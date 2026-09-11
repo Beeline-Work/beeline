@@ -14,7 +14,7 @@ import {
 } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   harvestWarmNodeModules,
@@ -214,9 +214,30 @@ describe('readWarmPlan', () => {
       resolve(outside, 'planted', 'package.json'),
       JSON.stringify({ name: 'planted', version: '1.0.0' }),
     );
-    const escape = `node_modules/a/../../${basename(outside)}/planted`;
-    const root = await worktree({ packages: { [escape]: { version: '1.0.0' } } });
+    const root = await worktree();
+    // Derived, not hand-counted: one `..` too few lands back inside the
+    // checkout, and the test would then be proving nothing about outside.
+    const escape = `node_modules/a/${relative(
+      resolve(root, 'node_modules', 'a'),
+      resolve(outside, 'planted'),
+    )}`;
+    const entries = {
+      '': { name: 'fixture' },
+      'node_modules/left-pad': { version: '1.0.0' },
+      [escape]: { version: '1.0.0' },
+    };
+    await writeFile(resolve(root, 'package-lock.json'), JSON.stringify({ packages: entries }));
+    // npm's hidden lockfile agrees the escaping package is installed, so
+    // containment is the ONLY thing left that can refuse it. Without that, the
+    // metadata check passes and the planted package.json answers the stat.
+    await writeFile(
+      resolve(root, 'node_modules', '.package-lock.json'),
+      JSON.stringify({ packages: { 'node_modules/left-pad': {}, [escape]: {} } }),
+    );
 
+    // The precondition the whole case rests on: that package really is there,
+    // really is valid, and really is where the key resolves to.
+    expect(resolve(root, escape)).toBe(resolve(outside, 'planted'));
     expect((await stat(resolve(root, escape, 'package.json'))).isFile()).toBe(true);
     expect(await missingInstalledPackages(root)).toContain(escape);
   });

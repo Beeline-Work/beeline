@@ -81,6 +81,26 @@ export type CornerDisplayState = {
   readonly terminal: boolean;
 };
 
+/** Compact sentence fragment for the corner header's opener + state line. */
+export function cornerHeaderStateLabel(state: CornerDisplayState): string {
+  switch (state.status) {
+    case 'live':
+      return 'WORKING';
+    case 'open':
+      return 'WAITING FOR REVIEW';
+    case 'needs-attention':
+      return 'WAITING FOR REPLY';
+    case 'failed':
+      return 'NEEDS RETRY';
+    case 'merged':
+      return 'MERGED';
+    case 'archived':
+      return 'CLOSED';
+    case null:
+      return state.needsYou ? 'WAITING FOR REPLY' : 'IDLE';
+  }
+}
+
 /**
  * The affordance word per canonical projection. `open` is a review ask, which
  * the Room row's older table folded into REPLY; naming it separately is the

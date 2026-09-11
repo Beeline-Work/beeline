@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import {
   cornerDisplayFacts,
+  cornerHeaderStateLabel,
   remoteTerminalState,
   resolveCornerDisplayState,
   unfinishedCornerDisplay,
@@ -10,6 +11,22 @@ import {
 
 const NOW = 1_800_000_000_000;
 const FRESH = NOW / 1_000;
+
+describe('cornerHeaderStateLabel', () => {
+  it('turns the canonical projection into a compact header phrase', () => {
+    expect(
+      cornerHeaderStateLabel(
+        resolveCornerDisplayState({ machineState: 'working', stateAt: FRESH }, NOW),
+      ),
+    ).toBe('WORKING');
+    expect(
+      cornerHeaderStateLabel(
+        resolveCornerDisplayState({ machineState: 'waiting', machineReason: 'review' }, NOW),
+      ),
+    ).toBe('WAITING FOR REVIEW');
+    expect(cornerHeaderStateLabel(resolveCornerDisplayState({}, NOW))).toBe('IDLE');
+  });
+});
 
 const pr = {
   number: 840,

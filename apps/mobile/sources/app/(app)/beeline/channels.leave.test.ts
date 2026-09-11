@@ -15,7 +15,7 @@ const roomSessionSource = readFileSync(
 describe('Chat-list swipe-left actions', () => {
   it('offers destructive Leave for member Rooms and non-destructive Close for DMs', () => {
     expect(source).toContain("const canLeaveRooms = chatList?.workspace.role === 'member'");
-    expect(source).toContain("!viewerIsAgent && Platform.OS !== 'web'");
+    expect(source).toContain('!viewerIsAgent ? (');
     expect(source).toContain('testID={`chat-close-swipe-${item.room.id}`}');
     expect(source).toContain('!item.directMessage && canLeaveRooms');
     expect(source).toContain('testID={`room-leave-action-${item.room.id}`}');

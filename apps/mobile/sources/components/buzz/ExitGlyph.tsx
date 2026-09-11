@@ -7,7 +7,6 @@ export const ExitGlyph = React.memo(function ExitGlyph({ testID }: { testID?: st
   const { theme } = useUnistyles();
   return (
     <Svg
-      accessibilityElementsHidden
       height={26}
       testID={testID}
       viewBox="0 0 24 24"

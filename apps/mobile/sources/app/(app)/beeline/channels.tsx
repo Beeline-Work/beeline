@@ -803,7 +803,7 @@ export default function BuzzChannels() {
             );
             return (
               <View style={styles.roomCell}>
-                {!viewerIsAgent && Platform.OS !== 'web' ? (
+                {!viewerIsAgent ? (
                   <Swipeable
                     ref={(ref) => {
                       if (ref) swipeableRefs.current.set(item.room.id, ref);

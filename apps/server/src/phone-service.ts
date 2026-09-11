@@ -775,7 +775,7 @@ export class PhoneService {
         )) unread,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
-        EXISTS(
+        (r.direct_participants IS NOT NULL AND EXISTS(
           SELECT 1 FROM chat_dismissals dismissal
           WHERE dismissal.room_id=r.id AND dismissal.identity_id=$2
             AND NOT EXISTS(
@@ -785,7 +785,7 @@ export class PhoneService {
                 AND incoming.presentation IN ('message','system','card')
                 AND incoming.created_at>dismissal.dismissed_at
             )
-        ) closed
+        )) closed
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
@@ -3155,21 +3155,27 @@ export class PhoneService {
     await this.database.query(`DELETE FROM rooms WHERE id=$1`, [roomId]);
   }
   private async leaveRoom(roomId: string, viewerId: string) {
-    await this.requireTopLevelRoom(roomId);
-    const membership = await this.database.query<{ role: 'owner' | 'admin' | 'member' }>(
-      `SELECT role FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-      [roomId, viewerId],
-    );
-    const role = membership.rows[0]?.role;
-    if (role !== 'member') {
-      throw new Error(
-        role === 'owner' || role === 'admin'
-          ? 'room managers cannot leave'
-          : 'room membership required',
-      );
-    }
+    const room = await this.requireTopLevelRoom(roomId);
     const leaver = await this.requireIdentity(viewerId);
     await this.database.transaction(async (database) => {
+      const membership = (
+        await database.query<{ workspace_role: 'owner' | 'admin' | 'member' }>(
+          `SELECT workspace_member.role workspace_role
+           FROM memberships room_member
+           JOIN memberships workspace_member
+             ON workspace_member.workspace_id=$3 AND workspace_member.room_id IS NULL
+            AND workspace_member.identity_id=room_member.identity_id
+            AND workspace_member.removed_at IS NULL
+           WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+             AND room_member.removed_at IS NULL
+           FOR UPDATE OF room_member,workspace_member`,
+          [roomId, viewerId, room.workspace_id],
+        )
+      ).rows[0];
+      if (!membership) throw new Error('room membership required');
+      if (membership.workspace_role === 'owner' || membership.workspace_role === 'admin') {
+        throw new Error('workspace managers cannot leave Rooms');
+      }
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
         [roomId, viewerId],
@@ -3185,7 +3191,16 @@ export class PhoneService {
   }
   private async closeChat(roomId: string, viewerId: string) {
     await this.database.transaction(async (database) => {
-      await this.requireTopLevelChatMember(roomId, viewerId, database);
+      const membership = await database.query(
+        `SELECT 1 FROM rooms room
+         JOIN memberships membership ON membership.room_id=room.id
+           AND membership.identity_id=$2 AND membership.removed_at IS NULL
+         WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
+           AND room.direct_participants IS NOT NULL
+         FOR SHARE OF room,membership`,
+        [roomId, viewerId],
+      );
+      if (!membership.rowCount) throw new Error('direct-message membership required');
       await database.query(
         `INSERT INTO chat_dismissals(room_id,identity_id,dismissed_at) VALUES($1,$2,now())
          ON CONFLICT (room_id,identity_id)

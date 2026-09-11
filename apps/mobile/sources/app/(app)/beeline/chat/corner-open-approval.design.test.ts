@@ -34,6 +34,13 @@ describe('corner-open approval card design contract', () => {
     expect(source).toContain('<LedgerRoomUpdate');
   });
 
+  it('holds the objective under the header for the life of the corner', () => {
+    // Outside the transcript list, so it survives the first message rather than
+    // scrolling away with the empty state.
+    expect(source).toContain('<CornerObjectiveLine objective={cornerObjectiveText} />');
+    expect(source).toContain('const cornerObjectiveText = useMemo(');
+  });
+
   it('lets the corner title wrap because the name is the objective verbatim', () => {
     expect(source).toContain('numberOfLines={isCorner ? 2 : 1}');
   });

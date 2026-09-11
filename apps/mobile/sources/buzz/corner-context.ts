@@ -32,23 +32,14 @@ export type RoomContextEntry = {
 };
 
 /**
- * The corner's objective, as one line.
+ * The corner's objective, as independently readable items — without treating
+ * commas, code, or abbreviations as list boundaries.
  *
  * The human's task from the immutable corner create event wins for the life of
  * the corner. A plan objective is only a compatibility fallback for corners
  * opened before the `task` tag shipped. A generated room name is never content.
- * `undefined` means "say nothing" — never a placeholder, and never raw text.
+ * An empty result means "say nothing" — never a placeholder, and never raw text.
  */
-export function cornerObjectiveLine(input: {
-  planObjective?: string;
-  task?: string;
-  cornerName?: string;
-}): string | undefined {
-  return cornerObjectiveItems(input).join('\n') || undefined;
-}
-
-/** Turns a fixed objective into independently readable items without treating
- * commas, code, or abbreviations as list boundaries. */
 export function cornerObjectiveItems(input: {
   planObjective?: string;
   task?: string;

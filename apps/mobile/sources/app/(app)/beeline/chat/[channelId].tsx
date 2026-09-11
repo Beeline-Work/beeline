@@ -19,9 +19,16 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Notifications from 'expo-notifications';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
+import {
+  useFocusEffect,
+  useLocalSearchParams,
+  useNavigation,
+  router,
+  type Href,
+} from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -56,6 +63,7 @@ import {
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
+import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
@@ -219,6 +227,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
+import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
@@ -367,6 +376,13 @@ export default function BuzzChat() {
     pushOpenBuzzChannelId(decodedId || null);
     return () => releaseOpenBuzzChannelId(decodedId || null);
   }, [decodedId]);
+  useFocusEffect(
+    useCallback(() => {
+      void dismissPresentedNotificationsForChannel(decodedId, Notifications).catch((error) => {
+        console.log('Failed to dismiss notifications for opened conversation:', error);
+      });
+    }, [decodedId]),
+  );
 
   const {
     transport,
@@ -763,6 +779,9 @@ export default function BuzzChat() {
       }),
     [cornerTask, resolvedChannelName],
   );
+  // The same objective as one line, for the inscription under the header and
+  // for the empty state's steering copy — derived once so the two never drift.
+  const cornerObjectiveText = useMemo(() => cornerObjective.join(' '), [cornerObjective]);
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessagesRef.current) return;
@@ -3481,6 +3500,12 @@ export default function BuzzChat() {
             )}
           </View>
 
+          {/* What the corner is for, held under the header for its whole life:
+            the human's own request, inscribed rather than framed. The header
+            carries a short corner name, so without this the objective survives
+            only until the first message lands. */}
+          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
+
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
           {isCorner && (
@@ -3569,7 +3594,7 @@ export default function BuzzChat() {
                 <EmptyLedgerState
                   variant={emptyLedgerVariant}
                   name={isDirectMessage ? displayRoomName : undefined}
-                  objective={isCorner ? cornerObjective.join(' ') : undefined}
+                  objective={isCorner ? cornerObjectiveText : undefined}
                   onPress={focusComposer}
                 />
               </View>

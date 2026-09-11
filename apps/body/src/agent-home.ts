@@ -414,11 +414,13 @@ async function provisionAgentSkillsAndMcp(
     console.warn('[body] operator MCP passthrough failed for claude:', error);
   }
 
-  // Native web search for Claude Code: the tool is permission-gated, so the
-  // generated isolated settings allow it explicitly. Regenerated on every
-  // activation like every other Beeline-owned file in the harness home.
+  // Native web reads for Claude Code: both discovery (`WebSearch`) and direct
+  // URL retrieval (`WebFetch`) are permission-gated, so the generated isolated
+  // settings allow them explicitly. Regenerated on every activation like every
+  // other Beeline-owned file in the harness home. Filesystem and command tools
+  // remain absent and continue through the Room's fail-closed permission path.
   try {
-    const settings = { permissions: { allow: ['WebSearch'] } };
+    const settings = { permissions: { allow: ['WebSearch', 'WebFetch'] } };
     await writeIsolatedHarnessFile(
       resolve(root, 'claude', 'settings.json'),
       `${JSON.stringify(settings, null, 2)}\n`,

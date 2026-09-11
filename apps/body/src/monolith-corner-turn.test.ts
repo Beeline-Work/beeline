@@ -1,6 +1,6 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,7 +9,10 @@ import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
+  CORNER_DELIVERY_NUDGE,
+  CORNER_YOLO_MERGE_NUDGE,
   cornerClosePollMs,
+  cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
   cornerToolActivity,
   MonolithCornerTurnLoop,
@@ -41,6 +44,55 @@ describe('corner merge instructions', () => {
     expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
     expect(cornerMergeInstruction(false)).toContain('never merge');
     expect(cornerMergeInstruction(false)).toContain('explicit human approval');
+  });
+
+  it('nudges delivery for dirty work without disposing of it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-delivery-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Test']);
+    await writeFile(join(root, 'tracked.txt'), 'clean\n');
+    await execFileAsync('git', ['-C', root, 'add', 'tracked.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'initial']);
+
+    expect(await cornerHasUndeliveredRepositoryWork(root)).toBe(false);
+    await writeFile(join(root, 'tracked.txt'), 'agent decides this change\n');
+    expect(await cornerHasUndeliveredRepositoryWork(root)).toBe(true);
+    expect(await readFile(join(root, 'tracked.txt'), 'utf8')).toBe('agent decides this change\n');
+
+    await execFileAsync('git', ['-C', root, 'add', 'tracked.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'local delivery']);
+    await execFileAsync('git', [
+      '-C',
+      root,
+      'update-ref',
+      'refs/remotes/origin/feature/widget',
+      'HEAD~1',
+    ]);
+    expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget')).toBe(true);
+    await execFileAsync('git', [
+      '-C',
+      root,
+      'update-ref',
+      '-d',
+      'refs/remotes/origin/feature/widget',
+    ]);
+    await execFileAsync('git', [
+      '-C',
+      root,
+      'update-ref',
+      'refs/remotes/origin/main',
+      'HEAD~1',
+    ]);
+    expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget', 'main')).toBe(true);
+  });
+
+  it('keeps delivery cleanup under agent control and the merge reminder behind yolo', () => {
+    expect(CORNER_DELIVERY_NUDGE).toContain('commit and push');
+    expect(CORNER_DELIVERY_NUDGE).toContain('do not discard');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Yolo is on');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('pr_checks_status');
   });
 });
 
@@ -212,6 +264,7 @@ describe('corner close-request polling cadence', () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-immediate-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
+    await writeFile(join(root, 'retained-agent-work.txt'), 'keep until the agent decides\n');
     const worktree = root;
     const gitCommonDir = join(root, '.git');
     const runtime = {
@@ -286,12 +339,26 @@ describe('corner close-request polling cadence', () => {
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
-    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
-      stopReason: 'end_turn',
-      updates: [],
-      agentText: 'Done.',
-      toolCalls: [],
-    });
+    const sessionPrompt = vi
+      .spyOn(acp, 'sessionPrompt')
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'PR opened: https://github.com/acme/widgets/pull/7',
+        toolCalls: [],
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Kept retained-agent-work.txt for the next turn.',
+        toolCalls: [],
+      })
+      .mockResolvedValue({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Done.',
+        toolCalls: [],
+      });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const onCloseRequested = vi.fn(async () => undefined);
     await new MonolithCornerTurnLoop({
@@ -318,7 +385,20 @@ describe('corner close-request polling cadence', () => {
       createAcpClient: () => acp,
     }).run();
     await scheduler.dispose();
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt).toHaveBeenCalledTimes(3);
+    expect(sessionPrompt.mock.calls[1]?.[1]).toBe(CORNER_DELIVERY_NUDGE);
+    expect(execute).toHaveBeenCalledWith(
+      'postRoomMessage',
+      expect.objectContaining({
+        text:
+          'PR opened: https://github.com/acme/widgets/pull/7\n\n' +
+          'Kept retained-agent-work.txt for the next turn.',
+      }),
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      'postAgentTurnReceipt',
+      expect.objectContaining({ status: 'failed' }),
+    );
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
@@ -1592,7 +1672,8 @@ describe('thin monolith corner turn', () => {
       .spyOn(acp, 'sessionPrompt')
       .mockImplementation(async (_id, prompt, _timeout, draft, _activity, toolActivity) => {
         draft?.('Opening PR', 'Opening PR');
-        const checksTurn = prompt.includes('passed a check');
+        const checksTurn =
+          prompt.includes('passed a check') || prompt === CORNER_YOLO_MERGE_NUDGE;
         const toolCalls = checksTurn
           ? []
           : [
@@ -1643,9 +1724,10 @@ describe('thin monolith corner turn', () => {
     await scheduler.dispose();
 
     expect(conversationReads).toBeGreaterThanOrEqual(2);
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt).toHaveBeenCalledTimes(3);
     expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
+    expect(sessionPrompt.mock.calls[2]?.[1]).toBe(CORNER_YOLO_MERGE_NUDGE);
     // The first turn on a cold session renders the whole transcript window.
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
@@ -1709,7 +1791,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({ systemPrompt: expect.stringContaining(SOUL_HOUSE_RULE) }),
     );
-    for (const call of sessionPrompt.mock.calls) {
+    for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
       expect(call[1]).toContain('Your Beeline identity is Bee.');
       expect(call[1]).toContain(
         'Human-authored Workspace persona: Terra. Steady, exact, and kind.',

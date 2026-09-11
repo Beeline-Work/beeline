@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   isCornerStatusRestatement,
   sanitizeAgentReply,
-  stripCornerOpenEcho,
 } from './reply-sanitizer.js';
 
 describe('sanitizeAgentReply', () => {
@@ -71,38 +70,6 @@ describe('sanitizeAgentReply', () => {
 
     expect(sanitizeAgentReply(banner)).toBe('');
     expect(sanitizeAgentReply(`${banner}\nThe real answer.`)).toBe('The real answer.');
-  });
-});
-
-describe('stripCornerOpenEcho', () => {
-  it.each([
-    'Opened corner 3f2a9c1e-77d2-4b0e-9d1a-0c5b2e8f4a11 with the objective "Fix the widget".',
-    "I've opened a corner for this: Fix the widget. I'll report back when the PR is up.",
-    'Okay, opening a new write-enabled corner now.',
-    'Done. Opened the repository corner (id 3f2a9c1e).',
-  ])("drops the model's own announcement after the server posted the corner card: %j", (echo) => {
-    expect(stripCornerOpenEcho(echo)).toBe('');
-  });
-
-  it('keeps anything the model says after the announcement paragraph', () => {
-    expect(
-      stripCornerOpenEcho(
-        'Opened corner 3f2a9c1e for the widget fix.\n\nNote: the repo has no test runner, so I will add vitest first.',
-      ),
-    ).toBe('Note: the repo has no test runner, so I will add vitest first.');
-  });
-
-  it('keeps a reply that only mentions a corner without announcing one', () => {
-    const reply = 'The corner from yesterday merged already; nothing to open here.';
-    expect(stripCornerOpenEcho(reply)).toBe(reply);
-    expect(stripCornerOpenEcho('I could not open a corner: this Room has no repository.')).toBe(
-      'I could not open a corner: this Room has no repository.',
-    );
-  });
-
-  it('keeps a long first paragraph even when it starts as the announcement', () => {
-    const long = `Opened corner 3f2a9c1e. ${'The plan has several parts. '.repeat(16)}`.trim();
-    expect(stripCornerOpenEcho(long)).toBe(long);
   });
 });
 

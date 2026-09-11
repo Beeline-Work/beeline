@@ -231,6 +231,12 @@ export interface GitHubAppInstallation {
   account: GitHubInstallationAccount;
 }
 
+/**
+ * A user's own membership in an organization, as their token reports it.
+ * 'unknown' means GitHub would not answer — never treat it as a denial.
+ */
+export type GitHubOrganizationMembership = 'active' | 'pending' | 'none' | 'unknown';
+
 export interface GitHubInstallationAccount {
   id: string;
   login: string;
@@ -592,6 +598,51 @@ export class GitHubAppClient {
 
   async listUserInstallationIds(accessToken: string): Promise<number[]> {
     return (await this.userInstallationIds(accessToken)).installationIds;
+  }
+
+  /**
+   * What a user's own token can prove about their membership in `organization`.
+   *
+   * GET /user/memberships/orgs/{org} describes the AUTHENTICATED user only, so
+   * it answers the one question the installation listing leaves open: an
+   * organization installation missing from GET /user/installations may belong
+   * to an org this user is plainly a member of, and membership is the fallback
+   * that lets reconciliation claim it (see the caller in server-context.ts).
+   *
+   * Deliberately total and non-throwing. GitHub answers 404 for a non-member,
+   * which is a DEFINITIVE no; every other failure (403 when the App's user
+   * token is not allowed to read memberships, a 5xx, a network error) is
+   * 'unknown' so callers fall back to their prior behaviour instead of
+   * inventing either a claim or a refusal. That matters because the App
+   * manifest deliberately requests NO organization permissions — this endpoint
+   * may simply be closed to the token, and the fallback must degrade quietly.
+   */
+  async organizationMembership(
+    accessToken: string,
+    organization: string,
+  ): Promise<GitHubOrganizationMembership> {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
+        { headers: githubHeaders(accessToken) },
+      );
+    } catch {
+      return 'unknown';
+    }
+    if (response.status === 404) return 'none';
+    if (!response.ok) return 'unknown';
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return 'unknown';
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return 'unknown';
+    const state = (body as Record<string, unknown>).state;
+    if (state === 'active') return 'active';
+    // 'pending' is an unaccepted invitation: a real answer, but not membership.
+    return state === 'pending' ? 'pending' : 'unknown';
   }
 
   private async userInstallationIds(

@@ -55,7 +55,6 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
-import { stripCornerOpenEcho } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
@@ -64,6 +63,8 @@ import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
+
+export const ROOM_PROMPT_INACTIVITY_TIMEOUT_MS = 180_000;
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
@@ -904,7 +905,7 @@ export class MonolithRoomTurnLoop {
                     result = await this.client!.sessionPrompt(
                       this.sessionId!,
                       nextPrompt,
-                      120_000,
+                      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
                       (delta, full) => {
                         trace.firstModelOutput();
                         stream.onChunk(delta, full);
@@ -1023,11 +1024,11 @@ export class MonolithRoomTurnLoop {
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
                 );
               }
-              // The server's corner-open card already announces a corner the
-              // turn opened; the model's own "Opened corner …" echo is dropped and
-              // a turn left with nothing else settles through its receipt.
+              // A successful corner open completes this Room turn silently.
+              // The server's corner-open card is the complete handoff; publishing
+              // any model text here would create a second, competing completion.
               if (openCornerCall && !isFailedToolCall(openCornerCall)) {
-                reply = stripCornerOpenEcho(reply);
+                reply = '';
               }
               await trace.measure('publish', () =>
                 stream.settle(

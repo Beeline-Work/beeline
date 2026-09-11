@@ -333,7 +333,7 @@ describe('system-line producers', () => {
     }
   });
 
-  it('phrases a failed turn, restates a retry in place, and settles it after success', async () => {
+  it('phrases a failed turn once and rejects a stale retry', async () => {
     const database = await fixture();
     try {
       const requestId = 'f'.repeat(64);
@@ -363,47 +363,43 @@ describe('system-line producers', () => {
         },
         AGENT,
       );
-      await daemon.execute(
-        'postAgentTurnReceipt',
-        {
-          agentId: AGENT,
-          roomId: ROOM,
-          requestId,
-          generationId: 'g1',
-          status: 'failed',
-          reason: 'timed out: after 120s',
-        },
-        AGENT,
-      );
+      await expect(
+        daemon.execute(
+          'postAgentTurnReceipt',
+          {
+            agentId: AGENT,
+            roomId: ROOM,
+            requestId,
+            generationId: 'g1',
+            status: 'failed',
+            reason: 'timed out: after 120s',
+          },
+          AGENT,
+        ),
+      ).rejects.toThrow('authority rejected');
       const failed = await lines(database);
       expect(failed).toEqual([
         {
           author_id: AGENT,
-          text: '@bee could not answer · timed out: after 120s',
+          text: '@bee could not answer · provider error 429',
           presentation: 'system',
           mention_ids: [],
           card_type: 'turn-failed',
           system_event: {
             subject: { kind: 'agent', id: AGENT, name: '@bee' },
             verb: 'could not answer',
-            consequence: 'timed out: after 120s',
+            consequence: 'provider error 429',
           },
         },
       ]);
-      await daemon.execute(
-        'postAgentTurnReceipt',
-        { agentId: AGENT, roomId: ROOM, requestId, generationId: 'g1', status: 'complete' },
-        AGENT,
-      );
-      expect(await lines(database)).toEqual([
-        expect.objectContaining({
-          text: '@bee answered after a retry',
-          system_event: {
-            subject: { kind: 'agent', id: AGENT, name: '@bee' },
-            verb: 'answered after a retry',
-          },
-        }),
-      ]);
+      await expect(
+        daemon.execute(
+          'postAgentTurnReceipt',
+          { agentId: AGENT, roomId: ROOM, requestId, generationId: 'g1', status: 'complete' },
+          AGENT,
+        ),
+      ).resolves.toBeDefined();
+      expect(await lines(database)).toEqual(failed);
     } finally {
       await database.close();
     }

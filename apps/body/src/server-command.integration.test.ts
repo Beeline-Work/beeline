@@ -64,7 +64,7 @@ describe.each([
   ['Room', R],
   ['corner', C],
 ])('%s complete command conversation', (surface, roomId) => {
-  it('replays Hoots/Goosy with exact agent tags, fresh human reply and idle untagged traffic', async () => {
+  it('replays Hoots/Goosy with exact tags, replies and immediate untagged continuity', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 4 });
     const controller = new AbortController();
     const helpers = [A, B].map((agentId) => {
@@ -181,13 +181,15 @@ describe.each([
         { roomId, text: 'Thanks everyone' },
         H,
       );
+      await waitAnswers(5);
       expect(
         (
           await db.query(`SELECT 1 FROM agent_commands WHERE source_message_id=$1`, [
             untagged.messageId,
           ])
         ).rowCount,
-      ).toBe(0);
+      ).toBe(1);
+      expect(helpers.map((h) => h.prompt.mock.calls.length)).toEqual([2, 3]);
       for (const agentId of [A, B])
         expect((await daemon.execute('getAgentCommands', { roomId }, agentId)).commands).toEqual(
           [],
@@ -202,7 +204,7 @@ describe.each([
         `SELECT agent_depth FROM agent_commands WHERE room_id=$1 ORDER BY created_at,id`,
         [roomId],
       );
-      expect(depths.rows.map((c) => c.agent_depth)).toEqual([0, 1, 0, 0]);
+      expect(depths.rows.map((c) => c.agent_depth)).toEqual([0, 1, 0, 0, 0]);
     } finally {
       controller.abort();
       await Promise.all(helpers.map((h) => h.running));

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
@@ -70,6 +71,12 @@ export function nextReleaseVersion(previous) {
   return `v${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
 }
 
+export function releaseVersionForSource(previous, sourceSha) {
+  validateReleaseIdentity(previous?.version, previous?.sourceSha);
+  validateReleaseIdentity(previous.version, sourceSha);
+  return previous.sourceSha === sourceSha ? previous.version : nextReleaseVersion(previous.version);
+}
+
 function assertComponent(component) {
   if (!RELEASE_COMPONENTS.includes(component)) fail(`unknown release component: ${component}`);
 }
@@ -92,6 +99,38 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
   }
   if (storeTrack !== 'none') selected.add('mobile-native');
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
+}
+
+export function selectReleaseComponentsFromPublishedInputs(
+  pathsByComponent,
+  { selection = 'auto', storeTrack = 'none' } = {},
+) {
+  if (selection !== 'auto' && selection !== '') {
+    return selectReleaseComponents([], { selection, storeTrack });
+  }
+  const selected = new Set(selectReleaseComponents([], { storeTrack }));
+  for (const component of RELEASE_COMPONENTS) {
+    const paths = pathsByComponent?.[component];
+    if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
+    if (selectReleaseComponents(paths).includes(component)) selected.add(component);
+  }
+  return RELEASE_COMPONENTS.filter((component) => selected.has(component));
+}
+
+export function changedPathsFromPublishedInputs(previous, releaseSha, {
+  gitDiff = (publishedSha, targetSha) => execFileSync(
+    'git', ['diff', '--name-only', publishedSha, targetSha],
+    { encoding: 'utf8', timeout: 30_000 },
+  ),
+} = {}) {
+  validateReleaseIdentity(previous?.version, previous?.sourceSha);
+  validateReleaseIdentity(previous.version, releaseSha);
+  return Object.fromEntries(RELEASE_COMPONENTS.map((component) => {
+    const publishedSha = previous.components?.[component]?.sourceSha ?? previous.sourceSha;
+    validateReleaseIdentity(previous.version, publishedSha);
+    const output = gitDiff(publishedSha, releaseSha);
+    return [component, output.split(/\r?\n/).map((path) => path.trim()).filter(Boolean)];
+  }));
 }
 
 export function artifactReference(component, { version, sourceSha }) {
@@ -309,14 +348,34 @@ async function main(argv) {
     process.stdout.write(`${nextReleaseVersion(previous?.version)}\n`);
     return;
   }
+  if (command === 'release-version') {
+    const previous = args.previous ? readJson(args.previous) : undefined;
+    process.stdout.write(`${previous ? releaseVersionForSource(previous, args.sha) : 'v0.0.1'}\n`);
+    return;
+  }
+  if (command === 'component-paths') {
+    const previous = args.previous ? readJson(args.previous) : fail('missing previous release');
+    const componentPaths = changedPathsFromPublishedInputs(previous, args.sha);
+    writeJson(args.output, componentPaths);
+    if (args['paths-output']) {
+      const paths = [...new Set(Object.values(componentPaths).flat())].sort();
+      writeFileSync(args['paths-output'], paths.length ? `${paths.join('\n')}\n` : '');
+    }
+    return;
+  }
   if (command === 'plan' || command === 'init') {
     const previous = args.previous ? readJson(args.previous) : undefined;
     const retry = args.retry ? readJson(args.retry) : undefined;
     const paths = args.paths ? readFileSync(args.paths, 'utf8').split(/\r?\n/).map((path) => path.trim()).filter(Boolean) : [];
+    const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
     const selection = args.selection ?? (command === 'init' && !args.paths ? 'all' : 'auto');
-    const selectedComponents = selectReleaseComponents(paths, { selection, storeTrack: args['store-track'] ?? 'none' });
+    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none' };
+    const selectedComponents = componentPaths
+      ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
+      : selectReleaseComponents(paths, selectOptions);
     const state = initializeRelease({ ...identityFromOptions(args), previous, retry, selectedComponents });
     state.plan.paths = paths;
+    if (componentPaths) state.plan.componentPaths = componentPaths;
     state.plan.selection = selection;
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
@@ -363,7 +422,7 @@ async function main(argv) {
     console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s`);
     return;
   }
-  fail('Usage: unified-release.mjs <next-version|plan|init|mark-stage|apply-checkpoints|finalize|notify|report>');
+  fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|mark-stage|apply-checkpoints|finalize|notify|report>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

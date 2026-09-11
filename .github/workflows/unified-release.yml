@@ -8,25 +8,25 @@ on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: Exact current main SHA (required on a retry)
+        description: Recovery only - pinned SHA from main
         type: string
         required: false
       release_version:
-        description: Existing vX.Y.Z identity (required on a retry)
+        description: Recovery only - existing vX.Y.Z identity
         type: string
         required: false
       retry_attempt:
-        description: Component-local retry attempt (1-3)
+        description: Recovery only - component-local attempt (1-3)
         type: string
         default: '1'
         required: true
       selection:
-        description: auto, all, or a comma-separated component list
+        description: Recovery only - routine releases keep auto
         type: string
         default: auto
         required: true
       store_track:
-        description: Native build destination; none keeps builds off store tracks
+        description: Recovery only - routine releases keep none
         type: choice
         default: none
         options:
@@ -142,10 +142,10 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main
-          release_sha="${REQUESTED_SHA:-$(git rev-parse origin/main)}"
+          release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
           test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
-          test "$(git rev-parse origin/main)" = "$release_sha" || {
-            echo "release SHA is not current main: $release_sha" >&2; exit 1;
+          git merge-base --is-ancestor "$release_sha" origin/main || {
+            echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
           }
           previous="$RUNNER_TEMP/previous/release-attempt.json"
           [ -f "$previous" ] || previous="$RUNNER_TEMP/previous/unified-release.json"
@@ -153,20 +153,29 @@ jobs:
           if [ -n "$REQUESTED_VERSION" ]; then
             release_version="$REQUESTED_VERSION"
           elif [ -f "$previous" ]; then
-            release_version=$(node scripts/unified-release.mjs next-version --previous "$previous")
+            release_version=$(node scripts/unified-release.mjs release-version --previous "$previous" --sha "$release_sha")
           else
             release_version=v0.0.1
           fi
           release_id="${release_version}-${release_sha}"
-          previous_sha=''
           if [ -f "$previous" ]; then
-            previous_sha=$(node -e 'process.stdout.write(require(process.argv[1]).sourceSha)' "$previous")
-            git diff --name-only "$previous_sha" "$release_sha" > "$RUNNER_TEMP/release-paths.txt"
+            node scripts/unified-release.mjs component-paths \
+              --previous "$previous" --sha "$release_sha" \
+              --output "$RUNNER_TEMP/release-component-paths.json" \
+              --paths-output "$RUNNER_TEMP/release-paths.txt"
           else
             git ls-tree -r --name-only "$release_sha" > "$RUNNER_TEMP/release-paths.txt"
+            node - "$RUNNER_TEMP/release-paths.txt" "$RUNNER_TEMP/release-component-paths.json" <<'NODE'
+          const fs = require('node:fs');
+          const [pathsPath, outputPath] = process.argv.slice(2);
+          const paths = fs.readFileSync(pathsPath, 'utf8').split(/\r?\n/).filter(Boolean);
+          const components = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
+          fs.writeFileSync(outputPath, `${JSON.stringify(Object.fromEntries(components.map((component) => [component, paths])), null, 2)}\n`);
+          NODE
           fi
           args=(plan --version "$release_version" --sha "$release_sha"
-            --paths "$RUNNER_TEMP/release-paths.txt" --selection "$SELECTION"
+            --paths "$RUNNER_TEMP/release-paths.txt" --component-paths "$RUNNER_TEMP/release-component-paths.json"
+            --selection "$SELECTION"
             --store-track "$STORE_TRACK" --state "$RUNNER_TEMP/unified-release.json"
             --summary "$RUNNER_TEMP/release-plan.json")
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
@@ -192,6 +201,7 @@ jobs:
             ${{ runner.temp }}/unified-release.json
             ${{ runner.temp }}/release-plan.json
             ${{ runner.temp }}/release-paths.txt
+            ${{ runner.temp }}/release-component-paths.json
           if-no-files-found: error
           retention-days: 90
 
@@ -665,6 +675,7 @@ jobs:
           NODE
           node scripts/unified-release.mjs apply-checkpoints --state "$state" --checkpoints "$RUNNER_TEMP/checkpoints.json" --summary "$RUNNER_TEMP/retry-plan.json"
           incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
+          no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
           now=$(date +%s)
           elapsed=$((now - TRIGGER_EPOCH))
           if [ "$elapsed" -ge 1200 ]; then
@@ -680,16 +691,19 @@ jobs:
               echo "outcome=failure"
               echo "failure_class=$failure_class"
               echo "incomplete=$incomplete"
+              echo "no_op=false"
             } >> "$GITHUB_OUTPUT"
           else
             {
               echo "outcome=success"
               echo "failure_class="
               echo "incomplete="
+              echo "no_op=$no_op"
             } >> "$GITHUB_OUTPUT"
           fi
           cp "$state" "$RUNNER_TEMP/release-attempt.json"
       - name: Publish immutable attempt state for component-local retry
+        if: steps.result.outputs.no_op != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: unified-release-state-${{ needs.initialize.outputs.release_id }}
@@ -703,7 +717,7 @@ jobs:
           path: ${{ runner.temp }}/desktop-release
           merge-multiple: true
       - name: Create the one GitHub release record and preserve stable desktop downloads
-        if: steps.result.outputs.outcome == 'success'
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
@@ -731,7 +745,7 @@ jobs:
           fi
       - name: Notify clients without changing the authoritative release outcome
         id: notification
-        if: steps.result.outputs.outcome == 'success'
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         continue-on-error: true
         env:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
@@ -744,10 +758,10 @@ jobs:
           --repository "$GITHUB_REPOSITORY"
           --output "$RUNNER_TEMP/release-notification.json"
       - name: Finalize successful delivery after every selected promotion and record
-        if: steps.result.outputs.outcome == 'success'
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         run: node scripts/unified-release.mjs finalize --state "$RUNNER_TEMP/release-attempt.json" --outcome success
       - name: Publish the one successful release index
-        if: steps.result.outputs.outcome == 'success'
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: unified-release-index
@@ -773,12 +787,13 @@ jobs:
       - name: Surface release outcome, duration, and measured failure rate
         env:
           OUTCOME: ${{ steps.result.outputs.outcome }}
+          NO_OP: ${{ steps.result.outputs.no_op }}
           FAILURE_CLASS: ${{ steps.result.outputs.failure_class }}
           SAMPLE: ${{ steps.reliability.outputs.sample }}
           FAILED: ${{ steps.reliability.outputs.failed }}
           RATE: ${{ steps.reliability.outputs.rate }}
-          NOTIFICATION_STATE: ${{ steps.notification.outputs.state || (steps.notification.outcome == 'failure' && 'warning') || 'not-attempted' }}
-          NOTIFICATION_DETAIL: ${{ steps.notification.outputs.detail || (steps.notification.outcome == 'failure' && 'notification step failed unexpectedly') || 'release result was not successful' }}
+          NOTIFICATION_STATE: ${{ (steps.result.outputs.no_op == 'true' && 'not-needed') || steps.notification.outputs.state || (steps.notification.outcome == 'failure' && 'warning') || 'not-attempted' }}
+          NOTIFICATION_DETAIL: ${{ (steps.result.outputs.no_op == 'true' && 'no component inputs changed') || steps.notification.outputs.detail || (steps.notification.outcome == 'failure' && 'notification step failed unexpectedly') || 'release result was not successful' }}
         run: |
           node - "$RUNNER_TEMP/release-attempt.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
           const fs = require('node:fs');
@@ -787,6 +802,7 @@ jobs:
           console.log(`- Duration: ${release.delivery.durationSeconds}s`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
+          if (process.env.NO_OP === 'true') console.log('- No-op: this exact release was already delivered; nothing was republished.');
           console.log(`- Notification: ${process.env.NOTIFICATION_STATE} (${process.env.NOTIFICATION_DETAIL})`);
           if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);
           console.log('- Reliability target: fewer than 10% failed attempts over the rolling 20 release attempts.');

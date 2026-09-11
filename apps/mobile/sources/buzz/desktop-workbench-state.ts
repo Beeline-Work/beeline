@@ -15,19 +15,6 @@ const DRAFT_PREFIX = 'beeline.desktop.draft.v1:';
 
 export type DesktopLayoutMode = 'three-pane' | 'inspector-overlay' | 'navigation-view';
 
-export type DesktopRoomAttention = {
-  readonly agentState?: 'needs-you' | 'working';
-  readonly cornerCount: number;
-};
-
-export function desktopRoomWorkLine(item: DesktopRoomAttention): string | null {
-  if (item.agentState === 'needs-you') return 'Needs your attention';
-  if (item.agentState === 'working') return 'Agent thinking';
-  if (item.cornerCount > 0)
-    return `${item.cornerCount} active ${item.cornerCount === 1 ? 'Corner' : 'Corners'}`;
-  return null;
-}
-
 export function desktopLayoutMode(width: number): DesktopLayoutMode {
   if (width >= 1180) return 'three-pane';
   if (width >= LAYOUT_BREAKPOINTS.regular) return 'inspector-overlay';

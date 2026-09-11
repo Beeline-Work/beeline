@@ -158,6 +158,10 @@ async function main() {
     livePaintDiagnostics: process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
     authHandler: mountedAuth.handle,
+    webAppOrigins: (process.env.BEELINE_WEB_APP_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     github: {
       webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
       ...(github

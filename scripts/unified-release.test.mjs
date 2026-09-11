@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import {
   applyComponentCheckpoints,
+  changedPathsFromPublishedInputs,
   COMPONENT_PATH_RULES,
   RELEASE_BUDGET_MINUTES,
   RELEASE_COMPONENTS,
@@ -16,10 +21,23 @@ import {
   releasePlanSummary,
   retryPlan,
   selectReleaseComponents,
+  selectReleaseComponentsFromPublishedInputs,
+  releaseVersionForSource,
 } from './unified-release.mjs';
 
 const OLD_SHA = '1'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
+const RELEASE_SCRIPT = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
+
+function run(command, args, cwd) {
+  return execFileSync(command, args, { cwd, encoding: 'utf8', timeout: 10_000 });
+}
+
+function writeFixture(root, path, contents) {
+  const target = join(root, path);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, contents);
+}
 
 function deliveredPrevious() {
   return {
@@ -63,6 +81,165 @@ test('shared protocol and shared UI paths fan out to their actual consumers', ()
     selectReleaseComponents(['apps/mobile/app.config.js']),
     ['mobile-ota', 'mobile-native', 'desktop'],
   );
+});
+
+test('routine auto selection catches lagging consumers from each published component sha', () => {
+  const pathsByComponent = {
+    server: [],
+    helper: ['apps/server/src/index.ts', 'apps/mobile/sources/components/Ledger.tsx'],
+    'mobile-ota': ['apps/server/src/index.ts', 'apps/mobile/sources/components/Ledger.tsx'],
+    'mobile-native': ['apps/server/src/index.ts', 'apps/mobile/sources/components/Ledger.tsx'],
+    desktop: ['apps/server/src/index.ts', 'apps/mobile/sources/components/Ledger.tsx'],
+    website: ['apps/server/src/index.ts', 'apps/mobile/sources/components/Ledger.tsx'],
+  };
+
+  assert.deepEqual(selectReleaseComponentsFromPublishedInputs(pathsByComponent), [
+    'mobile-ota',
+    'desktop',
+  ]);
+  assert.equal(releaseVersionForSource(deliveredPrevious(), NEW_SHA), 'v0.0.9');
+  assert.equal(releaseVersionForSource({ ...deliveredPrevious(), sourceSha: NEW_SHA }, NEW_SHA), 'v0.0.8');
+});
+
+test('routine CLI derives lagging consumers from real published git history', () => {
+  const root = mkdtempSync(join(tmpdir(), 'beeline-release-test-'));
+  try {
+    run('git', ['init', '--quiet'], root);
+    run('git', ['config', 'user.email', 'release-test@usebeeline.app'], root);
+    run('git', ['config', 'user.name', 'Release Test'], root);
+    writeFixture(root, 'README.md', 'baseline\n');
+    run('git', ['add', '.'], root);
+    run('git', ['commit', '--quiet', '-m', 'baseline'], root);
+    const oldSha = run('git', ['rev-parse', 'HEAD'], root).trim();
+
+    writeFixture(root, 'apps/server/src/index.ts', 'export const server = true;\n');
+    writeFixture(root, 'apps/mobile/sources/components/Ledger.tsx', 'export const ledger = true;\n');
+    run('git', ['add', '.'], root);
+    run('git', ['commit', '--quiet', '-m', 'server and shared ui'], root);
+    const releaseSha = run('git', ['rev-parse', 'HEAD'], root).trim();
+
+    const previous = deliveredPrevious();
+    previous.sourceSha = releaseSha;
+    previous.components.server = {
+      ...previous.components.server,
+      sourceSha: releaseSha,
+      artifactRef: `server-${previous.version}-${releaseSha}`,
+    };
+    for (const component of RELEASE_COMPONENTS.filter((name) => name !== 'server')) {
+      previous.components[component] = {
+        ...previous.components[component], sourceSha: oldSha, state: 'carried', selected: false,
+      };
+    }
+    const previousPath = join(root, 'previous.json');
+    const componentPathsPath = join(root, 'component-paths.json');
+    const pathsPath = join(root, 'paths.txt');
+    const statePath = join(root, 'state.json');
+    const summaryPath = join(root, 'summary.json');
+    writeFileSync(previousPath, `${JSON.stringify(previous)}\n`);
+
+    assert.equal(
+      run('node', [RELEASE_SCRIPT, 'release-version', '--previous', previousPath, '--sha', releaseSha], root).trim(),
+      previous.version,
+    );
+    run('node', [
+      RELEASE_SCRIPT, 'component-paths', '--previous', previousPath, '--sha', releaseSha,
+      '--output', componentPathsPath, '--paths-output', pathsPath,
+    ], root);
+    const componentPaths = JSON.parse(readFileSync(componentPathsPath, 'utf8'));
+    assert.deepEqual(componentPaths.server, []);
+    assert.deepEqual(componentPaths.desktop, [
+      'apps/mobile/sources/components/Ledger.tsx',
+      'apps/server/src/index.ts',
+    ]);
+    assert.deepEqual(changedPathsFromPublishedInputs(previous, releaseSha, {
+      gitDiff: (from, to) => run('git', ['diff', '--name-only', from, to], root),
+    }).server, []);
+
+    run('node', [
+      RELEASE_SCRIPT, 'plan', '--version', previous.version, '--sha', releaseSha,
+      '--previous', previousPath, '--paths', pathsPath, '--component-paths', componentPathsPath,
+      '--selection', 'auto', '--store-track', 'none', '--state', statePath, '--summary', summaryPath,
+    ], root);
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
+    assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop']);
+    assert.deepEqual(summary.selected, ['mobile-ota', 'desktop']);
+    assert.equal(state.components.server.sourceSha, releaseSha);
+    assert.equal(state.components.helper.sourceSha, oldSha);
+    assert.ok(state.plan.selected.every((component) => state.components[component].sourceSha === releaseSha));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('routine same-head release supplements lagging shared UI consumers and retries in place', () => {
+  const previous = deliveredPrevious();
+  previous.sourceSha = NEW_SHA;
+  previous.components.server = {
+    ...previous.components.server,
+    version: previous.version,
+    sourceSha: NEW_SHA,
+    artifactRef: `server-${previous.version}-${NEW_SHA}`,
+  };
+  for (const component of RELEASE_COMPONENTS.filter((name) => name !== 'server')) {
+    previous.components[component] = {
+      ...previous.components[component],
+      state: 'carried',
+      selected: false,
+    };
+  }
+  const sharedUiPaths = ['apps/server/src/index.ts', 'apps/mobile/sources/components/Ledger.tsx'];
+  const componentPaths = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [
+    component,
+    component === 'server' ? [] : sharedUiPaths,
+  ]));
+  const selected = selectReleaseComponentsFromPublishedInputs(componentPaths);
+  const version = releaseVersionForSource(previous, NEW_SHA);
+  const state = initializeRelease({
+    version,
+    sourceSha: NEW_SHA,
+    previous,
+    selectedComponents: selected,
+  });
+
+  assert.equal(version, previous.version);
+  assert.deepEqual(selected, ['mobile-ota', 'desktop']);
+  assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop']);
+  assert.equal(state.components.server.sourceSha, NEW_SHA);
+  assert.equal(state.components.helper.sourceSha, OLD_SHA);
+  for (const component of selected) {
+    assert.equal(state.components[component].state, 'pending');
+    assert.equal(state.components[component].sourceSha, NEW_SHA);
+  }
+
+  for (const stage of ['built', 'promoted', 'checked']) markComponentStage(state, 'mobile-ota', stage);
+  markComponentStage(state, 'desktop', 'built');
+  const retry = initializeRelease({
+    version,
+    sourceSha: NEW_SHA,
+    retry: state,
+  });
+  assert.equal(retry.components['mobile-ota'].state, 'checked');
+  assert.equal(retry.components.desktop.state, 'built');
+  assert.deepEqual(retryPlan(retry), {
+    server: false,
+    helper: false,
+    'mobile-ota': false,
+    'mobile-native': false,
+    desktop: true,
+    website: false,
+  });
+
+  for (const stage of ['promoted', 'checked']) markComponentStage(retry, 'desktop', stage);
+  finalizeRelease(retry);
+  const noChanges = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [component, []]));
+  const noOp = initializeRelease({
+    version: releaseVersionForSource(retry, NEW_SHA),
+    sourceSha: NEW_SHA,
+    previous: retry,
+    selectedComponents: selectReleaseComponentsFromPublishedInputs(noChanges),
+  });
+  assert.deepEqual(noOp, retry);
 });
 
 test('store choice explicitly selects a native mobile binary', () => {
@@ -252,6 +429,13 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   const source = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   const workflow = parse(source);
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.equal(inputs.release_sha.required, false);
+  assert.equal(inputs.release_version.required, false);
+  assert.equal(inputs.retry_attempt.default, '1');
+  assert.equal(inputs.selection.default, 'auto');
+  assert.equal(inputs.store_track.default, 'none');
+  for (const input of Object.values(inputs)) assert.match(input.description, /Recovery only/);
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
@@ -259,8 +443,12 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.doesNotMatch(source, /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/);
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
-  assert.match(source, /description: auto, all, or a comma-separated component list/);
-  assert.match(source, /git diff --name-only "\$previous_sha" "\$release_sha"/);
+  assert.match(source, /description: Recovery only - routine releases keep auto/);
+  assert.match(source, /release-version --previous "\$previous" --sha "\$release_sha"/);
+  assert.match(source, /release_sha="\$\{REQUESTED_SHA:-\$GITHUB_SHA\}"/);
+  assert.match(source, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
+  assert.match(source, /unified-release\.mjs component-paths/);
+  assert.match(source, /--component-paths "\$RUNNER_TEMP\/release-component-paths\.json"/);
   assert.match(source, /needs\.initialize\.outputs\.run_server == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_helper == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_mobile_ota == 'true'/);
@@ -289,6 +477,17 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const notification = workflow.jobs.release_result.steps.find((step) => step.id === 'notification');
   assert.equal(notification['continue-on-error'], true);
   const summary = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Surface release outcome'));
+  assert.match(summary.env.NOTIFICATION_STATE, /no_op == 'true'/);
+  for (const name of [
+    'Publish immutable attempt state for component-local retry',
+    'Create the one GitHub release record and preserve stable desktop downloads',
+    'Notify clients without changing the authoritative release outcome',
+    'Finalize successful delivery after every selected promotion and record',
+    'Publish the one successful release index',
+  ]) {
+    const step = workflow.jobs.release_result.steps.find((candidate) => candidate.name === name);
+    assert.match(step.if, /no_op != 'true'/);
+  }
   assert.match(summary.env.NOTIFICATION_STATE, /steps\.notification\.outputs\.state/);
   const genuineFailure = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Fail the attempt'));
   assert.equal(genuineFailure.if, "steps.result.outputs.outcome != 'success'");
@@ -301,4 +500,14 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   for (const gate of ['TYPECHECK', 'BODY SUITE', 'MOBILE SUITE', 'ACTIONLINT']) {
     assert.match(checks, new RegExp(`name: ${gate}$`, 'm'));
   }
+});
+
+test('canonical routine release guidance is a single no-input dispatch', () => {
+  const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
+  const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
+  const command = 'gh-axi workflow run unified-release.yml --ref main';
+  assert.match(guide, new RegExp(command.replaceAll('.', '\\.')));
+  assert.match(agents, new RegExp(command.replaceAll('.', '\\.')));
+  assert.match(guide, /Pass no inputs/);
+  assert.match(agents, /with no release worker and no inputs/);
 });

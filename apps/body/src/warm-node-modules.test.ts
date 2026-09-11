@@ -14,10 +14,11 @@ import {
 } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   harvestWarmNodeModules,
+  isContainedPath,
   isContainedTreePath,
   isPlanRefusal,
   missingInstalledPackages,
@@ -174,13 +175,56 @@ describe('readWarmPlan', () => {
 
   it('refuses a lockfile whose tree path escapes the checkout', async () => {
     const root = await worktree({ packages: { '../../etc/node_modules/evil': { version: '1' } } });
+    // Reported as the lockfile key, which is the thing an operator can go and
+    // look at, rather than the tree prefix derived from it.
     expect(await readWarmPlan(root)).toEqual({
       failure: 'unsafe-lockfile',
-      detail: '../../etc/node_modules',
+      detail: '../../etc/node_modules/evil',
     });
   });
 
+  it('refuses traversal that starts after the first node_modules segment', async () => {
+    // The tree this derives — `node_modules` — is perfectly ordinary. The
+    // escape only happens when the whole key is resolved against it, so the
+    // whole key is what has to be validated.
+    const escape = 'node_modules/a/../../../outside';
+    const root = await worktree({ packages: { [escape]: { version: '1.0.0' } } });
+    expect(nodeModulesTreePaths({ [escape]: {} })).toEqual(['node_modules']);
+    expect(await readWarmPlan(root)).toEqual({ failure: 'unsafe-lockfile', detail: escape });
+
+    const store = await scratch();
+    expect(await harvestWarmNodeModules({ worktreePath: root, storeRoot: store })).toMatchObject({
+      reason: 'unsafe-lockfile',
+      detail: escape,
+    });
+    expect(await readdir(store)).toEqual([]);
+    expect(await seedWarmNodeModules({ worktreePath: root, storeRoot: store })).toMatchObject({
+      reason: 'unsafe-lockfile',
+    });
+  });
+
+  it('never lets a package outside the checkout answer for one inside it', async () => {
+    // A REAL package, installed and valid, sitting outside the checkout. An
+    // escaping key that resolves onto it must still count as missing —
+    // otherwise a lockfile could satisfy completeness with somebody else's
+    // files and publish a tree that does not contain them.
+    const outside = await scratch();
+    await mkdir(resolve(outside, 'planted'), { recursive: true });
+    await writeFile(
+      resolve(outside, 'planted', 'package.json'),
+      JSON.stringify({ name: 'planted', version: '1.0.0' }),
+    );
+    const escape = `node_modules/a/../../${basename(outside)}/planted`;
+    const root = await worktree({ packages: { [escape]: { version: '1.0.0' } } });
+
+    expect((await stat(resolve(root, escape, 'package.json'))).isFile()).toBe(true);
+    expect(await missingInstalledPackages(root)).toContain(escape);
+  });
+
   it('reads containment per path segment', () => {
+    expect(isContainedPath('node_modules/a/b')).toBe(true);
+    expect(isContainedPath('node_modules/a/../../../outside')).toBe(false);
+    expect(isContainedPath('')).toBe(false);
     expect(isContainedTreePath('node_modules')).toBe(true);
     expect(isContainedTreePath('apps/body/node_modules')).toBe(true);
     expect(isContainedTreePath('../node_modules')).toBe(false);

@@ -161,6 +161,13 @@ export function isPlanRefusal(value: WarmPlan | PlanRefusal): value is PlanRefus
  * not an error. A lockfile naming a path that leaves the checkout is
  * `unsafe-lockfile` and stops every read and write this module would do
  * through it.
+ *
+ * Containment is checked on the WHOLE package path, not on the tree prefix it
+ * derives. `node_modules/a/../../../outside` derives the perfectly ordinary
+ * tree `node_modules` and then leaves the checkout when it is resolved against
+ * it, so validating the derivation would leave every later `resolve` free to
+ * escape. Validating each key instead makes the tree safe by construction: a
+ * prefix of a contained path is contained.
  */
 export async function readWarmPlan(worktreePath: string): Promise<WarmPlan | PlanRefusal> {
   const lockfile = await readFile(resolve(worktreePath, 'package-lock.json')).catch(
@@ -169,8 +176,14 @@ export async function readWarmPlan(worktreePath: string): Promise<WarmPlan | Pla
   if (!lockfile) return { failure: 'no-lockfile' };
   const packages = parseLockfilePackages(lockfile);
   if (!packages) return { failure: 'no-lockfile' };
+  const escaping = Object.keys(packages).find(
+    (path) => namesInstalledPackage(path) && !isContainedPath(path),
+  );
+  if (escaping) return { failure: 'unsafe-lockfile', detail: escaping };
   const trees = nodeModulesTreePaths(packages);
   if (trees.length === 0) return { failure: 'no-lockfile' };
+  // The invariant the derivation above must preserve, asserted rather than
+  // assumed: nothing reaches the filesystem through an uncontained path.
   const unsafe = trees.find((tree) => !isContainedTreePath(tree));
   if (unsafe) return { failure: 'unsafe-lockfile', detail: unsafe };
   const key = createHash('sha256')
@@ -194,13 +207,26 @@ export async function readWarmPlan(worktreePath: string): Promise<WarmPlan | Pla
 export function nodeModulesTreePaths(packages: Record<string, unknown>): string[] {
   const trees = new Set<string>();
   for (const path of Object.keys(packages)) {
+    if (!namesInstalledPackage(path)) continue;
     const segments = path.split('/');
-    const index = segments.indexOf('node_modules');
-    // A trailing `node_modules` names no package, so it names no tree either.
-    if (index < 0 || index === segments.length - 1) continue;
-    trees.add(segments.slice(0, index + 1).join('/'));
+    trees.add(segments.slice(0, segments.indexOf('node_modules') + 1).join('/'));
   }
   return [...trees].sort();
+}
+
+/**
+ * Whether a lockfile key names a package an install unpacks into a tree.
+ *
+ * One predicate, used by the tree derivation, the containment check and the
+ * completeness check alike — they select over the same keys, and two spellings
+ * of "is this an installed package" would eventually disagree about one. The
+ * match is on a whole path SEGMENT: `vendor_node_modules/a` is an ordinary
+ * directory, and a trailing `node_modules` names no package.
+ */
+function namesInstalledPackage(path: string): boolean {
+  const segments = path.split('/');
+  const index = segments.indexOf('node_modules');
+  return index >= 0 && index < segments.length - 1;
 }
 
 export type SeedReason = 'seeded' | 'present' | PlanFailure | 'cold' | 'cross-device' | 'failed';
@@ -419,13 +445,18 @@ export async function missingInstalledPackages(
   if (!wanted) return ['package-lock.json is unreadable'];
   if (!installed) return ['node_modules/.package-lock.json is absent'];
   const required: string[] = [];
+  const missing: string[] = [];
   for (const [path, entry] of Object.entries(wanted)) {
-    if (!path.includes('node_modules/')) continue;
+    if (!namesInstalledPackage(path)) continue;
     if (entry.link === true || entry.optional === true) continue;
     if (entry.os !== undefined || entry.cpu !== undefined) continue;
-    required.push(path);
+    // This function is what resolves a repository-supplied path against a
+    // directory, so it refuses an escaping one itself rather than trusting a
+    // caller to have read a plan first. Never resolved, so a real package
+    // sitting outside the checkout can never stand in for a missing one.
+    if (!isContainedPath(path)) missing.push(path);
+    else required.push(path);
   }
-  const missing: string[] = [];
   await mapWithLimit(required, INTEGRITY_READ_CONCURRENCY, async (path) => {
     if (!(path in installed) || !(await isInstalledPackage(resolve(treeRoot, path)))) {
       missing.push(path);
@@ -492,17 +523,25 @@ function parseLockfilePackages(
 }
 
 /**
- * A tree path is only usable when it stays inside the checkout. Lockfile keys
- * are repository content, so `../` and absolute paths are refused here rather
- * than resolved into a write outside the worktree or a read outside the store.
+ * A path from the lockfile is only usable when it stays inside the checkout.
+ * Lockfile keys are repository content, so `..`, absolute paths and empty
+ * segments are refused here rather than resolved into a write outside the
+ * worktree or a read outside the store — including traversal that appears
+ * AFTER a legitimate leading segment.
  */
+export function isContainedPath(value: string): boolean {
+  if (!value) return false;
+  return value
+    .split('/')
+    .every(
+      (segment) =>
+        segment.length > 0 && segment !== '.' && segment !== '..' && !segment.includes('\\'),
+    );
+}
+
+/** A contained path that names a `node_modules` directory. */
 export function isContainedTreePath(value: string): boolean {
-  const segments = value.split('/');
-  if (segments.pop() !== 'node_modules') return false;
-  return segments.every(
-    (segment) =>
-      segment.length > 0 && segment !== '.' && segment !== '..' && !segment.includes('\\'),
-  );
+  return isContainedPath(value) && value.split('/').pop() === 'node_modules';
 }
 
 /** A file materialized into a cloned tree, given its source and destination. */

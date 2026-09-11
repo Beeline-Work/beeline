@@ -54,9 +54,9 @@ describe('the thinking clock', () => {
     expect(elapsedSeconds(10_000, 9_000)).toBe(0);
   });
 
-  it('names the live counter thinking, or stopping once the asker has pressed', () => {
-    expect(formatWorkingCounter(10_000, 12_000)).toBe('2s \u00b7 thinking');
-    expect(formatWorkingCounter(10_000, 12_000, 'thinking')).toBe('2s \u00b7 thinking');
+  it('shows only elapsed time while working, or stopping once the asker has pressed', () => {
+    expect(formatWorkingCounter(10_000, 12_000)).toBe('2s');
+    expect(formatWorkingCounter(10_000, 12_000, 'thinking')).toBe('2s');
     expect(formatWorkingCounter(10_000, 12_000, 'stopping')).toBe('2s \u00b7 stopping');
     expect(formatWorkingCounter(10_000, 12_000, 'stopping')).not.toContain('thinking');
   });

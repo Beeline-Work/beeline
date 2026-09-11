@@ -4,7 +4,7 @@
  * testable without a renderer.
  *
  * Modeled on the Claude Code status line: a spinner frame cycling back and
- * forth, a gerund verb, then "(Ns · thinking)" ticking once per second from
+ * forth, a gerund verb, then elapsed seconds ticking once per second from
  * the server receipt's own time. On completion the line settles briefly to
  * "<Past> for Ns · done h:MM" before the transcript resumes its silence.
  */
@@ -65,16 +65,17 @@ export function elapsedSeconds(startedAtMs: number, nowMs: number): number {
   return Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000));
 }
 
-/** The live counter's last word: thinking, or stopping the moment the asker presses. */
+/** The live counter phase; only the exceptional stopping state needs a label. */
 export type WorkingPhase = 'thinking' | 'stopping';
 
-/** `Ns · thinking` / `Ns · stopping` — one string for the counter and the spoken line. */
+/** `Ns` while working, or `Ns · stopping` once the asker presses stop. */
 export function formatWorkingCounter(
   startedAtMs: number,
   nowMs: number,
   phase: WorkingPhase = 'thinking',
 ): string {
-  return `${elapsedSeconds(startedAtMs, nowMs)}s \u00b7 ${phase}`;
+  const seconds = `${elapsedSeconds(startedAtMs, nowMs)}s`;
+  return phase === 'stopping' ? `${seconds} \u00b7 stopping` : seconds;
 }
 
 /** Local wall clock as the settled line's "done h:MM" stamp. */

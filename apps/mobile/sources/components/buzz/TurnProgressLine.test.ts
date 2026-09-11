@@ -246,15 +246,15 @@ describe('the per-turn progress indicator', () => {
     );
     const counter = () =>
       renderer.root.findByProps({ testID: 'turn-progress-line-elapsed' }).props.children;
-    expect(counter()).toBe('2s \u00b7 thinking');
+    expect(counter()).toBe('2s');
     act(() => {
       vi.advanceTimersByTime(500);
     });
-    expect(counter()).toBe('3s \u00b7 thinking');
+    expect(counter()).toBe('3s');
     act(() => {
       vi.advanceTimersByTime(9_000);
     });
-    expect(counter()).toBe('12s \u00b7 thinking');
+    expect(counter()).toBe('12s');
   });
 
   it('draws the Beeline mark as a brass ribbon, not a cycling text glyph', () => {

@@ -21,10 +21,10 @@ import { Typography } from '@/constants/Typography';
  * box is for something the reader must act on (DESIGN.md), and this is only
  * ever a reminder.
  *
- * It wraps once rather than truncating to a fragment, the same rule the corner
- * header title follows, and renders nothing at all when there is no objective —
- * never a placeholder. The text is whatever `cornerObjectiveItems` has already
- * filtered; raw harness output never reaches this region.
+ * It wraps to its full height rather than truncating to a fragment, and renders
+ * nothing at all when there is no objective — never a placeholder. The text is
+ * whatever `cornerObjectiveItems` has already filtered; raw harness output
+ * never reaches this region.
  */
 export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   objective,
@@ -38,7 +38,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   return (
     <View accessibilityRole="text" style={styles.line} testID={testID}>
       <View style={styles.rail} />
-      <Text numberOfLines={2} style={styles.copy} testID={`${testID}-copy`}>
+      <Text style={styles.copy} testID={`${testID}-copy`}>
         {line}
       </Text>
     </View>

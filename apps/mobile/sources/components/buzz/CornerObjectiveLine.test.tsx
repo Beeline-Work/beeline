@@ -52,14 +52,16 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('CornerObjectiveLine', () => {
-  it('inscribes the objective as prose on a brass rail — no box, no control', () => {
-    const renderer = render(<CornerObjectiveLine objective="Restore the corner objective" />);
+  it('inscribes the full objective as prose on a brass rail — no clamp, box, or control', () => {
+    const objective =
+      'Restore the complete corner objective across every line so a long but valid request remains readable in its entirety.';
+    const renderer = render(<CornerObjectiveLine objective={objective} />);
     const copy = renderer.root.findByProps({ testID: 'corner-objective-line-copy' });
-    expect(copy.props.children).toBe('Restore the corner objective');
+    expect(copy.props.children).toBe(objective);
     expect(copy.props.style.color).toBe('#c9c9d1');
     expect(copy.props.style.fontFamily).toBe('SpaceGrotesk-Regular');
-    // Wraps once rather than truncating to a fragment, like the header title.
-    expect(copy.props.numberOfLines).toBe(2);
+    expect(copy.props.numberOfLines).toBeUndefined();
+    expect(copy.props.ellipsizeMode).toBeUndefined();
 
     const line = renderer.root.findByProps({ testID: 'corner-objective-line' });
     expect(line.props.style.borderWidth).toBeUndefined();

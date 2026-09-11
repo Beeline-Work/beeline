@@ -3796,6 +3796,56 @@ describe('monolith integration', () => {
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('video-bytes');
   });
 
+  it('archives a repository corner for its opener and still refuses another member', async () => {
+    const helper = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Helper','helper')`,
+      [helper],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [helper, HUMAN]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, helper, ROOM],
+    );
+    const helperToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(helper)).exchangeToken,
+    ))!.daemonToken;
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'repository-corner-close',
+      name: 'Ship widget',
+      objective: 'Ship the widget and close up',
+      repository: 'owner/widgets',
+      targetBranch: 'main',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+
+    // The helper was pulled in for one question; closing is still not its call.
+    expect((await daemonOperation('archiveCorner', { cornerId }, helperToken)).status).toBe(403);
+    expect(
+      (
+        await database.query<{ archived: boolean }>(
+          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
+          [cornerId],
+        )
+      ).rows[0]?.archived,
+    ).toBe(false);
+
+    // The opener closes its own repository corner, no merge required.
+    expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
+    expect(
+      (
+        await database.query<{ archived: boolean; close_requested: boolean }>(
+          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested
+           FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+          [cornerId],
+        )
+      ).rows[0],
+    ).toMatchObject({ archived: true, close_requested: true });
+  });
+
   it('authenticates an explicit corner close and routes structured stops without chat prose', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,

@@ -74,6 +74,27 @@ export function cornerMergeInstruction(yoloMode: boolean): string {
     : 'Yolo is off: never merge; wait for explicit human approval in the app.';
 }
 
+export const CORNER_DELIVERY_NUDGE =
+  'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean.';
+
+export const CORNER_YOLO_MERGE_NUDGE =
+  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. Otherwise stop without merging.';
+
+function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
+  return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
+}
+
+export async function cornerHasUndeliveredRepositoryWork(
+  worktreePath: string,
+): Promise<boolean> {
+  return execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1', '--branch'])
+    .then(({ stdout }) => {
+      const [branch = '', ...changes] = stdout.trimEnd().split('\n');
+      return changes.some(Boolean) || /\[(?:ahead|gone)\b/.test(branch);
+    })
+    .catch(() => false);
+}
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -301,6 +322,8 @@ export class MonolithCornerTurnLoop {
   private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
+  /** The merge authority baked into the current session. */
+  private yoloMode = false;
   private turnIdentityInstructions = '';
   private busy = false;
   private forcedStop = false;
@@ -444,6 +467,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
     });
+    this.yoloMode = configuration.yoloMode;
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection =
       configuration.model || configuration.effort
@@ -908,7 +932,7 @@ export class MonolithCornerTurnLoop {
               // One prompt run. It is a closure because an empty completion
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
-              const runPrompt = async (): Promise<PromptResult> => {
+              const runPrompt = async (prompt = buildPrompt()): Promise<PromptResult> => {
                 activityAttempt += 1;
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
@@ -923,7 +947,7 @@ export class MonolithCornerTurnLoop {
                 return this.client!.sessionPrompt(
                   this.sessionId!,
                   promptWithImages(
-                    buildPrompt(),
+                    prompt,
                     attachmentImageBlocks(delivered, this.acceptsImages()),
                   ),
                   120_000,
@@ -969,6 +993,27 @@ export class MonolithCornerTurnLoop {
                   trace.promptSettled();
                   explained = await this.explainEmpty(result);
                 }
+              }
+              // One bounded second chance to deliver repository work. Check
+              // turns get the narrower merge reminder instead: repeating the
+              // broad delivery instruction there could invite unrelated branch
+              // cleanup. The model remains the authority over whether dirty
+              // work belongs to the objective and whether to retain or dispose
+              // of it; the daemon never rewrites the worktree after a turn.
+              const checksTurn = isCornerChecksTurn(trigger, restates);
+              const needsDeliveryNudge =
+                !checksTurn &&
+                this.options.repository &&
+                (await cornerHasUndeliveredRepositoryWork(this.options.worktreePath));
+              if (!explained && (needsDeliveryNudge || (checksTurn && this.yoloMode))) {
+                await flushToolCalls(result.toolCalls, '');
+                result = await runPrompt(
+                  checksTurn
+                    ? CORNER_YOLO_MERGE_NUDGE
+                    : CORNER_DELIVERY_NUDGE,
+                );
+                trace.promptSettled();
+                explained = await this.explainEmpty(result);
               }
               // The requester stopped this turn while it ran. What the model
               // had already written STAYS, as in a Room (`monolith-room-turn`

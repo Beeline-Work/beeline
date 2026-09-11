@@ -69,7 +69,7 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
-import { typedMentionHandles } from './message-mentions.js';
+import { resolveCurrentMemberMentions, typedMentionHandles } from './message-mentions.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -188,7 +188,6 @@ export class DaemonService {
       !this.commandTransaction &&
       scopedRoom &&
       name === 'postRoomMessage' &&
-      (!Array.isArray(candidate.mentionIds) || candidate.mentionIds.length === 0) &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string'
     )
@@ -1257,40 +1256,15 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     const messageId = id();
-    const mentions = new Set(input.mentionIds ?? []);
-    const exactAgentMentions = new Set<string>();
-    const typedHandles = typedMentionHandles(input.text);
-    if (typedHandles.size) {
-      const typedMembers = await this.database.query<{
-        identity_id: string;
-        alias: string;
-        kind: 'human' | 'agent';
-      }>(
-        `SELECT membership.identity_id,identity.kind,
-           COALESCE(NULLIF(btrim(identity.handle),''),NULLIF(btrim(identity.name),'')) alias
-         FROM memberships membership
-         JOIN identities identity ON identity.id=membership.identity_id
-         WHERE membership.room_id=$1 AND membership.removed_at IS NULL
-           AND COALESCE(NULLIF(btrim(identity.handle),''),NULLIF(btrim(identity.name),'')) IS NOT NULL`,
-        [input.roomId],
-      );
-      const membersByHandle = new Map<string, typeof typedMembers.rows>();
-      for (const member of typedMembers.rows) {
-        const handle = member.alias;
-        const members = membersByHandle.get(handle) ?? [];
-        members.push(member);
-        membersByHandle.set(handle, members);
-      }
-      for (const handle of typedHandles) {
-        const members = membersByHandle.get(handle);
-        if (members?.length !== 1) continue;
-        const member = members[0]!;
-        mentions.add(member.identity_id);
-        if (member.kind === 'agent') exactAgentMentions.add(member.identity_id);
-      }
-    }
-    mentions.delete(agentId);
-    let agentMentionIds = new Set<string>();
+    const resolvedMentions = await resolveCurrentMemberMentions(
+      this.database,
+      input.roomId,
+      input.text,
+      agentId,
+    );
+    const agentMentionIds = new Set(
+      resolvedMentions.filter((mention) => mention.kind === 'agent').map((mention) => mention.id),
+    );
     const parent = input.replyToMessageId
       ? (
           await this.database.query<{
@@ -1316,29 +1290,8 @@ export class DaemonService {
           input.requestId,
           input.generationId,
         )));
-    let humanIds = new Set<string>();
-    if (mentions.size) {
-      const members = await this.database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
-        `SELECT membership.identity_id,identity.kind FROM memberships membership
-         JOIN identities identity ON identity.id=membership.identity_id
-         WHERE membership.room_id=$1 AND membership.removed_at IS NULL
-           AND membership.identity_id=ANY($2::text[])`,
-        [input.roomId, [...mentions]],
-      );
-      agentMentionIds = new Set(
-        members.rows
-          .filter((row) => row.kind === 'agent' && exactAgentMentions.has(row.identity_id))
-          .map((row) => row.identity_id),
-      );
-      humanIds = new Set(
-        members.rows.filter((row) => row.kind === 'human').map((row) => row.identity_id),
-      );
-    }
-    // Human ids are server-validated against the Room roster. Agent ids must
-    // additionally come from an exact tag parsed here; caller resolution is
-    // only a hint and cannot grant another helper work.
-    const validatedMentions = [...mentions].filter(
-      (value) => humanIds.has(value) || agentMentionIds.has(value),
+    const humanIds = new Set(
+      resolvedMentions.filter((mention) => mention.kind === 'human').map((mention) => mention.id),
     );
     // A tag an agent writes reaches the person it names, exactly as a
     // human-authored one does: the same stored mention id, the same push
@@ -1348,8 +1301,8 @@ export class DaemonService {
     // anybody — a laundered tag, which is worse than the over-tagging it was
     // meant to stop. How often an agent should tag a human is a matter for its
     // instructions (`beeline-skill.ts`), never for a silent truncation.
-    let deliveredMentions = validatedMentions;
-    if (validatedMentions.some((value) => humanIds.has(value))) {
+    let deliveredMentions = resolvedMentions.map((mention) => mention.id);
+    if (humanIds.size) {
       // The one human-tag rule that is not a cap: a corner agent must not tag
       // the user on completion, because the merge summary card and its push
       // already cover that. Turn-settling corner posts deliver no human

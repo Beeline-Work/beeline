@@ -58,7 +58,7 @@ import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
-import { agentReplyMentionIds, roomMentionDirectory } from './monolith-room-turn.js';
+import { roomMentionDirectory } from './monolith-room-turn.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -1008,16 +1008,12 @@ export class MonolithCornerTurnLoop {
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
-              const mentionIds = durableReply
-                ? agentReplyMentionIds(durableReply, roster, this.agent.publicKey)
-                : [];
               await trace.measure('publish', () =>
                 stream.settle(
                   durableReply,
                   durableReply
                     ? {
                         ...(requestedById ? { triggerMessageId: requestId } : {}),
-                        mentionIds,
                       }
                     : {},
                 ),

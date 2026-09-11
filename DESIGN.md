@@ -255,6 +255,16 @@ is still resolving, a skeleton stands in rather than a guess. The approval panel
 and diff review exist only in a Corner — that is a difference in content, not in
 shape language.
 
+Beneath that header a Corner holds its objective — the human's own request, as
+one inscribed line that stays for the life of the corner. A slug in the header
+does not say what the work is for, and an objective that lives only in the empty
+state disappears at the first message, which is when the transcript starts
+burying it. It is prose in the secondary tone behind a brass `humanRail`
+hairline, the mark the ledger already gives a human's words, and it carries no
+box, no fill and no label: a box is for something the reader must act on, and
+this is only ever a reminder. It wraps once rather than truncating, and when
+there is no objective it renders nothing rather than a placeholder.
+
 ## Index rows
 
 The Room list is the screen the product opens on, and it is an index: one

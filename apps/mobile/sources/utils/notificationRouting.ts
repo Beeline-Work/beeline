@@ -72,7 +72,11 @@ export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificati
       : type === 'agent-attention' || type === 'pull-request-opened'
         ? 'corner'
         : 'message';
-  const channelId = cornerId && target !== 'message' ? cornerId : rawChannelId;
+  // A corner id is the most specific destination in the push contract. Older
+  // producers used the parent Room as `channelId` even for a message inside a
+  // corner, so preferring `cornerId` keeps those retained notifications from
+  // opening the parent and looking for a message that cannot exist there.
+  const channelId = cornerId ?? rawChannelId;
   const roomId =
     nonEmptyString(getObjectValue(normalizedData, 'roomId')) ??
     (cornerId && cornerId !== rawChannelId ? rawChannelId : channelId);

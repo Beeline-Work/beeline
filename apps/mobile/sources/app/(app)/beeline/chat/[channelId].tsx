@@ -109,6 +109,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from '@/buzz/corners';
+import { cornerHeaderStateLabel, resolveCornerDisplayState } from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -1414,6 +1415,9 @@ export default function BuzzChat() {
   const canonicalCorner = isCorner
     ? cornerLifecycle.find((corner) => corner.id === decodedId)
     : undefined;
+  const canonicalCornerLifecycle = isCorner
+    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)?.lifecycle
+    : undefined;
   const canonicalCornerStatus = canonicalCorner
     ? currentCornerStatus(canonicalCorner)
     : cornerLifecycleStatus;
@@ -1424,6 +1428,19 @@ export default function BuzzChat() {
       : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
         ? 'done'
         : 'idle';
+  const cornerHeaderState = canonicalCorner
+    ? cornerHeaderStateLabel(
+        resolveCornerDisplayState({
+          ...(canonicalCorner.machineState ? { machineState: canonicalCorner.machineState } : {}),
+          ...(canonicalCorner.machineReason
+            ? { machineReason: canonicalCorner.machineReason }
+            : {}),
+          ...(canonicalCorner.stateAt === undefined ? {} : { stateAt: canonicalCorner.stateAt }),
+          ...(canonicalCornerLifecycle ? { lifecycle: canonicalCornerLifecycle } : {}),
+          archived: isArchived,
+        }),
+      )
+    : 'IDLE';
   // A notification may outlive the corner it names. Once server truth says the
   // target disappeared or finished, replace it with the parent Room carried by
   // the push instead of stranding the reader on an empty/read-only transcript.
@@ -3392,55 +3409,22 @@ export default function BuzzChat() {
               {isCorner ? (
                 <HeaderMetaRow>
                   <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
-                    {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()}
+                    {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderState}
                   </Text>
-                  <TouchableOpacity
-                    accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
-                    accessibilityRole="button"
-                    disabled={!memberManagement.canOpenRoster}
-                    hitSlop={HEADER_EDGE_HIT_SLOP}
-                    onPress={() => {
-                      if (memberManagement.canOpenRoster) setRosterVisible(true);
-                    }}
-                    testID="room-participant-roster-trigger"
-                  >
-                    <HeaderMetaCaps testID="corner-header-meta">
-                      {participantsHydrated
-                        ? formatRoomParticipantTotal(roomParticipantTotal)
-                        : ''}
-                    </HeaderMetaCaps>
-                  </TouchableOpacity>
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
                 <HeaderMetaCaps>DIRECT MESSAGE</HeaderMetaCaps>
               ) : null}
             </View>
             {/* The trailing slot holds ONE control. There is no `+` beside it:
-              a Room's members have one way in (C83) — the `N members ›` line
-              above opens the roster sheet, whose section heads carry the add
-              control. Room membership sits beside overflow as an explicit
-              trailing action; a corner keeps its count beneath its longer title.
+              a Room or corner's members have one way in — the Members row in
+              this overflow sheet opens the roster, whose section heads carry
+              the add control. This preserves the title and subtitle width.
 
               One overflow vocabulary: the same ••• the Room header carries,
               holding whatever destructive/rare actions the surface has. A
               corner's "close" belongs here, not as a permanent button sitting
               under the composer where the reader's thumb lives. */}
-            {!isCorner && !isDirectMessage && memberManagement.canOpenRoster && (
-              <TouchableOpacity
-                accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
-                accessibilityRole="button"
-                hitSlop={HEADER_EDGE_HIT_SLOP}
-                onPress={() => setRosterVisible(true)}
-                style={styles.roomMembersButton}
-                testID="room-participant-roster-trigger"
-              >
-                <HeaderMetaCaps testID="room-header-meta">
-                  {participantsHydrated
-                    ? formatRoomParticipantTotal(roomParticipantTotal)
-                    : 'LOADING'}
-                </HeaderMetaCaps>
-              </TouchableOpacity>
-            )}
             {isCorner && !viewerIsAgent && !isArchived && (
               <TouchableOpacity
                 accessibilityLabel={`${CORNER_LABEL} actions`}
@@ -4080,6 +4064,22 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
+        {!isDirectMessage && (
+          <HullActionSheetRow
+            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+            chevron="right"
+            disabled={!memberManagement.canOpenRoster}
+            label="Members"
+            metadata={
+              participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+            }
+            onPress={() => {
+              closeRoomActions();
+              setRosterVisible(true);
+            }}
+            testID="room-participant-roster-trigger"
+          />
+        )}
         {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">
@@ -4238,6 +4238,20 @@ export default function BuzzChat() {
         title={headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
+        <HullActionSheetRow
+          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+          chevron="right"
+          disabled={!memberManagement.canOpenRoster}
+          label="Members"
+          metadata={
+            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+          }
+          onPress={() => {
+            setCornerActionsVisible(false);
+            setRosterVisible(true);
+          }}
+          testID="room-participant-roster-trigger"
+        />
         <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
@@ -4399,18 +4413,11 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
-    roomMembersButton: {
-      minHeight: 44,
-      marginLeft: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    // Overflow follows membership in the trailing action cluster. Both retain
-    // independent 44-point targets without opening a gap between related
-    // controls.
+    // The title and its metadata keep a clear gap before the trailing action.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
+      marginLeft: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },

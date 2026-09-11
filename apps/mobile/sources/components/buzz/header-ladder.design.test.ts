@@ -18,10 +18,10 @@ const ladderSource = readFileSync(path.join(__dirname, './HeaderLadder.tsx'), 'u
 
 describe('Chat header — one language for Room and Corner', () => {
   it('routes both surfaces’ header metadata through the shared micro-caps token', () => {
-    // The repo binding, the member count line, and the corner status all read
+    // The repo binding and the corner status both read
     // through HeaderMetaCaps — no hand-rolled meta text per branch.
     const uses = chatSource.match(/<HeaderMetaCaps/g) ?? [];
-    expect(uses.length).toBeGreaterThanOrEqual(3);
+    expect(uses.length).toBeGreaterThanOrEqual(2);
     // The superseded per-branch styles are gone; a reintroduction would be a
     // second vocabulary growing beside the shared one.
     for (const retired of [
@@ -42,42 +42,33 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toMatch(/<IdentityMark\s*\n\s*kind="workspace"/);
   });
 
-  it('phrases membership as "N members", with no location suffix', () => {
+  it('puts membership in the existing Room and corner action sheets', () => {
     // Owner trim (2026-08-23): "3 participants · IN THIS ROOM" became
     // "3 members" (singular "1 member") on every surface.
     expect(chatSource).not.toContain('IN THIS ROOM  ›');
     expect(chatSource).not.toContain("}' participants");
-    const meta = chatSource.match(
-      /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
-    );
-    expect(meta, 'missing room-header-meta').toBeTruthy();
-    expect(meta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(chatSource).not.toContain('testID="room-header-meta"');
+    expect(chatSource).not.toContain('testID="corner-header-meta"');
+    expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(2);
+    expect(chatSource.match(/label="Members"/g)).toHaveLength(2);
+    expect(
+      chatSource.match(/formatRoomParticipantTotal\(roomParticipantTotal\)/g).length,
+    ).toBeGreaterThanOrEqual(2);
   });
 
-  it('keeps the repo and membership action in the shared meta token', () => {
+  it('keeps the repository subtitle in the shared meta token', () => {
     const repoChip = chatSource.match(/repoChip:\s*\{[^}]*\}/);
     expect(repoChip, 'missing repo chip alignment style').toBeTruthy();
     expect(repoChip![0]).toContain("alignSelf: 'flex-start'");
-
-    const memberMeta = chatSource.match(
-      /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
-    );
-    expect(memberMeta, 'missing room member metadata').toBeTruthy();
-    expect(memberMeta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
 
     const caps = ladderSource.match(/metaCaps:\s*\{[\s\S]*?\n\s*\},/);
     expect(caps, 'missing shared metadata font token').toBeTruthy();
     expect(caps![0]).toMatch(/\.\.\.theme\.buzz\.type\.meta/);
   });
 
-  it('places Room membership immediately before overflow', () => {
-    const roomMembership = chatSource.indexOf('style={styles.roomMembersButton}');
-    const cornerOverflow = chatSource.indexOf('testID="corner-actions-menu"');
-    const roomOverflow = chatSource.indexOf('testID="room-actions-menu"');
-    expect(roomMembership).toBeGreaterThanOrEqual(0);
-    expect(cornerOverflow).toBeGreaterThan(roomMembership);
-    expect(roomOverflow).toBeGreaterThan(cornerOverflow);
-    expect(chatSource).toContain('!isCorner && !isDirectMessage && memberManagement.canOpenRoster');
+  it('keeps membership out of the trailing header slot', () => {
+    expect(chatSource).not.toContain('styles.roomMembersButton');
+    expect(chatSource).not.toContain('roomMembersButton:');
   });
 
   it('leads the Corner with the agent mark through the same slot', () => {
@@ -105,9 +96,7 @@ describe('Chat header — one language for Room and Corner', () => {
     const actions = chatSource.match(/roomActionsButton:\s*\{[\s\S]*?\n    \},/);
     expect(actions, 'missing roomActionsButton style').toBeTruthy();
     expect(actions![0]).toContain('minWidth: 44');
-    const membership = chatSource.match(/roomMembersButton:\s*\{[\s\S]*?\n    \},/);
-    expect(membership![0]).toContain('marginLeft: 12');
-    expect(membership![0]).toContain('minHeight: 44');
+    expect(actions![0]).toContain('marginLeft: 12');
     // The archived badge takes the same trailing axis.
     const badge = chatSource.match(/archivedBadge:\s*\{[\s\S]*?\n    \},/);
     expect(badge![0]).toContain('marginLeft: 12');
@@ -116,7 +105,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(6);
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(4);
   });
 
   it('lets the corner’s agent name give before the facts beside it do', () => {
@@ -153,7 +142,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(metaRow![0]).toContain('marginTop: 2');
   });
 
-  it('carries neither the presence light nor the state glyph in the corner header (C85)', () => {
+  it('carries no presence light or state glyph, but states canonical progress in words', () => {
     // Captain correction: inside a corner the working state is already
     // carried by the thinking line above the composer and the live bar, and
     // the Room list carries corner state for when you're outside it — a
@@ -167,13 +156,13 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toContain('cornerAgentOnline');
     expect(chatSource).not.toContain('corner-view-status');
     expect(chatSource).not.toContain('displayedCornerStatus');
-    expect(chatSource).not.toContain('cornerHeaderState');
-    // Corners keep membership beside the opener name so their longer title
-    // retains the full header width.
+    expect(chatSource).toContain('cornerHeaderStateLabel');
+    expect(chatSource).toContain('cornerHeaderState}');
+    // Membership is in overflow; the subtitle carries opener + canonical state.
     const branch = chatSource.match(/isCorner \? \(\s*<HeaderMetaRow>[\s\S]*?<\/HeaderMetaRow>/);
     expect(branch, 'missing corner meta row branch').toBeTruthy();
     expect(branch![0]).toContain('cornerHeaderAgent');
-    expect(branch![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
-    expect(branch![0]).toContain('testID="corner-header-meta"');
+    expect(branch![0]).toContain('cornerHeaderState');
+    expect(branch![0]).not.toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 });

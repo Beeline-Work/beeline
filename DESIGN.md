@@ -251,8 +251,12 @@ the transcript and the Room-list preview can never disagree.
 
 The header names the surface honestly or names nothing. A Corner shows its own
 kind:9007 slug, never the word "Room"; while either the channel kind or its name
-is still resolving, a skeleton stands in rather than a guess. The approval panel
-and diff review exist only in a Corner — that is a difference in content, not in
+is still resolving, a skeleton stands in rather than a guess. A Room keeps its
+linked repository as the subtitle. A Corner's subtitle names its opener and the
+state returned by the canonical corner display resolver. Membership consumes no
+header width on either surface: the existing overflow sheet carries one Members
+row with the current count and opens the existing roster. The approval panel and
+diff review exist only in a Corner — that is a difference in content, not in
 shape language.
 
 ## Index rows

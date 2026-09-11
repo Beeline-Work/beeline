@@ -544,10 +544,8 @@ const styles = StyleSheet.create((theme) => {
     },
     columnWorkspaceName: {
       ...Typography.default('semiBold'),
+      ...groknight.type.sectionHead,
       color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.6,
       maxWidth: DRAWER_WIDTH,
     },
     /* Tone, not a box: an unselected Workspace mark sits one step back from the

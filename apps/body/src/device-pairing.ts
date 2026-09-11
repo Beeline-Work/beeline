@@ -19,6 +19,8 @@ export interface DevicePairingGrant {
   agentName: string;
   harness: Exclude<AgentKind, 'reference' | 'custom'>;
   model: string;
+  /** The wizard's reasoning-effort pick; absent for a harness with no such axis. */
+  effort?: string;
   soul: string;
   workspaceId: string;
   workspaceName: string;
@@ -103,10 +105,14 @@ async function pairDevice(
       ...(grant.llmEnvFile ? { llmEnvFile: grant.llmEnvFile } : {}),
       agent: selectedAgent,
     });
+  const modelSelection = {
+    model: grant.model,
+    ...(grant.effort ? { effort: grant.effort } : {}),
+  };
   await (options.validateSelection ?? validateAgentModelSelection)(
     selectedAgent,
     localConfig.agentEnv,
-    { model: grant.model },
+    modelSelection,
   );
   const agentIdentity = identityFromKey(grant.agentSecretKey, grant.agentName);
   const staged = await stageMonolithAgentRuntime({
@@ -119,7 +125,7 @@ async function pairDevice(
     agentKind: selectedAgent.kind,
     agentCommand: selectedAgent.command,
     agentArgs: selectedAgent.args,
-    modelSelection: { model: grant.model },
+    modelSelection,
     ...(grant.accessPolicy ? { accessPolicy: grant.accessPolicy } : {}),
     mcpBinary: localConfig.mcpBinary,
     agentIdentity,

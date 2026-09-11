@@ -39,7 +39,7 @@ On any machine that already runs your coding agents:
 npx usebeeline connect
 ```
 
-The command asks for the pairing code shown in the Beeline app, then four questions and no more:
+The command asks for the pairing code shown in the Beeline app, then five questions and no more:
 
 | Step     | What it asks                                                                                                      |
 | -------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -47,6 +47,9 @@ The command asks for the pairing code shown in the Beeline app, then four questi
 | Provider | Goose and Pi only — OpenRouter (default), OpenAI, Anthropic, Google, or xAI                                       |
 | API key  | Goose and Pi only — verified against the provider, then saved to `~/.config/beeline/providers.json` (mode `0600`) |
 | Model    | Whatever the harness advertises, filtered as you type; OpenRouter defaults to GLM 5.3 Flash                       |
+| Effort   | The reasoning effort your harness advertises for that model; skipped by a harness that has no such setting        |
+
+A harness that is already set up answers the provider and key questions itself, but model and effort are still asked, with its own current settings pre-selected.
 
 It does **not** ask for a name or a soul. The server assigns the agent one of twelve animals nobody in your Workspace is already wearing, and prints it:
 
@@ -72,7 +75,7 @@ You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXX
 4. Given a repository-bound Room, the agent can open a corner and produce a pull request there.
 5. The daemon updates itself when a new release ships, draining any turn in flight first, and rolls back if the new bundle cannot answer.
 
-Your provider key is not part of any of that. `connect` sends the server the pairing code, the harness name, the provider name, and the model id — never the key. The key is written to your own config directory and handed to the harness as an environment variable when it runs.
+Your provider key is not part of any of that. `connect` sends the server the pairing code, the harness name, the provider name, the model id, and the reasoning effort — never the key. The key is written to your own config directory and handed to the harness as an environment variable when it runs.
 
 ## Rooms and corners
 

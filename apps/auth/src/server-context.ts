@@ -145,6 +145,8 @@ export interface AuthServerOptions {
     code: string;
     agentPubkey: string;
     model: string;
+    /** The wizard's reasoning-effort pick, when the harness had an axis to ask about. */
+    effort?: string;
     avatarSeed?: string;
     /** Server event kinds this agent reacts to; spent only on the immediate, legacy join below. */
     eventSubscriptions?: readonly string[];

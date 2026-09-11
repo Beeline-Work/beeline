@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { Linking, ScrollView, Text, View, type TextStyle } from 'react-native';
+import { Linking, Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
 import { Typography } from '@/constants/Typography';
@@ -175,6 +175,25 @@ export function markTailSpans(spans: MentionSpan[], length: number): MentionSpan
   return out;
 }
 
+/**
+ * Column flex weights for a pipe table: each column's longest cell, clamped
+ * so one huge column cannot squeeze the rest into slivers. Every row hands
+ * this same weight list to the same flex layout — that is what keeps the
+ * column boundaries aligned across the whole table while each cell wraps
+ * inside its own column.
+ */
+export const TABLE_MIN_COLUMN_WEIGHT = 3;
+export const TABLE_MAX_COLUMN_WEIGHT = 48;
+
+export function tableColumnWeights(rows: string[][]): number[] {
+  const columnCount = rows.reduce((count, row) => Math.max(count, row.length), 1);
+  return Array.from({ length: columnCount }, (_, column) => {
+    let longest = 0;
+    for (const row of rows) longest = Math.max(longest, (row[column] ?? '').length);
+    return Math.min(TABLE_MAX_COLUMN_WEIGHT, Math.max(TABLE_MIN_COLUMN_WEIGHT, longest));
+  });
+}
+
 /** Block kinds whose renderer starts with a `Text` that can host the handle. */
 const INLINE_HOSTS = new Set(['text', 'header', 'list', 'numbered-list']);
 
@@ -295,6 +314,50 @@ export function monoMarkdownPropsAreEqual(
   );
 }
 
+function markdownTableCellText(cell: MarkdownSpan[]): string {
+  return cell.map((span) => span.text).join('');
+}
+
+/**
+ * A pipe table is machine output, so it keeps the fenced block's vocabulary —
+ * the 2px left rule, the mono body — but renders as an aligned wrapping grid
+ * instead of the flattened `  |  ` join whose rows ran off the tile's right
+ * edge. One flex weight per column (its longest cell, clamped), shared by
+ * every row: column boundaries align across the whole table and a long cell
+ * wraps inside its column. No horizontal scroll — a table fits the tile or
+ * its cells wrap.
+ */
+function MarkdownTable({ headers, rows }: { headers: MarkdownSpan[][]; rows: MarkdownSpan[][][] }) {
+  const { weights, grid } = useMemo(() => {
+    const cells = [headers, ...rows].map((row) => row.map(markdownTableCellText));
+    const columnWeights = tableColumnWeights(cells);
+    return {
+      weights: columnWeights,
+      grid: cells.map((row) =>
+        Array.from({ length: columnWeights.length }, (_, column) => row[column] ?? ''),
+      ),
+    };
+  }, [headers, rows]);
+  return (
+    <View style={styles.table}>
+      {grid.map((row, rowIndex) => (
+        <View
+          key={rowIndex}
+          style={[styles.tableRow, rowIndex === grid.length - 1 && styles.tableLastRow]}
+        >
+          {row.map((cell, column) => (
+            <View key={column} style={[styles.tableCell, { flex: weights[column] ?? 1 }]}>
+              <Text selectable style={[styles.codeBlock, rowIndex === 0 && styles.tableHeadText]}>
+                {cell}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
   textStyle,
@@ -412,20 +475,10 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           return <View key={index} style={[styles.rule, blockStyle]} />;
         }
         if (block.type === 'table') {
-          const rows = [block.headers, ...block.rows]
-            .map((row) => row.map((cell) => cell.map((span) => span.text).join('')).join('  |  '))
-            .join('\n');
           return (
-            <ScrollView
-              horizontal
-              key={index}
-              showsHorizontalScrollIndicator={false}
-              style={[styles.codeFrame, blockStyle]}
-            >
-              <Text selectable style={styles.codeBlock}>
-                {rows}
-              </Text>
-            </ScrollView>
+            <View key={index} style={[styles.codeFrame, blockStyle]}>
+              <MarkdownTable headers={block.headers} rows={block.rows} />
+            </View>
           );
         }
         if (block.type === 'options') {
@@ -500,5 +553,24 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
     lineHeight: 18,
   },
+  /**
+   * A pipe table keeps the fenced block's machine frame and mono body, but
+   * lays out as an aligned wrapping grid: one shared flex weight per column
+   * (`tableColumnWeights`), a hairline divider between rows in the machine
+   * vocabulary, and the header lifted to the ledger's bright tier. No
+   * horizontal scroll — a table fits the tile or its cells wrap.
+   */
+  table: { width: '100%', minWidth: 0 },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: 8,
+    paddingVertical: 3,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.buzz.borderQuiet,
+  },
+  tableLastRow: { borderBottomWidth: 0 },
+  tableCell: { minWidth: 0 },
+  tableHeadText: { color: theme.buzz.ledgerBright },
   rule: { height: 1, backgroundColor: theme.buzz.borderQuiet, marginVertical: 3 },
 }));

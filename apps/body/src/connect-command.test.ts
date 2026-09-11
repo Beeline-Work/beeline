@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,7 @@ import {
   finishConnectedAgentPairing,
   renameConnectedAgent,
   seededIdentityLine,
+  connectEffortPickerFromAxes,
   connectModelPickerFromAxes,
   connectPlainFailure,
   defaultConnectModel,
@@ -80,14 +81,30 @@ function installed(...kinds: Array<'codex' | 'claude' | 'goose' | 'pi' | 'grok'>
  * discovery probe arrives with no key, the credentialed read arrives with one.
  * A harness with no `configured` catalog is one that cannot answer unasked.
  */
+type SeamCatalog = {
+  currentValue?: string;
+  options: Array<{ id: string; name?: string }>;
+  note?: string;
+  effort?: { currentValue?: string; options: Array<{ id: string; name?: string }> };
+};
+
 function catalogSeam(input: {
-  configured?: { currentValue?: string; options: Array<{ id: string; name?: string }> };
-  credentialed?: { currentValue?: string; options: Array<{ id: string; name?: string }>; note?: string };
+  configured?: SeamCatalog;
+  credentialed?: SeamCatalog;
+  /** What the re-read under a named model answers, keyed by that model. */
+  perModel?: Record<string, SeamCatalog>;
   probeFailure?: Error;
+  rereadFailure?: Error;
 }) {
   const requests: ConnectModelCatalogRequest[] = [];
-  const load = async (request: ConnectModelCatalogRequest) => {
+  const load = async (request: ConnectModelCatalogRequest): Promise<SeamCatalog> => {
     requests.push(request);
+    // A read naming a model is the effort re-read; it answers as that model.
+    if (request.model) {
+      if (input.rereadFailure) throw input.rereadFailure;
+      const perModel = input.perModel?.[request.model];
+      if (perModel) return perModel;
+    }
     if (request.apiKey) {
       if (!input.credentialed) throw new Error('no credentialed catalog in this fixture');
       return input.credentialed;
@@ -296,13 +313,14 @@ describe('connect wizard', () => {
     expect(fixture.calls.some((call) => /Agent name|soul/i.test(call))).toBe(false);
   });
 
-  it('skips provider, key and model for a Goose that already holds a provider', async () => {
-    const fixture = promptFixture([]);
+  it('still asks model and effort for a Goose that already holds a provider', async () => {
+    const fixture = promptFixture(['anthropic/claude-sonnet-4.5', 'high']);
     const announced: string[] = [];
     const seam = catalogSeam({
       configured: {
         currentValue: 'anthropic/claude-sonnet-4.5',
         options: [{ id: 'anthropic/claude-sonnet-4.5' }, { id: 'x-ai/grok-code-fast-1' }],
+        effort: { currentValue: 'medium', options: [{ id: 'medium' }, { id: 'high' }] },
       },
     });
     const keyStore: ConnectKeyStore = { read: vi.fn(), save: vi.fn() };
@@ -317,16 +335,113 @@ describe('connect wizard', () => {
         verifyKey as never,
         { detect: installed('goose'), announce: (line) => announced.push(line) },
       ),
-    ).resolves.toEqual({ harness: 'goose', model: 'anthropic/claude-sonnet-4.5' });
-    // Nothing was asked at all: harness, provider, key and model were all facts.
-    expect(fixture.calls).toEqual([]);
+    ).resolves.toEqual({
+      harness: 'goose',
+      model: 'anthropic/claude-sonnet-4.5',
+      effort: 'high',
+    });
+    // Provider and key stayed facts; what the agent thinks with stayed a
+    // question, asked with the harness's own settings pre-selected.
+    expect(fixture.calls).toEqual([
+      'autocomplete:Choose model:anthropic/claude-sonnet-4.5',
+      'select:Choose reasoning effort:medium',
+    ]);
     expect(keyStore.read).not.toHaveBeenCalled();
     expect(verifyKey).not.toHaveBeenCalled();
     expect(announced).toEqual([
       'Goose is the only harness installed here, and it is already set up, running anthropic/claude-sonnet-4.5.',
     ]);
-    // One bounded attempt, and no credentialed second read.
+    // One bounded attempt, and no credentialed second read. Keeping the
+    // harness's own model keeps the effort ladder in hand — no re-read either.
     expect(seam.requests).toEqual([{ harness: 'goose', timeoutMs: CONNECT_PROBE_TIMEOUT_MS }]);
+  });
+
+  it('re-reads the effort ladder under the model actually picked', async () => {
+    const fixture = promptFixture(['x-ai/grok-code-fast-1', 'minimal']);
+    const seam = catalogSeam({
+      configured: {
+        currentValue: 'anthropic/claude-sonnet-4.5',
+        options: [{ id: 'anthropic/claude-sonnet-4.5' }, { id: 'x-ai/grok-code-fast-1' }],
+        effort: { currentValue: 'medium', options: [{ id: 'medium' }, { id: 'high' }] },
+      },
+      perModel: {
+        'x-ai/grok-code-fast-1': {
+          currentValue: 'x-ai/grok-code-fast-1',
+          options: [{ id: 'x-ai/grok-code-fast-1' }],
+          effort: { currentValue: 'low', options: [{ id: 'minimal' }, { id: 'low' }] },
+        },
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        {},
+        async () => undefined,
+        { detect: installed('goose'), announce: () => {} },
+      ),
+    ).resolves.toEqual({
+      harness: 'goose',
+      model: 'x-ai/grok-code-fast-1',
+      effort: 'minimal',
+    });
+    // The other model's ladder would have offered medium/high, neither of
+    // which this model advertises — and an unadvertised effort is refused by
+    // the session that validates it at the end of connect.
+    expect(fixture.calls[1]).toBe('select:Choose reasoning effort:low');
+    expect(seam.requests[1]).toEqual({
+      harness: 'goose',
+      model: 'x-ai/grok-code-fast-1',
+      timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
+    });
+  });
+
+  it('keeps the ladder in hand when the re-read fails rather than dropping the question', async () => {
+    const fixture = promptFixture(['x-ai/grok-code-fast-1', 'high']);
+    const seam = catalogSeam({
+      configured: {
+        currentValue: 'anthropic/claude-sonnet-4.5',
+        options: [{ id: 'anthropic/claude-sonnet-4.5' }, { id: 'x-ai/grok-code-fast-1' }],
+        effort: { currentValue: 'medium', options: [{ id: 'medium' }, { id: 'high' }] },
+      },
+      rereadFailure: new Error('ACP session/new timed out after 12000ms'),
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        {},
+        async () => undefined,
+        { detect: installed('goose'), announce: () => {} },
+      ),
+    ).resolves.toEqual({ harness: 'goose', model: 'x-ai/grok-code-fast-1', effort: 'high' });
+    expect(fixture.calls[1]).toBe('select:Choose reasoning effort:medium');
+  });
+
+  it('asks no effort question of a harness that advertises no effort axis', async () => {
+    const fixture = promptFixture(['claude-opus-4-1']);
+    const seam = catalogSeam({
+      configured: {
+        currentValue: 'claude-opus-4-1',
+        options: [{ id: 'claude-opus-4-1' }, { id: 'claude-fable-5' }],
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        {},
+        async () => undefined,
+        { detect: installed('claude'), announce: () => {} },
+      ),
+    ).resolves.toEqual({ harness: 'claude', model: 'claude-opus-4-1' });
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['autocomplete']);
   });
 
   it('gives an unconfigured Goose the whole provider, key and model flow', async () => {
@@ -341,14 +456,10 @@ describe('connect wizard', () => {
     });
 
     await expect(
-      collectConnectWizard(
-        fixture.prompts,
-        seam.load,
-        keyStore,
-        {},
-        async () => undefined,
-        { detect: installed('goose'), announce: (line) => announced.push(line) },
-      ),
+      collectConnectWizard(fixture.prompts, seam.load, keyStore, {}, async () => undefined, {
+        detect: installed('goose'),
+        announce: (line) => announced.push(line),
+      }),
     ).resolves.toEqual({
       harness: 'goose',
       provider: 'openrouter',
@@ -401,7 +512,7 @@ describe('connect wizard', () => {
   }, 5_000);
 
   it('offers the list when several harnesses are installed, and probes only the one picked', async () => {
-    const fixture = promptFixture(['claude']);
+    const fixture = promptFixture(['claude', 'claude-opus-4-1']);
     const announced: string[] = [];
     const seam = catalogSeam({
       configured: { currentValue: 'claude-opus-4-1', options: [{ id: 'claude-opus-4-1' }] },
@@ -417,8 +528,9 @@ describe('connect wizard', () => {
         { detect: installed('codex', 'claude', 'goose'), announce: (line) => announced.push(line) },
       ),
     ).resolves.toEqual({ harness: 'claude', model: 'claude-opus-4-1' });
-    expect(fixture.calls).toHaveLength(1);
+    expect(fixture.calls).toHaveLength(2);
     expect(fixture.calls[0]).toContain('Choose harness');
+    expect(fixture.calls[1]).toContain('Choose model');
     expect(seam.requests).toEqual([{ harness: 'claude', timeoutMs: CONNECT_PROBE_TIMEOUT_MS }]);
     expect(announced).toEqual(['Claude is already set up, running claude-opus-4-1.']);
   });
@@ -442,7 +554,11 @@ describe('connect wizard', () => {
     expect(soleInstalledConnectHarness([])).toBeUndefined();
     expect(
       soleInstalledConnectHarness([
-        { kind: 'pi', status: 'missing-adapter', install: { command: 'npm', args: ['install', '-g', 'pi-acp'] } },
+        {
+          kind: 'pi',
+          status: 'missing-adapter',
+          install: { command: 'npm', args: ['install', '-g', 'pi-acp'] },
+        },
       ]),
     ).toBeUndefined();
     expect(connectFoundLine({ harness: 'pi', sole: false })).toBe('Pi is already set up.');
@@ -563,10 +679,7 @@ describe('connect wizard', () => {
   });
 
   it('falls back to an environment key without storing it', async () => {
-    const keyStore: ConnectKeyStore = {
-      read: vi.fn(async () => undefined),
-      save: vi.fn(async () => {}),
-    };
+    const keyStore: ConnectKeyStore = { read: vi.fn(async () => undefined), save: vi.fn(async () => {}) };
     const fixture = promptFixture([
       'pi',
       'openrouter',
@@ -824,6 +937,108 @@ describe('connect wizard', () => {
     ]);
     expect(picker.currentValue).toBe('z-ai/glm-5.3-flash');
     expect(picker.note).toBeUndefined();
+  });
+
+  it('reads the effort axis under any of the three names a harness spells it with', () => {
+    for (const category of ['effort', 'reasoning_effort', 'thought_level']) {
+      expect(
+        connectEffortPickerFromAxes([
+          { category: 'model', options: [{ id: 'gpt-5.4' }] },
+          { category, currentValue: 'medium', options: [{ id: 'low' }, { id: 'medium' }] },
+        ]),
+      ).toEqual({ currentValue: 'medium', options: [{ id: 'low' }, { id: 'medium' }] });
+    }
+    // Nothing to choose from is not a question worth asking.
+    expect(connectEffortPickerFromAxes([{ category: 'model', options: [] }])).toBeUndefined();
+    expect(connectEffortPickerFromAxes([{ category: 'effort', options: [] }])).toBeUndefined();
+    // Same raw-axis fallback the model picker keeps: a filter that emptied the
+    // safe view must not cost the question.
+    expect(
+      connectEffortPickerFromAxes(
+        [{ category: 'effort', currentValue: 'off', options: [] }],
+        [{ category: 'thought_level', currentValue: 'off', options: [{ id: 'off' }] }],
+      ),
+    ).toEqual({ currentValue: 'off', options: [{ id: 'off' }] });
+  });
+
+  it('sends the chosen effort with the claim, and omits it when nothing was chosen', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ agent_name: 'Scout' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    await requestConnectGrant(
+      'https://server.example',
+      '9C8F0388-A84A4B8F',
+      { harness: 'codex', model: 'gpt-5.4', effort: 'high' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: 'gpt-5.4',
+      effort: 'high',
+    });
+    await requestConnectGrant(
+      'https://server.example',
+      '9C8F0388-A84A4B8F',
+      { harness: 'codex', model: 'gpt-5.4' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).not.toHaveProperty('effort');
+  });
+
+  it('runs the paired agent at the effort the wizard chose', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            daemonToken: `bdt_${'a'.repeat(43)}`,
+            agentId: identityFromKey('1'.repeat(64), 'Scout').publicKey,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    const validateSelection = vi.fn(async () => undefined);
+    const supervisorRoot = await mkdtemp(join(tmpdir(), 'beeline-pair-'));
+    try {
+      const paired = await completeDevicePairing(
+        {
+          agentSecretKey: '1'.repeat(64),
+          bodySecretKey: '3'.repeat(64),
+          agentName: 'Scout',
+          harness: 'codex',
+          model: 'gpt-5.4',
+          effort: 'high',
+          soul: 'Brisk and kind.',
+          workspaceId: 'workspace-id',
+          workspaceName: 'Builders',
+          pairedBy: '4'.repeat(64),
+          monolithBaseUrl: 'https://server.example',
+          daemonExchangeToken: `bde_${'5'.repeat(43)}`,
+        },
+        {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          supervisorRoot,
+          selectedAgent: { kind: 'codex', command: 'codex', args: [] },
+          localConfig: { agentBinary: 'codex', mcpBinary: 'buzz-dev-mcp', agentEnv: {} },
+          validateSelection,
+          launch: async () => 4242,
+        },
+      );
+      // Validated against a live session before the daemon is written, and
+      // written into the runtime the daemon then runs on.
+      expect(validateSelection).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+        model: 'gpt-5.4',
+        effort: 'high',
+      });
+      const written = JSON.parse(await readFile(paired.configPath, 'utf8')) as {
+        modelSelection?: { model?: string; effort?: string };
+      };
+      expect(written.modelSelection).toEqual({ model: 'gpt-5.4', effort: 'high' });
+    } finally {
+      await rm(supervisorRoot, { recursive: true, force: true });
+    }
   });
 
   it('falls back to the provider default model with a note when a harness enumerates nothing', () => {

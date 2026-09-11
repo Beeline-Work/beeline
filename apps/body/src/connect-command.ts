@@ -92,6 +92,8 @@ export interface ConnectWizardResult {
   provider?: ConnectProvider;
   apiKey?: string;
   model: string;
+  /** Only set when the harness advertises a reasoning-effort axis to choose from. */
+  effort?: string;
 }
 
 export interface ConnectPrompts {
@@ -235,11 +237,38 @@ const clackPrompts: ConnectPrompts = {
   },
 };
 
-type ConnectModelCatalog = {
+type ConnectAxisPicker = {
   currentValue?: string;
   options: Array<{ id: string; name?: string }>;
-  note?: string;
 };
+
+type ConnectModelCatalog = ConnectAxisPicker & {
+  note?: string;
+  /** The harness's reasoning-effort axis, when it advertises one. */
+  effort?: ConnectAxisPicker;
+};
+
+/**
+ * The categories a harness spells its reasoning-effort axis with. Codex says
+ * `effort`, Claude says `thought_level`, others say `reasoning_effort`; all
+ * three are the same question to a person.
+ */
+const CONNECT_EFFORT_CATEGORIES = ['effort', 'reasoning_effort', 'thought_level'];
+
+/**
+ * The effort picker, from the safe view when it kept the axis and the raw
+ * advertised axes otherwise. A harness with no such axis has nothing to ask
+ * about, so the wizard skips the question rather than inventing a ladder.
+ */
+export function connectEffortPickerFromAxes(
+  axes: Array<{ category: string; currentValue?: string; options: Array<{ id: string }> }>,
+  rawAxes = axes,
+): ConnectAxisPicker | undefined {
+  const isEffort = (axis: { category: string; options: Array<{ id: string }> }): boolean =>
+    CONNECT_EFFORT_CATEGORIES.includes(axis.category) && axis.options.length > 0;
+  const axis = axes.find(isEffort) ?? rawAxes.find(isEffort);
+  return axis ? { currentValue: axis.currentValue, options: axis.options } : undefined;
+}
 
 /**
  * Derive the wizard's model picker from the harness's advertised axes —
@@ -275,6 +304,12 @@ export interface ConnectModelCatalogRequest {
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
   apiKey?: string;
+  /**
+   * Read the catalog as this model rather than the provider default. Effort
+   * ladders can be model-specific, so the wizard re-reads under the model the
+   * person just picked before asking what effort it should run at.
+   */
+  model?: string;
   /** Bound the read; the discovery probe sets one, the credentialed read does not. */
   timeoutMs?: number;
 }
@@ -283,23 +318,28 @@ export async function loadConnectModelCatalog(
   input: ConnectModelCatalogRequest,
 ): Promise<ConnectModelCatalog> {
   const agent = resolveAgentCommand({ kind: input.harness });
+  const model = input.model ?? defaultConnectModel(input.harness, input.provider);
   const catalog = await fetchAgentModelCatalog(
     agent,
     providerEnvironment({
       harness: input.harness,
       ...(input.provider ? { provider: input.provider } : {}),
       ...(input.apiKey ? { apiKey: input.apiKey } : {}),
-      model: defaultConnectModel(input.harness, input.provider),
+      model,
     }),
-    undefined,
+    input.model ? { model: input.model } : undefined,
     input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
   );
-  return connectModelPickerFromAxes(
-    catalog.catalog,
-    defaultConnectModel(input.harness, input.provider),
-    input.harness,
-    catalog.raw,
-  );
+  const effort = connectEffortPickerFromAxes(catalog.catalog, catalog.raw);
+  return {
+    ...connectModelPickerFromAxes(
+      catalog.catalog,
+      defaultConnectModel(input.harness, input.provider),
+      input.harness,
+      catalog.raw,
+    ),
+    ...(effort ? { effort } : {}),
+  };
 }
 
 /**
@@ -341,7 +381,11 @@ export function connectHarnessLabel(harness: (typeof CONNECT_HARNESSES)[number])
   return harness === 'pi' ? 'Pi' : harness[0]!.toUpperCase() + harness.slice(1);
 }
 
-/** What the probe found, said once, in place of the questions it answered. */
+/**
+ * What the probe found, said once: it stands in for the provider and key
+ * questions it answered, and explains where the model prompt's default came
+ * from.
+ */
 export function connectFoundLine(input: {
   harness: (typeof CONNECT_HARNESSES)[number];
   sole: boolean;
@@ -362,12 +406,15 @@ export interface ConnectWizardSeams {
 }
 
 /**
- * Ask before prompting. Every question here is one the machine could not
- * answer for itself: which harness (only when there is more than one), which
- * provider and key (only when the harness holds none), which model (only when
- * the harness named none). A harness that answers `session/new` with its own
- * model list is authenticated by definition — its provider, its key and its
- * current model are facts, not questions.
+ * Ask before assuming — except about what the agent will think with. Setup
+ * facts the machine can establish it establishes: which harness (asked only
+ * when more than one is installed), which provider and key (asked only when
+ * the harness holds none; a harness that answers `session/new` with its own
+ * model list is authenticated by definition). Model and reasoning effort are
+ * always asked, including of an already-configured harness: the harness's
+ * current selection is the default offered, never a silent answer. It used to
+ * be taken as one, which left people connected to whatever their harness
+ * happened to be set to with no say and no way back but the app.
  */
 export async function collectConnectWizard(
   prompts: ConnectPrompts = clackPrompts,
@@ -400,6 +447,47 @@ export async function collectConnectWizard(
         : {}),
       placeholder: 'Type to filter available models…',
       maxItems: 12,
+    });
+    return picked.trim();
+  };
+  /**
+   * Reasoning effort, asked whenever the harness advertises the axis. Ladders
+   * can be model-specific, so a model other than the one the catalog was read
+   * under earns one more bounded read: the ladder offered is then the chosen
+   * model's own, and the value cannot be refused later by the session that
+   * validates it. A re-read that fails or runs long keeps the ladder already
+   * in hand rather than dropping the question.
+   */
+  const askEffort = async (
+    catalog: ConnectModelCatalog,
+    forHarness: (typeof CONNECT_HARNESSES)[number],
+    model: string,
+    forProvider?: ConnectProvider,
+    forKey?: string,
+  ): Promise<string | undefined> => {
+    if (!catalog.effort) return undefined;
+    let axis = catalog.effort;
+    if (model !== catalog.currentValue) {
+      const reread = await loadModels({
+        harness: forHarness,
+        model,
+        ...(forProvider ? { provider: forProvider } : {}),
+        ...(forKey ? { apiKey: forKey } : {}),
+        timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
+      }).catch(() => undefined);
+      axis = reread?.effort ?? axis;
+    }
+    if (!axis.options.length) return undefined;
+    const picked = await prompts.select<string>({
+      message: brass('Choose reasoning effort'),
+      options: axis.options.map((choice) => ({
+        value: choice.id,
+        label: choice.name ?? choice.id,
+        ...(choice.id === axis.currentValue ? { hint: 'current' } : {}),
+      })),
+      ...(axis.options.some((choice) => choice.id === axis.currentValue)
+        ? { initialValue: axis.currentValue! }
+        : {}),
     });
     return picked.trim();
   };
@@ -443,12 +531,11 @@ export async function collectConnectWizard(
         ...(configured.currentValue ? { model: configured.currentValue } : {}),
       }),
     );
-    // The harness's own current selection is an observation. Only a harness
-    // that enumerated models without naming one still owes an answer.
-    return {
-      harness,
-      model: configured.currentValue ?? (await askModel(configured, harness)),
-    };
+    // What the harness is set to is the default, not the decision: both
+    // questions are still asked, with its own current values pre-selected.
+    const model = await askModel(configured, harness);
+    const effort = await askEffort(configured, harness, model);
+    return { harness, model, ...(effort ? { effort } : {}) };
   }
   let provider: ConnectProvider | undefined;
   let apiKey: string | undefined;
@@ -512,11 +599,13 @@ export async function collectConnectWizard(
     ...(apiKey ? { apiKey: apiKey.trim() } : {}),
   });
   const model = await askModel(catalog, harness, provider);
+  const effort = await askEffort(catalog, harness, model, provider, apiKey?.trim());
   return {
     harness,
     ...(provider ? { provider } : {}),
     ...(apiKey ? { apiKey: apiKey.trim() } : {}),
     model,
+    ...(effort ? { effort } : {}),
   };
 }
 
@@ -534,6 +623,7 @@ export interface DeviceGrantResponse {
   harness: ConnectWizardResult['harness'];
   provider?: ConnectProvider;
   model: string;
+  effort?: string;
   soul: string;
 }
 
@@ -591,6 +681,7 @@ export function requestConnectGrant(
       harness: selection.harness,
       ...(selection.provider ? { provider: selection.provider } : {}),
       model: selection.model,
+      ...(selection.effort ? { effort: selection.effort } : {}),
       avatar_seed: avatarSeed,
       // This wizard always finishes the join itself (`finishConnectedAgentPairing`,
       // called once the rename prompt below settles), so the claim must not
@@ -851,6 +942,9 @@ async function runConnectWizard(
     agentName: grant.agent_name,
     harness: grant.harness,
     model: grant.model,
+    // The server echoes back what it stored; the wizard's own answer is the
+    // fallback for a server too old to carry the effort through.
+    ...((grant.effort ?? selection.effort) ? { effort: grant.effort ?? selection.effort } : {}),
     soul: grant.soul,
     workspaceId: grant.workspace_id,
     workspaceName: grant.workspace_name,
@@ -936,6 +1030,7 @@ function isDevicePairingGrant(value: unknown): value is DevicePairingGrant {
     typeof grant.agentName === 'string' &&
     CONNECT_HARNESSES.includes(grant.harness as (typeof CONNECT_HARNESSES)[number]) &&
     typeof grant.model === 'string' &&
+    (grant.effort === undefined || typeof grant.effort === 'string') &&
     typeof grant.soul === 'string' &&
     typeof grant.workspaceId === 'string' &&
     typeof grant.workspaceName === 'string' &&

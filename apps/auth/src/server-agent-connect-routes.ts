@@ -106,6 +106,10 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     const harness = typeof body.harness === 'string' ? body.harness.trim().toLowerCase() : '';
     const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
     const model = typeof body.model === 'string' ? body.model.trim().slice(0, 200) : '';
+    // The wizard's reasoning-effort pick. Optional: a harness that advertises
+    // no effort axis is never asked, and a CLI built before the wizard asked
+    // sends nothing — both leave the agent on the harness's own effort.
+    const effort = typeof body.effort === 'string' ? body.effort.trim().slice(0, 100) : '';
     const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
     // A two-step CLI (this one) sets this to say it will call
     // `/auth/agent/connect/finish` itself once its rename decision settles.
@@ -155,6 +159,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       code: pairingCode,
       agentPubkey: agent.publicKey,
       model,
+      ...(effort ? { effort } : {}),
       ...(avatarSeed ? { avatarSeed } : {}),
       ...(eventSubscriptions.length ? { eventSubscriptions } : {}),
       ...(deferJoin ? { deferJoin } : {}),
@@ -187,6 +192,7 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       harness,
       ...(provider ? { provider } : {}),
       model,
+      ...(effort ? { effort } : {}),
       soul: claim.soul,
     });
   });

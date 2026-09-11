@@ -190,6 +190,15 @@ export default function BuzzChannels() {
     }
   }, [transport]);
 
+  const explainRoomLeaveConstraint = useCallback((item: ChatListItem) => {
+    const heading = roomRowName(item);
+    const title = `${heading.sigil}${heading.name}`;
+    Modal.alert(
+      `Cannot leave ${title}`,
+      'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.',
+    );
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let unsubscribeWorkspaces: (() => void) | undefined;
@@ -794,7 +803,7 @@ export default function BuzzChannels() {
                     overshootRight={false}
                     renderRightActions={() => (
                       <View style={styles.chatActions}>
-                        {canLeaveRooms && !item.directMessage && (
+                        {!item.directMessage && canLeaveRooms && (
                           <View style={styles.leaveTile}>
                             <TouchableOpacity
                               accessibilityLabel={`Leave ${title}`}
@@ -804,22 +813,38 @@ export default function BuzzChannels() {
                               style={styles.leaveTileButton}
                               testID={`room-leave-action-${item.room.id}`}
                             >
-                              <Text style={styles.leaveTileGlyph}>↪</Text>
+                              <Text style={styles.closeTileGlyph}>×</Text>
                             </TouchableOpacity>
                           </View>
                         )}
-                        <View style={styles.leaveTile}>
-                          <TouchableOpacity
-                            accessibilityLabel={`Close ${title}`}
-                            accessibilityRole="button"
-                            hitSlop={LEAVE_TILE_HIT_SLOP}
-                            onPress={() => handleCloseChat(item)}
-                            style={styles.leaveTileButton}
-                            testID={`chat-close-action-${item.room.id}`}
-                          >
-                            <Text style={styles.closeTileGlyph}>×</Text>
-                          </TouchableOpacity>
-                        </View>
+                        {!item.directMessage && canManageWorkspace && (
+                          <View style={styles.leaveTile}>
+                            <TouchableOpacity
+                              accessibilityLabel={`Cannot leave ${title}`}
+                              accessibilityRole="button"
+                              hitSlop={LEAVE_TILE_HIT_SLOP}
+                              onPress={() => explainRoomLeaveConstraint(item)}
+                              style={styles.leaveTileButton}
+                              testID={`room-leave-constraint-${item.room.id}`}
+                            >
+                              <Text style={styles.leaveTileGlyph}>!</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                        {item.directMessage && (
+                          <View style={styles.leaveTile}>
+                            <TouchableOpacity
+                              accessibilityLabel={`Close ${title}`}
+                              accessibilityRole="button"
+                              hitSlop={LEAVE_TILE_HIT_SLOP}
+                              onPress={() => handleCloseChat(item)}
+                              style={styles.leaveTileButton}
+                              testID={`chat-close-action-${item.room.id}`}
+                            >
+                              <Text style={styles.closeTileGlyph}>×</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
                       </View>
                     )}
                     testID={`chat-close-swipe-${item.room.id}`}

@@ -108,7 +108,7 @@ beforeEach(async () => {
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
-  it('replays the exact Hoots/Goosy incident without remembered-responder work', async () => {
+  it('routes an untagged continuation only to the immediately preceding agent', async () => {
     await send('@hoots ask Goosy', room);
     const [first] = await commands(A, room);
     expect(first).toBeDefined();
@@ -129,7 +129,12 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await result(tagged!, 'Goosy answered');
     await send('Thanks everyone', room);
     expect(await commands(A, room)).toEqual([]);
-    expect(await commands(B, room)).toEqual([]);
+    expect((await commands(B, room))[0]?.reason).toBe('human_continuation');
+
+    await send('An intervening human message', room);
+    await send('This is not a continuation', room);
+    expect(await commands(A, room)).toEqual([]);
+    expect(await commands(B, room)).toHaveLength(1);
   });
   it('allows depths zero through three and refuses a fourth dispatch', async () => {
     await send('@hoots start', room);
@@ -468,6 +473,33 @@ it('still presents an offline notice without dropping the durable command', asyn
   expect((await db.query(`SELECT 1 FROM messages WHERE id=$1`, [source.messageId])).rowCount).toBe(
     1,
   );
+});
+it('routes an untagged continuation without a false offline notice', async () => {
+  await send('@hoots start');
+  const [command] = await commands(A);
+  await claim(command!);
+  await result(command!, 'Previous answer');
+  await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [A]);
+  const noticesBefore = (
+    await db.query(
+      `SELECT 1 FROM messages
+       WHERE room_id=$1 AND presentation='system' AND text LIKE '%helper is offline%'`,
+      [R],
+    )
+  ).rowCount;
+
+  const continuation = await send('Continue');
+
+  expect((await commands(A))[0]?.sourceMessageId).toBe(continuation.messageId);
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM messages
+         WHERE room_id=$1 AND presentation='system' AND text LIKE '%helper is offline%'`,
+        [R],
+      )
+    ).rowCount,
+  ).toBe(noticesBefore);
 });
 it('selects exactly one winner when two generations claim a pending command together', async () => {
   await send('@hoots');

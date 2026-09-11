@@ -68,6 +68,18 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
+  it('adds membership to both existing sheets without replacing their settings', () => {
+    for (const source of [roomSheet, cornerSheet]) {
+      const members = row(source, 'room-participant-roster-trigger');
+      expect(members).toContain('label="Members"');
+      expect(members).toContain('metadata=');
+      expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+      expect(members).toContain('setRosterVisible(true)');
+    }
+    for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
+    expect(cornerSheet).toContain('testID="close-corner-action"');
+  });
+
   it('spends the trailing column on the closed vocabulary and nothing else', () => {
     // A row that toggles gets the switch, never a filled/empty circle.
     const notifications = row(roomSheet, 'room-github-events-toggle');

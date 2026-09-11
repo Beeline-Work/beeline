@@ -58,6 +58,11 @@ import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
+import {
+  harvestWarmNodeModules,
+  sharedNpmCacheDir,
+  warmNodeModulesStoreDir,
+} from './warm-node-modules.js';
 import { roomMentionDirectory } from './monolith-room-turn.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
@@ -396,6 +401,9 @@ export class MonolithCornerTurnLoop {
    */
   private readonly stoppedTurns = new Set<string>();
 
+  /** In-flight warm-store harvest, awaited at shutdown and never by a turn. */
+  private harvest: Promise<void> | undefined;
+
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
@@ -560,10 +568,18 @@ export class MonolithCornerTurnLoop {
         inheritedPath: this.options.config.agentEnv.PATH ?? process.env.PATH,
       });
     }
+    // One npm cache for every corner on this host. `agent-home.ts` gives each
+    // corner its own `$HOME`, so npm's default `$HOME/.npm` is per-corner and
+    // every corner re-downloads the same tarballs; this points them all at the
+    // shared cache instead. It lives under the supervisor root the sandbox
+    // protects, so it also needs the explicit writable re-bind below.
+    const npmCacheDir = sharedNpmCacheDir(this.options.runtime.supervisorRoot);
+    await mkdir(npmCacheDir, { recursive: true, mode: 0o700 });
     const agentEnv: Record<string, string> = {
       ...this.options.config.agentEnv,
       ...homeOverlay,
       ...githubEnv,
+      npm_config_cache: npmCacheDir,
     };
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
@@ -597,7 +613,13 @@ export class MonolithCornerTurnLoop {
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
-        ...(attachScratchRoot ? { additionalWritablePaths: [attachScratchRoot] } : {}),
+        additionalWritablePaths: [
+          ...(attachScratchRoot ? [attachScratchRoot] : []),
+          // The shared npm cache. npm writes to its cache on every install,
+          // and this one is deliberately outside the per-corner home so the
+          // download is paid once per host rather than once per corner.
+          npmCacheDir,
+        ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
       command,
@@ -630,6 +652,10 @@ export class MonolithCornerTurnLoop {
               env: [
                 { name: 'GH_TOKEN', value: repository.githubToken },
                 { name: 'GITHUB_TOKEN', value: repository.githubToken },
+                // Its shell tool runs the same installs the harness does, and
+                // a sanitized env would otherwise send them to npm's default
+                // per-corner cache.
+                { name: 'npm_config_cache', value: npmCacheDir },
               ],
             },
           ]
@@ -1162,7 +1188,43 @@ export class MonolithCornerTurnLoop {
     } finally {
       this.busy = false;
       this.currentTurn = undefined;
+      this.harvestWarmNodeModules();
     }
+  }
+
+  /**
+   * Offer this worktree's `node_modules` to the host-wide warm store.
+   *
+   * A turn's end is the moment the tree is most likely to be a finished
+   * install, and the store keeps only the first complete tree per lockfile —
+   * so after the first corner on a lockfile this is one `stat` that answers
+   * `already-warm`. The copy that the first one does is deliberately NOT
+   * awaited by the turn: nobody in the Room is waiting on a cache, and the
+   * only thing that waits is shutdown, so a half-copied tree is never left
+   * where a later corner could read it as complete.
+   */
+  private harvestWarmNodeModules(): void {
+    if (this.harvest || !this.options.repository) return;
+    const { cornerId, worktreePath, runtime } = this.options;
+    const run = harvestWarmNodeModules({
+      worktreePath,
+      storeRoot: warmNodeModulesStoreDir(runtime.supervisorRoot),
+    })
+      .then((outcome) => {
+        if (outcome.reason === 'already-warm' || outcome.reason === 'no-lockfile') return;
+        console.log(
+          `[thin-core] corner ${cornerId} warm node_modules harvest: ${outcome.reason}${
+            outcome.detail ? ` (${outcome.detail})` : ''
+          }`,
+        );
+      })
+      .catch((error) => {
+        console.error(`[thin-core] corner ${cornerId} warm node_modules harvest failed:`, error);
+      })
+      .finally(() => {
+        if (this.harvest === run) this.harvest = undefined;
+      });
+    this.harvest = run;
   }
 
   /**
@@ -1217,6 +1279,8 @@ export class MonolithCornerTurnLoop {
         closed: async () => {
           const state = await api.execute('getCornerRestoreState', { cornerId });
           if (!state.closeRequested) return false;
+          // The reap deletes the worktree a harvest is still reading.
+          await this.harvest;
           await this.options.onCloseRequested();
           return true;
         },
@@ -1232,6 +1296,9 @@ export class MonolithCornerTurnLoop {
     } finally {
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
+      // A harvest writes into host-wide state, so it finishes or is discarded
+      // with this corner — never left running against a reaped worktree.
+      await this.harvest;
     }
   }
 }

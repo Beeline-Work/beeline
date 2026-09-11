@@ -109,6 +109,18 @@ describe('splitLedgerText', () => {
     expect(code.prose).toContain('if (!ready) return;');
   });
 
+  it('keeps language-tagged authored code even when its fixtures resemble machine output', () => {
+    const code = [
+      '```ts',
+      "const output = ['error: failed', 'hint: retry', '$ npm test'];",
+      "expect(output).toContain('error: failed');",
+      '```',
+    ].join('\n');
+    const split = splitLedgerText(code);
+    expect(split.machine).toBeUndefined();
+    expect(split.prose).toBe(code);
+  });
+
   it('lifts a stack trace', () => {
     const split = splitLedgerText(
       'The suite failed.\n\n' +

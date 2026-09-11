@@ -14,8 +14,11 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     View: host('View'),
     ScrollView: host('ScrollView'),
+    Pressable: host('Pressable'),
   };
 });
+
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 
 import { MonoMarkdown } from './MonoMarkdown';
 

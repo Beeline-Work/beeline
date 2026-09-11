@@ -145,7 +145,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
       expect(c!.rootCommandId).toBe(root);
       await claim(c!);
       const target = c!.agentId === A ? B : A;
-      await result(c!, `depth ${depth}`, [target]);
+      await result(c!, `@${target === A ? 'hoots' : 'goosy'} depth ${depth}`, [target]);
       const next = await commands(target, room);
       if (depth === 3) expect(next).toEqual([]);
       else c = next[0];
@@ -155,7 +155,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await send('@hoots start', room);
     const [a] = await commands(A, room);
     await claim(a!);
-    const posted = await result(a!, 'Delegation', [B]);
+    const posted = await result(a!, '@goosy Delegation', [B]);
     const [b] = await commands(B, room);
     await claim(b!);
     const reply = await result(b!, 'Deliberate reply', [], 'g1', { replyToMessageId: posted.id });
@@ -181,6 +181,12 @@ it('resolves multiple natural tags and ignores human-only and unknown tags', asy
     { roomId: R, parentMessageId: human.messageId, text: 'Reply' },
     H,
   );
+  expect(await commands(A)).toHaveLength(1);
+});
+it('routes only the exact current spelling of an agent tag', async () => {
+  await send('@Hoots @ｈｏｏｔｓ @hoots-old');
+  expect(await commands(A)).toEqual([]);
+  await send('@hoots');
   expect(await commands(A)).toHaveLength(1);
 });
 it('routes a direct message without redundant tags or a presence row', async () => {
@@ -232,8 +238,8 @@ it('deduplicates human writes, claims and final results', async () => {
     ),
   );
   expect(attempts.every((a) => a.status === 'rejected')).toBe(true);
-  const one = await result(c!, 'Done', [B]);
-  const two = await result(c!, 'Done', [B]);
+  const one = await result(c!, '@goosy Done', [B]);
+  const two = await result(c!, '@goosy Done', [B]);
   expect(two.id).toBe(one.id);
   expect(await commands(B)).toHaveLength(1);
 });
@@ -310,6 +316,20 @@ it('routes a validated agent tag when the final message is committed', async () 
   await result(c!, '@goosy please help', [B]);
   expect(await commands(B)).toHaveLength(1);
 });
+it('does not trust a caller-supplied agent id without an exact tag', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  const posted = await result(c!, '@GOOSY please help', [B]);
+  expect(await commands(B)).toEqual([]);
+  expect(
+    (
+      await db.query<{ mention_ids: string[] }>(`SELECT mention_ids FROM messages WHERE id=$1`, [
+        posted.id,
+      ])
+    ).rows[0]?.mention_ids,
+  ).toEqual([]);
+});
 it('rolls final storage back if creating the next command fails', async () => {
   await send('@hoots');
   const [c] = await commands();
@@ -317,14 +337,14 @@ it('rolls final storage back if creating the next command fails', async () => {
   await db.query(`CREATE FUNCTION refuse_command() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected dispatch failure'; END $$;
  CREATE TRIGGER refuse_command BEFORE INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION refuse_command();`);
   try {
-    await expect(result(c!, 'Atomic', [B])).rejects.toThrow('injected');
+    await expect(result(c!, '@goosy Atomic', [B])).rejects.toThrow('injected');
     expect((await db.query(`SELECT 1 FROM messages WHERE text='Atomic'`)).rowCount).toBe(0);
   } finally {
     await db.query(
       `DROP TRIGGER refuse_command ON agent_commands; DROP FUNCTION refuse_command();`,
     );
   }
-  await result(c!, 'Atomic', [B]);
+  await result(c!, '@goosy Atomic', [B]);
   expect(await commands(B)).toHaveLength(1);
 });
 it('gives old helpers only projected commands and refuses unsolicited old output', async () => {

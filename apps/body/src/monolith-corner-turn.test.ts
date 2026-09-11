@@ -38,8 +38,9 @@ const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
 
 describe('corner merge instructions', () => {
   it('allows autonomous merge only in yolo mode', () => {
-    expect(cornerMergeInstruction(true)).toContain('merge this pull request yourself');
-    expect(cornerMergeInstruction(false)).toContain('never merge the pull request yourself');
+    expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
+    expect(cornerMergeInstruction(false)).toContain('never merge');
+    expect(cornerMergeInstruction(false)).toContain('explicit human approval');
   });
 });
 
@@ -1675,14 +1676,12 @@ describe('thin monolith corner turn', () => {
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
-        systemPrompt: expect.stringContaining('On a later server checks turn'),
+        systemPrompt: expect.stringContaining('On a later checks turn, call pr_checks_status'),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'Yolo mode is on: when that merge gate passes, merge this pull request yourself with gh.',
-        ),
+        systemPrompt: expect.stringContaining(cornerMergeInstruction(true)),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
@@ -1695,7 +1694,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'GitHub check and merge notes are server lines already in the corner: never restate them',
+          'Never restate server check or merge notes',
         ),
       }),
     );

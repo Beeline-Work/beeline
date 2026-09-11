@@ -10,8 +10,7 @@ import { createBeelineServer } from './server.js';
 // Found by $qa on 2026-09-10
 // Report: /home/lunchbox/firstmate2/data/beeline-web-desktop-dogfood/report.md
 describe('web app CORS', () => {
-  const deployedWebOrigin =
-    'https://lunchboxfortwo-buzzy--beeline-desktop-web-workbench-final.expo.app';
+  const deployedWebOrigin = 'https://web.usebeeline.app';
   const servers: ReturnType<typeof createBeelineServer>[] = [];
 
   afterEach(async () => {
@@ -90,5 +89,19 @@ describe('web app CORS', () => {
     expect(response.status).toBe(404);
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
     expect(redeem).not.toHaveBeenCalled();
+  });
+
+  it('does not retain the temporary Expo preview as a production origin', async () => {
+    const { origin } = await start([deployedWebOrigin]);
+    const response = await fetch(`${origin}/v1/auth/review/exchange`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://lunchboxfortwo-buzzy--beeline-desktop-web-workbench-final.expo.app',
+        'access-control-request-method': 'POST',
+      },
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
   });
 });

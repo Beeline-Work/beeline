@@ -33,6 +33,12 @@ GitHub account/install/repository operations are enabled when `GITHUB_CLIENT_ID`
 
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
+The browser client is hosted separately at `https://web.usebeeline.app`. Set
+`BEELINE_WEB_APP_ORIGINS=https://web.usebeeline.app` in production so the server
+answers that exact origin's API preflights. This allowlist does not change
+`PUBLIC_ORIGIN`, auth callback URLs, app-link hosts, or the landing site at
+`https://usebeeline.app`.
+
 ```sh
 npm run typecheck -w @beeline/server
 npm test -w @beeline/server

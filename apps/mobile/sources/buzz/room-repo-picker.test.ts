@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   dedupeRepoCandidates,
+  explainMissingRepo,
   filterRepoCandidates,
   githubRepositoryLinkagePlan,
   looksLikeCornerOpenIntent,
@@ -65,6 +66,70 @@ describe('githubRepositoryLinkagePlan', () => {
       owner: 'bananaman',
       fullName: 'bananaman/widget',
     });
+  });
+});
+
+describe('explainMissingRepo', () => {
+  it('says nothing about a repository that is actually available', () => {
+    expect(
+      explainMissingRepo(
+        'ACME/widget',
+        [{ key: 'github:42', name: 'acme/widget' }],
+        [installation],
+      ),
+    ).toBeNull();
+    expect(explainMissingRepo('not-a-full-name', [], [installation])).toBeNull();
+  });
+
+  it('names the selected-repositories install as the reason an org repo is absent', () => {
+    expect(explainMissingRepo('acme/widget', [], [installation])).toEqual({
+      reason: 'not-selected',
+      owner: 'acme',
+      message:
+        'acme is connected, but Beeline only sees selected repositories there — acme/widget is not one of them.',
+    });
+  });
+
+  it('distinguishes an unconnected owner from one the probe says never granted', () => {
+    expect(explainMissingRepo('MoonScannerAI/pulse', [], [installation])).toMatchObject({
+      reason: 'owner-not-connected',
+      owner: 'MoonScannerAI',
+    });
+    expect(
+      explainMissingRepo('MoonScannerAI/pulse', [], [installation], {
+        uncoveredOwners: new Set(['moonscannerai']),
+      }),
+    ).toMatchObject({ reason: 'owner-grant-needed', owner: 'MoonScannerAI' });
+  });
+
+  it('reports a suspended or revoked installation instead of calling the owner unconnected', () => {
+    expect(
+      explainMissingRepo('acme/widget', [], [{ ...installation, status: 'suspended' as const }]),
+    ).toMatchObject({ reason: 'installation-suspended' });
+    expect(
+      explainMissingRepo('acme/widget', [], [{ ...installation, status: 'revoked' as const }]),
+    ).toMatchObject({ reason: 'installation-revoked' });
+    // A reinstall leaves the revoked row behind; the live one speaks.
+    expect(
+      explainMissingRepo(
+        'acme/widget',
+        [],
+        [
+          { ...installation, installationId: 6, status: 'revoked' as const },
+          { ...installation, repositorySelection: 'all' as const },
+        ],
+      ),
+    ).toMatchObject({ reason: 'listing-stale' });
+  });
+
+  it('points an all-repositories install at a stale list rather than a missing grant', () => {
+    expect(
+      explainMissingRepo(
+        'acme/widget',
+        [],
+        [{ ...installation, repositorySelection: 'all' as const }],
+      ),
+    ).toMatchObject({ reason: 'listing-stale', owner: 'acme' });
   });
 });
 

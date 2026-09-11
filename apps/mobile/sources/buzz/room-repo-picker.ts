@@ -58,6 +58,92 @@ export function githubRepositoryLinkagePlan(
   return { kind: 'manage', installation, fullName };
 }
 
+/** Why a repository the user named is absent from the picker's own list. */
+export type MissingRepoReason =
+  | 'owner-not-connected'
+  | 'owner-grant-needed'
+  | 'installation-suspended'
+  | 'installation-revoked'
+  | 'not-selected'
+  | 'listing-stale';
+
+export type MissingRepoExplanation = {
+  reason: MissingRepoReason;
+  owner: string;
+  message: string;
+};
+
+/**
+ * Say WHY a named repository is not in the list, instead of leaving an empty
+ * picker to imply it does not exist. Organization repositories are the case
+ * that needs saying out loud: an org install is a different act from a
+ * personal one — someone with admin rights on the org has to approve it, and a
+ * selected-repositories install hides everything outside its selection — so
+ * "nothing here" reads as a bug when it is really a pending grant.
+ *
+ * Returns null when the repository IS available (nothing to explain) or when
+ * `fullName` is not an owner/name pair.
+ */
+export function explainMissingRepo(
+  fullName: string,
+  candidates: readonly RepoCandidate[],
+  installations: readonly GitHubInstallationAccess[],
+  options: { uncoveredOwners?: ReadonlySet<string> } = {},
+): MissingRepoExplanation | null {
+  const normalized = fullName.trim().toLowerCase();
+  const [owner, name] = normalized.split('/');
+  if (!owner || !name) return null;
+  if (candidates.some((entry) => entry.name.trim().toLowerCase() === normalized)) return null;
+  const display = fullName.trim();
+  // A reinstall leaves the old revoked row behind, so the LIVE installation
+  // speaks first: active, then suspended, then whatever remains.
+  const owned = installations.filter((entry) => entry.accountLogin.toLowerCase() === owner);
+  const account =
+    owned.find((entry) => entry.status === 'active') ??
+    owned.find((entry) => entry.status === 'suspended') ??
+    owned[0];
+  const login = account?.accountLogin ?? display.split('/')[0]!;
+  const explain = (reason: MissingRepoReason, message: string): MissingRepoExplanation => ({
+    reason,
+    owner: login,
+    message,
+  });
+  if (!account) {
+    if (options.uncoveredOwners?.has(owner)) {
+      return explain(
+        'owner-grant-needed',
+        `${login} has not granted Beeline access. Only an owner or admin of ${login} can install the App there.`,
+      );
+    }
+    return explain(
+      'owner-not-connected',
+      `No ${login} installation is connected to your account. If ${login} is an organization, an owner or admin there has to approve the install.`,
+    );
+  }
+  if (account.status === 'revoked') {
+    return explain(
+      'installation-revoked',
+      `Beeline's access to ${login} was revoked, so its repositories stay hidden until it is installed again.`,
+    );
+  }
+  if (account.status === 'suspended') {
+    return explain(
+      'installation-suspended',
+      `The ${login} installation is suspended on GitHub, so its repositories stay hidden.`,
+    );
+  }
+  if (account.repositorySelection === 'selected') {
+    return explain(
+      'not-selected',
+      `${login} is connected, but Beeline only sees selected repositories there — ${display} is not one of them.`,
+    );
+  }
+  return explain(
+    'listing-stale',
+    `${login} is connected to all its repositories, so ${display} is either new, renamed, or not there — refresh to re-read the list.`,
+  );
+}
+
 export const GITHUB_REPOSITORY_SELECTION_INSTRUCTION =
   'Choose the repositories Beeline may access, then return.';
 

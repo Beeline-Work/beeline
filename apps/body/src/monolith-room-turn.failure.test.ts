@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, ROOM_PROMPT_INACTIVITY_TIMEOUT_MS } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -34,6 +34,7 @@ async function runTurn(options: {
   receipts: Array<Record<string, unknown>>;
   posted: Array<Record<string, unknown>>;
   attempts: number;
+  promptTimeouts: number[];
   agentHomeRoot: string;
 }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-failure-'));
@@ -139,8 +140,10 @@ async function runTurn(options: {
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
   let attempts = 0;
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation(() => {
+  const promptTimeouts: number[] = [];
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation((_sessionId, _prompt, timeoutMs) => {
     attempts += 1;
+    promptTimeouts.push(timeoutMs);
     return options.prompt({ agentHomeRoot, attempt: attempts });
   });
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
@@ -169,10 +172,27 @@ async function runTurn(options: {
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
-  return { receipts, posted, attempts, agentHomeRoot };
+  return { receipts, posted, attempts, promptTimeouts, agentHomeRoot };
 }
 
 describe('Room turn failure receipt', () => {
+  it('allows a high-reasoning Room model four minutes to produce its first output', async () => {
+    const { promptTimeouts, posted } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: async () => ({
+        agentText: 'A late but valid answer',
+        toolCalls: [],
+        stopReason: 'end_turn',
+        raw: {},
+      }),
+    });
+
+    expect(promptTimeouts).toEqual([ROOM_PROMPT_INACTIVITY_TIMEOUT_MS]);
+    expect(ROOM_PROMPT_INACTIVITY_TIMEOUT_MS).toBe(240_000);
+    expect(posted).toEqual([expect.objectContaining({ text: 'A late but valid answer' })]);
+  });
+
   it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
     const failure = new Error(
       'ACP error -32000: provider error 429 concurrency_limit (Authorization: Bearer sk-or-v1-abcdefghijklmnop)',

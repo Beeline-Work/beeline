@@ -65,6 +65,8 @@ import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
 
+export const ROOM_PROMPT_INACTIVITY_TIMEOUT_MS = 240_000;
+
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
 type RoomMessage = DaemonOperationMap['getRoomInbox']['output']['items'][number];
@@ -904,7 +906,7 @@ export class MonolithRoomTurnLoop {
                     result = await this.client!.sessionPrompt(
                       this.sessionId!,
                       nextPrompt,
-                      120_000,
+                      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
                       (delta, full) => {
                         trace.firstModelOutput();
                         stream.onChunk(delta, full);

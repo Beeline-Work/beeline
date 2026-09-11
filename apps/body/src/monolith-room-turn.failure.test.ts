@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AcpClient } from './acp.js';
+import { AcpClient, AcpRequestTimeoutError } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -173,6 +173,78 @@ async function runTurn(options: {
 }
 
 describe('Room turn failure receipt', () => {
+  it('retries an inactive model request on the next provider before reporting failure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-room-timeout-routing-'));
+    roots.push(root);
+    const cacheRoot = join(root, 'routing');
+    await mkdir(cacheRoot, { recursive: true });
+    await writeFile(
+      join(cacheRoot, 'z-ai_glm-5.3-flash.json'),
+      JSON.stringify({
+        model: 'z-ai/glm-5.3-flash',
+        fetchedAt: Date.now(),
+        providers: ['modal', 'cloudflare'],
+        bar: 98,
+        input: ['text'],
+      }),
+    );
+    await writeFile(
+      join(cacheRoot, 'z-ai_glm-5.3-flash.probe.json'),
+      JSON.stringify({
+        model: 'z-ai/glm-5.3-flash',
+        fetchedAt: Date.now(),
+        answered: [
+          { provider: 'modal', latencyMs: 700 },
+          { provider: 'cloudflare', latencyMs: 1200 },
+        ],
+      }),
+    );
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    });
+    let secondPin: unknown;
+    const { receipts, posted, attempts, agentHomeRoot } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      advertisedModel: 'z-ai/glm-5.3-flash',
+      configOverrides: {
+        agentEnv: { OPENROUTER_API_KEY: 'k' },
+        openRouterRoutingCacheDir: cacheRoot,
+        modelSelection: { model: 'z-ai/glm-5.3-flash' },
+      } as Partial<BodyConfig>,
+      prompt: async (input) => {
+        if (input.attempt === 1)
+          throw new AcpRequestTimeoutError('session/prompt', 120_000, '', true);
+        secondPin = JSON.parse(
+          await readFile(join(input.agentHomeRoot, 'pi', 'models.json'), 'utf8'),
+        );
+        return {
+          agentText: 'Recovered answer',
+          toolCalls: [],
+          stopReason: 'end_turn',
+          raw: {},
+        };
+      },
+    });
+    warn.mockRestore();
+
+    expect(attempts).toBe(2);
+    expect(receipts.some((receipt) => receipt.status === 'failed')).toBe(false);
+    expect(posted).toEqual([expect.objectContaining({ text: 'Recovered answer' })]);
+    expect(
+      (secondPin as Record<string, any>).providers.openrouter.modelOverrides['z-ai/glm-5.3-flash']
+        .compat.openRouterRouting,
+    ).toEqual({
+      only: ['cloudflare'],
+      order: ['cloudflare'],
+      allow_fallbacks: false,
+      require_parameters: false,
+    });
+    expect(warnings.join('\n')).toContain('retrying on cloudflare');
+    expect(warnings.join('\n')).toContain('timed out after 120000ms of inactivity');
+  });
+
   it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
     const failure = new Error(
       'ACP error -32000: provider error 429 concurrency_limit (Authorization: Bearer sk-or-v1-abcdefghijklmnop)',

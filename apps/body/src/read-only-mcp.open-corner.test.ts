@@ -217,9 +217,9 @@ describe('open_corner over the grok wire', () => {
     );
   }, 30_000);
 
-  it('does not let close_corner bypass a repository corner merge', async () => {
+  it('closes a repository corner through that same operation', async () => {
     const door = await daemonDoor();
-    const { result } = await callTool(
+    const { result, error } = await callTool(
       door.origin,
       {},
       {
@@ -228,8 +228,23 @@ describe('open_corner over the grok wire', () => {
       },
     );
 
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, status: 'closed' });
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({ operation: 'archiveCorner', cornerId: CORNER }),
+    );
+    // The repository shape of the parent Room is not consulted at all: who may
+    // archive is the server's opener check, not a question about the Room.
+    expect(door.calls.some((call) => call.operation === 'getRoomRepositoryState')).toBe(false);
+  }, 30_000);
+
+  it('refuses close_corner outside a corner instead of archiving something else', async () => {
+    const door = await daemonDoor();
+    const { result } = await callTool(door.origin, {}, { name: 'close_corner' });
+
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toContain('only in a chat-only corner');
+    expect(result?.content[0]?.text).toContain('BEELINE_DAEMON_CORNER_ID');
     expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
   }, 30_000);
 

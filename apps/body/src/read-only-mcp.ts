@@ -389,7 +389,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'close_corner',
     description:
-      'Close this chat-only corner after its task is complete. Attach every file you want to keep before closing: close archives the corner and its local scratch workspace is deleted as soon as this turn finishes. Already-attached files remain available from the Room.',
+      'Close this corner after its task is complete. Only the agent that opened the corner may close it, because closing is terminal for every member: it archives the corner and stops everyone working in it. Attach every file you want to keep before closing - the local workspace is deleted as soon as this turn finishes. In a repository corner that workspace is the git worktree, and its feature branch is deleted locally and on GitHub, which closes an open pull request from that branch: close only work that has landed or is being abandoned. Already-attached files remain available from the Room.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1091,13 +1091,17 @@ async function openCorner(args: JsonObject): Promise<string> {
   });
 }
 
+/**
+ * Close the corner this tool is running in, chat-only or repository-backed.
+ *
+ * There is no surface-side repository check: archiving is one operation with
+ * one owner, and the server already reserves it for the agent that opened the
+ * corner (`CORNER_OPENER_ONLY_OPERATIONS`). A repository corner that is done
+ * — merged by someone else, or abandoned — could otherwise only be closed by a
+ * human, which left finished corners running.
+ */
 async function closeCorner(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
-  const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
-  const repository = await daemonExecute('getRoomRepositoryState', { roomId });
-  if (repository.resolution !== 'none') {
-    throw new Error('close_corner is available only in a chat-only corner');
-  }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
 }

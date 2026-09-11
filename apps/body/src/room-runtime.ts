@@ -15,6 +15,7 @@ import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
+import { seedWarmNodeModules, warmNodeModulesStoreDir } from './warm-node-modules.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
@@ -127,6 +128,20 @@ export async function materializeCornerWorktree(input: {
       ],
       { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
     );
+    // A worktree cut from a bare clone has no `node_modules`, so this is the
+    // one moment a warm tree can be hardlinked in before anything reads it.
+    // Never fatal: a cold store just means the corner installs as before.
+    const seed = await seedWarmNodeModules({
+      worktreePath: path,
+      storeRoot: warmNodeModulesStoreDir(input.supervisorRoot),
+    });
+    if (seed.reason !== 'no-lockfile') {
+      console.log(
+        `[thin-core] corner ${input.cornerId} warm node_modules: ${seed.reason}${
+          seed.detail ? ` (${seed.detail})` : ''
+        }`,
+      );
+    }
   }
   await execFileAsync('git', [
     `--git-dir=${gitCommonDir}`,

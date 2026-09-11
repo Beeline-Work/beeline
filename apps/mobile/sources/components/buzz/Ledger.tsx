@@ -288,23 +288,31 @@ function Byline({ byline }: { byline: LedgerByline }) {
           testID="chat-byline-dot"
         />
       )}
-      {byline.name ? (
-        <Text
-          numberOfLines={1}
-          style={[styles.bylineName, nameHue, byline.isViewer && styles.bylineNameViewer]}
-          testID="chat-byline-name"
-        >
-          {byline.name}
+      {/* The three written parts sit on ONE baseline. They are set at two sizes
+       *  in two faces (16px prose name, 10px mono tag and stamp), so centring
+       *  them against each other leaves the small type floating half a line
+       *  above the name's feet. Baseline alignment is the type rule; the mark
+       *  is a picture, not a word, so it stays centred on the row — hence the
+       *  nested row, which keeps `alignItems: 'center'` for the tile. */}
+      <View style={styles.bylineWords}>
+        {byline.name ? (
+          <Text
+            numberOfLines={1}
+            style={[styles.bylineName, nameHue, byline.isViewer && styles.bylineNameViewer]}
+            testID="chat-byline-name"
+          >
+            {byline.name}
+          </Text>
+        ) : null}
+        {byline.role ? (
+          <Text style={styles.bylineTag} testID="chat-byline-role">
+            {byline.role}
+          </Text>
+        ) : null}
+        <Text style={styles.bylineStamp} testID="chat-byline-stamp">
+          {byline.stamp}
         </Text>
-      ) : null}
-      {byline.role ? (
-        <Text style={styles.bylineTag} testID="chat-byline-role">
-          {byline.role}
-        </Text>
-      ) : null}
-      <Text style={styles.bylineStamp} testID="chat-byline-stamp">
-        {byline.stamp}
-      </Text>
+      </View>
     </View>
   );
 }
@@ -690,6 +698,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: 8,
     marginBottom: 9,
+  },
+  // The words of the byline, on one baseline. `flex: 1` so the stamp's auto
+  // margin still has the whole remaining row to push against, `minWidth: 0`
+  // so a long name shrinks here instead of shoving the clock off the edge.
+  bylineWords: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
   },
   bylineDot: {
     width: 5,

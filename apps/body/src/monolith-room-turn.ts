@@ -989,16 +989,15 @@ export class MonolithRoomTurnLoop {
                   `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
                 );
               }
-              const openCornerCalls = result.toolCalls.filter((call) =>
+              const openCornerCall = result.toolCalls.find((call) =>
                 /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
               );
-              const openedCorner = openCornerCalls.some((call) => !isFailedToolCall(call));
-              for (const openCornerCall of openCornerCalls) {
+              if (openCornerCall) {
                 console.log(
                   `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title} (${openCornerCall.status ?? 'no status'})`,
                 );
+                if (!isFailedToolCall(openCornerCall)) this.options.onCornerOpened?.();
               }
-              if (openedCorner) this.options.onCornerOpened?.();
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result?.toolCalls ?? []) {
                 const failure = toolCallFailureLine(call);
@@ -1027,8 +1026,8 @@ export class MonolithRoomTurnLoop {
               }
               // A successful corner open completes this Room turn silently.
               // The server's corner-open card is the complete handoff; publishing
-              // any model text here could route an incidental tag as new work.
-              if (openedCorner) {
+              // any model text here would create a second, competing completion.
+              if (openCornerCall && !isFailedToolCall(openCornerCall)) {
                 reply = '';
               }
               await trace.measure('publish', () =>

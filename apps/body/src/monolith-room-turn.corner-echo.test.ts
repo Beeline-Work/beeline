@@ -162,15 +162,7 @@ describe('Room turn after open_corner', () => {
     expect(posted).toEqual([]);
   });
 
-  it('uses a successful retry instead of a stale failed open when settling the turn', async () => {
-    const { posted } = await runTurn('The retry opened the corner. @Captain take a look.', [
-      { ...OPEN_CORNER, id: 'failed-call', status: 'failed' },
-      { ...OPEN_CORNER, id: 'successful-call' },
-    ]);
-    expect(posted).toEqual([]);
-  });
-
-  it('publishes the reply when every open_corner call failed', async () => {
+  it('publishes the reply when the open_corner call failed: nothing else says why', async () => {
     const { posted } = await runTurn('I could not open a corner: this Room has no repository.', [
       { ...OPEN_CORNER, status: 'failed' },
     ]);

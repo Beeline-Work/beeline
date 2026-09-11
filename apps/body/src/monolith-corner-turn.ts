@@ -87,26 +87,34 @@ function isCornerChecksTurn(trigger: string, restates?: readonly string[]): bool
 export async function cornerHasUndeliveredRepositoryWork(
   worktreePath: string,
   featureBranch?: string,
+  targetBranch?: string,
 ): Promise<boolean> {
-  return Boolean(await cornerUndeliveredRepositoryState(worktreePath, featureBranch));
+  return Boolean(
+    await cornerUndeliveredRepositoryState(worktreePath, featureBranch, targetBranch),
+  );
 }
 
 async function cornerUndeliveredRepositoryState(
   worktreePath: string,
   featureBranch?: string,
+  targetBranch?: string,
 ): Promise<string | undefined> {
   try {
     const [{ stdout: status }, ahead] = await Promise.all([
       execFileAsync('git', ['-C', worktreePath, 'status', '--porcelain=v1']),
       featureBranch
-        ? execFileAsync('git', [
-            '-C',
-            worktreePath,
-            'rev-list',
-            '--count',
-            `refs/remotes/origin/${featureBranch}..HEAD`,
-          ])
-            .then(({ stdout }) => Number.parseInt(stdout.trim(), 10) || 0)
+        ? firstResolvedRemoteRef(worktreePath, [featureBranch, targetBranch])
+            .then((remoteRef) =>
+              remoteRef
+                ? execFileAsync('git', [
+                    '-C',
+                    worktreePath,
+                    'rev-list',
+                    '--count',
+                    `${remoteRef}..HEAD`,
+                  ]).then(({ stdout }) => Number.parseInt(stdout.trim(), 10) || 0)
+                : 0,
+            )
             .catch(() => 0)
         : Promise.resolve(0),
     ]);
@@ -115,6 +123,21 @@ async function cornerUndeliveredRepositoryState(
   } catch {
     return undefined;
   }
+}
+
+async function firstResolvedRemoteRef(
+  worktreePath: string,
+  branches: readonly (string | undefined)[],
+): Promise<string | undefined> {
+  for (const branch of branches) {
+    if (!branch) continue;
+    const ref = `refs/remotes/origin/${branch}`;
+    const resolved = await execFileAsync('git', ['-C', worktreePath, 'rev-parse', '--verify', ref])
+      .then(() => true)
+      .catch(() => false);
+    if (resolved) return ref;
+  }
+  return undefined;
 }
 
 function oneLine(value: string): string {
@@ -1030,6 +1053,7 @@ export class MonolithCornerTurnLoop {
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
+                      this.options.repository.targetBranch,
                     )
                   : undefined;
               const needsDeliveryNudge =
@@ -1039,6 +1063,9 @@ export class MonolithCornerTurnLoop {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
                 replyBeforeNudge = durableReplyText(result.agentText);
                 await flushToolCalls(result.toolCalls, '');
+                // This is the same warm session: identity, soul and merge
+                // authority remain in its system prompt and need not be
+                // repeated in this focused follow-up.
                 result = await runPrompt(
                   checksTurn
                     ? CORNER_YOLO_MERGE_NUDGE
@@ -1059,7 +1086,7 @@ export class MonolithCornerTurnLoop {
               let reply = durableReplyText(result.agentText);
               if (!reply && explained?.recoveredText)
                 reply = durableReplyText(explained.recoveredText);
-              if (!reply) reply = replyBeforeNudge;
+              reply = [replyBeforeNudge, reply].filter(Boolean).join('\n\n');
               await flushToolCalls(result.toolCalls, reply);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {

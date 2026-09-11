@@ -71,6 +71,21 @@ describe('corner merge instructions', () => {
       'HEAD~1',
     ]);
     expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget')).toBe(true);
+    await execFileAsync('git', [
+      '-C',
+      root,
+      'update-ref',
+      '-d',
+      'refs/remotes/origin/feature/widget',
+    ]);
+    await execFileAsync('git', [
+      '-C',
+      root,
+      'update-ref',
+      'refs/remotes/origin/main',
+      'HEAD~1',
+    ]);
+    expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget', 'main')).toBe(true);
   });
 
   it('keeps delivery cleanup under agent control and the merge reminder behind yolo', () => {
@@ -335,7 +350,7 @@ describe('corner close-request polling cadence', () => {
       .mockResolvedValueOnce({
         stopReason: 'end_turn',
         updates: [],
-        agentText: '',
+        agentText: 'Kept retained-agent-work.txt for the next turn.',
         toolCalls: [],
       })
       .mockResolvedValue({
@@ -375,7 +390,9 @@ describe('corner close-request polling cadence', () => {
     expect(execute).toHaveBeenCalledWith(
       'postRoomMessage',
       expect.objectContaining({
-        text: 'PR opened: https://github.com/acme/widgets/pull/7',
+        text:
+          'PR opened: https://github.com/acme/widgets/pull/7\n\n' +
+          'Kept retained-agent-work.txt for the next turn.',
       }),
     );
     expect(execute).not.toHaveBeenCalledWith(

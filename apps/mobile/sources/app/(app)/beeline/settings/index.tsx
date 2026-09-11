@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { Linking, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, type Href } from 'expo-router';
 import * as Updates from 'expo-updates';
@@ -15,6 +15,7 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { loadAppConfig } from '@/sync/appConfig';
+import { openExternalUrl } from '@/utils/open-external-url';
 import {
   createManualUpdateState,
   isManualUpdateBusy,
@@ -193,7 +194,7 @@ export default function BuzzSettings() {
                   : `${installation.status} · reconnect required`
               }
               key={installation.installationId}
-              onPress={() => void Linking.openURL(installation.manageUrl)}
+              onPress={() => void openExternalUrl(installation.manageUrl).catch(() => undefined)}
               testID={`github-installation-${installation.installationId}`}
               title={installation.accountLogin}
             />

@@ -594,12 +594,32 @@ function SwipeToReply({
       delayLongPress={450}
       onLongPress={onLongPress}
       onPress={onPress}
+      style={Platform.OS === 'web' ? styles.replyDesktopMessage : undefined}
       testID={`copy-message-${messageId}`}
     >
       {children}
     </Pressable>
   );
-  if (Platform.OS === 'web') return message;
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.replyDesktopRow}>
+        {message}
+        <Pressable
+          accessibilityLabel="Reply to message"
+          accessibilityRole="button"
+          onPress={onReply}
+          style={({ pressed }) => [
+            styles.replyDesktopAction,
+            pressed && styles.replyDesktopPressed,
+          ]}
+          testID={`reply-button-${messageId}`}
+        >
+          <Text style={styles.replyDesktopGlyph}>↩</Text>
+          <Text style={styles.replyDesktopLabel}>REPLY</Text>
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <Swipeable
       ref={swipeableRef}
@@ -1089,6 +1109,33 @@ const styles = StyleSheet.create(() => ({
   outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
   replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
   replySwipeChildren: { paddingHorizontal: ALIVE_RING_PAD },
+  replyDesktopRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  replyDesktopMessage: { flex: 1, minWidth: 0 },
+  replyDesktopAction: {
+    width: 54,
+    minHeight: 44,
+    marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderLeftWidth: 1,
+    borderLeftColor: groknight.borderStrong,
+  },
+  replyDesktopPressed: { backgroundColor: groknight.bgHighlight },
+  replyDesktopGlyph: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    letterSpacing: 0,
+  },
+  replyDesktopLabel: {
+    ...Typography.default('semiBold'),
+    marginTop: 1,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 2,
+  },
   replySwipeAction: {
     width: 78,
     marginBottom: 8,

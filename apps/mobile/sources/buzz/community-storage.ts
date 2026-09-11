@@ -4,6 +4,8 @@ const ACTIVE_COMMUNITY_PREFIX = '@beeline/community/active/';
 const LAST_CHANNEL_PREFIX = '@beeline/community/last-channel/';
 const PERSONAL_COMMUNITY_PREFIX = '@beeline/workspace/personal/';
 const STANDALONE_SCOPE = 'standalone';
+const activeCommunityListeners = new Map<string, Set<(communityId: string | null) => void>>();
+const activeCommunityValues = new Map<string, string | null>();
 
 function activeCommunityKey(pubkey: string): string {
   return `${ACTIVE_COMMUNITY_PREFIX}${pubkey}`;
@@ -23,6 +25,23 @@ export async function saveActiveCommunityId(
   communityId: string | null,
 ): Promise<void> {
   await AsyncStorage.setItem(activeCommunityKey(pubkey), communityId ?? STANDALONE_SCOPE);
+  activeCommunityValues.set(pubkey, communityId);
+  activeCommunityListeners.get(pubkey)?.forEach((listener) => listener(communityId));
+}
+
+/** Keep mounted navigation surfaces aligned with a Room opened elsewhere in the app. */
+export function subscribeActiveCommunityId(
+  pubkey: string,
+  listener: (communityId: string | null) => void,
+): () => void {
+  const listeners = activeCommunityListeners.get(pubkey) ?? new Set();
+  listeners.add(listener);
+  activeCommunityListeners.set(pubkey, listeners);
+  if (activeCommunityValues.has(pubkey)) listener(activeCommunityValues.get(pubkey) ?? null);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) activeCommunityListeners.delete(pubkey);
+  };
 }
 
 export async function loadPersonalCommunityId(pubkey: string): Promise<string | null> {
@@ -62,9 +81,7 @@ export async function reconcileStoredWorkspaceSelection(
   reconciliation: 'authoritative' | 'preserve' = 'authoritative',
 ): Promise<string | null> {
   const persistedPersonalWorkspaceId =
-    personalWorkspaceId === undefined
-      ? await storage.loadPersonalId(pubkey)
-      : personalWorkspaceId;
+    personalWorkspaceId === undefined ? await storage.loadPersonalId(pubkey) : personalWorkspaceId;
   const confirmedIds = new Set(workspaces.map((workspace) => workspace.communityId));
   const nextPersonalWorkspaceId =
     reconciliation === 'preserve' ||

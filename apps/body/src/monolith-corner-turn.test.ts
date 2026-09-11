@@ -1681,9 +1681,7 @@ describe('thin monolith corner turn', () => {
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'Yolo mode is on: when that merge gate passes, merge this pull request yourself with gh.',
-        ),
+        systemPrompt: expect.stringContaining(cornerMergeInstruction(true)),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(

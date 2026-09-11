@@ -1,38 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { cornerObjectiveItems, cornerObjectiveLine } from './corner-context';
+import { cornerObjectiveItems } from './corner-context';
 
-describe('cornerObjectiveLine', () => {
+describe('cornerObjectiveItems', () => {
   it('pins the opening objective verbatim ahead of later plan objectives', () => {
     expect(
-      cornerObjectiveLine({
+      cornerObjectiveItems({
         planObjective: 'plan says',
         task: 'task says',
         cornerName: 'name-says',
       }),
-    ).toBe('task says');
-    expect(cornerObjectiveLine({ planObjective: 'plan says', cornerName: 'name-says' })).toBe(
+    ).toEqual(['task says']);
+    expect(cornerObjectiveItems({ planObjective: 'plan says', cornerName: 'name-says' })).toEqual([
       'plan says',
-    );
-    expect(cornerObjectiveLine({ task: 'task says', cornerName: 'name-says' })).toBe('task says');
-    expect(cornerObjectiveLine({ cornerName: 'add-color-to-code-blocks' })).toBeUndefined();
+    ]);
+    expect(cornerObjectiveItems({ task: 'task says', cornerName: 'name-says' })).toEqual([
+      'task says',
+    ]);
+    expect(cornerObjectiveItems({ cornerName: 'add-color-to-code-blocks' })).toEqual([]);
   });
 
   it('says nothing rather than naming a generated corner id', () => {
-    expect(cornerObjectiveLine({ cornerName: 'corner-1a2b3c4d' })).toBeUndefined();
-    expect(cornerObjectiveLine({})).toBeUndefined();
-    expect(cornerObjectiveLine({ task: '   ' })).toBeUndefined();
+    expect(cornerObjectiveItems({ cornerName: 'corner-1a2b3c4d' })).toEqual([]);
+    expect(cornerObjectiveItems({})).toEqual([]);
+    expect(cornerObjectiveItems({ task: '   ' })).toEqual([]);
   });
 
   it('never renders raw tool plumbing as an objective', () => {
-    expect(cornerObjectiveLine({ task: 'hint: Updates were rejected' })).toBeUndefined();
-    expect(cornerObjectiveLine({ planObjective: 'diff --git a/x b/x' })).toBeUndefined();
+    expect(cornerObjectiveItems({ task: 'hint: Updates were rejected' })).toEqual([]);
+    expect(cornerObjectiveItems({ planObjective: 'diff --git a/x b/x' })).toEqual([]);
   });
 
   it('does not truncate or rewrite the validated objective', () => {
-    const line = cornerObjectiveLine({ task: 'add color to **code** blocks' });
-    expect(line).toBe('add color to **code** blocks');
-    const long = cornerObjectiveLine({ task: 'x'.repeat(400) });
-    expect(long).toBe('x'.repeat(400));
+    expect(cornerObjectiveItems({ task: 'add color to **code** blocks' })).toEqual([
+      'add color to **code** blocks',
+    ]);
+    expect(cornerObjectiveItems({ task: 'x'.repeat(400) })).toEqual(['x'.repeat(400)]);
   });
 
   it('keeps parsing legacy plan objectives', () => {

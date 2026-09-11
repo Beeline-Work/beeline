@@ -218,6 +218,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
+import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
@@ -758,6 +759,9 @@ export default function BuzzChat() {
       }),
     [cornerTask, resolvedChannelName],
   );
+  // The same objective as one line, for the inscription under the header and
+  // for the empty state's steering copy — derived once so the two never drift.
+  const cornerObjectiveText = useMemo(() => cornerObjective.join(' '), [cornerObjective]);
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessagesRef.current) return;
@@ -3486,6 +3490,12 @@ export default function BuzzChat() {
             )}
           </View>
 
+          {/* What the corner is for, held under the header for its whole life:
+            the human's own request, inscribed rather than framed. The header
+            carries a short corner name, so without this the objective survives
+            only until the first message lands. */}
+          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
+
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
           {isCorner && (
@@ -3574,7 +3584,7 @@ export default function BuzzChat() {
                 <EmptyLedgerState
                   variant={emptyLedgerVariant}
                   name={isDirectMessage ? displayRoomName : undefined}
-                  objective={isCorner ? cornerObjective.join(' ') : undefined}
+                  objective={isCorner ? cornerObjectiveText : undefined}
                   onPress={focusComposer}
                 />
               </View>

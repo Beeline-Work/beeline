@@ -199,6 +199,8 @@ describe('Workspace drawer', () => {
     });
 
     expect(renderer.root.findByProps({ testID: 'community-rail-community-2' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-tile-plate-community-1' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-tile-plate-community-2' })).toBeDefined();
     expect(
       renderer.root.findByProps({ testID: 'workspace-avatar-community-1' }).props.selected,
     ).toBe(true);

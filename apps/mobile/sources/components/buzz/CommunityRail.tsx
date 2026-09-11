@@ -214,15 +214,32 @@ export function CommunityRail({
               testID={`community-rail-${community.communityId}`}
               presentation={presentation}
             >
-              <IdentityMark
-                kind="workspace"
-                seed={community?.communityId ?? 'workspace-loading'}
-                avatarUrl={community?.avatar}
-                name={community?.name}
-                size={40}
-                selected={active}
-                testID={`workspace-avatar-${community.communityId}`}
-              />
+              {column ? (
+                <View
+                  style={[styles.columnLogoPlate, active && styles.columnLogoPlateSelected]}
+                  testID={`workspace-tile-plate-${community.communityId}`}
+                >
+                  <IdentityMark
+                    kind="workspace"
+                    seed={community?.communityId ?? 'workspace-loading'}
+                    avatarUrl={community?.avatar}
+                    name={community?.name}
+                    size={40}
+                    selected={active}
+                    testID={`workspace-avatar-${community.communityId}`}
+                  />
+                </View>
+              ) : (
+                <IdentityMark
+                  kind="workspace"
+                  seed={community?.communityId ?? 'workspace-loading'}
+                  avatarUrl={community?.avatar}
+                  name={community?.name}
+                  size={40}
+                  selected={active}
+                  testID={`workspace-avatar-${community.communityId}`}
+                />
+              )}
               {column && <Text style={styles.columnWorkspaceName}>{community.name}</Text>}
             </RailButton>
           );
@@ -529,7 +546,12 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    columnButtonSlot: { width: '100%', alignItems: 'center' },
+    columnButtonSlot: {
+      width: '100%',
+      height: DRAWER_WIDTH,
+      paddingLeft: groknight.space.md,
+      alignItems: 'flex-start',
+    },
     railButton: {
       width: 48,
       height: 48,
@@ -538,15 +560,29 @@ const styles = StyleSheet.create((theme) => {
     },
     columnButton: {
       width: DRAWER_WIDTH,
-      height: 58,
+      height: DRAWER_WIDTH,
       flexDirection: 'column',
-      gap: 3,
+      alignItems: 'flex-start',
+      gap: groknight.space.xs,
+    },
+    columnLogoPlate: {
+      width: groknight.space.xxl,
+      height: groknight.space.xxl,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    columnLogoPlateSelected: {
+      borderColor: groknight.selectedBorder,
+      backgroundColor: groknight.bgHover,
     },
     columnWorkspaceName: {
       ...Typography.default('semiBold'),
-      ...groknight.type.sectionHead,
+      ...groknight.type.meta,
       color: groknight.textMuted,
-      maxWidth: DRAWER_WIDTH,
+      width: DRAWER_WIDTH,
     },
     /* Tone, not a box: an unselected Workspace mark sits one step back from the
      * one you are in. The rail is a quiet column you glance at, not a row of

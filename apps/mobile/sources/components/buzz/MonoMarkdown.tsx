@@ -3,7 +3,7 @@ import { Linking, ScrollView, Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
 import { Typography } from '@/constants/Typography';
-import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
+import { CodeBlock } from '@/components/buzz/CodeBlock';
 import {
   findChannelReferences,
   type ChannelReferenceIndex,
@@ -403,13 +403,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           const code = block.content;
           const language = 'language' in block ? (block.language ?? null) : null;
           return (
-            <View key={index} style={[styles.codeFrame, blockStyle]}>
-              {'language' in block && block.language ? (
-                <Text style={styles.codeLanguage}>{block.language}</Text>
-              ) : null}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <CodeHighlighter code={code} language={language} />
-              </ScrollView>
+            <View key={index} style={blockStyle}>
+              <CodeBlock code={code} language={language} />
             </View>
           );
         }
@@ -498,13 +493,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 3,
     borderLeftWidth: 2,
     borderLeftColor: theme.buzz.bgTexturePeak,
-  },
-  codeLanguage: {
-    ...Typography.mono(),
-    color: theme.buzz.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
-    marginBottom: 5,
   },
   codeBlock: {
     ...Typography.mono(),

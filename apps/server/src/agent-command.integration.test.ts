@@ -151,7 +151,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
       else c = next[0];
     }
   });
-  it('routes human reply as fresh intent and structured agent reply only within the chain', async () => {
+  it('routes replies only through exact tags', async () => {
     await send('@hoots start', room);
     const [a] = await commands(A, room);
     await claim(a!);
@@ -159,11 +159,22 @@ describe.each([R, C])('server command authority in %s', (room) => {
     const [b] = await commands(B, room);
     await claim(b!);
     const reply = await result(b!, 'Deliberate reply', [], 'g1', { replyToMessageId: posted.id });
-    expect((await commands(A, room))[0]?.agentDepth).toBe(2);
+    expect(await commands(A, room)).toEqual([]);
+    await send('@goosy Start a tagged handoff', room);
+    const fresh = (await commands(B, room))[0]!;
+    await claim(fresh!);
+    const taggedReply = await result(fresh!, '@hoots Deliberate handoff', [A]);
+    expect((await commands(A, room))[0]?.agentDepth).toBe(1);
     await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [B]);
     await phone.execute(
       'sendRoomReply',
       { roomId: room, parentMessageId: reply.id, text: 'Continue' },
+      H,
+    );
+    expect(await commands(B, room)).toEqual([]);
+    await phone.execute(
+      'sendRoomReply',
+      { roomId: room, parentMessageId: taggedReply.id, text: '@goosy Continue' },
       H,
     );
     expect((await commands(B, room))[0]?.agentDepth).toBe(0);

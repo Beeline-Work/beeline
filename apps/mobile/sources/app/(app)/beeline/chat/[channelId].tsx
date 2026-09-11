@@ -1909,6 +1909,9 @@ export default function BuzzChat() {
       const agentDisplay = isAgent
         ? resolveAgentDisplayIdentity(message.pubkey ?? 'unknown-agent', knownAgent)
         : undefined;
+      const canonicalAgentHandle = isAgent
+        ? (message.authorIdentity?.handle ?? knownAgent?.handle)
+        : undefined;
       const personName = message.pubkey
         ? personProfileByPubkey.get(message.pubkey)?.name
         : undefined;
@@ -1924,6 +1927,7 @@ export default function BuzzChat() {
             agentDisplay?.name ??
             personName ??
             fallbackMemberName(message.pubkey ?? '')),
+        ...(canonicalAgentHandle ? { authorHandle: canonicalAgentHandle } : {}),
         ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
         isAgent,
         preview: message.text.trim() || attachmentPreview || 'Attachment',
@@ -1976,7 +1980,9 @@ export default function BuzzChat() {
       }
       return;
     }
-    const text = replyTarget ? replyMessageText(rawText) : rawText;
+    const text = replyTarget
+      ? replyMessageText(rawText, replyTarget.isAgent ? replyTarget.authorHandle : undefined)
+      : rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
@@ -1986,11 +1992,10 @@ export default function BuzzChat() {
       text,
       selectedAgentMentionsRef.current,
     );
-    const mentionedAgent = replyTarget?.isAgent
-      ? replyTarget.authorPubkey
-      : (selectedMentionedAgent ??
-        mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
-        mentionedAgentPubkey(text, roomAgents));
+    const mentionedAgent =
+      selectedMentionedAgent ??
+      mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
+      mentionedAgentPubkey(text, roomAgents);
     // Resolve before attachment upload or cold transport creation so the ack
     // cannot wait on either. A corner (one agent, always addressed) or a
     // two-party Room (the sole other participant may speak naturally, per the

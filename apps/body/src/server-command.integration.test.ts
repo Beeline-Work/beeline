@@ -64,7 +64,7 @@ describe.each([
   ['Room', R],
   ['corner', C],
 ])('%s complete command conversation', (surface, roomId) => {
-  it('replays Hoots/Goosy with exact tags, replies and immediate untagged continuity', async () => {
+  it('replays Hoots/Goosy with exact tags, tagged replies and immediate untagged continuity', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 4 });
     const controller = new AbortController();
     const helpers = [A, B].map((agentId) => {
@@ -171,7 +171,7 @@ describe.each([
       const goosy = (await answers()).rows.find((row) => row.author_id === B)!;
       await phone.execute(
         'sendRoomReply',
-        { roomId, parentMessageId: goosy.id, text: 'Please continue' },
+        { roomId, parentMessageId: goosy.id, text: '@goosy Please continue' },
         H,
       );
       await waitAnswers(4);

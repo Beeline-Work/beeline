@@ -55,7 +55,6 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
-import { stripCornerOpenEcho } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
@@ -990,15 +989,16 @@ export class MonolithRoomTurnLoop {
                   `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
                 );
               }
-              const openCornerCall = result.toolCalls.find((call) =>
+              const openCornerCalls = result.toolCalls.filter((call) =>
                 /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
               );
-              if (openCornerCall) {
+              const openedCorner = openCornerCalls.some((call) => !isFailedToolCall(call));
+              for (const openCornerCall of openCornerCalls) {
                 console.log(
                   `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title} (${openCornerCall.status ?? 'no status'})`,
                 );
-                if (!isFailedToolCall(openCornerCall)) this.options.onCornerOpened?.();
               }
+              if (openedCorner) this.options.onCornerOpened?.();
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result?.toolCalls ?? []) {
                 const failure = toolCallFailureLine(call);
@@ -1025,11 +1025,11 @@ export class MonolithRoomTurnLoop {
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
                 );
               }
-              // The server's corner-open card already announces a corner the
-              // turn opened; the model's own "Opened corner …" echo is dropped and
-              // a turn left with nothing else settles through its receipt.
-              if (openCornerCall && !isFailedToolCall(openCornerCall)) {
-                reply = stripCornerOpenEcho(reply);
+              // A successful corner open completes this Room turn silently.
+              // The server's corner-open card is the complete handoff; publishing
+              // any model text here could route an incidental tag as new work.
+              if (openedCorner) {
+                reply = '';
               }
               await trace.measure('publish', () =>
                 stream.settle(

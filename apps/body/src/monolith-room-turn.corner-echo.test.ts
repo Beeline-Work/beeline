@@ -154,13 +154,28 @@ describe('Room turn after open_corner', () => {
     );
   });
 
-  it('keeps what the model adds beyond the announcement', async () => {
+  it('settles silently even when the model adds text beyond the announcement', async () => {
     const { posted } = await runTurn(
       'Opened corner 3f2a9c1e for the widget fix.\n\n@Captain the repo has no CI; want one in the same PR?',
       [OPEN_CORNER],
     );
+    expect(posted).toEqual([]);
+  });
+
+  it('uses a successful retry instead of a stale failed open when settling the turn', async () => {
+    const { posted } = await runTurn('The retry opened the corner. @Captain take a look.', [
+      { ...OPEN_CORNER, id: 'failed-call', status: 'failed' },
+      { ...OPEN_CORNER, id: 'successful-call' },
+    ]);
+    expect(posted).toEqual([]);
+  });
+
+  it('publishes the reply when every open_corner call failed', async () => {
+    const { posted } = await runTurn('I could not open a corner: this Room has no repository.', [
+      { ...OPEN_CORNER, status: 'failed' },
+    ]);
     expect(posted.map((message) => message.text)).toEqual([
-      '@Captain the repo has no CI; want one in the same PR?',
+      'I could not open a corner: this Room has no repository.',
     ]);
   });
 

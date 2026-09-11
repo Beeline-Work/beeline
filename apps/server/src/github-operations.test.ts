@@ -351,6 +351,9 @@ describe('GitHub phone operations', () => {
     });
     const app = {
       listUserInstallationIds: vi.fn(async () => [78]),
+      // Installation 79 is omitted from that listing, so membership decides
+      // it — and this user is in no organization but the listed one.
+      organizationMembership: vi.fn(async () => 'none' as const),
       listInstallations: vi.fn(async () => [
         {
           installationId: 77,
@@ -430,6 +433,7 @@ describe('GitHub phone operations', () => {
     expect(app.listInstallations).toHaveBeenCalledOnce();
     expect(resolveSealedUserToken).toHaveBeenCalledWith('42');
     expect(app.listUserInstallationIds).toHaveBeenCalledWith('secret-user-token');
+    expect(app.organizationMembership).toHaveBeenCalledWith('secret-user-token', 'someone-else');
     expect(
       (
         await database.query<{ installation_id: string }>(
@@ -650,6 +654,140 @@ describe('GitHub phone operations', () => {
       expect((userInstallations?.[1]?.headers as Record<string, string>).authorization).toBe(
         'Bearer fresh-user-token',
       );
+    });
+
+    const OMITTED_ORG_INSTALLATION = {
+      id: 88,
+      account: { id: 500, login: 'acme', type: 'Organization' },
+      repository_selection: 'all',
+    };
+
+    /**
+     * An organization install the App serves but GET /user/installations never
+     * mentions — the blindness that hides org repositories from the picker.
+     * `membership` is what GitHub answers for this user's own membership in
+     * that org.
+     */
+    async function withOmittedOrgInstallation(
+      fetchMock: Awaited<ReturnType<typeof bindIdentity>>['fetchMock'],
+      membership: Response,
+    ) {
+      const original = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input, init) => {
+        const url = String(input);
+        const json = (body: unknown, status = 200) =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (url === 'https://api.github.test/app/installations?per_page=100&page=1')
+          return json([INSTALLATION_ENTRY, OMITTED_ORG_INSTALLATION]);
+        if (url === 'https://api.github.test/app/installations/88')
+          return json(OMITTED_ORG_INSTALLATION);
+        if (url === 'https://api.github.test/app/installations/88/access_tokens')
+          return json({ token: 'org-token', expires_at: '2030-01-01T00:00:00Z' });
+        if (url === 'https://api.github.test/user/memberships/orgs/acme') {
+          // Same rule the user listing enforces: the expired token proves
+          // nothing, so a membership asked with it must not be believed.
+          const authorization = (init?.headers as Record<string, string>).authorization;
+          return authorization === 'Bearer fresh-user-token'
+            ? membership.clone()
+            : json({ message: 'Bad credentials' }, 401);
+        }
+        return original(input, init);
+      });
+    }
+
+    async function ownedInstallationIds(owner: string): Promise<number[]> {
+      const rows = await database.query<{ installation_id: string }>(
+        `SELECT installation_id FROM github_installations WHERE owner_id=$1 ORDER BY installation_id`,
+        [owner],
+      );
+      return rows.rows.map((row) => Number(row.installation_id));
+    }
+
+    it('claims an organization installation the user listing omits once membership confirms it', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'org-membership',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'org-membership' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      await withOmittedOrgInstallation(
+        fetchMock,
+        new Response(JSON.stringify({ state: 'active', role: 'member' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      await expect(ownedInstallationIds(HUMAN)).resolves.toEqual([77, 88]);
+    });
+
+    it('leaves an omitted organization installation unclaimed when membership denies it', async () => {
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'org-non-member',
+      });
+      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'org-non-member' }, false);
+      await database.query(
+        `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      // GitHub answers 404 for a non-member: a definitive no, so the listing's
+      // omission stands and nothing is claimed.
+      await withOmittedOrgInstallation(
+        fetchMock,
+        new Response(JSON.stringify({ message: 'Not Found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      await expect(ownedInstallationIds(HUMAN)).resolves.toEqual([77]);
+    });
+
+    it('never takes an organization installation another identity already owns', async () => {
+      const other = 'b'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [
+        other,
+      ]);
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(88,$1,'500','acme','Organization','all','active')`,
+        [other],
+      );
+      const operations = operationsFor(database);
+      const { fetchMock } = await bindIdentity(database);
+      await operations.beginIdentity(HUMAN, {
+        redirectUri: 'beeline://callback',
+        state: 'org-owned-elsewhere',
+      });
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'org-owned-elsewhere' },
+        false,
+      );
+      await database.query(
+        `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
+      );
+      await withOmittedOrgInstallation(
+        fetchMock,
+        new Response(JSON.stringify({ state: 'active', role: 'member' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+      await expect(operations.refresh(HUMAN)).resolves.toEqual({});
+      await expect(ownedInstallationIds(HUMAN)).resolves.toEqual([77]);
+      await expect(ownedInstallationIds(other)).resolves.toEqual([88]);
     });
 
     it('keeps a valid linked account healthy across repeated refreshes without a replacement grant', async () => {

@@ -4283,6 +4283,36 @@ describe('monolith integration', () => {
       status: 'merge-requested',
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
     });
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      mergeApproval: { pullRequestNumber: 42, headSha: '1'.repeat(40) },
+    });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(
+      77,
+      101,
+      'owner/widgets',
+      42,
+      '1'.repeat(40),
+    );
+    await database.query(
+      `UPDATE corner_facts
+       SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text))
+       WHERE corner_id=$1`,
+      [cornerId, '2'.repeat(40)],
+    );
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
+      lifecycle: { pr: { number: 42, headSha: '2'.repeat(40) } },
+      mergeApproval: { pullRequestNumber: 42, headSha: '1'.repeat(40) },
+    });
+    await database.query(
+      `UPDATE corner_facts
+       SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text))
+       WHERE corner_id=$1`,
+      [cornerId, '1'.repeat(40)],
+    );
     await webhook('check_suite', 'corner-checks-passed', {
       ...base,
       action: 'completed',
@@ -4562,12 +4592,23 @@ describe('monolith integration', () => {
     ).toBe(true);
     expect(
       (
-        await database.query<{ approved_by: string; force: boolean }>(
-          `SELECT approved_by,force FROM corner_merge_approvals WHERE corner_id=$1`,
+        await database.query<{
+          approved_by: string;
+          force: boolean;
+          pull_request_number: number;
+          head_sha: string;
+        }>(
+          `SELECT approved_by,force,pull_request_number,head_sha
+           FROM corner_merge_approvals WHERE corner_id=$1`,
           [cornerId],
         )
       ).rows[0],
-    ).toEqual({ approved_by: HUMAN, force: true });
+    ).toEqual({
+      approved_by: HUMAN,
+      force: true,
+      pull_request_number: 42,
+      head_sha: '1'.repeat(40),
+    });
     const approvalAfterMerge = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,
     });

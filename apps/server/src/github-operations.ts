@@ -464,9 +464,17 @@ export class GitHubOperations {
       );
     }
     const approval = await this.database.query(
-      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force)
-       VALUES($1,$2,$3) ON CONFLICT(corner_id) DO NOTHING RETURNING corner_id`,
-      [input.cornerId, viewerId, input.force === true],
+      `INSERT INTO corner_merge_approvals(
+         corner_id,approved_by,force,pull_request_number,head_sha
+       ) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(corner_id) DO UPDATE SET
+         approved_by=EXCLUDED.approved_by,force=EXCLUDED.force,
+         pull_request_number=EXCLUDED.pull_request_number,head_sha=EXCLUDED.head_sha,
+         approved_at=now()
+       WHERE corner_merge_approvals.pull_request_number IS DISTINCT FROM EXCLUDED.pull_request_number
+          OR corner_merge_approvals.head_sha IS DISTINCT FROM EXCLUDED.head_sha
+       RETURNING corner_id`,
+      [input.cornerId, viewerId, input.force === true, pullRequest.number, pullRequest.headSha],
     );
     if (!approval.rowCount) {
       return { status: 'already-requested' as const, pullRequestUrl: pullRequest.url };
@@ -477,6 +485,7 @@ export class GitHubOperations {
         Number(target.repository_id),
         target.full_name,
         pullRequest.number,
+        pullRequest.headSha,
       );
       if (target.feature_branch) {
         await this.app.deleteBranch(
@@ -488,8 +497,9 @@ export class GitHubOperations {
       }
     } catch (error) {
       await this.database.query(
-        `DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND approved_by=$2`,
-        [input.cornerId, viewerId],
+        `DELETE FROM corner_merge_approvals
+         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=$3 AND head_sha=$4`,
+        [input.cornerId, viewerId, pullRequest.number, pullRequest.headSha],
       );
       throw error;
     }

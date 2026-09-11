@@ -563,8 +563,12 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   approved_by text NOT NULL REFERENCES identities(id),
   force boolean NOT NULL DEFAULT false,
+  pull_request_number integer,
+  head_sha text,
   approved_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
+ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,

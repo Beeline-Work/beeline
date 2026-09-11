@@ -985,7 +985,7 @@ esac
     expect(unifiedWorkflow).toContain('createWorkflowDispatch');
     expect(unifiedWorkflow).toContain('release_sha: process.env.RELEASE_SHA');
     expect(unifiedWorkflow).toContain('unified-release-state-${process.env.RELEASE_ID}');
-    expect(unifiedWorkflow).toContain('release SHA is not current main');
+    expect(unifiedWorkflow).toContain('release SHA is not a commit on main');
     expect(unifiedWorkflow).not.toContain('maxFailures < 3');
     expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
     expect(deliveryIndexScript).toContain('`${rangeStart}..${head}`');

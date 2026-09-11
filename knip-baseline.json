@@ -36,7 +36,6 @@
     "exports:apps/mobile/sources/auth/buzz-identity-storage.ts:clearRelayUrl",
     "exports:apps/mobile/sources/auth/github-auth-session.ts:isGitHubSignInCallbackUrl",
     "exports:apps/mobile/sources/buzz/agent-display.ts:canIdentifyAgent",
-    "exports:apps/mobile/sources/buzz/corners.ts:cornerGlyphForStatus",
     "exports:apps/mobile/sources/buzz/corners.ts:isCornerActive",
     "exports:apps/mobile/sources/buzz/corners.ts:isCornerNeedsYou",
     "exports:apps/mobile/sources/buzz/corners.ts:resolveCornerLifecycleStatus",

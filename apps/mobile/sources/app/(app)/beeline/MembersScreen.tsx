@@ -25,10 +25,9 @@ import {
 } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
-import { fallbackMemberHandle } from '@/buzz/member-display';
 import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -96,30 +95,10 @@ function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean 
   return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
 }
 
-function memberMetaLine(
-  identity: { handle?: string; pubkey: string },
-  role: WorkspaceRole,
-): string {
-  return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)} · ${role}`;
-}
-
 function ownerByline(
   owner: NonNullable<WorkspaceView['agents'][number]['owner']>,
 ): string | undefined {
   return owner.handle ? `by @${owner.handle}` : undefined;
-}
-
-/** Agent roster rows use the address that can actually mention the agent. */
-function agentHandle(identity: { handle?: string; pubkey: string }): string {
-  return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)}`;
-}
-
-/** Agent rows spend their three metadata slots on identity, runtime, and ownership. */
-function agentMetaLine(agent: WorkspaceView['agents'][number]): string {
-  const name = agentHandle(agent.identity);
-  const model = agent.model ?? UNSET_VALUE;
-  const owner = agent.owner ? ownerByline(agent.owner) : undefined;
-  return [name, model, owner].filter((part): part is string => part !== undefined).join(' · ');
 }
 
 const ROLE_LABELS: Record<WorkspaceRole, string> = {
@@ -844,30 +823,22 @@ export default function BuzzMembers() {
               const open = openPersonPubkey === member.identity.pubkey;
               return (
                 <View key={member.identity.pubkey}>
-                  <TouchableOpacity
+                  <MemberRosterRow
+                    avatarUrl={member.identity.avatar}
                     disabled={!hasDetail || busy}
+                    divider="bottom"
+                    face={member.identity.face}
+                    handle={member.identity.handle}
+                    kind="human"
+                    name={member.identity.name}
                     onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
-                    style={styles.row}
+                    pubkey={member.identity.pubkey}
+                    role={member.role}
                     testID={`member-${member.identity.pubkey}-identity`}
-                  >
-                    <IdentityMark
-                      kind="human"
-                      seed={member.identity.pubkey}
-                      avatarUrl={member.identity.avatar}
-                      face={member.identity.face}
-                      name={member.identity.name}
-                      size={38}
-                    />
-                    <View style={styles.rowCopy}>
-                      <Text numberOfLines={1} style={styles.name}>
-                        {member.identity.name}
-                      </Text>
-                      <Text numberOfLines={1} style={styles.detail}>
-                        {memberMetaLine(member.identity, member.role)}
-                      </Text>
-                    </View>
-                    {hasDetail && <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>}
-                  </TouchableOpacity>
+                    trailing={
+                      hasDetail ? <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text> : undefined
+                    }
+                  />
                   {open && (
                     <View
                       style={styles.personDetail}
@@ -937,30 +908,21 @@ export default function BuzzMembers() {
               </TouchableOpacity>
             </View>
             {surface.agents.map((member) => (
-              <TouchableOpacity
+              <MemberRosterRow
+                avatarUrl={member.identity.avatar}
+                divider="bottom"
+                face={member.identity.face}
+                handle={member.identity.handle}
+                kind="agent"
                 key={member.identity.pubkey}
-                style={styles.row}
+                model={member.model}
+                name={member.identity.name}
                 onPress={() => void openAgent(member.identity.pubkey)}
+                ownerHandle={member.owner?.handle}
+                pubkey={member.identity.pubkey}
                 testID={`agent-${member.identity.pubkey}-identity`}
-              >
-                <IdentityMark
-                  kind="agent"
-                  seed={member.identity.pubkey}
-                  avatarUrl={member.identity.avatar}
-                  face={member.identity.face}
-                  name={member.identity.name}
-                  size={38}
-                />
-                <View style={styles.rowCopy}>
-                  <Text numberOfLines={1} style={styles.name}>
-                    {agentHandle(member.identity)}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.detail}>
-                    {agentMetaLine(member)}
-                  </Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </TouchableOpacity>
+                trailing={<Text style={styles.chevron}>›</Text>}
+              />
             ))}
           </View>
           {selectedAgent && (
@@ -1304,15 +1266,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     sectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
-    row: {
-      minHeight: hull.layout.row,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-      paddingHorizontal: hull.space.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
     rowCopy: { flex: 1, minWidth: 0 },
     name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },

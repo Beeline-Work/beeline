@@ -20,6 +20,10 @@ const settingsRow = readFileSync(
   'utf8',
 );
 const members = readFileSync(new URL('../MembersScreen.tsx', import.meta.url), 'utf8');
+const memberRow = readFileSync(
+  new URL('../../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
+  'utf8',
+);
 const account = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
 const workspace = readFileSync(new URL('./workspace.tsx', import.meta.url), 'utf8');
 
@@ -50,7 +54,10 @@ function declarations(block: string): string[] {
 describe('Settings reads as the Members page', () => {
   it('cuts the shared settings row to the Members row, declaration for declaration', () => {
     expect(declarations(styleBlock(settingsRow, 'row'))).toEqual(
-      declarations(styleBlock(members, 'row')),
+      [
+        ...declarations(styleBlock(memberRow, 'row')),
+        ...declarations(styleBlock(memberRow, 'dividerBottom')),
+      ].sort(),
     );
   });
 

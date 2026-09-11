@@ -2111,6 +2111,7 @@ describe('monolith integration', () => {
       ['𐐀@bee please inspect this.', []],
       ['@bee-𐐀 please inspect this.', []],
       ['Bee, please inspect this.', []],
+      ['@Bee please inspect this.', []],
       ['@beeline, please inspect this.', []],
     ] as const;
     for (const [index, [text, expected]] of cases.entries()) {
@@ -4835,7 +4836,7 @@ describe('monolith integration', () => {
       (
         await daemonOperation(
           'postRoomMessage',
-          { roomId: cornerId, text: 'I last answered this person.', mentionIds: [HUMAN] },
+          { roomId: cornerId, text: '@owner I last answered this person.' },
           peerToken,
         )
       ).status,
@@ -5481,12 +5482,12 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'human-mention-turn',
       triggerMessageId: '5'.repeat(64),
-      text: '@Owner Repository root files: README.md',
+      text: '@owner Repository root files: README.md',
       mentionIds: [unknown],
     });
     expect(reply.status).toBe(200);
     const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '@Owner%'`,
+      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '@owner%'`,
       [ROOM, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
@@ -5494,14 +5495,14 @@ describe('monolith integration', () => {
     expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
     const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
     expect(
-      projected.messages.find((message) => message.text.startsWith('@Owner'))?.mentionPubkeys,
+      projected.messages.find((message) => message.text.startsWith('@owner'))?.mentionPubkeys,
     ).toEqual([HUMAN]);
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',
       expect.objectContaining({
         roomId: ROOM,
-        text: 'Bee: @Owner Repository root files: README.md',
+        text: 'Bee: @owner Repository root files: README.md',
       }),
     );
   });
@@ -5509,7 +5510,7 @@ describe('monolith integration', () => {
   it('routes an exact model-written agent tag resolved at the shared write boundary', async () => {
     const peer = 'f'.repeat(64);
     await database.query(
-      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','fuckface')`,
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Peer','retired-peer')`,
       [peer],
     );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [peer, HUMAN]);
@@ -5520,9 +5521,19 @@ describe('monolith integration', () => {
     );
     const peerExchange = await auth.createDaemonExchange(peer);
     const peerToken = (await auth.exchangeDaemonToken(peerExchange.exchangeToken))!.daemonToken;
+    await database.query(`UPDATE identities SET handle='fuckface' WHERE id=$1`, [peer]);
+    const spoofed = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      text: 'Peer should not receive this untagged message.',
+      mentionIds: [peer],
+    });
+    expect(spoofed.status).toBe(200);
+    const spoofedBody = (await spoofed.json()) as { id: string; mentionIds: string[] };
+    expect(spoofedBody.mentionIds).toEqual([]);
     const reply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
-      text: '@fuckface investigate the failed build.',
+      text: '@bee cannot self-route. @retired-peer and @FUCKFACE are stale. @fuckface investigate the failed build.',
+      mentionIds: [AGENT],
     });
     expect(reply.status).toBe(200);
     const body = (await reply.json()) as { id: string; mentionIds: string[] };
@@ -5540,6 +5551,7 @@ describe('monolith integration', () => {
     expect(inbox.items).toContainEqual(
       expect.objectContaining({ id: body.id, mentionIds: [peer] }),
     );
+    expect(inbox.items).not.toContainEqual(expect.objectContaining({ id: spoofedBody.id }));
   });
 
   it('delivers every human an agent tags, with the push a human-authored tag gets', async () => {
@@ -5585,11 +5597,8 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'two-human-tags-turn',
       triggerMessageId: '5'.repeat(64),
-      // The reply's resolution order, which is alias length descending: the
-      // legacy `a_` spelling of the owner's handle sorts ahead of the peer's
-      // correct one, so the peer was the tag the old per-turn cap threw away.
-      text: '@a_lunchboxfortwo here is where things stand.\n@bananaman614305 you are up next.',
-      mentionIds: [HUMAN, human2],
+      text: '@owner here is where things stand.\n@bananaman614305 you are up next.',
+      mentionIds: [AGENT],
     });
     expect(reply.status).toBe(200);
     // The agent's own durable reply — a server-authored system line about the
@@ -5682,7 +5691,7 @@ describe('monolith integration', () => {
     const reply = await daemonOperation('postRoomMessage', {
       roomId: cornerId,
       requestId: 'corner-complete-tag-done',
-      text: '@Owner all done, merging now.',
+      text: '@owner all done, merging now.',
       mentionIds: [HUMAN],
     });
     expect(reply.status).toBe(200);

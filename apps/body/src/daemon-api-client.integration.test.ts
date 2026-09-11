@@ -25,11 +25,7 @@ import { GitHubOperations } from '../../server/src/github-operations.js';
 import { ConnectionPresence } from '../../server/src/connection-presence.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { AcpClient } from './acp.js';
-import {
-  agentReplyMentionIds,
-  isScheduledPrompt,
-  MonolithRoomTurnLoop,
-} from './monolith-room-turn.js';
+import { isScheduledPrompt, MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_ID,
@@ -90,6 +86,7 @@ describe('daemon API client against the local monolith', () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
     const client = new DaemonApiClient(origin, daemonToken, AGENT);
+    await database.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`, [HUMAN]);
 
     await prepareTurn(client, 'c'.repeat(64));
     await expect(
@@ -97,48 +94,10 @@ describe('daemon API client against the local monolith', () => {
         roomId: ROOM,
         requestId: 'c'.repeat(64),
         generationId: 'generation-1',
-        text: 'Please review this.',
-        mentionIds: [HUMAN, 'missing-member'],
+        text: '@lunchboxfortwo Please review this.',
+        mentionIds: ['missing-member'],
       }),
     ).resolves.toMatchObject({ mentionIds: [HUMAN] });
-  });
-
-  it('routes model-written peer names through validated agent mention ids', () => {
-    const peer = 'peer-agent';
-    const roster = {
-      members: [
-        { identityId: AGENT, kind: 'agent' as const, name: 'Bee', role: 'member' as const },
-        {
-          identityId: peer,
-          kind: 'agent' as const,
-          name: 'Codex',
-          handle: 'codex-helper',
-          role: 'member' as const,
-          soul: {
-            name: 'Clockwork',
-            instructions: '',
-            avatarSeed: peer,
-            authoredBy: HUMAN,
-            updatedAt: 1,
-          },
-        },
-        {
-          identityId: HUMAN,
-          kind: 'human' as const,
-          name: 'Owner',
-          handle: 'lunchboxfortwo',
-          role: 'owner' as const,
-        },
-      ],
-    };
-
-    expect(agentReplyMentionIds('@codex what time is it?', roster, AGENT)).toEqual([]);
-    expect(agentReplyMentionIds('Please ask @Clockwork.', roster, AGENT)).toEqual([]);
-    expect(agentReplyMentionIds('@codex-helper what time is it?', roster, AGENT)).toEqual([peer]);
-    expect(agentReplyMentionIds('Mail codex@example.com', roster, AGENT)).toEqual([]);
-    expect(agentReplyMentionIds('@Owner please review', roster, AGENT)).toEqual([HUMAN]);
-    expect(agentReplyMentionIds('@a_lunchboxfortwo please review', roster, AGENT)).toEqual([HUMAN]);
-    expect(agentReplyMentionIds('Unknown @Stranger stays plain text', roster, AGENT)).toEqual([]);
   });
 
   it.skipIf(process.env.BEELINE_REAL_ROOM_CAPABILITY_PROOF !== '1')(

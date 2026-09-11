@@ -96,6 +96,8 @@ const rosterSections = {
       handle: 'ox',
       kind: 'agent' as const,
       agent: { pubkey: OX, displayName: 'Ox', face: 'octopus' },
+      model: 'Sonnet',
+      ownerHandle: 'ana',
     },
   ],
 };
@@ -160,24 +162,39 @@ describe('RoomRosterSheet', () => {
     expect(renderSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('reads like the Members page: counted section heads, name plus one @handle · role line, ring only', () => {
-    const renderer = render(sheet());
-    expect(
-      renderer.root.findAllByProps({ testID: 'room-roster-people-head' }).at(-1)!.props.children,
-    ).toEqual(['People', ' ', 1]);
-    expect(
-      renderer.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!.props.children,
-    ).toEqual(['Agents', ' ', 1]);
+  it.each([
+    ['Room', null],
+    ['corner', 'parent-room'],
+  ])(
+    'shows shared human-role and agent-model/owner rows inside a %s',
+    (_surface, parentChannelId) => {
+      const renderer = render(sheet({ parentChannelId }));
+      expect(
+        renderer.root.findAllByProps({ testID: 'room-roster-people-head' }).at(-1)!.props.children,
+      ).toEqual(['People', ' ', 1]);
+      expect(
+        renderer.root.findAllByProps({ testID: 'room-roster-agents-head' }).at(-1)!.props.children,
+      ).toEqual(['Agents', ' ', 1]);
 
-    const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-    const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
-    expect(texts[0]).toBe('Ox');
-    expect(texts[1]).toEqual(['@', 'ox', ' · ', 'member', ' · online']);
-    // The gold ring is the only state mark: no status square, no kind word.
-    expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
-    expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
-    expect(agentRow.props.accessibilityLabel).toBe('Ox, agent, online, at ox');
-  });
+      const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
+      const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
+      expect(texts[0]).toBe('@ox');
+      expect(texts[1]).toBe('Sonnet · by @ana');
+      // The gold ring is the only state mark: no status square, no kind word.
+      expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
+      expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
+      expect(agentRow.props.accessibilityLabel).toBe('@ox, agent, online, at ox');
+
+      const personRow = renderer.root
+        .findAllByProps({ testID: `room-roster-person-${ANA}` })
+        .at(-1)!;
+      const personTexts = personRow
+        .findAllByType('Text' as any)
+        .map((node: any) => node.props.children);
+      expect(personTexts[0]).toBe('@ana');
+      expect(personTexts[1]).toBe('admin');
+    },
+  );
 
   it('draws each agent its assigned creature, not one hashed from the key', () => {
     // The server hands out the animal, the name and the soul together; a
@@ -195,32 +212,31 @@ describe('RoomRosterSheet', () => {
   it('rings an agent only while it is working, never for a presence lease alone', () => {
     // C77: Candy's helper renewed its presence lease every few seconds while
     // every turn ended `failed`; the ring pulsed on an agent that could not
-    // answer. The ring reads the working record; the lowercase presence word
-    // at the end of the meta line reads the lease.
+    // answer. The ring reads the working record; accessibility reads presence.
     const markFor = (renderer: ReactTestRenderer) =>
       renderer.root
         .findAllByProps({ testID: `room-roster-agent-${OX}` })
         .at(-1)!
         .findByType('IdentityMark' as any).props;
-    const metaFor = (renderer: ReactTestRenderer) =>
-      renderer.root
-        .findAllByProps({ testID: `room-roster-agent-${OX}` })
-        .at(-1)!
-        .findAllByType('Text' as any)[1].props.children;
-
     // Working: ring on.
     expect(
       markFor(render(sheet({ onlineByPubkey: { [OX]: true }, workingByPubkey: { [OX]: true } })))
         .alive,
     ).toBe(true);
-    // Idle but present (lease live): ring off, the row still says online.
+    // Idle but present (lease live): ring off, accessibility still says online.
     const idle = render(sheet({ onlineByPubkey: { [OX]: true }, workingByPubkey: {} }));
     expect(markFor(idle).alive).toBe(false);
-    expect(metaFor(idle)).toEqual(['@', 'ox', ' · ', 'member', ' · online']);
-    // Absent: ring off, the row says offline.
+    expect(
+      idle.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!.props
+        .accessibilityLabel,
+    ).toContain(', online,');
+    // Absent: ring off, accessibility says offline.
     const absent = render(sheet({ onlineByPubkey: {}, workingByPubkey: {} }));
     expect(markFor(absent).alive).toBe(false);
-    expect(metaFor(absent)).toEqual(['@', 'ox', ' · ', 'member', ' · offline']);
+    expect(
+      absent.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!.props
+        .accessibilityLabel,
+    ).toContain(', offline,');
   });
 
   it('keeps remove off the list: an owner opens a row to find its one control', () => {

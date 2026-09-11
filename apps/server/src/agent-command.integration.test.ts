@@ -597,6 +597,27 @@ it('never reopens terminal commands and never accepts missing generation claims'
   await result(c!, 'Terminal');
   await expect(claim(c!, 'another')).rejects.toThrow();
 });
+it('settles a failed command instead of redelivering it after its lease expires', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!);
+  await daemon.execute(
+    'postAgentTurnReceipt',
+    {
+      roomId: R,
+      requestId: c!.turnRequestId,
+      generationId: 'g1',
+      status: 'failed',
+      reason: 'provider failed',
+    },
+    A,
+  );
+  await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [
+    c!.id,
+  ]);
+  expect(await commands()).toEqual([]);
+  await expect(claim(c!, 'retry')).rejects.toThrow('conflict');
+});
 it('rechecks tagged agent membership at final commit', async () => {
   await send('@hoots');
   const [c] = await commands();

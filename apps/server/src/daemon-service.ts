@@ -1052,8 +1052,14 @@ export class DaemonService {
         request_id: string | null;
         close_requested: boolean;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
+        pull_request_number: number | null;
+        approval_head_sha: string | null;
       }>(
-        `SELECT objective,feature_branch,request_id,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`,
+        `SELECT fact.objective,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+           approval.pull_request_number,approval.head_sha approval_head_sha
+         FROM corner_facts fact
+         LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
+         WHERE fact.corner_id=$1`,
         [cornerId],
       )
     ).rows[0];
@@ -1064,6 +1070,14 @@ export class DaemonService {
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
+      ...(row?.pull_request_number && row.approval_head_sha
+        ? {
+            mergeApproval: {
+              pullRequestNumber: row.pull_request_number,
+              headSha: row.approval_head_sha,
+            },
+          }
+        : {}),
     };
   }
   private async repository(roomId: string, agentId: string) {

@@ -197,7 +197,9 @@ describe('GitHub-only account and repository access', () => {
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
 
-    await expect(app.mergePullRequest(77, 9, 'acme/beeline', 42)).resolves.toBeUndefined();
+    await expect(
+      app.mergePullRequest(77, 9, 'acme/beeline', 42, 'a'.repeat(40)),
+    ).resolves.toBeUndefined();
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
       body: JSON.stringify({
         repository_ids: [9],
@@ -209,7 +211,7 @@ describe('GitHub-only account and repository access', () => {
       expect.objectContaining({
         method: 'PUT',
         headers: expect.objectContaining({ authorization: 'Bearer merge-token' }),
-        body: JSON.stringify({ merge_method: 'squash' }),
+        body: JSON.stringify({ merge_method: 'squash', sha: 'a'.repeat(40) }),
       }),
     ]);
   });

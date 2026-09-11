@@ -1102,6 +1102,18 @@ async function closeCorner(): Promise<string> {
   return JSON.stringify({ cornerId, status: 'closed' });
 }
 
+export function mergeApprovalPending(
+  lifecycle: CornerLifecycleView | undefined,
+  approval: { pullRequestNumber: number; headSha: string } | undefined,
+): boolean {
+  return Boolean(
+    lifecycle?.pr &&
+    approval &&
+    approval.pullRequestNumber === lifecycle.pr.number &&
+    approval.headSha === lifecycle.pr.headSha,
+  );
+}
+
 async function prChecksStatus(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
@@ -1125,14 +1137,17 @@ async function prChecksStatus(): Promise<string> {
         })
       : [],
   );
-  // The server's webhook-owned check state is the verdict; the transcript's
-  // wording only stands in while the server carries none (never the agent's
-  // own narration, which the corner loop now drops).
+  // The server's webhook-owned check state is the verdict; transcript wording
+  // only stands in for checks while the server carries none. Merge approval is
+  // always the durable PR/head-bound server fact below.
   const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
   const serverVerdict = checksVerdictFromLifecycle(lifecycle);
   let checks: 'passed' | 'failed' | 'pending' = serverVerdict ?? 'pending';
   let held = false;
-  let approvalPending = false;
+  const approvalPending = mergeApprovalPending(
+    lifecycle,
+    restore.mergeApproval as { pullRequestNumber: number; headSha: string } | undefined,
+  );
   let pullRequest: string | undefined = lifecycle?.pr?.url;
   const items = Array.isArray(conversation.items) ? conversation.items : [];
   for (const item of items) {
@@ -1147,16 +1162,9 @@ async function prChecksStatus(): Promise<string> {
     }
     const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
     if (url && !lifecycle?.pr?.url) pullRequest = url;
-    if (/\bapproval pending\b|\bmerge (?:approval )?requested\b/i.test(body)) {
-      approvalPending = true;
-    }
-    if (/\bapproval (?:completed|failed|cancelled)\b|\bpull request merged\b/i.test(body)) {
-      approvalPending = false;
-    }
     if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
       if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
       if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
-      if (/\bapprove(?:d)?\b|\bmerge (?:it|this|now)\b/i.test(body)) approvalPending = true;
     }
   }
   return JSON.stringify({

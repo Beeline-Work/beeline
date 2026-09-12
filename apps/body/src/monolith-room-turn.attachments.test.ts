@@ -121,7 +121,6 @@ async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) 
               createdAt: 1,
               type: 'message',
               body: 'What is in this photo and does the spec match?',
-              mentionIds: [agent.publicKey],
               attachments: [PHOTO, PDF],
             },
           ],

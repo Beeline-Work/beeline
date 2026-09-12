@@ -21,7 +21,7 @@ describe('delivery-driven presence', () => {
     database = new PgliteDatabase();
     await migrate(database);
     await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner',NULL),($2,'agent','Bee','bee')`,
       [HUMAN, AGENT],
     );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
@@ -53,9 +53,8 @@ describe('delivery-driven presence', () => {
   }
   async function message() {
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-      VALUES($1,$2,$3,'Hello',$4::jsonb)`,
-      [MESSAGE, ROOM, HUMAN, JSON.stringify([AGENT])],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Hello')`,
+      [MESSAGE, ROOM, HUMAN],
     );
     await presence.observe(ROOM);
   }
@@ -82,9 +81,8 @@ describe('delivery-driven presence', () => {
     expect((await body()).status).toBe('online');
     // The socket may have disappeared; the authenticated turn remains proof.
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-      VALUES($1,$2,$3,'Are you there?',$4::jsonb)`,
-      ['d'.repeat(64), ROOM, HUMAN, JSON.stringify([AGENT])],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Are you there?')`,
+      ['d'.repeat(64), ROOM, HUMAN],
     );
     await presence.observe(ROOM);
     await elapsed();

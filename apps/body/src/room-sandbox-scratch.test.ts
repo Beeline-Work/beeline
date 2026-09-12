@@ -93,7 +93,6 @@ describe('Room session sandbox — attach scratch root', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'send me a picture',
-                mentionIds: [agent.publicKey],
                 attachments: [],
               },
             ],

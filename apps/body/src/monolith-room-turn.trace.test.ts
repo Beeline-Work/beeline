@@ -120,7 +120,6 @@ async function runTurns(options: {
               createdAt: delivered,
               type: 'message',
               body: ask.body,
-              mentionIds: [agent.publicKey],
               attachments: [],
             },
           ],

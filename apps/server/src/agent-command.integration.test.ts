@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -38,13 +39,7 @@ async function claim(c: AgentCommand, generationId = 'g1') {
     c.agentId,
   );
 }
-const result = (
-  c: AgentCommand,
-  text: string,
-  mentionIds: string[] = [],
-  generationId = 'g1',
-  extra = {},
-) =>
+const result = (c: AgentCommand, text: string, generationId = 'g1', extra = {}) =>
   daemon.execute(
     'postRoomMessage',
     {
@@ -52,7 +47,6 @@ const result = (
       requestId: c.turnRequestId,
       generationId,
       text,
-      mentionIds,
       ...extra,
     },
     c.agentId,
@@ -150,7 +144,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
     const [first] = await commands(A, room);
     expect(first).toBeDefined();
     await claim(first!);
-    await result(first!, '@goosy please help', [B]);
+    await result(first!, '@goosy please help');
     const [delegated] = await commands(B, room);
     expect(delegated?.agentDepth).toBe(1);
     await claim(delegated!);
@@ -159,7 +153,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await send('@hoots explain tags', room);
     const [next] = await commands(A, room);
     await claim(next!);
-    await result(next!, 'Tag @goosy and Goosy answers', [B]);
+    await result(next!, 'Tag @goosy and Goosy answers');
     const [tagged] = await commands(B, room);
     expect(tagged).toBeDefined();
     await claim(tagged!);
@@ -182,7 +176,7 @@ describe.each([R, C])('server command authority in %s', (room) => {
       expect(c!.rootCommandId).toBe(root);
       await claim(c!);
       const target = c!.agentId === A ? B : A;
-      await result(c!, `@${target === A ? 'hoots' : 'goosy'} depth ${depth}`, [target]);
+      await result(c!, `@${target === A ? 'hoots' : 'goosy'} depth ${depth}`);
       const next = await commands(target, room);
       if (depth === 3) expect(next).toEqual([]);
       else c = next[0];
@@ -192,15 +186,15 @@ describe.each([R, C])('server command authority in %s', (room) => {
     await send('@hoots start', room);
     const [a] = await commands(A, room);
     await claim(a!);
-    const posted = await result(a!, '@goosy Delegation', [B]);
+    const posted = await result(a!, '@goosy Delegation');
     const [b] = await commands(B, room);
     await claim(b!);
-    const reply = await result(b!, 'Deliberate reply', [], 'g1', { replyToMessageId: posted.id });
+    const reply = await result(b!, 'Deliberate reply', 'g1', { replyToMessageId: posted.id });
     expect(await commands(A, room)).toEqual([]);
     await send('@goosy Start a tagged handoff', room);
     const fresh = (await commands(B, room))[0]!;
     await claim(fresh!);
-    const taggedReply = await result(fresh!, '@hoots Deliberate handoff', [A]);
+    const taggedReply = await result(fresh!, '@hoots Deliberate handoff');
     expect((await commands(A, room))[0]?.agentDepth).toBe(1);
     await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [B]);
     await phone.execute(
@@ -286,8 +280,8 @@ it('deduplicates human writes, claims and final results', async () => {
     ),
   );
   expect(attempts.every((a) => a.status === 'rejected')).toBe(true);
-  const one = await result(c!, '@goosy Done', [B]);
-  const two = await result(c!, '@goosy Done', [B]);
+  const one = await result(c!, '@goosy Done');
+  const two = await result(c!, '@goosy Done');
   expect(two.id).toBe(one.id);
   expect(await commands(B)).toHaveLength(1);
 });
@@ -302,7 +296,7 @@ it('redelivers the same expired command, rejects late generation and keeps succe
   expect((await commands())[0]?.id).toBe(c!.id);
   await claim(c!, 'g2');
   await expect(result(c!, 'Late')).rejects.toThrow('authority');
-  await result(c!, 'Current', [], 'g2');
+  await result(c!, 'Current', 'g2');
   await expect(result(c!, 'Late')).rejects.toThrow('authority');
 });
 it('heartbeats extend only the matching generation lease', async () => {
@@ -361,21 +355,24 @@ it('routes a validated agent tag when the final message is committed', async () 
   const [c] = await commands();
   await claim(c!);
   expect(await commands(B)).toEqual([]);
-  await result(c!, '@goosy please help', [B]);
+  await result(c!, '@goosy please help');
   expect(await commands(B)).toHaveLength(1);
 });
 it('does not trust a caller-supplied agent id without an exact tag', async () => {
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
-  const posted = await result(c!, '@GOOSY please help', [B]);
+  const posted = await result(c!, '@GOOSY please help');
   expect(await commands(B)).toEqual([]);
+  // `@GOOSY` is not how Goosy is spelled, so it names nobody — and there is no
+  // caller-supplied list that could disagree with the words.
   expect(
     (
-      await db.query<{ mention_ids: string[] }>(`SELECT mention_ids FROM messages WHERE id=$1`, [
-        posted.id,
-      ])
-    ).rows[0]?.mention_ids,
+      await db.query<{ tagged_ids: string[] }>(
+        `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m WHERE m.id=$1`,
+        [posted.id],
+      )
+    ).rows[0]?.tagged_ids,
   ).toEqual([]);
 });
 it('rolls final storage back if creating the next command fails', async () => {
@@ -385,14 +382,14 @@ it('rolls final storage back if creating the next command fails', async () => {
   await db.query(`CREATE FUNCTION refuse_command() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected dispatch failure'; END $$;
  CREATE TRIGGER refuse_command BEFORE INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION refuse_command();`);
   try {
-    await expect(result(c!, '@goosy Atomic', [B])).rejects.toThrow('injected');
+    await expect(result(c!, '@goosy Atomic')).rejects.toThrow('injected');
     expect((await db.query(`SELECT 1 FROM messages WHERE text='Atomic'`)).rowCount).toBe(0);
   } finally {
     await db.query(
       `DROP TRIGGER refuse_command ON agent_commands; DROP FUNCTION refuse_command();`,
     );
   }
-  await result(c!, '@goosy Atomic', [B]);
+  await result(c!, '@goosy Atomic');
   expect(await commands(B)).toHaveLength(1);
 });
 it('gives old helpers only projected commands and refuses unsolicited old output', async () => {
@@ -401,7 +398,9 @@ it('gives old helpers only projected commands and refuses unsolicited old output
   const a = await daemon.execute('getRoomInbox', { roomId: R, startAtLatest: true }, A);
   const b = await daemon.execute('getRoomInbox', { roomId: R, startAtLatest: true }, B);
   expect(a.items).toHaveLength(1);
-  expect(a.items[0]?.mentionIds).toEqual([A]);
+  // The item reached A because the server routed it to A; the row itself
+  // carries no reader to re-check that against.
+  expect(a.items[0]?.authorId).toBe(H);
   expect(b.items).toEqual([]);
   await expect(
     daemon.execute(
@@ -736,7 +735,7 @@ it('rechecks tagged agent membership at final commit', async () => {
     R,
     B,
   ]);
-  await result(c!, '@goosy no target remains', [B]);
+  await result(c!, '@goosy no target remains');
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [B])).rowCount).toBe(0);
 });
 it('binds emitted events to the issuing command when agents share a human request', async () => {

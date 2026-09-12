@@ -31,16 +31,12 @@ export class TurnStoppedError extends Error {
  * The stopped turn is named by ITS OWN request id and never by "whatever is
  * running", so a stop pressed as one turn ends can never silence the next one.
  */
-export function turnStopRequestId(
-  item: {
-    type: string;
-    mentionIds: readonly string[];
-    requestId?: string;
-    systemEvent?: SystemEvent;
-  },
-  agentId: string,
-): string | undefined {
-  if (item.type !== 'system' || !item.mentionIds.includes(agentId)) return undefined;
+export function turnStopRequestId(item: {
+  type: string;
+  requestId?: string;
+  systemEvent?: SystemEvent;
+}): string | undefined {
+  if (item.type !== 'system') return undefined;
   if (item.systemEvent?.kind !== 'turn-cancelled') return undefined;
   return item.requestId || undefined;
 }

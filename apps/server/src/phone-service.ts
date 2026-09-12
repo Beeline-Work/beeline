@@ -56,7 +56,11 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
-import { resolveCurrentMemberMentions, typedMentionHandles } from './message-mentions.js';
+import {
+  resolveCurrentMemberMentions,
+  taggedIdentityIdsSql,
+  typedMentionHandles,
+} from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
@@ -169,7 +173,8 @@ interface MessageRow {
   text: string;
   presentation: RoomViewMessage['presentation'];
   attachments: unknown[];
-  mention_ids: string[];
+  /** Derived on read from the row's text and the Room's membership, not stored. */
+  tagged_ids: string[];
   reply_to_message_id: string | null;
   root_message_id: string | null;
   request_id: string | null;
@@ -384,7 +389,7 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
           ),
         }
       : {}),
-    ...(row.mention_ids.length ? { mentionPubkeys: row.mention_ids } : {}),
+    ...(row.tagged_ids.length ? { mentionPubkeys: row.tagged_ids } : {}),
     ...(row.reply_to_message_id
       ? {
           reply: {
@@ -513,7 +518,8 @@ export class PhoneService {
     const row = (
       await this.database.query<MessageRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
-           author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+           author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+           ${taggedIdentityIdsSql('message')} tagged_ids
          FROM rooms room
          JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
            AND member.removed_at IS NULL
@@ -976,7 +982,8 @@ export class PhoneService {
             >(
               `SELECT m.*,
                i.kind author_kind,i.name author_name,i.handle author_handle,
-               i.avatar author_avatar,i.face_id author_face
+               i.avatar author_avatar,i.face_id author_face,
+               ${taggedIdentityIdsSql('m')} tagged_ids
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
                AND (
@@ -1225,7 +1232,8 @@ export class PhoneService {
            SELECT agent_id,created_at FROM projected_turn_rows WHERE status='working'
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
-             i.avatar author_avatar,i.face_id author_face
+             i.avatar author_avatar,i.face_id author_face,
+             ${taggedIdentityIdsSql('m')} tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
@@ -1237,7 +1245,8 @@ export class PhoneService {
            ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
-             i.avatar author_avatar,i.face_id author_face
+             i.avatar author_avatar,i.face_id author_face,
+             '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
@@ -2392,20 +2401,19 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
-    const mentions = JSON.stringify(mentionResolution.mentionIds);
-    const values = [id, input.roomId, author, input.text, attachments, mentions];
+    const noticeAgentIds = await this.unansweredMentionTargets(input.roomId, author, input.text);
+    const values = [id, input.roomId, author, input.text, attachments];
     return this.database.transaction(async (database) => {
       const inserted = await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb) ON CONFLICT(id) DO NOTHING`,
+        `INSERT INTO messages(id,room_id,author_id,text,attachments)
+       VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT(id) DO NOTHING`,
         values,
       );
       if (!inserted.rowCount) {
         const retry = await database.query(
           `SELECT 1 FROM messages
          WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
-           AND attachments=$5::jsonb AND mention_ids=$6::jsonb
+           AND attachments=$5::jsonb
            AND reply_to_message_id IS NULL`,
           values,
         );
@@ -2416,7 +2424,7 @@ export class PhoneService {
         };
       }
       await routeHumanMessage(database, id);
-      await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
+      await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -2516,33 +2524,31 @@ export class PhoneService {
     await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
-    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
-    const mentionIds = new Set(mentionResolution.mentionIds);
-    if (parent.rows[0].direct && parent.rows[0].author_kind === 'agent') {
-      mentionIds.add(parent.rows[0].author_id);
-    }
+    // A reply in a DM addresses the agent it answers without naming it. That
+    // is the DM's own doing, not a tag: `routeHumanMessage` wakes every
+    // participant of a direct Room, so the address survives without a list.
+    const noticeAgentIds = await this.unansweredMentionTargets(input.roomId, author, input.text);
     const values = [
       id,
       input.roomId,
       author,
       input.text,
       JSON.stringify(input.attachments ?? []),
-      JSON.stringify([...mentionIds]),
       input.parentMessageId,
       parent.rows[0].root_message_id ?? input.parentMessageId,
     ];
     return this.database.transaction(async (database) => {
       const inserted = await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,attachments,mention_ids,reply_to_message_id,root_message_id)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT(id) DO NOTHING`,
+        `INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) ON CONFLICT(id) DO NOTHING`,
         values,
       );
       if (!inserted.rowCount) {
         const retry = await database.query(
           `SELECT 1 FROM messages
          WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
-           AND attachments=$5::jsonb AND mention_ids=$6::jsonb
-           AND reply_to_message_id=$7 AND root_message_id=$8`,
+           AND attachments=$5::jsonb
+           AND reply_to_message_id=$6 AND root_message_id=$7`,
           values,
         );
         if (!retry.rowCount) throw new Error('messageId is invalid');
@@ -2552,7 +2558,7 @@ export class PhoneService {
         };
       }
       await routeHumanMessage(database, id);
-      await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
+      await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -2609,10 +2615,10 @@ export class PhoneService {
   private async noteUnansweredMentions(
     roomId: string,
     senderId: string,
-    mentionIds: readonly string[],
+    agentIds: readonly string[],
     afterMessageId?: string,
   ): Promise<void> {
-    if (!mentionIds.length) return;
+    if (!agentIds.length) return;
     try {
       const sender = (
         await this.database.query<{ kind: 'human' | 'agent'; handle: string | null }>(
@@ -2654,7 +2660,7 @@ export class PhoneService {
          LEFT JOIN agents a ON a.agent_id=identity.id
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'`,
-        [[...mentionIds], roomId, AGENT_REACHABLE_HORIZON_MS],
+        [[...agentIds], roomId, AGENT_REACHABLE_HORIZON_MS],
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
@@ -2745,20 +2751,27 @@ export class PhoneService {
       consequence: 'its helper is offline',
     };
   }
-  private async resolveMessageMentions(
+  /**
+   * The agents this message tries to reach, for the sole purpose of saying so
+   * when one of them cannot answer. This is NOT the message's address — who a
+   * message tags is read from its text on demand (`message-mentions.ts`) and
+   * never recorded. It is the wider set worth explaining: an agent named in a
+   * corner it has not joined is unreachable in a way the writer should hear
+   * about, and a tag alone would say nothing.
+   */
+  private async unansweredMentionTargets(
     roomId: string,
     author: string,
     text: string,
-  ): Promise<{ mentionIds: readonly string[]; noticeAgentIds: readonly string[] }> {
+  ): Promise<readonly string[]> {
     const authorKind = (
       await this.database.query<{ kind: 'human' | 'agent' }>(
         `SELECT kind FROM identities WHERE id=$1`,
         [author],
       )
     ).rows[0]?.kind;
-    if (authorKind !== 'human') return { mentionIds: [], noticeAgentIds: [] };
+    if (authorKind !== 'human') return [];
     const resolvedMembers = await resolveCurrentMemberMentions(this.database, roomId, text, author);
-    const mentions = new Set(resolvedMembers.map((member) => member.id));
     const typedHandles = typedMentionHandles(text);
     const noticeAgentIds = new Set(
       resolvedMembers.filter((member) => member.kind === 'agent').map((member) => member.id),
@@ -2781,11 +2794,10 @@ export class PhoneService {
     );
     // A private two-member DM with one agent is already an addressed surface:
     // every human message in it is for that sole helper, including the first
-    // untagged message and a reply to the human's own row. Persist the address
-    // as an ordinary mention so inbox replay after a daemon restart has the
-    // same meaning as live delivery.
+    // untagged message and a reply to the human's own row. The address is the
+    // Room, not a tag, and `routeHumanMessage` reads it from the participant
+    // list — so this only decides whether an unreachable helper is worth a word.
     if (directAgents.rows.length === 1) {
-      mentions.add(directAgents.rows[0]!.id);
       noticeAgentIds.add(directAgents.rows[0]!.id);
     }
     const absentCornerAgents = await this.database.query<{ id: string; handle: string }>(
@@ -2813,7 +2825,7 @@ export class PhoneService {
       const candidates = absentByHandle.get(handle);
       if (candidates?.length === 1) noticeAgentIds.add(candidates[0]!);
     }
-    return { mentionIds: [...mentions], noticeAgentIds: [...noticeAgentIds] };
+    return [...noticeAgentIds];
   }
   /**
    * Stop a turn in progress, at the asker's word.
@@ -2888,7 +2900,7 @@ export class PhoneService {
         object: { text: agent.name, id: agent.pubkey },
         consequence: 'turn cancelled',
         kind: 'turn-cancelled',
-        mentions: [input.agentId],
+        wakes: [input.agentId],
         requestId: input.requestId,
       });
     });
@@ -3782,7 +3794,7 @@ export class PhoneService {
           )
         ).rows[0]?.command_id,
         object: `${grant.kind} ${grant.target}`,
-        mentions: [grant.agent_id],
+        wakes: [grant.agent_id],
         cardType: 'grant-decision',
         card: { grantId: input.grantId, status },
       });
@@ -4260,7 +4272,9 @@ export class PhoneService {
       );
 
       // Authored content survives as the shared record, anonymised to the one
-      // hidden tombstone author; mentions of the deleted ids are stripped.
+      // hidden tombstone author. Nothing strips the tags those people were
+      // named by: a tag is read against current membership, and a deleted
+      // account is no longer a member, so its old @handle already names nobody.
       await database.query(
         `INSERT INTO identities(id,kind,name,hidden_from_roster,github_subject)
          VALUES ($1,'human',$2,true,NULL) ON CONFLICT (id) DO NOTHING`,
@@ -4270,11 +4284,6 @@ export class PhoneService {
         gone,
         DELETED_ACCOUNT_IDENTITY_ID,
       ]);
-      await database.query(
-        `UPDATE messages SET mention_ids=mention_ids-$1::text[]
-         WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(mention_ids) m WHERE m=ANY($1))`,
-        [gone],
-      );
 
       // DM Rooms nobody else relies on (person↔own-agent) go with the account;
       // the rest lose the deleted participant from their participant list.
@@ -4805,7 +4814,8 @@ export class PhoneService {
       await this.database.query<MessageRow>(
         `SELECT m.*,
            i.kind author_kind,i.name author_name,i.handle author_handle,
-           i.avatar author_avatar,i.face_id author_face
+           i.avatar author_avatar,i.face_id author_face,
+           ${taggedIdentityIdsSql('m')} tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
            AND m.card_type IS DISTINCT FROM 'grant-decision'
@@ -4872,7 +4882,8 @@ export class PhoneService {
     const transcriptRowsPromise = this.database.query<MessageRow>(
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
-         i.avatar author_avatar,i.face_id author_face
+         i.avatar author_avatar,i.face_id author_face,
+         ${taggedIdentityIdsSql('m')} tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
          AND m.card_type IS DISTINCT FROM 'grant-decision'
@@ -4883,7 +4894,8 @@ export class PhoneService {
     const liveRowsPromise = this.database.query<MessageRow>(
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
-         i.avatar author_avatar,i.face_id author_face
+         i.avatar author_avatar,i.face_id author_face,
+         '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
@@ -4894,7 +4906,8 @@ export class PhoneService {
       ? this.database.query<MessageRow>(
           `SELECT m.*,
              i.kind author_kind,i.name author_name,i.handle author_handle,
-             i.avatar author_avatar,i.face_id author_face
+             i.avatar author_avatar,i.face_id author_face,
+             '{}'::text[] tagged_ids
            FROM messages m JOIN identities i ON i.id=m.author_id
            WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
              AND EXISTS(

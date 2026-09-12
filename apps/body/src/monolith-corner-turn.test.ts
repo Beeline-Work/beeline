@@ -1914,6 +1914,7 @@ describe('thin monolith corner turn', () => {
     );
     const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    expect(repositorySystemPrompt).not.toContain('Proposed corner:');
     expect(repositorySystemPrompt.indexOf(CORNER_AUTHOR_CONTRACT)).toBeLessThan(
       repositorySystemPrompt.indexOf(cornerMergeInstruction(true)),
     );

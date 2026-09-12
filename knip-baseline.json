@@ -16,8 +16,6 @@
     "exports:apps/body/src/config.ts:WRITE_TOOL_NAMES",
     "exports:apps/body/src/config.ts:hasLlmCredentials",
     "exports:apps/body/src/config.ts:resolveBinaries",
-    "exports:apps/body/src/corner-checks.ts:completedCheckNote",
-    "exports:apps/body/src/corner-checks.ts:isCheckStartNote",
     "exports:apps/body/src/daemon-api-client.ts:laterInboxCursor",
     "exports:apps/body/src/external-mcp-capabilities.ts:SQUIRE_MCP_PACKAGE",
     "exports:apps/body/src/external-mcp-capabilities.ts:squireArgumentsDigest",

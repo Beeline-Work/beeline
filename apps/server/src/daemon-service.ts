@@ -150,6 +150,9 @@ export class DaemonService {
     private readonly authorizedCommand?: CommandRow,
     private readonly livePaintDiagnostics = false,
     private readonly liveDiagnosticServerInstance?: string,
+    private readonly prChecksStatus?: (
+      input: Input<'getPrChecksStatus'>,
+    ) => Promise<Output<'getPrChecksStatus'>>,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -269,6 +272,7 @@ export class DaemonService {
           command,
           this.livePaintDiagnostics,
           this.liveDiagnosticServerInstance,
+          this.prChecksStatus,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -434,6 +438,9 @@ export class DaemonService {
           (input as Input<'listRoomCorners'>).roomId,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getPrChecksStatus':
+        if (!this.prChecksStatus) throw new Error('GitHub PR checks service unavailable');
+        return (await this.prChecksStatus(input as Input<'getPrChecksStatus'>)) as Output<Name>;
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
@@ -3023,6 +3030,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getTargetAgentAuthority: true,
   listRoomCorners: true,
   getCornerRestoreState: true,
+  getPrChecksStatus: true,
   getCornerCloseRequests: true,
   waitForCornerWake: true,
   listUntrackedCorners: true,

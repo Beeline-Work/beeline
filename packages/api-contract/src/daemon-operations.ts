@@ -109,6 +109,15 @@ export type DaemonOperationMap = {
   getTargetAgentAuthority: Operation<TargetAgentAuthorityInput, AuthorityDecisionResult>;
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
+  getPrChecksStatus: Operation<
+    CornerInput & { pullRequest?: number | string },
+    {
+      checks: 'passed' | 'failed' | 'pending';
+      pullRequest: string;
+      headSha: string;
+      approvalPending: boolean;
+    }
+  >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
   waitForCornerWake: Operation<CornerInput, CornerWakeResult>;

@@ -1489,11 +1489,6 @@ export default function BuzzChat() {
     : isDirectMessage
       ? 'dm'
       : 'room';
-  const composerPlaceholder = isCorner
-    ? `Steer this ${CORNER_LABEL}…`
-    : isDirectMessage
-      ? `Message ${displayRoomName}…`
-      : `Start this ${ROOM_LABEL}…`;
   const focusComposer = useCallback(() => {
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
@@ -4201,7 +4196,6 @@ export default function BuzzChat() {
                       : nextSelection,
                   );
                 }}
-                placeholder={composerPlaceholder}
                 onSend={
                   slashMenuVisible
                     ? () => {

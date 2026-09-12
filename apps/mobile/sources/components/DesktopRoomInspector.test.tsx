@@ -365,9 +365,7 @@ describe('DesktopRoomInspector work pane', () => {
       'Repair the complete boundary fixture without truncating this objective.',
     );
     expect(tree.root.findByProps({ testID: 'desktop-work-corner-transcript' })).toBeTruthy();
-    expect(tree.root.findByType('ConversationComposer' as any).props.placeholder).toBe(
-      'Message this corner…',
-    );
+    expect(tree.root.findByType('ConversationComposer' as any).props.placeholder).toBeUndefined();
     act(() => {
       tree.root.findByProps({ accessibilityLabel: 'Back to work overview' }).props.onPress();
     });

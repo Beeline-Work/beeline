@@ -712,7 +712,6 @@ function CornerCockpit({
             stopKey={ack?.turnKey}
             stopping={stopping}
             value={input}
-            placeholder="Message this corner…"
             height={height}
             maxHeight={COMPOSER_MAX_HEIGHT}
             focused={focused}

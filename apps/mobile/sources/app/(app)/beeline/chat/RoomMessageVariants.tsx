@@ -605,7 +605,7 @@ function SwipeToReply({
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
-  const message = (
+  const message = isDesktop ? (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
       accessibilityLabel="Message"
@@ -617,6 +617,10 @@ function SwipeToReply({
     >
       {children}
     </Pressable>
+  ) : (
+    <View onTouchEnd={onPress} testID={`copy-message-${messageId}`}>
+      {children}
+    </View>
   );
   if (isDesktop) {
     return (

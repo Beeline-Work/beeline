@@ -89,6 +89,16 @@ const NUMBERED_LIST_INPUT = `REDESIGN (drill-down, three depths):
 3. Tap that line -> SECONDARY view: the list of edited files + tool calls for that turn.`;
 
 describe('MonoMarkdown lists', () => {
+  it('renders prose as selectable native text', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(MonoMarkdown, { markdown: 'select only these words' }));
+    });
+
+    expect(renderedText(renderer)).toContain('select only these words');
+    expect(renderer.root.findAll((node) => node.props.selectable === true)).not.toHaveLength(0);
+  });
+
   it('renders numbered list item body text, not just the markers', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

@@ -516,13 +516,47 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('offers a visible reply action on desktop', () => {
+  it('keeps visible copy and reply actions on desktop', () => {
     const onReply = vi.fn();
+    const onCopy = vi.fn();
     const row = message({ id: 'desktop-reply' });
     const renderer = render(
       <OrdinaryLedgerMessage
         message={row}
         desktopLayout
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={onReply}
+        onCopy={onCopy}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const copy = renderer.root.findByProps({ testID: 'copy-button-desktop-reply' });
+    expect(copy.props.accessibilityLabel).toBe('Copy message text');
+    act(() => copy.props.onPress());
+    expect(onCopy).toHaveBeenCalledWith(row.text);
+
+    const reply = renderer.root.findByProps({ testID: 'reply-button-desktop-reply' });
+    expect(reply.props.accessibilityLabel).toBe('Reply to message');
+    act(() => reply.props.onPress());
+    expect(onReply).toHaveBeenCalledWith(row);
+  });
+
+  it('uses the phone swipe interaction on compact web', () => {
+    const onReply = vi.fn();
+    const row = message({ id: 'compact-web-reply' });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={row}
+        desktopLayout={false}
         participantsHydrated
         viewerPubkey="viewer"
         speakerWorking={false}
@@ -538,34 +572,12 @@ describe('Room message variant components', () => {
       />,
     );
 
-    const reply = renderer.root.findByProps({ testID: 'reply-button-desktop-reply' });
-    expect(reply.props.accessibilityLabel).toBe('Reply to message');
-    act(() => reply.props.onPress());
+    const swipeable = renderer.root.findByType('Swipeable');
+    act(() => swipeable.props.onSwipeableOpen('right'));
     expect(onReply).toHaveBeenCalledWith(row);
-  });
-
-  it('uses the phone swipe interaction on compact web', () => {
-    const renderer = render(
-      <OrdinaryLedgerMessage
-        message={message({ id: 'compact-web-reply' })}
-        desktopLayout={false}
-        participantsHydrated
-        viewerPubkey="viewer"
-        speakerWorking={false}
-        continued={false}
-        participantHandles={[]}
-        channelIndex={{ rooms: [], corners: [] }}
-        deliveryFailed={false}
-        onChannelReference={vi.fn()}
-        onReply={vi.fn()}
-        onCopy={vi.fn()}
-        onRetry={vi.fn()}
-        onDismiss={vi.fn()}
-      />,
+    expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(
+      0,
     );
-
-    expect(renderer.root.findByType('Swipeable')).toBeTruthy();
-    expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(0);
   });
 
   // Attachment bytes are swept 24 hours after upload; the message that carried
@@ -1359,10 +1371,10 @@ describe('Room message variant components', () => {
     expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
   });
 
-  it('dismisses the composer keyboard when the transcript row is tapped', () => {
-    // Tapping outside the composer — the transcript being the whole of that
-    // outside — puts the keyboard away. The row keeps its long-press copy, so
-    // one gesture never costs the other.
+  it('leaves compact-row long press to native text selection while retaining tap dismissal', () => {
+    // A parent Pressable claiming long press wins over selectable Text on
+    // device. The compact row observes touch end without becoming that
+    // competing responder; its nested MonoMarkdown text owns selection.
     const onTapOutsideComposer = vi.fn();
     const onCopy = vi.fn();
     const renderer = render(
@@ -1384,11 +1396,10 @@ describe('Room message variant components', () => {
       />,
     );
     const row = renderer.root.findByProps({ testID: 'copy-message-tapped' });
-    act(() => row.props.onPress());
+    expect(row.props.onLongPress).toBeUndefined();
+    expect(row.props.onTouchEnd).toBeTypeOf('function');
+    act(() => row.props.onTouchEnd());
     expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
     expect(onCopy).not.toHaveBeenCalled();
-    act(() => row.props.onLongPress());
-    expect(onCopy).toHaveBeenCalledWith('a settled line');
-    expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
   });
 });

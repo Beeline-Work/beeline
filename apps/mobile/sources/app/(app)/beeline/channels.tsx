@@ -1052,6 +1052,15 @@ const styles = StyleSheet.create((theme) => {
       minHeight: ROW_HEIGHT,
       flexDirection: 'row',
       alignItems: 'center',
+      // The shifted row stays on the slab and lifts just enough for its
+      // trailing edge to separate from the recessed swipe action beneath it.
+      backgroundColor: hull.bgBase,
+      shadowColor: hull.bgVoid,
+      shadowOffset: { width: 6, height: 0 },
+      shadowOpacity: 0.28,
+      shadowRadius: 8,
+      elevation: 4,
+      boxShadow: `6px 0 8px color-mix(in srgb, ${hull.bgVoid} 28%, transparent)`,
     },
     rowMain: {
       flex: 1,
@@ -1189,6 +1198,8 @@ const styles = StyleSheet.create((theme) => {
     },
     chatActions: {
       flexDirection: 'row',
+      minHeight: ROW_HEIGHT,
+      backgroundColor: hull.bgRaised,
     },
     swipeAction: {
       width: 26,

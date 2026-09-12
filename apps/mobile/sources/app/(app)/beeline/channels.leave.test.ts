@@ -35,8 +35,24 @@ describe('Chat-list swipe-left actions', () => {
     expect(reveal).not.toMatch(/<Text[^>]*>\s*[A-Z][A-Z\s]+<\/Text>/);
     expect(reveal).not.toMatch(/<Text[^>]*>[A-Z][A-Z\s]+<\/Text>/);
     expect(source).toContain('swipeActionButton: {');
-    expect(source).not.toContain('backgroundColor: hull.bgRaised');
-    expect(source).not.toContain('borderColor: hull.borderStrong');
+    const actionStyles = source.slice(
+      source.indexOf('chatActions: {'),
+      source.indexOf('composeOverlay: {'),
+    );
+    expect(actionStyles).toContain('backgroundColor: hull.bgRaised');
+    expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?backgroundColor:/);
+    expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?border(?:Color|Width):/);
+
+    const rowStyles = source.slice(source.indexOf('row: {'), source.indexOf('rowMain: {'));
+    expect(rowStyles).toContain('backgroundColor: hull.bgBase');
+    expect(rowStyles).toContain('shadowColor: hull.bgVoid');
+    expect(rowStyles).toContain('shadowOffset: { width: 6, height: 0 }');
+    expect(rowStyles).toContain('shadowOpacity: 0.28');
+    expect(rowStyles).toContain('shadowRadius: 8');
+    expect(rowStyles).toContain(
+      'boxShadow: `6px 0 8px color-mix(in srgb, ${hull.bgVoid} 28%, transparent)`',
+    );
+    expect(rowStyles).not.toMatch(/border(?:Color|Width):/);
 
     expect(glyphSource).toContain('height={26}');
     expect(glyphSource).toContain('width={26}');

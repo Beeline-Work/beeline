@@ -1843,6 +1843,7 @@ export default function BuzzChat() {
   const composerAck = useMemo((): ComposerAckPresentation | null => {
     return selectComposerAckPresentation({
       isCorner,
+      viewerRole: roomSurface?.viewer.role,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
       ...(activeAgentTurn
         ? {
@@ -1863,6 +1864,7 @@ export default function BuzzChat() {
     });
   }, [
     activeAgentTurn,
+    roomSurface?.viewer.role,
     agentByPubkey,
     conversationIdentities,
     isCorner,
@@ -1874,7 +1876,7 @@ export default function BuzzChat() {
   /**
    * Withdraw the question this turn is answering.
    *
-   * The control is offered only to the asker (`viewerMayStopTurn`) and the
+   * The control is offered to the requester or Room manager (`viewerMayStopTurn`), and the
    * server refuses anyone else, so the two agree on one rule rather than the
    * phone guessing at it. The press is acknowledged on this line immediately
    * (`stoppingTurn`); the cancelled receipt is still what settles the durable
@@ -1894,6 +1896,7 @@ export default function BuzzChat() {
           agentId: stop.agentPubkey,
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return true;
       } catch (err) {
         setStoppingTurn((current) =>
           current?.requestId === stop.requestId && current.agentPubkey === stop.agentPubkey
@@ -1903,6 +1906,7 @@ export default function BuzzChat() {
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         console.warn('Stopping the turn failed:', err);
+        return false;
       }
     },
     [decodedId],
@@ -4019,6 +4023,10 @@ export default function BuzzChat() {
                 </>
               )}
               <ConversationComposer
+                onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
+                running={Boolean(activeAgentTurn)}
+                stopKey={composerAck?.turnKey}
+                stopping={stoppingThisTurn}
                 inputRef={composerRef}
                 value={inputText}
                 height={composerHeight}

@@ -7,8 +7,7 @@ import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
 
 /** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
-const STOP_SIZE = 10;
-const STOP_HIT_SLOP = 17;
+const STOP_HIT_SLOP = 9;
 
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
@@ -44,10 +43,10 @@ const STOP_HIT_SLOP = 17;
  * is what keeps it from stranding a reader in a dead channel. `onStop` is a
  * different thing in the trailing slot: not navigation but the one action a
  * turn in progress admits, withdrawing the question. It is passed only to the
- * person who asked (`viewerMayStopTurn`), so for everyone else this component
+ * requester or Room manager (`viewerMayStopTurn`), so for everyone else this component
  * renders exactly what it rendered before. A press is acknowledged here —
- * the square empties and the counter says `stopping` — before the cancelled
- * receipt lands; a failed stop puts the filled square back.
+ * the control dims and the counter says `stopping` — before the cancelled
+ * receipt lands; a failed stop enables it again.
  */
 export function TurnProgressLine({
   label,
@@ -62,7 +61,7 @@ export function TurnProgressLine({
   startedAt?: number;
   /** A new human steer was committed against this running turn. */
   received?: boolean;
-  /** Present only for the turn's own requester; absent renders no control. */
+  /** Present only for a requester or Room manager; absent renders no control. */
   onStop?: () => void;
   /** The asker already pressed stop; the cancelled receipt has not landed yet. */
   stopping?: boolean;
@@ -119,7 +118,9 @@ export function TurnProgressLine({
               stopping && styles.stopStopping,
             ]}
             testID={testID ? `${testID}-stop` : undefined}
-          />
+          >
+            <Text style={styles.stopLabel}>■ STOP</Text>
+          </Pressable>
         )}
       </HullLivePulse>
     </View>
@@ -191,22 +192,22 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
       lineHeight: 18,
     },
-    // A small brass square. Pressed dims it; stopping empties it so the press
-    // is visible until the cancelled receipt retires the line.
+    // One discoverable stop action, shared by Room and corner working lines.
     stop: {
-      width: STOP_SIZE,
-      height: STOP_SIZE,
+      minHeight: 26,
+      justifyContent: 'center',
+      marginLeft: 'auto',
       flexShrink: 0,
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.accent,
+    },
+    stopLabel: {
+      ...groknight.type.sectionHead,
+      color: groknight.accent,
     },
     stopPressed: {
       opacity: 0.6,
     },
     stopStopping: {
-      backgroundColor: 'transparent',
-      borderWidth: 1,
-      borderColor: groknight.accent,
+      opacity: 0.45,
     },
   };
 });

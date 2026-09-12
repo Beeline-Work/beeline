@@ -9,6 +9,7 @@ import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
+import type { GitHubLifecycleItem } from '@/buzz/github-lifecycle-fold';
 
 /**
  * The one transcript primitive a Room and a Corner both render, in the
@@ -628,6 +629,68 @@ export function LedgerSystemLine({
   );
 }
 
+const GITHUB_RUN_VISIBLE_ITEMS = 3;
+
+/** One system-line container for a run of repository lifecycle facts. */
+export function LedgerGitHubLifecycleRun({
+  id,
+  headline,
+  items,
+  stamp,
+  onOpenUrl,
+}: {
+  id: string;
+  headline: string;
+  items: readonly GitHubLifecycleItem[];
+  stamp: string;
+  onOpenUrl?: (url: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hidden = Math.max(0, items.length - GITHUB_RUN_VISIBLE_ITEMS);
+  const visible = expanded ? items : items.slice(0, GITHUB_RUN_VISIBLE_ITEMS);
+  return (
+    <View style={styles.systemLine} testID={`github-lifecycle-run-${id}`}>
+      <Text
+        numberOfLines={1}
+        style={styles.systemLineText}
+        testID={`github-lifecycle-headline-${id}`}
+      >
+        {headline}
+      </Text>
+      <Text numberOfLines={1} style={styles.roomUpdateStamp}>
+        {stamp}
+      </Text>
+      <View style={styles.githubLifecycleItems}>
+        {visible.map((item) => (
+          <Text
+            key={item.id}
+            numberOfLines={1}
+            style={item.url ? styles.systemLineLink : styles.systemLineText}
+            onPress={item.url && onOpenUrl ? () => onOpenUrl(item.url!) : undefined}
+            testID={`github-lifecycle-item-${item.id}`}
+          >
+            {item.title}
+          </Text>
+        ))}
+        {hidden ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              expanded ? 'Show fewer GitHub events' : `Show ${hidden} more GitHub events`
+            }
+            onPress={() => setExpanded((value) => !value)}
+            testID={`github-lifecycle-expand-${id}`}
+          >
+            <Text style={styles.systemLineName}>
+              {expanded ? 'show less' : `and ${hidden} more`}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 /**
  * A wall of tool output, folded into one ghost line.
  *
@@ -850,6 +913,10 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerBody,
     textDecorationLine: 'underline',
+  },
+  githubLifecycleItems: {
+    marginTop: theme.buzz.space.xs,
+    gap: theme.buzz.space.xs,
   },
   roomUpdateDigest: {
     fontFamily: theme.buzz.proseRegular,

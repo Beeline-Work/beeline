@@ -13,6 +13,7 @@ import {
   GROK_LAUNCH_EFFORT_AXIS_ID,
   agentArgsWithModelSelection,
   sortModelChoicesNewestFirst,
+  withEffectiveCurrentValues,
 } from './model-config.js';
 import type { AgentModelConfigOption } from './model-types.js';
 import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
@@ -419,4 +420,44 @@ describe('assertModelSelectionAdvertised — shared strict validation', () => {
   it('is a no-op when neither model nor effort was requested', () => {
     expect(() => assertModelSelectionAdvertised(raw, {})).not.toThrow();
   });
+});
+
+describe('withEffectiveCurrentValues — published picker state', () => {
+  it.each(['effort', 'thought_level', 'reasoning_effort'] as const)(
+    'stamps the selected effort onto a live %s axis',
+    (category) => {
+      expect(
+        withEffectiveCurrentValues(
+          [
+            {
+              id: 'model',
+              category: 'model',
+              currentValue: 'provider-default',
+              options: [{ id: 'provider-default' }, { id: 'selected-model' }],
+            },
+            {
+              id: 'provider-effort',
+              category,
+              currentValue: 'medium',
+              options: [{ id: 'medium' }, { id: 'high' }],
+            },
+          ],
+          { model: 'selected-model', effort: 'high' },
+        ),
+      ).toEqual([
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'selected-model',
+          options: [{ id: 'provider-default' }, { id: 'selected-model' }],
+        },
+        {
+          id: 'provider-effort',
+          category,
+          currentValue: 'high',
+          options: [{ id: 'medium' }, { id: 'high' }],
+        },
+      ]);
+    },
+  );
 });

@@ -17,6 +17,7 @@ import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { AgentCommand } from './agent-command.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
+import { withEffectiveCurrentValues } from './model-config.js';
 import type { AgentModelConfigOption } from './model-types.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
@@ -106,14 +107,22 @@ export async function syncAgentModelCatalog(
       input.timeoutMs ?? MODEL_CATALOG_PROBE_TIMEOUT_MS,
       'model catalog probe',
     );
-    const hash = modelCatalogHash(catalog, selection, input.startupUnavailable);
+    // session/new reports the harness defaults before Beeline applies the
+    // persisted selection. Publish the effective values so the phone does not
+    // mistake every activation for an unfinished model switch and hide the
+    // harness's live effort choices. An unavailable startup selection is the
+    // exception: that probe deliberately describes the harness default.
+    const effectiveCatalog = input.startupUnavailable
+      ? catalog
+      : withEffectiveCurrentValues(catalog, selection);
+    const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable);
     const previous = await readFile(hashPath, 'utf8').catch(() => '');
     if (previous.trim() === hash) return 'unchanged';
     await input.api.execute('postAgentModelCatalog', {
       agentId: input.agentId,
       workspaceId: input.workspaceId,
       // `fetchAgentModelCatalog` already applied the category allow-list.
-      options: catalog as Input<'postAgentModelCatalog'>['options'],
+      options: effectiveCatalog as Input<'postAgentModelCatalog'>['options'],
       ...(selection ? { selection } : {}),
       ...(input.startupUnavailable ? { unavailable: input.startupUnavailable } : {}),
     });

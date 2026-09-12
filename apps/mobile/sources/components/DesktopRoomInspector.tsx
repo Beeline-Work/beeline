@@ -13,6 +13,7 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
 import { roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { foldSystemLines } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
   roomViewTranscriptMessages,
@@ -35,6 +36,7 @@ import { LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
 import {
   DaemonFactCard,
   GitHubEventCard,
+  NotificationLifecycleCard,
   OrdinaryLedgerMessage,
 } from '@/app/(app)/beeline/chat/RoomMessageVariants';
 
@@ -244,6 +246,7 @@ export function DesktopRoomInspector({
           loading={loading}
           summary={summary}
           onBack={() => onSelectCorner(null)}
+          onOpenCorner={onSelectCorner}
           onRefresh={refreshCorner}
         />
       ) : (
@@ -484,12 +487,14 @@ function CornerCockpit({
   loading,
   summary,
   onBack,
+  onOpenCorner,
   onRefresh,
 }: {
   detail: RoomView | null;
   loading: boolean;
   summary?: CornerListItem;
   onBack(): void;
+  onOpenCorner(cornerId: string): void;
   onRefresh(): Promise<void>;
 }) {
   const [input, setInput] = React.useState('');
@@ -501,7 +506,9 @@ function CornerCockpit({
   const messages = React.useMemo(
     () =>
       detail
-        ? projector.project(roomViewTranscriptMessages(detail), detail.viewer.identity.pubkey)
+        ? foldSystemLines(
+            projector.project(roomViewTranscriptMessages(detail), detail.viewer.identity.pubkey),
+          )
         : [],
     [detail, projector],
   );
@@ -549,8 +556,15 @@ function CornerCockpit({
         return (
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
         );
-      if (item.githubEvent || item.githubLifecycleRun)
-        return <GitHubEventCard message={item} onOpenUrl={openUrl} />;
+      if (item.notificationLifecycleRun)
+        return (
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={onOpenCorner}
+            onOpenUrl={openUrl}
+          />
+        );
+      if (item.githubEvent) return <GitHubEventCard message={item} onOpenUrl={openUrl} />;
       if (item.daemonFact)
         return <DaemonFactCard message={item} onOpenCorner={() => undefined} onOpenUrl={openUrl} />;
       if (item.isSystemNotice)
@@ -584,7 +598,7 @@ function CornerCockpit({
         />
       );
     },
-    [channelIndex, detail],
+    [channelIndex, detail, onOpenCorner],
   );
   const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
   const objective = summary?.corner.about ?? detail?.room.about ?? title;

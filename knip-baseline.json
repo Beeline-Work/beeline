@@ -24,7 +24,6 @@
     "exports:apps/body/src/fixtures/grok-use-tool-permissions.ts:GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL",
     "exports:apps/body/src/harness-tool-scope.ts:NO_PERSONAL_CONNECTORS_INSTRUCTION",
     "exports:apps/body/src/harness-tool-scope.ts:toolScopeWarning",
-    "exports:apps/body/src/model-config.ts:withEffectiveCurrentValues",
     "exports:apps/body/src/trusty-squire-storage.ts:hasUnmaskableTrustySquireIpc",
     "exports:apps/body/src/trusty-squire-storage.ts:trustySquireConfigRoot",
     "exports:apps/body/src/trusty-squire-storage.ts:trustySquireConfigRootForRuntimeConfig",

@@ -76,7 +76,8 @@ function fakeApi(configuration: { model?: string; effort?: string } = {}) {
   return {
     posted,
     execute: vi.fn(async (name: string, input: unknown) => {
-      if (name === 'getAgentConfiguration') return { ...configuration, commands: [], yoloMode: false };
+      if (name === 'getAgentConfiguration')
+        return { ...configuration, commands: [], yoloMode: false };
       if (name === 'postAgentModelCatalog') {
         posted.push(input);
         return { ok: true };
@@ -170,6 +171,30 @@ describe('syncAgentModelCatalog', () => {
         options: [],
         selection: { model: 'openrouter/z-ai/glm-5.3-flash' },
       },
+    ]);
+  });
+
+  it('publishes the startup-unavailable mark while probing the default catalog', async () => {
+    const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
+    const api = fakeApi({ model: 'claude-fable-5-1[1m]' });
+    const fetchCatalog = vi.fn().mockResolvedValue({ raw: [], catalog: [] });
+    await syncAgentModelCatalog({
+      api: api as never,
+      agent: { command: 'claude-agent-acp', args: [] },
+      agentEnv: {},
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeDir,
+      startupUnavailable: 'model',
+      fetchCatalog,
+      log: vi.fn(),
+    });
+    expect(fetchCatalog).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined);
+    expect(api.posted).toEqual([
+      expect.objectContaining({
+        selection: { model: 'claude-fable-5-1[1m]' },
+        unavailable: 'model',
+      }),
     ]);
   });
 

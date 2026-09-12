@@ -2218,6 +2218,30 @@ describe('monolith integration', () => {
         ).rows[0]?.mention_ids,
       ).toEqual(expected);
     }
+    const outsider = '7'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Outsider','outsider')`,
+      [outsider],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, outsider],
+    );
+    const outsideRoom = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: '7'.repeat(64),
+      text: '@outsider, hello.',
+      mentions: [outsider],
+    });
+    expect(outsideRoom.status).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          ['7'.repeat(64)],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([]);
     const duplicatePeer = '0'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Another peer','peer')`,
@@ -2243,6 +2267,59 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.mention_ids,
     ).toEqual([]);
+  });
+
+  it('stores, projects, and pushes a current human member typed without a picker', async () => {
+    const recipient = createHash('sha256').update('github:recipient').digest('hex');
+    const recipientToken = (await auth.exchangeGitHubOidc('recipient-proof')).accessToken;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, recipient, ROOM],
+    );
+    const send = vi.fn(async () => undefined);
+    const pushes = new PushDeliveryLoop(database, { send });
+    await pushes.runOnce();
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('recipient-device-token-12345678901234567890',$1,'ios','physical')`,
+      [recipient],
+    );
+
+    const messageId = '6'.repeat(64);
+    const sent = await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId,
+      text: '@recipient try',
+      mentions: [],
+    });
+    expect(sent.status).toBe(200);
+    expect(
+      (
+        await database.query<{ mention_ids: string[] }>(
+          `SELECT mention_ids FROM messages WHERE id=$1`,
+          [messageId],
+        )
+      ).rows[0]?.mention_ids,
+    ).toEqual([recipient]);
+
+    const recipientRoom = await request(
+      `/v1/phone/rooms/${ROOM}`,
+      'GET',
+      undefined,
+      recipientToken,
+    );
+    expect(recipientRoom.status).toBe(200);
+    const projected = (await recipientRoom.json()) as RoomView;
+    expect(projected.messages.find((message) => message.id === messageId)?.mentionPubkeys).toEqual([
+      recipient,
+    ]);
+    expect(await pushes.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'recipient-device-token-12345678901234567890',
+      expect.objectContaining({ roomId: ROOM, text: 'Owner: @recipient try' }),
+    );
   });
 
   it('does not persist a typed agent outside the Room as a mention', async () => {
@@ -4002,6 +4079,22 @@ describe('monolith integration', () => {
     expect(
       (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
     ).toEqual([{ name: 'Honeybee', handle: 'honeybee' }]);
+
+    await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify([
+        {
+          id: 'model',
+          category: 'model',
+          options: [{ id: 'gpt-5.6' }, { id: 'gpt-5.6-codex' }],
+        },
+        {
+          id: 'effort',
+          category: 'reasoning_effort',
+          options: [{ id: 'high' }, { id: 'max' }],
+        },
+      ]),
+    ]);
 
     const model = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
       workspaceId: WORKSPACE,

@@ -143,9 +143,36 @@ export async function fetchAgentModelCatalog(
     agent,
     agentEnv,
     selection,
-    async ({ raw, catalog }) => ({ raw, catalog }),
+    async ({ client, sessionId, raw, catalog }) => ({
+      raw,
+      catalog: await filterModelChoicesByLiveValidation(client, sessionId, catalog),
+    }),
     limits,
   );
+}
+
+/**
+ * An advertised model is only a candidate. Exercise every candidate through
+ * the same setter used by startup validation before it reaches a human picker.
+ * Refused choices disappear; non-model axes retain the harness's own catalog.
+ */
+export async function filterModelChoicesByLiveValidation(
+  client: Pick<AcpClient, 'setConfigOption' | 'setModel'>,
+  sessionId: string,
+  catalog: AgentModelConfigOption[],
+): Promise<AgentModelConfigOption[]> {
+  const modelAxis = catalog.find((axis) => axis.category === 'model');
+  if (!modelAxis) return catalog;
+  const available: AgentModelConfigOption['options'] = [];
+  for (const choice of modelAxis.options) {
+    try {
+      await applyAgentModelSelection(client, sessionId, catalog, { model: choice.id });
+      available.push(choice);
+    } catch {
+      // Fail closed: a picker choice must have completed the live setter.
+    }
+  }
+  return catalog.map((axis) => (axis === modelAxis ? { ...axis, options: available } : axis));
 }
 
 /**

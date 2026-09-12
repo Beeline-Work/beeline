@@ -109,13 +109,6 @@ const ROLE_LABELS: Record<WorkspaceRole, string> = {
 
 type ModelAxisKind = 'model' | 'effort';
 
-/** The harness-generic effort ladder offered when no live catalog has arrived. */
-const GENERIC_EFFORT_LADDER: AgentModelConfigOption['options'] = [
-  { id: 'low' },
-  { id: 'medium' },
-  { id: 'high' },
-  { id: 'xhigh' },
-];
 const MODEL_APPLIES_NOTE_MS = 4_000;
 const UNSET_VALUE = '—';
 
@@ -712,9 +705,9 @@ export default function BuzzMembers() {
       ) ?? [];
     return {
       model: live.find((axis) => axis.category === 'model'),
-      // Effort choices may be model-specific. After a model switch, fall back
-      // to the generic ladder until the agent republishes a catalog whose
-      // current model matches the persisted human selection.
+      // Effort choices may be model-specific. After a model switch, offer
+      // nothing until the agent republishes a catalog whose current model
+      // matches the persisted human selection.
       effort: awaitingSelectedModelCatalog
         ? undefined
         : live.find((axis) => axis.category !== 'model'),
@@ -1038,21 +1031,15 @@ export default function BuzzMembers() {
                     const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
                     const current = axisValue(selectedAgent, kind, axis);
                     const open = openModelAxis === kind;
-                    const freeEntry = kind === 'model' && !axis;
-                    const choices =
-                      axis?.options ?? (kind === 'effort' ? GENERIC_EFFORT_LADDER : []);
+                    const choices = axis?.options ?? [];
                     const visibleChoices =
                       kind === 'model'
                         ? filterAgentModelOptions(choices, modelSearchQuery)
                         : choices;
-                    const submitTypedModel = () => {
-                      const typed = modelSearchQuery.trim();
-                      if (freeEntry && typed) void setModelOption('model', typed);
-                    };
                     return (
                       <View key={kind} style={styles.axisBlock}>
                         <TouchableOpacity
-                          disabled={busy}
+                          disabled={busy || !axis}
                           onPress={() => {
                             setOpenModelAxis(open ? null : kind);
                             setModelSearchQuery('');
@@ -1066,17 +1053,26 @@ export default function BuzzMembers() {
                           <Text style={styles.axisValue} numberOfLines={1}>
                             {current ?? UNSET_VALUE}
                           </Text>
+                          {(selectedAgent.modelUnavailable === kind ||
+                            selectedAgent.modelUnavailable === 'selection') && (
+                            <Text
+                              accessibilityLabel={`${kind} unavailable`}
+                              style={styles.axisValue}
+                              testID={`model-unavailable-${kind}`}
+                            >
+                              !
+                            </Text>
+                          )}
                           <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>
                         </TouchableOpacity>
-                        {open && kind === 'model' && (
+                        {open && kind === 'model' && axis && (
                           <TextInput
                             autoCapitalize="none"
                             autoCorrect={false}
                             editable={!busy}
                             onChangeText={setModelSearchQuery}
-                            onSubmitEditing={submitTypedModel}
-                            placeholder={freeEntry ? 'Model id' : 'Search models'}
-                            returnKeyType={freeEntry ? 'done' : 'search'}
+                            placeholder="Search models"
+                            returnKeyType="search"
                             style={styles.modelSearchInput}
                             testID="model-search-model"
                             value={modelSearchQuery}

@@ -870,6 +870,8 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
       (typeof item.seededSoul === 'string' && item.seededSoul.length > 0)) &&
     (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
     (item.selected === undefined || modelSelection(item.selected)) &&
+    (item.modelUnavailable === undefined ||
+      ['model', 'effort', 'selection'].includes(String(item.modelUnavailable))) &&
     (item.yolo === undefined || agentYolo(item.yolo)) &&
     (item.access === undefined || agentAccess(item.access)) &&
     (item.grants === undefined ||

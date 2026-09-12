@@ -5,6 +5,7 @@ import type { CornerSummary, CornerStatus } from './corners';
 import { cornerName } from './corners';
 import {
   displayCornerTitle,
+  displayGroupedCornerTitle,
   displayRoomIndexTitle,
   expandedCornerRefreshAction,
   isRoomAlive,
@@ -662,6 +663,23 @@ describe('Room row presentation', () => {
       expect(cornerName('fix ledger drift', 'abc12345')).toBe('fix ledger drift');
       // A brief that arrived with line breaks still reads as one line.
       expect(cornerName('fix\nledger  drift', 'abc12345')).toBe('fix ledger drift');
+    });
+  });
+
+  describe('displayGroupedCornerTitle', () => {
+    it('shows only the short title when the parent Room is already visible', () => {
+      expect(displayGroupedCornerTitle('beeline', 'iOS Composer Overflow', 'abc12345')).toBe(
+        'iOS Composer Overflow',
+      );
+      expect(
+        displayGroupedCornerTitle('#My Room', '#My Room/iOS Composer Overflow', 'abc12345'),
+      ).toBe('iOS Composer Overflow');
+    });
+
+    it('leaves the flat-context formatter namespaced with its parent Room', () => {
+      expect(displayCornerTitle('beeline', 'iOS Composer Overflow', 'abc12345')).toBe(
+        '#beeline/iOS Composer Overflow',
+      );
     });
   });
 });

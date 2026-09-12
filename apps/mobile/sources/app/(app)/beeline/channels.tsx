@@ -36,7 +36,7 @@ import { cornerDisplayState, unfinishedCornerDisplay } from '@/buzz/corner-displ
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { claimFirstLaunchLanding, welcomeRoomHref } from '@/buzz/welcome-landing';
 import {
-  displayCornerTitle,
+  displayGroupedCornerTitle,
   expandedCornerRefreshAction,
   roomRowName,
   roomRowNeedsAttention,
@@ -883,7 +883,7 @@ export default function BuzzChannels() {
                       </TouchableOpacity>
                     ) : corners?.length ? (
                       corners.map((corner) => {
-                        const label = displayCornerTitle(
+                        const label = displayGroupedCornerTitle(
                           item.room.name,
                           corner.corner.name,
                           corner.corner.id,

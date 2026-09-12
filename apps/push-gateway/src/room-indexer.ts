@@ -495,7 +495,25 @@ export class RoomIndexer {
           unread: data.unread === true,
           ...(text(data.repositoryName) ? { repositoryName: text(data.repositoryName) } : {}),
           ...(agentState ? { agentState } : {}),
-          ...(data.directPeer ? { directMessage: { peer: identity(json(data.directPeer)) } } : {}),
+          ...(data.directPeer
+            ? {
+                directMessage: {
+                  peer: identity(json(data.directPeer)),
+                  ...(text(json(data.directPeer).presenceStatus) &&
+                  integer(json(data.directPeer).presenceObservedAt) > 0
+                    ? {
+                        presence: {
+                          status:
+                            text(json(data.directPeer).presenceStatus) === 'online'
+                              ? ('online' as const)
+                              : ('offline' as const),
+                          observedAt: integer(json(data.directPeer).presenceObservedAt),
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : {}),
         };
       })
       .sort(

@@ -808,6 +808,9 @@ export class PhoneService {
         peer_handle: string | null;
         peer_avatar: string | null;
         peer_face: string | null;
+        peer_presence_body: Record<string, unknown> | null;
+        peer_presence_updated_at: Date | null;
+        peer_activity_at: Date | null;
         unread: boolean;
         working: boolean;
         needs_you: boolean;
@@ -821,6 +824,13 @@ export class PhoneService {
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
+        peer_presence.body peer_presence_body,peer_presence.updated_at peer_presence_updated_at,
+        GREATEST(
+          (SELECT max(peer_message.created_at) FROM messages peer_message
+           WHERE peer_message.room_id=r.id AND peer_message.author_id=peer.id),
+          (SELECT max(peer_mark.updated_at) FROM room_read_marks peer_mark
+           WHERE peer_mark.room_id=r.id AND peer_mark.identity_id=peer.id)
+        ) peer_activity_at,
         (lm_other.id IS NOT NULL AND (
           mark.message_created_at IS NULL OR
           lm_other.id<>mark.message_id AND
@@ -849,6 +859,10 @@ export class PhoneService {
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
         ) p WHERE p<>$2 LIMIT 1)
+      LEFT JOIN LATERAL(
+        SELECT body,updated_at FROM live_outputs
+        WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
+      ) peer_presence ON peer.kind='agent'
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
       [workspaceId, viewerId],
@@ -905,6 +919,9 @@ export class PhoneService {
                   },
                   this.publicOrigin,
                 ),
+                ...(this.directMessagePresence(row)
+                  ? { presence: this.directMessagePresence(row)! }
+                  : {}),
               },
             }
           : {}),
@@ -927,6 +944,32 @@ export class PhoneService {
         ? [{ kinds: [9, 9000, 9001, 9002, 9007, 9008], '#h': rooms.rows.map((row) => row.id) }]
         : [],
     };
+  }
+
+  private directMessagePresence(row: {
+    peer_id: string | null;
+    peer_kind: 'human' | 'agent' | null;
+    peer_presence_body: Record<string, unknown> | null;
+    peer_presence_updated_at: Date | null;
+    peer_activity_at: Date | null;
+  }): { status: 'online' | 'offline'; observedAt: number } | undefined {
+    if (!row.peer_id || !row.peer_kind) return undefined;
+    if (row.peer_kind === 'agent' && row.peer_presence_body && row.peer_presence_updated_at) {
+      return {
+        status:
+          row.peer_presence_body.status === 'online' &&
+          Date.now() - row.peer_presence_updated_at.getTime() < AGENT_REACHABLE_HORIZON_MS
+            ? 'online'
+            : 'offline',
+        observedAt: Number(row.peer_presence_body.observedAt ?? unix(row.peer_presence_updated_at)),
+      };
+    }
+    const connection = this.live?.humanPresence(row.peer_id);
+    const activityAt = row.peer_activity_at ? unix(row.peer_activity_at) : undefined;
+    const observedAt = Math.max(connection?.observedAt ?? 0, activityAt ?? 0);
+    return observedAt
+      ? { status: connection?.status === 'online' ? 'online' : 'offline', observedAt }
+      : undefined;
   }
 
   async readRoom(roomId: string, viewerId: string): Promise<RoomView | null> {

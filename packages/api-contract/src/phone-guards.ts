@@ -584,6 +584,8 @@ function latest(value: unknown): boolean {
 
 function chat(value: unknown): value is ChatListItem {
   const item = record(value);
+  const direct = record(item?.directMessage);
+  const directPresence = record(direct?.presence);
   return Boolean(
     item &&
     header(item.room) &&
@@ -596,7 +598,11 @@ function chat(value: unknown): value is ChatListItem {
     (item.agentState === undefined ||
       item.agentState === 'needs-you' ||
       item.agentState === 'working') &&
-    (item.directMessage === undefined || identity(record(item.directMessage)?.peer)),
+    (item.directMessage === undefined ||
+      (identity(direct?.peer) &&
+        (direct?.presence === undefined ||
+          ((directPresence?.status === 'online' || directPresence?.status === 'offline') &&
+            integer(directPresence?.observedAt))))),
   );
 }
 

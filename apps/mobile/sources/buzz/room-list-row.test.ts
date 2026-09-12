@@ -14,6 +14,8 @@ import {
   roomRowNeedsAttention,
   roomRowPreview,
   roomListSections,
+  directMessagePresence,
+  personLastSeen,
   roomListFeed,
   roomRowPresentation,
 } from './room-list-row';
@@ -87,7 +89,9 @@ describe('Room list sections', () => {
               author: { pubkey: 'author', kind: 'human', name: 'Author' },
             },
           }),
-      ...(direct ? { directMessage: { peer: { pubkey: `peer-${id}`, kind: 'human', name: id } } } : {}),
+      ...(direct
+        ? { directMessage: { peer: { pubkey: `peer-${id}`, kind: 'human', name: id } } }
+        : {}),
     }) as ChatListItem;
 
   it('keeps Rooms first and sorts direct messages by latest message', () => {
@@ -95,9 +99,15 @@ describe('Room list sections', () => {
     const newer = chat('newer-dm', 20, true, 40);
     const sections = roomListSections([older, chat('room-a', 50), newer, chat('room-b', 5)]);
 
-    expect(sections.map((section) => section.title)).toEqual([undefined, 'Messages']);
+    expect(sections.every((section) => !('title' in section))).toBe(true);
     expect(sections[0]?.data.map((item) => item.room.id)).toEqual(['room-a', 'room-b']);
     expect(sections[1]?.data.map((item) => item.room.id)).toEqual(['newer-dm', 'older-dm']);
+  });
+
+  it('never adds a Messages section label above direct messages', () => {
+    expect(roomListSections([chat('dm', 1, true)])).toEqual([
+      { kind: 'messages', data: [chat('dm', 1, true)] },
+    ]);
   });
 
   it('omits the Messages heading when there are no direct messages', () => {
@@ -113,11 +123,41 @@ describe('Room list sections', () => {
     const openDm = chat('open-dm', 1, true);
     const source = [closedRoom, closedDm, openRoom, openDm];
 
-    expect(roomListSections(source).flatMap((section) => section.data)).toEqual([
-      openRoom,
-      openDm,
-    ]);
+    expect(roomListSections(source).flatMap((section) => section.data)).toEqual([openRoom, openDm]);
     expect(source).toHaveLength(4);
+  });
+});
+
+describe('direct-message presence', () => {
+  const peer = (kind: 'human' | 'agent', status: 'online' | 'offline', observedAt: number) =>
+    ({
+      directMessage: {
+        peer: { pubkey: kind, kind, name: kind },
+        presence: { status, observedAt },
+      },
+    }) as Pick<ChatListItem, 'directMessage' | 'agentState'>;
+
+  it('reports agent working, idle, and offline states', () => {
+    const observedAt = Math.floor(NOW / 1000);
+    expect(
+      directMessagePresence({ ...peer('agent', 'online', observedAt), agentState: 'working' }, NOW),
+    ).toEqual({ label: 'working', dot: 'working' });
+    expect(directMessagePresence(peer('agent', 'online', observedAt), NOW)).toEqual({
+      label: 'idle',
+      dot: 'idle',
+    });
+    expect(directMessagePresence(peer('agent', 'offline', observedAt), NOW)).toEqual({
+      label: 'offline',
+      dot: null,
+    });
+  });
+
+  it('reports person online and formats last-seen buckets', () => {
+    const nowSeconds = Math.floor(NOW / 1000);
+    expect(directMessagePresence(peer('human', 'online', nowSeconds), NOW)?.label).toBe('online');
+    expect(personLastSeen(nowSeconds - 2 * 3_600, NOW)).toBe('last seen 2h');
+    expect(personLastSeen(Math.floor(Date.UTC(2026, 0, 14, 20) / 1000), NOW)).toBe('yesterday');
+    expect(personLastSeen(Math.floor(Date.UTC(2026, 0, 3, 20) / 1000), NOW)).toBe('Jan 3');
   });
 });
 

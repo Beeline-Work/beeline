@@ -14,6 +14,7 @@
  *
  * Env-driven config; see BodyConfig for all env overrides.
  */
+import './network-family-bootstrap.js';
 import { dirname, resolve } from 'node:path';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';

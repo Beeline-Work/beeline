@@ -7,6 +7,7 @@ const withRoomNotificationGroups = require('../../plugins/withRoomNotificationGr
 describe('Room notification native registration', () => {
   it('replaces both Expo entry points once, including after repeated prebuilds', async () => {
     const config = withRoomNotificationGroups({ name: 'proof', slug: 'proof' });
+    expect(Object.keys(config.mods)).toEqual(['android']);
     let mod = {
       modResults: { manifest: { $: {}, application: [{}] } },
       modRequest: {},

@@ -272,7 +272,7 @@ test('runtime pin change reads the published and release trees', () => {
   const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
     gitShow: (sha) => JSON.stringify({ runtimeVersion: sha === OLD_SHA ? '23' : '24' }),
   });
-  assert.deepEqual(pins, { changed: true, previous: '23', next: '24' });
+  assert.deepEqual(pins, { changed: true, changedPlatforms: ['android', 'ios'], previous: { android: '23', ios: '23' }, next: { android: '24', ios: '24' } });
   const selected = selectReleaseComponents([], {
     selection: 'mobile-native', storeTrack: 'internal', runtimePin: pins,
   });
@@ -281,8 +281,36 @@ test('runtime pin change reads the published and release trees', () => {
     selectedComponents: selected, runtimePin: pins,
   });
   assert.equal(state.plan.runtimePinChanged, true);
-  assert.equal(state.plan.previousRuntimeVersion, '23');
-  assert.equal(state.plan.nextRuntimeVersion, '24');
+  assert.deepEqual(state.plan.previousRuntimeVersion, { android: '23', ios: '23' });
+  assert.deepEqual(state.plan.nextRuntimeVersion, { android: '24', ios: '24' });
+  assert.deepEqual(state.plan.nativePlatforms, ['android', 'ios']);
+});
+
+test('per-platform pins select only the changed platform native release', () => {
+  for (const changed of ['android', 'ios']) {
+    const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
+      gitShow: (sha) => JSON.stringify(sha === OLD_SHA ? { runtimeVersion: '23' } : {
+        android: { runtimeVersion: changed === 'android' ? '24' : '23' },
+        ios: { runtimeVersion: changed === 'ios' ? '24' : '23' },
+      }),
+    });
+    assert.deepEqual(pins.changedPlatforms, [changed]);
+    assert.throws(() => selectReleaseComponents([], { runtimePin: pins }), /--store-track/);
+    assert.throws(() => selectReleaseComponents([], { selection: 'mobile-ota', storeTrack: 'internal', runtimePin: pins }), /mobile-native/);
+    const selectedComponents = selectReleaseComponents([], { storeTrack: 'internal', runtimePin: pins });
+    const state = initializeRelease({ version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents, runtimePin: pins });
+    assert.deepEqual(state.plan.nativePlatforms, [changed]);
+  }
+  const unchanged = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
+    gitShow: (sha) => JSON.stringify(sha === OLD_SHA ? { runtimeVersion: '23' } : {
+      android: { runtimeVersion: '23' }, ios: { runtimeVersion: '23' },
+    }),
+  });
+  assert.equal(unchanged.changed, false);
+  assert.deepEqual(selectReleaseComponents([], { runtimePin: unchanged }), []);
+  assert.throws(() => runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
+    gitShow: () => JSON.stringify({ android: { runtimeVersion: '24' } }),
+  }), /ios.runtimeVersion/);
 });
 
 test('reproduces #1088: a runtime pin bump cannot plan an OTA without store binaries', () => {
@@ -559,4 +587,38 @@ test('canonical routine release guidance is a single no-input dispatch', () => {
   assert.match(agents, new RegExp(command.replaceAll('.', '\\.')));
   assert.match(guide, /Pass no inputs/);
   assert.match(agents, /with no release worker and no inputs/);
+});
+
+test('native workflow builds only selected platforms and Android needs no Apple credentials', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const steps = workflow.jobs.mobile_native.steps;
+  const build = steps.find((step) => step.name === 'Build immutable store binaries for selected platforms');
+  const credentials = steps.find((step) => step.name === 'Require native release credentials');
+  const project = mkdtempSync(join(tmpdir(), 'beeline-native-platforms-'));
+  try {
+    for (const platform of ['android', 'ios']) {
+      const root = join(project, platform);
+      mkdirSync(root);
+      const env = { ...process.env, RUNNER_TEMP: root, EAS_CLI_VERSION: 'test',
+        NATIVE_ANDROID: String(platform === 'android'), NATIVE_IOS: String(platform === 'ios'), EXPO_TOKEN: 'fixture' };
+      if (platform === 'android') {
+        delete env.EXPO_ASC_KEY_ID;
+        delete env.EXPO_ASC_ISSUER_ID;
+        delete env.EXPO_ASC_API_KEY_P8;
+        execFileSync('bash', ['-euc', credentials.run], { env });
+      }
+      execFileSync('bash', ['-euc', `npm() { :; }
+        npx() { printf '%s\\n' "$*" >> "$RUNNER_TEMP/calls"; printf '{"id":"fixture","status":"FINISHED"}'; }
+        ${build.run}`], { env });
+      const calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n');
+      assert.equal(calls.length, 1);
+      assert.match(calls[0], new RegExp(`--platform ${platform} `));
+    }
+    for (const step of steps.filter((step) => ['Authenticate to Google Play', 'Upload Android to the selected Play track'].includes(step.name))) {
+      assert.match(step.if, /native_android == 'true'/);
+    }
+    assert.match(steps.find((step) => step.name?.startsWith('Submit iOS')).if, /native_ios == 'true'/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
 });

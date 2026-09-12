@@ -54,16 +54,16 @@ export default {
         // installed binary carries whatever stamp it was BUILT with, so a
         // policy that recomputes the stamp per commit silently cuts every
         // already-installed app off from OTA updates (v0.0.42 did exactly
-        // that). Bumping this number is therefore a deliberate act that says
-        // "a new native build is shipping". `scripts/native-fingerprint.mjs`
+        // that). Each platform pins its own runtime below. A bump says
+        // "a new native build is shipping for this platform". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "24",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
+            runtimeVersion: "23",
             icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -91,6 +91,7 @@ export default {
             }
         },
         android: {
+            runtimeVersion: "24",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",

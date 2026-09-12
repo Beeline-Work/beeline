@@ -68,4 +68,6 @@ The local sender invoked `flyctl ssh console -a beeline-server -C 'node -e …'`
 }
 ```
 
-This native change is stacked on the runtime-23 OTA-safe work. Android grouping requires a runtime-24 binary and must wait for the native release; it must not hold the runtime-23 OTA. The server cursor, JS dismissal/suppression, and unread divider belong to the base PR.
+This native change is stacked on the runtime-23 OTA-safe work. Android grouping requires an Android runtime-24 binary. iOS remains on runtime 23 and keeps receiving compatible OTAs without a new iOS binary. The unified release planner compares per-platform pins (including legacy global-pin records), then builds/submits only changed platforms; an Android-only change neither requires Apple credentials nor starts an iOS build. The server cursor, JS dismissal/suppression, and unread divider belong to the base PR.
+
+Runtime configuration follows [Expo platform-specific runtime versions](https://docs.expo.dev/eas-update/runtime-versions/#platform-specific-runtime-version). The iOS fingerprint remains exactly the runtime-23 baseline; Android-only Kotlin edits are excluded from iOS fingerprint computation.

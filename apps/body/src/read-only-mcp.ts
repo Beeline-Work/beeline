@@ -68,7 +68,6 @@ import {
   isServerEventKind,
   type CornerLifecycleView,
 } from '@beeline/api-contract/phone';
-import { checksVerdictFromLifecycle } from './corner-checks.js';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 
 type JsonObject = Record<string, unknown>;
@@ -395,8 +394,17 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read the server-posted GitHub checks fact and current human hold state for this corner. Never infer passing checks from local git or gh output.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      'Read GitHub checks and the human merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. Never infer passing checks from local git, gh output, or chat prose.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pullRequest: {
+          anyOf: [{ type: 'integer', minimum: 1 }, { type: 'string' }],
+          description: 'PR number in this Room repository, or its full GitHub pull request URL.',
+        },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: 'write_scratch_file',
@@ -1106,19 +1114,7 @@ async function closeCorner(): Promise<string> {
   return JSON.stringify({ cornerId, status: 'closed' });
 }
 
-export function mergeApprovalPending(
-  lifecycle: CornerLifecycleView | undefined,
-  approval: { pullRequestNumber: number; headSha: string } | undefined,
-): boolean {
-  return Boolean(
-    lifecycle?.pr &&
-    approval &&
-    approval.pullRequestNumber === lifecycle.pr.number &&
-    approval.headSha === lifecycle.pr.headSha,
-  );
-}
-
-async function prChecksStatus(): Promise<string> {
+export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
@@ -1141,40 +1137,36 @@ async function prChecksStatus(): Promise<string> {
         })
       : [],
   );
-  // The server's webhook-owned check state is the verdict; transcript wording
-  // only stands in for checks while the server carries none. Merge approval is
-  // always the durable PR/head-bound server fact below.
   const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
-  const serverVerdict = checksVerdictFromLifecycle(lifecycle);
-  let checks: 'passed' | 'failed' | 'pending' = serverVerdict ?? 'pending';
   let held = false;
-  const approvalPending = mergeApprovalPending(
-    lifecycle,
-    restore.mergeApproval as { pullRequestNumber: number; headSha: string } | undefined,
-  );
-  let pullRequest: string | undefined = lifecycle?.pr?.url;
+  let pullRequest: unknown = args.pullRequest ?? lifecycle?.pr?.url;
+  // An objective URL is a target hint only, never a check verdict.
+  if (pullRequest === undefined && typeof restore.objective === 'string')
+    pullRequest = restore.objective.match(
+      /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/,
+    )?.[0];
   const items = Array.isArray(conversation.items) ? conversation.items : [];
   for (const item of items) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const message = item as Record<string, unknown>;
     const body = typeof message.body === 'string' ? message.body : '';
-    if (!serverVerdict) {
-      if (/\b(?:all\s+)?checks?\s+(?:have\s+)?passed\b|\bpassed a check\b/i.test(body)) {
-        checks = 'passed';
-      }
-      if (/\bchecks?\s+(?:have\s+)?failed\b|\bfailed a check\b/i.test(body)) checks = 'failed';
-    }
     const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
-    if (url && !lifecycle?.pr?.url) pullRequest = url;
+    if (url && args.pullRequest === undefined && !lifecycle?.pr?.url) pullRequest = url;
     if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
       if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
       if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
     }
   }
+  const verdict =
+    pullRequest !== undefined
+      ? await daemonExecute('getPrChecksStatus', { cornerId, pullRequest })
+      : undefined;
+  if (verdict) pullRequest = verdict.pullRequest;
   return JSON.stringify({
-    checks,
+    checks: verdict?.checks ?? 'pending',
+    ...(verdict?.headSha ? { headSha: verdict.headSha } : {}),
     held,
-    approvalPending,
+    approvalPending: verdict?.approvalPending ?? false,
     archived: authority.archived === true,
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
@@ -1784,7 +1776,7 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
     case 'close_corner':
       return closeCorner();
     case 'pr_checks_status':
-      return prChecksStatus();
+      return prChecksStatus(args);
     case 'write_scratch_file':
       return writeScratchFile(args);
     case 'attach_file':

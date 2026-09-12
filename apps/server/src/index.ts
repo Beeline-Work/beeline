@@ -135,6 +135,7 @@ async function main() {
     undefined,
     process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     process.env.FLY_MACHINE_ID,
+    github ? (input) => github!.prChecksStatus(input) : undefined,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

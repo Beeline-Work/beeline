@@ -680,6 +680,15 @@ CREATE TABLE IF NOT EXISTS github_repositories (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Shared across author and reviewer corners; webhook-only rows are incomplete snapshots.
+CREATE TABLE IF NOT EXISTS github_head_checks (
+  repository_id bigint NOT NULL REFERENCES github_repositories(repository_id) ON DELETE CASCADE,
+  head_sha text NOT NULL,
+  facts jsonb NOT NULL DEFAULT '{}',
+  verified_at timestamptz,
+  PRIMARY KEY(repository_id, head_sha)
+);
+
 CREATE TABLE IF NOT EXISTS github_user_tokens (
   subject text PRIMARY KEY,
   encrypted_token text NOT NULL,

@@ -11,7 +11,6 @@ import {
   type TextInputSelectionChangeEventData,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 
 type Props = {
   value: string;
@@ -130,15 +129,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     justifyContent: 'center',
   },
   attachButtonText: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.textMuted,
-    fontSize: 18,
-    lineHeight: 22,
   },
   input: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     flex: 1,
-    fontSize: 14,
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
     color: theme.buzz.textSecondary,
     minHeight: 40,
@@ -156,9 +152,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   sendButtonDisabled: { backgroundColor: theme.buzz.bgBase },
   sendButtonText: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.textPrimary,
-    fontSize: 16,
   },
 }));
 

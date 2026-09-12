@@ -937,18 +937,16 @@ export default function BuzzChannels() {
                             >
                               └ {label}
                             </Text>
-                            <View style={styles.cornerEndcap}>
-                              <Text
-                                style={[
-                                  styles.cornerStatus,
-                                  display.needsYou && styles.cornerStatusNeedsYou,
-                                ]}
-                                testID={`room-corner-status-${corner.corner.id}`}
-                              >
-                                {display.word}
-                              </Text>
-                              <Text style={styles.cornerChevron}>›</Text>
-                            </View>
+                            <Text
+                              style={[
+                                styles.cornerStatus,
+                                display.needsYou && styles.cornerStatusNeedsYou,
+                              ]}
+                              testID={`room-corner-status-${corner.corner.id}`}
+                            >
+                              {display.word}
+                            </Text>
+                            <Text style={styles.cornerChevron}>›</Text>
                           </TouchableOpacity>
                         );
                       })
@@ -1200,21 +1198,18 @@ const styles = StyleSheet.create((theme) => {
       gap: 8,
     },
     cornerName: {
-      ...Typography.default('semiBold'),
+      ...hull.type.meta,
+      fontFamily: hull.type.bodyStrong.fontFamily,
       flex: 1,
       minWidth: 0,
       color: hull.textSecondary,
-      fontSize: 12,
+      includeFontPadding: false,
     },
     cornerStatus: {
-      ...Typography.mono('semiBold'),
+      ...hull.type.sectionHead,
       color: hull.textMuted,
-      fontSize: 8,
-      letterSpacing: 0.35,
+      includeFontPadding: false,
     },
-    // Mixed font families and sizes must share a text baseline. The endcap is
-    // centered by the row while its word and chevron align to one baseline.
-    cornerEndcap: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
     // Brass on the index means the row is talking to you, and a corner waiting
     // on a person is the one thing in this dropdown that is. It is never the
     // only signal: the word itself changes to the affordance (REVIEW, REPLY,
@@ -1224,9 +1219,9 @@ const styles = StyleSheet.create((theme) => {
     // one emphasized row rather than a loud chip beside a quiet title.
     cornerNameNeedsYou: { color: hull.textPrimary },
     cornerChevron: {
-      ...Typography.default('semiBold'),
+      ...hull.type.bodyStrong,
       color: hull.steel,
-      fontSize: 18,
+      includeFontPadding: false,
     },
     chatActions: {
       flexDirection: 'row',

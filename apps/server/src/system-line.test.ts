@@ -262,7 +262,7 @@ describe('workspace system lines', () => {
     const roomId = room.rows[0]!.room_id;
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('system-dm-device-token-123456789012345',$1,'ios','physical')`,
+       VALUES('system-dm-device-token-123456789012345',$1,'android','physical')`,
       [HUMAN],
     );
     const send = vi.fn().mockResolvedValue(undefined);

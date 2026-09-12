@@ -114,7 +114,8 @@ async function main() {
   const sendPushTest = pushSender
     ? async (identityId: string) => {
         const devices = await database.query<{ token: string }>(
-          `SELECT token FROM push_devices WHERE identity_id=$1`,
+          // Same sender, same constraint as the delivery loop: FCM only.
+          `SELECT token FROM push_devices WHERE identity_id=$1 AND platform='android'`,
           [identityId],
         );
         for (const device of devices.rows)

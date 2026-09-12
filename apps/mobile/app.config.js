@@ -58,7 +58,7 @@ export default {
         // "a new native build is shipping". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "23",
+        runtimeVersion: "24",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
@@ -176,7 +176,6 @@ export default {
             ],
             "expo-secure-store",
             "expo-web-browser",
-            require("./plugins/withoutIosPushCapabilities.js"),
             [
                 "expo-notifications",
                 {

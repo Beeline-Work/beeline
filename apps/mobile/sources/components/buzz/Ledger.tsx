@@ -555,6 +555,7 @@ export function LedgerSystemLine({
   text,
   event,
   subjects,
+  summaryItems,
   stamp,
   onOpenIdentity,
   onOpenUrl,
@@ -563,10 +564,12 @@ export function LedgerSystemLine({
   text: string;
   event?: SystemEvent;
   subjects?: readonly SystemSubject[];
+  summaryItems?: readonly { id: string; title: string; url?: string }[];
   stamp: string;
   onOpenIdentity?: (identityId: string) => void;
   onOpenUrl?: (url: string) => void;
 }) {
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
   const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
   const name = (subject: SystemSubject, index: number) => (
     <Text
@@ -618,12 +621,47 @@ export function LedgerSystemLine({
   }
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
-      <Text numberOfLines={2} style={styles.systemLineText} testID={`system-line-text-${id}`}>
+      <Text
+        numberOfLines={summaryItems ? 1 : 2}
+        style={styles.systemLineText}
+        testID={`system-line-text-${id}`}
+      >
         {event ? spans : text}
       </Text>
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
       </Text>
+      {summaryItems ? (
+        <View style={styles.systemLineItems}>
+          {(summaryExpanded ? summaryItems : summaryItems.slice(0, 3)).map((item) => (
+            <Text
+              key={item.id}
+              numberOfLines={1}
+              style={item.url ? styles.systemLineLink : styles.systemLineText}
+              onPress={item.url && onOpenUrl ? () => onOpenUrl(item.url!) : undefined}
+              testID={`github-lifecycle-item-${item.id}`}
+            >
+              {item.title}
+            </Text>
+          ))}
+          {summaryItems.length > 3 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                summaryExpanded
+                  ? 'Show fewer GitHub events'
+                  : `Show ${summaryItems.length - 3} more GitHub events`
+              }
+              onPress={() => setSummaryExpanded((value) => !value)}
+              testID={`github-lifecycle-expand-${id}`}
+            >
+              <Text style={styles.systemLineName}>
+                {summaryExpanded ? 'show less' : `and ${summaryItems.length - 3} more`}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -850,6 +888,10 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerBody,
     textDecorationLine: 'underline',
+  },
+  systemLineItems: {
+    marginTop: theme.buzz.space.xs,
+    gap: theme.buzz.space.xs,
   },
   roomUpdateDigest: {
     fontFamily: theme.buzz.proseRegular,

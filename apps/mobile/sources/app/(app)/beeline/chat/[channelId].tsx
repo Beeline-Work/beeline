@@ -755,7 +755,7 @@ export default function BuzzChat() {
   // first, then pages in from the server once that's exhausted.
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
-  // Same-verb system lines fold into one ("Candy, Terra and Codex joined").
+  // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(
     () => foldSystemLines(foldSettledActivityRuns(combinedMessages)),
     [combinedMessages],
@@ -3176,7 +3176,7 @@ export default function BuzzChat() {
         return null;
       }
 
-      if (item.githubEvent) {
+      if (item.githubEvent || item.githubLifecycleRun) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 

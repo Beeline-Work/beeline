@@ -23,11 +23,12 @@ describe('Room composer status layout', () => {
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 
-  it('lets newline content drive the multiline input height', () => {
-    expect(composerInput).toContain('style={styles.input}');
+  it('lets newline content drive the iOS input height without changing web sizing', () => {
+    expect(composerInput).toContain(
+      "style={[styles.input, Platform.OS === 'ios' ? undefined : { height, maxHeight }]}",
+    );
     expect(composerInput).toContain('multiline');
     expect(composerInput).not.toContain('numberOfLines=');
-    expect(composerInput).not.toMatch(/style=.*\bheight\b/);
   });
 
   it('lets soft-wrapped content grow until the 120px scrolling cap', () => {

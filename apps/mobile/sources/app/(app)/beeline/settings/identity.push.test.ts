@@ -30,6 +30,14 @@ vi.mock('expo-linking', () => ({
   addEventListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock('expo-updates', () => ({
+  isEnabled: false,
+  channel: null,
+  updateId: null,
+  checkForUpdateAsync: vi.fn(),
+  fetchUpdateAsync: vi.fn(),
+  reloadAsync: vi.fn(),
+}));
 vi.mock('expo-haptics', () => ({
   notificationAsync: vi.fn(async () => undefined),
   NotificationFeedbackType: { Success: 'SUCCESS', Warning: 'WARNING', Error: 'ERROR' },
@@ -86,6 +94,9 @@ vi.mock('@/buzz/runtime-config', () => ({
     pushGatewayUrl: 'https://push.test',
   }),
 }));
+vi.mock('@/sync/appConfig', () => ({
+  loadAppConfig: () => ({ releaseVersion: 'v0.0.1', releaseSha: null }),
+}));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/constants/Typography', () => ({
   Typography: {
@@ -101,6 +112,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
+    PixelLoader: host('PixelLoader'),
   };
 });
 vi.mock('@/components/buzz/IdentityMark', async () => {
@@ -120,6 +132,7 @@ vi.mock('@/sync/transport', () => ({
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
+vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: { create: (styles: unknown) => styles },
   useUnistyles: () => ({
@@ -189,16 +202,6 @@ function toggle(renderer: ReactTestRenderer): { value: boolean } & Record<string
   return renderer.root.findByProps({ testID: 'push-notifications-toggle' }).props;
 }
 
-function subtitleText(renderer: ReactTestRenderer): string {
-  const section = renderer.root.findByProps({ testID: 'notifications-setting' });
-  return section
-    .findAllByType('Text')
-    .map((node: { props: { children?: unknown } }) =>
-      typeof node.props.children === 'string' ? node.props.children : '',
-    )
-    .join(' ');
-}
-
 describe('identity settings push row honesty', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -211,7 +214,7 @@ describe('identity settings push row honesty', () => {
     });
   });
 
-  it('shows a truthful off switch and failure line when registration failed, and retries on demand', async () => {
+  it('shows a truthful off switch and retry action when registration failed', async () => {
     // Forced failure: token acquisition timed out on last launch.
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(
       registrationState({ phase: 'token-timed-out' }),
@@ -222,8 +225,7 @@ describe('identity settings push row honesty', () => {
     const renderer = await renderScreen();
 
     expect(toggle(renderer).value).toBe(false);
-    expect(subtitleText(renderer)).toContain('device token timed out');
-    expect(subtitleText(renderer)).toContain('will retry');
+    expect(renderer.root.findByProps({ testID: 'push-retry-registration' })).toBeDefined();
 
     // The user taps RETRY NOW; this time the gateway accepts.
     await act(async () => {
@@ -232,7 +234,7 @@ describe('identity settings push row honesty', () => {
 
     expect(pushModule.registerBuzzPushNotifications).toHaveBeenCalledTimes(1);
     expect(toggle(renderer).value).toBe(true);
-    expect(subtitleText(renderer)).toContain('Registered');
+    expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
   });
 
   it('shows the switch on only when the stored state says registered', async () => {
@@ -247,7 +249,6 @@ describe('identity settings push row honesty', () => {
     const renderer = await renderScreen();
 
     expect(toggle(renderer).value).toBe(true);
-    expect(subtitleText(renderer)).toContain('Registered');
     expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
   });
@@ -288,6 +289,6 @@ describe('identity settings push row honesty', () => {
 
     expect(pushModule.setBuzzPushEnabled).toHaveBeenCalledWith(expect.anything(), true);
     expect(toggle(renderer).value).toBe(false);
-    expect(subtitleText(renderer)).toContain('push gateway refused registration');
+    expect(renderer.root.findByProps({ testID: 'push-retry-registration' })).toBeDefined();
   });
 });

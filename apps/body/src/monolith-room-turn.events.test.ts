@@ -30,7 +30,6 @@ const line = (over: Record<string, unknown> = {}) =>
       verb: 'joined',
       kind: 'joined',
     },
-    mentionIds: [AGENT],
     attachments: [],
     ...over,
   }) as import('@beeline/api-contract/daemon').RoomInboxResult['items'][number];
@@ -44,12 +43,12 @@ describe('an event line that woke a subscriber', () => {
     // The roster this turn was built from predates the arrival, so a lookup by
     // author id finds nothing — and a greeting addressed to a truncated public
     // key is not a greeting.
-    expect(inboxItemAuthorName(line(), AGENT, new Map())).toBe('Ada');
+    expect(inboxItemAuthorName(line(), new Map())).toBe('Ada');
     // An ordinary message still reads its author from the roster, and falls
     // back to the short key when even that is unknown.
     const message = line({ type: 'message', systemEvent: undefined, body: 'hello' });
-    expect(inboxItemAuthorName(message, AGENT, new Map([[NEWCOMER, 'Ada']]))).toBe('Ada');
-    expect(inboxItemAuthorName(message, AGENT, new Map())).toBe(NEWCOMER.slice(0, 12));
+    expect(inboxItemAuthorName(message, new Map([[NEWCOMER, 'Ada']]))).toBe('Ada');
+    expect(inboxItemAuthorName(message, new Map())).toBe(NEWCOMER.slice(0, 12));
   });
 
   it('prompts an agent-emitted event with the whole sentence, so the reader sees WHO said it', () => {
@@ -68,7 +67,7 @@ describe('an event line that woke a subscriber', () => {
       },
     });
     expect(inboxItemPromptBody(emitted, AGENT)).toBe('Bee emitted handoff · the branch is ready');
-    expect(inboxItemAuthorName(emitted, AGENT, new Map())).toBe('Bee');
+    expect(inboxItemAuthorName(emitted, new Map())).toBe('Bee');
   });
 });
 
@@ -97,7 +96,7 @@ describe('a scheduled prompt across the kind cutover', () => {
         kind: 'joined',
       },
     });
-    expect(isScheduledPrompt(mislabelled, AGENT)).toBe(false);
+    expect(isScheduledPrompt(mislabelled)).toBe(false);
     expect(inboxItemPromptBody(mislabelled, AGENT)).toBe(
       'Beeline Scheduler ran a schedule for Bee · ping',
     );

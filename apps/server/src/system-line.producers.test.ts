@@ -50,14 +50,16 @@ type Line = {
   author_id: string;
   text: string;
   presentation: string;
-  mention_ids: string[];
+  woke: string[];
   card_type: string | null;
   system_event: Record<string, unknown> | null;
 };
 async function lines(database: PgliteDatabase, roomId = ROOM): Promise<Line[]> {
   return (
     await database.query<Line>(
-      `SELECT author_id,text,presentation,mention_ids,card_type,system_event FROM messages
+      `SELECT author_id,text,presentation,card_type,system_event,
+         ARRAY(SELECT agent_id FROM agent_commands WHERE source_message_id=messages.id) woke
+       FROM messages
        WHERE room_id=$1 AND presentation IN ('system','card') ORDER BY created_at,id`,
       [roomId],
     )
@@ -103,7 +105,7 @@ describe('system-line producers', () => {
           author_id: LATE,
           text: '@candy joined · invited by @owner',
           presentation: 'system',
-          mention_ids: [],
+          woke: [],
           card_type: 'member-joined',
           // The kind is additive: the TEXT above is byte-identical to what this
           // producer wrote before events existed. Verbs are prose; kinds are
@@ -119,7 +121,7 @@ describe('system-line producers', () => {
           author_id: MEMBER,
           text: '@member left',
           presentation: 'system',
-          mention_ids: [],
+          woke: [],
           card_type: 'member-left',
           system_event: { subject: { kind: 'person', id: MEMBER, name: '@member' }, verb: 'left' },
         },
@@ -127,7 +129,7 @@ describe('system-line producers', () => {
           author_id: OWNER,
           text: '@owner removed @candy',
           presentation: 'system',
-          mention_ids: [],
+          woke: [],
           card_type: 'member-removed',
           system_event: {
             subject: { kind: 'person', id: OWNER, name: '@owner' },
@@ -356,8 +358,8 @@ describe('system-line producers', () => {
     try {
       const requestId = 'f'.repeat(64);
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'@bee hi',$4::jsonb)`,
-        [requestId, ROOM, OWNER, JSON.stringify([AGENT])],
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee hi')`,
+        [requestId, ROOM, OWNER],
       );
       const command = await database.transaction((tx) =>
         createAgentCommand(tx, {
@@ -402,7 +404,7 @@ describe('system-line producers', () => {
           author_id: AGENT,
           text: '@bee is not available · ask its owner',
           presentation: 'system',
-          mention_ids: [],
+          woke: [],
           card_type: 'turn-failed',
           system_event: {
             subject: { kind: 'agent', id: AGENT, name: '@bee' },

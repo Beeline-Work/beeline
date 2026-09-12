@@ -31,82 +31,53 @@ function isX64({ userAgent = '', uaDataArchitecture = '', uaDataBitness = '' }) 
   );
 }
 
-function isMobilePlatform(input = {}) {
+export function selectPlatform(input = {}) {
   const userAgent = input.userAgent ?? '';
   const platform = `${input.uaDataPlatform ?? ''} ${input.platform ?? ''}`.toLowerCase();
-  return (
-    input.uaDataMobile === true ||
-    /android|iphone|ipad|ipod|mobile/i.test(userAgent) ||
-    (/mac/i.test(platform) && Number(input.maxTouchPoints ?? 0) > 1)
-  );
-}
 
-export function selectDesktopInstaller(input = {}) {
-  const userAgent = input.userAgent ?? '';
-  const platform = `${input.uaDataPlatform ?? ''} ${input.platform ?? ''}`.toLowerCase();
-  if (isMobilePlatform(input)) return undefined;
-
+  if (/iphone|ipad|ipod/i.test(userAgent) || (/mac/i.test(platform) && Number(input.maxTouchPoints ?? 0) > 1)) {
+    return 'ios';
+  }
+  if (/android/i.test(userAgent) || /android/i.test(platform)) return 'android';
   if (/mac/i.test(platform) || /macintosh|mac os x/i.test(userAgent)) {
-    return PRIMARY_INSTALLERS.macos;
+    return 'macos';
   }
   if (/win/i.test(platform) || /windows/i.test(userAgent)) {
-    return isX64({ ...input, userAgent }) ? PRIMARY_INSTALLERS.windows : undefined;
+    return 'windows';
   }
   if (/linux/i.test(platform) || /linux/i.test(userAgent)) {
-    return isX64({ ...input, userAgent }) ? PRIMARY_INSTALLERS.linux : undefined;
+    return 'linux';
   }
   return undefined;
 }
 
-export async function browserPlatformInput(navigatorLike = globalThis.navigator) {
-  const input = {
+export function selectDesktopInstaller(input = {}) {
+  const platform = selectPlatform(input);
+  if (!platform || platform === 'ios' || platform === 'android') return undefined;
+  if ((platform === 'windows' || platform === 'linux') && !isX64(input)) return undefined;
+  return PRIMARY_INSTALLERS[platform];
+}
+
+export async function initializePlatformDownloads(
+  documentLike = globalThis.document,
+  navigatorLike = globalThis.navigator,
+) {
+  const tiles = [...(documentLike?.querySelectorAll?.('[data-platform]') ?? [])];
+  if (tiles.length === 0) return;
+
+  const platform = selectPlatform({
     userAgent: navigatorLike?.userAgent ?? '',
     platform: navigatorLike?.platform ?? '',
     maxTouchPoints: navigatorLike?.maxTouchPoints ?? 0,
     uaDataPlatform: navigatorLike?.userAgentData?.platform ?? '',
-    uaDataMobile: navigatorLike?.userAgentData?.mobile,
-  };
-  if (typeof navigatorLike?.userAgentData?.getHighEntropyValues === 'function') {
-    try {
-      const detail = await navigatorLike.userAgentData.getHighEntropyValues(['architecture', 'bitness']);
-      input.uaDataArchitecture = detail.architecture ?? '';
-      input.uaDataBitness = detail.bitness ?? '';
-    } catch {
-      // Reduced user-agent clients safely keep the chooser instead of guessing.
-    }
+  });
+  for (const tile of tiles) {
+    tile.classList.remove('is-current');
+    tile.removeAttribute('aria-current');
   }
-  return input;
+  const current = tiles.find((tile) => tile.dataset.platform === platform);
+  current?.classList.add('is-current');
+  current?.setAttribute('aria-current', 'true');
 }
 
-export async function initializeDesktopDownload(
-  documentLike = globalThis.document,
-  navigatorLike = globalThis.navigator,
-) {
-  const primary = documentLike?.querySelector('[data-desktop-download]');
-  const choices = documentLike?.querySelector('[data-desktop-choices]');
-  if (!primary || !choices) return;
-
-  const platformInput = await browserPlatformInput(navigatorLike);
-  const mobile = isMobilePlatform(platformInput);
-  const installer = selectDesktopInstaller(platformInput);
-  if (!installer) {
-    primary.textContent = 'Choose a desktop download';
-    primary.href = '#desktop-downloads';
-    choices.open = !mobile;
-    if (mobile) {
-      const stores = documentLike?.querySelector('.hero-text > .stores');
-      const desktopDownload = choices.closest?.('.desktop-download');
-      stores?.after?.(desktopDownload);
-    }
-    primary.addEventListener('click', () => {
-      choices.open = true;
-    });
-    return;
-  }
-
-  const platformName = { macos: 'macOS', windows: 'Windows', linux: 'Linux' }[installer.platform];
-  primary.textContent = `Download for ${platformName}`;
-  primary.href = installer.url;
-}
-
-if (typeof document !== 'undefined') initializeDesktopDownload();
+if (typeof document !== 'undefined') initializePlatformDownloads();

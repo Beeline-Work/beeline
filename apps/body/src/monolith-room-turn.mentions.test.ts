@@ -141,7 +141,6 @@ describe('who an agent can tag, and how it is spelled', () => {
                   createdAt: 902,
                   type: 'message',
                   body: 'hello',
-                  mentionIds: [CAPTAIN],
                   attachments: [],
                 },
               ]
@@ -160,7 +159,6 @@ describe('who an agent can tag, and how it is spelled', () => {
                 createdAt: 900,
                 type: 'message',
                 body: 'say hello to the new arrival',
-                mentionIds: [],
                 replyToMessageId: 'agent-parent',
                 replyToAuthorId: agent.publicKey,
                 attachments: [],
@@ -186,7 +184,6 @@ describe('who an agent can tag, and how it is spelled', () => {
                 createdAt: 901,
                 type: 'message',
                 body: 'and please keep going',
-                mentionIds: [],
                 attachments: [],
               },
             ],
@@ -259,10 +256,5 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
-    expect(
-      writes.every(
-        (write) => typeof write !== 'object' || write === null || !('mentionIds' in write),
-      ),
-    ).toBe(true);
   }, 20_000);
 });

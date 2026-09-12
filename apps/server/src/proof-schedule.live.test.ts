@@ -127,15 +127,18 @@ describe('end-to-end agent schedule proof', () => {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
     const finishedAt = new Date();
-    const stored = await database.query<{ text: string; author_id: string; mention_ids: string[] }>(
-      `SELECT text,author_id,mention_ids FROM messages ORDER BY created_at`,
+    const stored = await database.query<{ text: string; author_id: string; woke: string[] }>(
+      `SELECT text,author_id,
+         ARRAY(SELECT agent_id FROM agent_commands
+               WHERE source_message_id=messages.id) woke
+       FROM messages ORDER BY created_at`,
     );
     console.log(`[proof] wall-clock ${(finishedAt.getTime() - startedAt.getTime()) / 1_000}s; fired ${stored.rowCount} runs`);
     for (const row of stored.rows) console.log(`[proof] fired: ${JSON.stringify(row)}`);
     expect(stored.rowCount).toBe(5);
     for (const row of stored.rows) {
       expect(row.author_id).toBe(SCHEDULE_SCHEDULER_ID);
-      expect(row.mention_ids).toEqual([AGENT]);
+      expect(row.woke).toEqual([AGENT]);
     }
     expect(
       (await database.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [scheduleId])).rowCount,

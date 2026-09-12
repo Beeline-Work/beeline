@@ -62,7 +62,6 @@ describe('DaemonApiClient', () => {
       createdAt: 1,
       type: 'message',
       body: id,
-      mentionIds: [],
       attachments: [],
     });
     const polledEarlier = item('a'.repeat(64), `1000,${'a'.repeat(64)}`);
@@ -227,7 +226,6 @@ describe('DaemonApiClient', () => {
       createdAt: 1,
       type: 'message',
       body: id,
-      mentionIds: [],
       attachments: [],
     }));
     second.message({ type: 'inbox', roomId: 'room-1', cursor: `2000,${'b'.repeat(64)}`, items });

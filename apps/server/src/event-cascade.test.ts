@@ -41,7 +41,7 @@ describe('an event cascade', () => {
   });
   afterEach(() => database.close());
 
-  const emit = (causeId: string | undefined, mentions: string[] = [], kind = 'agent:ping') =>
+  const emit = (causeId: string | undefined, wakes: string[] = [], kind = 'agent:ping') =>
     systemLine(database, {
       roomId: ROOM,
       subject: { kind: 'agent', id: AGENT_A, name: 'Owl' },
@@ -49,7 +49,7 @@ describe('an event cascade', () => {
       object: 'ping',
       consequence: 'again',
       kind: kind as 'joined',
-      mentions,
+      wakes,
       ...(causeId === undefined ? {} : { causeId }),
     });
 
@@ -98,7 +98,7 @@ describe('an event cascade', () => {
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'joined',
       kind: 'joined',
-      mentions: [AGENT_A],
+      wakes: [AGENT_A],
     });
     const first = await emit(root.id, [AGENT_B]);
     const second = await emit(first.id, [AGENT_A]);
@@ -128,7 +128,7 @@ describe('an event cascade', () => {
         subject: { kind: 'person', id: HUMAN, name: 'Ada' },
         verb: 'joined',
         kind: 'joined',
-        mentions: [AGENT_A],
+        wakes: [AGENT_A],
       })
     ).id;
     // A wakes B, B wakes A, A wakes B… each hop is one event citing the last.
@@ -154,7 +154,7 @@ describe('an event cascade', () => {
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'joined',
       kind: 'joined',
-      mentions: [AGENT_A, AGENT_B, HUMAN],
+      wakes: [AGENT_A, AGENT_B, HUMAN],
     });
     let cause = root.id;
     for (let hop = 0; hop < 3; hop += 1) {
@@ -162,7 +162,7 @@ describe('an event cascade', () => {
     }
     // 4 lines × 3 mentions = 12 turns woken, exactly the budget.
     const spent = await database.query<{ woken: number }>(
-      `SELECT COALESCE(SUM(jsonb_array_length(mention_ids)),0)::int woken
+      `SELECT COALESCE(SUM(event_woken),0)::int woken
        FROM messages WHERE event_root_cause_id=$1`,
       [root.id],
     );
@@ -189,13 +189,13 @@ describe('an event cascade', () => {
       kind: 'joined',
     });
     expect(join.inserted).toBe(true);
-    const mentions = (
-      await database.query<{ mention_ids: string[] }>(
-        `SELECT mention_ids FROM messages WHERE id=$1`,
+    const woke = (
+      await database.query<{ woke: string[] }>(
+        `SELECT ARRAY(SELECT agent_id FROM agent_commands WHERE source_message_id=$1) woke`,
         [join.id],
       )
-    ).rows[0]?.mention_ids;
-    expect(mentions?.sort()).toEqual([AGENT_A, AGENT_B].sort());
+    ).rows[0]?.woke;
+    expect(woke?.sort()).toEqual([AGENT_A, AGENT_B].sort());
   });
 
   it('counts a subscriber fan-out toward the same budget its emits spend', async () => {
@@ -211,7 +211,7 @@ describe('an event cascade', () => {
     });
     const first = await emit(root.id, [AGENT_B]);
     const spent = await database.query<{ woken: number }>(
-      `SELECT COALESCE(SUM(jsonb_array_length(mention_ids)),0)::int woken
+      `SELECT COALESCE(SUM(event_woken),0)::int woken
        FROM messages WHERE event_root_cause_id=$1`,
       [root.id],
     );

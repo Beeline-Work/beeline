@@ -30,7 +30,6 @@ const command = (id = 'c1', action: AgentCommand['action'] = 'input'): AgentComm
     body: 'Do it',
     createdAt: 1,
     type: 'message',
-    mentionIds: [],
     attachments: [],
   },
 });

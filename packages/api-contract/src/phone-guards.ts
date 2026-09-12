@@ -409,6 +409,23 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.mentionPubkeys === undefined ||
       (Array.isArray(item.mentionPubkeys) &&
         item.mentionPubkeys.every((pubkey) => typeof pubkey === 'string' && HEX.test(pubkey)))) &&
+    (item.reactions === undefined ||
+      (Array.isArray(item.reactions) &&
+        item.reactions.every((candidate) => {
+          const reaction = record(candidate);
+          return Boolean(
+            reaction &&
+            (reaction.emoji === '👍' ||
+              reaction.emoji === '❤️' ||
+              reaction.emoji === '😂' ||
+              reaction.emoji === '🎉' ||
+              reaction.emoji === '👀' ||
+              reaction.emoji === '✅') &&
+            integer(reaction.count) &&
+            Number(reaction.count) > 0 &&
+            typeof reaction.reacted === 'boolean',
+          );
+        }))) &&
     (item.activity === undefined ||
       (Array.isArray(item.activity) && item.activity.every(activity))) &&
     (item.durableFact === undefined ||

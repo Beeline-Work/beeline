@@ -17,7 +17,6 @@ const command = {
     body: 'Work',
     createdAt: 1,
     attachments: [],
-    mentionIds: [],
   },
 };
 describe('server command protocol 1', () => {

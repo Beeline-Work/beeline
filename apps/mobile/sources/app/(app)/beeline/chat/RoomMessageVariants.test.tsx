@@ -46,7 +46,10 @@ vi.mock('react-native-gesture-handler', async () => {
 });
 
 vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (factory: () => unknown) => factory() },
+  StyleSheet: {
+    create: (factory: (theme: { buzz: { type: { body: object } } }) => unknown) =>
+      factory({ buzz: { type: { body: {} } } }),
+  },
 }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/buzz/chat-attachment', () => ({
@@ -559,9 +562,11 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('keeps visible copy and reply actions on desktop', () => {
+  it('shows copy, reply, react, and forward actions on desktop', () => {
     const onReply = vi.fn();
     const onCopy = vi.fn();
+    const onReact = vi.fn();
+    const onForward = vi.fn();
     const row = message({ id: 'desktop-reply' });
     const renderer = render(
       <OrdinaryLedgerMessage
@@ -577,6 +582,8 @@ describe('Room message variant components', () => {
         onChannelReference={vi.fn()}
         onReply={onReply}
         onCopy={onCopy}
+        onReact={onReact}
+        onForward={onForward}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
       />,
@@ -591,6 +598,49 @@ describe('Room message variant components', () => {
     expect(reply.props.accessibilityLabel).toBe('Reply to message');
     act(() => reply.props.onPress());
     expect(onReply).toHaveBeenCalledWith(row);
+
+    const react = renderer.root.findByProps({ testID: 'react-button-desktop-reply' });
+    expect(react.props.accessibilityLabel).toBe('React to message');
+    act(() => react.props.onPress());
+    const laugh = renderer.root.findByProps({ testID: 'reaction-choice-desktop-reply-😂' });
+    act(() => laugh.props.onPress());
+    expect(onReact).toHaveBeenCalledWith(row, '😂');
+
+    const forward = renderer.root.findByProps({ testID: 'forward-button-desktop-reply' });
+    expect(forward.props.accessibilityLabel).toBe('Forward message');
+    act(() => forward.props.onPress());
+    expect(onForward).toHaveBeenCalledWith(row);
+  });
+
+  it('renders reaction chips on mobile and toggles the viewer reaction', () => {
+    const onReact = vi.fn();
+    const row = message({
+      id: 'reacted',
+      reactions: [{ emoji: '👍', count: 2, reacted: true }],
+    });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={row}
+        desktopLayout={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onReact={onReact}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const chip = renderer.root.findByProps({ testID: 'reaction-chip-reacted-👍' });
+    expect(chip.props.accessibilityState).toEqual({ selected: true });
+    act(() => chip.props.onPress());
+    expect(onReact).toHaveBeenCalledWith(row, '👍');
   });
 
   it('uses the phone swipe interaction on compact web', () => {
@@ -1127,7 +1177,8 @@ describe('Room message variant components', () => {
       />,
     );
 
-    // The renderer reads mention_ids and nothing about the author, so a tag an
+    // The renderer reads the server-derived tag list and nothing about the
+    // author, so a tag an
     // agent wrote is highlighted exactly like one a person wrote — and BOTH
     // tags survive, which is the whole point of dropping the server's
     // one-human-mention cap.

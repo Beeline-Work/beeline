@@ -78,6 +78,7 @@ import {
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
+  STEER_RECEIVED_VISIBLE_MS,
   hasComposerAckReceipt,
   selectComposerAckPresentation,
   type ComposerAckPresentation,
@@ -494,6 +495,11 @@ export default function BuzzChat() {
   // receipt (API write + pickup + receipt + refetch). See
   // `selectComposerAckState`.
   const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
+  const [receivedSteer, setReceivedSteer] = useState<{
+    agentPubkey: string;
+    turnRequestId: string;
+    receivedAt: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!desktopExperience || !decodedId) return;
@@ -1775,6 +1781,26 @@ export default function BuzzChat() {
     return () => clearTimeout(timer);
   }, [pendingAck]);
 
+  // A committed steer is a brief confirmation, not a new lifecycle. It stays
+  // on the exact running turn the server accepted it into and then clears.
+  useEffect(() => {
+    if (!receivedSteer) return;
+    if (
+      !activeAgentTurn ||
+      activeAgentTurn.agentPubkey !== receivedSteer.agentPubkey ||
+      activeAgentTurn.requestId !== receivedSteer.turnRequestId
+    ) {
+      setReceivedSteer(null);
+      return;
+    }
+    const delay = Math.max(
+      1,
+      receivedSteer.receivedAt + STEER_RECEIVED_VISIBLE_MS - Date.now() + 1,
+    );
+    const timer = setTimeout(() => setReceivedSteer(null), delay);
+    return () => clearTimeout(timer);
+  }, [activeAgentTurn, receivedSteer]);
+
   /**
    * The ordinary turn indicator, and the only thing a plain question in a Room
    * ever lights: "beebee thinking…" while the reply is being composed, gone
@@ -1810,11 +1836,20 @@ export default function BuzzChat() {
         : {}),
       ...(viewerPubkey ? { viewerPubkey } : {}),
       ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
+      ...(receivedSteer ? { receivedSteer } : {}),
       now: pendingAck?.sentAt ?? Date.now(),
       conversationIdentities,
       agentsByPubkey: agentByPubkey,
     });
-  }, [activeAgentTurn, agentByPubkey, conversationIdentities, isCorner, pendingAck, viewerPubkey]);
+  }, [
+    activeAgentTurn,
+    agentByPubkey,
+    conversationIdentities,
+    isCorner,
+    pendingAck,
+    receivedSteer,
+    viewerPubkey,
+  ]);
 
   /**
    * Withdraw the question this turn is answering.
@@ -2046,6 +2081,7 @@ export default function BuzzChat() {
       isCorner ||
       Boolean(mentionedAgent) ||
       (roomAgents.length === 1 && roomParticipants.length <= 2);
+    setReceivedSteer(null);
     setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
     sendInFlightRef.current = true;
@@ -2134,7 +2170,18 @@ export default function BuzzChat() {
       setReplyTarget(null);
       if (desktopExperience) void saveDesktopDraft(decodedId, '');
       await activeOutbox.attempted(preparedEvent.id);
-      await sendTransport.publishPreparedMessage(preparedEvent);
+      const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+      if (
+        isCorner &&
+        activeAgentTurn &&
+        writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
+      ) {
+        setReceivedSteer({
+          agentPubkey: activeAgentTurn.agentPubkey,
+          turnRequestId: activeAgentTurn.requestId,
+          receivedAt: Date.now(),
+        });
+      }
       if (desktopExperience) setDesktopDeliveryState('delivered');
       // The write ack retires the local bridge: the server has STORED the
       // message, so "sending…" has nothing left to bridge. It used to outlive
@@ -2190,6 +2237,7 @@ export default function BuzzChat() {
     addMessages,
     isArchived,
     isCorner,
+    activeAgentTurn,
     userPubkey,
     parentChannelId,
     roomParticipants,
@@ -3898,6 +3946,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      received={composerAck.received}
                       stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
@@ -3925,6 +3974,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      received={composerAck.received}
                       stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined

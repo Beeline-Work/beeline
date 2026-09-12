@@ -109,6 +109,42 @@ beforeEach(async () => {
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
+  it('acknowledges a committed human steer only while its targeted turn is active', async () => {
+    const first = await send('@hoots start', room);
+    const [active] = await commands(A, room);
+    await claim(active!);
+
+    const steerId = id();
+    const received = await phone.execute(
+      'sendRoomMessage',
+      { roomId: room, messageId: steerId, text: '@hoots change course' },
+      H,
+    );
+    expect(received).toEqual({ messageId: steerId, activeSteerAgentIds: [A] });
+    expect((await commands(A, room)).map((command) => command.sourceMessageId)).toContain(steerId);
+
+    // A retried write reads the same committed routing result instead of
+    // falling back to a client-side guess.
+    await expect(
+      phone.execute(
+        'sendRoomMessage',
+        { roomId: room, messageId: steerId, text: '@hoots change course' },
+        H,
+      ),
+    ).resolves.toEqual(received);
+
+    await result(active!, 'Finished');
+    const idleId = id();
+    await expect(
+      phone.execute(
+        'sendRoomMessage',
+        { roomId: room, messageId: idleId, text: '@hoots next task' },
+        H,
+      ),
+    ).resolves.toEqual({ messageId: idleId, activeSteerAgentIds: [] });
+    expect(first.messageId).toBe(active!.sourceMessageId);
+  });
+
   it('routes an untagged continuation only to the immediately preceding agent', async () => {
     await send('@hoots ask Goosy', room);
     const [first] = await commands(A, room);

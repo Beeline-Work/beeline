@@ -11,6 +11,7 @@ import type {
   RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
+import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -288,7 +289,7 @@ export class MonolithRigTransport {
     );
   }
 
-  async publishPreparedMessage(event: NostrEvent): Promise<string> {
+  async publishPreparedMessage(event: NostrEvent): Promise<AgentMessageWriteResult> {
     const roomId = tag(event, 'h');
     if (!roomId) throw new Error('Prepared monolith message has no Room');
     const attachments = JSON.parse(
@@ -296,15 +297,14 @@ export class MonolithRigTransport {
     ) as AttachmentReference[];
     const mentions = JSON.parse(tag(event, 'monolith-mentions') ?? '[]') as string[];
     const parentMessageId = tag(event, 'monolith-parent');
-    const result = (await this.operation(parentMessageId ? 'sendRoomReply' : 'sendRoomMessage', {
+    return (await this.operation(parentMessageId ? 'sendRoomReply' : 'sendRoomMessage', {
       roomId,
       messageId: event.id,
       text: event.content,
       mentions,
       attachments,
       ...(parentMessageId ? { parentMessageId } : {}),
-    })) as { messageId: string };
-    return result.messageId;
+    })) as AgentMessageWriteResult;
   }
 
   async uploadMedia(bytes: Uint8Array, mimeType: string): Promise<any> {

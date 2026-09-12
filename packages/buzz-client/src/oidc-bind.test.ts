@@ -280,6 +280,27 @@ describe('OIDC device-key bind protocol', () => {
     ).toBe('beeline://buzz/github-callback');
   });
 
+  it('allows the Expo web GitHub callback to reach the server allowlist', () => {
+    for (const redirectUri of [
+      'https://web.usebeeline.app/beeline/github-callback',
+      'http://127.0.0.1:8081/beeline/github-callback',
+    ]) {
+      expect(
+        startGitHubBind('https://server.usebeeline.app', {
+          redirectUri,
+          state: 's'.repeat(43),
+        }).redirectUri,
+      ).toBe(redirectUri);
+    }
+
+    expect(() =>
+      startGitHubBind('https://server.usebeeline.app', {
+        redirectUri: 'https://web.usebeeline.app/other',
+        state: 's'.repeat(43),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
+  });
+
   it('strictly parses the callback and refuses missing, duplicate, or foreign state fields', () => {
     expect(parseOidcBindCallback(callbackUrl(), 's'.repeat(43))).toEqual(challenge);
     const duplicate = `${callbackUrl()}&ticket=${challenge.ticket}`;

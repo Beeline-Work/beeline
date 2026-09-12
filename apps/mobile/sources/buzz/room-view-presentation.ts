@@ -213,7 +213,10 @@ export type ChatDisplayMessage = {
   /** The ids of every row folded into this one. */
   foldedIds?: string[];
   /** A render-time-only run of adjacent GitHub lifecycle rows. */
-  githubLifecycleRun?: import('./github-lifecycle-fold').GitHubLifecycleRun;
+  githubLifecycleRun?: {
+    headline: string;
+    items: { id: string; title: string; url?: string }[];
+  };
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
   isAgentLiveTurn?: boolean;

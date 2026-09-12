@@ -25,7 +25,7 @@ vi.mock('./IdentityMark', async () => {
   return { IdentityMark: IdentityMarkStub };
 });
 
-import { LedgerGitHubLifecycleRun, LedgerSystemLine } from './Ledger';
+import { LedgerSystemLine } from './Ledger';
 import { typeRoles } from '@/buzz/groknight';
 
 const originalConsoleError = console.error;
@@ -183,17 +183,17 @@ describe('the folded GitHub lifecycle line', () => {
       subject: 'PR' as const,
     }));
     const renderer = render(
-      React.createElement(LedgerGitHubLifecycleRun, {
+      React.createElement(LedgerSystemLine, {
         id: 'run',
-        headline: '3 PRs opened · 2 merged',
-        items,
+        text: '3 PRs opened · 2 merged',
+        summaryItems: items,
         stamp: '16:41',
         onOpenUrl,
       }),
     );
-    expect(
-      renderer.root.findByProps({ testID: 'github-lifecycle-headline-run' }).props.children,
-    ).toBe('3 PRs opened · 2 merged');
+    expect(renderer.root.findByProps({ testID: 'system-line-text-run' }).props.children).toBe(
+      '3 PRs opened · 2 merged',
+    );
     expect(
       renderer.root.findAll(
         (node) => node.type === 'Text' && /^github-lifecycle-item-/.test(node.props.testID ?? ''),

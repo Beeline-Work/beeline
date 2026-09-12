@@ -197,7 +197,6 @@ import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
-  GitHubLifecycleRunCard,
   DaemonFactCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
@@ -207,7 +206,6 @@ import {
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
-import { foldGitHubLifecycleRuns } from '@/buzz/github-lifecycle-fold';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -757,11 +755,9 @@ export default function BuzzChat() {
   // first, then pages in from the server once that's exhausted.
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
-  // Same-verb system lines fold into one ("Candy, Terra and Codex joined").
-  // Adjacent GitHub lifecycle rows fold before that generic pass so a corner
-  // note and a top-level repository card can share one stable summary row.
+  // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(
-    () => foldSystemLines(foldGitHubLifecycleRuns(foldSettledActivityRuns(combinedMessages))),
+    () => foldSystemLines(foldSettledActivityRuns(combinedMessages)),
     [combinedMessages],
   );
   const unprojectedMessages = useMemo(
@@ -3180,11 +3176,7 @@ export default function BuzzChat() {
         return null;
       }
 
-      if (item.githubLifecycleRun) {
-        return <GitHubLifecycleRunCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
-      }
-
-      if (item.githubEvent) {
+      if (item.githubEvent || item.githubLifecycleRun) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 

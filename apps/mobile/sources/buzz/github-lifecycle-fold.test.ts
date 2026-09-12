@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { foldGitHubLifecycleRuns } from './github-lifecycle-fold';
+import { foldSystemLines as foldGitHubLifecycleRuns } from './system-lines';
 
 function github(
   id: string,
@@ -50,7 +50,6 @@ describe('GitHub lifecycle folding', () => {
       timestamp: count,
       githubLifecycleRun: {
         headline: count <= 3 ? `${count} PRs opened` : `3 PRs opened · ${count - 3} merged`,
-        foldedIds: messages.map((message) => message.id),
       },
     });
     expect(folded[0]!.githubLifecycleRun!.items.map((item) => item.id)).toEqual(
@@ -67,8 +66,8 @@ describe('GitHub lifecycle folding', () => {
       github('4', 'closed'),
     ]);
     expect(folded.map((message) => message.id)).toEqual(['1', 'message', '3']);
-    expect(folded[0]!.githubLifecycleRun?.foldedIds).toEqual(['1', '2']);
-    expect(folded[2]!.githubLifecycleRun?.foldedIds).toEqual(['3', '4']);
+    expect(folded[0]!.githubLifecycleRun?.items).toHaveLength(2);
+    expect(folded[2]!.githubLifecycleRun?.items).toHaveLength(2);
   });
 
   it('extends the tail card in place when another event appends', () => {
@@ -82,7 +81,6 @@ describe('GitHub lifecycle folding', () => {
     expect(after[0]!.id).toBe('1');
     expect(after[0]!.githubLifecycleRun).toMatchObject({
       headline: '2 PRs opened · 1 merged',
-      foldedIds: ['1', '2', '3'],
     });
   });
 
@@ -103,7 +101,6 @@ describe('GitHub lifecycle folding', () => {
     expect(folded).toHaveLength(1);
     expect(folded[0]!.githubLifecycleRun).toMatchObject({
       headline: '1 PR opened · 1 check passed',
-      foldedIds: ['1', 'corner'],
     });
   });
 });

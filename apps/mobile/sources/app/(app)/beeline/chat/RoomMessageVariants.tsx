@@ -35,7 +35,7 @@ import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import {
   LedgerEntry,
   LedgerGhostLine,
-  LedgerGitHubLifecycleRun,
+  LedgerSystemLine,
   LedgerSteer,
   type LedgerByline,
 } from '@/components/buzz/Ledger';
@@ -411,6 +411,17 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   message,
   onOpenUrl,
 }: GitHubEventCardProps) {
+  if (message.githubLifecycleRun) {
+    return (
+      <LedgerSystemLine
+        id={message.id}
+        text={message.githubLifecycleRun.headline}
+        summaryItems={message.githubLifecycleRun.items}
+        stamp={ledgerStamp(message.timestamp)}
+        onOpenUrl={onOpenUrl}
+      />
+    );
+  }
   const event = message.githubEvent!;
   const title =
     event.type === 'pull-request'
@@ -428,22 +439,6 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
       actionLabel="VIEW ON GITHUB ↗"
       onPress={() => onOpenUrl(event.url)}
       testID={`github-event-card-${event.type}-${event.action}`}
-    />
-  );
-});
-
-export const GitHubLifecycleRunCard = React.memo(function GitHubLifecycleRunCard({
-  message,
-  onOpenUrl,
-}: GitHubEventCardProps) {
-  const run = message.githubLifecycleRun!;
-  return (
-    <LedgerGitHubLifecycleRun
-      id={message.id}
-      headline={run.headline}
-      items={run.items}
-      stamp={ledgerStamp(message.timestamp)}
-      onOpenUrl={onOpenUrl}
     />
   );
 });

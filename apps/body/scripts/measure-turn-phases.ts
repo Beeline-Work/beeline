@@ -202,7 +202,6 @@ async function runRig(options: {
               createdAt: delivered,
               type: 'message',
               body: ask.body,
-              mentionIds: [runtime.agent.publicKey],
               attachments: [],
             },
           ],

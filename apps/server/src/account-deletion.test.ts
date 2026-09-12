@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -37,8 +38,9 @@ describe('deleteAccount', () => {
 
   const seed = async () => {
     await database.query(
-      `INSERT INTO identities(id,kind,name,github_subject) VALUES
-         ($1,'human','Owner','owner'),($2,'human','Partner','partner'),($3,'agent','Bee',NULL)`,
+      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES
+         ($1,'human','Owner','owner','owner'),($2,'human','Partner','partner','partner'),
+         ($3,'agent','Bee','bee',NULL)`,
       [OWNER, PARTNER, AGENT],
     );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
@@ -83,19 +85,11 @@ describe('deleteAccount', () => {
     // the agent in the shared Room mentioning the owner, the owner in the
     // human DM.
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES
-         ('m1',$1,$2,'hello @partner',$5::jsonb),
-         ('m2',$1,$3,'on it @owner',$6::jsonb),
-         ('m3',$4,$2,'just us',$7::jsonb)`,
-      [
-        ROOM,
-        OWNER,
-        AGENT,
-        DM_HUMAN,
-        JSON.stringify([PARTNER]),
-        JSON.stringify([OWNER]),
-        JSON.stringify([]),
-      ],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES
+         ('m1',$1,$2,'hello @partner'),
+         ('m2',$1,$3,'on it @owner'),
+         ('m3',$4,$2,'just us')`,
+      [ROOM, OWNER, AGENT, DM_HUMAN],
     );
     // The agent's working state and schedules.
     await database.query(
@@ -228,9 +222,11 @@ describe('deleteAccount', () => {
       [DELETED_ACCOUNT_IDENTITY_ID],
       3,
     );
+    // Nothing had to scrub the tags: the deleted account is no longer a member
+    // of anything, so `@owner` in a surviving line now names nobody.
     await expectRowCount(
-      `SELECT 1 FROM messages WHERE id IN ('m1','m2','m3')
-       AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(mention_ids) m WHERE m=ANY($1))`,
+      `SELECT 1 FROM messages message WHERE message.id IN ('m1','m2','m3')
+       AND ${taggedIdentityIdsSql('message')} && $1::text[]`,
       [[OWNER, AGENT]],
       0,
     );

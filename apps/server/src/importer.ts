@@ -568,7 +568,7 @@ export class SnapshotImporter {
           if (row.kind !== 9 && latestPlanEventByRoom.get(row.roomId)?.id !== row.id) return;
           const typed = card(projected);
           await db.query(
-            `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,mention_ids,reply_to_message_id,root_message_id,request_id,turn_id,activity,durable_fact,card_type,card,legacy_event,created_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16::jsonb,$17) ON CONFLICT(id) DO NOTHING`,
+            `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,reply_to_message_id,root_message_id,request_id,turn_id,activity,durable_fact,card_type,card,legacy_event,created_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11::jsonb,$12,$13,$14::jsonb,$15::jsonb,$16) ON CONFLICT(id) DO NOTHING`,
             [
               projected.id,
               row.roomId,
@@ -576,7 +576,9 @@ export class SnapshotImporter {
               projected.text,
               projected.presentation,
               JSON.stringify(projected.attachments ?? []),
-              JSON.stringify(projected.mentionPubkeys ?? []),
+              // The imported event's own mention list is dropped: a tag is read
+              // from the text against today's membership, so an id frozen in a
+              // relay event would only ever disagree with what the line says.
               projected.reply?.eventId ?? null,
               projected.reply?.rootId ?? projected.reference?.rootId ?? row.rootId ?? row.id,
               projected.requestId ?? null,

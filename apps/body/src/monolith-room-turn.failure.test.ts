@@ -101,7 +101,6 @@ async function runTurn(options: {
               createdAt: 1,
               type: 'message',
               body: "what's up",
-              mentionIds: [agent.publicKey],
               attachments: [],
             },
           ],

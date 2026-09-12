@@ -174,10 +174,13 @@ describe('agent schedule background posting', () => {
           await database.query<{
             author_id: string;
             text: string;
-            mention_ids: string[];
-          }>(`SELECT author_id,text,mention_ids FROM messages`)
+            woke: string[];
+          }>(`SELECT author_id,text,
+                ARRAY(SELECT agent_id FROM agent_commands
+                      WHERE source_message_id=messages.id) woke
+              FROM messages`)
         ).rows,
-      ).toEqual([{ author_id: OWNER, text: 'Post the status update.', mention_ids: [AGENT] }]);
+      ).toEqual([{ author_id: OWNER, text: 'Post the status update.', woke: [AGENT] }]);
       expect((await database.query(`SELECT 1 FROM agent_schedule_occurrences`)).rowCount).toBe(1);
     } finally {
       await database.close();
@@ -215,10 +218,13 @@ describe('agent schedule background posting', () => {
         author_id: string;
         text: string;
         presentation: string;
-        mention_ids: string[];
+        woke: string[];
         system_event: unknown;
       }>(
-        `SELECT author_id,text,presentation,mention_ids,system_event FROM messages ORDER BY created_at`,
+        `SELECT author_id,text,presentation,system_event,
+           ARRAY(SELECT agent_id FROM agent_commands
+                 WHERE source_message_id=messages.id) woke
+         FROM messages ORDER BY created_at`,
       );
       expect(messages.rowCount).toBe(2);
       // Never authored by the agent itself: the scheduler identity posts a
@@ -227,7 +233,7 @@ describe('agent schedule background posting', () => {
         author_id: SCHEDULE_SCHEDULER_ID,
         text: '@scheduler ran a schedule for @worker · Post exactly: hello @methoxine-debug',
         presentation: 'system',
-        mention_ids: [AGENT],
+        woke: [AGENT],
         system_event: {
           subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: '@scheduler' },
           verb: SCHEDULE_RAN_VERB,
@@ -251,11 +257,10 @@ describe('agent schedule background posting', () => {
       // The agent's daemon inbox contains the scheduled prompt (the own-author
       // drop would have hidden a self-authored row) and a simulated turn reply.
       const inbox = await daemon.execute('getRoomInbox', { roomId: ROOM, limit: 50 }, AGENT);
+      // An inbox item is already addressed to this agent by the fact it was
+      // delivered here, so there is nothing on the row left to check it against.
       const scheduledItems = inbox.items.filter(
-        (item) =>
-          item.type === 'system' &&
-          item.systemEvent?.verb === SCHEDULE_RAN_VERB &&
-          item.mentionIds.includes(AGENT),
+        (item) => item.type === 'system' && item.systemEvent?.verb === SCHEDULE_RAN_VERB,
       );
       expect(scheduledItems).toHaveLength(2);
       const [command] = (await daemon.execute('getAgentCommands', { roomId: ROOM }, AGENT))

@@ -64,6 +64,8 @@ jobs:
       stage_helper: ${{ steps.plan.outputs.stage_helper }}
       stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
+      native_android: ${{ steps.plan.outputs.native_android }}
+      native_ios: ${{ steps.plan.outputs.native_ios }}
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
       previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
       next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
@@ -189,7 +191,8 @@ jobs:
             echo "release_sha=$release_sha"
             echo "release_version=$release_version"
             echo "release_id=$release_id"
-            node -e 'const p=require(process.argv[1]).plan;console.log("runtime_pin_changed="+(p.runtimePinChanged??false)+"\nprevious_runtime_version="+(p.previousRuntimeVersion??"")+"\nnext_runtime_version="+(p.nextRuntimeVersion??""))' "$RUNNER_TEMP/unified-release.json"
+            node -e 'const p=require(process.argv[1]).plan;console.log("runtime_pin_changed="+(p.runtimePinChanged??false)+"\nprevious_runtime_version="+JSON.stringify(p.previousRuntimeVersion??"")+"\nnext_runtime_version="+JSON.stringify(p.nextRuntimeVersion??""))' "$RUNNER_TEMP/unified-release.json"
+            node -e 'const p=require(process.argv[1]).plan;for(const platform of ["android","ios"])console.log("native_"+platform+"="+(p.nativePlatforms??["android","ios"]).includes(platform))' "$RUNNER_TEMP/unified-release.json"
             for component in server helper mobile-ota mobile-native desktop website; do
               output="run_${component//-/_}"
               value=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.retry[process.argv[2]]))' "$RUNNER_TEMP/release-plan.json" "$component")
@@ -541,6 +544,8 @@ jobs:
     timeout-minutes: 60
     env:
       EAS_CLI_VERSION: 22.2.0
+      NATIVE_ANDROID: ${{ needs.initialize.outputs.native_android }}
+      NATIVE_IOS: ${{ needs.initialize.outputs.native_ios }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -558,7 +563,7 @@ jobs:
           EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
         run: |
           test -n "$EXPO_TOKEN" || { echo 'EXPO_TOKEN is required for a native release' >&2; exit 1; }
-          if [ "${{ inputs.store_track }}" != none ]; then
+          if [ "$NATIVE_IOS" = true ]; then
             for name in EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
               test -n "${!name}" || { echo "$name is required for a store release" >&2; exit 1; }
             done
@@ -567,7 +572,7 @@ jobs:
             chmod 600 "$key_path"
             echo "EXPO_ASC_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
           fi
-      - name: Build immutable Android and iOS store binaries
+      - name: Build immutable store binaries for selected platforms
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -576,15 +581,20 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production --platform android --non-interactive --wait --json > "$RUNNER_TEMP/android-build.json" &
-          android_pid=$!
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios --non-interactive --wait --json > "$RUNNER_TEMP/ios-build.json" &
-          ios_pid=$!
-          android_status=0; ios_status=0
-          wait "$android_pid" || android_status=$?
-          wait "$ios_pid" || ios_status=$?
-          test "$android_status" -eq 0 && test "$ios_status" -eq 0
-          node - "$RUNNER_TEMP/android-build.json" "$RUNNER_TEMP/ios-build.json" <<'NODE'
+          build_files=(); build_pids=()
+          if [ "$NATIVE_ANDROID" = true ]; then
+            npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production --platform android --non-interactive --wait --json > "$RUNNER_TEMP/android-build.json" &
+            build_pids+=("$!"); build_files+=("$RUNNER_TEMP/android-build.json")
+          fi
+          if [ "$NATIVE_IOS" = true ]; then
+            npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production-ci --platform ios --non-interactive --wait --json > "$RUNNER_TEMP/ios-build.json" &
+            build_pids+=("$!"); build_files+=("$RUNNER_TEMP/ios-build.json")
+          fi
+          test "${#build_pids[@]}" -gt 0
+          build_status=0
+          for build_pid in "${build_pids[@]}"; do wait "$build_pid" || build_status=$?; done
+          test "$build_status" -eq 0
+          node - "${build_files[@]}" <<'NODE'
           const fs = require('node:fs');
           for (const path of process.argv.slice(2)) {
             const raw = JSON.parse(fs.readFileSync(path));
@@ -597,13 +607,13 @@ jobs:
         working-directory: apps/mobile
         run: echo "version=$(node scripts/check-release-version.cjs)" >> "$GITHUB_OUTPUT"
       - name: Authenticate to Google Play
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && needs.initialize.outputs.native_android == 'true'
         id: play-auth
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: node scripts/play-token.mjs
       - name: Upload Android to the selected Play track
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && needs.initialize.outputs.native_android == 'true'
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           TRACK: ${{ inputs.store_track }}
@@ -614,7 +624,7 @@ jobs:
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=draft bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
       - name: Submit iOS build to TestFlight for a selected store track
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && needs.initialize.outputs.native_ios == 'true'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

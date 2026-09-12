@@ -6,7 +6,7 @@ import type {
 } from '@beeline/api-contract/daemon';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
-import { typedMentionHandles } from './message-mentions.js';
+import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
 export const COMMAND_MAX_DEPTH = 3;
@@ -119,15 +119,19 @@ export async function createAgentCommand(
 }
 
 export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Promise<void> {
+  // Who this message tags is read in the SAME statement that reads the message.
+  // Routing is on the write path of every human message in every Room, so the
+  // tags cost no round trip of their own.
   const source = (
     await db.query<{
       room_id: string;
       author_id: string;
       text: string;
-      mention_ids: string[];
       direct_participants: string[] | null;
+      tagged_ids: string[];
     }>(
-      `SELECT m.room_id,m.author_id,m.text,m.mention_ids,r.direct_participants
+      `SELECT m.room_id,m.author_id,m.text,r.direct_participants,
+   ${taggedIdentityIdsSql('m')} tagged_ids
  FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
  JOIN rooms r ON r.id=m.room_id
  WHERE m.id=$1`,
@@ -135,7 +139,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     )
   ).rows[0];
   if (!source) return;
-  const targets = new Set([...source.mention_ids, ...(source.direct_participants ?? [])]);
+  const targets = new Set([...source.tagged_ids, ...(source.direct_participants ?? [])]);
   targets.delete(source.author_id);
   // An untagged top-level message continues only the immediately preceding
   // conversational agent message. Do not search farther back: intervening
@@ -196,14 +200,20 @@ export async function routeAgentResult(
   parent: CommandRow,
   sourceId: string,
 ): Promise<void> {
+  // An agent-to-agent tag hands work on, so only an agent it names is a target;
+  // a person this reply tags is reached by push and highlight, not by a turn.
   const source = (
-    await db.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3`,
+    await db.query<{ tagged_agent_ids: string[] }>(
+      `SELECT ARRAY(
+     SELECT tagged.id FROM identities tagged
+     WHERE tagged.id=ANY(${taggedIdentityIdsSql('m')}) AND tagged.kind='agent'
+   ) tagged_agent_ids
+   FROM messages m WHERE m.id=$1 AND m.room_id=$2 AND m.author_id=$3`,
       [sourceId, parent.room_id, parent.agent_id],
     )
   ).rows[0];
   if (!source) return;
-  const targets = new Set(source.mention_ids);
+  const targets = new Set(source.tagged_agent_ids);
   targets.delete(parent.agent_id);
   for (const agentId of targets)
     await createAgentCommand(db, {
@@ -343,7 +353,6 @@ export async function readAgentCommands(
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.presentation,
         systemEvent: r.system_event,
-        mentionIds: [agentId],
         ...(r.reply_to_message_id ? { replyToMessageId: r.reply_to_message_id } : {}),
         ...(r.reply_to_author_id ? { replyToAuthorId: r.reply_to_author_id } : {}),
       },
@@ -363,8 +372,6 @@ export async function commandInbox(
     items: commands.map((c) => ({
       ...c.source,
       id: c.sourceMessageId,
-      mentionIds: [agentId],
-      agentMentionIds: [agentId],
       ...(c.action === 'stop'
         ? {
             type: 'system',

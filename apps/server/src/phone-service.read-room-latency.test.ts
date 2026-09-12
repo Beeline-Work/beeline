@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow } from './live.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -281,7 +282,8 @@ describe('PhoneService.readRoom latency', () => {
     const messageRow = (
       await database.query<CommittedMessageLiveRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
-           author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+           author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+           ${taggedIdentityIdsSql('message')} tagged_ids
          FROM messages message JOIN identities author ON author.id=message.author_id
          WHERE message.room_id=$1 AND message.id='reply-message'`,
         [ROOM],

@@ -71,15 +71,20 @@ export function readPinnedRuntimeVersion(projectDir) {
     skipSDKVersionRequirement: true,
     isPublicConfig: false,
   });
-  const runtimeVersion = exp.runtimeVersion;
-  if (typeof runtimeVersion !== 'string' || runtimeVersion.length === 0) {
-    throw new Error(
-      `app.config.js must pin runtimeVersion to a literal string; found ${JSON.stringify(
-        runtimeVersion,
-      )}. A computed policy re-stamps every commit and cuts installed binaries off from OTA updates.`,
-    );
-  }
-  return runtimeVersion;
+  return runtimeVersionsFromConfig(exp);
+}
+
+// Old release records used one global pin; Expo platform overrides win.
+export function runtimeVersionsFromConfig(config) {
+  return Object.fromEntries(
+    PLATFORMS.map((platform) => {
+      const pin = config?.[platform]?.runtimeVersion ?? config?.runtimeVersion;
+      if (typeof pin !== 'string' || !pin.trim()) {
+        throw new Error(`${platform}.runtimeVersion must be a nonempty literal string`);
+      }
+      return [platform, pin];
+    }),
+  );
 }
 
 export async function computeNativeFingerprints(projectDir) {
@@ -87,9 +92,41 @@ export async function computeNativeFingerprints(projectDir) {
   const { createFingerprintAsync } = require('@expo/fingerprint');
   const computed = {};
   for (const platform of PLATFORMS) {
-    // fingerprint.config.js is read automatically from the project directory,
-    // so the gate, `eas update` and EAS Build all skip the same sources.
-    const { hash } = await createFingerprintAsync(projectDir, { platforms: [platform] });
+    // Start with the shared fingerprint policy, then isolate the one plugin
+    // whose mods and Kotlin implementation are exclusively Android.
+    const config = require(join(projectDir, 'fingerprint.config.js'));
+    const iosOnly =
+      platform === 'ios'
+        ? {
+            // This plugin installs Android mods only. Shared plugins still count on
+            // both platforms; an Android Kotlin edit must not strand installed iOS.
+            ignorePaths: [
+              ...(config.ignorePaths ?? []),
+              'plugins/room-notifications',
+              'plugins/room-notifications/**',
+              'plugins/withRoomNotificationGroups.js',
+            ],
+            fileHookTransform(source, chunk, ...rest) {
+              const transformed = config.fileHookTransform?.(source, chunk, ...rest) ?? chunk;
+              if (
+                source.type !== 'contents' ||
+                source.id !== 'expoConfig' ||
+                typeof transformed !== 'string'
+              )
+                return transformed;
+              const value = JSON.parse(transformed);
+              value.plugins = value.plugins?.filter(
+                (plugin) =>
+                  (Array.isArray(plugin) ? plugin[0] : plugin) !== 'withRoomNotificationGroups',
+              );
+              return JSON.stringify(value);
+            },
+          }
+        : {};
+    const { hash } = await createFingerprintAsync(projectDir, {
+      platforms: [platform],
+      ...iosOnly,
+    });
     computed[platform] = hash;
   }
   return computed;
@@ -97,9 +134,7 @@ export async function computeNativeFingerprints(projectDir) {
 
 export function readBaseline(projectDir, baselineFile = baselinePath(projectDir)) {
   const parsed = JSON.parse(readFileSync(baselineFile, 'utf8'));
-  if (typeof parsed?.runtimeVersion !== 'string' || !parsed.runtimeVersion) {
-    throw new Error(`${baselineFile} records no runtimeVersion`);
-  }
+  runtimeVersionsFromConfig(parsed);
   for (const platform of PLATFORMS) {
     if (typeof parsed.fingerprints?.[platform] !== 'string' || !parsed.fingerprints[platform]) {
       throw new Error(`${baselineFile} records no ${platform} fingerprint`);
@@ -128,69 +163,46 @@ export function compareNativeFingerprints({ runtimeVersion, computed, baseline }
   const moved = PLATFORMS.filter(
     (platform) => baseline.fingerprints[platform] !== computed[platform],
   );
-  const pinMoved = baseline.runtimeVersion !== runtimeVersion;
-
-  if (moved.length === 0 && !pinMoved) return { ok: true, moved, pinMoved };
-
-  if (moved.length > 0 && !pinMoved) {
-    return {
-      ok: false,
-      moved,
-      pinMoved,
-      message: [
-        `Native inputs changed but runtimeVersion is still "${runtimeVersion}".`,
-        describeMove(baseline, computed),
-        '',
-        'An installed app only accepts an update whose runtime version matches the one',
-        'it was built with, and it was built from different native code than this tree.',
-        'Shipping an OTA on the same pin would deliver JS that its native side cannot run.',
-        '',
-        `Fix: bump runtimeVersion in apps/mobile/app.config.js to "${nextRuntimeSuggestion(
-          runtimeVersion,
-        )}", run`,
-        '`npm run fingerprint:write --prefix apps/mobile` to record the new stamps, and ship a',
-        'new native build (store + `eas build --profile beta-apk`) before the next OTA release.',
-        '',
-        'If nothing native actually changed, `npm ci` in apps/mobile first: the fingerprint',
-        'covers the installed native dependency tree.',
-      ].join('\n'),
-    };
+  const pins =
+    typeof runtimeVersion === 'string'
+      ? Object.fromEntries(PLATFORMS.map((platform) => [platform, runtimeVersion]))
+      : runtimeVersion;
+  const previous = runtimeVersionsFromConfig(baseline);
+  const bumped = PLATFORMS.filter((platform) => previous[platform] !== pins[platform]);
+  const pinMoved = bumped.length > 0;
+  const unbumped = moved.filter((platform) => !bumped.includes(platform));
+  if (moved.length === 0 && !pinMoved) return { ok: true, moved, pinMoved, unbumped };
+  const detail = describeMove(baseline, computed);
+  let message;
+  if (unbumped.length) {
+    message = unbumped
+      .map(
+        (platform) =>
+          `Native inputs changed but ${platform}.runtimeVersion is still "${pins[platform]}".\n` +
+          `Fix: bump ${platform}.runtimeVersion in apps/mobile/app.config.js to "${nextRuntimeSuggestion(pins[platform])}" and ship that platform's new native build.`,
+      )
+      .join('\n');
+  } else if (moved.length) {
+    message = 'The runtime pin moved but the committed baseline still records the old stamps.';
+  } else {
+    message =
+      'The runtime pin moved but no native input changed. A bump strands every installed binary on that platform until its new native build ships.';
   }
-
-  if (moved.length > 0 && pinMoved) {
-    return {
-      ok: false,
-      moved,
-      pinMoved,
-      message: [
-        `runtimeVersion moved from "${baseline.runtimeVersion}" to "${runtimeVersion}" and native inputs changed with it,`,
-        `but ${BASELINE_FILENAME} still records the old stamps.`,
-        describeMove(baseline, computed),
-        '',
-        'Fix: run `npm run fingerprint:write --prefix apps/mobile` and commit the result.',
-      ].join('\n'),
-    };
-  }
-
   return {
     ok: false,
     moved,
     pinMoved,
-    message: [
-      `runtimeVersion moved from "${baseline.runtimeVersion}" to "${runtimeVersion}" but no native input changed.`,
-      describeMove(baseline, computed),
-      '',
-      'A bump strands every installed binary until a new native build ships, so it is never a',
-      'free change. If the bump is deliberate, run `npm run fingerprint:write --prefix apps/mobile`',
-      `and commit the ${BASELINE_FILENAME} diff so review sees the new pin.`,
-    ].join('\n'),
+    unbumped,
+    message: `${message}\n${detail}\nRun \`npm run fingerprint:write --prefix apps/mobile\` and commit ${BASELINE_FILENAME}.`,
   };
 }
 
 function writeBaseline(baselineFile, runtimeVersion, computed, existing) {
   const record = {
     note: 'Runtime pin plus the Expo native fingerprint it belongs to. Regenerate with `npm run fingerprint:write --prefix apps/mobile`; the NATIVE FINGERPRINT gate compares this to the tree.',
-    runtimeVersion,
+    ...Object.fromEntries(
+      PLATFORMS.map((platform) => [platform, { runtimeVersion: runtimeVersion[platform] }]),
+    ),
     fingerprints: Object.fromEntries(PLATFORMS.map((platform) => [platform, computed[platform]])),
   };
   if (existing?.note && typeof existing.note === 'string') record.note = existing.note;
@@ -219,7 +231,7 @@ export async function run(argv, { log = console.log, error = console.error } = {
   if (options.write) {
     if (baseline && !options.force) {
       const verdict = compareNativeFingerprints({ runtimeVersion, computed, baseline });
-      if (verdict.moved.length > 0 && !verdict.pinMoved) {
+      if (verdict.unbumped.length > 0) {
         error(
           `${verdict.message}\n\nIf the stamps moved because fingerprint.config.js changed what it counts, and not\nbecause native code changed, re-record them with \`--write --force\`.`,
         );
@@ -228,7 +240,7 @@ export async function run(argv, { log = console.log, error = console.error } = {
     }
     const record = writeBaseline(baselineFile, runtimeVersion, computed, baseline);
     log(
-      `Recorded runtime ${record.runtimeVersion}: android ${record.fingerprints.android}, ios ${record.fingerprints.ios}`,
+      `Recorded runtime ${JSON.stringify(runtimeVersion)}: android ${record.fingerprints.android}, ios ${record.fingerprints.ios}`,
     );
     return 0;
   }
@@ -239,7 +251,7 @@ export async function run(argv, { log = console.log, error = console.error } = {
     return 1;
   }
   log(
-    `runtime ${runtimeVersion} still describes this tree: android ${computed.android}, ios ${computed.ios}`,
+    `runtime ${JSON.stringify(runtimeVersion)} still describes this tree: android ${computed.android}, ios ${computed.ios}`,
   );
   return 0;
 }

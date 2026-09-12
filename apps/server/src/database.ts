@@ -379,7 +379,6 @@ CREATE TABLE IF NOT EXISTS messages (
   text text NOT NULL,
   presentation text NOT NULL DEFAULT 'message' CHECK (presentation IN ('message', 'system', 'activity', 'card')),
   attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
-  mention_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   reply_to_message_id text REFERENCES messages(id),
   root_message_id text,
   request_id text,
@@ -395,6 +394,12 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
+-- Who a message tags is read from its text against the Room's CURRENT membership
+-- (message-mentions.ts), never from a list frozen at write time. The old column
+-- was that frozen list, and it drifted: a handle renamed, a member removed, or a
+-- person joining after the fact left stored ids that no longer matched the words
+-- anybody could see. Deriving on read is the only way the two can never disagree.
+ALTER TABLE messages DROP COLUMN IF EXISTS mention_ids;
 -- Where an event line came from. The cause is the message that triggered the
 -- turn that emitted it; the root is the first line of that whole cascade, and
 -- the depth is how far this line sits from it. Columns rather than more json
@@ -403,6 +408,11 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_cause_id text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_root_cause_id text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_depth integer;
+-- How many turns this line woke, which is what the cascade budget spends. It is
+-- a COUNT and never a list: wake targets were the one thing the retired column
+-- below held that no text could be read back for, because a system line
+-- addresses agents by subscription rather than by anything in its sentence.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_woken integer;
 CREATE INDEX IF NOT EXISTS messages_event_root_idx ON messages(event_root_cause_id)
   WHERE event_root_cause_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
@@ -823,6 +833,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_live_activity_idx
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
+  );
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_unread_cursor_idx
+     ON messages(room_id,created_at,id) INCLUDE(author_id)
+     WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'`,
   );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService, ACCESS_POLICY_AUTHORITY_MESSAGE } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -37,11 +38,12 @@ async function fixture() {
   return database;
 }
 
-type Line = { text: string; presentation: string; author_id: string; mention_ids: string[] };
+type Line = { text: string; presentation: string; author_id: string; tagged_ids: string[] };
 async function lines(database: PgliteDatabase): Promise<Line[]> {
   return (
     await database.query<Line>(
-      `SELECT text,presentation,author_id,mention_ids FROM messages
+      `SELECT text,presentation,author_id,${taggedIdentityIdsSql('messages')} tagged_ids
+       FROM messages
        WHERE room_id=$1 AND presentation='system' ORDER BY created_at,id`,
       [ROOM],
     )
@@ -117,8 +119,9 @@ describe('who may address an agent', () => {
         {
           author_id: AGENT,
           presentation: 'system',
-          // No mention: the line wakes no daemon and pushes to nobody.
-          mention_ids: [],
+          // The handles in this sentence are grammar, not an address: the line
+          // wakes no daemon and pushes to nobody.
+          tagged_ids: [],
           text:
             '@greeter did not answer @bananaman614305 · only @lunchboxfortwo may address @greeter. ' +
             'Ask the user for permission to access the agent in the members page',

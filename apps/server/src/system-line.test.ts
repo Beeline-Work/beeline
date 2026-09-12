@@ -128,13 +128,13 @@ describe('who an event line mentions', () => {
   });
   afterEach(() => database.close());
 
-  const mentionsOf = async (id: string) =>
+  const wokenBy = async (id: string) =>
     (
-      await database.query<{ mention_ids: string[] }>(
-        `SELECT mention_ids FROM messages WHERE id=$1`,
+      await database.query<{ woke: string[] }>(
+        `SELECT ARRAY(SELECT agent_id FROM agent_commands WHERE source_message_id=$1) woke`,
         [id],
       )
-    ).rows[0]!.mention_ids;
+    ).rows[0]!.woke;
 
   it('adds the Room members subscribed to the kind, keeping the explicit mentions', async () => {
     const written = await systemLine(database, {
@@ -142,11 +142,11 @@ describe('who an event line mentions', () => {
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'joined',
       kind: 'joined',
-      mentions: [QUIET_AGENT],
+      wakes: [QUIET_AGENT],
     });
     // The explicit mention survives; the subscriber is added beside it. The
     // agent subscribed to a different kind hears nothing from this line.
-    expect((await mentionsOf(written.id)).sort()).toEqual([QUIET_AGENT, GREETER].sort());
+    expect((await wokenBy(written.id)).sort()).toEqual([QUIET_AGENT, GREETER].sort());
   });
 
   it('mentions nobody extra when nothing subscribes, and nothing at all with no kind', async () => {
@@ -155,15 +155,15 @@ describe('who an event line mentions', () => {
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'left',
       kind: 'corner-opened',
-      mentions: [QUIET_AGENT],
+      wakes: [QUIET_AGENT],
     });
-    expect(await mentionsOf(unsubscribed.id)).toEqual([QUIET_AGENT]);
+    expect(await wokenBy(unsubscribed.id)).toEqual([QUIET_AGENT]);
     const plain = await systemLine(database, {
       roomId: ROOM,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'joined',
     });
-    expect(await mentionsOf(plain.id)).toEqual([]);
+    expect(await wokenBy(plain.id)).toEqual([]);
   });
 
   it('never mentions a human or a member who left', async () => {
@@ -178,7 +178,7 @@ describe('who an event line mentions', () => {
       verb: 'joined',
       kind: 'joined',
     });
-    expect(await mentionsOf(written.id)).toEqual([]);
+    expect(await wokenBy(written.id)).toEqual([]);
   });
 
   it('still writes the line when the subscriber lookup fails', async () => {
@@ -196,10 +196,10 @@ describe('who an event line mentions', () => {
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'joined',
       kind: 'joined',
-      mentions: [QUIET_AGENT],
+      wakes: [QUIET_AGENT],
     });
     expect(written.inserted).toBe(true);
-    expect(await mentionsOf(written.id)).toEqual([QUIET_AGENT]);
+    expect(await wokenBy(written.id)).toEqual([QUIET_AGENT]);
   });
 });
 
@@ -369,13 +369,13 @@ describe('the scheduled-prompt kind backfill', () => {
 describe('a caused line sorts after its cause', () => {
   let database: PgliteDatabase;
   const CAUSE = 'd'.repeat(64);
-  const mentionsOf = async (id: string) =>
+  const wokenBy = async (id: string) =>
     (
-      await database.query<{ mention_ids: string[] }>(
-        `SELECT mention_ids FROM messages WHERE id=$1`,
+      await database.query<{ woke: string[] }>(
+        `SELECT ARRAY(SELECT agent_id FROM agent_commands WHERE source_message_id=$1) woke`,
         [id],
       )
-    ).rows[0]!.mention_ids;
+    ).rows[0]!.woke;
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -439,7 +439,7 @@ describe('a caused line sorts after its cause', () => {
     );
     // Ordering only: the line cites nothing, wakes nobody, mentions nobody.
     expect(line.cause).toBeNull();
-    expect(await mentionsOf(written.id)).toEqual([]);
+    expect(await wokenBy(written.id)).toEqual([]);
   });
 
   it('keeps the natural time once the second has already passed', async () => {

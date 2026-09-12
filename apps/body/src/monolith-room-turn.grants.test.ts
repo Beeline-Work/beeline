@@ -120,7 +120,6 @@ describe('Room turn paused on a grant card', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Deploy the preview please',
-                mentionIds: [agent.publicKey],
                 attachments: [],
               },
             ],
@@ -140,7 +139,6 @@ describe('Room turn paused on a grant card', () => {
                 createdAt: 2,
                 type: 'system',
                 body: 'member joined',
-                mentionIds: [agent.publicKey],
                 attachments: [],
               },
               // …the owner's decision does, without an authority read.
@@ -152,7 +150,6 @@ describe('Room turn paused on a grant card', () => {
                 createdAt: 3,
                 type: 'system',
                 body: decision,
-                mentionIds: [agent.publicKey],
                 attachments: [],
               },
             ],

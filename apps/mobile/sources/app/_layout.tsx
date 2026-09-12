@@ -65,11 +65,9 @@ Notifications.setNotificationHandler({
     return {
       shouldShowAlert: decision.shouldPresent,
       shouldPlaySound: decision.shouldPresent,
-      shouldSetBadge: true,
+      shouldSetBadge: decision.shouldPresent,
       shouldShowBanner: decision.shouldPresent,
-      // Keep suppressed notifications in the notification list/tray so they
-      // remain discoverable after the fact without interrupting the screen.
-      shouldShowList: true,
+      shouldShowList: decision.shouldPresent,
     };
   },
 });

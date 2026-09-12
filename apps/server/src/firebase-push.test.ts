@@ -92,28 +92,31 @@ describe('Firebase push routing payload', () => {
     ['corner opened', 'parent-1', 'corner-1', 'corner-1', 'corner'],
     ['corner closed', 'parent-1', 'corner-1', 'corner-1', 'corner'],
     ['DM', 'dm-1', 'dm-1', undefined, 'message'],
-    ['system DM', 'system-dm-1', 'system-dm-1', undefined, 'message'],
+    ['release notice in system DM', 'system-dm-1', 'system-dm-1', undefined, 'message'],
   ])('carries the complete %s destination', (_kind, roomId, channelId, cornerId, target) => {
-    expect(
-      firebasePushMessage('device-token', {
-        messageId: 'message-1',
-        workspaceId: 'workspace-1',
-        roomId,
-        channelId,
-        ...(cornerId ? { cornerId } : {}),
-        target: target as 'message' | 'corner',
-        type: 'message',
-        text: 'routing payload',
-      }).data,
-    ).toEqual({
-      type: 'channel-activity',
-      target,
+    const payload = firebasePushMessage('device-token', {
+      messageId: 'message-1',
       workspaceId: 'workspace-1',
       roomId,
       channelId,
       ...(cornerId ? { cornerId } : {}),
+      target: target as 'message' | 'corner',
+      type: 'message',
+      text: 'routing payload',
+    });
+    expect(payload.data).toEqual({
+      type: 'channel-activity',
+      target,
+      workspaceId: 'workspace-1',
+      roomId,
+      threadId: roomId,
+      channelId,
+      ...(cornerId ? { cornerId } : {}),
       messageId: 'message-1',
     });
+    expect(payload.android).toEqual({ notification: { tag: roomId } });
+    expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
+    expect(payload.android).not.toHaveProperty('collapseKey');
   });
 
   it('carries a workspace join to its exact Workspace and Room', () => {
@@ -127,12 +130,15 @@ describe('Firebase push routing payload', () => {
       }),
     ).toMatchObject({
       token: 'device-token',
+      android: { notification: { tag: 'room-welcome' } },
+      apns: { payload: { aps: { sound: 'default', threadId: 'room-welcome' } } },
       data: {
         type: 'workspace-join',
         target: 'message',
         workspaceId: 'workspace-default',
         roomId: 'room-welcome',
         channelId: 'room-welcome',
+        threadId: 'room-welcome',
       },
     });
   });

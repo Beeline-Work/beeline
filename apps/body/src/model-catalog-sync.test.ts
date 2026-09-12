@@ -91,7 +91,7 @@ describe('syncAgentModelCatalog', () => {
   it('posts the harness catalog with the server selection on activation, once per change', async () => {
     const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
     const command = await fakeCatalogAgent(ADVERTISED);
-    const api = fakeApi({ model: 'gpt-5.6-mini' });
+    const api = fakeApi({ model: 'gpt-5.6-mini', effort: 'high' });
     const log = vi.fn();
 
     const first = await syncAgentModelCatalog({
@@ -114,7 +114,7 @@ describe('syncAgentModelCatalog', () => {
           {
             id: 'model',
             category: 'model',
-            currentValue: 'gpt-5.6',
+            currentValue: 'gpt-5.6-mini',
             options: [
               { id: 'gpt-5.6', name: 'GPT-5.6' },
               { id: 'gpt-5.6-mini', name: 'GPT-5.6 mini' },
@@ -123,11 +123,11 @@ describe('syncAgentModelCatalog', () => {
           {
             id: 'reasoning_effort',
             category: 'reasoning_effort',
-            currentValue: 'medium',
+            currentValue: 'high',
             options: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }],
           },
         ],
-        selection: { model: 'gpt-5.6-mini' },
+        selection: { model: 'gpt-5.6-mini', effort: 'high' },
       },
     ]);
     expect((await readFile(resolve(runtimeDir, MODEL_CATALOG_HASH_FILE), 'utf8')).trim()).toMatch(
@@ -177,7 +177,17 @@ describe('syncAgentModelCatalog', () => {
   it('publishes the startup-unavailable mark while probing the default catalog', async () => {
     const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
     const api = fakeApi({ model: 'claude-fable-5-1[1m]' });
-    const fetchCatalog = vi.fn().mockResolvedValue({ raw: [], catalog: [] });
+    const fetchCatalog = vi.fn().mockResolvedValue({
+      raw: [],
+      catalog: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'claude-sonnet-5',
+          options: [{ id: 'claude-sonnet-5' }],
+        },
+      ],
+    });
     await syncAgentModelCatalog({
       api: api as never,
       agent: { command: 'claude-agent-acp', args: [] },
@@ -192,6 +202,11 @@ describe('syncAgentModelCatalog', () => {
     expect(fetchCatalog).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined);
     expect(api.posted).toEqual([
       expect.objectContaining({
+        options: [
+          expect.objectContaining({
+            currentValue: 'claude-sonnet-5',
+          }),
+        ],
         selection: { model: 'claude-fable-5-1[1m]' },
         unavailable: 'model',
       }),

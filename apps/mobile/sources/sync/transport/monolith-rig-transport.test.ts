@@ -332,6 +332,22 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('returns the server-backed active-steer acknowledgement', async () => {
+    controls.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ messageId: '07'.repeat(32), activeSteerAgentIds: ['agent-1'] }),
+        { status: 200 },
+      ),
+    );
+    const transport = new MonolithRigTransport(identity);
+    const event = await transport.composeMessage({ sessionId: ROOM, text: 'Change course' });
+
+    await expect(transport.publishPreparedMessage(event)).resolves.toEqual({
+      messageId: event.id,
+      activeSteerAgentIds: ['agent-1'],
+    });
+  });
+
   it('stages a reply before publishing it to the monolith', async () => {
     const transport = new MonolithRigTransport(identity);
     const publish = vi.spyOn(transport, 'publishPreparedMessage');

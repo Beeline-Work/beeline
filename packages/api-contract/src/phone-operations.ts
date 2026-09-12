@@ -8,8 +8,8 @@ import type {
 } from './phone-types.js';
 
 export type PhoneOperationMap = {
-  sendRoomMessage: { input: SendRoomMessageInput; output: MessageWriteResult };
-  sendRoomReply: { input: SendRoomReplyInput; output: MessageWriteResult };
+  sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
+  sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -102,6 +102,11 @@ export type IdResult = { readonly id: string };
 export type MembershipResult = { readonly joined: boolean };
 export type InviteMembershipResult = MembershipResult & { readonly workspaceId: string };
 export type MessageWriteResult = { readonly messageId: string };
+/** Active turns that received a server-created command with this human message. */
+export type AgentMessageWriteResult = MessageWriteResult & {
+  /** Optional so a newer phone remains compatible during a rolling server deploy. */
+  readonly activeSteerAgentIds?: readonly string[];
+};
 export type RoomScheduleCadence =
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }
   | { readonly kind: 'interval'; readonly everyMinutes: number; readonly startsAt?: number };

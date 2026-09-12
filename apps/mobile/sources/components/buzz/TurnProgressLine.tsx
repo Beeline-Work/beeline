@@ -52,6 +52,7 @@ const STOP_HIT_SLOP = 17;
 export function TurnProgressLine({
   label,
   startedAt,
+  received = false,
   onStop,
   stopping = false,
   testID,
@@ -59,6 +60,8 @@ export function TurnProgressLine({
   label: string;
   /** Server receipt time, unix seconds, the elapsed counter ticks from. */
   startedAt?: number;
+  /** A new human steer was committed against this running turn. */
+  received?: boolean;
   /** Present only for the turn's own requester; absent renders no control. */
   onStop?: () => void;
   /** The asker already pressed stop; the cancelled receipt has not landed yet. */
@@ -75,10 +78,12 @@ export function TurnProgressLine({
   const phase = stopping ? 'stopping' : 'thinking';
   const counter =
     startedAt != null ? formatWorkingCounter(startedAt * 1_000, now, phase) : undefined;
+  const stateLabel = [counter, received ? 'received' : undefined].filter(Boolean).join(' · ');
 
   return (
     <View
-      accessibilityLabel={counter ? `${label} (${counter})` : label}
+      accessibilityLabel={stateLabel ? `${label} (${stateLabel})` : label}
+      accessibilityLiveRegion="polite"
       accessibilityRole="progressbar"
       style={styles.bar}
       testID={testID}
@@ -93,6 +98,11 @@ export function TurnProgressLine({
         {counter != null && (
           <Text style={styles.counter} testID={testID ? `${testID}-elapsed` : undefined}>
             {counter}
+          </Text>
+        )}
+        {received && (
+          <Text style={styles.counter} testID={testID ? `${testID}-received` : undefined}>
+            · received
           </Text>
         )}
         {onStop && (

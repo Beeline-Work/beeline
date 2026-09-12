@@ -2355,7 +2355,7 @@ export class PhoneService {
   private async sendMessage(
     input: Input<'sendRoomMessage'>,
     author: string,
-  ): Promise<{ messageId: string }> {
+  ): Promise<Output<'sendRoomMessage'>> {
     if (!this.routingTransaction)
       return this.database.transaction((db) =>
         new PhoneService(
@@ -2390,11 +2390,17 @@ export class PhoneService {
           values,
         );
         if (!retry.rowCount) throw new Error('messageId is invalid');
-        return { messageId: id };
+        return {
+          messageId: id,
+          activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        };
       }
       await routeHumanMessage(database, id);
       await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
-      return { messageId: id };
+      return {
+        messageId: id,
+        activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+      };
     });
   }
   private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
@@ -2459,7 +2465,7 @@ export class PhoneService {
   private async sendReply(
     input: Input<'sendRoomReply'>,
     author: string,
-  ): Promise<{ messageId: string }> {
+  ): Promise<Output<'sendRoomReply'>> {
     if (!this.routingTransaction)
       return this.database.transaction((db) =>
         new PhoneService(
@@ -2520,12 +2526,37 @@ export class PhoneService {
           values,
         );
         if (!retry.rowCount) throw new Error('messageId is invalid');
-        return { messageId: id };
+        return {
+          messageId: id,
+          activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        };
       }
       await routeHumanMessage(database, id);
       await this.noteUnansweredMentions(input.roomId, author, mentionResolution.noticeAgentIds, id);
-      return { messageId: id };
+      return {
+        messageId: id,
+        activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+      };
     });
+  }
+
+  /**
+   * Active turns targeted by the human write. The command and message commit
+   * in one transaction, so the phone can distinguish a server-accepted steer
+   * from text that merely looked addressed locally.
+   */
+  private async activeSteerAgentIds(database: SqlDatabase, messageIdValue: string) {
+    const commands = await database.query<{ agent_id: string }>(
+      `SELECT DISTINCT command.agent_id
+       FROM agent_commands command
+       JOIN agent_turns turn ON turn.room_id=command.room_id
+         AND turn.agent_id=command.agent_id AND turn.status='working'
+         AND turn.request_id<>command.turn_request_id
+       WHERE command.source_message_id=$1 AND command.action='input'
+       ORDER BY command.agent_id`,
+      [messageIdValue],
+    );
+    return commands.rows.map((command) => command.agent_id);
   }
   /**
    * Say out loud why a mentioned agent will not answer. ONE producer for every

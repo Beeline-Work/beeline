@@ -820,13 +820,15 @@ export class RoomRuntimeCoordinator {
         .reverse()
         .find((item) => item.type === 'message' && item.authorId !== this.agent.publicKey);
       if (!asked) return;
+      const reason = distillTurnFailureReason(error);
       await this.options.daemonApi.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
         requestId: asked.id,
         status: 'failed',
         generationId: `${this.agent.publicKey}:${cornerId}`,
-        reason: distillTurnFailureReason(error),
+        reason: reason.text,
+        ...(reason.kind ? { reasonKind: reason.kind } : {}),
       });
     } catch (reportError) {
       console.error(`[thin-core] corner ${cornerId} start-failure report failed:`, reportError);

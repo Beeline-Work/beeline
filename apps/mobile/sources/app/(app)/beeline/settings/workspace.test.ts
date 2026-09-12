@@ -435,7 +435,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const control = renderer.root.findByProps({ testID: 'room-visibility-private-room' });
-    expect(control.props.accessibilityLabel).toBe('Make #captains public');
+    expect(control.props.accessibilityLabel).toBe('Set #captains visibility to Everyone');
 
     await act(async () => {
       control.props.onPress();
@@ -447,7 +447,7 @@ describe('Workspace Settings authority', () => {
       visibility: 'public',
     });
     expect(renderer.root.findByProps({ testID: 'room-visibility-private-room' }).props.value).toBe(
-      'Public',
+      'Everyone',
     );
   });
 
@@ -514,7 +514,7 @@ describe('Workspace Settings authority', () => {
       (node) => node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-room-1',
     )[0]!;
     expect(visibilityControl.props).toMatchObject({
-      accessibilityLabel: 'Make #atlas invite-only',
+      accessibilityLabel: 'Set #atlas visibility to Private',
       accessibilityRole: 'button',
     });
 
@@ -533,14 +533,16 @@ describe('Workspace Settings authority', () => {
     roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
 
     const renderer = await render();
-    const openRow = renderer.root.findByProps({ accessibilityLabel: 'Make #atlas invite-only' });
+    const openRow = renderer.root.findByProps({
+      accessibilityLabel: 'Set #atlas visibility to Private',
+    });
     // The title leads the row; the visibility value trails it on the one axis.
     const [rowTitle, rowValue] = openRow
       .findAllByType('Text')
       .map((node: any) => node.props.children);
     // The display form carries exactly one mark...
     expect(rowTitle).toBe('#atlas');
-    expect(rowValue).toBe('Public');
+    expect(rowValue).toBe('Everyone');
     // ...and the duplicate-name qualifier still keys off the RAW name.
     expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });

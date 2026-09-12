@@ -396,6 +396,8 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   readonly heartbeat?: boolean;
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
+  /** Typed Room-safe classification; detail stays in the daemon log. */
+  readonly reasonKind?: 'model-selection-unavailable';
 };
 export type PostAgentActivityInput = TurnOutputAuthority &
   AgentRoomInput & {
@@ -434,6 +436,8 @@ export type PostAgentModelCatalogInput = AgentInput & {
   readonly workspaceId: string;
   readonly options: readonly DaemonModelConfigOption[];
   readonly selection?: { readonly model?: string; readonly effort?: string };
+  /** Startup validation verdict for the persisted selection. */
+  readonly unavailable?: 'model' | 'effort' | 'selection';
 };
 export type PostCornerLifecycleInput = CornerInput & {
   readonly status: string;

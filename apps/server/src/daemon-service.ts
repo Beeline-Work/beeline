@@ -1730,7 +1730,14 @@ export class DaemonService {
         committedTurn = written.rows[0];
       }
       if (input.status === 'failed') {
-        await this.inscribeTurnFailure(database, input.roomId, input.requestId, agentId, reason);
+        await this.inscribeTurnFailure(
+          database,
+          input.roomId,
+          input.requestId,
+          agentId,
+          reason,
+          input.reasonKind,
+        );
       } else if (input.status === 'complete') {
         await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
       }
@@ -1764,10 +1771,12 @@ export class DaemonService {
     requestId: string,
     agentId: string,
     reason: string | null,
+    reasonKind?: 'model-selection-unavailable',
   ) {
     const trigger = (
-      await database.query<{ author_id: string; agent_name: string }>(
-        `SELECT message.author_id,COALESCE(NULLIF(agent.name,''),'The agent') agent_name
+      await database.query<{ author_id: string; agent_name: string; agent_handle: string | null }>(
+        `SELECT message.author_id,COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+                agent.handle agent_handle
          FROM messages message
          JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
          JOIN identities agent ON agent.id=$3
@@ -1777,11 +1786,22 @@ export class DaemonService {
       )
     ).rows[0];
     if (!trigger) return;
-    const phrase: SystemPhrase = {
-      subject: { kind: 'agent', id: agentId, name: trigger.agent_name },
-      verb: 'could not answer',
-      ...(reason ? { consequence: reason } : {}),
-    };
+    const phrase: SystemPhrase =
+      reasonKind === 'model-selection-unavailable'
+        ? {
+            subject: {
+              kind: 'agent',
+              id: agentId,
+              name: trigger.agent_handle ? `@${trigger.agent_handle}` : trigger.agent_name,
+            },
+            verb: 'is not available',
+            consequence: 'ask its owner',
+          }
+        : {
+            subject: { kind: 'agent', id: agentId, name: trigger.agent_name },
+            verb: 'could not answer',
+            ...(reason ? { consequence: reason } : {}),
+          };
     const recent = (
       await database.query<{ id: string }>(
         `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
@@ -2208,12 +2228,15 @@ export class DaemonService {
   }
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
     await this.database.query(
-      `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),selected_effort=COALESCE($4,selected_effort),updated_at=now() WHERE agent_id=$1`,
+      `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
+         selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,updated_at=now()
+       WHERE agent_id=$1`,
       [
         agentId,
         JSON.stringify(input.options),
         input.selection?.model ?? null,
         input.selection?.effort ?? null,
+        input.unavailable ?? null,
       ],
     );
     return this.writeResult();

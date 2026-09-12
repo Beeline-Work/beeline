@@ -223,7 +223,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       const associatedRedirect = `${tenant.origin}/auth/github/mobile-callback`;
       if (
         typeof appRedirect !== 'string' ||
-        !isAllowedAppRedirect(appRedirect, associatedRedirect)
+        !isAllowedAppRedirect(appRedirect, associatedRedirect, '/beeline/github-callback')
       ) {
         throw new ProtocolError(
           400,

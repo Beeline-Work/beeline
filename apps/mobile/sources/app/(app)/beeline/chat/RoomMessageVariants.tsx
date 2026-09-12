@@ -35,6 +35,7 @@ import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import {
   LedgerEntry,
   LedgerGhostLine,
+  LedgerSystemLine,
   LedgerSteer,
   type LedgerByline,
 } from '@/components/buzz/Ledger';
@@ -410,6 +411,17 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   message,
   onOpenUrl,
 }: GitHubEventCardProps) {
+  if (message.githubLifecycleRun) {
+    return (
+      <LedgerSystemLine
+        id={message.id}
+        text={message.githubLifecycleRun.headline}
+        summaryItems={message.githubLifecycleRun.items}
+        stamp={ledgerStamp(message.timestamp)}
+        onOpenUrl={onOpenUrl}
+      />
+    );
+  }
   const event = message.githubEvent!;
   const title =
     event.type === 'pull-request'
@@ -855,12 +867,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const mentionHandles = useMemo(
     () =>
       participantHandles
-        .filter(
-          (participant) =>
-            participant.pubkey !== viewerPubkey && taggedMentionPubkeys.has(participant.pubkey),
-        )
+        .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
         .map((participant) => participant.handle),
-    [participantHandles, taggedMentionPubkeys, viewerPubkey],
+    [participantHandles, taggedMentionPubkeys],
   );
   const handleMention = useCallback(
     (handle: string) => {

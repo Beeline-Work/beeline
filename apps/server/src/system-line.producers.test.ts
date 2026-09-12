@@ -170,6 +170,13 @@ describe('system-line producers', () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
+      await expect(
+        phone.execute(
+          'updateAgentModelSelection',
+          { workspaceId: WORKSPACE, agentId: AGENT, model: 'claude-fable-5-1[1m]' },
+          OWNER,
+        ),
+      ).rejects.toThrow('model is not available in the live harness catalog');
       await phone.execute(
         'addWorkspaceMember',
         { workspaceId: WORKSPACE, memberId: ADDED_AGENT, role: 'member' },
@@ -289,6 +296,13 @@ describe('system-line producers', () => {
         { workspaceId: WORKSPACE, agentId: AGENT, model: 'codex' },
         OWNER,
       );
+      await expect(
+        phone.execute(
+          'updateAgentModelSelection',
+          { workspaceId: WORKSPACE, agentId: AGENT, model: 'claude-fable-5-1[1m]' },
+          OWNER,
+        ),
+      ).rejects.toThrow('model is not available in the live harness catalog');
       await phone.execute(
         'addWorkspaceMember',
         { workspaceId: WORKSPACE, memberId: MEMBER, role: 'admin' },
@@ -302,6 +316,10 @@ describe('system-line producers', () => {
       expect((await lines(database)).map((line) => line.text)).toEqual([
         "@owner changed @bee's model to Codex",
       ]);
+      await database.query(`UPDATE agents SET model_unavailable='model' WHERE agent_id=$1`, [
+        AGENT,
+      ]);
+      expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.modelUnavailable).toBe('model');
       expect(await workspaceLineCounts(database, ['member-role', 'workspace-visibility'])).toEqual([
         {
           author_id: SYSTEM_IDENTITY_ID,
@@ -335,7 +353,7 @@ describe('system-line producers', () => {
     }
   });
 
-  it('phrases a failed turn once and rejects a stale retry', async () => {
+  it('phrases model unavailability without ids, advice, or mentions', async () => {
     const database = await fixture();
     try {
       const requestId = 'f'.repeat(64);
@@ -361,7 +379,8 @@ describe('system-line producers', () => {
           requestId,
           generationId: 'g1',
           status: 'failed',
-          reason: 'provider error 429',
+          reason: 'model selection unavailable',
+          reasonKind: 'model-selection-unavailable',
         },
         AGENT,
       );
@@ -383,14 +402,14 @@ describe('system-line producers', () => {
       expect(failed).toEqual([
         {
           author_id: AGENT,
-          text: '@bee could not answer · provider error 429',
+          text: '@bee is not available · ask its owner',
           presentation: 'system',
           woke: [],
           card_type: 'turn-failed',
           system_event: {
             subject: { kind: 'agent', id: AGENT, name: '@bee' },
-            verb: 'could not answer',
-            consequence: 'provider error 429',
+            verb: 'is not available',
+            consequence: 'ask its owner',
           },
         },
       ]);

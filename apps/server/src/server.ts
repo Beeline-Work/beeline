@@ -91,6 +91,14 @@ function applyWebAppCors(
   return true;
 }
 
+function isWebAppCorsPath(pathname: string): boolean {
+  return (
+    pathname.startsWith('/v1/') ||
+    pathname === '/auth/github/completion' ||
+    pathname === '/auth/github/completion/cancel'
+  );
+}
+
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
     'content-type': 'application/json',
@@ -172,7 +180,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     console.log('[req]', method, url.pathname);
-    if (url.pathname.startsWith('/v1/') && applyWebAppCors(request, response, options)) return;
+    if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
     void route(request, response, options, invitePreview).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =

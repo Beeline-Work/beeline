@@ -471,6 +471,8 @@ export type AgentDetailView = {
   readonly catalog: readonly AgentModelConfigOption[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;
+  /** Which persisted selection axis failed the daemon's live startup validation. */
+  readonly modelUnavailable?: 'model' | 'effort' | 'selection';
   /**
    * The agent "yolo" switch: grant requests are approved without asking.
    * `canChange` is the server's verdict for this viewer (agent owner or a

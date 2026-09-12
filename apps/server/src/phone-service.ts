@@ -1423,6 +1423,7 @@ export class PhoneService {
         model_catalog: AgentDetailView['catalog'];
         selected_model: string | null;
         selected_effort: string | null;
+        model_unavailable: 'model' | 'effort' | 'selection' | null;
         yolo_mode: boolean;
         yolo_forced_off: boolean;
         yolo_set_by_name: string | null;
@@ -1434,7 +1435,7 @@ export class PhoneService {
         owner_name: string | null;
         owner_handle: string | null;
       }>(
-        `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,
+        `SELECT a.soul,a.model_catalog,a.selected_model,a.selected_effort,a.model_unavailable,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
@@ -1482,6 +1483,7 @@ export class PhoneService {
           }
         : {}),
       catalog: config?.model_catalog ?? [],
+      ...(config?.model_unavailable ? { modelUnavailable: config.model_unavailable } : {}),
       ...(config?.selected_model || config?.selected_effort
         ? {
             selected: {
@@ -1857,7 +1859,8 @@ export class PhoneService {
          VALUES($1,$2,$3::jsonb,$4,$5)
          ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
            selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,
-           model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
+           model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
+           schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,updated_at=now()`,
         [
@@ -3579,6 +3582,18 @@ export class PhoneService {
         )
       ).rows[0];
       if (!context) throw new Error('agent not found');
+      if (hasModel && input.model) {
+        const axis = context.model_catalog.find((candidate) => candidate.category === 'model');
+        if (!axis?.options.some((choice) => choice.id === input.model)) {
+          throw new Error('model is not available in the live harness catalog');
+        }
+      }
+      if (hasEffort && input.effort) {
+        const axis = context.model_catalog.find((candidate) => candidate.category !== 'model');
+        if (!axis?.options.some((choice) => choice.id === input.effort)) {
+          throw new Error('effort is not available in the live harness catalog');
+        }
+      }
       await database.query(
         `UPDATE agents
          SET selected_model=CASE WHEN $2 THEN $3 ELSE selected_model END,
@@ -3981,7 +3996,8 @@ export class PhoneService {
       );
       await database.query(
         `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
-           model_catalog='[]'::jsonb,commands='[]'::jsonb,schedule_ids='[]'::jsonb,
+           model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
+           schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
          WHERE agent_id=$1`,

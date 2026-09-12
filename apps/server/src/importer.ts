@@ -312,7 +312,7 @@ export class SnapshotImporter {
       for (const row of identities.filter((identity) => identity.kind === 'agent'))
         await one('agent', row.id, async (db) => {
           await db.query(
-            `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog) VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb) ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,model_catalog=EXCLUDED.model_catalog,updated_at=now()`,
+            `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog) VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb) ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,model_catalog=EXCLUDED.model_catalog,model_unavailable=NULL,updated_at=now()`,
             [
               row.id,
               row.ownerId ?? row.id,

@@ -20,6 +20,16 @@ export type SystemLineMessage = {
   systemSubjects?: SystemSubject[];
   /** The ids of every row folded into this one, oldest first. */
   foldedIds?: string[];
+  githubEvent?: {
+    type: 'pull-request' | 'issue';
+    action: 'opened' | 'closed' | 'merged';
+    title: string;
+    url: string;
+  };
+  githubLifecycleRun?: {
+    headline: string;
+    items: { id: string; title: string; url?: string }[];
+  };
 };
 
 /** "@candy" · "@candy and @terra" · "@candy, @terra and @codex". */
@@ -66,7 +76,32 @@ function subjectKey(subject: SystemSubject): string {
 export function foldSystemLines<T extends SystemLineMessage>(messages: readonly T[]): T[] {
   const folded: T[] = [];
   let run: { index: number; key: string; subjects: SystemSubject[]; ids: string[] } | null = null;
+  let githubRun: { index: number; anchor: T; items: GitHubFoldItem[] } | undefined;
   for (const message of messages) {
+    const githubItem = githubFoldItem(message);
+    if (githubItem) {
+      run = null;
+      if (!githubRun) {
+        githubRun = { index: folded.length, anchor: message, items: [githubItem] };
+        folded.push(message);
+      } else {
+        githubRun.items.push(githubItem);
+        folded[githubRun.index] = {
+          ...githubRun.anchor,
+          timestamp: message.timestamp,
+          githubLifecycleRun: {
+            headline: githubHeadline(githubRun.items),
+            items: [...githubRun.items].reverse().map(({ id, title, url }) => ({
+              id,
+              title,
+              ...(url ? { url } : {}),
+            })),
+          },
+        };
+      }
+      continue;
+    }
+    githubRun = undefined;
     const event = message.isSystemNotice ? message.systemEvent : undefined;
     if (!event) {
       run = null;
@@ -92,4 +127,63 @@ export function foldSystemLines<T extends SystemLineMessage>(messages: readonly 
     folded.push(message);
   }
   return folded;
+}
+
+type GitHubFoldItem = {
+  id: string;
+  title: string;
+  url?: string;
+  verb: string;
+  subject: 'PR' | 'issue' | 'push' | 'check' | 'event';
+};
+
+function githubFoldItem(message: SystemLineMessage): GitHubFoldItem | undefined {
+  const event = message.isSystemNotice ? message.systemEvent : undefined;
+  if (!message.githubEvent && event?.subject.kind !== 'github') return undefined;
+  const verb = message.githubEvent?.action ?? event!.verb;
+  const subject = message.githubEvent
+    ? message.githubEvent.type === 'pull-request'
+      ? 'PR'
+      : 'issue'
+    : /pull request|merge/i.test(verb)
+      ? 'PR'
+      : /check/i.test(verb)
+        ? 'check'
+        : /push/i.test(verb)
+          ? 'push'
+          : 'event';
+  return {
+    id: message.id,
+    title: message.githubEvent?.title ?? event?.object?.text ?? message.text,
+    ...((message.githubEvent?.url ?? event?.object?.url)
+      ? { url: message.githubEvent?.url ?? event?.object?.url }
+      : {}),
+    verb,
+    subject,
+  };
+}
+
+function githubHeadline(items: readonly GitHubFoldItem[]): string {
+  const groups = new Map<string, { item: GitHubFoldItem; count: number }>();
+  for (const item of items) {
+    const verb =
+      ['opened', 'merged', 'closed', 'pushed', 'passed', 'failed', 'started'].find((candidate) =>
+        item.verb.toLowerCase().includes(candidate.replace(/ed$/, '')),
+      ) ?? item.verb.toLowerCase();
+    const key = `${item.subject}:${verb}`;
+    const group = groups.get(key);
+    if (group) group.count += 1;
+    else groups.set(key, { item: { ...item, verb }, count: 1 });
+  }
+  const named = new Set<string>();
+  return [...groups.values()]
+    .map(({ item, count }) => {
+      if (item.subject === 'push') return `${count} ${count === 1 ? 'push' : 'pushes'}`;
+      const repeated = named.has(item.subject);
+      named.add(item.subject);
+      if (repeated) return `${count} ${item.verb}`;
+      const noun = item.subject === 'event' ? 'GitHub event' : item.subject;
+      return `${count} ${noun}${count === 1 ? '' : 's'} ${item.verb}`;
+    })
+    .join(' · ');
 }

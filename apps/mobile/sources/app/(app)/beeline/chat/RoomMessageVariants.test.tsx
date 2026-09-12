@@ -84,6 +84,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
       return ReactModule.createElement('LedgerEntry', props);
     },
     LedgerGhostLine: (props: any) => ReactModule.createElement('LedgerGhostLine', props),
+    LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
     LedgerSteer: (props: any) => ReactModule.createElement('LedgerSteer', props),
   };
 });
@@ -282,6 +283,23 @@ describe('Room message variant components', () => {
       act(() => renderer.root.findByType('Pressable').props.onPress());
       expect(onOpenUrl).toHaveBeenLastCalledWith(githubEvent.url);
     }
+  });
+
+  it('renders a folded GitHub run through the existing system line', () => {
+    const renderer = render(
+      <GitHubEventCard
+        message={message({
+          githubLifecycleRun: {
+            headline: '3 PRs opened · 2 merged',
+            items: [{ id: 'five', title: 'Ship it', url: 'https://github.test/pr/5' }],
+          },
+        })}
+        onOpenUrl={vi.fn()}
+      />,
+    );
+    expect(renderer.root.findByType('LedgerSystemLine' as never).props).toMatchObject({
+      text: '3 PRs opened · 2 merged',
+    });
   });
 
   it('renders a landed corner as a summary card with its full objective and tappable PR', () => {

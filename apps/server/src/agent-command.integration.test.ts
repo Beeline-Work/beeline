@@ -764,6 +764,36 @@ it('accepts and settles draft, thought, activity, attachment and final under one
   ).toBe(0);
 });
 
+it('deletes draft and thought rows when a successful turn settles without a reply', async () => {
+  await send('@hoots open a corner');
+  const [command] = await commands();
+  await claim(command!);
+  const input = {
+    roomId: R,
+    agentId: A,
+    requestId: command!.turnRequestId,
+    turnId: command!.turnRequestId,
+    generationId: 'g1',
+  };
+  await daemon.execute('postAgentDraft', { ...input, text: 'Opening a corner.' }, A);
+  await daemon.execute('postAgentThought', { ...input, text: 'Preparing the handoff.' }, A);
+
+  // A successful open_corner turn has no postRoomMessage call. Its terminal
+  // receipt is the durable ending and must reap the live rows itself even if
+  // the best-effort retract never arrived.
+  await daemon.execute('postAgentTurnReceipt', { ...input, status: 'complete' }, A);
+
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM live_outputs
+         WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
+        [R, A, command!.turnRequestId],
+      )
+    ).rowCount,
+  ).toBe(0);
+});
+
 it('stores an ambiguous agent tag as prose without dispatching either candidate', async () => {
   await db.query(`UPDATE identities SET handle='hoots' WHERE id=$1`, [B]);
   try {

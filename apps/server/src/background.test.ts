@@ -103,7 +103,7 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-         VALUES('device-token-12345678901234567890',$1,'ios','physical',now()-interval '2 days')`,
+         VALUES('device-token-12345678901234567890',$1,'android','physical',now()-interval '2 days')`,
         [human],
       );
       await db.query(
@@ -178,7 +178,7 @@ describe('background advisory-lock ownership', () => {
         [workspace, room, human, agent],
       );
       await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'ios','physical')`,
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'android','physical')`,
         [human],
       );
       const loop = new PushDeliveryLoop(db, {
@@ -226,7 +226,7 @@ describe('background advisory-lock ownership', () => {
         [workspace, room, human, agent],
       );
       await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'android','physical')`,
         [token, human],
       );
       const loop = new PushDeliveryLoop(db, {
@@ -245,6 +245,52 @@ describe('background advisory-lock ownership', () => {
       expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount).toBe(
         0,
       );
+    } finally {
+      await db.close();
+    }
+  });
+  it('leaves a registered iOS device alone instead of feeding it to Firebase', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        apns = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        [apns, human],
+      );
+      const send = vi.fn(async () => {
+        const error = new Error('The registration token is not a valid FCM token');
+        Object.assign(error, { code: 'messaging/invalid-registration-token' });
+        throw error;
+      });
+      const loop = new PushDeliveryLoop(db, { send });
+      await loop.runOnce();
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
+        ['1'.repeat(64), room, agent],
+      );
+
+      expect(await loop.runOnce()).toBe(0);
+      expect(send).not.toHaveBeenCalled();
+      // The registration survives: an APNs token is not FCM's to reject.
+      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [apns])).rowCount).toBe(1);
     } finally {
       await db.close();
     }
@@ -277,8 +323,8 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ('owner-device-token-12345678901234567890',$1,'ios','physical'),
-         ('other-device-token-12345678901234567890',$2,'ios','physical')`,
+         ('owner-device-token-12345678901234567890',$1,'android','physical'),
+         ('other-device-token-12345678901234567890',$2,'android','physical')`,
         [human, otherHuman],
       );
       await db.query(

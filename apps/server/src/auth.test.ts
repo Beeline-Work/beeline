@@ -199,7 +199,7 @@ describe('opaque token ceremony', () => {
     );
     await db.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('welcome-device-token-12345678901234567890',$1,'ios','physical')`,
+       VALUES('welcome-device-token-12345678901234567890',$1,'android','physical')`,
       [first.identityId],
     );
     const secondAuth = new TokenAuth(db, async () => ({

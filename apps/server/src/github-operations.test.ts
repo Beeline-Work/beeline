@@ -64,6 +64,127 @@ describe('GitHub phone operations', () => {
     );
     expect(app.dispatchWorkflow).toHaveBeenCalledWith('room-token', 'owner/widgets', 12, 'trunk');
   });
+  it('keeps the corner gate passing when completed check deliveries overlap', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const headSha = '1'.repeat(40);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(
+         installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+       ) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(
+         id,workspace_id,created_by,name,repository_key,repository_remote,
+         repository_resolution,github_installation_id
+       ) VALUES($1,$2,$3,'General','owner/widgets','https://github.com/owner/widgets.git','repository',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Checks')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
+       VALUES($1,'Fix checks','feature/checks',$2::jsonb)`,
+      [
+        corner,
+        JSON.stringify({
+          lifecycle: 'in-review',
+          branch: 'feature/checks',
+          checks: 'unknown',
+          pr: {
+            number: 1,
+            url: 'https://github.com/owner/widgets/pull/1',
+            title: 'Fix checks',
+            targetBranch: 'main',
+            headSha,
+            mergeability: 'clean',
+          },
+        }),
+      ],
+    );
+    const operations = new GitHubOperations(
+      database,
+      {} as GitHubOAuthClient,
+      {} as GitHubAppClient,
+      'secret',
+    );
+    const payload = (name: string, status: 'in_progress' | 'completed') => ({
+      action: status === 'completed' ? 'completed' : 'in_progress',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name,
+        status,
+        ...(status === 'completed' ? { conclusion: 'success' } : {}),
+        check_suite: { head_branch: 'feature/checks', head_sha: headSha },
+      },
+    });
+    await operations.processWebhook('check_run', payload('lint', 'in_progress'));
+    await operations.processWebhook('check_run', payload('typecheck', 'in_progress'));
+
+    // Force the race from the old read/aggregate/write sequence: lint reads a pending
+    // aggregate, typecheck commits the passing aggregate, then lint writes its stale view.
+    const originalQuery = database.query.bind(database);
+    let markSummaryCaptured!: () => void;
+    const summaryCaptured = new Promise<void>((resolve) => {
+      markSummaryCaptured = resolve;
+    });
+    let releaseStaleSummary!: () => void;
+    const staleSummaryMayFinish = new Promise<void>((resolve) => {
+      releaseStaleSummary = resolve;
+    });
+    let staleSummaryHeld = false;
+    vi.spyOn(database, 'query').mockImplementation(async (sql, values = []) => {
+      if (
+        sql.includes('INSERT INTO corner_check_facts') &&
+        values[1] === 'typecheck' &&
+        values[2] === 'passed'
+      ) {
+        await summaryCaptured;
+      }
+      if (sql.includes('SELECT name,status,conclusion,url,updated_at') && !staleSummaryHeld) {
+        staleSummaryHeld = true;
+        const result = await originalQuery(sql, values);
+        markSummaryCaptured();
+        await staleSummaryMayFinish;
+        return result;
+      }
+      if (
+        sql.includes('UPDATE corner_facts SET lifecycle=$2::jsonb') &&
+        typeof values[1] === 'string' &&
+        JSON.parse(values[1]).checks === 'passing'
+      ) {
+        const result = await originalQuery(sql, values);
+        releaseStaleSummary();
+        return result;
+      }
+      return originalQuery(sql, values);
+    });
+
+    await Promise.all([
+      operations.processWebhook('check_run', payload('lint', 'completed')),
+      operations.processWebhook('check_run', payload('typecheck', 'completed')),
+    ]);
+
+    expect(
+      (
+        await originalQuery<{ lifecycle: { checks: string; checksSummary: { status: string } } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.lifecycle,
+    ).toMatchObject({ checks: 'passing', checksSummary: { status: 'passing' } });
+  });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);

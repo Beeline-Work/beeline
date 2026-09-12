@@ -52,6 +52,7 @@ export type TurnProgressInput = {
   activeTurnRequestedBy?: string;
   /** The identity reading this Room. */
   viewerPubkey?: string;
+  viewerRole?: 'owner' | 'admin' | 'member';
 };
 
 /**
@@ -136,33 +137,24 @@ export type ComposerAckPresentation = {
   /** The server committed a new human command against this running turn. */
   received?: boolean;
   /**
-   * The coordinates a stop request names, present only when this reader is the
-   * one who asked. Absent is the ordinary case: everyone else watching the same
-   * line is a spectator, and the line stays exactly what it was for them.
+   * The coordinates a stop request names, present for the requester and
+   * current Room owners/admins. Other members see only the working line.
    */
   stop?: { agentPubkey: string; requestId: string };
 };
 
-/**
- * Whether the reader may stop the turn on this line.
- *
- * A question is the asker's to take back. Anyone else in the Room — a Workspace
- * owner, the agent's owner, another member watching the seconds tick — is a
- * spectator here, because a Room where anybody can silence anybody else's agent
- * mid-sentence is a different product with different manners. The server
- * enforces exactly this rule on the write; the phone offers the control only
- * where the write would be accepted, so a visible control always acts.
- *
- * Both halves must be KNOWN. A turn whose requester the server did not report
- * (the request has aged out of the messages it can join, or a person's question
- * was relayed by a schedule) offers no control to anybody — never one to
- * everybody.
- */
+/** The requester and current Room owners/admins may stop a running turn. */
 export function viewerMayStopTurn(
   viewerPubkey: string | undefined,
   requestedBy: string | undefined,
+  viewerRole?: 'owner' | 'admin' | 'member',
 ): boolean {
-  return Boolean(viewerPubkey && requestedBy && viewerPubkey === requestedBy);
+  return Boolean(
+    viewerPubkey &&
+    (viewerRole === 'owner' ||
+      viewerRole === 'admin' ||
+      (requestedBy && viewerPubkey === requestedBy)),
+  );
 }
 
 function agentFromConversationIdentity(
@@ -240,7 +232,11 @@ export function selectComposerAckPresentation(
       // them. The local "sending…" bridge is not a turn yet: there is nothing
       // running to stop, and offering to stop it would be a lie about what the
       // press does.
-      const stoppable = viewerMayStopTurn(input.viewerPubkey, input.activeTurnRequestedBy);
+      const stoppable = viewerMayStopTurn(
+        input.viewerPubkey,
+        input.activeTurnRequestedBy,
+        input.viewerRole,
+      );
       return {
         label: `${subject} ${verb.gerund}…`,
         turnKey,

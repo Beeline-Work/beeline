@@ -59,6 +59,10 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/TurnProgressLine', async () => {
+  const ReactModule = await import('react');
+  return { TurnProgressLine: (props: any) => ReactModule.createElement('TurnProgressLine', props) };
+});
 vi.mock('@/components/buzz/ConversationComposer', async () => {
   const ReactModule = await import('react');
   return {
@@ -295,6 +299,47 @@ describe('DesktopRoomInspector work pane', () => {
       workflowName: 'Release',
     });
   });
+
+  it.each(['member', 'owner', 'admin'] as const)(
+    'shares corner stop authority for a %s',
+    async (role) => {
+      const detail = {
+        ...room(),
+        room: corners[0].corner,
+        viewer: { ...room().viewer, role },
+        latestAgentTurns: [
+          {
+            agentPubkey: agent.pubkey,
+            requestId: 'turn-1',
+            requestedBy: 'another-person',
+            status: 'working',
+            createdAt: Date.now() / 1000,
+          },
+        ],
+      };
+      const client = { room: vi.fn(async () => detail) } as any;
+      let tree!: ReactTestRenderer;
+      await act(async () => {
+        tree = create(<DesktopRoomInspector {...props({ client, selectedCornerId: 'working' })} />);
+      });
+      const composer = tree.root.findByType('ConversationComposer' as any);
+      const progress = tree.root.findByType('TurnProgressLine' as any);
+      expect(Boolean(composer.props.onStop)).toBe(role !== 'member');
+      expect(Boolean(progress.props.onStop)).toBe(role !== 'member');
+      expect(composer.props.running).toBe(true);
+      if (role !== 'member') {
+        await act(async () => {
+          await composer.props.onStop();
+        });
+        expect(phoneOperation).toHaveBeenCalledWith('cancelAgentTurn', {
+          roomId: 'working',
+          requestId: 'turn-1',
+          agentId: agent.pubkey,
+        });
+      }
+      act(() => tree.unmount());
+    },
+  );
 
   it('opens a corner cockpit and returns to overview without closing the pane', async () => {
     const onSelectCorner = vi.fn();

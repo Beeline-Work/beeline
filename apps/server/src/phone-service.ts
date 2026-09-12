@@ -2918,9 +2918,8 @@ export class PhoneService {
    */
   private async cancelAgentTurn(input: Input<'cancelAgentTurn'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    // The turn must be running, and the message it answers must be the
-    // viewer's own. A corner's request lives in its parent Room, the same
-    // widening `inscribeTurnFailure` makes.
+    // A corner's root request may live in its parent Room. Authority is
+    // checked against current membership under lock before settling it.
     const running = (
       await this.database.query<{ author_id: string }>(
         `SELECT trigger.author_id
@@ -2934,10 +2933,24 @@ export class PhoneService {
       )
     ).rows[0];
     if (!running) throw new Error('running turn not found');
-    if (running.author_id !== viewerId) throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
     const stopper = await this.requireIdentity(viewerId);
     const agent = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
+      const member = (
+        await database.query<{ role: string }>(
+          `SELECT room_member.role FROM memberships room_member
+         JOIN rooms room ON room.id=room_member.room_id
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=room_member.identity_id
+           AND workspace_member.removed_at IS NULL
+         WHERE room_member.room_id=$1 AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         FOR SHARE OF room_member,workspace_member`,
+          [input.roomId, viewerId],
+        )
+      ).rows[0];
+      if (!member) throw new Error('room access denied');
+      if (running.author_id !== viewerId && member.role !== 'owner' && member.role !== 'admin')
+        throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
       await database.query(
         `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 FOR UPDATE`,
         [input.roomId, input.agentId, input.requestId],
@@ -5077,11 +5090,11 @@ export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace adm
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
 
 /**
- * Stopping a turn answers to the REQUEST, not to the Room: a question is the
- * asker's to take back, and no amount of Workspace authority makes it someone
- * else's. Named here so `server.ts` answers 403 rather than a generic failure.
+ * A requester or current Room owner/admin may stop a turn.
+ * Named here so `server.ts` answers 403 rather than a generic failure.
  */
-export const TURN_REQUESTER_AUTHORITY_MESSAGE = 'Only the person who asked can stop this turn';
+export const TURN_REQUESTER_AUTHORITY_MESSAGE =
+  'Only the requester, Room owner or admin can stop this turn';
 
 /** The same owner-only axis, for who may address an agent. */
 export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;

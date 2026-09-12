@@ -15,6 +15,7 @@ import {
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import {
+  isAgentPresenceOnline,
   isRetiredAgentNotice,
   type ChatListItem,
   type RoomViewIdentity,
@@ -25,7 +26,6 @@ export type ExpandedCornerRefreshAction =
 
 export type RoomListSection = {
   kind: 'rooms' | 'messages';
-  title?: 'Messages';
   data: ChatListItem[];
 };
 
@@ -42,9 +42,7 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
     );
   return [
     ...(rooms.length ? [{ kind: 'rooms' as const, data: rooms }] : []),
-    ...(messages.length
-      ? [{ kind: 'messages' as const, title: 'Messages' as const, data: messages }]
-      : []),
+    ...(messages.length ? [{ kind: 'messages' as const, data: messages }] : []),
   ];
 }
 
@@ -257,6 +255,57 @@ export function roomRowPreview(
   if (viewerPubkey && latest.author.pubkey === viewerPubkey)
     return { attribution: 'self', text: preview };
   return { attribution: 'other', handle: previewHandle(latest.author), text: preview };
+}
+
+export type DirectMessagePresence = {
+  readonly label: string;
+  /** Agents with a preview use the existing small state-dot idiom. */
+  readonly dot: 'working' | 'idle' | null;
+};
+
+/** One counterparty-presence grammar for the phone deck and desktop sidebar. */
+export function directMessagePresence(
+  item: Pick<ChatListItem, 'directMessage' | 'agentState'>,
+  nowMs: number,
+): DirectMessagePresence | null {
+  const direct = item.directMessage;
+  if (!direct) return null;
+  const presence = direct.presence;
+  if (direct.peer.kind === 'agent') {
+    const online = presence
+      ? isAgentPresenceOnline(
+          {
+            agentPubkey: direct.peer.pubkey,
+            status: presence.status,
+            observedAt: presence.observedAt,
+          },
+          nowMs,
+        )
+      : false;
+    if (!online) return { label: 'offline', dot: null };
+    return item.agentState === 'working'
+      ? { label: 'working', dot: 'working' }
+      : { label: 'idle', dot: 'idle' };
+  }
+  if (presence?.status === 'online') return { label: 'online', dot: null };
+  if (!presence?.observedAt) return null;
+  return { label: personLastSeen(presence.observedAt, nowMs), dot: null };
+}
+
+/** Today is relative, yesterday is spoken, and older activity gets a calendar stamp. */
+export function personLastSeen(observedAt: number, nowMs: number): string {
+  const then = new Date(observedAt * 1_000);
+  const now = new Date(nowMs);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfThen = new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime();
+  if (startOfThen === startOfToday) {
+    const elapsedHours = Math.max(0, Math.floor((nowMs - then.getTime()) / 3_600_000));
+    if (elapsedHours > 0) return `last seen ${elapsedHours}h`;
+    const elapsedMinutes = Math.max(1, Math.floor((nowMs - then.getTime()) / 60_000));
+    return `last seen ${elapsedMinutes}m`;
+  }
+  if (startOfToday - startOfThen === 86_400_000) return 'yesterday';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(then);
 }
 
 function attachmentPreview(

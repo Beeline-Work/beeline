@@ -7,10 +7,6 @@ const composeSource = readFileSync(
   new URL('../../../components/buzz/RoomDeckComposeMenu.tsx', import.meta.url),
   'utf8',
 );
-const sectionHeaderSource = readFileSync(
-  new URL('../../../components/buzz/RoomListSectionHeader.tsx', import.meta.url),
-  'utf8',
-);
 const roomViewSource = readFileSync(
   new URL('../../../../../../packages/api-contract/src/phone-types.ts', import.meta.url),
   'utf8',
@@ -39,14 +35,12 @@ function styleBlock(text: string, name: string): string {
 }
 
 describe('Room list layout contract', () => {
-  it('places DMs beneath Rooms under a conditional Messages heading', () => {
+  it('places DMs beneath Rooms without a second section heading', () => {
     expect(source).toContain('<SectionList');
     expect(source).toContain('sections={chatSections}');
     expect(source).toContain('roomListSections(chatList?.chats ?? [])');
-    expect(source).toContain('section.title ? <RoomListSectionHeader title={section.title} /> : null');
-    expect(sectionHeaderSource).toContain('{title.toUpperCase()}');
-    expect(sectionHeaderSource).toContain('accessibilityRole="header"');
-    expect(styleBlock(sectionHeaderSource, 'sectionHeaderText')).toContain('...hull.type.sectionHead,');
+    expect(source).not.toContain('RoomListSectionHeader');
+    expect(source).not.toContain('section.title');
     expect(source).not.toContain('<FlatList');
   });
 
@@ -282,7 +276,9 @@ describe('Room list layout contract', () => {
 
     expect(desktopInspectorSource).toContain('<View style={styles.cornerEndcap}>');
     expect(desktopInspectorSource).toContain('{display.word}');
-    expect(desktopInspectorSource).toContain("cornerRow: {\n    minHeight: 88,\n    flexDirection: 'row',\n    alignItems: 'center'");
+    expect(desktopInspectorSource).toContain(
+      "cornerRow: {\n    minHeight: 88,\n    flexDirection: 'row',\n    alignItems: 'center'",
+    );
     expect(desktopInspectorSource).toContain(
       "cornerEndcap: { flexDirection: 'row', alignItems: 'baseline'",
     );

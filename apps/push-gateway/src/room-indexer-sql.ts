@@ -697,6 +697,14 @@ WITH workspace_candidates AS (
 ), identity_keys AS (
   SELECT DISTINCT e.community_id, e.pubkey, w.id::text AS workspace_id
   FROM preview_events e JOIN workspace w ON true
+  UNION
+  SELECT a.community_id, decode(peer_tag.pubkey, 'hex'), w.id::text
+  FROM chats a JOIN workspace w ON true
+  JOIN LATERAL (
+    SELECT t->>1 AS pubkey FROM jsonb_array_elements(a.tags) t
+    WHERE t->>0 = 'p' AND t->>1 <> $2 AND t->>1 ~* '^[0-9a-f]{64}$'
+    ORDER BY t->>1 LIMIT 1
+  ) peer_tag ON true
 ), agent_declarations AS MATERIALIZED (
   SELECT DISTINCT ON (e.community_id, e.pubkey) e.community_id, e.pubkey, e.content
   FROM workspace w JOIN events e ON e.community_id = w.community_id
@@ -836,7 +844,12 @@ SELECT 'chat', jsonb_build_object(
     'name', ${resolvedIdentityNameSql('peer')},
     'handle', peer.handle,
     'avatar', COALESCE(peer.agent_content::jsonb->>'avatar', peer.avatar),
-    'agent', peer.agent_content IS NOT NULL
+    'agent', peer.agent_content IS NOT NULL,
+    'presenceStatus', CASE
+      WHEN peer.agent_content IS NOT NULL THEN COALESCE(peer_presence.status, 'offline')
+      ELSE 'offline'
+    END,
+    'presenceObservedAt', COALESCE(peer_presence.observed_at, peer_activity.observed_at)
   ) ELSE NULL END
 ) FROM chats a
 LEFT JOIN identities peer ON peer.community_id = a.community_id
@@ -846,6 +859,26 @@ LEFT JOIN identities peer ON peer.community_id = a.community_id
     WHERE t->>0 = 'visibility' AND t->>1 = 'private')
   AND peer.pubkey = (SELECT decode(t->>1, 'hex') FROM jsonb_array_elements(a.tags) t
     WHERE t->>0 = 'p' AND t->>1 <> $2 ORDER BY t->>1 LIMIT 1)
+LEFT JOIN LATERAL (
+  SELECT
+    (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'status' LIMIT 1) status,
+    extract(epoch FROM e.created_at)::bigint observed_at
+  FROM events e
+  WHERE peer.agent_content IS NOT NULL AND e.community_id=a.community_id
+    AND e.pubkey=peer.pubkey AND e.kind=30078 AND e.deleted_at IS NULL
+    AND e.tags @> '[["t", "agent-presence"]]'::jsonb
+  ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+) peer_presence ON true
+LEFT JOIN LATERAL (
+  SELECT greatest(
+    (SELECT extract(epoch FROM max(e.created_at))::bigint FROM events e
+     WHERE e.community_id=a.community_id AND e.channel_id=a.id
+       AND e.pubkey=peer.pubkey AND e.kind=9 AND e.deleted_at IS NULL),
+    (SELECT extract(epoch FROM mark.updated_at)::bigint FROM beeline_room_read_marks mark
+     WHERE mark.community_id=a.community_id AND mark.room_id=a.id
+       AND mark.viewer_pubkey=peer.pubkey)
+  ) observed_at
+) peer_activity ON true
 LEFT JOIN member_counts members ON members.community_id = a.community_id AND members.room_id = a.id
 LEFT JOIN corner_counts corners ON corners.community_id = a.community_id AND corners.room_id = a.id
 LEFT JOIN room_turns turns ON turns.community_id = a.community_id AND turns.room_id = a.id

@@ -94,6 +94,33 @@ export type LiveEvent =
 export class LiveHub {
   readonly #events = new EventEmitter();
   readonly #presence = new Map<string, Map<string, Extract<LiveEvent, { type: 'presence' }>>>();
+  readonly #humanConnections = new Map<string, { count: number; observedAt: number }>();
+
+  humanConnected(identityId: string, now = Date.now()): boolean {
+    const previous = this.#humanConnections.get(identityId);
+    this.#humanConnections.set(identityId, {
+      count: (previous?.count ?? 0) + 1,
+      observedAt: Math.floor(now / 1_000),
+    });
+    return !previous?.count;
+  }
+
+  humanDisconnected(identityId: string, now = Date.now()): boolean {
+    const previous = this.#humanConnections.get(identityId);
+    if (!previous) return false;
+    const count = Math.max(0, previous.count - 1);
+    this.#humanConnections.set(identityId, { count, observedAt: Math.floor(now / 1_000) });
+    return previous.count > 0 && count === 0;
+  }
+
+  humanPresence(
+    identityId: string,
+  ): { status: 'online' | 'offline'; observedAt: number } | undefined {
+    const presence = this.#humanConnections.get(identityId);
+    return presence
+      ? { status: presence.count > 0 ? 'online' : 'offline', observedAt: presence.observedAt }
+      : undefined;
+  }
 
   publish(event: LiveEvent): void {
     if (event.type === 'presence') {

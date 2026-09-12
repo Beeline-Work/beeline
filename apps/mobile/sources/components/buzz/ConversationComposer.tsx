@@ -17,7 +17,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 type Props = {
   value: string;
-  placeholder: string;
   height: number;
   maxHeight?: number;
   focused: boolean;
@@ -45,7 +44,6 @@ type Props = {
 /** The one text-entry row used by both desktop Room and embedded Corner conversations. */
 export function ConversationComposer({
   value,
-  placeholder,
   height,
   maxHeight = 160,
   focused,
@@ -153,7 +151,7 @@ export function ConversationComposer({
         onBlur={onBlur}
         onKeyPress={onKeyPress}
         onSelectionChange={onSelectionChange}
-        placeholder={placeholder}
+        placeholder="Message"
         placeholderTextColor={theme.buzz.dim}
         multiline
         returnKeyType="default"

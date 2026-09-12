@@ -867,12 +867,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const mentionHandles = useMemo(
     () =>
       participantHandles
-        .filter(
-          (participant) =>
-            participant.pubkey !== viewerPubkey && taggedMentionPubkeys.has(participant.pubkey),
-        )
+        .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
         .map((participant) => participant.handle),
-    [participantHandles, taggedMentionPubkeys, viewerPubkey],
+    [participantHandles, taggedMentionPubkeys],
   );
   const handleMention = useCallback(
     (handle: string) => {

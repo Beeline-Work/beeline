@@ -723,6 +723,64 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({ face: 'owl' });
   });
 
+  it('never lifts a live draft into settled narration (C108 duplicate)', () => {
+    const props = {
+      agent: { pubkey: 'agent', displayName: 'ECHO' },
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    // Reported twice from a phone: one unfinished sentence printed twice under
+    // one byline, the upright copy reading as the agent's answer. A row with no
+    // activity of its own has its `text` lifted into an `output` item, and
+    // `buildTurnActivity` renders an `output` as narration — the settled tier —
+    // while the same words also went out through `messageDraft`.
+    const draft = render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'live-turn:agent:request-9',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          isAgentDraft: true,
+          isAgentLiveTurn: true,
+          text: 'Codex gets the review request when the',
+          agentMessageDraft: 'Codex gets the review request when the',
+        })}
+      />,
+    );
+    const lane = draft.root.findByType('ActivityTimeline').props;
+    expect(lane.items).toEqual([]);
+    expect(lane.messageDraft).toBe('Codex gets the review request when the');
+
+    // An ordinary settled activity row still shows its prose.
+    const settled = render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'corner-output',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          text: 'The fix is ready.',
+        })}
+      />,
+    );
+    expect(settled.root.findByType('ActivityTimeline').props.items).toEqual([
+      { kind: 'output', title: 'Output', text: 'The fix is ready.' },
+    ]);
+  });
+
   it('hands the streamed words to the reply that settles them, exactly once (C98)', () => {
     const rowProps = {
       agent: { pubkey: 'agent', displayName: 'CODEX' },

@@ -125,11 +125,18 @@ export function applyLiveOverlay(
  *
  * A turn can also complete with NO durable reply — a Room turn whose whole
  * handoff is the server's corner card publishes no message at all — and then
- * nothing was ever going to arrive for the retracted draft to dissolve into. Its
- * `complete` receipt is the ending, and the row goes with it; the server deleted
- * the `live_outputs` row in the same settle, so a reader who opens the Room
- * again is already shown no draft, and a session that keeps one is the only
- * reader still being told a provisional sentence is the answer.
+ * nothing was ever going to arrive for that draft to dissolve into. Its own
+ * `complete` receipt is the ending, and the row goes with it; the server
+ * deleted the `live_outputs` row in the same settle, so a reader who opens the
+ * Room again is already shown no draft, and a session that keeps one is the
+ * only reader still being told a provisional sentence is the answer.
+ *
+ * The receipt ends the lane whether or not the RETRACT was seen. A retract is
+ * an ephemeral push and `LiveHub` reaches only sockets already listening, so a
+ * reader can miss it outright and hold an open draft that nothing will ever
+ * close. No snapshot can follow a `complete` receipt for the same request
+ * either — the server refuses a draft write once that turn's command is
+ * complete — so there is nothing left for the row to be waiting for.
  *
  * A turn that failed or was stopped is NOT an ending of this kind: its partial
  * text stays exactly where the reader last saw it.
@@ -146,6 +153,6 @@ export function visibleLiveOverlays(
   return overlays.filter((overlay) => {
     if (overlay.kind !== 'draft') return true;
     const turn = `${overlay.agentPubkey}:${overlay.requestId}`;
-    return !completed.has(turn) && !(overlay.closed && settled.has(turn));
+    return !completed.has(turn) && !settled.has(turn);
   });
 }

@@ -27,7 +27,14 @@ export function liveDraftMessages(
     return [
       {
         id: liveDraftRowId(overlay.agentPubkey, overlay.requestId),
-        text: overlay.text ?? '',
+        // A draft's prose lives in `agentMessageDraft` and NOWHERE else. Held
+        // in `text` as well it was read twice: `RoomMessageVariants` builds an
+        // `output` activity item out of `text` for any activity row that has
+        // no items of its own, and `buildTurnActivity` renders an `output` as
+        // NARRATION — the settled, upright tier. One unsettled half-sentence
+        // was therefore painted as the agent's answer with the same
+        // half-sentence in the provisional face directly beneath it.
+        text: '',
         isUser: false,
         timestamp: overlay.createdAt,
         pubkey: overlay.agentPubkey,

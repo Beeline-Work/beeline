@@ -819,12 +819,21 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                 },
               }),
         };
+  // A row with no activity of its own still has its text to show, so it is
+  // lifted into one `output` item — which `buildTurnActivity` renders as
+  // narration, at the settled tier. A LIVE DRAFT is the one row that must
+  // never take that path: its words are provisional, they are already rendered
+  // in the provisional face through `messageDraft`, and promoting them here
+  // printed the same unfinished sentence twice, the first copy dressed as the
+  // durable reply.
   const activity = useMemo(
     () =>
       message.activity?.length
         ? message.activity
-        : [{ kind: 'output' as const, title: 'Output', text: message.text }],
-    [message.activity, message.text],
+        : message.isAgentDraft
+          ? []
+          : [{ kind: 'output' as const, title: 'Output', text: message.text }],
+    [message.activity, message.isAgentDraft, message.text],
   );
   // What the reader is being shown while the turn writes, remembered under the
   // turn's own request id. The durable reply below collects it and fades out

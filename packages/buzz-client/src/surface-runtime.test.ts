@@ -342,10 +342,10 @@ describe('narrow live seam', () => {
     for (const status of ['working', 'failed', 'cancelled'] as const) {
       expect(visibleLiveOverlays(retracted, [], [turn(status)])).toEqual(retracted);
     }
-    // The receipt only ends a RETRACTED draft. A completed turn whose lane is
-    // still open belongs to a reader mid-stream, and a late receipt must not
-    // erase text the next snapshot is about to replace.
-    expect(visibleLiveOverlays([overlay], [], [turn('complete')])).toEqual([overlay]);
+    // The receipt ends the lane whether or not the retract was seen. A retract
+    // reaches only sockets already listening, so a reader can miss it and hold
+    // an open draft nothing will ever close.
+    expect(visibleLiveOverlays([overlay], [], [turn('complete')])).toEqual([]);
     // Another agent's turn under the same request id is untouched.
     expect(
       visibleLiveOverlays(retracted, [], [{ ...turn('complete'), agentPubkey: 'other' }]),

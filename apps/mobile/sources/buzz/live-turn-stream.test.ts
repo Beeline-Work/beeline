@@ -267,6 +267,25 @@ describe('two agents streaming at once', () => {
         createdAt: 130,
       };
       expect(liveDraftMessages(settled, [], [complete])).toEqual([]);
+      // And with no retract seen at all: it is an ephemeral push, so a reader
+      // can miss it outright and hold an open lane nothing will ever close.
+      const never = stream(draft(AGENT, 'Opening a corner for that.', 100));
+      expect(liveDraftMessages(never, [], [complete])).toEqual([]);
+    });
+
+    it('never lets a draft row print its prose as settled narration', () => {
+      // The duplicate as reported: one unfinished sentence painted twice, the
+      // upright copy reading as the answer. A draft's words belong to
+      // `agentMessageDraft` alone — `RoomMessageVariants` lifts a bare `text`
+      // into an `output` item, which renders at the settled tier.
+      const rows = liveDraftMessages(stream(draft(AGENT, 'Codex gets the review', 100)), []);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        text: '',
+        agentMessageDraft: 'Codex gets the review',
+        isAgentDraft: true,
+      });
+      expect(rows[0]?.activity).toBeUndefined();
     });
 
     it('keeps a stopped or failed turn exactly where the reader last saw it', () => {

@@ -380,6 +380,7 @@ CREATE TABLE IF NOT EXISTS messages (
   presentation text NOT NULL DEFAULT 'message' CHECK (presentation IN ('message', 'system', 'activity', 'card')),
   attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
   mention_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  reactions jsonb NOT NULL DEFAULT '{}'::jsonb,
   reply_to_message_id text REFERENCES messages(id),
   root_message_id text,
   request_id text,
@@ -395,6 +396,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- Where an event line came from. The cause is the message that triggered the
 -- turn that emitted it; the root is the first line of that whole cascade, and
 -- the depth is how far this line sits from it. Columns rather than more json

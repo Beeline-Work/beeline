@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
-import type { AttachmentReference } from '@beeline/buzz-client';
+import {
+  MESSAGE_REACTION_EMOJIS,
+  type AttachmentReference,
+  type MessageReactionEmoji,
+} from '@beeline/buzz-client';
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -41,6 +45,7 @@ import {
 } from '@/components/buzz/Ledger';
 import { HullSurface, MonoButton, NewMessageMaterialize } from '@/components/buzz/MonoHull';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
+import { forwardedMessageParts } from '@/buzz/message-forward';
 
 type WriteDecision = 'allow' | 'deny';
 
@@ -661,6 +666,8 @@ function SwipeToReply({
   onLongPress,
   onPress,
   onReply,
+  onReact,
+  onForward,
   isDesktop,
 }: {
   children: React.ReactNode;
@@ -668,10 +675,13 @@ function SwipeToReply({
   onLongPress(): void;
   onPress?(): void;
   onReply(): void;
+  onReact(emoji: MessageReactionEmoji): void;
+  onForward(): void;
   isDesktop: boolean;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
+  const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
   const message = isDesktop ? (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
@@ -735,7 +745,55 @@ function SwipeToReply({
           >
             <Text style={styles.replyDesktopGlyph}>↩</Text>
           </Pressable>
+          <Pressable
+            accessibilityLabel="React to message"
+            accessibilityRole="button"
+            onFocus={() => setDesktopActionsVisible(true)}
+            onPress={() => setReactionPickerVisible((visible) => !visible)}
+            style={({ pressed }) => [
+              styles.replyDesktopAction,
+              pressed && styles.replyDesktopPressed,
+            ]}
+            testID={`react-button-${messageId}`}
+          >
+            <Text style={styles.replyDesktopGlyph}>☺</Text>
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Forward message"
+            accessibilityRole="button"
+            onFocus={() => setDesktopActionsVisible(true)}
+            onPress={onForward}
+            style={({ pressed }) => [
+              styles.replyDesktopAction,
+              pressed && styles.replyDesktopPressed,
+            ]}
+            testID={`forward-button-${messageId}`}
+          >
+            <Text style={styles.replyDesktopGlyph}>↗</Text>
+          </Pressable>
         </View>
+        {reactionPickerVisible ? (
+          <View style={styles.reactionPicker} testID={`reaction-picker-${messageId}`}>
+            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+              <Pressable
+                accessibilityLabel={`React with ${emoji}`}
+                accessibilityRole="button"
+                key={emoji}
+                onPress={() => {
+                  onReact(emoji);
+                  setReactionPickerVisible(false);
+                }}
+                style={({ pressed }) => [
+                  styles.reactionPickerChoice,
+                  pressed && styles.replyDesktopPressed,
+                ]}
+                testID={`reaction-choice-${messageId}-${emoji}`}
+              >
+                <Text style={styles.reactionEmoji}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -798,6 +856,8 @@ export interface OrdinaryLedgerMessageProps {
   onTapOutsideComposer?(): void;
   onReply(message: ChatDisplayMessage): void;
   onCopy(text: string): void;
+  onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
+  onForward?(message: ChatDisplayMessage): void;
   onRetry(eventId: string): void;
   onDismiss(eventId: string): void;
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
@@ -823,6 +883,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onTapOutsideComposer,
   onReply,
   onCopy,
+  onReact = () => undefined,
+  onForward = () => undefined,
   onRetry,
   onDismiss,
   announcementFeed = false,
@@ -987,7 +1049,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       </Text>
     </View>
   ) : null;
-  const ledgerText = isSelfSteer ? undefined : splitLedgerText(message.text);
+  const forwarded = forwardedMessageParts(message.text);
+  const ledgerText = isSelfSteer ? undefined : splitLedgerText(forwarded.body);
   const machineNoise = ledgerText?.machine ? (
     <LedgerGhostLine
       body={ledgerText.machine}
@@ -1007,7 +1070,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             itemId={message.id}
             continued={continued}
             byline={byline}
-            bodyText={message.text}
+            bodyText={forwarded.body}
             mentionHandles={mentionHandles}
             onMention={handleMention}
             channelIndex={channelIndex}
@@ -1024,7 +1087,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}
-            bodyText={ledgerText ? ledgerText.prose : message.text}
+            bodyText={ledgerText ? ledgerText.prose : forwarded.body}
             mentionHandles={mentionHandles}
             onMention={handleMention}
             channelIndex={channelIndex}
@@ -1035,6 +1098,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             attachments={attachments}
           />
         )}
+        {forwarded.caption ? (
+          <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
+            {forwarded.caption}
+          </Text>
+        ) : null}
         {message.isUser && deliveryFailed ? (
           <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>
             <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
@@ -1048,6 +1116,24 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             </View>
           </View>
         ) : null}
+        {message.reactions?.length ? (
+          <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
+            {message.reactions.map((reaction) => (
+              <Pressable
+                accessibilityLabel={`${reaction.emoji}, ${reaction.count} reaction${reaction.count === 1 ? '' : 's'}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: reaction.reacted }}
+                key={reaction.emoji}
+                onPress={() => onReact(message, reaction.emoji)}
+                style={[styles.reactionChip, reaction.reacted && styles.reactionChipMine]}
+                testID={`reaction-chip-${message.id}-${reaction.emoji}`}
+              >
+                <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
+                <Text style={styles.reactionCount}>{reaction.count}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
     </NewMessageMaterialize>
   );
@@ -1058,6 +1144,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onLongPress={() => onCopy(message.text)}
       {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
+      onReact={(emoji) => onReact(message, emoji)}
+      onForward={() => onForward(message)}
       isDesktop={desktopLayout}
     >
       {content}
@@ -1302,6 +1390,57 @@ const styles = StyleSheet.create(() => ({
     fontSize: 13,
     lineHeight: 18,
     letterSpacing: 0,
+  },
+  reactionPicker: {
+    position: 'absolute',
+    top: 46,
+    right: 0,
+    zIndex: 4,
+    flexDirection: 'row',
+    padding: 4,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    borderRadius: groknight.radius,
+    backgroundColor: groknight.bgTerminal,
+  },
+  reactionPickerChoice: {
+    width: 36,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reactionChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+    marginLeft: 8,
+  },
+  reactionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 28,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: groknight.radius,
+    backgroundColor: groknight.bgBase,
+  },
+  reactionChipMine: {
+    borderColor: groknight.accent,
+    backgroundColor: groknight.bgHighlight,
+  },
+  reactionEmoji: { fontSize: 15, lineHeight: 19 },
+  reactionCount: {
+    ...groknight.type.meta,
+    color: groknight.textSecondary,
+  },
+  forwardCaption: {
+    ...groknight.type.sectionHead,
+    marginTop: 5,
+    marginLeft: 8,
+    color: groknight.ledgerQuiet,
   },
   replyDesktopLabel: {
     ...Typography.default('semiBold'),

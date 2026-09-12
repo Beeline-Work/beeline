@@ -42,6 +42,7 @@ import {
   type KnownMessageReference,
   addRoomPage,
   type RoomViewMessage,
+  type MessageReactionEmoji,
   AGENT_PRESENCE_STALE_MS,
 } from '@beeline/buzz-client';
 import {
@@ -207,6 +208,7 @@ import {
 } from './RoomMessageVariants';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { forwardMessageToRoom } from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -434,6 +436,12 @@ export default function BuzzChat() {
   const failedOutboxIds = outbox.failedIds;
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
+  const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
+  const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
+    null,
+  );
+  const [forwardBusyRoomId, setForwardBusyRoomId] = useState<string | null>(null);
+  const [forwardError, setForwardError] = useState<string | null>(null);
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
   // corner onto the pinned line — see `selectPinnedCorner`.
@@ -2028,6 +2036,74 @@ export default function BuzzChat() {
     [decodedId, replyTargetForMessage],
   );
 
+  const handleReactToMessage = useCallback(
+    async (message: ChatDisplayMessage, emoji: MessageReactionEmoji) => {
+      if (message.isAgentDraft) return;
+      try {
+        await monolithPhoneOperation('reactToMessage', {
+          roomId: decodedId,
+          messageId: message.relayId ?? message.id,
+          emoji,
+        });
+        refreshSignal.force();
+      } catch (error) {
+        Modal.alert('Could not react', error instanceof Error ? error.message : String(error));
+      }
+    },
+    [decodedId, refreshSignal],
+  );
+
+  const beginForward = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (!desktopExperience || message.isAgentDraft || !roomClient || !activeCommunityId) return;
+      setForwardTarget(message);
+      setForwardRooms(null);
+      setForwardError(null);
+      try {
+        const list = await roomClient.chats(activeCommunityId);
+        setForwardRooms(
+          list.chats
+            .filter(
+              (chat) =>
+                chat.room.id !== decodedId &&
+                !chat.room.parentId &&
+                !chat.room.archived &&
+                !chat.directMessage,
+            )
+            .map((chat) => ({ id: chat.room.id, name: chat.room.name })),
+        );
+      } catch (error) {
+        setForwardError(error instanceof Error ? error.message : String(error));
+        setForwardRooms([]);
+      }
+    },
+    [activeCommunityId, decodedId, desktopExperience, roomClient],
+  );
+
+  const forwardToRoom = useCallback(
+    async (room: { id: string; name: string }) => {
+      if (!forwardTarget || forwardBusyRoomId) return;
+      setForwardBusyRoomId(room.id);
+      setForwardError(null);
+      try {
+        await forwardMessageToRoom(
+          (input) => monolithPhoneOperation('sendRoomMessage', input),
+          room.id,
+          forwardTarget.text,
+          displayRoomName,
+        );
+        setForwardTarget(null);
+        setForwardRooms(null);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (error) {
+        setForwardError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setForwardBusyRoomId(null);
+      }
+    },
+    [displayRoomName, forwardBusyRoomId, forwardTarget],
+  );
+
   const markOutboxFailed = outbox.markFailed;
   const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
   const retryOutboxMessage = outbox.retry;
@@ -3312,6 +3388,8 @@ export default function BuzzChat() {
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
+          onReact={handleReactToMessage}
+          onForward={beginForward}
           onRetry={retryOutboxMessage}
           onDismiss={dismissOutboxMessage}
         />
@@ -3323,6 +3401,8 @@ export default function BuzzChat() {
       handleWritePermission,
       handleGrantDecision,
       handleOpenSystemIdentity,
+      handleReactToMessage,
+      beginForward,
       grantActionId,
       handleConfirmTargetBranch,
       openCorner,
@@ -4125,6 +4205,51 @@ export default function BuzzChat() {
         onPickPhoto={() => void pickPhoto()}
       />
 
+      <HullActionSheetModal
+        accessibilityLabel="Close forward picker"
+        onClose={() => {
+          if (forwardBusyRoomId) return;
+          setForwardTarget(null);
+          setForwardRooms(null);
+          setForwardError(null);
+        }}
+        subtitle="Choose a Room in this Workspace"
+        testID="forward-room-picker"
+        title="Forward message"
+        visible={Boolean(forwardTarget)}
+      >
+        <ScrollView style={styles.forwardRoomList}>
+          {forwardRooms === null ? (
+            <Text style={styles.forwardRoomStatus}>LOADING ROOMS…</Text>
+          ) : forwardRooms.length ? (
+            forwardRooms.map((room) => (
+              <HullActionSheetRow
+                chevron="right"
+                disabled={Boolean(forwardBusyRoomId)}
+                key={room.id}
+                label={`#${room.name}`}
+                metadata={forwardBusyRoomId === room.id ? 'SENDING' : undefined}
+                onPress={() => void forwardToRoom(room)}
+                testID={`forward-room-${room.id}`}
+              />
+            ))
+          ) : (
+            <Text style={styles.forwardRoomStatus}>
+              {forwardError ?? 'NO OTHER ROOMS AVAILABLE'}
+            </Text>
+          )}
+        </ScrollView>
+        <HullActionSheetCancel
+          onPress={() => {
+            if (forwardBusyRoomId) return;
+            setForwardTarget(null);
+            setForwardRooms(null);
+            setForwardError(null);
+          }}
+          testID="forward-room-cancel"
+        />
+      </HullActionSheetModal>
+
       <RoomRosterSheet
         bottomInset={insets.bottom}
         canManage={roomSurface?.viewer.permissions.manage ?? false}
@@ -4423,6 +4548,13 @@ const styles = StyleSheet.create((theme) => {
     },
     desktopStatusFailed: {
       color: groknight.danger,
+    },
+    forwardRoomList: { maxHeight: 360 },
+    forwardRoomStatus: {
+      ...theme.buzz.type.sectionHead,
+      paddingHorizontal: 22,
+      paddingVertical: 18,
+      color: groknight.textMuted,
     },
     center: {
       alignItems: 'center',

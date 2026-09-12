@@ -447,6 +447,7 @@ export {
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_REQUEST_TIMEOUT_MS,
+  MESSAGE_REACTION_EMOJIS,
   RoomViewClient,
   RoomViewHttpError,
 } from './room-view.js';
@@ -472,6 +473,7 @@ export type {
   RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
+  MessageReactionEmoji,
   SurfaceWatchFilter,
   WorkspaceListView,
   WorkspaceView,

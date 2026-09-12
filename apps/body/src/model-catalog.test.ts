@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fetchAgentModelCatalog,
   filterAgentModelCatalog,
+  filterModelChoicesByLiveValidation,
   modelCatalogProbeEnvironment,
 } from './model-catalog.js';
 import type { AgentModelConfigOption } from './model-types.js';
@@ -101,6 +102,24 @@ describe('agent model catalog filtering', () => {
         { OPENROUTER_API_KEY: 'secret' },
       )[0]?.options.map((option) => option.id),
     ).toEqual(['openrouter/native-model']);
+  });
+
+  it('offers only model choices the live account accepts', async () => {
+    const setConfigOption = async (_sessionId: string, _configId: string, value: string) => {
+      if (value === 'claude-fable-5-1[1m]') throw new Error('model unavailable');
+    };
+    const filtered = await filterModelChoicesByLiveValidation(
+      { setConfigOption, setModel: async () => undefined } as never,
+      'session-1',
+      [
+        {
+          id: 'model',
+          category: 'model',
+          options: [{ id: 'claude-sonnet-5' }, { id: 'claude-fable-5-1[1m]' }],
+        },
+      ],
+    );
+    expect(filtered[0]?.options).toEqual([{ id: 'claude-sonnet-5' }]);
   });
 });
 

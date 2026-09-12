@@ -253,6 +253,19 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
   });
 
+  it('shows only corner titles beneath the parent Room in the overview', () => {
+    const prefixedRoom = room();
+    prefixedRoom.corners = [
+      {
+        ...corners[0],
+        corner: { ...corners[0].corner, name: '#CloverGTO/Fix fixture' },
+      },
+    ];
+    const copy = text(render(props({ room: prefixedRoom })));
+    expect(copy).toContain('Fix fixture');
+    expect(copy).not.toContain('#CloverGTO/Fix fixture');
+  });
+
   it('renders dispatchable workflows and confirms the name and default branch before running', async () => {
     phoneOperation
       .mockResolvedValueOnce({

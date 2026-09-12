@@ -238,7 +238,9 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'rowMain')).toContain('paddingLeft: ROW_PADDING_LEFT');
     expect(styleBlock(source, 'rowMain')).toContain('gap: ROW_COPY_GAP');
     expect(styleBlock(source, 'cornerDropdown')).toContain('paddingLeft: ROW_TEXT_INSET');
+    expect(source).toContain('const label = displayGroupedCornerTitle(');
     expect(source).toContain('└ {label}');
+    expect(source).not.toContain('const label = displayCornerTitle(');
   });
 
   it('reads one display-state resolver for both the dropdown list and its words', () => {

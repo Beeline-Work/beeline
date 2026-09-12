@@ -10,4 +10,9 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('setWorkspaceId(nextWorkspaceId);');
     expect(source).toContain('setSurface(null)');
   });
+
+  it('renders nested corners with the grouped title formatter', () => {
+    expect(source).toContain('displayGroupedCornerTitle(');
+    expect(source).not.toContain('{corner.corner.name}\n                                </Text>');
+  });
 });

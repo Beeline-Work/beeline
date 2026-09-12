@@ -13,6 +13,7 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
+import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { foldSystemLines } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
@@ -280,7 +281,11 @@ export function DesktopRoomInspector({
               <SectionHeader title="CORNERS" action="New ›" onAction={onNewCorner} />
             }
             renderItem={({ item }) => (
-              <CornerRow corner={item} onPress={() => onSelectCorner(item.corner.id)} />
+              <CornerRow
+                corner={item}
+                parentRoomName={room.room.name}
+                onPress={() => onSelectCorner(item.corner.id)}
+              />
             )}
             ListFooterComponent={
               <>
@@ -413,8 +418,17 @@ function SectionHeader({
   );
 }
 
-function CornerRow({ corner, onPress }: { corner: CornerListItem; onPress(): void }) {
+function CornerRow({
+  corner,
+  parentRoomName,
+  onPress,
+}: {
+  corner: CornerListItem;
+  parentRoomName: string;
+  onPress(): void;
+}) {
   const display = cornerDisplayState(corner);
+  const title = displayGroupedCornerTitle(parentRoomName, corner.corner.name, corner.corner.id);
   return (
     <Pressable
       accessibilityRole="button"
@@ -423,8 +437,8 @@ function CornerRow({ corner, onPress }: { corner: CornerListItem; onPress(): voi
       testID={`desktop-work-corner-${corner.corner.id}`}
     >
       <View style={styles.cornerCopy}>
-        <Text style={styles.cornerTitle}>{corner.corner.name}</Text>
-        <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
+        <Text style={styles.cornerTitle}>{title}</Text>
+        <Text style={styles.objective}>{corner.corner.about ?? title}</Text>
         <View style={styles.cornerAgent}>
           <IdentityMark
             kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}

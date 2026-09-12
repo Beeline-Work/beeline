@@ -545,10 +545,11 @@ function projectEntries<T extends RoomRowInput>(
 
 /**
  * Captain's channel-mark convention (2026-08): Room index rows display
- * `#<name>`. Extended across every surface that exposes a room or corner
- * name (2026-08): chat headers, breadcrumbs, the pinned-corner line, corner
- * lists, Workspace settings, and Members references all render through this
- * derivation or `displayCornerTitle` below. Strictly presentation — the
+ * `#<name>`. Extended across flat surfaces that expose a room or corner name
+ * (2026-08): chat headers, breadcrumbs, the pinned-corner line, cross-Room
+ * lists, Workspace settings, and Members references render through this
+ * derivation or `displayCornerTitle` below. Grouped corner rows use
+ * `displayGroupedCornerTitle`. Strictly presentation — the
  * stored name, search keys, sorting, unread state, navigation params, cache
  * writes, and identity never see the prefix. A Room whose title fell back to
  * the placeholder id gains no mark: nothing fabricated is decorated.
@@ -580,6 +581,27 @@ export function displayCornerTitle(
   const corner = cornerName(cornerStoredName, cornerId);
   const room = parentRoomName?.trim().replace(/^#+/, '');
   return room ? `#${room}/${corner}` : `#${corner}`;
+}
+
+/**
+ * A corner grouped directly beneath its parent Room needs only its short name:
+ * the surrounding Room row or work-pane header already supplies the namespace.
+ * Accept legacy pre-decorated names so old cached/server rows cannot reintroduce
+ * the redundant `#room/` prefix on grouped surfaces.
+ */
+export function displayGroupedCornerTitle(
+  parentRoomName: string | undefined | null,
+  cornerStoredName: string | undefined,
+  cornerId: string,
+): string {
+  const room = parentRoomName?.trim().replace(/^#+/, '');
+  const stored = cornerStoredName?.trim().replace(/^#+/, '');
+  const prefix = room ? `${room}/` : undefined;
+  const shortStored =
+    prefix && stored?.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
+      ? stored.slice(prefix.length)
+      : stored;
+  return cornerName(shortStored, cornerId);
 }
 
 /**

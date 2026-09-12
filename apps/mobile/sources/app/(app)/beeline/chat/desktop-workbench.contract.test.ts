@@ -44,6 +44,16 @@ describe('desktop workbench wiring', () => {
     expect(inspector).toContain('Back to work overview');
   });
 
+  it('renders dispatchable workflows as ordinary overview rows behind confirmation', () => {
+    expect(inspector).toContain('<SectionHeader title="WORKFLOWS" />');
+    expect(inspector).toContain("monolithPhoneOperation('listRoomWorkflows'");
+    expect(inspector).toContain("monolithPhoneOperation('dispatchRoomWorkflow'");
+    expect(inspector).toContain('Modal.confirm(');
+    expect(inspector).toContain("confirmText: 'Run'");
+    expect(inspector).not.toContain('Workflows arrive with the next release');
+    expect(inspector).not.toMatch(/workflow\.name\s*===\s*['"]Release/);
+  });
+
   it('keeps repository lifecycle vocabulary out of overview corner rows', () => {
     const cornerRow = inspector.slice(
       inspector.indexOf('function CornerRow'),

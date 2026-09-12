@@ -444,6 +444,72 @@ export class GitHubOperations {
     return { token: value.token, expiresAt: new Date(value.expiresAt).getTime() };
   }
 
+  private async roomWorkflowTarget(roomId: string) {
+    const row = (
+      await this.database.query<{
+        github_installation_id: string;
+        repository_id: string;
+        full_name: string;
+        default_branch: string;
+      }>(
+        `SELECT r.github_installation_id,g.repository_id,g.full_name,g.default_branch
+         FROM rooms r
+         JOIN github_repositories g ON lower(g.full_name)=lower(regexp_replace(regexp_replace(
+           COALESCE(r.repository_remote,r.repository_key,''),
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+         JOIN github_installations i ON i.installation_id=g.installation_id
+         WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
+           AND r.github_installation_id=i.installation_id AND g.active AND i.status='active'`,
+        [roomId],
+      )
+    ).rows[0];
+    if (!row) throw new Error('GitHub repository installation not found');
+    const token = await this.app.installationToken(Number(row.github_installation_id), {
+      repositoryIds: [Number(row.repository_id)],
+    });
+    return {
+      token: token.token,
+      repository: row.full_name,
+      defaultBranch: row.default_branch,
+    };
+  }
+
+  async listRoomWorkflows(roomId: string) {
+    const target = await this.roomWorkflowTarget(roomId);
+    const workflows = await this.app.listDispatchableWorkflows(
+      target.token,
+      target.repository,
+      target.defaultBranch,
+    );
+    return {
+      defaultBranch: target.defaultBranch,
+      workflows: workflows.map(({ name, lastRunAt, conclusion }) => ({
+        name,
+        ...(lastRunAt !== undefined ? { lastRunAt } : {}),
+        ...(conclusion ? { conclusion } : {}),
+      })),
+    };
+  }
+
+  async dispatchRoomWorkflow(roomId: string, workflowName: string): Promise<void> {
+    const name = workflowName.trim();
+    if (!name || name.length > 255) throw new Error('invalid workflow name');
+    const target = await this.roomWorkflowTarget(roomId);
+    const workflows = await this.app.listDispatchableWorkflows(
+      target.token,
+      target.repository,
+      target.defaultBranch,
+    );
+    const matches = workflows.filter((workflow) => workflow.name === name);
+    if (matches.length !== 1) throw new Error('dispatchable workflow not found');
+    await this.app.dispatchWorkflow(
+      target.token,
+      target.repository,
+      matches[0]!.id,
+      target.defaultBranch,
+    );
+  }
+
   async approveCornerMerge(viewerId: string, input: Input<'approveCornerMerge'>) {
     const target = (
       await this.database.query<{

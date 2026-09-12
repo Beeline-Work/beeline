@@ -7079,12 +7079,73 @@ describe('monolith integration', () => {
       ['completeGitHubIdentityBind', {}],
       ['recoverGitHubIdentity', {}],
       ['adoptGitHubHandle', {}],
+      ['dispatchRoomWorkflow', { roomId: ROOM, workflowName: 'Release' }],
     ] as const;
     expect(REVIEW_LOCKED_OPERATIONS).toEqual(new Set(lockedOperations.map(([name]) => name)));
     for (const [name, payload] of lockedOperations) {
       const refused = await operation(name, payload, session.accessToken);
       expect([refused.status, name]).toEqual([403, name]);
     }
+  });
+
+  it('lists and dispatches Room workflows only for human Workspace managers', async () => {
+    const list = vi.spyOn(githubOperations, 'listRoomWorkflows').mockResolvedValue({
+      defaultBranch: 'main',
+      workflows: [{ name: 'Release', lastRunAt: 1_789_214_400, conclusion: 'success' }],
+    });
+    const dispatch = vi
+      .spyOn(githubOperations, 'dispatchRoomWorkflow')
+      .mockResolvedValue(undefined);
+
+    const listed = await operation('listRoomWorkflows', { roomId: ROOM });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      defaultBranch: 'main',
+      workflows: [{ name: 'Release', lastRunAt: 1_789_214_400, conclusion: 'success' }],
+    });
+    const dispatched = await operation('dispatchRoomWorkflow', {
+      roomId: ROOM,
+      workflowName: 'Release',
+    });
+    expect(dispatched.status).toBe(204);
+    expect(list).toHaveBeenCalledWith(ROOM);
+    expect(dispatch).toHaveBeenCalledWith(ROOM, 'Release');
+
+    const adminToken = await phoneToken('workflow-admin');
+    const adminId = createHash('sha256').update('github:workflow-admin').digest('hex');
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'admin')`,
+      [WORKSPACE, adminId],
+    );
+    expect((await operation('listRoomWorkflows', { roomId: ROOM }, adminToken)).status).toBe(200);
+
+    const memberToken = await phoneToken('workflow-member');
+    const memberId = createHash('sha256').update('github:workflow-member').digest('hex');
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, memberId, ROOM],
+    );
+    expect((await operation('listRoomWorkflows', { roomId: ROOM }, memberToken)).status).toBe(400);
+    expect(
+      (
+        await operation(
+          'dispatchRoomWorkflow',
+          { roomId: ROOM, workflowName: 'Release' },
+          memberToken,
+        )
+      ).status,
+    ).toBe(400);
+
+    // An agent never gains this phone authority, even if corrupt data assigns it an admin role.
+    await database.query(
+      `UPDATE memberships SET role='admin' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, AGENT],
+    );
+    await expect(
+      phone.execute('dispatchRoomWorkflow', { roomId: ROOM, workflowName: 'Release' }, AGENT),
+    ).rejects.toThrow('room manager required');
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('does not wake Room subscribers for a Workspace-scoped arrival', async () => {

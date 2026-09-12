@@ -876,53 +876,63 @@ export class GitHubOperations {
       }
       const check = checkFact(event, body);
       if (check) {
-        const current = await this.lifecycle(target.corner_id, database);
-        // GitHub may deliver a completed run for the previous branch head after a push.
-        if (check.headSha && current.pr?.headSha && check.headSha !== current.pr.headSha) continue;
-        await database.query(
-          `INSERT INTO corner_check_facts(corner_id,name,status,conclusion,url,head_sha)
-           VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(corner_id,name) DO UPDATE SET
-             status=EXCLUDED.status,conclusion=EXCLUDED.conclusion,url=EXCLUDED.url,
-             head_sha=EXCLUDED.head_sha,updated_at=now()`,
-          [
+        await database.transaction(async (database) => {
+          // Check deliveries for one corner overlap in production. Lock the lifecycle row so
+          // each delivery folds its fact and aggregate before the next delivery takes a snapshot.
+          const current = (
+            await database.query<{ lifecycle: CornerLifecycleView }>(
+              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+              [target.corner_id],
+            )
+          ).rows[0]?.lifecycle;
+          if (!current) return;
+          // GitHub may deliver a completed run for the previous branch head after a push.
+          if (check.headSha && current.pr?.headSha && check.headSha !== current.pr.headSha) return;
+          await database.query(
+            `INSERT INTO corner_check_facts(corner_id,name,status,conclusion,url,head_sha)
+             VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(corner_id,name) DO UPDATE SET
+               status=EXCLUDED.status,conclusion=EXCLUDED.conclusion,url=EXCLUDED.url,
+               head_sha=EXCLUDED.head_sha,updated_at=now()`,
+            [
+              target.corner_id,
+              check.name,
+              check.status,
+              check.conclusion ?? null,
+              check.url ?? null,
+              check.headSha ?? null,
+            ],
+          );
+          const summary = await this.checksSummary(target.corner_id, database);
+          await this.updateLifecycle(
             target.corner_id,
-            check.name,
-            check.status,
-            check.conclusion ?? null,
-            check.url ?? null,
-            check.headSha ?? null,
-          ],
-        );
-        const summary = await this.checksSummary(target.corner_id, database);
-        await this.updateLifecycle(
-          target.corner_id,
-          {
-            checks: summary.status,
-            checksSummary: summary,
-          },
-          database,
-        );
-        const label = check.status === 'pending' ? 'started' : check.status;
-        await this.systemNote(
-          target.corner_id,
-          target.author_id,
-          {
-            subject: GITHUB_SUBJECT,
-            verb: `${label} a check`,
-            // A check that is still running is not yet a fact to react to.
-            ...(check.status === 'passed'
-              ? { kind: 'check-passed' as const }
-              : check.status === 'failed'
-                ? { kind: 'check-failed' as const }
+            {
+              checks: summary.status,
+              checksSummary: summary,
+            },
+            database,
+          );
+          const label = check.status === 'pending' ? 'started' : check.status;
+          await this.systemNote(
+            target.corner_id,
+            target.author_id,
+            {
+              subject: GITHUB_SUBJECT,
+              verb: `${label} a check`,
+              // A check that is still running is not yet a fact to react to.
+              ...(check.status === 'passed'
+                ? { kind: 'check-passed' as const }
+                : check.status === 'failed'
+                  ? { kind: 'check-failed' as const }
+                  : {}),
+              object: { text: check.name, ...(check.url ? { url: check.url } : {}) },
+              ...(check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
+                ? { consequence: check.conclusion }
                 : {}),
-            object: { text: check.name, ...(check.url ? { url: check.url } : {}) },
-            ...(check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
-              ? { consequence: check.conclusion }
-              : {}),
-          },
-          `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
-          database,
-        );
+            },
+            `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
+            database,
+          );
+        });
       }
     }
   }

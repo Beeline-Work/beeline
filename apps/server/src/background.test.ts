@@ -78,6 +78,84 @@ describe('background advisory-lock ownership', () => {
     expect(first).toBeGreaterThan(1);
     expect(second).toBeGreaterThan(1);
   });
+  it('bounds push history before resolving tags and still delivers a fresh mention', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64);
+      const workspace = '11111111-1111-4111-8111-111111111111';
+      const room = '22222222-2222-4222-8222-222222222222';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle)
+         VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES('device-token-12345678901234567890',$1,'ios','physical',now()-interval '2 days')`,
+        [human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_floors(id,started_at)
+         VALUES('message-delivery',now()-interval '2 days')`,
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at)
+         SELECT lpad(n::text,64,'0'),$1,$2,repeat('@owner historical message ',100),
+           now()-interval '1 day' FROM generate_series(1,21630) n`,
+        [room, agent],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      const query = vi.spyOn(db, 'query');
+      expect(await loop.runOnce()).toBe(0);
+      const candidateQueries = query.mock.calls.filter(([sql]) => sql.includes('FROM unclaimed'));
+      expect(candidateQueries).toHaveLength(1);
+      const sql = candidateQueries[0]![0];
+      query.mockRestore();
+      expect(send).not.toHaveBeenCalled();
+
+      const result = await db.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`);
+      type Plan = { Plans?: Plan[]; [key: string]: unknown };
+      const root = (result.rows[0]!['QUERY PLAN'] as Array<{ Plan: Plan }>)[0]!.Plan;
+      const nodes: Plan[] = [];
+      const visit = (node: Plan) => {
+        nodes.push(node);
+        for (const child of node.Plans ?? []) visit(child);
+      };
+      visit(root);
+      expect(
+        nodes.some(
+          (node) => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'recent_messages',
+        ),
+      ).toBe(true);
+      const tagScan = nodes.find((node) => node.Alias === 'tagged_member');
+      expect(tagScan).toBeDefined();
+      expect(tagScan!['Actual Loops']).toBe(0);
+
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner new message')`,
+        ['f'.repeat(64), room, agent],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(await loop.runOnce()).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+
   it('persists an FCM failure without claiming a successful delivery', async () => {
     const db = new PgliteDatabase();
     try {

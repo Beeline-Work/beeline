@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -612,7 +612,7 @@ function SwipeToReply({
       delayLongPress={450}
       onLongPress={onLongPress}
       onPress={onPress}
-      style={Platform.OS === 'web' ? styles.replyDesktopMessage : undefined}
+      style={isDesktop ? styles.replyDesktopMessage : undefined}
       testID={`copy-message-${messageId}`}
     >
       {children}
@@ -665,26 +665,6 @@ function SwipeToReply({
             <Text style={styles.replyDesktopGlyph}>↩</Text>
           </Pressable>
         </View>
-      </View>
-    );
-  }
-  if (Platform.OS === 'web') {
-    return (
-      <View style={styles.replyDesktopRow}>
-        {message}
-        <Pressable
-          accessibilityLabel="Reply to message"
-          accessibilityRole="button"
-          onPress={onReply}
-          style={({ pressed }) => [
-            styles.replyDesktopAction,
-            pressed && styles.replyDesktopPressed,
-          ]}
-          testID={`reply-button-${messageId}`}
-        >
-          <Text style={styles.replyDesktopGlyph}>↩</Text>
-          <Text style={styles.replyDesktopLabel}>REPLY</Text>
-        </Pressable>
       </View>
     );
   }

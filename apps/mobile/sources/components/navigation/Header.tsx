@@ -3,7 +3,7 @@ import { View, Text, Platform, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { layout } from '../layout';
-import { useHeaderHeight, useIsDesktop, useIsTablet } from '@/utils/responsive';
+import { useHeaderHeight, useIsDesktop, useIsTablet, useLayoutClass } from '@/utils/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -21,6 +21,8 @@ interface HeaderProps {
     headerTransparent?: boolean;
     safeAreaEnabled?: boolean;
 }
+
+const PHONE_SUBTITLE_FONT_SIZE = 12;
 
 export const Header = React.memo((props: HeaderProps) => {
     const styles = stylesheet;
@@ -44,6 +46,7 @@ export const Header = React.memo((props: HeaderProps) => {
     const paddingTop = safeAreaEnabled ? insets.top : 0;
     const headerHeight = useHeaderHeight();
     const isDesktop = useIsDesktop();
+    const isCompact = useLayoutClass() === 'compact';
     const contentHeight = headerHeight;
 
     const containerStyle = [
@@ -76,7 +79,7 @@ export const Header = React.memo((props: HeaderProps) => {
                 <View style={[
                     styles.content,
                     isDesktop && styles.desktopContent,
-                    { height: contentHeight },
+                    { height: contentHeight, maxWidth: isCompact ? '100%' : layout.headerMaxWidth },
                 ]}>
                     <View style={styles.leftContainer}>
                         {headerLeft && headerLeft()}
@@ -224,10 +227,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     content: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: Platform.OS === 'web' ? 0 : 8,
-        paddingHorizontal: Platform.OS === 'web' ? 16 : 12,
+        gap: 8,
+        paddingHorizontal: 12,
         width: '100%',
-        maxWidth: layout.headerMaxWidth,
     },
     desktopContent: {
         gap: 0,
@@ -242,11 +244,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexGrow: 1,
         flexBasis: 0,
         alignSelf: 'stretch',
-        flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-        alignItems: Platform.OS === 'web' ? 'center' : 'flex-start',
-        justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
-        paddingHorizontal: Platform.OS === 'web' ? 12 : 0,
-        minWidth: Platform.OS === 'web' ? undefined : 0,
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        paddingHorizontal: 0,
+        minWidth: 0,
     },
     desktopCenterContainer: {
         flexDirection: 'row',
@@ -261,17 +263,17 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'flex-end',
     },
     title: {
-        fontSize: Platform.OS === 'web' ? 17 : 16,
+        fontSize: 16,
         fontWeight: '600',
         textAlign: 'center',
         color: theme.colors.header.tint,
         fontFamily: theme.buzz.proseSemibold,
     },
     subtitle: {
-        fontSize: Platform.OS === 'web' ? 13 : 12,
+        fontSize: PHONE_SUBTITLE_FONT_SIZE,
         fontWeight: '400',
         textAlign: 'left',
-        marginTop: Platform.OS === 'web' ? 2 : 1,
+        marginTop: 1,
         color: theme.colors.header.tint,
         fontFamily: theme.buzz.monoRegular,
     },

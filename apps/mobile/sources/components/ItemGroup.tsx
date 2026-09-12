@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { layout } from './layout';
 import { StyleSheet } from 'react-native-unistyles';
+import { useLayoutClass } from '@/utils/responsive';
 
 interface ItemChildProps {
     showDivider?: boolean;
@@ -72,6 +73,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 
 export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const styles = stylesheet;
+    const isCompact = useLayoutClass() === 'compact';
 
     const {
         title,
@@ -87,7 +89,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     return (
         <View style={[styles.wrapper, style]}>
-            <View style={styles.container}>
+            <View style={[styles.container, isCompact && { maxWidth: '100%' }]}>
                 {/* Header */}
                 {title ? (
                     <View style={[styles.header, headerStyle]}>

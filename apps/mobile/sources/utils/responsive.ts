@@ -1,4 +1,4 @@
-import { Dimensions, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import { useWindowDimensions } from 'react-native';
 import { useMemo } from 'react';
 import { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight } from './deviceCalculations';
@@ -18,24 +18,6 @@ export function getHeaderHeight(isLandscape: boolean, deviceType: 'phone' | 'tab
         isPad: Platform.OS === 'ios' ? Platform.isPad : undefined,
         deviceType: Platform.OS === 'android' ? deviceType : undefined,
         isMacCatalyst: isRunningOnMac()
-    });
-}
-
-// Device type detection based on screen size and aspect ratio
-export function getDeviceType(): 'phone' | 'tablet' {
-    const { width, height } = Dimensions.get('screen');
-
-    const dimensions = calculateDeviceDimensions({
-        widthPoints: width,
-        heightPoints: height,
-        pointsPerInch: Platform.OS === 'ios' ? 163 : 160
-    });
-
-    return determineDeviceType({
-        diagonalInches: dimensions.diagonalInches,
-        platform: Platform.OS,
-        // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-        isPad: Platform.OS === 'ios' ? Platform.isPad : false
     });
 }
 

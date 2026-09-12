@@ -522,6 +522,7 @@ describe('Room message variant components', () => {
     const renderer = render(
       <OrdinaryLedgerMessage
         message={row}
+        desktopLayout
         participantsHydrated
         viewerPubkey="viewer"
         speakerWorking={false}
@@ -541,6 +542,30 @@ describe('Room message variant components', () => {
     expect(reply.props.accessibilityLabel).toBe('Reply to message');
     act(() => reply.props.onPress());
     expect(onReply).toHaveBeenCalledWith(row);
+  });
+
+  it('uses the phone swipe interaction on compact web', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'compact-web-reply' })}
+        desktopLayout={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(renderer.root.findByType('Swipeable')).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(0);
   });
 
   // Attachment bytes are swept 24 hours after upload; the message that carried

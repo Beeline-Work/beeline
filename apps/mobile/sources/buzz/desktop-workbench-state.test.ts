@@ -27,6 +27,8 @@ describe('desktop workbench state', () => {
 
   it('keeps desktop layouts through narrow windows and overlays the inspector first', () => {
     expect(desktopLayoutMode(1280)).toBe('three-pane');
+    expect(desktopLayoutMode(1180)).toBe('three-pane');
+    expect(desktopLayoutMode(1179)).toBe('inspector-overlay');
     expect(desktopLayoutMode(1024)).toBe('inspector-overlay');
     expect(desktopLayoutMode(800)).toBe('inspector-overlay');
     expect(desktopLayoutMode(768)).toBe('inspector-overlay');

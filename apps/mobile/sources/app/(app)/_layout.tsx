@@ -15,9 +15,8 @@ export const unstable_settings = {
 export default function RootLayout() {
   // Keep UIKit in charge of iPhone/iPad headers. A custom React header makes
   // native-stack animate every blur/glass subview during each push and pop.
-  const shouldUseCustomHeader =
-    Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
   const isDesktop = useIsDesktop();
+  const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || isDesktop;
   const { theme } = useUnistyles();
 
   return (

@@ -24,7 +24,7 @@ describe('presented notification dismissal', () => {
     expect(dismissNotificationAsync.mock.calls).toEqual([['first'], ['second']]);
   });
 
-  it('dismisses a corner notification only when that exact corner opens', async () => {
+  it('dismisses corner pushes on the parent Room or exact corner, never a sibling', async () => {
     const dismissNotificationAsync = vi.fn(() => Promise.resolve());
     const presented = [
       notification('corner', {
@@ -40,10 +40,42 @@ describe('presented notification dismissal', () => {
       dismissNotificationAsync,
     };
 
-    await dismissPresentedNotificationsForChannel('room-a', api);
+    await dismissPresentedNotificationsForChannel('corner-b', api);
     expect(dismissNotificationAsync).not.toHaveBeenCalled();
+    await dismissPresentedNotificationsForChannel('room-a', api);
+    expect(dismissNotificationAsync).toHaveBeenCalledWith('corner');
 
     await dismissPresentedNotificationsForChannel('corner-a', api);
     expect(dismissNotificationAsync).toHaveBeenCalledWith('corner');
   });
+});
+
+it('clears a Room stack including its summary, while retaining other Rooms', async () => {
+  const dismissNotificationAsync = vi.fn(async () => undefined);
+  await dismissPresentedNotificationsForChannel('room-a', {
+    getPresentedNotificationsAsync: async () => [
+      notification('summary-a', {
+        type: 'channel-activity',
+        roomId: 'room-a',
+        channelId: 'room-a',
+        threadId: 'room-a',
+        groupSummary: true,
+      }),
+      notification('corner-a', {
+        type: 'channel-activity',
+        roomId: 'room-a',
+        channelId: 'corner-a',
+        cornerId: 'corner-a',
+        threadId: 'room-a',
+      }),
+      notification('room-b', {
+        type: 'channel-activity',
+        roomId: 'room-b',
+        channelId: 'room-b',
+        threadId: 'room-b',
+      }),
+    ],
+    dismissNotificationAsync,
+  });
+  expect(dismissNotificationAsync.mock.calls).toEqual([['summary-a'], ['corner-a']]);
 });

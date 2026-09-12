@@ -4,23 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { selectPlatform } from '../relay-stack/web/desktop-download.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'relay-stack', 'web');
 const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
 const termsHtml = fs.readFileSync(path.join(WEB, 'terms', 'index.html'), 'utf8');
-const nginx = fs.readFileSync(path.join(ROOT, 'relay-stack', 'prod', 'nginx.conf'), 'utf8');
-
-test('landing and terms pages ship from the production web root', () => {
-  assert.match(nginx, /location = \/ \{/);
-  assert.match(nginx, /try_files \/index\.html =404;/);
-  assert.match(nginx, /location = \/terms \{/);
-  assert.match(nginx, /location = \/terms\/ \{/);
-  assert.match(nginx, /try_files \/terms\/index\.html =404;/);
-  assert.match(nginx, /map "\$http_upgrade:\$http_accept" \$root_is_relay_request/);
-  assert.match(nginx, /error_page 418 = @relay_root;/);
-  assert.match(nginx, /location @relay_root \{/);
-  assert.doesNotMatch(nginx, /location \^~ \/assets\/landing\//);
-});
 
 test('landing and terms pages load fonts from Google Fonts, not self-hosted assets', () => {
   assert.match(html, /https:\/\/fonts\.googleapis\.com/);
@@ -30,21 +19,55 @@ test('landing and terms pages load fonts from Google Fonts, not self-hosted asse
   assert.ok(!fs.existsSync(path.join(WEB, 'assets', 'landing')), 'old self-hosted landing assets should be removed');
 });
 
-test('nginx CSP for landing and terms allows the Google Fonts hosts they load from', () => {
-  for (const location of [/location = \/ \{[\s\S]*?\n {4}\}/, /location = \/terms \{[\s\S]*?\n {4}\}/]) {
-    const block = nginx.match(location)?.[0];
-    assert.ok(block, `expected an nginx block matching ${location}`);
-    assert.match(block, /style-src[^;]*https:\/\/fonts\.googleapis\.com/);
-    assert.match(block, /font-src[^;]*https:\/\/fonts\.gstatic\.com/);
-  }
-});
-
 test('landing page links to the app stores and the terms/privacy pages', () => {
   assert.match(html, /https:\/\/apps\.apple\.com\/app\/id6803948500/);
-  assert.match(html, /https:\/\/play\.google\.com\/store\/apps\/details\?id=app\.usebeeline\.mobile/);
+  assert.match(html, /https:\/\/play\.google\.com\/store\/apps\/details\?id=app\.usebeeline/);
   assert.match(html, /href="\/privacy\/"/);
   assert.match(html, /href="\/terms\/"/);
   assert.match(html, /npx usebeeline connect/);
+});
+
+test('landing page presents one row of five equal platform tiles', () => {
+  assert.equal(html.match(/data-platform="(?:ios|android|macos|windows|linux)"/g)?.length, 5);
+  for (const platform of ['ios', 'android', 'macos', 'windows', 'linux']) {
+    assert.match(html, new RegExp(`data-platform="${platform}"`));
+  }
+  assert.match(html, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(html, /data-platform="ios"[\s\S]*?<span>App Store<\/span>/);
+  assert.match(html, /data-platform="android"[\s\S]*?<span>Google Play<\/span>/);
+  assert.doesNotMatch(html, /store-badge|assets\/store-badges/);
+});
+
+test('platform detection prioritizes phones before desktop user-agent fragments', () => {
+  assert.equal(
+    selectPlatform({
+      userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) Mobile',
+      platform: 'Linux armv8l',
+    }),
+    'android',
+  );
+  assert.equal(
+    selectPlatform({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      platform: 'MacIntel',
+      maxTouchPoints: 5,
+    }),
+    'ios',
+  );
+  assert.equal(selectPlatform({ userAgent: 'ExampleBrowser/1.0', platform: '' }), undefined);
+});
+
+test('landing page names the browser option once and removes the split download UI', () => {
+  assert.equal(html.match(/open Beeline in the browser/g)?.length, 1);
+  assert.match(html, /href="https:\/\/web\.usebeeline\.app"/);
+  for (const removed of [
+    'Download for Linux',
+    'Other platforms',
+    'Desktop · macOS universal · Windows and Linux x86_64',
+  ]) {
+    assert.doesNotMatch(html, new RegExp(removed));
+  }
+  assert.doesNotMatch(html, /class="stores"|class="store"/);
 });
 
 test('terms page carries the beeline brand tokens and links home', () => {

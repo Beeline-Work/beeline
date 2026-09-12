@@ -1177,7 +1177,8 @@ describe('Room message variant components', () => {
       />,
     );
 
-    // The renderer reads mention_ids and nothing about the author, so a tag an
+    // The renderer reads the server-derived tag list and nothing about the
+    // author, so a tag an
     // agent wrote is highlighted exactly like one a person wrote — and BOTH
     // tags survive, which is the whole point of dropping the server's
     // one-human-mention cap.

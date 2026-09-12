@@ -46,7 +46,7 @@ export interface SystemLineInput {
   readonly verb: string;
   /**
    * What this line IS. A producer says the kind and nothing else: the
-   * subscriber fill below turns it into mentions, in one place. A line with no
+   * subscriber fill below turns it into wakes, in one place. A line with no
    * kind is one nothing subscribes to.
    */
   readonly kind?: SystemEventKind;
@@ -57,8 +57,13 @@ export interface SystemLineInput {
     readonly verb: string;
     readonly actor: SystemSubject;
   };
-  /** Identities to mention: the only thing that makes a line push or wake a daemon. */
-  readonly mentions?: readonly string[];
+  /**
+   * Agents this line wakes, named outright because a system line addresses by
+   * FACT rather than by text: nothing in `@scheduler ran a schedule for Ada`
+   * spells a handle, so there is no tag for `message-mentions.ts` to read. This
+   * is a routing list only — it starts turns, and never stands in for a tag.
+   */
+  readonly wakes?: readonly string[];
   readonly presentation?: 'system' | 'card';
   readonly cardType?: string;
   readonly card?: Record<string, unknown>;
@@ -91,7 +96,7 @@ export interface SystemLineInput {
 
 export interface WorkspaceSystemLineInput extends Omit<
   SystemLineInput,
-  'roomId' | 'authorId' | 'id' | 'mentions' | 'causeId' | 'afterMessageId'
+  'roomId' | 'authorId' | 'id' | 'wakes' | 'causeId' | 'afterMessageId'
 > {
   readonly workspaceId: string;
   /** Active people who should not receive this Workspace fact, such as the person who just joined. */
@@ -283,7 +288,7 @@ async function canonicalPhrase(database: SqlDatabase, phrase: SystemPhrase): Pro
  * A failure here must never take the caller down with it: the join that posts
  * the line is a real membership write, and losing it to a subscription lookup
  * would be a silent partial join. So the lookup is caught and logged, and the
- * line is still written with whatever mentions the producer named explicitly.
+ * line is still written with whatever wakes the producer named explicitly.
  * The residual limit, stated plainly: PostgreSQL aborts a transaction on a
  * failed statement, so a caller that passes its own transaction handle is
  * still lost if THIS query is what failed inside it. The catch covers every
@@ -360,7 +365,7 @@ async function orderingFloor(
 async function resolveCascade(
   database: SqlDatabase,
   causeId: string,
-  mentionCount: number,
+  wakeCount: number,
 ): Promise<Cascade> {
   const cause = await database.query<{
     event_root_cause_id: string | null;
@@ -376,13 +381,14 @@ async function resolveCascade(
   const depth = (row.event_depth ?? 0) + 1;
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [rootCauseId]);
   if (depth > MAX_EVENT_DEPTH) throw new EventCascadeRefusedError(eventDepthRefusal(depth));
+  // What this cascade has already spent, in turns woken.
   const spent = await database.query<{ woken: number }>(
-    `SELECT COALESCE(SUM(jsonb_array_length(mention_ids)),0)::int woken
+    `SELECT COALESCE(SUM(event_woken),0)::int woken
      FROM messages WHERE event_root_cause_id=$1`,
     [rootCauseId],
   );
   const woken = spent.rows[0]?.woken ?? 0;
-  if (woken + mentionCount > MAX_TURNS_PER_ROOT)
+  if (woken + wakeCount > MAX_TURNS_PER_ROOT)
     throw new EventCascadeRefusedError(eventBudgetRefusal(woken));
   return { causeId, rootCauseId, depth };
 }
@@ -396,9 +402,9 @@ export async function systemLine(
   const id = input.id ?? randomBytes(32).toString('hex');
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
-  const mentions = [
+  const wakes = [
     ...new Set([
-      ...(input.mentions ?? []),
+      ...(input.wakes ?? []),
       ...(await subscribers(database, input.roomId, input.kind)),
     ]),
   ];
@@ -407,10 +413,11 @@ export async function systemLine(
   const write = async (db: SqlDatabase, cascade: Cascade | undefined, notBefore: Date | null) => {
     const result = await db.query(
       `INSERT INTO messages(
-         id,room_id,author_id,text,presentation,mention_ids,request_id,durable_fact,
-         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth,created_at
+         id,room_id,author_id,text,presentation,request_id,durable_fact,
+         card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth,
+         event_woken,created_at
        ) VALUES(
-         $1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,
+         $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14,
          GREATEST(now(), COALESCE($15::timestamptz, now()))
        )
        ON CONFLICT(id) DO NOTHING`,
@@ -420,7 +427,6 @@ export async function systemLine(
         authorId,
         text,
         input.presentation ?? 'system',
-        JSON.stringify(mentions),
         input.requestId ?? null,
         input.durableFact ?? null,
         input.cardType ?? null,
@@ -429,6 +435,7 @@ export async function systemLine(
         cascade?.causeId ?? null,
         cascade?.rootCauseId ?? null,
         cascade?.depth ?? null,
+        cascade ? wakes.length : null,
         notBefore,
       ],
     );
@@ -437,7 +444,7 @@ export async function systemLine(
         roomId: input.roomId,
         sourceMessageId: id,
         kind: input.kind,
-        targets: mentions,
+        targets: wakes,
         requestId: input.requestId,
         causeId: input.causeId,
         commandId: input.commandId,
@@ -459,7 +466,7 @@ export async function systemLine(
   return database.transaction(async (tx) =>
     write(
       tx,
-      await resolveCascade(tx, input.causeId as string, mentions.length),
+      await resolveCascade(tx, input.causeId as string, wakes.length),
       await orderingFloor(tx, input.roomId, input.causeId),
     ),
   );

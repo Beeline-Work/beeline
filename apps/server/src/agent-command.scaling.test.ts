@@ -94,9 +94,8 @@ describe('addressed-message routing and claim scaling', () => {
   async function routeAndClaim(request: string, generation: string) {
     await database.query(`TRUNCATE claim_live_notification_audit`);
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'@target run',jsonb_build_array($4::text))`,
-      [request, BASE_ROOM, HUMAN, TARGET],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@target run')`,
+      [request, BASE_ROOM, HUMAN],
     );
     // The request row is already committed: measure only server routing through
     // the helper's atomic claim, excluding fixture reads and writes.
@@ -178,9 +177,8 @@ describe('addressed-message routing and claim scaling', () => {
     );
     for (const request of requests)
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-         VALUES($1,$2,$3,'@target concurrent',jsonb_build_array($4::text))`,
-        [request, BASE_ROOM, HUMAN, TARGET],
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@target concurrent')`,
+        [request, BASE_ROOM, HUMAN],
       );
 
     const counted = new CountingDatabase(database);
@@ -213,9 +211,8 @@ describe('addressed-message routing and claim scaling', () => {
     const commands: string[] = [];
     for (const request of requests) {
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-         VALUES($1,$2,$3,'@target sustained',jsonb_build_array($4::text))`,
-        [request, BASE_ROOM, HUMAN, TARGET],
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@target sustained')`,
+        [request, BASE_ROOM, HUMAN],
       );
       await routeHumanMessage(database, request);
       const command = (

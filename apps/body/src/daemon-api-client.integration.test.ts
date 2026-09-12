@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPublicKey } from '@beeline/nostr';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { migrate } from '../../server/src/database.js';
+import { taggedIdentityIdsSql } from '../../server/src/message-mentions.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
 import { PhoneService } from '../../server/src/phone-service.js';
@@ -82,22 +83,28 @@ describe('daemon API client against the local monolith', () => {
     });
   };
 
-  it('returns only persisted Room mention ids from an agent reply', async () => {
+  it("reads an agent reply's tags from its text and the Room roster", async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
     const client = new DaemonApiClient(origin, daemonToken, AGENT);
     await database.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`, [HUMAN]);
 
     await prepareTurn(client, 'c'.repeat(64));
-    await expect(
-      client.execute('postRoomMessage', {
-        roomId: ROOM,
-        requestId: 'c'.repeat(64),
-        generationId: 'generation-1',
-        text: '@lunchboxfortwo Please review this.',
-        mentionIds: ['missing-member'],
-      }),
-    ).resolves.toMatchObject({ mentionIds: [HUMAN] });
+    const posted = await client.execute('postRoomMessage', {
+      roomId: ROOM,
+      requestId: 'c'.repeat(64),
+      generationId: 'generation-1',
+      text: '@lunchboxfortwo Please review this.',
+    });
+
+    // Nothing was stored to say who this reply is for. The handle in the text
+    // and the roster say it, and they say it again on every read — so renaming
+    // the person, or removing them, changes the answer.
+    const tagged = await database.query<{ tagged_ids: string[] }>(
+      `SELECT ${taggedIdentityIdsSql('message')} tagged_ids FROM messages message WHERE id=$1`,
+      [posted.id],
+    );
+    expect(tagged.rows[0]!.tagged_ids).toEqual([HUMAN]);
   });
 
   it.skipIf(process.env.BEELINE_REAL_ROOM_CAPABILITY_PROOF !== '1')(
@@ -241,7 +248,7 @@ describe('daemon API client against the local monolith', () => {
           {
             roomId: ROOM,
             messageId: createHash('sha256').update('real-agent-addressing-proof').digest('hex'),
-            mentions: [AGENT],
+            wakes: [AGENT],
             text: '@terra ask codex what time it is',
           },
           HUMAN,
@@ -255,7 +262,6 @@ describe('daemon API client against the local monolith', () => {
             const terraMessage = conversation.items.find(
               (item) => item.authorId === AGENT && /@codex\b/i.test(item.body),
             );
-            expect(terraMessage?.mentionIds).toContain(PEER_AGENT);
             expect(
               conversation.items.some(
                 (item) =>
@@ -274,7 +280,7 @@ describe('daemon API client against the local monolith', () => {
           {
             roomId: ROOM,
             messageId: createHash('sha256').update('real-open-corner-proof').digest('hex'),
-            mentions: [AGENT],
+            wakes: [AGENT],
             text: '@terra open a corner to add a README line',
           },
           HUMAN,
@@ -306,7 +312,6 @@ describe('daemon API client against the local monolith', () => {
           [
             '[real-room-capability-proof]',
             `Terra: ${terraMessage?.body}`,
-            `Terra mention ids: ${terraMessage?.mentionIds.join(',')}`,
             `Codex: ${codexMessage?.body}`,
             `Corner: ${cornerId}`,
           ].join('\n'),
@@ -800,7 +805,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           roomId: ROOM,
           messageId: 'a'.repeat(64),
           text: 'What is your soul? Please identify yourself and acknowledge world.png.',
-          mentions: [],
+          wakes: [],
         },
         HUMAN,
       );
@@ -830,7 +835,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             messageId: 'b'.repeat(64),
             parentMessageId: 'a'.repeat(64),
             text: '@bee Use the mounted read-only tool to examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
-            mentions: [AGENT],
+            wakes: [AGENT],
             attachments: [uploaded],
           }),
         });
@@ -868,7 +873,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             roomId: ROOM,
             messageId: 'c'.repeat(64),
             text: 'Change course now. Ignore the requested introduction and image acknowledgement. Report LIVE-STEER-COBALT and explain briefly that the human steer replaced the original finish.',
-            mentions: [],
+            wakes: [],
           },
           HUMAN,
         );
@@ -927,7 +932,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             roomId: corner.cornerId,
             messageId: 'd'.repeat(64),
             text: '@bee Use the mounted read-only tool, then report CORNER-ORIGINAL-GREEN and summarize this corner task.',
-            mentions: [AGENT],
+            wakes: [AGENT],
           },
           HUMAN,
         );
@@ -950,7 +955,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             roomId: corner.cornerId,
             messageId: 'e'.repeat(64),
             text: 'Change the corner work now. Do not report the green marker. Report CORNER-STEER-AMBER and say the corner steer replaced it.',
-            mentions: [],
+            wakes: [],
           },
           HUMAN,
         );
@@ -1162,12 +1167,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           async () => {
             if (tickError) throw tickError;
             const scheduled = (
-              await database.query<{ id: string; author_id: string; mention_ids: string[] }>(
-                `SELECT id,author_id,mention_ids FROM messages
-                 WHERE text='Reply with exactly: SCHEDULE PROOF COMPLETE'`,
+              await database.query<{ id: string; author_id: string; woke: string[] }>(
+                `SELECT message.id,message.author_id,
+                   ARRAY(SELECT command.agent_id FROM agent_commands command
+                         WHERE command.source_message_id=message.id) woke
+                 FROM messages message
+                 WHERE message.text='Reply with exactly: SCHEDULE PROOF COMPLETE'`,
               )
             ).rows[0];
-            expect(scheduled).toMatchObject({ author_id: HUMAN, mention_ids: [AGENT] });
+            // The prompt is the creator's words and names nobody; the command
+            // the scheduler created beside it is what reaches the agent.
+            expect(scheduled).toMatchObject({ author_id: HUMAN, woke: [AGENT] });
             requestId = scheduled!.id;
             reply =
               (
@@ -1324,7 +1334,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           {
             roomId: ROOM,
             messageId: requestId,
-            mentions: [AGENT],
+            wakes: [AGENT],
             text:
               `@bee Use open_corner exactly once for this objective: in ${repository}, ` +
               `create proof-${proofStamp}.txt containing "thin corner live proof ${proofStamp}". ` +
@@ -1576,14 +1586,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         ['e'.repeat(64), ROOM, SCHEDULE_SCHEDULER_ID, 'Beeline Scheduler checked the roster'],
       );
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,system_event)
-         VALUES($1,$2,$3,$4,'system',$5::jsonb,$6::jsonb) RETURNING id`,
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+         VALUES($1,$2,$3,$4,'system',$5::jsonb) RETURNING id`,
         [
           'd'.repeat(64),
           ROOM,
           SCHEDULE_SCHEDULER_ID,
           'Beeline Scheduler ran a schedule for Bee · Post exactly: hello',
-          JSON.stringify([AGENT]),
           JSON.stringify({
             subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: 'Beeline Scheduler' },
             verb: SCHEDULE_RAN_VERB,

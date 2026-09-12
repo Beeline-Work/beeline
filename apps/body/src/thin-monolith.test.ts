@@ -77,7 +77,6 @@ describe('monolith-only thin daemon', () => {
                   createdAt: 1,
                   type: 'message',
                   body: 'Generate a video clip.',
-                  mentionIds: [],
                   attachments: [],
                 },
               ],
@@ -304,7 +303,6 @@ describe('monolith-only thin daemon', () => {
             createdAt: 1,
             type: 'message',
             body: 'Are you there?',
-            mentionIds: [staged.runtime.agent.publicKey],
             attachments: [],
           };
           return {
@@ -481,7 +479,6 @@ describe('monolith-only thin daemon', () => {
               createdAt: 1,
               type: 'message',
               body: 'Rip out the legacy path.',
-              mentionIds: [],
               attachments: [],
             },
             {
@@ -490,7 +487,6 @@ describe('monolith-only thin daemon', () => {
               createdAt: 2,
               type: 'message',
               body: '@Goosy can you pick up where Codex left off?',
-              mentionIds: [agentId],
               attachments: [],
             },
           ],

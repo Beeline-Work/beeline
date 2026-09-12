@@ -170,19 +170,15 @@ export class AgentScheduleLoop {
             kind: 'schedule-ran',
             object: { text: current.agent_name, id: current.agent_id },
             consequence: current.message,
-            mentions: [current.agent_id],
+            wakes: [current.agent_id],
           });
         } else {
+          // The agent is woken by the command created just below, never by a
+          // tag: a scheduled prompt is the creator's words, and those words
+          // need not name anybody.
           await database.query(
-            `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-             VALUES($1,$2,$3,$4,$5::jsonb)`,
-            [
-              messageId,
-              current.room_id,
-              current.creator_id,
-              current.message,
-              JSON.stringify([current.agent_id]),
-            ],
+            `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
+            [messageId, current.room_id, current.creator_id, current.message],
           );
         }
         await createAgentCommand(database, {

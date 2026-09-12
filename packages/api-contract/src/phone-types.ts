@@ -283,6 +283,11 @@ export type GrantRequestCardView = {
 };
 
 export type RoomViewer = {
+  /** Server-owned boundary; absent on older servers, null ids when no mark/unread exists. */
+  readonly readCursor?: {
+    readonly messageId: string | null;
+    readonly firstUnreadMessageId: string | null;
+  };
   readonly identity: RoomViewIdentity;
   readonly role: 'owner' | 'admin' | 'member';
   readonly permissions: {

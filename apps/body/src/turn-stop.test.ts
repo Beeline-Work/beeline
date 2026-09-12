@@ -20,9 +20,8 @@ afterEach(async () => {
 const AGENT_HEX = '11'.repeat(32);
 const HUMAN = '22'.repeat(32);
 const AGENT = 'a'.repeat(64);
-const OTHER_AGENT = 'b'.repeat(64);
 
-/** The stop as the server writes it: kinded, mentioning the agent, carrying the request id. */
+/** The stop as the server writes it: kinded, delivered to the agent, carrying the request id. */
 const stopLine = (over: Record<string, unknown> = {}) =>
   ({
     id: 'stop-1',
@@ -31,7 +30,6 @@ const stopLine = (over: Record<string, unknown> = {}) =>
     type: 'system',
     body: '@captain stopped @bee · turn cancelled',
     requestId: 'ask-1',
-    mentionIds: [AGENT],
     attachments: [],
     systemEvent: {
       subject: { kind: 'person', id: HUMAN, name: '@captain' },
@@ -45,7 +43,7 @@ const stopLine = (over: Record<string, unknown> = {}) =>
 
 describe('the stop a requester wrote', () => {
   it('names the one request it ends', () => {
-    expect(turnStopRequestId(stopLine(), AGENT)).toBe('ask-1');
+    expect(turnStopRequestId(stopLine())).toBe('ask-1');
   });
 
   it('reads the kind and the request id, never the wording', () => {
@@ -58,24 +56,23 @@ describe('the stop a requester wrote', () => {
         kind: 'turn-cancelled',
       },
     });
-    expect(turnStopRequestId(reworded, AGENT)).toBe('ask-1');
+    expect(turnStopRequestId(reworded)).toBe('ask-1');
     // The same sentence with no kind is an ordinary system line and stops nothing.
     expect(
       turnStopRequestId(
         stopLine({
           systemEvent: { subject: { kind: 'person', name: '@captain' }, verb: 'stopped' },
         }),
-        AGENT,
       ),
     ).toBeUndefined();
     // A stop with no request id names no turn, so it silences none.
-    expect(turnStopRequestId(stopLine({ requestId: undefined }), AGENT)).toBeUndefined();
+    expect(turnStopRequestId(stopLine({ requestId: undefined }))).toBeUndefined();
   });
 
-  it('reaches only the agent it mentions, and only as a system line', () => {
-    expect(turnStopRequestId(stopLine(), OTHER_AGENT)).toBeUndefined();
-    expect(turnStopRequestId(stopLine({ mentionIds: [] }), AGENT)).toBeUndefined();
-    expect(turnStopRequestId(stopLine({ type: 'message' }), AGENT)).toBeUndefined();
+  it('reads only a system line, and trusts the delivery for who it is for', () => {
+    // A stop arrives as a command addressed to one agent, so the line itself
+    // carries no reader: there is nothing here to check it against.
+    expect(turnStopRequestId(stopLine({ type: 'message' }))).toBeUndefined();
   });
 
   it('never starts the very turn it exists to end', () => {
@@ -155,7 +152,6 @@ describe('a Room turn the requester stopped', () => {
                 createdAt: 1,
                 type: 'message',
                 body: 'Summarise the release please',
-                mentionIds: [agent.publicKey],
                 attachments: [],
               },
             ],
@@ -170,7 +166,6 @@ describe('a Room turn the requester stopped', () => {
             items: [
               {
                 ...stopLine(),
-                mentionIds: [agent.publicKey],
                 fixtureCommandAction: 'stop',
                 fixtureTurnRequestId: 'ask-1',
               },
@@ -239,7 +234,7 @@ describe('a Room turn the requester stopped', () => {
 
     const posted = execute.mock.calls
       .filter(([name]) => name === 'postRoomMessage')
-      .map(([, input]) => input as { text: string; mentionIds?: string[] });
+      .map(([, input]) => input as { text: string });
     const receipts = execute.mock.calls
       .filter(([name]) => name === 'postAgentTurnReceipt')
       .map(([, input]) => (input as { status: string; heartbeat?: boolean }).status);

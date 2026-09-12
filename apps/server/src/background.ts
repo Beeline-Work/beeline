@@ -1,6 +1,7 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
+import { tagsIdentitySql } from './message-mentions.js';
 import {
   claimReleaseCatchup,
   RELEASE_CATCHUP_CANDIDATES_SQL,
@@ -112,9 +113,13 @@ export class PushDeliveryLoop {
             OR workspace_member.identity_id IS NOT NULL
           )
           AND (
-            m.mention_ids @> jsonb_build_array(member.identity_id)
+            ${tagsIdentitySql('m', 'member.identity_id')}
             OR room.direct_participants IS NOT NULL
             OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
+            -- A grant request names its owner in the card, not in its sentence:
+            -- the line is phrased about the agent, and the person who must answer
+            -- it is the only one it is for.
+            OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=member.identity_id)
           )
           AND (
             btrim(m.text)<>''

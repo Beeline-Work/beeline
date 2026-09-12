@@ -48,7 +48,6 @@ export function commandFixtureApi(
         createdAt: 1,
         type: 'message',
         body: objective,
-        mentionIds: [agentId],
         attachments: [],
       },
       'corner_objective',

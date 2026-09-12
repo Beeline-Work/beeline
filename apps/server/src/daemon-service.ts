@@ -69,7 +69,7 @@ import {
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
-import { resolveCurrentMemberMentions, typedMentionHandles } from './message-mentions.js';
+import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -243,8 +243,8 @@ export class DaemonService {
         if (command.state === 'complete') {
           if (name === 'postRoomMessage' && command.result_message_id) {
             const saved = (
-              await db.query<{ id: string; created_at: Date; mention_ids: string[]; text: string }>(
-                `SELECT id,created_at,mention_ids,text FROM messages WHERE id=$1`,
+              await db.query<{ id: string; created_at: Date; text: string }>(
+                `SELECT id,created_at,text FROM messages WHERE id=$1`,
                 [command.result_message_id],
               )
             ).rows[0]!;
@@ -252,7 +252,6 @@ export class DaemonService {
             return {
               id: saved.id,
               createdAt: seconds(saved.created_at),
-              mentionIds: saved.mention_ids,
             } as Output<Name>;
           }
           if (name !== 'retractAgentLiveOutput' && name !== 'postAgentTurnReceipt')
@@ -277,8 +276,10 @@ export class DaemonService {
           );
         }
         if (name === 'postRoomMessage') {
-          const message = result as unknown as { id: string; mentionIds: string[] };
-          if (message.mentionIds.length > 0) await routeAgentResult(db, command, message.id);
+          // routeAgentResult reads the reply's own text for the agents it hands
+          // work to, so there is nothing to pre-check here.
+          const message = result as unknown as { id: string };
+          await routeAgentResult(db, command, message.id);
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(
@@ -767,8 +768,6 @@ export class DaemonService {
       created_at: Date;
       presentation: string;
       text: string;
-      mention_ids: string[];
-      agent_mention_ids: string[];
       agent_author: boolean;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
@@ -830,8 +829,6 @@ export class DaemonService {
         createdAt: seconds(row.created_at),
         type: row.presentation,
         body: row.text,
-        mentionIds: row.mention_ids ?? [],
-        agentMentionIds: row.agent_mention_ids ?? [],
         ...(row.agent_author ? { agentAuthor: true } : {}),
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
         ...(row.reply_to_author_id ? { replyToAuthorId: row.reply_to_author_id } : {}),
@@ -1261,15 +1258,6 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     const messageId = id();
-    const resolvedMentions = await resolveCurrentMemberMentions(
-      this.database,
-      input.roomId,
-      input.text,
-      agentId,
-    );
-    const agentMentionIds = new Set(
-      resolvedMentions.filter((mention) => mention.kind === 'agent').map((mention) => mention.id),
-    );
     const parent = input.replyToMessageId
       ? (
           await this.database.query<{
@@ -1295,34 +1283,13 @@ export class DaemonService {
           input.requestId,
           input.generationId,
         )));
-    const humanIds = new Set(
-      resolvedMentions.filter((mention) => mention.kind === 'human').map((mention) => mention.id),
-    );
     // A tag an agent writes reaches the person it names, exactly as a
-    // human-authored one does: the same stored mention id, the same push
-    // fan-out, the same highlight. There is no per-turn numeric cap. One kept
-    // only the FIRST human id in the reply's resolution order and dropped every
-    // other tag, so a correctly spelled handle vanished with nothing said to
-    // anybody — a laundered tag, which is worse than the over-tagging it was
-    // meant to stop. How often an agent should tag a human is a matter for its
-    // instructions (`beeline-skill.ts`), never for a silent truncation.
-    let deliveredMentions = resolvedMentions.map((mention) => mention.id);
-    if (humanIds.size) {
-      // The one human-tag rule that is not a cap: a corner agent must not tag
-      // the user on completion, because the merge summary card and its push
-      // already cover that. Turn-settling corner posts deliver no human
-      // mentions at all.
-      const corner = (
-        await this.database.query<{ corner: boolean }>(
-          `SELECT EXISTS(SELECT 1 FROM corner_facts WHERE corner_id=rooms.id) corner
-           FROM rooms WHERE rooms.id=$1`,
-          [input.roomId],
-        )
-      ).rows[0];
-      if (corner?.corner && input.requestId) {
-        deliveredMentions = deliveredMentions.filter((value) => !humanIds.has(value));
-      }
-    }
+    // human-authored one does: the same reading of the text, the same push
+    // fan-out, the same highlight. There is no per-turn numeric cap, and no
+    // list is frozen here — `message-mentions.ts` reads the tags back out of
+    // this text whenever someone asks who it addresses, and carries the one
+    // rule that is not a cap: a corner agent's turn reply never tags a person,
+    // because the merge summary card and its push already say the work is done.
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;
@@ -1330,7 +1297,6 @@ export class DaemonService {
     // agent, not the optional presentation reply parent; a human item starts a
     // fresh chain at zero.
     const hopCount = command?.agent_depth ?? 0;
-    const persistedMentions = deliveredMentions;
     let messageWriteStartedAt: number | undefined;
     const saveCompatibilityReply = async (database: SqlDatabase) => {
       // Attachments queued this turn by beeline-agent attach_file ride on this
@@ -1380,7 +1346,6 @@ export class DaemonService {
         input.presentation === 'card' ? 'card' : 'message',
         input.requestId ?? null,
         JSON.stringify(input.tags ?? {}),
-        JSON.stringify(persistedMentions),
         input.replyToMessageId ?? null,
         rootMessageId,
         hopCount,
@@ -1398,19 +1363,20 @@ export class DaemonService {
           await database.query<CommittedMessageLiveRow>(
             `WITH inserted AS (
                INSERT INTO messages(
-                 id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+                 id,room_id,author_id,text,presentation,request_id,legacy_event,
                  reply_to_message_id,root_message_id,agent_hop_count,attachments
-               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
                RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
-               FROM inserted WHERE agent_commands.id=$13
+               FROM inserted WHERE agent_commands.id=$12
              ), cleared AS (
                DELETE FROM live_outputs
                WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')
              )
              SELECT inserted.*,author.kind author_kind,author.name author_name,
-               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+               ${taggedIdentityIdsSql('inserted')} tagged_ids
              FROM inserted JOIN identities author ON author.id=inserted.author_id`,
             [...values, command!.id],
           )
@@ -1420,13 +1386,14 @@ export class DaemonService {
         await database.query<CommittedMessageLiveRow>(
           `WITH inserted AS (
              INSERT INTO messages(
-               id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+               id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments
-             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb)
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
              RETURNING *
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
-             author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+             author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+             ${taggedIdentityIdsSql('inserted')} tagged_ids
            FROM inserted JOIN identities author ON author.id=inserted.author_id`,
           values,
         )
@@ -1461,7 +1428,7 @@ export class DaemonService {
                    AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
              FROM agent_commands command
              WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$6
-               AND command.action IN ('input','resume') AND command.generation_id=$11
+               AND command.action IN ('input','resume') AND command.generation_id=$10
              ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command
            ), writable AS (
              SELECT * FROM candidate
@@ -1469,7 +1436,7 @@ export class DaemonService {
            ), pending AS (
              DELETE FROM agent_pending_attachments attachment USING writable
              WHERE attachment.room_id=$2 AND attachment.agent_id=$3
-               AND attachment.request_id=$6 AND attachment.generation_id=$11
+               AND attachment.request_id=$6 AND attachment.generation_id=$10
              RETURNING attachment.url,attachment.name,attachment.mime_type,attachment.size,
                attachment.created_at,attachment.id
            ), attachment_payload AS (
@@ -1478,7 +1445,7 @@ export class DaemonService {
              ) ORDER BY created_at,id),'[]'::jsonb) attachments FROM pending
            ), settled AS (
              INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-             SELECT room_id,turn_request_id,agent_id,'complete',$11 FROM writable
+             SELECT room_id,turn_request_id,agent_id,'complete',$10 FROM writable
              ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
                status='complete',created_at=now()
              WHERE agent_turns.status<>'cancelled'
@@ -1499,7 +1466,8 @@ export class DaemonService {
              RETURNING failure.*
            ), recovered_public AS (
              SELECT recovered.*,author.kind author_kind,author.name author_name,
-               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+               ${taggedIdentityIdsSql('recovered')} tagged_ids
              FROM recovered JOIN identities author ON author.id=recovered.author_id
            ), recovery_barrier AS (
              SELECT count(*) recovered_count,
@@ -1507,9 +1475,9 @@ export class DaemonService {
              FROM recovered_public
            ), inserted AS (
              INSERT INTO messages(
-               id,room_id,author_id,text,presentation,request_id,legacy_event,mention_ids,
+               id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments
-             ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,
+             ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
                  writable.agent_depth,attachment_payload.attachments
                FROM writable,settled,attachment_payload,recovery_barrier
              RETURNING *
@@ -1524,12 +1492,14 @@ export class DaemonService {
                AND output.kind IN ('draft','thought')
            ), inserted_public AS (
              SELECT inserted.*,author.kind author_kind,author.name author_name,
-               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+               ${taggedIdentityIdsSql('inserted')} tagged_ids
              FROM inserted JOIN identities author ON author.id=inserted.author_id
              CROSS JOIN completed
            ), existing_public AS (
              SELECT message.*,author.kind author_kind,author.name author_name,
-               author.handle author_handle,author.avatar author_avatar,author.face_id author_face
+               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+               ${taggedIdentityIdsSql('message')} tagged_ids
              FROM candidate JOIN messages message ON message.id=candidate.result_message_id
              JOIN identities author ON author.id=message.author_id
              WHERE candidate.state='complete' AND message.text=$4
@@ -1558,7 +1528,6 @@ export class DaemonService {
           input.presentation === 'card' ? 'card' : 'message',
           input.requestId ?? null,
           JSON.stringify(input.tags ?? {}),
-          JSON.stringify(persistedMentions),
           input.replyToMessageId ?? null,
           rootMessageId,
           input.generationId,
@@ -1624,7 +1593,6 @@ export class DaemonService {
     return {
       id: saved.id,
       createdAt: seconds(saved.created_at),
-      mentionIds: saved.mention_ids,
     };
   }
   /** An agent-claimed attachment queued by attach_file; stamped onto the agent's
@@ -2161,19 +2129,19 @@ export class DaemonService {
       throw new Error(
         `the event sentence must be at most ${MAX_EVENT_CONSEQUENCE_LENGTH} characters`,
       );
-    const mentions = [...new Set(input.mentionAgentIds ?? [])];
-    if (mentions.length > MAX_MENTIONS_PER_EVENT)
+    const wakes = [...new Set(input.mentionAgentIds ?? [])];
+    if (wakes.length > MAX_MENTIONS_PER_EVENT)
       throw new Error(`an event may wake at most ${MAX_MENTIONS_PER_EVENT} agents`);
-    if (mentions.length) {
+    if (wakes.length) {
       const members = await this.database.query<{ identity_id: string }>(
         `SELECT member.identity_id FROM memberships member
          JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
          WHERE member.room_id=$1 AND member.removed_at IS NULL
            AND member.identity_id=ANY($2::text[])`,
-        [input.roomId, mentions],
+        [input.roomId, wakes],
       );
       const present = new Set(members.rows.map((row) => row.identity_id));
-      const missing = mentions.filter((mention) => !present.has(mention));
+      const missing = wakes.filter((wake) => !present.has(wake));
       if (missing.length)
         throw new Error(`not an agent member of this Room: ${missing.join(', ')}`);
     }
@@ -2199,7 +2167,7 @@ export class DaemonService {
       object: input.kind.slice('agent:'.length),
       consequence,
       kind: input.kind,
-      mentions,
+      wakes,
       causeId,
       commandId: (
         await authorizeCommandOutput(
@@ -2437,6 +2405,12 @@ export class DaemonService {
     // The requester is whoever addressed the agent last in this Room: the
     // identity whose message triggered the turn that is asking now. With no
     // such message (a fresh corner objective), the owner asked.
+    //
+    // Read from the command that woke this agent rather than by searching the
+    // transcript for an address. The command IS the trigger, so it names the
+    // right message even when nothing in that message's text spells a handle —
+    // a scheduled prompt wakes the agent by subscription, and a search for a
+    // written tag would walk straight past it to some older line.
     const requesterRow = (
       await this.database.query<{
         id: string;
@@ -2446,11 +2420,12 @@ export class DaemonService {
         avatar: string | null;
       }>(
         `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
-         FROM messages message JOIN identities identity ON identity.id=message.author_id
-         WHERE message.room_id=$1 AND message.author_id<>$2
-           AND message.mention_ids @> $3::jsonb AND message.presentation IN ('message','system')
-         ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
-        [input.roomId, agentId, JSON.stringify([agentId])],
+         FROM agent_commands command
+         JOIN messages message ON message.id=command.source_message_id
+         JOIN identities identity ON identity.id=message.author_id
+         WHERE command.room_id=$1 AND command.agent_id=$2 AND message.author_id<>$2
+         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+        [input.roomId, agentId],
       )
     ).rows[0];
     const owner = {
@@ -2562,7 +2537,9 @@ export class DaemonService {
         id: messageId,
         roomId: input.roomId,
         ...grantCardPhrase(agent, owner, [grantView]),
-        mentions: [owner.pubkey],
+        // The owner is reached by the card itself (`background.ts` pushes a
+        // grant request to the person named on it), not by a wake: this line
+        // has no kind, so it starts no turn and never did.
         presentation: 'card',
         cardType: 'grant-request',
         card: { agent, owner, requester, grants: [grantView] },
@@ -2903,11 +2880,7 @@ function grantCardPhrase(
 }
 
 /** The one projection an inbox or conversation row is read through. */
-const conversationColumns = `SELECT id,author_id,created_at,presentation,text,mention_ids,
-        ARRAY(SELECT mentioned.id
-              FROM jsonb_array_elements_text(messages.mention_ids) mention(id)
-              JOIN identities mentioned ON mentioned.id=mention.id
-              WHERE mentioned.kind='agent') agent_mention_ids,
+const conversationColumns = `SELECT id,author_id,created_at,presentation,text,
         EXISTS(SELECT 1 FROM identities author
                WHERE author.id=messages.author_id AND author.kind='agent') agent_author,
         reply_to_message_id,

@@ -232,7 +232,7 @@ describe('a real pi Room agent subscribes itself to arrivals', () => {
           {
             roomId: ROOM,
             messageId: createHash('sha256').update('pi-event-subscribe-proof').digest('hex'),
-            mentions: [AGENT],
+            wakes: [AGENT],
             text: '@Greeter subscribe to joins in this Room, so every arrival wakes you. Use your tools, then tell me what you subscribed to.',
           },
           HUMAN,
@@ -260,12 +260,14 @@ describe('a real pi Room agent subscribes itself to arrivals', () => {
           identityId: NEWCOMER,
           rooms: { type: 'rooms', roomIds: [ROOM] },
         });
-        const joins = await database.query<{ mention_ids: string[] }>(
-          `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2
+        const joins = await database.query<{ woke: string[] }>(
+          `SELECT ARRAY(SELECT agent_id FROM agent_commands
+                        WHERE source_message_id=messages.id) woke
+           FROM messages WHERE room_id=$1 AND author_id=$2
            AND system_event->>'kind'='joined'`,
           [ROOM, NEWCOMER],
         );
-        expect(joins.rows.some((row) => row.mention_ids.includes(AGENT))).toBe(true);
+        expect(joins.rows.some((row) => row.woke.includes(AGENT))).toBe(true);
       } finally {
         abort.abort();
         await run.catch(() => undefined);

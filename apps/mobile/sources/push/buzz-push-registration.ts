@@ -67,7 +67,7 @@ function registrationKey(pubkey: string): string {
 
 /**
  * Short non-reversible fingerprint of a push token for diagnostics ONLY.
- * Never log or surface the full FCM token.
+ * Never log or surface the full device push token.
  */
 function tokenFingerprint(token: string): string {
   let hash = 0x811c9dc5;
@@ -151,9 +151,18 @@ function classifyRegistrationFailure(error: unknown): ClassifiedFailure {
   return { phase: 'network-failed', retryable: true };
 }
 
-async function grantedAndroidNotificationPermission(
-  requestWhenPossible: boolean,
-): Promise<boolean> {
+type SupportedPushPlatform = 'android' | 'ios';
+
+function currentPushPlatform(): SupportedPushPlatform | null {
+  return Platform.OS === 'android' || Platform.OS === 'ios' ? Platform.OS : null;
+}
+
+/** The vendor name for a platform's native push service, used only in diagnostics. */
+function pushServiceLabel(platform: SupportedPushPlatform): string {
+  return platform === 'ios' ? 'APNs' : 'FCM';
+}
+
+async function grantedNotificationPermission(requestWhenPossible: boolean): Promise<boolean> {
   const current = await Notifications.getPermissionsAsync();
   console.log(
     `[beeline-push] permission granted=${current.granted} canAskAgain=${current.canAskAgain} status=${current.status}`,
@@ -168,18 +177,18 @@ async function grantedAndroidNotificationPermission(
 }
 
 /**
- * Obtain the native Android push token (FCM) and bind it to the Buzz pubkey.
- * Registration failures do not block login; every attempt is classified,
- * logged under `[beeline-push]`, persisted for the settings UI, and retried with
- * backoff on later launches / foregrounds when {@link retryable}.
+ * Obtain the native push token (FCM on Android, APNs on iOS) and bind it to
+ * the Buzz pubkey. Registration failures do not block login; every attempt is
+ * classified, logged under `[beeline-push]`, persisted for the settings UI,
+ * and retried with backoff on later launches / foregrounds when {@link retryable}.
  *
- * Never logs or returns the full FCM token — only a fingerprint and length.
+ * Never logs or returns the full device push token — only a fingerprint and length.
  */
 export async function registerBuzzPushNotifications(
   identity: Identity,
   options: { automatic?: boolean } = {},
 ): Promise<BuzzPushRegistrationResult> {
-  if (Platform.OS !== 'android') {
+  if (!currentPushPlatform()) {
     return { registered: false, retryable: false, phase: 'unsupported-platform' };
   }
   if (!(await getBuzzPushEnabled(identity.publicKey))) {
@@ -219,8 +228,13 @@ async function attemptRegistration(
   identity: Identity,
   requestPermission: boolean,
 ): Promise<BuzzPushRegistrationResult> {
+  const platform = currentPushPlatform();
+  if (!platform) {
+    return { registered: false, retryable: false, phase: 'unsupported-platform' };
+  }
+  const service = pushServiceLabel(platform);
   try {
-    if (!(await grantedAndroidNotificationPermission(requestPermission))) {
+    if (!(await grantedNotificationPermission(requestPermission))) {
       return { registered: false, retryable: true, phase: 'permission-denied' };
     }
 
@@ -228,7 +242,7 @@ async function attemptRegistration(
     try {
       nativeToken = await withRegistrationTimeout(
         Notifications.getDevicePushTokenAsync(),
-        'FCM token acquisition',
+        `${service} token acquisition`,
       );
     } catch (error) {
       const failure =
@@ -247,18 +261,19 @@ async function attemptRegistration(
       };
     }
     // Expo identifies native tokens by platform; on Android the string is the
-    // raw FCM registration token consumed by Firebase Admin.
-    if (nativeToken.type !== 'android' || typeof nativeToken.data !== 'string') {
-      console.warn('[beeline-push] Android did not return an FCM token');
+    // raw FCM registration token, and on iOS it is the raw APNs device token.
+    if (nativeToken.type !== platform || typeof nativeToken.data !== 'string') {
+      const message = `${platform === 'ios' ? 'iOS' : 'Android'} did not return an ${service} token`;
+      console.warn(`[beeline-push] ${message}`);
       return {
         registered: false,
         retryable: true,
         phase: 'token-type-unexpected',
-        message: 'Android did not return an FCM token',
+        message,
       };
     }
     console.log(
-      `[beeline-push] FCM token acquired fingerprint=${tokenFingerprint(nativeToken.data)} length=${nativeToken.data.length}`,
+      `[beeline-push] ${service} token acquired fingerprint=${tokenFingerprint(nativeToken.data)} length=${nativeToken.data.length}`,
     );
 
     const controller = new AbortController();
@@ -282,7 +297,7 @@ async function attemptRegistration(
             body: JSON.stringify({
               pubkey: identity.publicKey,
               token: nativeToken.data,
-              platform: 'android',
+              platform,
               environment: Device.isDevice ? 'physical' : 'emulator',
             }),
             signal: controller.signal,
@@ -290,7 +305,7 @@ async function attemptRegistration(
       if (runtime.monolithEnabled) {
         await monolithPhoneOperation('registerPushDevice', {
           token: nativeToken.data,
-          platform: 'android',
+          platform,
           environment: Device.isDevice ? 'physical' : 'emulator',
         });
       }
@@ -303,12 +318,12 @@ async function attemptRegistration(
         throw new Error(`gateway returned HTTP ${response.status}`);
       }
       if (response.status === 202) {
-        console.log('[beeline-push] non-production FCM device ignored');
+        console.log(`[beeline-push] non-production ${service} device ignored`);
         return {
           registered: false,
           retryable: true,
           phase: 'gateway-rejected',
-          message: 'gateway ignored a non-production FCM device (HTTP 202)',
+          message: `gateway ignored a non-production ${service} device (HTTP 202)`,
         };
       }
       await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
@@ -328,7 +343,7 @@ async function attemptRegistration(
       clearTimeout(timeout);
     }
 
-    console.log('[beeline-push] FCM device registered');
+    console.log(`[beeline-push] ${service} device registered`);
     return { registered: true, retryable: false, phase: 'registered' };
   } catch (error) {
     const failure = classifyRegistrationFailure(error);
@@ -398,7 +413,7 @@ export async function sendBuzzPushTestNotification(identity: Identity): Promise<
 export async function retryBuzzPushRegistration(
   identity: Identity,
 ): Promise<BuzzPushRegistrationResult | null> {
-  if (Platform.OS !== 'android') return null;
+  if (!currentPushPlatform()) return null;
   if (!(await getBuzzPushEnabled(identity.publicKey))) return null;
   const state = await getBuzzPushRegistrationState(identity.publicKey);
   if (!state || state.registered || !state.retryable) return null;
@@ -414,16 +429,18 @@ export async function setBuzzPushEnabled(
   if (enabled) return registerBuzzPushNotifications(identity);
 
   let token = await AsyncStorage.getItem(tokenKey(identity.publicKey));
-  if (!token && Platform.OS === 'android') {
+  const platform = currentPushPlatform();
+  if (!token && platform) {
     try {
       const permission = await Notifications.getPermissionsAsync();
       if (permission.granted) {
         const current = await Notifications.getDevicePushTokenAsync();
-        if (current.type === 'android' && typeof current.data === 'string') token = current.data;
+        if (current.type === platform && typeof current.data === 'string') token = current.data;
       }
     } catch {
-      // A device without configured FCM cannot have completed registration.
-      // Keep the local opt-out instead of making the switch appear stuck on.
+      // A device without a configured push service cannot have completed
+      // registration. Keep the local opt-out instead of making the switch
+      // appear stuck on.
     }
   }
   const disabledResult: BuzzPushRegistrationResult = {
@@ -443,7 +460,7 @@ export async function setBuzzPushEnabled(
   if (getBuzzRuntimeConfig().monolithEnabled) {
     await monolithPhoneOperation('unregisterPushDevice', {
       token,
-      platform: 'android',
+      platform: platform ?? 'android',
       environment: Device.isDevice ? 'physical' : 'emulator',
     });
     await AsyncStorage.removeItem(tokenKey(identity.publicKey));

@@ -176,7 +176,6 @@ export default {
             ],
             "expo-secure-store",
             "expo-web-browser",
-            require("./plugins/withoutIosPushCapabilities.js"),
             [
                 "expo-notifications",
                 {

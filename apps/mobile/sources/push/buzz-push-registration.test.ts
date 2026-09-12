@@ -10,12 +10,13 @@ const notifications = vi.hoisted(() => ({
   requestPermissionsAsync: vi.fn(),
   getDevicePushTokenAsync: vi.fn(),
 }));
+const platformState = vi.hoisted(() => ({ OS: 'android' as 'android' | 'ios' }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: storage }));
 vi.mock('@beeline/nostr', () => ({ nip98AuthHeader: vi.fn(() => 'Nostr signed') }));
 vi.mock('expo-device', () => ({ isDevice: true }));
 vi.mock('expo-notifications', () => notifications);
-vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+vi.mock('react-native', () => ({ Platform: platformState }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ pushGatewayUrl: 'https://push.example' }),
 }));
@@ -54,6 +55,7 @@ describe('Buzz push preference', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    platformState.OS = 'android';
     storage.getItem.mockResolvedValue(null);
     storage.setItem.mockResolvedValue(undefined);
     storage.removeItem.mockResolvedValue(undefined);
@@ -372,5 +374,101 @@ describe('Buzz push preference', () => {
     storage.getItem.mockResolvedValue('not json{');
 
     await expect(getBuzzPushRegistrationState(identity.publicKey)).resolves.toBeNull();
+  });
+});
+
+describe('Buzz push preference on iOS', () => {
+  const APNS_TOKEN = 'ab'.repeat(32);
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    platformState.OS = 'ios';
+    storage.getItem.mockResolvedValue(null);
+    storage.setItem.mockResolvedValue(undefined);
+    storage.removeItem.mockResolvedValue(undefined);
+    notifications.getPermissionsAsync.mockResolvedValue({
+      granted: true,
+      canAskAgain: true,
+      status: 'granted',
+    });
+    notifications.requestPermissionsAsync.mockResolvedValue({
+      granted: true,
+      canAskAgain: true,
+      status: 'granted',
+    });
+    notifications.getDevicePushTokenAsync.mockResolvedValue({ type: 'ios', data: APNS_TOKEN });
+  });
+
+  afterEach(() => {
+    platformState.OS = 'android';
+    vi.useRealTimers();
+  });
+
+  it('registers the APNs device token with platform "ios"', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await registerBuzzPushNotifications(identity);
+
+    expect(result).toMatchObject({ registered: true, retryable: false, phase: 'registered' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://push.example/registrations',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          pubkey: identity.publicKey,
+          token: APNS_TOKEN,
+          platform: 'ios',
+          environment: 'physical',
+        }),
+      }),
+    );
+  });
+
+  it('rejects a token whose type does not match the running platform', async () => {
+    notifications.getDevicePushTokenAsync.mockResolvedValue({ type: 'android', data: APNS_TOKEN });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await registerBuzzPushNotifications(identity);
+
+    expect(result).toMatchObject({
+      registered: false,
+      retryable: true,
+      phase: 'token-type-unexpected',
+      message: 'iOS did not return an APNs token',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('retries an unregistered but retryable iOS attempt on foreground', async () => {
+    storage.getItem.mockImplementation(async (key: string) =>
+      key === REGISTRATION_STATE_KEY
+        ? storedRegistrationState({ failedAttempts: 2, updatedAt: Date.now() - 60_000 })
+        : null,
+    );
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await retryBuzzPushRegistration(identity);
+
+    expect(result).toMatchObject({ registered: true, retryable: false, phase: 'registered' });
+  });
+
+  it('unregisters the stored APNs token with platform "ios"', async () => {
+    storage.getItem.mockImplementation(async (key: string) =>
+      key.includes('/token/') ? APNS_TOKEN : null,
+    );
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await setBuzzPushEnabled(identity, false);
+
+    expect(result).toMatchObject({ registered: false, retryable: false, phase: 'disabled' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://push.example/registrations',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
   });
 });

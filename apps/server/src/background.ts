@@ -70,7 +70,20 @@ export class PushDeliveryLoop {
       identity_id: string;
       is_release_catchup: boolean;
     }>(`
-      WITH candidates AS (
+      -- Bound message/device pairs before the current-roster tag subquery.
+      -- Without this barrier the planner can resolve tags across all history.
+      WITH recent_messages AS MATERIALIZED (
+        SELECT m.*,d.token push_token,d.identity_id push_identity_id
+        FROM messages m
+        JOIN push_delivery_floors floor ON floor.id='message-delivery'
+        JOIN push_devices d ON m.created_at>=d.registered_at
+        WHERE m.created_at>=floor.started_at
+          AND m.created_at>=now()-interval '1 hour'
+          AND NOT EXISTS (
+            SELECT 1 FROM push_delivery_claims claim
+            WHERE claim.message_id=m.id AND claim.device_token=d.token
+          )
+      ), candidates AS (
         SELECT m.id message_id,room.workspace_id::text workspace_id,
           COALESCE(room.parent_id,room.id)::text room_id,
           CASE WHEN m.card_type='daemon-fact'
@@ -89,20 +102,17 @@ export class PushDeliveryLoop {
             WHEN m.presentation IN ('system','card') THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
-          d.token,member.identity_id,false is_release_catchup,m.created_at
-        FROM messages m
+          m.push_token token,member.identity_id,false is_release_catchup,m.created_at
+        FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
         JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
-          AND member.identity_id<>m.author_id
+          AND member.identity_id<>m.author_id AND member.identity_id=m.push_identity_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
           AND workspace_member.removed_at IS NULL
-        JOIN push_devices d ON d.identity_id=member.identity_id
         JOIN identities author ON author.id=m.author_id
         JOIN identities recipient ON recipient.id=member.identity_id AND recipient.kind='human'
-        JOIN push_delivery_floors floor ON floor.id='message-delivery'
-        WHERE m.created_at>=d.registered_at AND m.created_at>=floor.started_at
-          AND m.presentation IS DISTINCT FROM 'activity'
+        WHERE m.presentation IS DISTINCT FROM 'activity'
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
           AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'

@@ -46,7 +46,10 @@ vi.mock('react-native-gesture-handler', async () => {
 });
 
 vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (factory: () => unknown) => factory() },
+  StyleSheet: {
+    create: (factory: (theme: { buzz: { type: { body: object } } }) => unknown) =>
+      factory({ buzz: { type: { body: {} } } }),
+  },
 }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/buzz/chat-attachment', () => ({

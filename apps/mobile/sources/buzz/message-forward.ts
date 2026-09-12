@@ -6,7 +6,8 @@ export function formatForwardedMessage(text: string, roomName: string): string {
     .split('\n')
     .map((line) => `> ${line}`)
     .join('\n');
-  return `${quote}\n\nFORWARDED FROM #${roomName.trim()}`;
+  const normalizedRoomName = roomName.trim().replace(/^#+/, '');
+  return `${quote}\n\nFORWARDED FROM #${normalizedRoomName}`;
 }
 
 export function forwardedMessageParts(text: string): { body: string; caption?: string } {

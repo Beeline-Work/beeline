@@ -1153,7 +1153,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   );
 });
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
   permissionCard: {
     minWidth: 0,
     marginBottom: 8,
@@ -1431,7 +1431,7 @@ const styles = StyleSheet.create(() => ({
     borderColor: groknight.accent,
     backgroundColor: groknight.bgHighlight,
   },
-  reactionEmoji: { fontSize: 15, lineHeight: 19 },
+  reactionEmoji: { ...theme.buzz.type.body, lineHeight: 19 },
   reactionCount: {
     ...groknight.type.meta,
     color: groknight.textSecondary,

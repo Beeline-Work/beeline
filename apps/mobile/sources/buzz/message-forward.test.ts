@@ -13,6 +13,9 @@ describe('message forwarding', () => {
       body: '> first\n> second',
       caption: 'FORWARDED FROM #general',
     });
+    expect(formatForwardedMessage('first', '#general')).toBe(
+      '> first\n\nFORWARDED FROM #general',
+    );
   });
 
   it('posts the quoted source into the chosen Room', async () => {

@@ -301,6 +301,8 @@ export type CornerListResult = {
   readonly corners: readonly {
     readonly cornerId: string;
     readonly parentRoomId: string;
+    readonly name?: string;
+    readonly objective?: string;
     readonly createdBy: string;
     readonly archived: boolean;
   }[];
@@ -369,6 +371,12 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */
     readonly triggerMessageId?: string;
+    /** Source room is the active command room; destination is authorized separately. */
+    readonly relay?: {
+      readonly fromRoomId: string;
+      readonly toRoomId: string;
+      readonly direction: 'down' | 'up';
+    };
   };
 export type PostAgentAttachmentInput = TurnOutputAuthority &
   RoomInput & {

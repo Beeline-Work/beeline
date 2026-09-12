@@ -1,0 +1,24 @@
+[
+  {
+    "id": "44a829f61684050ebf0c98fc6a930a51184c58ed192f0ef6904f8dcf48ef970b",
+    "roomId": "33333333-3333-4333-8333-333333333333",
+    "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceMessageId": "e2696dd858b658dfeb7f62ef22d4e126629b3d125e8c2dd3e7713638c85591ac",
+    "turnRequestId": "e2696dd858b658dfeb7f62ef22d4e126629b3d125e8c2dd3e7713638c85591ac",
+    "action": "input",
+    "reason": "relay_steer",
+    "rootCommandId": "c4e22678e36bc22a7b72d1a58c6d4341afa9f29ccaf0b359a12857124088839a",
+    "parentCommandId": "c4e22678e36bc22a7b72d1a58c6d4341afa9f29ccaf0b359a12857124088839a",
+    "rootSourceMessageId": "74f871484d2784d32a1c71d6e35919f77a05ece56cc2f5ddaa3585b49dbef059",
+    "agentDepth": 1,
+    "source": {
+      "id": "e2696dd858b658dfeb7f62ef22d4e126629b3d125e8c2dd3e7713638c85591ac",
+      "authorId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "body": "The endpoint is now /v2/rooms. Keep the existing response shape so the phone can ship independently. Please check both a fresh sign-in and an already-open Room, then report any compatibility blocker here before changing the client.",
+      "attachments": [],
+      "createdAt": 1789248526,
+      "type": "card",
+      "systemEvent": null
+    }
+  }
+]

@@ -1,4 +1,9 @@
-import { createAgentCommand, routeHumanMessage, type CommandRow } from './agent-command.js';
+import {
+  createAgentCommand,
+  routeHumanMessage,
+  turnRootMessageSql,
+  type CommandRow,
+} from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
@@ -428,6 +433,8 @@ function projectedMessage(
   };
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
+    case 'relay':
+      return { ...base, relay: row.card as NonNullable<RoomViewMessage['relay']> };
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':
@@ -526,8 +533,7 @@ export class PhoneService {
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
            JOIN agent_turns turn ON turn.room_id=room.id AND turn.agent_id=$3
-           LEFT JOIN messages trigger ON trigger.id=turn.request_id
-             AND (trigger.room_id=turn.room_id OR trigger.room_id=room.parent_id)
+           LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id
              AND requester.kind='human'
            WHERE room.id=$1
@@ -1247,7 +1253,7 @@ export class PhoneService {
              requester.id requested_by
            FROM authorized_room room
            JOIN agent_turns turn ON turn.room_id=room.id
-           LEFT JOIN messages trigger ON trigger.id=turn.request_id AND trigger.room_id=turn.room_id
+           LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
            ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
          ), projected_turn_rows AS (
@@ -4899,20 +4905,18 @@ export class PhoneService {
     ).rows;
   }
   private async latestAgentTurns(roomId: string): Promise<RoomView['latestAgentTurns']> {
-    // `requested_by` is the author of the message the request id names — the
+    // `requested_by` is the command chain's root human requester — the
     // one person who may stop this turn. It is resolved HERE, from the row, and
     // never from the transcript window: a long turn's request scrolls out of
     // that window while it is still running, and a control that disappears
     // because the question scrolled away is a control nobody can rely on. A
-    // corner's request lives in the parent Room, so the join looks there too.
+    // relayed turn keeps the initiating human through its command chain.
     const turns = await this.database.query<AgentTurnRow>(
       `SELECT DISTINCT ON(turn.agent_id)
          turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
          requester.id requested_by
        FROM agent_turns turn
-       LEFT JOIN messages trigger ON trigger.id=turn.request_id
-         AND (trigger.room_id=turn.room_id
-           OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=turn.room_id))
+       LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
        LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
        WHERE turn.room_id=$1
        ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC`,

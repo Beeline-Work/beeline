@@ -32,8 +32,15 @@ export function useRoomMessageRenderItem({
       <RoomMessageCell
         item={item}
         render={render}
-        startsUnread={item.id === firstUnreadMessageId}
-        continued={item.id !== firstUnreadMessageId && continuedIds.has(item.id)}
+        startsUnread={
+          item.id === firstUnreadMessageId ||
+          item.relayReports?.some((report) => report.id === firstUnreadMessageId)
+        }
+        continued={
+          item.id !== firstUnreadMessageId &&
+          !item.relayReports?.some((report) => report.id === firstUnreadMessageId) &&
+          continuedIds.has(item.id)
+        }
         immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
         referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
       />

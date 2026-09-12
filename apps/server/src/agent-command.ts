@@ -63,6 +63,14 @@ export type CommandRow = {
   result_message_id: string | null;
 };
 
+/** Read the same root requester that cancelAgentTurn authorizes, including relayed turns. */
+export function turnRootMessageSql(turn: 'turn' | 'written'): string {
+  return `COALESCE((SELECT command.root_source_message_id FROM agent_commands command
+    WHERE command.room_id=${turn}.room_id AND command.agent_id=${turn}.agent_id
+      AND command.turn_request_id=${turn}.request_id
+    ORDER BY command.created_at DESC,command.id DESC LIMIT 1),${turn}.request_id)`;
+}
+
 export function nextAgentDepth(parentDepth: number): number | undefined {
   return parentDepth < COMMAND_MAX_DEPTH ? parentDepth + 1 : undefined;
 }

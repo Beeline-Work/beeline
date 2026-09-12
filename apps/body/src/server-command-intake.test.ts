@@ -242,7 +242,8 @@ describe('command intake mechanics', () => {
           ) => void)
         | undefined,
       onCommands: ((commands: readonly AgentCommand[]) => void) | undefined,
-      finishRecovery: ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined,
+      finishRecovery:
+        ((page: { commandProtocol: 1; commands: AgentCommand[] }) => void) | undefined,
       finishClaim: ((result: { id: string }) => void) | undefined;
     let reads = 0;
     const claimDispatchedAt: number[] = [];
@@ -347,46 +348,59 @@ describe('command intake mechanics', () => {
     expect(stop).toHaveBeenCalledWith('turn');
     expect(execute).toHaveBeenCalledWith('acknowledgeAgentCommand', expect.anything());
   });
-  it('leaves later inputs unclaimed while busy and deduplicates repeated delivery', async () => {
-    const controller = new AbortController();
-    let release = () => {};
-    const pending = new Map([
-      ['first', command('first')],
-      ['second', command('second')],
-    ]);
-    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
-      if (name === 'getAgentCommands')
-        return { commandProtocol: 1, commands: [...pending.values(), ...pending.values()] };
-      if (name === 'claimAgentCommand') pending.delete(String(input.commandId));
-      return { id: 'ok' };
-    });
-    const run = vi.fn(async (c: AgentCommand) => {
-      if (c.id === 'first')
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      else controller.abort();
-    });
-    const running = runServerCommandIntake({
-      api: { execute } as unknown as DaemonApiClient,
-      roomId: 'room',
-      agentId: 'agent',
-      context: await context(),
-      signal: controller.signal,
-      pollMs: 1,
-      run,
-      stop: vi.fn(),
-    });
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(
-      execute.mock.calls
-        .filter(([name]) => name === 'claimAgentCommand')
-        .map(([, input]) => input.commandId),
-    ).toEqual(['first']);
-    release();
-    await running;
-    expect(run.mock.calls.map(([c]) => c.id)).toEqual(['first', 'second']);
-  });
+  it.each(['human_tag', 'relay_steer'])(
+    'leaves later %s input unclaimed while busy and deduplicates delivery',
+    async (reason) => {
+      const controller = new AbortController();
+      let release = () => {};
+      const pending = new Map([
+        ['first', command('first')],
+        [
+          'second',
+          {
+            ...command('second'),
+            reason,
+            source: {
+              ...command('second').source,
+              type: reason === 'relay_steer' ? 'card' : 'message',
+            },
+          },
+        ],
+      ]);
+      const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+        if (name === 'getAgentCommands')
+          return { commandProtocol: 1, commands: [...pending.values(), ...pending.values()] };
+        if (name === 'claimAgentCommand') pending.delete(String(input.commandId));
+        return { id: 'ok' };
+      });
+      const run = vi.fn(async (c: AgentCommand) => {
+        if (c.id === 'first')
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        else controller.abort();
+      });
+      const running = runServerCommandIntake({
+        api: { execute } as unknown as DaemonApiClient,
+        roomId: 'room',
+        agentId: 'agent',
+        context: await context(),
+        signal: controller.signal,
+        pollMs: 1,
+        run,
+        stop: vi.fn(),
+      });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(
+        execute.mock.calls
+          .filter(([name]) => name === 'claimAgentCommand')
+          .map(([, input]) => input.commandId),
+      ).toEqual(['first']);
+      release();
+      await running;
+      expect(run.mock.calls.map(([c]) => c.id)).toEqual(['first', 'second']);
+    },
+  );
   it('allows the server to redeliver a command after a failed execution', async () => {
     const controller = new AbortController();
     let attempts = 0;

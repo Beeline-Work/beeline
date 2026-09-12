@@ -102,6 +102,7 @@ import {
   NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
+  RelayHandOff,
   TargetBranchProposalCard,
   WritePermissionCard,
   type OrdinaryLedgerMessageProps,
@@ -1496,4 +1497,58 @@ describe('Room message variant components', () => {
     expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
     expect(onCopy).not.toHaveBeenCalled();
   });
+});
+
+describe('relay hand-offs', () => {
+  it.each(['down', 'up'] as const)(
+    'renders %s without a speaker bubble, collapsed with an in-place toggle',
+    (direction) => {
+      const renderer = render(
+        <RelayHandOff
+          message={message({
+            text: 'Long relay',
+            isUser: true,
+            isAgentAuthor: true,
+            pubkey: 'sol',
+            authorIdentity: { pubkey: 'sol', kind: 'agent', name: 'Sol', handle: 'sol' },
+            relay: {
+              direction,
+              fromRoomId: 'room',
+              toRoomId: 'corner',
+              cornerId: 'corner',
+              fromName: 'beeline',
+              received: true,
+            },
+          })}
+        />,
+      );
+      expect(ledgerEntryRender).not.toHaveBeenCalled();
+      expect(JSON.stringify(renderer.toJSON())).toContain(
+        direction === 'down' ? 'FROM #beeline' : 'FROM THE CORNER · beeline',
+      );
+      expect(renderer.root.findByProps({ testID: 'relay-text-message' }).props.numberOfLines).toBe(
+        2,
+      );
+      expect(renderer.root.findAllByProps({ testID: 'relay-toggle-message' })).toHaveLength(0);
+      act(() =>
+        renderer.root
+          .findByProps({ testID: 'relay-measure-message' })
+          .props.onTextLayout({ nativeEvent: { lines: [{}, {}, {}] } }),
+      );
+      act(() => renderer.root.findByProps({ testID: 'relay-toggle-message' }).props.onPress());
+      expect(
+        renderer.root.findByProps({ testID: 'relay-text-message' }).props.numberOfLines,
+      ).toBeUndefined();
+      act(() => renderer.root.findByProps({ testID: 'relay-toggle-message' }).props.onPress());
+      expect(renderer.root.findByProps({ testID: 'relay-text-message' }).props.numberOfLines).toBe(
+        2,
+      );
+      act(() =>
+        renderer.root
+          .findByProps({ testID: 'relay-measure-message' })
+          .props.onTextLayout({ nativeEvent: { lines: [{}] } }),
+      );
+      expect(renderer.root.findAllByProps({ testID: 'relay-toggle-message' })).toHaveLength(0);
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
@@ -915,4 +915,157 @@ it('stores an ambiguous agent tag as prose without dispatching either candidate'
   } finally {
     await db.query(`UPDATE identities SET handle='goosy' WHERE id=$1`, [B]);
   }
+});
+
+describe('Room/corner relays', () => {
+  it.each([A, B])(
+    'queues a member hand-off from %s without completing its source turn',
+    async (sender) => {
+      await send('@goosy work', C);
+      await claim((await commands(B, C))[0]!);
+      await send(sender === A ? '@hoots pass the change' : '@goosy pass the change');
+      const source = (await commands(sender))[0]!;
+      await claim(source);
+      // Use the active generation and a relay marker on the existing post path.
+      const relay = await result(source, 'Use the new endpoint', 'g1', {
+        relay: {
+          fromRoomId: R,
+          toRoomId: C,
+          direction: 'down',
+          fromName: 'forged',
+          anchorMessageId: 'forged',
+        },
+      });
+      const [queued] = await commands(B, C);
+      expect(queued).toMatchObject({
+        reason: 'relay_steer',
+        action: 'input',
+        sourceMessageId: relay.id,
+        rootSourceMessageId: source.rootSourceMessageId,
+        parentCommandId: source.id,
+        source: { body: 'Use the new endpoint', type: 'card' },
+      });
+      expect(
+        (await db.query('SELECT state FROM agent_commands WHERE id=$1', [source.id])).rows[0],
+      ).toEqual({ state: 'claimed' });
+      const view = (await phone.readRoom(C, H))!;
+      expect(view.messages.find((m) => m.id === relay.id)).toMatchObject({
+        presentation: 'card',
+        relay: { direction: 'down', fromName: 'Room', received: true },
+      });
+      expect(view.messages.find((m) => m.id === relay.id)?.relay).not.toHaveProperty(
+        'anchorMessageId',
+      );
+      await result(source, 'Passed it down');
+      await expect(
+        result(source, 'Late relay', 'g1', {
+          relay: { fromRoomId: R, toRoomId: C, direction: 'down' },
+        }),
+      ).rejects.toThrow();
+      await claim(queued!, 'relay-generation');
+      expect((await phone.readRoom(C, H))!.latestAgentTurns).toContainEqual(
+        expect.objectContaining({
+          requestId: queued!.turnRequestId,
+          requestedBy: H,
+        }),
+      );
+      // The root human's stop rule survives delegation, even without a manager role.
+      await db.query("UPDATE memberships SET role='member' WHERE room_id=$1 AND identity_id=$2", [
+        C,
+        H,
+      ]);
+      try {
+        await phone.execute(
+          'cancelAgentTurn',
+          { roomId: C, agentId: B, requestId: queued!.turnRequestId },
+          H,
+        );
+      } finally {
+        await db.query("UPDATE memberships SET role='owner' WHERE room_id=$1 AND identity_id=$2", [
+          C,
+          H,
+        ]);
+      }
+    },
+  );
+
+  it('reports under the newest open/complete card for its own corner, not newer unrelated cards', async () => {
+    const corner = randomUUID();
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Endpoint work')`,
+      [corner, W, R],
+    );
+    await db.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+      VALUES($1,$2,'Update the endpoint','{}')`,
+      [corner, B],
+    );
+    for (const who of [H, B])
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [W, corner, who],
+      );
+    const anchorId = id();
+    for (const [cardId, cardCorner, type, age] of [
+      [id(), corner, 'corner-open', 40],
+      [anchorId, corner, 'corner-complete', 30],
+      [id(), C, 'corner-open', 20],
+      [id(), corner, 'checks-failing', 10],
+    ] as const) {
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+        VALUES($1,$2,$3,'Corner card','card','daemon-fact',$4::jsonb,now()-$5::integer*interval '1 second')`,
+        [
+          cardId,
+          R,
+          B,
+          JSON.stringify({ type, cornerId: cardCorner, name: 'Endpoint work', objective: 'Work' }),
+          age,
+        ],
+      );
+    }
+    await send('@goosy milestone', corner);
+    const source = (await commands(B, corner))[0]!;
+    await claim(source);
+    const posted = await result(source, 'The endpoint is ready', 'g1', {
+      relay: { fromRoomId: corner, toRoomId: R, direction: 'up' },
+    });
+    expect((await commands(B))[0]).toMatchObject({
+      reason: 'relay_report',
+      sourceMessageId: posted.id,
+    });
+    const view = (await phone.readRoom(R, H))!;
+    expect(view.messages.find((m) => m.id === posted.id)).toMatchObject({
+      author: { pubkey: B },
+      presentation: 'card',
+      relay: { direction: 'up', anchorMessageId: anchorId },
+    });
+    await result(source, 'Done');
+  });
+
+  it('refuses nonmembers, wrong directions, and stale generations without posting', async () => {
+    await send('@hoots relay');
+    const source = (await commands())[0]!;
+    await claim(source);
+    const extra = { relay: { fromRoomId: R, toRoomId: C, direction: 'down' } };
+    await expect(result(source, 'No', 'stale', extra)).rejects.toThrow();
+    await expect(
+      result(source, 'No', 'g1', { relay: { ...extra.relay, direction: 'up' } }),
+    ).rejects.toThrow();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [
+      C,
+      A,
+    ]);
+    try {
+      await expect(result(source, 'No', 'g1', extra)).rejects.toThrow('membership');
+    } finally {
+      await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [
+        C,
+        A,
+      ]);
+    }
+    expect(
+      (await db.query("SELECT id FROM messages WHERE card_type='relay' AND text='No'")).rowCount,
+    ).toBe(0);
+  });
 });

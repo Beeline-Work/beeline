@@ -72,7 +72,7 @@ import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
-import { foldSystemLines } from '@/buzz/system-lines';
+import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
 import {
   advanceRoomHistoryCursor,
   retainRoomHistoryCursor,
@@ -205,6 +205,7 @@ import {
   NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
+  RelayHandOff,
   TargetBranchProposalCard,
   WritePermissionCard,
 } from './RoomMessageVariants';
@@ -823,12 +824,17 @@ export default function BuzzChat() {
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
   const foldedMessages = useMemo(() => {
-    const boundary = combinedMessages.findIndex((message) => message.id === firstUnreadMessageId);
-    if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(combinedMessages));
+    const anchoredMessages = anchorRelayReports(combinedMessages);
+    const boundary = anchoredMessages.findIndex(
+      (message) =>
+        message.id === firstUnreadMessageId ||
+        message.relayReports?.some((report) => report.id === firstUnreadMessageId),
+    );
+    if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchoredMessages));
     // A folded system/activity run must not swallow the unread boundary.
     return [
-      ...foldSystemLines(foldSettledActivityRuns(combinedMessages.slice(0, boundary))),
-      ...foldSystemLines(foldSettledActivityRuns(combinedMessages.slice(boundary))),
+      ...foldSystemLines(foldSettledActivityRuns(anchoredMessages.slice(0, boundary))),
+      ...foldSystemLines(foldSettledActivityRuns(anchoredMessages.slice(boundary))),
     ];
   }, [combinedMessages, firstUnreadMessageId]);
   const unprojectedMessages = useMemo(
@@ -1489,11 +1495,6 @@ export default function BuzzChat() {
     : isDirectMessage
       ? 'dm'
       : 'room';
-  const composerPlaceholder = isCorner
-    ? `Steer this ${CORNER_LABEL}…`
-    : isDirectMessage
-      ? `Message ${displayRoomName}…`
-      : `Start this ${ROOM_LABEL}…`;
   const focusComposer = useCallback(() => {
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
@@ -3322,6 +3323,7 @@ export default function BuzzChat() {
           />
         );
       }
+      if (item.relay) return <RelayHandOff message={item} />;
       if (item.corner) {
         return null;
       }
@@ -3342,12 +3344,17 @@ export default function BuzzChat() {
 
       if (item.daemonFact) {
         return (
-          <DaemonFactCard
-            message={item}
-            reviewerHandle={roomReviewerHandle}
-            onOpenCorner={openCorner}
-            onOpenUrl={handleOpenGitHubEvent}
-          />
+          <View>
+            <DaemonFactCard
+              message={item}
+              reviewerHandle={roomReviewerHandle}
+              onOpenCorner={openCorner}
+              onOpenUrl={handleOpenGitHubEvent}
+            />
+            {item.relayReports?.map((report) => (
+              <RelayHandOff key={report.id} message={report} />
+            ))}
+          </View>
         );
       }
 
@@ -4201,7 +4208,6 @@ export default function BuzzChat() {
                       : nextSelection,
                   );
                 }}
-                placeholder={composerPlaceholder}
                 onSend={
                   slashMenuVisible
                     ? () => {

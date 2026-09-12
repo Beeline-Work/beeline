@@ -32,6 +32,33 @@ describe('phone contract', () => {
       watchFilters: [],
     };
     expect(isRoomView(room)).toBe(true);
+    const relay = {
+      fromRoomId: room.room.id,
+      toRoomId: room.room.id,
+      direction: 'down',
+      fromName: 'beeline',
+      cornerId: 'corner',
+      received: true,
+    };
+    const message = {
+      id: 'b'.repeat(64),
+      text: 'Change course',
+      createdAt: 1,
+      author: identity,
+      presentation: 'card',
+      relay,
+    };
+    expect(isRoomView({ ...room, messages: [message] })).toBe(true);
+    for (const invalid of [
+      { direction: 'sideways' },
+      { received: 'yes' },
+      { fromName: 1 },
+      { anchorMessageId: 42 },
+    ])
+      expect(
+        isRoomView({ ...room, messages: [{ ...message, relay: { ...relay, ...invalid } }] }),
+      ).toBe(false);
+
     // The face ceremony: an optional face id on every identity, never a non-string.
     expect(
       isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 'owl' } } }),

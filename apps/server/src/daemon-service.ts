@@ -5,6 +5,7 @@ import {
   createAgentCommand,
   readAgentCommands,
   routeAgentResult,
+  turnRootMessageSql,
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -191,6 +192,7 @@ export class DaemonService {
       !this.commandTransaction &&
       scopedRoom &&
       name === 'postRoomMessage' &&
+      candidate.relay === undefined &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string'
     )
@@ -232,7 +234,7 @@ export class DaemonService {
             );
         }
         const allowCompleted =
-          name === 'postRoomMessage' ||
+          (name === 'postRoomMessage' && candidate.relay === undefined) ||
           name === 'retractAgentLiveOutput' ||
           (name === 'postAgentTurnReceipt' && candidate.status === 'complete');
         const command = await authorizeCommandOutput(
@@ -279,7 +281,7 @@ export class DaemonService {
             [(result as { grantId: string }).grantId, command.id],
           );
         }
-        if (name === 'postRoomMessage') {
+        if (name === 'postRoomMessage' && candidate.relay === undefined) {
           // routeAgentResult reads the reply's own text for the agents it hands
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
@@ -1024,8 +1026,10 @@ export class DaemonService {
       parent_id: string;
       created_by: string | null;
       archived: boolean;
+      name: string;
+      objective: string;
     }>(
-      `SELECT r.id,r.parent_id,f.owner_agent_id created_by,r.archived_at IS NOT NULL archived
+      `SELECT r.id,r.parent_id,r.name,f.objective,f.owner_agent_id created_by,r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
        WHERE r.parent_id=$1`,
@@ -1037,6 +1041,8 @@ export class DaemonService {
         parentRoomId: row.parent_id,
         createdBy: row.created_by ?? agentId,
         archived: row.archived,
+        name: row.name,
+        objective: row.objective,
       })),
     };
   }
@@ -1258,12 +1264,98 @@ export class DaemonService {
     ).rows[0]!;
     return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: row.complete };
   }
+  /** A hand-off is an intermediate command output, never the sender's final reply. */
+  private async postRelay(input: Input<'postRoomMessage'>, agentId: string) {
+    const relay = input.relay!;
+    if (
+      !relay ||
+      !['down', 'up'].includes(relay.direction) ||
+      relay.fromRoomId !== input.roomId ||
+      typeof relay.toRoomId !== 'string' ||
+      typeof input.text !== 'string' ||
+      !input.text.trim() ||
+      input.text.length > 16000
+    )
+      throw new Error('invalid relay');
+    const command = this.authorizedCommand;
+    if (!this.commandTransaction || !command) throw new Error('relay requires an active command');
+    const cornerId = relay.direction === 'down' ? relay.toRoomId : relay.fromRoomId;
+    const roomId = relay.direction === 'down' ? relay.fromRoomId : relay.toRoomId;
+    // Lock both current memberships and rooms against removal/closure for the whole write.
+    const pair = (
+      await this.database.query<{
+        corner_name: string;
+        room_name: string;
+        owner_agent_id: string;
+      }>(
+        `SELECT corner.name corner_name,parent.name room_name,f.owner_agent_id
+       FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts f ON f.corner_id=corner.id
+       JOIN memberships cm ON cm.room_id=corner.id AND cm.identity_id=$3 AND cm.removed_at IS NULL
+       JOIN memberships pm ON pm.room_id=parent.id AND pm.identity_id=$3 AND pm.removed_at IS NULL
+       WHERE corner.id=$1 AND parent.id=$2 AND parent.parent_id IS NULL
+         AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+       FOR SHARE OF corner,parent,cm,pm`,
+        [cornerId, roomId, agentId],
+      )
+    ).rows[0];
+    if (!pair) throw new Error('relay requires current Room and corner membership');
+    const anchor =
+      relay.direction === 'up'
+        ? (
+            await this.database.query<{ id: string }>(
+              `SELECT id FROM messages WHERE room_id=$1 AND
+       card_type='daemon-fact' AND card->>'cornerId'=$2
+       AND card->>'type' IN ('corner-open','corner-complete')
+       ORDER BY created_at DESC,id DESC LIMIT 1`,
+              [roomId, cornerId],
+            )
+          ).rows[0]?.id
+        : undefined;
+    const target = relay.direction === 'down' ? pair.owner_agent_id : agentId;
+    const received = Boolean(
+      (
+        await this.database.query(
+          `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND status='working'
+       AND created_at>now()-interval '90 seconds' LIMIT 1`,
+          [relay.toRoomId, target],
+        )
+      ).rowCount,
+    );
+    const card = {
+      fromRoomId: relay.fromRoomId,
+      toRoomId: relay.toRoomId,
+      direction: relay.direction,
+      fromName: relay.direction === 'down' ? pair.room_name : pair.corner_name,
+      cornerId,
+      ...(anchor ? { anchorMessageId: anchor } : {}),
+      received,
+    };
+    const saved = (
+      await this.database.query<{ id: string; created_at: Date }>(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,reply_to_message_id,root_message_id)
+       VALUES($1,$2,$3,$4,'card','relay',$5::jsonb,$6,$6) RETURNING id,created_at`,
+        [id(), relay.toRoomId, agentId, input.text.trim(), JSON.stringify(card), anchor ?? null],
+      )
+    ).rows[0]!;
+    const queued = await createAgentCommand(this.database, {
+      roomId: relay.toRoomId,
+      agentId: target,
+      sourceMessageId: saved.id,
+      parent: command,
+      reason: relay.direction === 'down' ? 'relay_steer' : 'relay_report',
+    });
+    if (!queued) throw new Error('relay target unavailable or delegation limit reached');
+    this.live.publish({ type: 'invalidate', roomId: relay.toRoomId, reason: 'message', agentId });
+    return { id: saved.id, createdAt: seconds(saved.created_at) };
+  }
   private async postRoomMessage(
     input: Input<'postRoomMessage'>,
     agentId: string,
     atomicCommandWrite = false,
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
+    if (input.relay !== undefined) return this.postRelay(input, agentId);
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -1704,8 +1796,7 @@ export class DaemonService {
                RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
              )
              SELECT written.*,requester.id requested_by FROM written
-             LEFT JOIN messages trigger ON trigger.id=written.request_id
-               AND (trigger.room_id=$1 OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=$1))
+             LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('written')}
              LEFT JOIN identities requester ON requester.id=trigger.author_id
                AND requester.kind='human'`,
             [input.roomId, input.requestId, agentId, input.generationId ?? null],
@@ -1730,8 +1821,7 @@ export class DaemonService {
              RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
            )
            SELECT written.*,requester.id requested_by FROM written
-           LEFT JOIN messages trigger ON trigger.id=written.request_id
-             AND (trigger.room_id=$1 OR trigger.room_id=(SELECT parent_id FROM rooms WHERE id=$1))
+           LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('written')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id
              AND requester.kind='human'`,
           [

@@ -103,6 +103,27 @@ describe('monolith Room turn context', () => {
           };
         return { items: [], cursor: 'latest' };
       }
+      if (name === 'listRoomCorners')
+        return {
+          corners: [
+            {
+              cornerId: 'current-corner',
+              parentRoomId: 'room-id',
+              createdBy: agent.publicKey,
+              name: 'Endpoint work',
+              objective: 'Update the endpoint',
+              archived: false,
+            },
+            {
+              cornerId: 'closed-corner',
+              parentRoomId: 'room-id',
+              createdBy: agent.publicKey,
+              name: 'Old work',
+              objective: 'Already done',
+              archived: true,
+            },
+          ],
+        };
       if (name === 'getRoomConversation') {
         conversationReads.push(input);
         return { items: conversation, cursor: 'row-250' };
@@ -162,6 +183,11 @@ describe('monolith Room turn context', () => {
       'If one message contains several asks, list one numbered `Proposed corner:` line per ask; `go on 1 and 3` opens exactly those objectives',
     );
 
+    for (const prompt of prompts) {
+      expect(prompt).toContain('current-corner');
+      expect(prompt).toContain('Update the endpoint');
+      expect(prompt).not.toContain('closed-corner');
+    }
     expect(conversationReads.every((read) => read.window !== 'continuity')).toBe(true);
     const promptConversationRead = conversationReads.find((read) => !('window' in read));
     expect(promptConversationRead).toEqual(

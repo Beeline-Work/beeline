@@ -35,7 +35,6 @@ function render(value: string, onStop?: () => Promise<boolean>) {
         onStop={onStop}
         running
         stopKey="turn-one"
-        placeholder="Message #beeline…"
         height={40}
         maxHeight={120}
         focused={false}
@@ -64,6 +63,11 @@ afterEach(() => {
 });
 
 describe('one composer: send on tap, deliberate stop on hold', () => {
+  it('uses the same empty placeholder on every surface', () => {
+    const f = render('');
+    expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
+  });
+
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
     const f = render(value);
     expect(f.button().findByType('Text').props.children).toBe('↑');

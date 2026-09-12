@@ -258,6 +258,8 @@ export type ChatDisplayMessage = {
   /** Repository activity is a typed surface, never a transcript speaker. */
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
   /** Daemon lifecycle facts are server-projected cards, never prose rows. */
+  relay?: RoomViewMessage['relay'];
+  relayReports?: ChatDisplayMessage[];
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
   /** An agent asking its owner for reach; rendered as the grant card. */
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
@@ -372,6 +374,7 @@ export function displayRoomMessage(
       : {}),
     ...(githubEvent ? { githubEvent } : {}),
     ...(daemonFact ? { daemonFact } : {}),
+    ...(message.relay ? { relay: message.relay } : {}),
     ...(message.grantRequest
       ? {
           grantRequest: {

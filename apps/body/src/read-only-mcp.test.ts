@@ -31,6 +31,9 @@ describe('open_corner arguments', () => {
     };
     expect(schema.required).toEqual(['name', 'objective']);
     expect(openCorner().description).toContain('AT MOST THREE WORDS');
+    expect(openCorner().description).toContain(
+      'Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope.',
+    );
     expect(schema.properties.name?.description).toBe(
       "The corner's title: at most 3 words, no line breaks.",
     );

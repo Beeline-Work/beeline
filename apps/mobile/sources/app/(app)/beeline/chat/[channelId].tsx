@@ -199,6 +199,7 @@ import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoo
 import {
   GitHubEventCard,
   DaemonFactCard,
+  NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
@@ -3225,7 +3226,17 @@ export default function BuzzChat() {
         return null;
       }
 
-      if (item.githubEvent || item.githubLifecycleRun) {
+      if (item.notificationLifecycleRun) {
+        return (
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={openCorner}
+            onOpenUrl={handleOpenGitHubEvent}
+          />
+        );
+      }
+
+      if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 

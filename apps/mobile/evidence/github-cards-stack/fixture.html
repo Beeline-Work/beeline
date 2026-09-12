@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Beeline notification run fixture</title>
+    <style>
+      :root {
+        --bg: #0f0514;
+        --surface: #16091c;
+        --line: #3a2941;
+        --ink: #f0f0f3;
+        --muted: #a89dab;
+        --quiet: #6f6274;
+        --brass: #b08a4a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          15px/1.45 Inter,
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+      .app {
+        min-height: 100vh;
+        display: flex;
+      }
+      .rail {
+        display: none;
+        width: 286px;
+        border-right: 1px solid var(--line);
+        padding: 28px 20px;
+        color: var(--muted);
+      }
+      .rail b {
+        color: var(--ink);
+        font-size: 19px;
+      }
+      .rail .room {
+        margin-top: 32px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        color: var(--ink);
+      }
+      main {
+        width: 100%;
+        min-width: 0;
+      }
+      header {
+        height: 112px;
+        border-bottom: 1px solid var(--line);
+        padding: 34px 20px 16px;
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        z-index: 1;
+      }
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        letter-spacing: -0.03em;
+      }
+      h1 span {
+        color: var(--brass);
+      }
+      header p {
+        margin: 2px 0 0;
+        color: var(--muted);
+      }
+      .transcript {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 26px 20px 80px;
+      }
+      .stamp {
+        float: right;
+        color: var(--quiet);
+        font:
+          11px ui-monospace,
+          monospace;
+      }
+      .old-run {
+        color: var(--muted);
+        font-size: 16px;
+        margin: 0 0 26px;
+      }
+      .old-run h2 {
+        font-size: 16px;
+        font-weight: 400;
+        margin: 0 0 10px;
+      }
+      .old-run a {
+        display: block;
+        color: var(--ink);
+        text-decoration: underline;
+        text-decoration-color: var(--quiet);
+        margin: 8px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .old-run button,
+      .more {
+        border: 0;
+        padding: 0;
+        background: none;
+        color: var(--brass);
+        font:
+          600 11px ui-monospace,
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 15px 16px;
+        margin: 0 0 26px;
+        background: var(--surface);
+      }
+      .card h2 {
+        margin: 0;
+        font-size: 16px;
+        line-height: 21px;
+      }
+      .sub {
+        margin: 4px 0 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .objective {
+        color: var(--muted);
+        margin: 8px 0;
+      }
+      .action {
+        color: var(--muted);
+        font:
+          600 11px ui-monospace,
+          monospace;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        margin-top: 12px;
+      }
+      .item {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        width: 100%;
+        border: 0;
+        background: none;
+        color: inherit;
+        padding: 5px 0;
+        text-align: left;
+        cursor: pointer;
+      }
+      .state {
+        width: 92px;
+        flex: 0 0 92px;
+        color: var(--muted);
+        font:
+          600 10px ui-monospace,
+          monospace;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+      .copy {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .title {
+        display: block;
+        color: var(--ink);
+        font-weight: 600;
+        text-decoration: underline;
+        text-decoration-color: var(--line);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .kind {
+        color: var(--quiet);
+        font-size: 11px;
+      }
+      .system {
+        color: var(--muted);
+        padding: 10px 0 24px;
+      }
+      .system b {
+        color: var(--brass);
+      }
+      .composer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 58px;
+        background: var(--bg);
+        border-top: 1px solid var(--line);
+        padding: 11px 20px;
+      }
+      .composer div {
+        max-width: 760px;
+        margin: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 12px;
+        color: var(--quiet);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (min-width: 900px) {
+        .rail {
+          display: block;
+        }
+        main {
+          width: calc(100% - 286px);
+        }
+        header {
+          padding-left: 42px;
+        }
+        .transcript {
+          padding-top: 38px;
+        }
+        .composer {
+          left: 286px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail">
+        <b>Beeline</b>
+        <div class="room">#beeline<br /><small>repository notifications</small></div>
+      </aside>
+      <main>
+        <header>
+          <h1><span>#</span>beeline</h1>
+          <p>Beeline-Work/beeline</p>
+        </header>
+        <section class="transcript" id="before" hidden>
+          <div class="old-run">
+            <span class="stamp">23:16</span>
+            <h2>3 PRs merged · 3 opened</h2>
+            <a>Require corner authors to demonstrate objectives</a
+            ><a>Add room-level corner reviewers</a
+            ><a>Fix push taps as one destination-routing class</a><button>and 3 more</button>
+          </div>
+          <div class="card">
+            <h2>MERGED · Duplicate draft settle</h2>
+            <div class="objective">
+              MERGED · Echo<br />Make the durable reply the final text and ensure the live draft row
+              is deleted when a Room turn settles successfully.
+            </div>
+            <div class="action">View PR: End a live draft on its turn's complete receipt ↗</div>
+            <div class="action">Open archived corner →</div>
+          </div>
+          <div class="old-run">
+            <span class="stamp">00:01</span>
+            <h2>3 PRs opened · 3 merged</h2>
+            <a>Make the desktop right pane the Room work pane</a
+            ><a>fix: couple runtime pin bumps to native releases</a
+            ><a>fix: couple runtime pin bumps to native releases</a><a>Add room reviewer controls</a
+            ><a>Require corner authors to demonstrate objectives</a><a>Add room reviewer controls</a
+            ><button>show less</button>
+          </div>
+          <div class="system">
+            <b>@bananaman614305</b> changed who may address <b>@echo</b> · only
+            <b>@bananaman614305</b> may ask now
+          </div>
+        </section>
+        <section class="transcript" id="after" hidden>
+          <div class="card" id="run-card">
+            <h2>3 merged · 1 opened · 1 PR opened</h2>
+            <div class="sub">by @echo, @github · 23:16 – 00:01</div>
+            <div id="rows">
+              <button class="item">
+                <span class="state">PR opened</span
+                ><span class="copy"
+                  ><span class="title">Make the desktop right pane the Room work pane</span
+                  ><br /><span class="kind">PR #1128</span></span
+                >
+              </button>
+              <button class="item">
+                <span class="state">Merged</span
+                ><span class="copy"
+                  ><span class="title">fix: couple runtime pin bumps to native releases</span
+                  ><br /><span class="kind">corner · PR #1127</span></span
+                >
+              </button>
+              <button class="item">
+                <span class="state">Merged</span
+                ><span class="copy"
+                  ><span class="title">Duplicate draft settle</span><br /><span class="kind"
+                    >corner · PR #1126</span
+                  ></span
+                >
+              </button>
+              <button class="item extra">
+                <span class="state">Opened</span
+                ><span class="copy"
+                  ><span class="title">Require corner authors to demonstrate objectives</span
+                  ><br /><span class="kind">corner · no PR yet</span></span
+                >
+              </button>
+              <button class="item extra">
+                <span class="state">Merged</span
+                ><span class="copy"
+                  ><span class="title">Add room reviewer controls</span><br /><span class="kind"
+                    >corner · PR #1124</span
+                  ></span
+                >
+              </button>
+            </div>
+            <button class="more" id="toggle">and 2 more</button>
+          </div>
+          <div class="system">
+            <b>@bananaman614305</b> changed who may address <b>@echo</b> · only
+            <b>@bananaman614305</b> may ask now <span class="stamp">00:05</span>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="composer"><div>＋ &nbsp; Start this Room…</div></div>
+    <script>
+      const query = new URLSearchParams(location.search);
+      const before = query.get('mode') === 'before';
+      document.querySelector(before ? '#before' : '#after').hidden = false;
+      const expanded = query.get('expanded') === '1';
+      const extras = [...document.querySelectorAll('.extra')];
+      const toggle = document.querySelector('#toggle');
+      const paint = (value) => {
+        extras.forEach((row) => (row.hidden = !value));
+        if (toggle) toggle.textContent = value ? 'show less' : 'and 2 more';
+      };
+      paint(expanded);
+      if (toggle) toggle.addEventListener('click', () => paint(extras[0].hidden));
+    </script>
+  </body>
+</html>

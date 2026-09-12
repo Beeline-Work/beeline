@@ -220,10 +220,26 @@ interface CornerRow extends RoomRow {
   latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
 }
+// Correlated with the authorized Room and viewer in both Room read paths.
+const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
+  'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
+  'firstUnreadMessageId',(
+    SELECT message.id FROM messages message
+    WHERE message.room_id=room.id AND message.author_id<>$2
+      AND message.presentation<>'activity'
+      AND message.card_type IS DISTINCT FROM 'grant-decision'
+      AND (message.created_at,message.id)>(
+        COALESCE((SELECT message_created_at FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'-infinity'::timestamptz),
+        COALESCE((SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'')
+      )
+    ORDER BY message.created_at,message.id LIMIT 1
+  ))`;
+
 interface TopLevelRoomReadRow {
   room: RoomRow & {
     viewer_role: 'owner' | 'admin' | 'member';
     workspace_role: 'owner' | 'admin' | 'member';
+    read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
   };
   members: MemberRow[];
   turns: AgentTurnRow[];
@@ -1007,6 +1023,7 @@ export class PhoneService {
       members,
       latestAgentTurns,
       viewer: {
+        readCursor: room.read_cursor,
         identity: members.find((member) => member.identity.pubkey === viewerId)?.identity ?? {
           pubkey: viewerId,
           kind: 'human',
@@ -1141,9 +1158,11 @@ export class PhoneService {
         RoomRow & {
           viewer_role: 'owner' | 'admin' | 'member';
           workspace_role: 'owner' | 'admin' | 'member';
+          read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
         }
       >(
-        `SELECT room.*,membership.role viewer_role,workspace_member.role workspace_role
+        `SELECT room.*,membership.role viewer_role,workspace_member.role workspace_role,
+           ${VIEWER_READ_CURSOR_SQL} read_cursor
          FROM rooms room
          JOIN memberships membership ON membership.room_id=room.id
            AND membership.identity_id=$2 AND membership.removed_at IS NULL
@@ -1175,7 +1194,8 @@ export class PhoneService {
       await this.database.query<TopLevelRoomReadRow>(
         `WITH authorized_room AS (
            SELECT room.*,membership.role viewer_role,
-             workspace_member.role workspace_role
+             workspace_member.role workspace_role,
+             ${VIEWER_READ_CURSOR_SQL} read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=room.id
              AND membership.identity_id=$2 AND membership.removed_at IS NULL

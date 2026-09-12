@@ -9,6 +9,11 @@ import {
 } from './room-message-cell';
 import type { ChatDisplayMessage } from './room-view-presentation';
 
+vi.mock('react-native', () => ({
+  Text: (props: Record<string, unknown>) => React.createElement('Text', props),
+  View: (props: Record<string, unknown>) => React.createElement('View', props),
+}));
+
 describe('RoomMessageCell', () => {
   it('does not rerender an identity-stable row when its parent list updates', () => {
     const message: ChatDisplayMessage = {
@@ -123,4 +128,51 @@ describe('RoomMessageCell', () => {
     expect(render).toHaveBeenCalledTimes(2);
     expect(renderer.root.findByType('message-row' as any).props.precedingId).toBe(inserted.id);
   });
+});
+
+it('places one divider before the unread row in either list order and breaks its byline group', () => {
+  const messages: ChatDisplayMessage[] = ['read', 'unread', 'later'].map((id) => ({
+    id,
+    text: id,
+    timestamp: 1,
+    isUser: false,
+  }));
+  function List({ reverse, boundary }: { reverse: boolean; boundary: string | null }) {
+    const renderItem = useRoomMessageRenderItem({
+      firstUnreadMessageId: boundary,
+      render: (item, context) =>
+        React.createElement('row', { id: item.id, continued: context.continued }),
+      continuedIds: new Set(['unread', 'later']),
+      precedingMessageById: new Map(),
+      messageById: new Map(),
+    });
+    return React.createElement(
+      'list',
+      {},
+      (reverse ? [...messages].reverse() : messages).map((item) =>
+        React.createElement(React.Fragment, { key: item.id }, renderItem({ item })),
+      ),
+    );
+  }
+  let renderer!: ReactTestRenderer;
+  for (const reverse of [false, true]) {
+    act(() => {
+      renderer = create(React.createElement(List, { reverse, boundary: 'unread' }));
+    });
+    expect(
+      renderer.root.findAll(
+        (node: { type: unknown; props: Record<string, unknown> }) =>
+          node.type === 'View' && node.props.testID === 'new-messages-divider',
+      ),
+    ).toHaveLength(1);
+    expect(renderer.root.findByProps({ id: 'unread' }).props.continued).toBe(false);
+    act(() => renderer.update(React.createElement(List, { reverse, boundary: null })));
+    expect(
+      renderer.root.findAll(
+        (node: { type: unknown; props: Record<string, unknown> }) =>
+          node.type === 'View' && node.props.testID === 'new-messages-divider',
+      ),
+    ).toHaveLength(0);
+    act(() => renderer.unmount());
+  }
 });

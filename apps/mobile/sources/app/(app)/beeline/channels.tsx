@@ -42,6 +42,8 @@ import {
   roomRowNeedsAttention,
   roomRowPreview,
   roomListSections,
+  directMessagePresence,
+  NO_ACTIVITY_PREVIEW,
 } from '@/buzz/room-list-row';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
@@ -49,7 +51,6 @@ import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
-import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import {
@@ -693,9 +694,6 @@ export default function BuzzChannels() {
             refreshNow();
           }}
           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
-          renderSectionHeader={({ section }) =>
-            section.title ? <RoomListSectionHeader title={section.title} /> : null
-          }
           ListEmptyComponent={
             // One quiet block in the upper third of the deck, not a hero in
             // the void: the FAB already anchors the bottom. Exactly one
@@ -739,6 +737,8 @@ export default function BuzzChannels() {
             // the same square. The screen renders answers, never re-derives.
             const heading = roomRowName(item);
             const preview = roomRowPreview(item, chatList.viewer.pubkey);
+            const presence = directMessagePresence(item, ageNow);
+            const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
             const attention = roomRowNeedsAttention(item);
             const title = `${heading.sigil}${heading.name}`;
             const age = compactRelativeTime(
@@ -765,20 +765,37 @@ export default function BuzzChannels() {
                     )}
                   </View>
                   <View style={styles.rowCopy}>
-                    <Text numberOfLines={1} style={styles.title}>
-                      <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
-                        {heading.sigil}
+                    <View style={styles.titleLine}>
+                      <Text numberOfLines={1} style={styles.title}>
+                        <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
+                          {heading.sigil}
+                        </Text>
+                        {heading.name}
                       </Text>
-                      {heading.name}
-                    </Text>
+                      {hasPreview && presence?.dot && (
+                        <View
+                          style={[
+                            styles.presenceDot,
+                            presence.dot === 'working'
+                              ? styles.presenceWorking
+                              : styles.presenceIdle,
+                          ]}
+                          testID={`room-presence-${item.room.id}`}
+                        />
+                      )}
+                      {hasPreview && presence && item.directMessage?.peer.kind === 'human' && (
+                        <Text style={styles.presenceCaption}>{presence.label}</Text>
+                      )}
+                    </View>
                     <Text numberOfLines={1} style={styles.preview} testID={`room-preview-${item.room.id}`}>
-                      {preview.attribution === 'self' && (
+                      {!hasPreview && presence ? presence.label : null}
+                      {hasPreview && preview.attribution === 'self' && (
                         <Text style={styles.previewSelf}>you: </Text>
                       )}
-                      {preview.attribution === 'other' && (
+                      {hasPreview && preview.attribution === 'other' && (
                         <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
                       )}
-                      {preview.text}
+                      {hasPreview ? preview.text : presence ? null : preview.text}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -1084,6 +1101,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: hull.accent,
     },
     rowCopy: { flex: 1, minWidth: 0, gap: 3 },
+    titleLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
     // The row leads with the name: one size, one weight, the brightest thing
     // on the row. Ownership and unread never bold or enlarge it.
     title: {
@@ -1091,9 +1109,18 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textPrimary,
       fontSize: 18,
       lineHeight: 22,
+      flexShrink: 1,
     },
     // The sigil is the name's first glyph in brass: `@` for a DM, `#` for a Room.
     sigil: { ...Typography.default('semiBold'), color: hull.accent },
+    presenceDot: { width: 7, height: 7, borderRadius: 4 },
+    presenceWorking: { backgroundColor: theme.colors.success },
+    presenceIdle: { backgroundColor: hull.textMuted },
+    presenceCaption: {
+      ...theme.buzz.type.sectionHead,
+      color: hull.textMuted,
+      textTransform: 'uppercase',
+    },
     preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },
     previewSelf: { ...Typography.default(), color: hull.textMuted },
     previewAuthor: { ...Typography.default(), color: hull.accent },

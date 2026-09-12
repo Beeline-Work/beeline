@@ -1290,13 +1290,71 @@ describe('monolith integration', () => {
     const chats = (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
       chats: Array<{
         room: { id: string };
-        directMessage?: { peer: { pubkey: string; kind: string } };
+        directMessage?: {
+          peer: { pubkey: string; kind: string };
+          presence?: { status: string; observedAt: number };
+        };
       }>;
     };
     expect(chats.chats.find((chat) => chat.room.id === dm.id)?.directMessage).toMatchObject({
       peer: { pubkey: AGENT, kind: 'agent' },
+      presence: { status: 'online' },
     });
     expect(chats.chats.find((chat) => chat.room.id === ROOM)?.directMessage).toBeUndefined();
+  });
+
+  it('projects a human DM peer online, then falls back to their newest activity', async () => {
+    const peerId = createHash('sha256').update('github:dm-peer').digest('hex');
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle,github_subject)
+       VALUES($1,'human','Ada','ada','dm-peer')`,
+      [peerId],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, peerId],
+    );
+    const dm = (await (
+      await operation('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: peerId })
+    ).json()) as { id: string };
+    const live = new LiveHub();
+    live.humanConnected(peerId, Date.UTC(2026, 8, 12, 16));
+    const presencePhone = new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      undefined,
+      live,
+    );
+    expect(
+      (await presencePhone.readChats(WORKSPACE, HUMAN))?.chats.find(
+        (chat) => chat.room.id === dm.id,
+      )?.directMessage?.presence,
+    ).toEqual({
+      status: 'online',
+      observedAt: Math.floor(Date.UTC(2026, 8, 12, 16) / 1_000),
+    });
+
+    live.humanDisconnected(peerId, Date.UTC(2026, 8, 12, 17));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'hello','2026-09-10T12:00:00Z')`,
+      ['human-presence-message', dm.id, peerId],
+    );
+    await database.query(
+      `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+       VALUES($1,$2,'2026-09-10T12:00:00Z',$3,'2026-09-11T12:00:00Z')`,
+      [dm.id, peerId, 'human-presence-message'],
+    );
+    expect(
+      (
+        await new PhoneService(database, 'http://placeholder').readChats(WORKSPACE, HUMAN)
+      )?.chats.find((chat) => chat.room.id === dm.id)?.directMessage?.presence,
+    ).toEqual({
+      status: 'offline',
+      observedAt: Math.floor(Date.parse('2026-09-11T12:00:00Z') / 1_000),
+    });
   });
 
   it('toggles a fixed reaction and projects its count for the viewer', async () => {
@@ -5295,8 +5353,9 @@ describe('monolith integration', () => {
     );
     expect(fresh.rows[0]?.status).toBe('working');
     expect(fresh.rows[0]?.age_seconds).toBeLessThan(5);
-    const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))
-      ?.latestAgentTurns.find((turn) => turn.requestId === requestId);
+    const projected = (
+      await new PhoneService(database, origin).readRoom(ROOM, HUMAN)
+    )?.latestAgentTurns.find((turn) => turn.requestId === requestId);
     expect(projected).toBeDefined();
     expect(projected!.createdAt).toBeGreaterThan(projected!.startedAt!);
     expect(projected!.createdAt - projected!.startedAt!).toBeGreaterThanOrEqual(119);

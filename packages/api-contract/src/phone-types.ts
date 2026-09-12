@@ -416,7 +416,14 @@ export type ChatListItem = {
    * viewer. The index names a DM row by this identity (`@peer`), never by
    * the stored Room name.
    */
-  readonly directMessage?: { readonly peer: RoomViewIdentity };
+  readonly directMessage?: {
+    readonly peer: RoomViewIdentity;
+    /** Counterparty availability, or their newest observable activity when offline. */
+    readonly presence?: {
+      readonly status: 'online' | 'offline';
+      readonly observedAt: number;
+    };
+  };
 };
 
 export type ChatListWorkspace = {

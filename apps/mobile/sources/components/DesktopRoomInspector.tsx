@@ -523,7 +523,7 @@ function CornerCockpit({
     activeTurnAgentPubkey: turn?.agentPubkey,
     activeTurnRequestId: turn?.requestId,
     activeTurnRequestedBy: turn?.requestedBy,
-    activeTurnStartedAt: turn?.createdAt,
+    activeTurnStartedAt: turn?.startedAt ?? turn?.createdAt,
     conversationIdentities: new Map(
       detail?.members.map(({ identity }) => [identity.pubkey, identity]),
     ),

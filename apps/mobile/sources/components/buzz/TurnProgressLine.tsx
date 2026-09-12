@@ -26,7 +26,7 @@ const STOP_HIT_SLOP = 9;
  * precisely what a turn in progress is.
  *
  * The shape of the line is the status-line idiom: a mark, the verb line, then
- * elapsed seconds ticking once per second. The mark is the Beeline ribbon
+ * elapsed minutes and seconds ticking once per second. The mark is the Beeline ribbon
  * (`BeelineMarkSpinner`) drawing itself, never a cycling text glyph — a glyph
  * whose advance width changes per frame walks the label's left edge back and
  * forth, so the mark sits in one fixed `MARK_CELL` square and the label's x

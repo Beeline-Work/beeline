@@ -61,9 +61,22 @@ describe('the thinking clock', () => {
     expect(formatWorkingCounter(10_000, 12_000, 'stopping')).not.toContain('thinking');
   });
 
+  it('accumulates minutes and seconds instead of restarting the counter', () => {
+    expect(formatWorkingCounter(0, 30_000)).toBe('30s');
+    expect(formatWorkingCounter(0, 59_999)).toBe('59s');
+    expect(formatWorkingCounter(0, 60_000)).toBe('1m 0s');
+    expect(formatWorkingCounter(0, 92_000)).toBe('1m 32s');
+    expect(formatWorkingCounter(0, 122_000, 'stopping')).toBe('2m 2s \u00b7 stopping');
+  });
+
   it('settles to "<Past> for Ns · done h:MM"', () => {
     const line = formatSettledLine({ gerund: 'Brewing', past: 'Brewed' }, 0, 14_000);
     expect(line).toMatch(/^Brewed for 14s \u00b7 done \d{1,2}:\d{2} (am|pm)$/);
+  });
+
+  it('keeps the accumulated duration when a long turn settles', () => {
+    const line = formatSettledLine({ gerund: 'Brewing', past: 'Brewed' }, 0, 92_000);
+    expect(line).toMatch(/^Brewed for 1m 32s \u00b7 done /);
   });
 
   it('says stopped, never done, for a turn the requester withdrew', () => {

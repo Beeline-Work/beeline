@@ -515,7 +515,7 @@ export class SnapshotImporter {
               (status === 'working' || status === 'complete' || status === 'failed')
             )
               await db.query(
-                `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,created_at=EXCLUDED.created_at`,
+                `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,started_at,created_at) VALUES($1,$2,$3,$4,$5,$6,$6) ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,started_at=LEAST(agent_turns.started_at,EXCLUDED.started_at),created_at=EXCLUDED.created_at`,
                 [
                   row.roomId,
                   requestId,

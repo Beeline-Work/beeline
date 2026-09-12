@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+const platform = vi.hoisted(() => ({ OS: 'web' }));
 vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -12,7 +13,12 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
-    Platform: { OS: 'web', select: (choices: any) => choices.default },
+    Platform: {
+      get OS() {
+        return platform.OS;
+      },
+      select: (choices: any) => choices.default,
+    },
   };
 });
 vi.mock('expo-haptics', () => ({
@@ -56,7 +62,10 @@ async function release(fixture: ReturnType<typeof render>) {
   act(() => fixture.button().props.onPressOut({ nativeEvent: { type: 'mouseup' } }));
   await act(async () => fixture.button().props.onPress());
 }
-beforeEach(() => vi.useFakeTimers());
+beforeEach(() => {
+  platform.OS = 'web';
+  vi.useFakeTimers();
+});
 afterEach(() => {
   act(() => renderers.splice(0).forEach((renderer) => renderer.unmount()));
   vi.useRealTimers();
@@ -66,6 +75,26 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
   it('uses the same empty placeholder on every surface', () => {
     const f = render('');
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
+  });
+
+  it('leaves multiline text visible through native auto-growth', () => {
+    const value = 'first line\nsecond line\nthird line';
+    platform.OS = 'ios';
+    const f = render(value);
+    const input = f.renderer.root.findByType('TextInput');
+    expect(input.props.value).toBe(value);
+    expect(input.props.multiline).toBe(true);
+    expect(input.props.numberOfLines).toBeUndefined();
+    expect(input.props.style).toHaveLength(2);
+    expect(input.props.style[1]).toBeUndefined();
+  });
+
+  it('keeps measured multiline sizing on web', () => {
+    const f = render('first line\nsecond line\nthird line');
+    expect(f.renderer.root.findByType('TextInput').props.style[1]).toEqual({
+      height: 40,
+      maxHeight: 120,
+    });
   });
 
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {

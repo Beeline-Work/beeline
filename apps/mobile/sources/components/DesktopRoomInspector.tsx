@@ -442,7 +442,7 @@ function CornerRow({
     >
       <View style={styles.cornerCopy}>
         <Text style={styles.cornerTitle}>{title}</Text>
-        <Text style={styles.objective}>{corner.corner.about ?? title}</Text>
+        <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
         <View style={styles.cornerAgent}>
           <IdentityMark
             kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}

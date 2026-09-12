@@ -229,10 +229,12 @@ function roomView(id: string, filters: RoomView['watchFilters'] = [{ '#h': [id] 
 function Harness({
   channelId,
   notificationResponseId,
+  isFocused = true,
   capture,
 }: {
   channelId: string;
   notificationResponseId?: string;
+  isFocused?: boolean;
   capture(result: UseRoomSurfaceSessionResult): void;
 }) {
   const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
@@ -243,6 +245,7 @@ function Harness({
   });
   const result = useRoomSurfaceSession({
     channelId,
+    isFocused,
     ...(notificationResponseId ? { notificationResponseId } : {}),
     bindingsRef,
   });
@@ -1252,4 +1255,96 @@ describe('useRoomSurfaceSession', () => {
     expect(current.hydrationError).toContain('Could not load this conversation');
     await act(async () => renderer.unmount());
   });
+});
+
+it('captures only the fresh server unread boundary, holds it for a visit, and clears on next open', async () => {
+  const cached = roomView('room-a');
+  controls.cached = {
+    ...cached,
+    viewer: { ...cached.viewer, readCursor: { messageId: null, firstUnreadMessageId: 'stale' } },
+  };
+  let current!: UseRoomSurfaceSessionResult;
+  let renderer!: ReactTestRenderer;
+  const props = {
+    channelId: 'room-a',
+    capture: (result: UseRoomSurfaceSessionResult) => {
+      current = result;
+    },
+  };
+  await act(async () => {
+    renderer = create(React.createElement(Harness, props));
+  });
+  await flushEffects();
+  expect(current.firstUnreadMessageId).toBeNull();
+  const fresh = {
+    ...cached,
+    viewer: { ...cached.viewer, readCursor: { messageId: 'read', firstUnreadMessageId: 'unread' } },
+  };
+  await act(async () => controls.schedulers.at(-1)!.apply(fresh));
+  expect(current.firstUnreadMessageId).toBe('unread');
+  const marked = {
+    ...fresh,
+    viewer: { ...fresh.viewer, readCursor: { messageId: 'unread', firstUnreadMessageId: null } },
+  };
+  await act(async () => controls.schedulers.at(-1)!.apply(marked));
+  expect(current.firstUnreadMessageId).toBe('unread');
+  const previousScheduler = controls.schedulers.at(-1)!;
+  await act(async () =>
+    renderer.update(React.createElement(Harness, { ...props, isFocused: false })),
+  );
+  expect(previousScheduler.disposed).toBe(true);
+  await act(async () => renderer.update(React.createElement(Harness, props)));
+  await flushEffects();
+  await act(async () => controls.schedulers.at(-1)!.apply(marked));
+  expect(current.firstUnreadMessageId).toBeNull();
+  // A delta paints immediately, then requests the server-owned boundary.
+  const scheduler = controls.schedulers.at(-1)!;
+  const signals = scheduler.signalCalls;
+  await act(async () =>
+    controls.subscriptions.at(-1)!.emit({
+      monolithLive: {
+        type: 'message-delta',
+        roomId: 'room-a',
+        message: {
+          id: 'new-arrival',
+          text: 'Incoming',
+          createdAt: 12,
+          author: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
+          presentation: 'message',
+        },
+      },
+    }),
+  );
+  expect(scheduler.signalCalls).toBe(signals + 1);
+  expect(current.firstUnreadMessageId).toBeNull();
+  // A new arrival during this visit gets a boundary from the server too.
+  await act(async () =>
+    controls.schedulers.at(-1)!.apply({
+      ...marked,
+      viewer: {
+        ...marked.viewer,
+        readCursor: { messageId: 'unread', firstUnreadMessageId: 'new-arrival' },
+      },
+    }),
+  );
+  expect(current.firstUnreadMessageId).toBe('new-arrival');
+  const capturedSignals = scheduler.signalCalls;
+  await act(async () =>
+    controls.subscriptions.at(-1)!.emit({
+      monolithLive: {
+        type: 'message-delta',
+        roomId: 'room-a',
+        message: {
+          id: 'later-arrival',
+          text: 'Later',
+          createdAt: 13,
+          author: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
+          presentation: 'message',
+        },
+      },
+    }),
+  );
+  expect(scheduler.signalCalls).toBe(capturedSignals + 1);
+  expect(current.firstUnreadMessageId).toBe('new-arrival');
+  await act(async () => renderer.unmount());
 });

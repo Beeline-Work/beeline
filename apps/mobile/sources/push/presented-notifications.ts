@@ -12,7 +12,7 @@ export type PresentedNotificationApi = {
   dismissNotificationAsync(identifier: string): Promise<void>;
 };
 
-/** Dismiss every presented push whose exact chat destination is now open. */
+/** Dismiss every presented push whose Room or corner is now open. */
 export async function dismissPresentedNotificationsForChannel(
   channelId: string,
   api: PresentedNotificationApi,
@@ -23,7 +23,9 @@ export async function dismissPresentedNotificationsForChannel(
   const presented = await api.getPresentedNotificationsAsync();
   const matchingIds = presented.flatMap((notification) => {
     const target = getBuzzNotificationTargetFromData(notification.request.content?.data);
-    return target?.target !== 'workspace' && target?.channelId === openedChannelId
+    return target &&
+      target.target !== 'workspace' &&
+      (target.channelId === openedChannelId || target.roomId === openedChannelId)
       ? [notification.request.identifier]
       : [];
   });

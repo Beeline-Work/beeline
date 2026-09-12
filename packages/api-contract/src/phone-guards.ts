@@ -455,9 +455,15 @@ function watchFilters(value: unknown): boolean {
 function viewer(value: unknown): boolean {
   const item = record(value);
   const permissions = record(item?.permissions);
+  const readCursor = record(item?.readCursor);
   return Boolean(
     item &&
     identity(item.identity) &&
+    (item.readCursor === undefined ||
+      (readCursor &&
+        (readCursor.messageId === null || typeof readCursor.messageId === 'string') &&
+        (readCursor.firstUnreadMessageId === null ||
+          typeof readCursor.firstUnreadMessageId === 'string'))) &&
     (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
     permissions &&
     typeof permissions.send === 'boolean' &&

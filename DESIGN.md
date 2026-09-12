@@ -532,6 +532,9 @@ and tracking. A screen spreads a role; it never sets a raw size.
 
 Space Grotesk is the one reading face: names, rows, buttons, labels, bylines,
 stamps. Mono is for strings a machine produced, never for a byline or a label.
+The transcript's `NEW MESSAGES` boundary is the one caption exception: the
+`sectionHead` role in the `machine` face, with `ledgerQuiet` ink and `space.md`
+vertical spacing (`room-message-cell.tsx`).
 Small tracked capitals exist only to divide a list into sections. The spacing
 scale beside the roles is `space` (4 · 8 · 16 · 24 · 32 · 48) and `layout`
 (rows 64 tall, sections 24 apart, screens start 24 below the header).

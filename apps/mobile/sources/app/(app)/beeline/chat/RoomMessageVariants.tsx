@@ -357,6 +357,12 @@ export interface GitHubEventCardProps {
   onOpenUrl(url: string): void;
 }
 
+export interface NotificationLifecycleCardProps {
+  message: ChatDisplayMessage;
+  onOpenCorner(cornerId: string): void;
+  onOpenUrl(url: string): void;
+}
+
 type RepositoryFactCardProps = {
   title: string;
   body?: string;
@@ -407,21 +413,79 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
   );
 });
 
+/** One raised card for one uninterrupted run of repository notifications. */
+export const NotificationLifecycleCard = React.memo(function NotificationLifecycleCard({
+  message,
+  onOpenCorner,
+  onOpenUrl,
+}: NotificationLifecycleCardProps) {
+  const run = message.notificationLifecycleRun!;
+  const [expanded, setExpanded] = useState(false);
+  const visibleItems = expanded ? run.items : run.items.slice(0, 3);
+  return (
+    <View style={styles.githubPressable} testID={`notification-run-${message.id}`}>
+      <HullSurface strength="raised" style={styles.githubCard}>
+        <Text style={styles.githubTitle}>{run.headline}</Text>
+        <Text style={styles.notificationRunSubline}>{run.subline}</Text>
+        <View style={styles.notificationRunItems}>
+          {visibleItems.map((item) => {
+            const onPress = item.cornerId
+              ? () => onOpenCorner(item.cornerId!)
+              : item.url
+                ? () => onOpenUrl(item.url!)
+                : undefined;
+            return (
+              <Pressable
+                key={item.id}
+                accessibilityRole={onPress ? 'link' : undefined}
+                accessibilityLabel={`${item.state}: ${item.title}. ${item.kindLine}`}
+                disabled={!onPress}
+                onPress={onPress}
+                style={styles.notificationRunItem}
+                testID={`notification-run-item-${item.id}`}
+              >
+                <Text
+                  style={
+                    item.danger ? styles.notificationRunStateDanger : styles.notificationRunState
+                  }
+                >
+                  {item.danger ? `${item.state} ×` : item.state}
+                </Text>
+                <View style={styles.notificationRunCopy}>
+                  <Text numberOfLines={1} style={styles.notificationRunTitle}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.notificationRunKind}>{item.kindLine}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+        {run.items.length > 3 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              expanded
+                ? 'Show fewer notifications'
+                : `Show ${run.items.length - 3} more notifications`
+            }
+            onPress={() => setExpanded((value) => !value)}
+            testID={`notification-run-expand-${message.id}`}
+          >
+            <Text style={styles.notificationRunMore}>
+              {expanded ? 'show less' : `and ${run.items.length - 3} more`}
+            </Text>
+          </Pressable>
+        ) : null}
+      </HullSurface>
+    </View>
+  );
+});
+
 export const GitHubEventCard = React.memo(function GitHubEventCard({
   message,
   onOpenUrl,
 }: GitHubEventCardProps) {
-  if (message.githubLifecycleRun) {
-    return (
-      <LedgerSystemLine
-        id={message.id}
-        text={message.githubLifecycleRun.headline}
-        summaryItems={message.githubLifecycleRun.items}
-        stamp={ledgerStamp(message.timestamp)}
-        onOpenUrl={onOpenUrl}
-      />
-    );
-  }
   const event = message.githubEvent!;
   const title =
     event.type === 'pull-request'
@@ -457,7 +521,10 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   onOpenUrl,
 }: DaemonFactCardProps) {
   const fact = message.daemonFact!;
-  const agent = message.authorIdentity?.kind === 'agent' ? message.authorIdentity.name : undefined;
+  const agent =
+    message.authorIdentity?.kind === 'agent'
+      ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
+      : undefined;
   const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
   // The NAME titles the card; the objective is its body. A card written
   // before the name existed falls back to the same three-word derivation
@@ -466,7 +533,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   const body =
     fact.type === 'corner-complete'
       ? landedCorner
-        ? `MERGED${agent ? ` · ${agent}` : ''}${reviewerHandle ? `\nReviewer: @${reviewerHandle}` : ''}\n${fact.objective}`
+        ? `${reviewerHandle ? `Reviewer: @${reviewerHandle}\n` : ''}${fact.objective}`
         : 'ABANDONED · Remote branch deleted'
       : fact.type === 'checks-failing'
         ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
@@ -477,7 +544,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
           : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard
-      title={landedCorner ? `MERGED · ${title}` : title}
+      title={landedCorner ? `Merged ${title}${agent ? ` by @${agent}` : ''}` : title}
       body={body}
       actionLabel={
         fact.type === 'corner-complete' && fact.pullRequest
@@ -1145,6 +1212,61 @@ const styles = StyleSheet.create(() => ({
     letterSpacing: 0.45,
   },
   githubActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  notificationRunSubline: {
+    ...Typography.default(),
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  notificationRunItems: { gap: 8, marginTop: 2 },
+  notificationRunItem: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
+    minWidth: 0,
+  },
+  notificationRunState: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 9,
+    lineHeight: 14,
+    letterSpacing: 0.45,
+    textTransform: 'uppercase',
+    width: 82,
+  },
+  notificationRunStateDanger: {
+    ...Typography.mono('semiBold'),
+    color: groknight.danger,
+    fontSize: 9,
+    lineHeight: 14,
+    letterSpacing: 0.45,
+    textTransform: 'uppercase',
+    width: 82,
+  },
+  notificationRunCopy: { flex: 1, minWidth: 0 },
+  notificationRunTitle: {
+    ...Typography.default('semiBold'),
+    color: groknight.textPrimary,
+    fontSize: 12,
+    lineHeight: 17,
+    textDecorationLine: 'underline',
+    textDecorationColor: groknight.borderStrong,
+  },
+  notificationRunKind: {
+    ...Typography.default(),
+    color: groknight.ledgerQuiet,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  notificationRunMore: {
+    ...Typography.mono('semiBold'),
+    color: groknight.accent,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.45,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
   activityGroup: { width: '100%', minWidth: 0, marginBottom: 20 },
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {

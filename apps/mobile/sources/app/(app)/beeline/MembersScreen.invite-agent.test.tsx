@@ -252,6 +252,7 @@ describe('Members agent invitation flow', () => {
 
     const sheet = renderer.root.findByType('MemberPickerSheet' as any);
     expect(sheet.props.visible).toBe(true);
+    expect(sheet.props.agentConnectOnly).toBe(true);
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
     expect(sheet.props.pairCommand).toBe('npx usebeeline connect 1234ABCD-5678EF90');
     await act(async () => {
@@ -284,12 +285,12 @@ describe('Members invite affordance design', () => {
     const renderer = await render();
     expect(renderer.root.findAllByType('BrassButton' as any)).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'add-members' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'members-add-people' }).props.accessibilityLabel).toBe(
-      'Add people',
-    );
-    expect(renderer.root.findByProps({ testID: 'members-add-agents' }).props.accessibilityLabel).toBe(
-      'Add agents',
-    );
+    expect(
+      renderer.root.findByProps({ testID: 'members-add-people' }).props.accessibilityLabel,
+    ).toBe('Add people');
+    expect(
+      renderer.root.findByProps({ testID: 'members-add-agents' }).props.accessibilityLabel,
+    ).toBe('Add agents');
     expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
     expect(renderer.root.findAllByType('MonoButton' as any)).toHaveLength(0);

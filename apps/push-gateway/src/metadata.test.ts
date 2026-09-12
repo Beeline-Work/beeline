@@ -89,6 +89,7 @@ describe('NotificationMetadataResolver', () => {
     message.pubkey = agent.publicKey;
 
     await expect(resolver.resolve(message, reader)).resolves.toEqual({
+      workspaceId: 'community-1',
       roomName: 'Launch room',
       isDirectMessage: false,
       persistentWorkspaceRoom: true,
@@ -98,6 +99,7 @@ describe('NotificationMetadataResolver', () => {
       senderName: 'Legacy Name',
     });
     await expect(resolver.resolve(message, reader)).resolves.toEqual({
+      workspaceId: 'community-1',
       roomName: 'Launch room',
       isDirectMessage: false,
       persistentWorkspaceRoom: true,
@@ -232,9 +234,10 @@ describe('NotificationMetadataResolver', () => {
   });
 
   describe('channel-naming convention presentation names', () => {
-    function metadataReader(
-      rooms: Record<string, NostrEvent[]>,
-    ): { reader: RelayEventReader; query: ReturnType<typeof vi.fn> } {
+    function metadataReader(rooms: Record<string, NostrEvent[]>): {
+      reader: RelayEventReader;
+      query: ReturnType<typeof vi.fn>;
+    } {
       const query = vi.fn(async (filters: Record<string, unknown>[]) => {
         if (
           !filters.some((filter) =>
@@ -281,20 +284,20 @@ describe('NotificationMetadataResolver', () => {
       });
       const resolver = new NotificationMetadataResolver();
 
-      await expect(resolver.resolve(unsignedEvent(9, [['h', 'corner-1']]), reader)).resolves.toMatchObject(
-        {
-          roomName: 'fix-login-loop',
-          isChildChannel: true,
-          parentChannelId: ROOM_ID,
-          cornerName: 'fix-login-loop',
-          parentRoomName: 'Launch room',
-        },
-      );
+      await expect(
+        resolver.resolve(unsignedEvent(9, [['h', 'corner-1']]), reader),
+      ).resolves.toMatchObject({
+        roomName: 'fix-login-loop',
+        isChildChannel: true,
+        parentChannelId: ROOM_ID,
+        cornerName: 'fix-login-loop',
+        parentRoomName: 'Launch room',
+      });
       // The parent lookup rides the same per-Room cache: a second resolve
       // issues no further metadata queries.
-      await expect(resolver.resolve(unsignedEvent(9, [['h', 'corner-1']]), reader)).resolves.toMatchObject(
-        { cornerName: 'fix-login-loop', parentRoomName: 'Launch room' },
-      );
+      await expect(
+        resolver.resolve(unsignedEvent(9, [['h', 'corner-1']]), reader),
+      ).resolves.toMatchObject({ cornerName: 'fix-login-loop', parentRoomName: 'Launch room' });
       // Corner room + its workspace, sender, parent room + its workspace.
       expect(query).toHaveBeenCalledTimes(5);
     });

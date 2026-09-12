@@ -50,6 +50,18 @@ export type BuzzNotificationTarget = BuzzNotificationTargetBase &
       }
   );
 
+export type NotificationRoomTruth = {
+  room: { id: string; workspaceId: string; parentId?: string; archived: boolean };
+  parent?: { id: string };
+  cornerLifecycle?: { lifecycle: string };
+};
+
+export type BuzzNotificationResolver = {
+  activateWorkspace: (workspaceId: string) => Promise<void>;
+  readRoom: (roomId: string) => Promise<NotificationRoomTruth>;
+  isUnavailableError?: (error: unknown) => boolean;
+};
+
 /** Parse the FCM string-only data contract without trusting arbitrary route input. */
 export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificationTarget | null {
   const normalizedData = normalizeNotificationData(data);
@@ -100,6 +112,65 @@ export function getBuzzChannelIdFromNotificationData(data: unknown): string | nu
 }
 
 /**
+ * The one notification destination resolver. Workspace selection is committed
+ * before Room truth is read, and an unavailable/finished corner degrades only
+ * to its parent Room. A transient read failure keeps the named destination;
+ * it never converts a routable push into the chat list.
+ */
+export async function resolveBuzzNotificationTarget(
+  target: BuzzNotificationTarget,
+  resolver: BuzzNotificationResolver,
+): Promise<BuzzNotificationTarget> {
+  if (target.workspaceId) await resolver.activateWorkspace(target.workspaceId);
+  if (target.target === 'workspace') return target;
+
+  try {
+    const truth = await resolver.readRoom(target.channelId);
+    const workspaceId = truth.room.workspaceId || target.workspaceId;
+    if (workspaceId && workspaceId !== target.workspaceId) {
+      await resolver.activateWorkspace(workspaceId);
+    }
+    const parentId = truth.parent?.id ?? truth.room.parentId;
+    const isFinishedCorner =
+      Boolean(parentId) && (truth.room.archived || truth.cornerLifecycle?.lifecycle === 'done');
+    if (isFinishedCorner && parentId) {
+      return {
+        type: target.type,
+        target: 'message',
+        ...(workspaceId ? { workspaceId } : {}),
+        roomId: parentId,
+        channelId: parentId,
+        ...(target.eventId ? { eventId: target.eventId } : {}),
+      };
+    }
+    if (!parentId) return { ...target, ...(workspaceId ? { workspaceId } : {}) };
+    return {
+      ...target,
+      ...(workspaceId ? { workspaceId } : {}),
+      roomId: parentId,
+      channelId: truth.room.id,
+      cornerId: truth.room.id,
+    };
+  } catch (error) {
+    if (
+      resolver.isUnavailableError?.(error) &&
+      target.roomId &&
+      target.roomId !== target.channelId
+    ) {
+      return {
+        type: target.type,
+        target: 'message',
+        ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+        roomId: target.roomId,
+        channelId: target.roomId,
+        ...(target.eventId ? { eventId: target.eventId } : {}),
+      };
+    }
+    return target;
+  }
+}
+
+/**
  * Bring a notification's Room to the front without creating another copy.
  * The response id also invalidates the retained screen's transcript backfill.
  */
@@ -122,7 +193,6 @@ export function navigateToBuzzTargetFromNotification(
   router: Pick<Router, 'navigate'>,
   target: BuzzNotificationTarget,
   notificationResponseId: string,
-  options: { targetExists?: boolean } = {},
 ): void {
   if (target.target === 'workspace') {
     router.navigate(
@@ -134,8 +204,7 @@ export function navigateToBuzzTargetFromNotification(
     );
     return;
   }
-  const useFallback = options.targetExists === false && target.roomId !== target.channelId;
-  const channelId = useFallback ? target.roomId : target.channelId;
+  const channelId = target.channelId;
   router.navigate(
     {
       pathname: '/beeline/chat/[channelId]',
@@ -143,16 +212,11 @@ export function navigateToBuzzTargetFromNotification(
         channelId,
         ...(target.workspaceId ? { communityId: target.workspaceId } : {}),
         notificationResponseId,
-        ...(!useFallback && target.roomId !== target.channelId
-          ? {
-              parent: target.roomId,
-              notificationFallbackChannelId: target.roomId,
-            }
-          : {}),
-        ...(!useFallback && target.target === 'message' && target.messageId
+        ...(target.roomId !== target.channelId ? { parent: target.roomId } : {}),
+        ...(target.target === 'message' && target.messageId
           ? { notificationMessageId: target.messageId }
           : {}),
-        ...(!useFallback ? { notificationTarget: target.target } : {}),
+        notificationTarget: target.target,
       },
     },
     { dangerouslySingular: true },

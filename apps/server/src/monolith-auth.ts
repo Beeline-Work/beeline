@@ -28,6 +28,7 @@ export async function createMonolithAuth(
   options: {
     createDaemonExchange: TokenAuth['createDaemonExchange'];
     env?: NodeJS.ProcessEnv;
+    webAppOrigins?: readonly string[];
   },
 ): Promise<MonolithAuthMount> {
   const env = options.env ?? process.env;
@@ -49,6 +50,7 @@ export async function createMonolithAuth(
     ...(github ? { github } : {}),
     tenants,
     secureCookies: env.NODE_ENV === 'production',
+    webAppOrigins: options.webAppOrigins,
     githubSetupToken: env.BUZZY_AUTH_SETUP_TOKEN,
     logger: false,
     claimAgentPairingCode: async (input) => {

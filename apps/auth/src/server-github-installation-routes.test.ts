@@ -1137,6 +1137,25 @@ describe('GitHub installation, repositories, and token routes', () => {
     expect(completion.searchParams.get('provider')).toBe('https://github.com');
   });
 
+  it('allows the configured Expo web callback and refuses a foreign origin', async () => {
+    const appState = 'w'.repeat(43);
+    const allowed = 'https://web.alpha.example/beeline/github-callback';
+    const accepted = await app.inject({
+      method: 'GET',
+      url: `/auth/github/start?app_redirect=${encodeURIComponent(allowed)}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(accepted.statusCode).toBe(302);
+
+    const refused = await app.inject({
+      method: 'GET',
+      url: `/auth/github/start?app_redirect=${encodeURIComponent('https://foreign.example/beeline/github-callback')}&app_state=${appState}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toBe('invalid_request');
+  });
+
   it('serves the legacy GitHub mobile callback as a human app handoff, never a 404', async () => {
     const appState = 'h'.repeat(43);
     const associatedRedirect = `${alphaTenant.origin}/auth/github/mobile-callback`;

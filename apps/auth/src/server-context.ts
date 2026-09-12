@@ -123,6 +123,8 @@ export interface AuthServerOptions {
   logger?: FastifyServerOptions['logger'];
   /** Exact native completion URLs; never accept an arbitrary OAuth open redirect. */
   nativeRedirectUris?: string[];
+  /** Exact browser origins shared with the monolith HTTP API CORS allowlist. */
+  webAppOrigins?: readonly string[];
   /** Local device emulators only. Production browser-session cookies stay Secure. */
   secureCookies?: boolean;
   /**
@@ -470,9 +472,17 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     LEGACY_GITHUB_INSTALLATION_DEEP_LINK,
     ...(options.nativeRedirectUris ?? []),
   ]);
-  const isAllowedAppRedirect = (value: string, associatedRedirect: string): boolean =>
+  const isAllowedAppRedirect = (
+    value: string,
+    associatedRedirect: string,
+    webPath?: string,
+  ): boolean =>
     exactRedirect(value, associatedRedirect) ||
-    [...nativeRedirectUris].some((nativeRedirect) => exactRedirect(value, nativeRedirect));
+    [...nativeRedirectUris].some((redirect) => exactRedirect(value, redirect)) ||
+    Boolean(
+      webPath &&
+      options.webAppOrigins?.some((origin) => exactRedirect(value, `${origin}${webPath}`)),
+    );
   const cookieSecurity = options.secureCookies === false ? '' : ' Secure;';
   const flowCookieName = options.secureCookies === false ? 'beeline_oidc_flow' : FLOW_COOKIE;
   const githubTokenKey = options.github

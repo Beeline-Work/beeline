@@ -39,6 +39,7 @@ import {
   FACE_SOULS,
   isCommunityInviteToken,
   isFaceId,
+  MESSAGE_REACTION_EMOJIS,
   resolveFace,
   type PhoneOperationMap,
 } from '@beeline/api-contract/phone';
@@ -173,6 +174,7 @@ interface MessageRow {
   text: string;
   presentation: RoomViewMessage['presentation'];
   attachments: unknown[];
+  reactions?: Record<string, string[]>;
   /** Derived on read from the row's text and the Room's membership, not stored. */
   tagged_ids: string[];
   reply_to_message_id: string | null;
@@ -341,7 +343,11 @@ function withAttachmentExpiry<Message extends RoomViewMessage>(
   });
 }
 
-function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessage {
+function projectedMessage(
+  row: MessageRow,
+  publicOrigin: string,
+  viewerId?: string,
+): RoomViewMessage {
   const author = identity(
     {
       id: row.author_id,
@@ -390,6 +396,22 @@ function projectedMessage(row: MessageRow, publicOrigin: string): RoomViewMessag
         }
       : {}),
     ...(row.tagged_ids.length ? { mentionPubkeys: row.tagged_ids } : {}),
+    ...(Object.keys(row.reactions ?? {}).length
+      ? {
+          reactions: MESSAGE_REACTION_EMOJIS.flatMap((emoji) => {
+            const reactors = (row.reactions ?? {})[emoji] ?? [];
+            return reactors.length
+              ? [
+                  {
+                    emoji,
+                    count: reactors.length,
+                    reacted: viewerId ? reactors.includes(viewerId) : false,
+                  },
+                ]
+              : [];
+          }),
+        }
+      : {}),
     ...(row.reply_to_message_id
       ? {
           reply: {
@@ -546,7 +568,7 @@ export class PhoneService {
       )
     ).rows[0];
     if (!row) return null;
-    const message = projectedMessage(row, this.publicOrigin);
+    const message = projectedMessage(row, this.publicOrigin, viewerId);
     return {
       type: 'message-delta',
       roomId,
@@ -930,6 +952,7 @@ export class PhoneService {
         [],
         latestAgentTurns,
         false,
+        viewerId,
       );
       cornerRows = rows.corners;
     } else {
@@ -940,7 +963,7 @@ export class PhoneService {
       [allMembers, latestAgentTurns, messageResult, cornerRows] = await Promise.all([
         measured('members', this.members(room.workspace_id, roomId)),
         measured('turns', latestAgentTurnsPromise),
-        measured('messages', this.roomMessages(roomId, latestAgentTurnsPromise, true)),
+        measured('messages', this.roomMessages(roomId, latestAgentTurnsPromise, true, viewerId)),
         measured('corners', this.cornerRows(familyRoomId, viewerId, true)),
       ]);
     }
@@ -1099,7 +1122,9 @@ export class PhoneService {
     const rows = await this.messageRows(roomId, before, 31);
     const page = rows.slice(0, 30);
     const tail = page.at(-1);
-    const messages = page.reverse().map((row) => projectedMessage(row, this.publicOrigin));
+    const messages = page
+      .reverse()
+      .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
     return {
       roomId,
       messages: withAttachmentExpiry(messages, await this.expiredMediaIds(messages)),
@@ -2065,6 +2090,9 @@ export class PhoneService {
         )) as Output<Name>;
       case 'sendRoomReply':
         return (await this.sendReply(input as Input<'sendRoomReply'>, viewerId)) as Output<Name>;
+      case 'reactToMessage':
+        await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
+        return undefined as Output<Name>;
       case 'createRoomSchedule':
         return (await this.createRoomSchedule(
           input as Input<'createRoomSchedule'>,
@@ -2563,6 +2591,37 @@ export class PhoneService {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
       };
+    });
+  }
+
+  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<void> {
+    if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
+    await this.database.transaction(async (database) => {
+      const row = (
+        await database.query<{ reactions: Record<string, string[]> }>(
+          `SELECT message.reactions FROM messages message
+           JOIN memberships membership ON membership.room_id=message.room_id
+             AND membership.identity_id=$3 AND membership.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=membership.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+             AND workspace_member.removed_at IS NULL
+           WHERE message.id=$1 AND message.room_id=$2 AND message.presentation='message'
+           FOR UPDATE OF message`,
+          [input.messageId, input.roomId, viewerId],
+        )
+      ).rows[0];
+      if (!row) throw new Error('message is not available for reaction');
+      const reactions = { ...(row.reactions ?? {}) };
+      const reactors = new Set(reactions[input.emoji] ?? []);
+      if (reactors.has(viewerId)) reactors.delete(viewerId);
+      else reactors.add(viewerId);
+      if (reactors.size) reactions[input.emoji] = [...reactors];
+      else delete reactions[input.emoji];
+      await database.query(`UPDATE messages SET reactions=$3::jsonb WHERE id=$1 AND room_id=$2`, [
+        input.messageId,
+        input.roomId,
+        JSON.stringify(reactions),
+      ]);
     });
   }
 
@@ -4867,6 +4926,7 @@ export class PhoneService {
     roomId: string,
     latestAgentTurns: RoomView['latestAgentTurns'] | Promise<RoomView['latestAgentTurns']>,
     isCorner = false,
+    viewerId?: string,
   ): Promise<{ messages: RoomViewMessage[]; toolRows: RoomViewMessage[] }> {
     const eligible = `m.id IN (
       (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
@@ -4930,6 +4990,7 @@ export class PhoneService {
       cornerActivityRows.rows,
       resolvedAgentTurns,
       isCorner,
+      viewerId,
     );
   }
   private projectRoomMessages(
@@ -4938,15 +4999,18 @@ export class PhoneService {
     cornerActivityRows: readonly MessageRow[],
     resolvedAgentTurns: RoomView['latestAgentTurns'],
     isCorner: boolean,
+    viewerId?: string,
   ): { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] } {
-    const transcript = transcriptRows.map((row) => projectedMessage(row, this.publicOrigin));
+    const transcript = transcriptRows.map((row) =>
+      projectedMessage(row, this.publicOrigin, viewerId),
+    );
     const workingByAgent = new Map(
       resolvedAgentTurns
         .filter((turn) => turn.status === 'working')
         .map((turn) => [turn.agentPubkey, turn.createdAt]),
     );
     const liveActivity = liveRows
-      .map((row) => projectedMessage(row, this.publicOrigin))
+      .map((row) => projectedMessage(row, this.publicOrigin, viewerId))
       .filter(
         (message) =>
           message.createdAt >=
@@ -4958,7 +5022,7 @@ export class PhoneService {
     // so neither crowds out the message window. The wire field keeps its
     // historical `toolRows` name for compatibility with shipped phones.
     const cornerActivityMessages = cornerActivityRows.map((row) =>
-      projectedMessage(row, this.publicOrigin),
+      projectedMessage(row, this.publicOrigin, viewerId),
     );
     const byId = new Map(
       collapsePermissionCards([...transcript.reverse(), ...liveActivity.reverse()]).map(
@@ -5044,6 +5108,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendRoomMessage',
   'sendRoomReply',
+  'reactToMessage',
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',

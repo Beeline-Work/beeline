@@ -1299,6 +1299,27 @@ describe('monolith integration', () => {
     expect(chats.chats.find((chat) => chat.room.id === ROOM)?.directMessage).toBeUndefined();
   });
 
+  it('toggles a fixed reaction and projects its count for the viewer', async () => {
+    const messageId = '9'.repeat(64);
+    expect(
+      (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'React here' })).status,
+    ).toBe(200);
+    expect(
+      (await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' })).status,
+    ).toBe(204);
+
+    const reacted = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
+    expect(reacted.messages.find((message) => message.id === messageId)?.reactions).toEqual([
+      { emoji: '👍', count: 1, reacted: true },
+    ]);
+
+    expect(
+      (await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' })).status,
+    ).toBe(204);
+    const cleared = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
+    expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
+  });
+
   it('refuses a direct message with an agent outside the Workspace', async () => {
     const outsider = 'd'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Outsider')`, [

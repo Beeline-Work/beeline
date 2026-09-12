@@ -48,7 +48,8 @@ const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC',
 });
 
-const VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
+const WORKSPACE_VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
+const ROOM_VISIBILITY_LABELS = { public: 'Everyone', 'invite-only': 'Private' } as const;
 
 function roomCreatedQualifier(createdAt: number): string {
   const created = new Date(createdAt * 1_000);
@@ -428,7 +429,9 @@ export default function WorkspaceSettings() {
               testID="workspace-visibility-row"
               title="Visibility"
               value={
-                workspace?.visibility ? VISIBILITY_LABELS[workspace.visibility] : 'Invite-only'
+                workspace?.visibility
+                  ? WORKSPACE_VISIBILITY_LABELS[workspace.visibility]
+                  : 'Invite-only'
               }
             />
           </View>
@@ -460,9 +463,10 @@ export default function WorkspaceSettings() {
               const displayName = displayRoomIndexTitle(room.name) ?? room.name;
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
+              const nextVisibilityLabel = ROOM_VISIBILITY_LABELS[nextVisibility];
               return (
                 <SettingsRow
-                  accessibilityLabel={`Make ${displayName} ${nextVisibility}`}
+                  accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
                   description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
                   descriptionAction={
                     duplicateName
@@ -479,7 +483,7 @@ export default function WorkspaceSettings() {
                   onPress={() => void changeRoomVisibility(room)}
                   testID={`room-visibility-${room.id}`}
                   title={displayName}
-                  value={VISIBILITY_LABELS[room.visibility]}
+                  value={ROOM_VISIBILITY_LABELS[room.visibility]}
                 />
               );
             })}
@@ -506,7 +510,7 @@ export default function WorkspaceSettings() {
           <HullActionSheetRow
             disabled={workingKey === 'visibility'}
             key={visibility}
-            label={VISIBILITY_LABELS[visibility]}
+            label={WORKSPACE_VISIBILITY_LABELS[visibility]}
             onPress={() => void changeWorkspaceVisibility(visibility)}
             selected={workspace?.visibility === visibility}
             testID={`workspace-visibility-${visibility}`}

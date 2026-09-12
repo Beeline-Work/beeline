@@ -27,6 +27,13 @@ independently. `selection=all` is a recovery-only, deliberate full-release
 override. A
 non-`none` store track always selects `mobile-native`.
 
+The native runtime pin couples OTA and store delivery: when
+`apps/mobile/native-fingerprint.json` changes `runtimeVersion`, planning requires
+`mobile-native` plus a non-`none` store track, records both pin values, and holds
+OTA promotion until that release's store binaries have been submitted. A retry
+with the same pinned release identity resumes both components from their saved
+stages.
+
 Selected jobs build immutable artifacts named with both release version and
 source SHA, promote them, run bounded checks, and publish a component
 checkpoint. Unselected entries retain the prior release's version, SHA, and

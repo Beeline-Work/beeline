@@ -64,6 +64,9 @@ jobs:
       stage_helper: ${{ steps.plan.outputs.stage_helper }}
       stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
+      runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
+      previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
+      next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
       stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
       stage_website: ${{ steps.plan.outputs.stage_website }}
     steps:
@@ -186,6 +189,7 @@ jobs:
             echo "release_sha=$release_sha"
             echo "release_version=$release_version"
             echo "release_id=$release_id"
+            node -e 'const p=require(process.argv[1]).plan;console.log("runtime_pin_changed="+(p.runtimePinChanged??false)+"\nprevious_runtime_version="+(p.previousRuntimeVersion??"")+"\nnext_runtime_version="+(p.nextRuntimeVersion??""))' "$RUNNER_TEMP/unified-release.json"
             for component in server helper mobile-ota mobile-native desktop website; do
               output="run_${component//-/_}"
               value=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.retry[process.argv[2]]))' "$RUNNER_TEMP/release-plan.json" "$component")
@@ -370,8 +374,13 @@ jobs:
           if-no-files-found: error
 
   mobile_ota:
-    needs: initialize
-    if: needs.initialize.outputs.run_mobile_ota == 'true'
+    needs: [initialize, mobile_native]
+    if: >-
+      always() && needs.initialize.result == 'success' &&
+      needs.initialize.outputs.run_mobile_ota == 'true' &&
+      (needs.initialize.outputs.runtime_pin_changed != 'true' ||
+      needs.initialize.outputs.stage_mobile_native == 'checked' ||
+      needs.mobile_native.result == 'success')
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 12
     steps:

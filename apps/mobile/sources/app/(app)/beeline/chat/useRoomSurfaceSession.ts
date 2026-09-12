@@ -279,7 +279,8 @@ export function useRoomSurfaceSession({
   );
 
   useEffect(() => {
-    if (!channelId || !isFocused) return;
+    if (!channelId) return;
+    if (!isFocused) return;
     setFirstUnreadMessageId(null);
 
     let cancelled = false;

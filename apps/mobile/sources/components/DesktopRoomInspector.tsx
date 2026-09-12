@@ -12,7 +12,7 @@ import {
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
-import { roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { foldSystemLines } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
@@ -414,11 +414,7 @@ function SectionHeader({
 }
 
 function CornerRow({ corner, onPress }: { corner: CornerListItem; onPress(): void }) {
-  const needsYou = roomRowNeedsAttention({
-    unread: false,
-    ...(corner.status === 'waiting' ? { agentState: 'needs-you' as const } : {}),
-  });
-  const working = corner.status === 'working';
+  const display = cornerDisplayState(corner);
   return (
     <Pressable
       accessibilityRole="button"
@@ -440,16 +436,19 @@ function CornerRow({ corner, onPress }: { corner: CornerListItem; onPress(): voi
           />
           <Text style={styles.cornerMeta}>
             {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
-            {stateLine(corner)} · {age(corner)}
+            {age(corner)}
           </Text>
         </View>
       </View>
-      {(needsYou || working) && (
-        <View
-          style={[styles.stateDot, needsYou ? styles.stateNeedsYou : styles.stateWorking]}
+      <View style={styles.cornerEndcap}>
+        <Text
+          style={[styles.cornerStatus, display.needsYou && styles.cornerStatusNeedsYou]}
           testID={`desktop-work-corner-state-${corner.corner.id}`}
-        />
-      )}
+        >
+          {display.word}
+        </Text>
+        <Text style={styles.chevron}>›</Text>
+      </View>
     </Pressable>
   );
 }
@@ -793,7 +792,7 @@ const styles = StyleSheet.create((theme) => ({
   cornerRow: {
     minHeight: 88,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 8,
     paddingHorizontal: 8,
     paddingVertical: 10,
@@ -805,9 +804,9 @@ const styles = StyleSheet.create((theme) => ({
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
-  stateDot: { width: 7, height: 7, marginTop: 7 },
-  stateNeedsYou: { backgroundColor: theme.colors.textLink },
-  stateWorking: { backgroundColor: theme.colors.textSecondary },
+  cornerEndcap: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  cornerStatus: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  cornerStatusNeedsYou: { color: theme.colors.textLink },
   sectionGap: { height: 22 },
   simpleRow: {
     minHeight: 44,

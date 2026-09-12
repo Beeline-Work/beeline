@@ -246,7 +246,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
     );
-    expect(copy).toContain('waiting · review');
+    expect(copy).toContain('REVIEW ›');
     expect(copy).toContain('Concluded · 1');
     expect(copy).toContain('1 people · 1 agents');
     expect(copy).toContain('@codex');

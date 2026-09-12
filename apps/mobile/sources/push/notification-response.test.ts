@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   routeBuzzNotificationResponse,
+  startNotificationResponseEntries,
   type NotificationResponseRouting,
   type TappedNotificationResponse,
 } from './notification-response';
@@ -31,6 +32,7 @@ function routing(overrides: Partial<NotificationResponseRouting> = {}) {
     defaultActionIdentifier: DEFAULT_ACTION,
     waitForInitialLanding: () => Promise.resolve(),
     clearLastResponse: () => Promise.resolve(),
+    resolveTarget: async (target) => target,
     log: () => {},
     ...overrides,
   };
@@ -129,10 +131,43 @@ describe('routeBuzzNotificationResponse', () => {
 });
 
 describe('notification response wiring', () => {
-  it('routes warm taps and cold-start responses through the one handler', () => {
+  it.each([
+    ['foreground', 'active'],
+    ['background', 'background'],
+  ] as const)('passes a %s response payload to the resolver', async (entry, appState) => {
+    let listener: ((response: TappedNotificationResponse) => void) | undefined;
+    const route = vi.fn().mockResolvedValue(undefined);
+    startNotificationResponseEntries({
+      addResponseListener: (next) => {
+        listener = next;
+        return { remove() {} };
+      },
+      getLastResponse: async () => null,
+      getAppState: () => appState,
+      route,
+    });
+    const response = tap(`msg-${entry}`, `room-${entry}`);
+    listener?.(response);
+    await Promise.resolve();
+    expect(route).toHaveBeenCalledWith(response, entry);
+  });
+
+  it('passes a killed-app response payload to the resolver as cold', async () => {
+    const response = tap('msg-cold-entry', 'room-cold-entry');
+    const route = vi.fn().mockResolvedValue(undefined);
+    startNotificationResponseEntries({
+      addResponseListener: () => ({ remove() {} }),
+      getLastResponse: async () => response,
+      getAppState: () => 'active',
+      route,
+    });
+    await vi.waitFor(() => expect(route).toHaveBeenCalledWith(response, 'cold'));
+  });
+
+  it('routes all Expo taps through the one entry adapter', () => {
     expect(appLayoutSource).toContain('Notifications.addNotificationResponseReceivedListener');
-    expect(appLayoutSource).toContain('Notifications.getLastNotificationResponseAsync()');
-    expect(appLayoutSource.match(/handleNotificationResponse\(response\)/g)).toHaveLength(2);
+    expect(appLayoutSource).toContain('Notifications.getLastNotificationResponseAsync');
+    expect(appLayoutSource).toContain('startNotificationResponseEntries({');
     expect(appLayoutSource).toContain('routeBuzzNotificationResponse(response, {');
     expect(appLayoutSource).toContain('waitForInitialLanding: whenInitialLandingResolved');
   });

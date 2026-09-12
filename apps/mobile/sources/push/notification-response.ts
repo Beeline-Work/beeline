@@ -1,6 +1,7 @@
 import type { Router } from 'expo-router';
 import {
-  navigateToBuzzNotificationResponse,
+  getBuzzNotificationTargetFromData,
+  navigateToBuzzTargetFromNotification,
   type BuzzNotificationTarget,
 } from '@/utils/notificationRouting';
 
@@ -20,6 +21,37 @@ export type TappedNotificationResponse = {
   notification?: { request?: { identifier?: string; content?: { data?: unknown } } };
 };
 
+export type NotificationEntryPath = 'cold' | 'background' | 'foreground';
+
+export type NotificationResponseEntries = {
+  addResponseListener: (listener: (response: TappedNotificationResponse) => void) => {
+    remove(): void;
+  };
+  getLastResponse: () => Promise<TappedNotificationResponse | null>;
+  getAppState: () => string;
+  route: (response: TappedNotificationResponse, entry: NotificationEntryPath) => Promise<unknown>;
+  log?: (message: string, error: unknown) => void;
+};
+
+/** Wire every Expo response entry path to the same payload resolver. */
+export function startNotificationResponseEntries(entries: NotificationResponseEntries): () => void {
+  let active = true;
+  const subscription = entries.addResponseListener((response) => {
+    const entry = entries.getAppState() === 'active' ? 'foreground' : 'background';
+    void entries.route(response, entry);
+  });
+  void entries
+    .getLastResponse()
+    .then((response) => {
+      if (active && response) return entries.route(response, 'cold');
+    })
+    .catch((error) => entries.log?.('Failed to read last notification response:', error));
+  return () => {
+    active = false;
+    subscription.remove();
+  };
+}
+
 export type NotificationResponseRouting = {
   router: Pick<Router, 'navigate'>;
   /** Response ids already routed in this process; each is acted on once. */
@@ -30,6 +62,7 @@ export type NotificationResponseRouting = {
   waitForInitialLanding: () => Promise<void>;
   /** Clears the retained native "last response" once it has been routed. */
   clearLastResponse: () => Promise<void>;
+  resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
   log?: (message: string) => void;
 };
 
@@ -88,12 +121,16 @@ export async function routeBuzzNotificationResponse(
     // this is already settled and the tap navigates in the same tick.
     await routing.waitForInitialLanding();
 
-    const buzzTarget = navigateToBuzzNotificationResponse(routing.router, response);
+    const buzzTarget = getBuzzNotificationTargetFromData(
+      response.notification?.request?.content?.data,
+    );
     if (buzzTarget) {
+      const resolvedTarget = await routing.resolveTarget(buzzTarget);
+      navigateToBuzzTargetFromNotification(routing.router, resolvedTarget, responseId!);
       log(
-        `[PUSH ROUTING] Navigating to Beeline ${buzzTarget.target}: ${buzzTarget.channelId ?? buzzTarget.workspaceId}`,
+        `[PUSH ROUTING] Navigating to Beeline ${resolvedTarget.target}: ${resolvedTarget.channelId ?? resolvedTarget.workspaceId}`,
       );
-      return buzzTarget;
+      return resolvedTarget;
     }
     log('[PUSH ROUTING] No supported route found in notification.request.content.data');
     return null;

@@ -77,7 +77,8 @@ export class PushDeliveryLoop {
             THEN m.card->>'cornerId' ELSE room.id::text END channel_id,
           CASE WHEN m.card_type='daemon-fact'
             AND m.card->>'type' IN ('corner-open','corner-complete')
-            THEN m.card->>'cornerId' ELSE room.parent_id::text END corner_id,
+            THEN m.card->>'cornerId'
+            WHEN room.parent_id IS NOT NULL THEN room.id::text END corner_id,
           CASE WHEN m.card_type='daemon-fact'
             AND m.card->>'type' IN ('corner-open','corner-complete')
             THEN 'corner' ELSE 'message' END target,

@@ -42,6 +42,14 @@ vi.mock('expo-linking', () => ({
   addEventListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock('expo-updates', () => ({
+  isEnabled: false,
+  channel: null,
+  updateId: null,
+  checkForUpdateAsync: vi.fn(),
+  fetchUpdateAsync: vi.fn(),
+  reloadAsync: vi.fn(),
+}));
 vi.mock('expo-haptics', () => ({
   notificationAsync: vi.fn(async () => undefined),
   NotificationFeedbackType: { Success: 'SUCCESS', Warning: 'WARNING', Error: 'ERROR' },
@@ -106,6 +114,9 @@ vi.mock('@/buzz/runtime-config', () => ({
     pushGatewayUrl: 'https://push.test',
   }),
 }));
+vi.mock('@/sync/appConfig', () => ({
+  loadAppConfig: () => ({ releaseVersion: 'v0.0.1', releaseSha: null }),
+}));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/constants/Typography', () => ({
   Typography: {
@@ -120,6 +131,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
+    PixelLoader: host('PixelLoader'),
   };
 });
 vi.mock('@/components/buzz/IdentityMark', async () => {
@@ -139,6 +151,7 @@ vi.mock('@/sync/transport', () => ({
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
+vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: { create: (styles: unknown) => styles },
   useUnistyles: () => ({
@@ -228,7 +241,8 @@ describe('photo-override darkflight on the settings surfaces', () => {
       'sources/app/(app)/beeline/MembersScreen.tsx',
     ];
     const identitySource = readFileSync(`${root}${surfaces[0]}`, 'utf8');
-    expect(identitySource).toContain('PHOTO_OVERRIDES_ENABLED &&');
+    expect(identitySource).not.toContain('pickAndUploadAvatar');
+    expect(identitySource).not.toMatch(/set(?:Agent|Person)(?:Avatar|Photo)/);
     const membersSource = readFileSync(`${root}${surfaces[1]}`, 'utf8');
     expect(membersSource).not.toContain('pickAndUploadAvatar');
     expect(membersSource).not.toMatch(/set(?:Agent|Person)(?:Avatar|Photo)/);

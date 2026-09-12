@@ -101,8 +101,21 @@ export function cornerReviewerInstruction(input: {
   return `Review PR #${number} with the beeline-review skill. If it fails, reply @${author} with the findings. If it passes and the gate (pr_checks_status: checks=passed, held=false, approvalPending=false) is open and YOUR yolo is on, merge with gh pr merge --squash --match-head-commit <sha you reviewed>; if your yolo is off, reply approved <sha> and stop; if checks are pending, reply approved pending checks <sha> and stop.`;
 }
 
+export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
+Before any code, write its end-user story in one sentence: "a person who does X sees Y".
+If the objective reports a defect, reproduce it first at the layer where it lives: the command, request, or tap sequence, and what was observed.
+Do not write a fix before you have seen the defect. Turn the reproduction into the regression test.
+Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
+If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
+A unit test of an inner function, a log line, or reading the code is not a demonstration.
+The pull request body MUST contain two sections with exactly these headings: ## Reproduced and ## Demonstrated.
+Under ## Reproduced, give the steps or command and what was observed; write "not a defect report" for feature work.
+Under ## Demonstrated, give the command or steps that produced Y and what was observed.
+A pull request without both sections is not deliverable and the Room's reviewer will fail it.
+Change only what the objective asks. No unrequested features, flags, compatibility shims, or refactors.`;
+
 export const CORNER_DELIVERY_NUDGE =
-  'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean.';
+  'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
 
 export const CORNER_YOLO_MERGE_NUDGE =
   'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. Otherwise stop without merging.';
@@ -756,14 +769,14 @@ export class MonolithCornerTurnLoop {
               `You are in an isolated git worktree on ${repository.featureBranch}, targeting ${repository.targetBranch}.`,
               `Commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Before pushing, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the objective if needed, then rerun affected tests. Open the pull request with gh.`,
               ...(reviewerInstruction
-                ? []
+                ? [reviewerInstruction]
                 : [
                     configuration.reviewerHandle
                       ? `Once the pull request exists, reply with its full URL, then @${configuration.reviewerHandle} please review, and end the turn; do not check or wait for CI.`
                       : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; only a later explicit human resume clears a hold.',
+                    CORNER_AUTHOR_CONTRACT,
+                    cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
-              reviewerInstruction ??
-                cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
               'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When approval is pending, wait for the server close request. Never merge another pull request.',
             ]

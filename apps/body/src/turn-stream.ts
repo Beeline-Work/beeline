@@ -156,13 +156,15 @@ export class AgentTurnStream {
       // to be the last word on this lane, or that late write puts an obsolete
       // draft back after the lane was supposed to be empty.
       await this.inFlight;
-      const { api, agentId, roomId, requestId } = this.options;
-      await api.execute('retractAgentLiveOutput', {
-        agentId,
-        roomId,
-        turnId: requestId,
-        kind: 'draft',
-      });
+      const { api, agentId, roomId, requestId, label } = this.options;
+      await api
+        .execute('retractAgentLiveOutput', {
+          agentId,
+          roomId,
+          turnId: requestId,
+          kind: 'draft',
+        })
+        .catch((error) => console.error(`[thin-core] ${label} draft retract failed:`, error));
     })();
     await this.retraction;
   }
@@ -171,6 +173,14 @@ export class AgentTurnStream {
    * Post the durable reply under the turn's request id and dissolve the draft.
    * An empty reply settles through the turn receipt instead, and the lane is
    * retracted either way.
+   *
+   * The durable reply is this turn's answer and its last word. The draft lane
+   * is presentation, so a refused retract is logged like a refused draft and
+   * the turn still settles complete: raising here failed a turn that had
+   * already answered, which posts a `failed` receipt and inscribes "<agent>
+   * could not answer" UNDER the answer the reader is looking at. The reader
+   * loses nothing by it either — the phone ends a retracted draft on the
+   * turn's own complete receipt (`visibleLiveOverlays`).
    */
   async settle(
     reply: string,

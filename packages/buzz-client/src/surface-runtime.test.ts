@@ -7,7 +7,7 @@ import { composeRoomRows, addRoomPage, replaceRoomTail } from './room-response-p
 import { SignedEventOutbox } from './signed-event-outbox.js';
 import { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
 import { SurfaceRefreshScheduler } from './surface-refresh.js';
-import type { RoomView, RoomViewMessage } from './room-view.js';
+import type { RoomView, RoomViewAgentTurn, RoomViewMessage } from './room-view.js';
 
 const ROOM = '7d111868-52eb-43ab-98ae-8a6c49b92da8';
 const WORKSPACE = 'ec08be9d-9d9d-413e-b546-959d4abe39df';
@@ -313,6 +313,43 @@ describe('narrow live seam', () => {
     expect(visibleLiveOverlays(retracted, [])).toEqual(retracted);
     // A close with no streamed text behind it drops cleanly.
     expect(applyLiveOverlay([], { ...overlay, text: undefined, closed: true })).toEqual([]);
+  });
+
+  it('ends a retracted draft whose turn completed with no durable reply', () => {
+    // A Room turn that opened a corner publishes nothing: the server's corner
+    // card is the whole handoff. Held for a final that never comes, the last
+    // streamed sentence stood as the answer until the Room was reopened.
+    const overlay: LiveOverlay = {
+      kind: 'draft',
+      key: 'draft:agent:request',
+      stableId: 'live-turn:agent:request',
+      agentPubkey: 'agent',
+      requestId: 'request',
+      text: 'Opening a corner for that.',
+      closed: false,
+      createdAt: 10,
+    };
+    const retracted = applyLiveOverlay([overlay], { ...overlay, text: undefined, closed: true });
+    const turn = (status: RoomViewAgentTurn['status']): RoomViewAgentTurn => ({
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status,
+      createdAt: 12,
+    });
+    expect(visibleLiveOverlays(retracted, [], [turn('complete')])).toEqual([]);
+    // Only a completed turn is an ending. A stopped or failed turn keeps the
+    // words the reader already read, and a working one is still writing them.
+    for (const status of ['working', 'failed', 'cancelled'] as const) {
+      expect(visibleLiveOverlays(retracted, [], [turn(status)])).toEqual(retracted);
+    }
+    // The receipt ends the lane whether or not the retract was seen. A retract
+    // reaches only sockets already listening, so a reader can miss it and hold
+    // an open draft nothing will ever close.
+    expect(visibleLiveOverlays([overlay], [], [turn('complete')])).toEqual([]);
+    // Another agent's turn under the same request id is untouched.
+    expect(
+      visibleLiveOverlays(retracted, [], [{ ...turn('complete'), agentPubkey: 'other' }]),
+    ).toEqual(retracted);
   });
 
   it('names a draft row by author and request, and holds it at its turn start', () => {

@@ -3,6 +3,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
+const glyphSource = readFileSync(
+  path.join(__dirname, '..', '..', '..', 'components', 'buzz', 'ExitGlyph.tsx'),
+  'utf8',
+);
 const roomSessionSource = readFileSync(
   path.join(__dirname, 'chat', 'useRoomSurfaceSession.ts'),
   'utf8',
@@ -11,7 +15,7 @@ const roomSessionSource = readFileSync(
 describe('Chat-list swipe-left actions', () => {
   it('offers destructive Leave for member Rooms and non-destructive Close for DMs', () => {
     expect(source).toContain("const canLeaveRooms = chatList?.workspace.role === 'member'");
-    expect(source).toContain("!viewerIsAgent && Platform.OS !== 'web'");
+    expect(source).toContain('!viewerIsAgent ? (');
     expect(source).toContain('testID={`chat-close-swipe-${item.room.id}`}');
     expect(source).toContain('!item.directMessage && canLeaveRooms');
     expect(source).toContain('testID={`room-leave-action-${item.room.id}`}');
@@ -19,22 +23,49 @@ describe('Chat-list swipe-left actions', () => {
     expect(source).toContain('testID={`chat-close-action-${item.room.id}`}');
   });
 
-  it('reveals one icon-only action for each row contract', () => {
+  it('reveals the same unframed brass exit glyph for Rooms and DMs', () => {
     const reveal = source.slice(
       source.indexOf('renderRightActions'),
       source.indexOf('testID={`chat-close-swipe-'),
     );
-    expect(reveal).toContain('×');
-    expect(reveal).toContain('!');
-    expect(reveal).toContain('styles.leaveTile');
+    expect(reveal).toContain('<ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />');
+    expect(reveal).toContain('<ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />');
+    expect(reveal).not.toContain('<Text style={styles.leaveTileGlyph}>');
+    expect(reveal).not.toContain('<Text style={styles.closeTileGlyph}>');
     expect(reveal).not.toMatch(/<Text[^>]*>\s*[A-Z][A-Z\s]+<\/Text>/);
     expect(reveal).not.toMatch(/<Text[^>]*>[A-Z][A-Z\s]+<\/Text>/);
-    // The tile itself is the specified 28px square, and the styles build it
-    // from that one constant with no label style of its own.
-    expect(source).toContain('const LEAVE_TILE_SIZE = 28;');
-    expect(source).toContain('leaveTileButton: {');
-    expect(source).toContain('width: LEAVE_TILE_SIZE,');
-    expect(source).not.toContain('leaveTileLabel:');
+    expect(source).toContain('swipeActionButton: {');
+    const actionStyles = source.slice(
+      source.indexOf('chatActions: {'),
+      source.indexOf('composeOverlay: {'),
+    );
+    expect(actionStyles).toContain('backgroundColor: hull.bgRaised');
+    expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?backgroundColor:/);
+    expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?border(?:Color|Width):/);
+
+    const rowStyles = source.slice(source.indexOf('row: {'), source.indexOf('rowMain: {'));
+    expect(rowStyles).toContain('backgroundColor: hull.bgBase');
+    expect(rowStyles).toContain('shadowColor: hull.bgVoid');
+    expect(rowStyles).toContain('shadowOffset: { width: 6, height: 0 }');
+    expect(rowStyles).toContain('shadowOpacity: 0.28');
+    expect(rowStyles).toContain('shadowRadius: 8');
+    expect(rowStyles).toContain(
+      'boxShadow: `6px 0 8px color-mix(in srgb, ${hull.bgVoid} 28%, transparent)`',
+    );
+    expect(rowStyles).not.toMatch(/border(?:Color|Width):/);
+
+    expect(glyphSource).toContain('height={26}');
+    expect(glyphSource).toContain('width={26}');
+    expect(glyphSource).toContain('stroke={theme.buzz.accent}');
+    expect(glyphSource).toContain('strokeWidth={1.8}');
+    expect(glyphSource).toContain('d="M14 4h6v16h-6"');
+    expect(glyphSource).toContain('d="M4 12h11"');
+    expect(glyphSource).toContain('d="M11 8l4 4-4 4"');
+  });
+
+  it('keeps the distinct spoken consequences on the shared glyph', () => {
+    expect(source).toContain('accessibilityLabel={`Leave ${title}`}');
+    expect(source).toContain('accessibilityLabel={`Close ${title}`}');
   });
 
   it('closes only DMs without a destructive confirmation and refreshes the deck', () => {

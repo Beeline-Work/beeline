@@ -9,6 +9,7 @@ import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
+  CORNER_AUTHOR_CONTRACT,
   CORNER_DELIVERY_NUDGE,
   CORNER_YOLO_MERGE_NUDGE,
   cornerClosePollMs,
@@ -107,6 +108,8 @@ describe('corner merge instructions', () => {
   it('keeps delivery cleanup under agent control and the merge reminder behind yolo', () => {
     expect(CORNER_DELIVERY_NUDGE).toContain('commit and push');
     expect(CORNER_DELIVERY_NUDGE).toContain('do not discard');
+    expect(CORNER_DELIVERY_NUDGE).toContain('## Reproduced');
+    expect(CORNER_DELIVERY_NUDGE).toContain('## Demonstrated');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('Yolo is on');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('pr_checks_status');
   });
@@ -382,6 +385,7 @@ describe('corner close-request polling cadence', () => {
       mcpServers: [expect.objectContaining({ name: 'beeline-agent' })],
       systemPrompt: expect.stringContaining('chat-only corner with no repository'),
     });
+    expect(sessionInput?.systemPrompt).not.toContain(CORNER_AUTHOR_CONTRACT);
     expect(sessionInput?.mcpServers.some((server) => server.name === 'buzz-dev-mcp')).toBe(false);
     expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     expect(calls).toContainEqual(
@@ -1907,6 +1911,11 @@ describe('thin monolith corner turn', () => {
       expect.objectContaining({
         systemPrompt: expect.stringContaining(cornerMergeInstruction(true)),
       }),
+    );
+    const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
+    expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    expect(repositorySystemPrompt.indexOf(CORNER_AUTHOR_CONTRACT)).toBeLessThan(
+      repositorySystemPrompt.indexOf(cornerMergeInstruction(true)),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({

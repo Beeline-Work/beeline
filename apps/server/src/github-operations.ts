@@ -93,9 +93,9 @@ function checkFact(event: string, body: GitHubRecord) {
         : 'pending',
       ...(conclusion ? { conclusion } : {}),
       ...(text(run?.html_url) ? { url: text(run?.html_url)! } : {}),
-      ...(text(record(run?.check_suite)?.head_sha)
+      ...((text(run?.head_sha) ?? text(record(run?.check_suite)?.head_sha))
         ? {
-            headSha: text(record(run?.check_suite)?.head_sha)!,
+            headSha: (text(run?.head_sha) ?? text(record(run?.check_suite)?.head_sha))!,
           }
         : {}),
     } as const;
@@ -471,6 +471,7 @@ export class GitHubOperations {
       token: token.token,
       repository: row.full_name,
       defaultBranch: row.default_branch,
+      repositoryId: row.repository_id,
     };
   }
 
@@ -507,6 +508,120 @@ export class GitHubOperations {
       target.repository,
       matches[0]!.id,
       target.defaultBranch,
+    );
+  }
+
+  /** Caller is authorized by DaemonService against the requesting corner membership. */
+  async prChecksStatus(input: { cornerId: string; pullRequest?: number | string }) {
+    const corner = (
+      await this.database.query<{
+        parent_id: string;
+        lifecycle: CornerLifecycleView;
+      }>(
+        `SELECT r.parent_id,f.lifecycle FROM rooms r JOIN corner_facts f ON f.corner_id=r.id WHERE r.id=$1`,
+        [input.cornerId],
+      )
+    ).rows[0];
+    if (!corner?.parent_id) throw new Error('corner not found');
+    const target = await this.roomWorkflowTarget(corner.parent_id);
+    const requested = input.pullRequest ?? corner.lifecycle.pr?.number;
+    let number: number;
+    if (typeof requested === 'number') number = requested;
+    else if (typeof requested === 'string') {
+      const match = requested.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/i);
+      if (!match || match[1]!.toLowerCase() !== target.repository.toLowerCase())
+        throw new Error('pull request must belong to the corner Room repository');
+      number = Number(match[2]);
+    } else throw new Error('specify the pull request number or URL being reviewed');
+    if (!Number.isSafeInteger(number) || number <= 0)
+      throw new Error('invalid pull request number');
+    // Always resolve the head: a force-push must never inherit a green predecessor.
+    const pr = await this.app.readPullRequest(target.token, target.repository, number);
+    const facts = await this.database.transaction(async (database) => {
+      const inserted = await database.query(
+        `INSERT INTO github_head_checks(repository_id,head_sha) VALUES($1,$2)
+         ON CONFLICT DO NOTHING RETURNING head_sha`,
+        [target.repositoryId, pr.headSha],
+      );
+      const cached = (
+        await database.query<{
+          facts: Record<string, 'passed' | 'failed' | 'pending'>;
+          fresh: boolean;
+        }>(
+          `SELECT facts,verified_at > now()-interval '30 seconds' AS fresh FROM github_head_checks
+          WHERE repository_id=$1 AND head_sha=$2 FOR UPDATE`,
+          [target.repositoryId, pr.headSha],
+        )
+      ).rows[0]!;
+      if (cached.fresh) return cached.facts;
+      // Reuse existing head-bound facts from any corner in this Room on first lookup.
+      // An invalidated/expired cache is reconciled with GitHub, not stale corner rows.
+      const known = inserted.rowCount
+        ? (
+            await database.query<{ name: string; status: 'passed' | 'failed' | 'pending' }>(
+              `SELECT DISTINCT ON (c.name) c.name,c.status FROM corner_check_facts c
+         JOIN rooms r ON r.id=c.corner_id WHERE r.parent_id=$1 AND c.head_sha=$2
+         ORDER BY c.name,c.updated_at DESC`,
+              [corner.parent_id, pr.headSha],
+            )
+          ).rows
+        : [];
+      const facts = known.length
+        ? Object.fromEntries(known.map((c) => [c.name, c.status]))
+        : await this.app.readCommitChecks(target.token, target.repository, pr.headSha);
+      // Holding the head row lock across the fetch ensures a concurrent webhook invalidates
+      // AFTER this snapshot is stored, instead of being overwritten by an older HTTP answer.
+      await database.query(
+        `UPDATE github_head_checks SET facts=$3::jsonb,verified_at=now()
+        WHERE repository_id=$1 AND head_sha=$2`,
+        [target.repositoryId, pr.headSha, JSON.stringify(facts)],
+      );
+      return facts;
+    });
+    const values = Object.values(facts);
+    const checks = values.includes('failed')
+      ? ('failed' as const)
+      : !values.length || values.includes('pending')
+        ? ('pending' as const)
+        : ('passed' as const);
+    const approval = await this.database.query(
+      `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
+       WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3 LIMIT 1`,
+      [corner.parent_id, number, pr.headSha],
+    );
+    return {
+      checks,
+      pullRequest: pr.url,
+      headSha: pr.headSha,
+      approvalPending: approval.rowCount > 0,
+    };
+  }
+
+  /** Keep head facts even when no Beeline corner authored this branch (including fork PRs).
+   * A delivery is only one check, never proof that the full head is green. Invalidate the
+   * complete snapshot so the next gate reconciles all runs and commit-status contexts.
+   */
+  private async recordHeadCheck(event: string, body: GitHubRecord, installationId: number) {
+    const check = checkFact(event, body);
+    const repository = repositoryName(body);
+    if (!check?.headSha || !repository) return;
+    await this.database.query(
+      `INSERT INTO github_head_checks(repository_id,head_sha,facts)
+       SELECT g.repository_id,$3,$4::jsonb FROM github_repositories g
+       JOIN github_installations i ON i.installation_id=g.installation_id AND i.status='active'
+       WHERE g.installation_id=$1 AND lower(g.full_name)=lower($2) AND g.active
+         AND EXISTS (SELECT 1 FROM rooms r WHERE r.parent_id IS NULL AND r.archived_at IS NULL
+           AND r.github_installation_id=g.installation_id
+           AND lower(regexp_replace(regexp_replace(COALESCE(r.repository_remote,r.repository_key,''),
+             '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower(g.full_name))
+       ON CONFLICT(repository_id,head_sha) DO UPDATE SET
+         facts=github_head_checks.facts||EXCLUDED.facts,verified_at=NULL`,
+      [
+        installationId,
+        repository,
+        check.headSha,
+        JSON.stringify({ [`${event}:${check.name}`]: check.status }),
+      ],
     );
   }
 
@@ -605,6 +720,7 @@ export class GitHubOperations {
       event === 'check_suite' ||
       event === 'status'
     ) {
+      await this.recordHeadCheck(event, body, install.id);
       await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
       return;

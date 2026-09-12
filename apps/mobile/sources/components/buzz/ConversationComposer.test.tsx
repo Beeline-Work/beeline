@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+const platform = vi.hoisted(() => ({ OS: 'web' }));
 vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -12,14 +13,23 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
-    Platform: { OS: 'web', select: (choices: any) => choices.default },
+    Platform: {
+      get OS() {
+        return platform.OS;
+      },
+      select: (choices: any) => choices.default,
+    },
   };
 });
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
-import { ConversationComposer } from './ConversationComposer';
+import {
+  COMPOSER_MAX_INPUT_HEIGHT,
+  COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+  ConversationComposer,
+} from './ConversationComposer';
 import { desktopComposerKeyAction } from '@/buzz/desktop-workbench-state';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,8 +45,8 @@ function render(value: string, onStop?: () => Promise<boolean>) {
         onStop={onStop}
         running
         stopKey="turn-one"
-        height={40}
-        maxHeight={120}
+        height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+        maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
         focused={false}
         disabled={false}
         onAttach={vi.fn()}
@@ -56,7 +66,10 @@ async function release(fixture: ReturnType<typeof render>) {
   act(() => fixture.button().props.onPressOut({ nativeEvent: { type: 'mouseup' } }));
   await act(async () => fixture.button().props.onPress());
 }
-beforeEach(() => vi.useFakeTimers());
+beforeEach(() => {
+  platform.OS = 'web';
+  vi.useFakeTimers();
+});
 afterEach(() => {
   act(() => renderers.splice(0).forEach((renderer) => renderer.unmount()));
   vi.useRealTimers();
@@ -66,6 +79,26 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
   it('uses the same empty placeholder on every surface', () => {
     const f = render('');
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
+  });
+
+  it('leaves multiline text visible through native auto-growth', () => {
+    const value = 'first line\nsecond line\nthird line';
+    platform.OS = 'ios';
+    const f = render(value);
+    const input = f.renderer.root.findByType('TextInput');
+    expect(input.props.value).toBe(value);
+    expect(input.props.multiline).toBe(true);
+    expect(input.props.numberOfLines).toBeUndefined();
+    expect(input.props.style).toHaveLength(2);
+    expect(input.props.style[1]).toBeUndefined();
+  });
+
+  it('keeps measured multiline sizing on web', () => {
+    const f = render('first line\nsecond line\nthird line');
+    expect(f.renderer.root.findByType('TextInput').props.style[1]).toEqual({
+      height: 40,
+      maxHeight: 120,
+    });
   });
 
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
@@ -172,7 +205,7 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     const f = render('hello');
     expect(f.renderer.root.findAllByType('View')[0].props.style[0]).toMatchObject({
       flexDirection: 'row',
-      alignItems: 'flex-end',
+      alignItems: 'center',
     });
     expect(f.renderer.root.findByType('TextInput').props.onKeyPress).toBe(f.onKeyPress);
     expect(desktopComposerKeyAction('web', 'Enter', false)).toBe('send');
@@ -186,5 +219,31 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
       expect(source).toContain('stopKey={');
       expect(source).toContain('desktopComposerKeyAction(');
     }
+  });
+
+  it('bottom-aligns the controls only after the field grows beyond one line', () => {
+    const f = render('one line');
+    expect(f.renderer.root.findAllByType('View')[0].props.style[1]).toBe(false);
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer {...props} height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT + 1} />,
+      ),
+    );
+    expect(f.renderer.root.findAllByType('View')[0].props.style[1]).toMatchObject({
+      alignItems: 'flex-end',
+    });
+  });
+
+  it('uses a one-pixel brass focus hairline without changing geometry or adding glow', () => {
+    const f = render('focused');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props} focused />));
+    const [base, , focus] = f.renderer.root.findAllByType('View')[0].props.style;
+    expect(base.borderWidth).toBe(1);
+    expect(focus).toEqual({ borderColor: '#b08a4a' });
+    expect(focus).not.toHaveProperty('borderWidth');
+    expect(focus).not.toHaveProperty('shadowColor');
+    expect(focus).not.toHaveProperty('boxShadow');
   });
 });

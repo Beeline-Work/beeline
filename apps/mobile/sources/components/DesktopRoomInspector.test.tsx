@@ -66,6 +66,8 @@ vi.mock('@/components/buzz/TurnProgressLine', async () => {
 vi.mock('@/components/buzz/ConversationComposer', async () => {
   const ReactModule = await import('react');
   return {
+    COMPOSER_SINGLE_LINE_INPUT_HEIGHT: 26,
+    COMPOSER_MAX_INPUT_HEIGHT: 115,
     ConversationComposer: (props: any) => ReactModule.createElement('ConversationComposer', props),
   };
 });
@@ -246,7 +248,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
     );
-    expect(copy).toContain('waiting · review');
+    expect(copy).toContain('REVIEW ›');
     expect(copy).toContain('Concluded · 1');
     expect(copy).toContain('1 people · 1 agents');
     expect(copy).toContain('@codex');

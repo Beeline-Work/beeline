@@ -488,6 +488,69 @@ export class GitHubAppClient {
     if (!response.ok) throw new GitHubHttpError('GitHub workflow dispatch', response.status);
   }
 
+  /** Resolve the current head in the Room's repository, including fork-authored PRs. */
+  async readPullRequest(accessToken: string, fullName: string, number: number) {
+    const body = await this.readRepositoryJson(accessToken, fullName, `pulls/${number}`);
+    const head = body.head as { sha?: unknown } | undefined;
+    if (typeof head?.sha !== 'string' || !/^[a-f0-9]{40,64}$/i.test(head.sha))
+      throw new Error('GitHub pull request has no valid head');
+    return { number, url: `https://github.com/${fullName}/pull/${number}`, headSha: head.sha };
+  }
+
+  /** All latest check runs plus GitHub's aggregate of every commit-status context. */
+  async readCommitChecks(accessToken: string, fullName: string, headSha: string) {
+    const checks: Record<string, 'passed' | 'failed' | 'pending'> = {};
+    for (let page = 1; ; page++) {
+      const body = await this.readRepositoryJson(
+        accessToken,
+        fullName,
+        `commits/${encodeURIComponent(headSha)}/check-runs?filter=latest&per_page=100&page=${page}`,
+      );
+      if (!Array.isArray(body.check_runs)) throw new Error('GitHub check runs are invalid');
+      for (const run of body.check_runs as Record<string, unknown>[]) {
+        const key = `run:${String(run.id)}`;
+        checks[key] =
+          run.status !== 'completed' || !run.conclusion
+            ? 'pending'
+            : ['success', 'neutral', 'skipped'].includes(String(run.conclusion))
+              ? 'passed'
+              : 'failed';
+      }
+      if (body.check_runs.length < 100) break;
+    }
+    const status = await this.readRepositoryJson(
+      accessToken,
+      fullName,
+      `commits/${encodeURIComponent(headSha)}/status`,
+    );
+    if (
+      !['success', 'failure', 'pending'].includes(String(status.state)) ||
+      typeof status.total_count !== 'number'
+    )
+      throw new Error('GitHub combined status is invalid');
+    // GitHub reports pending for zero status contexts; it must not mask passing check runs.
+    if (status.total_count > 0)
+      checks['commit-status'] =
+        status.state === 'success' ? 'passed' : status.state === 'failure' ? 'failed' : 'pending';
+    return checks;
+  }
+
+  private async readRepositoryJson(
+    accessToken: string,
+    fullName: string,
+    path: string,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
+      {
+        headers: githubHeaders(accessToken),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!response.ok) throw new GitHubHttpError('GitHub PR checks', response.status);
+    return (await response.json()) as Record<string, unknown>;
+  }
+
   /** Delete one installation-scoped branch after its corner has been archived. */
   async deleteBranch(
     installationId: number,

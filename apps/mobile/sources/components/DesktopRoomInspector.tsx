@@ -12,7 +12,7 @@ import {
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
-import { roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { foldSystemLines } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
@@ -29,7 +29,11 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
-import { ConversationComposer } from '@/components/buzz/ConversationComposer';
+import {
+  COMPOSER_MAX_INPUT_HEIGHT,
+  COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+  ConversationComposer,
+} from '@/components/buzz/ConversationComposer';
 import {
   HullActionSheetCancel,
   HullActionSheetModal,
@@ -54,8 +58,8 @@ type Props = {
   onOpenRoster(): void;
 };
 
-const COMPOSER_MIN_HEIGHT = 40;
-const COMPOSER_MAX_HEIGHT = 120;
+const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
+const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 
 function stateLine(corner: CornerListItem): string {
   return `${corner.status}${corner.reason ? ` · ${corner.reason}` : ''}`;
@@ -414,11 +418,7 @@ function SectionHeader({
 }
 
 function CornerRow({ corner, onPress }: { corner: CornerListItem; onPress(): void }) {
-  const needsYou = roomRowNeedsAttention({
-    unread: false,
-    ...(corner.status === 'waiting' ? { agentState: 'needs-you' as const } : {}),
-  });
-  const working = corner.status === 'working';
+  const display = cornerDisplayState(corner);
   return (
     <Pressable
       accessibilityRole="button"
@@ -440,16 +440,19 @@ function CornerRow({ corner, onPress }: { corner: CornerListItem; onPress(): voi
           />
           <Text style={styles.cornerMeta}>
             {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
-            {stateLine(corner)} · {age(corner)}
+            {age(corner)}
           </Text>
         </View>
       </View>
-      {(needsYou || working) && (
-        <View
-          style={[styles.stateDot, needsYou ? styles.stateNeedsYou : styles.stateWorking]}
+      <View style={styles.cornerEndcap}>
+        <Text
+          style={[styles.cornerStatus, display.needsYou && styles.cornerStatusNeedsYou]}
           testID={`desktop-work-corner-state-${corner.corner.id}`}
-        />
-      )}
+        >
+          {display.word}
+        </Text>
+        <Text style={styles.chevron}>›</Text>
+      </View>
     </Pressable>
   );
 }
@@ -793,7 +796,7 @@ const styles = StyleSheet.create((theme) => ({
   cornerRow: {
     minHeight: 88,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 8,
     paddingHorizontal: 8,
     paddingVertical: 10,
@@ -805,9 +808,9 @@ const styles = StyleSheet.create((theme) => ({
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
-  stateDot: { width: 7, height: 7, marginTop: 7 },
-  stateNeedsYou: { backgroundColor: theme.colors.textLink },
-  stateWorking: { backgroundColor: theme.colors.textSecondary },
+  cornerEndcap: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  cornerStatus: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  cornerStatusNeedsYou: { color: theme.colors.textLink },
   sectionGap: { height: 22 },
   simpleRow: {
     minHeight: 44,
@@ -846,7 +849,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   transcript: { flex: 1 },
   transcriptContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 12 },
-  cockpitComposer: { paddingHorizontal: 12, paddingBottom: 12 },
+  cockpitComposer: { paddingHorizontal: 16, paddingBottom: 12 },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, padding: 16 },
   error: {
     ...theme.buzz.type.meta,

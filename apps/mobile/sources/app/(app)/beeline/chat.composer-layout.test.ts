@@ -23,21 +23,25 @@ describe('Room composer status layout', () => {
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 
-  it('applies the measured multiline height within its scrolling cap', () => {
-    expect(composerInput).toContain('style={[styles.input, { height, maxHeight }]}');
+  it('lets newline content drive the iOS input height without changing web sizing', () => {
+    expect(composerInput).toContain(
+      "style={[styles.input, Platform.OS === 'ios' ? undefined : { height, maxHeight }]}",
+    );
     expect(composerInput).toContain('multiline');
     expect(composerInput).not.toContain('numberOfLines=');
-    expect(composerInput).not.toContain('height: composerHeight');
   });
 
-  it('lets soft-wrapped content grow until the 120px scrolling cap', () => {
+  it('lets soft-wrapped content grow until the five-line scrolling cap', () => {
     expect(composerInput).toContain('onContentSizeChange={onContentSizeChange}');
     expect(source).toContain(
       'Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight))',
     );
     expect(composerInput).toContain('scrollEnabled={height >= maxHeight}');
     expect(source).toContain('maxHeight={COMPOSER_MAX_HEIGHT}');
-    expect(inputStyle).toContain('maxHeight: 120');
+    expect(composerSource).toContain(
+      'export const COMPOSER_MAX_INPUT_HEIGHT = 5 * groknight.type.body.lineHeight',
+    );
+    expect(inputStyle).toContain('maxHeight: COMPOSER_MAX_INPUT_HEIGHT');
   });
 
   it('keeps turn progress inside the growing composer stack, above the field', () => {
@@ -48,12 +52,12 @@ describe('Room composer status layout', () => {
     expect(composer).toBeGreaterThan(progress);
   });
 
-  it('keeps the send arrow inset from the focus border', () => {
+  it('keeps the send arrow separated from the text field', () => {
     const sendButtonStyle = composerSource.slice(
       composerSource.indexOf('  sendButton: {'),
-      composerSource.indexOf('  sendButtonDisabled: {'),
+      composerSource.indexOf('  sendButtonArmed: {'),
     );
-    expect(sendButtonStyle).toContain('marginRight: 4');
+    expect(sendButtonStyle).toContain('marginLeft: 8');
   });
 
   it('uses a long-press wrapper to copy a complete turn', () => {

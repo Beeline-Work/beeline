@@ -164,6 +164,8 @@ export type CreateRoomInput = WorkspaceInput & {
 export type UpdateRoomInput = RoomInput & {
   readonly name?: string;
   readonly visibility?: 'public' | 'invite-only';
+  /** Agent member assigned to review every repository corner in this Room; null clears. */
+  readonly reviewerAgentId?: string | null;
 };
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };

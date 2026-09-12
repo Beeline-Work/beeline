@@ -135,10 +135,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     )
   ).rows[0];
   if (!source) return;
-  const targets = new Set([
-    ...source.mention_ids,
-    ...(source.direct_participants ?? []),
-  ]);
+  const targets = new Set([...source.mention_ids, ...(source.direct_participants ?? [])]);
   targets.delete(source.author_id);
   // An untagged top-level message continues only the immediately preceding
   // conversational agent message. Do not search farther back: intervening
@@ -185,12 +182,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       roomId: source.room_id,
       agentId: target,
       sourceMessageId: sourceId,
-      reason:
-        source.direct_participants
-          ? 'direct_message'
-          : continuationAgent === target
-            ? 'human_continuation'
-            : 'human_tag',
+      reason: source.direct_participants
+        ? 'direct_message'
+        : continuationAgent === target
+          ? 'human_continuation'
+          : 'human_tag',
     });
   }
 }
@@ -399,8 +395,25 @@ export async function routeSystemCommand(
   if (!input.kind) return;
   if (input.kind === 'check-passed' || input.kind === 'check-failed') {
     const fact = (
-      await db.query<{ owner_agent_id: string; state: string; command_check_state: string | null }>(
-        `SELECT owner_agent_id,lifecycle->>'checks' state,command_check_state FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+      await db.query<{
+        owner_agent_id: string;
+        reviewer_agent_id: string | null;
+        state: string;
+        command_check_state: string | null;
+      }>(
+        `SELECT fact.owner_agent_id,reviewer.id reviewer_agent_id,
+                fact.lifecycle->>'checks' state,fact.command_check_state
+         FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id
+         JOIN rooms parent ON parent.id=corner.parent_id
+         LEFT JOIN memberships reviewer_membership
+           ON reviewer_membership.room_id=parent.id
+          AND reviewer_membership.identity_id=parent.reviewer_agent_id
+          AND reviewer_membership.removed_at IS NULL
+         LEFT JOIN identities reviewer
+           ON reviewer.id=reviewer_membership.identity_id AND reviewer.kind='agent'
+         WHERE fact.corner_id=$1
+         FOR UPDATE OF fact`,
         [input.roomId],
       )
     ).rows[0];
@@ -411,13 +424,14 @@ export async function routeSystemCommand(
         fact.state === fact.command_check_state
       )
         return;
-      const carrier =
+      const fallbackCarrier =
         (
           await db.query<{ agent_id: string }>(
             `SELECT agent_id FROM agent_commands WHERE room_id=$1 AND result_message_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
             [input.roomId],
           )
         ).rows[0]?.agent_id ?? fact.owner_agent_id;
+      const carrier = fact.reviewer_agent_id ?? fallbackCarrier;
       await createAgentCommand(db, {
         roomId: input.roomId,
         agentId: carrier,

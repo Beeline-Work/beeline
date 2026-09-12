@@ -158,6 +158,7 @@ interface RoomRow {
   repository_resolution: 'repository' | 'none' | 'unverified';
   github_installation_id: string | null;
   github_events_enabled: boolean;
+  reviewer_agent_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -289,6 +290,7 @@ function roomHeader(row: RoomRow, publicOrigin: string) {
     ...(row.about ? { about: row.about } : {}),
     ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
+    ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
     archived: Boolean(row.archived_at),
     createdAt: unix(row.created_at),
     updatedAt: unix(row.updated_at),
@@ -2352,11 +2354,7 @@ export class PhoneService {
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const mentionResolution = await this.resolveMessageMentions(
-      input.roomId,
-      author,
-      input.text,
-    );
+    const mentionResolution = await this.resolveMessageMentions(input.roomId, author, input.text);
     const mentions = JSON.stringify(mentionResolution.mentionIds);
     const values = [id, input.roomId, author, input.text, attachments, mentions];
     return this.database.transaction(async (database) => {
@@ -3133,9 +3131,31 @@ export class PhoneService {
           [input.roomId],
         )
       ).rows[0];
+      if (input.reviewerAgentId !== undefined && input.reviewerAgentId !== null) {
+        const reviewer = await database.query(
+          `SELECT 1
+           FROM memberships membership
+           JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+           WHERE membership.room_id=$1 AND membership.identity_id=$2
+             AND membership.removed_at IS NULL
+           FOR SHARE OF membership`,
+          [input.roomId, input.reviewerAgentId],
+        );
+        if (!reviewer.rowCount) throw new Error('reviewer agent Room membership required');
+      }
       await database.query(
-        `UPDATE rooms SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),updated_at=now() WHERE id=$1`,
-        [input.roomId, input.name ?? null, input.visibility ?? null],
+        `UPDATE rooms
+         SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),
+             reviewer_agent_id=CASE WHEN $4::boolean THEN $5 ELSE reviewer_agent_id END,
+             updated_at=now()
+         WHERE id=$1`,
+        [
+          input.roomId,
+          input.name ?? null,
+          input.visibility ?? null,
+          input.reviewerAgentId !== undefined,
+          input.reviewerAgentId ?? null,
+        ],
       );
       if (input.visibility && input.visibility !== current?.visibility) {
         if (input.visibility === 'public')
@@ -3215,10 +3235,10 @@ export class PhoneService {
   private async reopenChat(roomId: string, viewerId: string) {
     await this.database.transaction(async (database) => {
       await this.requireTopLevelChatMember(roomId, viewerId, database);
-      await database.query(
-        `DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`,
-        [roomId, viewerId],
-      );
+      await database.query(`DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`, [
+        roomId,
+        viewerId,
+      ]);
     });
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
@@ -3438,10 +3458,10 @@ export class PhoneService {
       [input.workspaceId, JSON.stringify(participants)],
     );
     if (found.rows[0]) {
-      await this.database.query(
-        `DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`,
-        [found.rows[0].id, viewerId],
-      );
+      await this.database.query(`DELETE FROM chat_dismissals WHERE room_id=$1 AND identity_id=$2`, [
+        found.rows[0].id,
+        viewerId,
+      ]);
       return { id: found.rows[0].id, created: false };
     }
     const id = directMessageRoomId(input.workspaceId, participants as [string, string]);

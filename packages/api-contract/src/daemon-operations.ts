@@ -347,6 +347,8 @@ export type AgentConfigurationResult = {
   readonly commands: readonly { readonly name: string; readonly description?: string }[];
   /** The agent "yolo" switch: grant requests are approved without asking. */
   readonly yoloMode: boolean;
+  /** Live reviewer configured on a corner's parent Room; absent for self-review. */
+  readonly reviewerHandle?: string;
 };
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';

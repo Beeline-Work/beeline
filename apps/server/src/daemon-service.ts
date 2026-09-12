@@ -1135,12 +1135,22 @@ export class DaemonService {
         selected_effort: string | null;
         commands: Array<{ name: string; description?: string }>;
         yolo_mode: boolean;
+        reviewer_handle: string | null;
       }>(
         `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
-                CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode
+                CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
+                CASE WHEN room.parent_id IS NOT NULL AND reviewer.id<>a.agent_id
+                     THEN reviewer.handle END reviewer_handle
          FROM agents a
          LEFT JOIN rooms room ON room.id=$2
          LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
+         LEFT JOIN rooms parent ON parent.id=room.parent_id
+         LEFT JOIN memberships reviewer_membership
+           ON reviewer_membership.room_id=parent.id
+          AND reviewer_membership.identity_id=parent.reviewer_agent_id
+          AND reviewer_membership.removed_at IS NULL
+         LEFT JOIN identities reviewer
+           ON reviewer.id=reviewer_membership.identity_id AND reviewer.kind='agent'
          WHERE a.agent_id=$1`,
         [agentId, roomId],
       )
@@ -1151,6 +1161,7 @@ export class DaemonService {
       ...(row?.selected_effort ? { effort: row.selected_effort } : {}),
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
+      ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
@@ -1435,8 +1446,7 @@ export class DaemonService {
           | 'write_failed';
         row: (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
         recovered_row:
-          | (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string })
-          | null;
+          (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
       };
       // One autocommit statement owns the lock, generation/lease/cancellation
       // decision, attachment drain, terminal turn/failure state, reply insert,

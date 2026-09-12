@@ -254,6 +254,8 @@ import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/R
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { ConversationComposer } from '@/components/buzz/ConversationComposer';
+import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
 
@@ -409,6 +411,8 @@ export default function BuzzChat() {
   const loadedDraftForRef = useRef<string | null>(null);
   const inspectorTriggerRef = useRef<React.ElementRef<typeof TouchableOpacity>>(null);
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(false);
+  const [selectedDesktopCornerId, setSelectedDesktopCornerId] = useState<string | null>(null);
+  const observedCornerCardsRef = useRef<{ roomId: string; ids: Set<string> } | null>(null);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
   >(null);
@@ -519,8 +523,39 @@ export default function BuzzChat() {
 
   useEffect(() => {
     if (!desktopExperience) return;
-    void loadDesktopInspectorOpen().then(setDesktopInspectorOpen);
-  }, [desktopExperience]);
+    void loadDesktopInspectorOpen().then((open) =>
+      setDesktopInspectorOpen(open || desktopMode === 'three-pane'),
+    );
+  }, [desktopExperience, desktopMode]);
+
+  useEffect(() => {
+    if (!desktopExperience) return;
+    return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
+      if (roomId !== decodedId) return;
+      setSelectedDesktopCornerId(cornerId);
+      setDesktopInspectorOpen(true);
+      void saveDesktopInspectorOpen(true);
+    });
+  }, [decodedId, desktopExperience]);
+
+  useEffect(() => {
+    if (!roomSurface || desktopMode !== 'three-pane') return;
+    const ids = new Set(
+      roomSurface.messages.flatMap((message) => (message.corner ? [message.corner.id] : [])),
+    );
+    const observed = observedCornerCardsRef.current;
+    if (!observed || observed.roomId !== roomSurface.room.id) {
+      observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
+      setSelectedDesktopCornerId(null);
+      return;
+    }
+    const opened = [...ids].find((cornerId) => !observed.ids.has(cornerId));
+    observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
+    if (!opened) return;
+    setSelectedDesktopCornerId(opened);
+    setDesktopInspectorOpen(true);
+    void saveDesktopInspectorOpen(true);
+  }, [desktopMode, roomSurface]);
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
@@ -3902,133 +3937,108 @@ export default function BuzzChat() {
                   )}
                 </>
               )}
-              <View
-                style={[styles.composer, composerFocused && styles.composerFocused]}
-                {...(desktopExperience
-                  ? ({
-                      onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
-                      onDrop: handleDesktopDrop,
-                      onPaste: handleDesktopPaste,
-                    } as any)
-                  : {})}
-              >
-                <TouchableOpacity
-                  accessibilityLabel="Attach photo or document"
-                  accessibilityRole="button"
-                  disabled={sending}
-                  onPress={chooseAttachment}
-                  style={styles.attachButton}
-                  testID="chat-attach-button"
-                >
-                  <Text style={styles.attachButtonText}>＋</Text>
-                </TouchableOpacity>
-                <TextInput
-                  ref={composerRef}
-                  style={styles.input}
-                  value={inputText}
-                  onChangeText={(value) => {
-                    inputTextRef.current = value;
-                    setInputText(value);
-                  }}
-                  onContentSizeChange={(event) => {
-                    const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
-                    setComposerHeight(
-                      Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
-                    );
-                  }}
-                  onFocus={() => setComposerFocused(true)}
-                  onBlur={() => setComposerFocused(false)}
-                  onKeyPress={(event) => {
-                    const action = mentionKeyboardAction(event.nativeEvent.key);
-                    // Printable keys must never be prevented by the mention
-                    // picker. In particular, `>` is ordinary composer text.
-                    if (slashMenuVisible) {
-                      if (!action) return;
-                      if (action === 'select') {
-                        event.preventDefault();
-                        selectHighlightedPaletteItem();
-                      } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
-                        event.preventDefault();
-                        const direction = action === 'next' ? 1 : -1;
-                        setHighlightedSlashVerbIndex(
-                          (current) => (current + direction + paletteItemCount) % paletteItemCount,
-                        );
-                      } else {
-                        event.preventDefault();
-                        dismissSlashMenu();
-                      }
-                      return;
-                    }
-                    if (!mentionMenuVisible) {
-                      const desktopAction = desktopComposerKeyAction(
-                        Platform.OS,
-                        event.nativeEvent.key,
-                        Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
-                      );
-                      if (desktopAction === 'send') {
-                        event.preventDefault();
-                        void handleSend();
-                      }
-                      return;
-                    }
-                    if (!mentionMenuVisible || !action) return;
+              <ConversationComposer
+                inputRef={composerRef}
+                value={inputText}
+                height={composerHeight}
+                maxHeight={COMPOSER_MAX_HEIGHT}
+                focused={composerFocused}
+                disabled={sending}
+                canSend={
+                  slashMenuVisible
+                    ? Boolean(inputText.trim())
+                    : Boolean(inputText.trim() || pendingAttachments.length)
+                }
+                onAttach={chooseAttachment}
+                attachDisabled={sending}
+                containerProps={
+                  desktopExperience
+                    ? ({
+                        onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
+                        onDrop: handleDesktopDrop,
+                        onPaste: handleDesktopPaste,
+                      } as any)
+                    : undefined
+                }
+                onChangeText={(value) => {
+                  inputTextRef.current = value;
+                  setInputText(value);
+                }}
+                onContentSizeChange={(event) => {
+                  const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
+                  setComposerHeight(
+                    Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
+                  );
+                }}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
+                onKeyPress={(event) => {
+                  const action = mentionKeyboardAction(event.nativeEvent.key);
+                  // Printable keys must never be prevented by the mention
+                  // picker. In particular, `>` is ordinary composer text.
+                  if (slashMenuVisible) {
+                    if (!action) return;
                     if (action === 'select') {
                       event.preventDefault();
-                      const selected = mentionSuggestions.matches[highlightedMentionIndex];
-                      if (selected) selectMention(selected);
-                    } else if (action === 'next' || action === 'previous') {
+                      selectHighlightedPaletteItem();
+                    } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
                       event.preventDefault();
                       const direction = action === 'next' ? 1 : -1;
-                      setHighlightedMentionIndex((current) => {
-                        const count = mentionSuggestions.matches.length;
-                        return (current + direction + count) % count;
-                      });
+                      setHighlightedSlashVerbIndex(
+                        (current) => (current + direction + paletteItemCount) % paletteItemCount,
+                      );
                     } else {
                       event.preventDefault();
-                      setDismissedMentionKey(mentionMenuKey);
+                      dismissSlashMenu();
                     }
-                  }}
-                  onSelectionChange={(event) => {
-                    const nextSelection = event.nativeEvent.selection;
-                    setInputSelection((current) =>
-                      current.start === nextSelection.start && current.end === nextSelection.end
-                        ? current
-                        : nextSelection,
+                    return;
+                  }
+                  if (!mentionMenuVisible) {
+                    const desktopAction = desktopComposerKeyAction(
+                      Platform.OS,
+                      event.nativeEvent.key,
+                      Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
                     );
-                  }}
-                  placeholder={composerPlaceholder}
-                  placeholderTextColor={theme.buzz.dim}
-                  multiline
-                  returnKeyType="default"
-                  scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
-                  submitBehavior="newline"
-                  testID="chat-input"
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    (slashMenuVisible
-                      ? !inputText.trim()
-                      : (!inputText.trim() && pendingAttachments.length === 0) || sending) &&
-                      styles.sendButtonDisabled,
-                  ]}
-                  onPress={
-                    slashMenuVisible
-                      ? () => {
-                          selectHighlightedPaletteItem();
-                        }
-                      : handleSend
+                    if (desktopAction === 'send') {
+                      event.preventDefault();
+                      void handleSend();
+                    }
+                    return;
                   }
-                  disabled={
-                    slashMenuVisible
-                      ? !inputText.trim()
-                      : (!inputText.trim() && pendingAttachments.length === 0) || sending
+                  if (!mentionMenuVisible || !action) return;
+                  if (action === 'select') {
+                    event.preventDefault();
+                    const selected = mentionSuggestions.matches[highlightedMentionIndex];
+                    if (selected) selectMention(selected);
+                  } else if (action === 'next' || action === 'previous') {
+                    event.preventDefault();
+                    const direction = action === 'next' ? 1 : -1;
+                    setHighlightedMentionIndex((current) => {
+                      const count = mentionSuggestions.matches.length;
+                      return (current + direction + count) % count;
+                    });
+                  } else {
+                    event.preventDefault();
+                    setDismissedMentionKey(mentionMenuKey);
                   }
-                  testID="chat-send"
-                >
-                  <Text style={styles.sendButtonText}>⏎</Text>
-                </TouchableOpacity>
-              </View>
+                }}
+                onSelectionChange={(event) => {
+                  const nextSelection = event.nativeEvent.selection;
+                  setInputSelection((current) =>
+                    current.start === nextSelection.start && current.end === nextSelection.end
+                      ? current
+                      : nextSelection,
+                  );
+                }}
+                placeholder={composerPlaceholder}
+                onSend={
+                  slashMenuVisible
+                    ? () => {
+                        selectHighlightedPaletteItem();
+                      }
+                    : handleSend
+                }
+              />
             </View>
           )}
         </KeyboardAvoidingView>
@@ -4037,8 +4047,11 @@ export default function BuzzChat() {
             room={roomSurface}
             client={roomClient}
             overlay={desktopMode !== 'three-pane'}
+            selectedCornerId={selectedDesktopCornerId}
+            onSelectCorner={setSelectedDesktopCornerId}
             onClose={closeDesktopInspector}
-            onOpenCorner={(cornerId) => openCorner(cornerId)}
+            onNewCorner={focusComposer}
+            onOpenRoster={() => setRosterVisible(true)}
           />
         )}
       </View>

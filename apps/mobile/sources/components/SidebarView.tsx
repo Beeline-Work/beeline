@@ -4,7 +4,11 @@ import { type Href, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { type ChatListView, type WorkspaceListView } from '@beeline/buzz-client';
+import {
+  type ChatListView,
+  type CornerListItem,
+  type WorkspaceListView,
+} from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
@@ -24,6 +28,7 @@ import {
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunityRail, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -115,6 +120,19 @@ const stylesheet = StyleSheet.create((theme) => ({
   roomSigil: { color: theme.colors.textLink },
   roomTime: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
   roomFact: { ...theme.buzz.type.meta, marginTop: 3, color: theme.colors.textSecondary },
+  cornerRow: {
+    minHeight: 45,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingLeft: 34,
+    paddingRight: 16,
+    paddingVertical: 7,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.divider,
+  },
+  cornerTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
+  cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, marginTop: 2 },
   previewSelf: { color: theme.colors.textSecondary },
   previewAuthor: { color: theme.colors.textLink },
   empty: {
@@ -160,6 +178,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [attentionWorkspaceIds, setAttentionWorkspaceIds] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [activeCorners, setActiveCorners] = React.useState<readonly CornerListItem[]>([]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -203,6 +222,28 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
     };
   }, [client, pathname, workspaceId]);
+
+  React.useEffect(() => {
+    if (!isDesktop || !client || !activeRoomId) {
+      setActiveCorners([]);
+      return;
+    }
+    let cancelled = false;
+    void client
+      .corners(activeRoomId)
+      .then((view) => {
+        if (!cancelled)
+          setActiveCorners(
+            view.corners.filter((corner) => !['closed', 'concluded'].includes(corner.status)),
+          );
+      })
+      .catch(() => {
+        if (!cancelled) setActiveCorners([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoomId, client, isDesktop, pathname]);
 
   React.useEffect(() => {
     if (!identityPubkey) return;
@@ -325,10 +366,7 @@ export const SidebarView = React.memo(function SidebarView() {
 
   return (
     <View
-      style={[
-        styles.container,
-        { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) },
-      ]}
+      style={[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]}
       testID="desktop-navigation-pane"
     >
       {isDesktop ? (
@@ -432,58 +470,101 @@ export const SidebarView = React.memo(function SidebarView() {
                     const preview = roomRowPreview(item, identityPubkey ?? undefined);
                     const attention = roomRowNeedsAttention(item);
                     return (
-                  <Pressable
-                    key={item.room.id}
-                    accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
-                    accessibilityRole="button"
-                    onPress={() => openRoom(item.room.id)}
-                    style={({ pressed }) => [
-                      styles.roomRow,
-                      !isDesktop && styles.roomRowCompact,
-                      activeRoomId === item.room.id && styles.roomRowSelected,
-                      pressed && styles.roomRowSelected,
-                    ]}
-                    testID={`desktop-room-${item.room.id}`}
-                  >
-                    <View
-                      style={[styles.roomStateSlot, !isDesktop && styles.roomStateSlotCompact]}
-                      {...(Platform.OS === 'web'
-                        ? { 'aria-hidden': true }
-                        : { accessibilityElementsHidden: true })}
-                    >
-                      {(attention || (isDesktop && item.agentState === 'working')) && (
-                        <View
-                          style={[
-                            styles.roomStateMark,
-                            attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
+                      <React.Fragment key={item.room.id}>
+                        <Pressable
+                          accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
+                          accessibilityRole="button"
+                          onPress={() => openRoom(item.room.id)}
+                          style={({ pressed }) => [
+                            styles.roomRow,
+                            !isDesktop && styles.roomRowCompact,
+                            activeRoomId === item.room.id && styles.roomRowSelected,
+                            pressed && styles.roomRowSelected,
                           ]}
-                          testID={`desktop-room-state-${item.room.id}`}
-                        />
-                      )}
-                    </View>
-                    <View style={styles.roomCopy}>
-                      <View style={styles.roomTitleLine}>
-                        <Text numberOfLines={1} style={styles.roomTitle}>
-                          <Text style={styles.roomSigil}>{rowName.sigil}</Text>
-                          {rowName.name}
-                        </Text>
-                        <Text style={styles.roomTime}>
-                          {item.latestMessage
-                            ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
-                            : ''}
-                        </Text>
-                      </View>
-                      <Text numberOfLines={1} style={styles.roomFact}>
-                        {preview.attribution === 'self' && (
-                          <Text style={styles.previewSelf}>you: </Text>
-                        )}
-                        {preview.attribution === 'other' && (
-                          <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
-                        )}
-                        {preview.text}
-                      </Text>
-                    </View>
-                  </Pressable>
+                          testID={`desktop-room-${item.room.id}`}
+                        >
+                          <View
+                            style={[
+                              styles.roomStateSlot,
+                              !isDesktop && styles.roomStateSlotCompact,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? { 'aria-hidden': true }
+                              : { accessibilityElementsHidden: true })}
+                          >
+                            {(attention || (isDesktop && item.agentState === 'working')) && (
+                              <View
+                                style={[
+                                  styles.roomStateMark,
+                                  attention ? styles.roomStateNeedsYou : styles.roomStateWorking,
+                                ]}
+                                testID={`desktop-room-state-${item.room.id}`}
+                              />
+                            )}
+                          </View>
+                          <View style={styles.roomCopy}>
+                            <View style={styles.roomTitleLine}>
+                              <Text numberOfLines={1} style={styles.roomTitle}>
+                                <Text style={styles.roomSigil}>{rowName.sigil}</Text>
+                                {rowName.name}
+                              </Text>
+                              <Text style={styles.roomTime}>
+                                {item.latestMessage
+                                  ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
+                                  : ''}
+                              </Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.roomFact}>
+                              {preview.attribution === 'self' && (
+                                <Text style={styles.previewSelf}>you: </Text>
+                              )}
+                              {preview.attribution === 'other' && (
+                                <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
+                              )}
+                              {preview.text}
+                            </Text>
+                          </View>
+                        </Pressable>
+                        {isDesktop &&
+                          activeRoomId === item.room.id &&
+                          activeCorners.map((corner) => (
+                            <Pressable
+                              key={corner.corner.id}
+                              accessibilityLabel={`Open corner ${corner.corner.name} in work pane`}
+                              accessibilityRole="button"
+                              onPress={() =>
+                                selectDesktopWorkCorner({
+                                  roomId: item.room.id,
+                                  cornerId: corner.corner.id,
+                                })
+                              }
+                              style={styles.cornerRow}
+                              testID={`desktop-corner-${corner.corner.id}`}
+                            >
+                              <View style={styles.roomStateSlot}>
+                                {(corner.status === 'working' || corner.status === 'waiting') && (
+                                  <View
+                                    style={[
+                                      styles.roomStateMark,
+                                      corner.status === 'waiting'
+                                        ? styles.roomStateNeedsYou
+                                        : styles.roomStateWorking,
+                                    ]}
+                                  />
+                                )}
+                              </View>
+                              <View style={styles.roomCopy}>
+                                <Text numberOfLines={1} style={styles.cornerTitle}>
+                                  {corner.corner.name}
+                                </Text>
+                                <Text numberOfLines={1} style={styles.cornerMeta}>
+                                  {corner.status}
+                                  {corner.reason ? ` · ${corner.reason}` : ''}
+                                </Text>
+                              </View>
+                            </Pressable>
+                          ))}
+                      </React.Fragment>
                     );
                   })}
                 </React.Fragment>

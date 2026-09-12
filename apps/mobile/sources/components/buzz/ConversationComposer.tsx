@@ -143,7 +143,7 @@ export function ConversationComposer({
       </TouchableOpacity>
       <TextInput
         ref={inputRef}
-        style={[styles.input, { height, maxHeight }]}
+        style={styles.input}
         value={value}
         onChangeText={onChangeText}
         onContentSizeChange={onContentSizeChange}

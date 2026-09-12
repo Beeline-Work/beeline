@@ -68,6 +68,18 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
   });
 
+  it('leaves multiline text visible through native auto-growth', () => {
+    const value = 'first line\nsecond line\nthird line';
+    const f = render(value);
+    const input = f.renderer.root.findByType('TextInput');
+    expect(input.props.value).toBe(value);
+    expect(input.props.multiline).toBe(true);
+    expect(input.props.numberOfLines).toBeUndefined();
+    expect(input.props.style).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ height: expect.any(Number) })]),
+    );
+  });
+
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
     const f = render(value);
     expect(f.button().findByType('Text').props.children).toBe('↑');

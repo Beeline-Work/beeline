@@ -26,15 +26,19 @@ export interface SessionConfigInput {
   agentName?: string | undefined;
   /** Merge authority baked into a corner session's Git workflow prompt. */
   yoloMode?: boolean | undefined;
+  /** Reviewer identity baked into a corner session's Git workflow prompt. */
+  reviewerHandle?: string | undefined;
 }
 
 export function sessionConfigFingerprint(input: SessionConfigInput): string {
-  return JSON.stringify([
+  const fingerprint = [
     input.model ?? '',
     input.effort ?? '',
     input.soul?.name ?? '',
     input.soul?.instructions ?? '',
     input.agentName ?? '',
     input.yoloMode ?? false,
-  ]);
+  ];
+  if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);
+  return JSON.stringify(fingerprint);
 }

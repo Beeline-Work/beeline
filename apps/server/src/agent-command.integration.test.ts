@@ -105,6 +105,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
@@ -402,6 +403,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
     [C],
   );
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
   for (let n = 0; n < 2; n++)
     await systemLine(db, {
       roomId: C,
@@ -409,8 +411,27 @@ it('routes subscribed events, grants and changed corner checks through actions',
       verb: 'passed a check',
       kind: 'check-passed',
     });
+  expect(await commands(B, C)).toHaveLength(0);
+  expect(await commands(A, C)).toHaveLength(1);
+  expect((await commands(A, C))[0]?.reason).toBe('corner_check');
+
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    A,
+  ]);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"failing"}',command_check_state=NULL WHERE corner_id=$1`,
+    [C],
+  );
+  await systemLine(db, {
+    roomId: C,
+    subject: { kind: 'person', id: H, name: 'Human' },
+    verb: 'failed a check',
+    kind: 'check-failed',
+  });
+  expect(await commands(A, C)).toHaveLength(0);
   expect(await commands(B, C)).toHaveLength(1);
-  expect((await commands(B, C))[0]?.reason).toBe('corner_check');
 });
 it('transfers a corner objective without resetting the authorized chain', async () => {
   await send('@hoots');
@@ -612,9 +633,10 @@ it('settles a failed command instead of redelivering it after its lease expires'
     },
     A,
   );
-  await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [
-    c!.id,
-  ]);
+  await db.query(
+    `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`,
+    [c!.id],
+  );
   expect(await commands()).toEqual([]);
   await expect(claim(c!, 'retry')).rejects.toThrow('conflict');
 });

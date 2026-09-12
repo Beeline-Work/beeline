@@ -123,6 +123,8 @@ export type RoomViewHeader = {
   readonly about?: string;
   readonly avatar?: string;
   readonly visibility?: 'public' | 'invite-only';
+  /** Agent configured to review repository corners opened from this Room. */
+  readonly reviewerAgentId?: string;
   readonly archived: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;

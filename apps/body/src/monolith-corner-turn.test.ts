@@ -14,6 +14,7 @@ import {
   cornerClosePollMs,
   cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
+  cornerReviewerInstruction,
   cornerToolActivity,
   MonolithCornerTurnLoop,
 } from './monolith-corner-turn.js';
@@ -41,10 +42,30 @@ function stored(hex: string, name: string) {
 const TEST_AGENT_PUBLIC_KEY = stored('11'.repeat(32), 'Bee').publicKey;
 
 describe('corner merge instructions', () => {
-  it('allows autonomous merge only in yolo mode', () => {
+  it('selects the no-reviewer and reviewer matrix', () => {
     expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
     expect(cornerMergeInstruction(false)).toContain('never merge');
     expect(cornerMergeInstruction(false)).toContain('explicit human approval');
+    for (const yolo of [false, true]) {
+      const instruction = cornerMergeInstruction(yolo, 'echo');
+      expect(instruction).toContain('@echo please review');
+      expect(instruction).toContain('never merge this PR yourself');
+    }
+  });
+
+  it('selects the reviewer role by identity only for a non-opener', () => {
+    const reviewer = {
+      reviewerHandle: 'echo',
+      agentHandle: 'echo',
+      authorHandle: 'bee',
+      openedByAgent: false,
+      pullRequestNumber: 42,
+      yoloMode: true,
+    };
+    expect(cornerReviewerInstruction(reviewer)).toContain('Review PR #42');
+    expect(cornerReviewerInstruction(reviewer)).toContain('@bee');
+    expect(cornerReviewerInstruction({ ...reviewer, openedByAgent: true })).toBeUndefined();
+    expect(cornerReviewerInstruction({ ...reviewer, agentHandle: 'bee' })).toBeUndefined();
   });
 
   it('nudges delivery for dirty work without disposing of it', async () => {
@@ -79,13 +100,7 @@ describe('corner merge instructions', () => {
       '-d',
       'refs/remotes/origin/feature/widget',
     ]);
-    await execFileAsync('git', [
-      '-C',
-      root,
-      'update-ref',
-      'refs/remotes/origin/main',
-      'HEAD~1',
-    ]);
+    await execFileAsync('git', ['-C', root, 'update-ref', 'refs/remotes/origin/main', 'HEAD~1']);
     expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget', 'main')).toBe(true);
   });
 
@@ -94,6 +109,129 @@ describe('corner merge instructions', () => {
     expect(CORNER_DELIVERY_NUDGE).toContain('do not discard');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('Yolo is on');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('pr_checks_status');
+  });
+
+  it('boots a non-opener reviewer with the review instruction and repository gh surface', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
+    roots.push(root);
+    const agent = stored('11'.repeat(32), 'Echo');
+    const runtime = {
+      version: 2,
+      communityId: 'workspace',
+      pairedBy: 'human',
+      agent,
+      body: stored('22'.repeat(32), 'Body'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const api = {
+      execute: vi.fn(async (name: string) => {
+        if (name === 'getAgentConfiguration')
+          return { commands: [], yoloMode: true, reviewerHandle: 'echo' };
+        if (name === 'getWorkspaceRoster')
+          return {
+            members: [
+              {
+                identityId: agent.publicKey,
+                kind: 'agent',
+                name: 'Echo',
+                handle: 'echo',
+                role: 'member',
+              },
+              {
+                identityId: 'author-id',
+                kind: 'agent',
+                name: 'Bee',
+                handle: 'bee',
+                role: 'member',
+              },
+            ],
+          };
+        if (name === 'getCornerRestoreState')
+          return {
+            cornerId: 'corner-id',
+            objective: 'Implement the widget',
+            closeRequested: false,
+            lifecycle: {
+              lifecycle: 'in-review',
+              checks: 'passing',
+              pr: {
+                number: 7,
+                url: 'https://github.com/acme/widgets/pull/7',
+                title: 'Widget',
+                targetBranch: 'main',
+                headSha: 'a'.repeat(40),
+              },
+            },
+          };
+        throw new Error(`unexpected operation ${name}`);
+      }),
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    const sessionNew = vi
+      .spyOn(acp, 'sessionNew')
+      .mockResolvedValue({ sessionId: 'review-session', raw: {} });
+    const loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      openedBy: 'author-id',
+      objective: 'Implement the widget',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'room-token',
+      },
+      runtime,
+      config: {
+        agentBinary: '/fake-agent',
+        agentKind: 'codex',
+        agentCommand: '/fake-agent',
+        agentArgs: [],
+        mcpBinary: '/fake-dev-mcp',
+        readonlyMcpCommand: '/fake-beeline-mcp',
+        agentEnv: {},
+        workspaceRoot: root,
+        autoApprovePermissions: true,
+      },
+      api,
+      scheduler: new SessionScheduler({ maxLiveSessions: 1 }),
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+
+    await (loop as unknown as { activate(): Promise<string> }).activate();
+    const input = sessionNew.mock.calls[0]?.[0];
+    expect(input?.systemPrompt).toContain('Review PR #7 with the beeline-review skill');
+    expect(input?.systemPrompt).toContain('@bee with the findings');
+    expect(input?.systemPrompt).not.toContain('reply only with its full URL');
+    expect(input?.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: 'buzz-dev-mcp',
+        env: expect.arrayContaining([
+          { name: 'GH_TOKEN', value: 'room-token' },
+          { name: 'GITHUB_TOKEN', value: 'room-token' },
+        ]),
+      }),
+    );
+    await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   });
 });
 
@@ -1673,8 +1811,7 @@ describe('thin monolith corner turn', () => {
       .spyOn(acp, 'sessionPrompt')
       .mockImplementation(async (_id, prompt, _timeout, draft, _activity, toolActivity) => {
         draft?.('Opening PR', 'Opening PR');
-        const checksTurn =
-          prompt.includes('passed a check') || prompt === CORNER_YOLO_MERGE_NUDGE;
+        const checksTurn = prompt.includes('passed a check') || prompt === CORNER_YOLO_MERGE_NUDGE;
         const toolCalls = checksTurn
           ? []
           : [
@@ -1780,9 +1917,7 @@ describe('thin monolith corner turn', () => {
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'Never restate server check or merge notes',
-        ),
+        systemPrompt: expect.stringContaining('Never restate server check or merge notes'),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(

@@ -59,6 +59,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { AgentKind } from './agent-command.js';
 import {
+  BEELINE_REVIEW_SKILL_NAME,
+  beelineReviewSkillMarkdown,
   runningBeelineReleaseId,
   USING_BEELINE_SKILL_NAME,
   usingBeelineSkillMarkdown,
@@ -117,7 +119,10 @@ const GOOSE_SHARED_CONFIG_FILES = ['config.yaml', 'secrets.yaml'] as const;
  * directory the harness was pointed at. A missing source dir is skipped, not
  * fatal — not every host has every harness installed.
  */
-export const BEELINE_DEFAULT_SKILL_NAMES = [USING_BEELINE_SKILL_NAME] as const;
+export const BEELINE_DEFAULT_SKILL_NAMES = [
+  BEELINE_REVIEW_SKILL_NAME,
+  USING_BEELINE_SKILL_NAME,
+] as const;
 
 /**
  * Operator skill directories shared by default into an isolated harness
@@ -341,6 +346,7 @@ async function provisionAgentSkillsAndMcp(
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
+    { name: BEELINE_REVIEW_SKILL_NAME, content: beelineReviewSkillMarkdown(skillReleaseId) },
   ];
   const shared = await resolveSharedSkillSources(operatorHome, sharedSkills);
   await provisionManagedSkillsDir(

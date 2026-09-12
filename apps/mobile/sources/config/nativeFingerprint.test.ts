@@ -1,11 +1,4 @@
-import {
-  cpSync,
-  mkdtempSync,
-  readFileSync,
-  symlinkSync,
-  writeFileSync,
-  appendFileSync,
-} from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -15,19 +8,15 @@ import { describe, expect, it } from 'vitest';
 import {
   PLATFORMS,
   compareNativeFingerprints,
-  readPinnedRuntimeVersion,
-  runtimeVersionsFromConfig,
 } from '../../scripts/native-fingerprint.mjs';
 
 const mobileRoot = resolve(__dirname, '../..');
 const gateScript = join(mobileRoot, 'scripts/native-fingerprint.mjs');
 const appConfig = readFileSync(join(mobileRoot, 'app.config.js'), 'utf8');
 const fingerprintConfig = readFileSync(join(mobileRoot, 'fingerprint.config.js'), 'utf8');
-const baseline = JSON.parse(readFileSync(join(mobileRoot, 'native-fingerprint.json'), 'utf8')) as {
-  android: { runtimeVersion: string };
-  ios: { runtimeVersion: string };
-  fingerprints: Record<string, string>;
-};
+const baseline = JSON.parse(
+  readFileSync(join(mobileRoot, 'native-fingerprint.json'), 'utf8'),
+) as { runtimeVersion: string; fingerprints: Record<string, string> };
 const checksWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/checks.yml'),
   'utf8',
@@ -67,8 +56,7 @@ describe('native fingerprint gate', () => {
     // This pair moves together, by hand, on every deliberate native bump.
     expect(appConfig).toContain('runtimeVersion: "23"');
     expect(appConfig).not.toContain('policy: "fingerprint"');
-    expect(readPinnedRuntimeVersion(mobileRoot)).toEqual({ android: '24', ios: '23' });
-    expect(runtimeVersionsFromConfig(baseline)).toEqual({ android: '24', ios: '23' });
+    expect(baseline.runtimeVersion).toBe('23');
   });
 
   it('records one committed fingerprint per platform beside the runtime it belongs to', () => {
@@ -125,9 +113,7 @@ describe('native fingerprint gate', () => {
     // moved without re-running anything.
     expect(verdict.message).toContain('android: android-old -> android-new');
     expect(verdict.message).toContain('ios: ios-old -> ios-new');
-    expect(verdict.message).toContain(
-      'bump android.runtimeVersion in apps/mobile/app.config.js to "22"',
-    );
+    expect(verdict.message).toContain('bump runtimeVersion in apps/mobile/app.config.js to "22"');
     expect(verdict.message).toContain('npm run fingerprint:write');
     expect(verdict.message).toContain('new native build');
   });
@@ -168,93 +154,56 @@ describe('native fingerprint gate', () => {
     expect(verdict.message).toContain('strands every installed binary');
   });
 
-  it('migrates global pins and honors platform overrides, while refusing missing or computed pins', () => {
-    expect(runtimeVersionsFromConfig({ runtimeVersion: '23' })).toEqual({
-      android: '23',
-      ios: '23',
-    });
-    expect(
-      runtimeVersionsFromConfig({ runtimeVersion: '23', android: { runtimeVersion: '24' } }),
-    ).toEqual({ android: '24', ios: '23' });
-    expect(() => runtimeVersionsFromConfig({ android: { runtimeVersion: '24' } })).toThrow(
-      'ios.runtimeVersion',
-    );
-    expect(() => runtimeVersionsFromConfig({ runtimeVersion: { policy: 'fingerprint' } })).toThrow(
-      'literal string',
-    );
-  });
+  it(
+    'accepts this tree and rejects a real native edit, end to end',
+    async () => {
+      // The committed record must describe THIS tree: run the gate exactly as
+      // the NATIVE FINGERPRINT job does.
+      const clean = await runGate([]);
+      expect(clean.stderr).toBe('');
+      expect(clean.status).toBe(0);
 
-  it('requires the changed platform pin, not merely a bump on the other platform', () => {
-    const onlyAndroid = compareNativeFingerprints({
-      runtimeVersion: { android: '22', ios: '21' },
-      computed: { android: 'android-new', ios: 'ios-old' },
-      baseline: recorded,
-    });
-    expect(onlyAndroid.unbumped).toEqual([]);
-    const bothChanged = compareNativeFingerprints({
-      runtimeVersion: { android: '22', ios: '21' },
-      computed: { android: 'android-new', ios: 'ios-new' },
-      baseline: recorded,
-    });
-    expect(bothChanged.unbumped).toEqual(['ios']);
-    expect(bothChanged.message).toContain('ios.runtimeVersion is still "21"');
-  });
+      // Then a real altered fingerprint input. A config plugin is hashed by
+      // @expo/fingerprint on both platforms, so editing one in an isolated copy
+      // of the project is a genuine native change — no stubbing of the
+      // fingerprint itself, which is the thing under test.
+      const project = mkdtempSync(join(tmpdir(), 'beeline-native-fingerprint-'));
+      for (const file of ['package.json', 'app.config.js', 'fingerprint.config.js']) {
+        cpSync(join(mobileRoot, file), join(project, file));
+      }
+      cpSync(join(mobileRoot, 'plugins'), join(project, 'plugins'), { recursive: true });
+      // node_modules is the expensive part and is not what the edit touches.
+      for (const shared of ['node_modules', 'patches']) {
+        symlinkSync(join(mobileRoot, shared), join(project, shared));
+      }
+      const baselineFile = join(project, 'native-fingerprint.json');
 
-  it('accepts this tree and rejects a real native edit, end to end', async () => {
-    // The committed record must describe THIS tree: run the gate exactly as
-    // the NATIVE FINGERPRINT job does.
-    const clean = await runGate([]);
-    expect(clean.stderr).toBe('');
-    expect(clean.status).toBe(0);
+      const fixture = ['--project-dir', project, '--baseline', baselineFile];
+      const recordedRun = await runGate(['--write', ...fixture]);
+      expect(recordedRun.stderr).toBe('');
+      expect(recordedRun.status).toBe(0);
+      const before = JSON.parse(readFileSync(baselineFile, 'utf8'));
+      expect(before.runtimeVersion).toBe('23');
 
-    // Then a real altered fingerprint input. A config plugin is hashed by
-    // @expo/fingerprint on both platforms, so editing one in an isolated copy
-    // of the project is a genuine native change — no stubbing of the
-    // fingerprint itself, which is the thing under test.
-    const project = mkdtempSync(join(tmpdir(), 'beeline-native-fingerprint-'));
-    for (const file of ['package.json', 'app.config.js', 'fingerprint.config.js']) {
-      cpSync(join(mobileRoot, file), join(project, file));
-    }
-    cpSync(join(mobileRoot, 'plugins'), join(project, 'plugins'), { recursive: true });
-    // node_modules is the expensive part and is not what the edit touches.
-    for (const shared of ['node_modules', 'patches']) {
-      symlinkSync(join(mobileRoot, shared), join(project, shared));
-    }
-    const baselineFile = join(project, 'native-fingerprint.json');
+      appendFileSync(join(project, 'plugins/withEinkCompatibility.js'), '\n// native change\n');
+      const dirty = await runGate(fixture);
 
-    const fixture = ['--project-dir', project, '--baseline', baselineFile];
-    const recordedRun = await runGate(['--write', ...fixture]);
-    expect(recordedRun.stderr).toBe('');
-    expect(recordedRun.status).toBe(0);
-    const before = JSON.parse(readFileSync(baselineFile, 'utf8'));
-    expect(runtimeVersionsFromConfig(before)).toEqual({ android: '24', ios: '23' });
+      expect(dirty.status).toBe(1);
+      expect(dirty.stderr).toContain('Native inputs changed but runtimeVersion is still "23"');
+      expect(dirty.stderr).toContain(
+        `android: ${before.fingerprints.android} -> `,
+      );
+      expect(dirty.stderr).toContain(`ios: ${before.fingerprints.ios} -> `);
+      expect(dirty.stderr).toContain('bump runtimeVersion in apps/mobile/app.config.js to "24"');
+      expect(dirty.stderr).toContain('new native build');
 
-    appendFileSync(
-      join(project, 'plugins/room-notifications/RoomNotificationsService.kt'),
-      '\n// Android-only change\n',
-    );
-    const androidDirty = await runGate(fixture);
-    expect(androidDirty.status).toBe(1);
-    expect(androidDirty.stderr).toContain('android.runtimeVersion is still \"24\"');
-    expect(androidDirty.stderr).toContain(
-      `ios: ${before.fingerprints.ios} -> ${before.fingerprints.ios} (unchanged)`,
-    );
-
-    appendFileSync(join(project, 'plugins/withEinkCompatibility.js'), '\n// native change\n');
-    const dirty = await runGate(fixture);
-
-    expect(dirty.status).toBe(1);
-    expect(dirty.stderr).toContain('Native inputs changed but ios.runtimeVersion is still "23"');
-    expect(dirty.stderr).toContain(`android: ${before.fingerprints.android} -> `);
-    expect(dirty.stderr).toContain(`ios: ${before.fingerprints.ios} -> `);
-    expect(dirty.stderr).toContain('bump ios.runtimeVersion in apps/mobile/app.config.js to "24"');
-    expect(dirty.stderr).toContain('new native build');
-
-    // `--write` will not quietly re-record a native change under the old pin:
-    // that is the move that strands installed binaries.
-    const refused = await runGate(['--write', ...fixture]);
-    expect(refused.status).toBe(1);
-    expect(refused.stderr).toContain('Native inputs changed but ios.runtimeVersion is still "23"');
-    expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
-  }, 360_000);
+      // `--write` will not quietly re-record a native change under the old pin:
+      // that is the move that strands installed binaries.
+      const refused = await runGate(['--write', ...fixture]);
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain('Native inputs changed but runtimeVersion is still "23"');
+      expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
+    },
+    240_000,
+  );
 });

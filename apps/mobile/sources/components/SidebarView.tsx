@@ -20,6 +20,8 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import {
+  directMessagePresence,
+  NO_ACTIVITY_PREVIEW,
   roomListSections,
   roomRowName,
   roomRowNeedsAttention,
@@ -114,6 +116,14 @@ const stylesheet = StyleSheet.create((theme) => ({
   roomStateMark: { width: 7, height: 7 },
   roomStateNeedsYou: { backgroundColor: theme.colors.textLink },
   roomStateWorking: { backgroundColor: theme.colors.textSecondary },
+  presenceDot: { width: 7, height: 7, borderRadius: 4 },
+  presenceWorking: { backgroundColor: theme.colors.success },
+  presenceIdle: { backgroundColor: theme.colors.textSecondary },
+  presenceCaption: {
+    ...theme.buzz.type.sectionHead,
+    color: theme.colors.textSecondary,
+    textTransform: 'uppercase',
+  },
   roomCopy: { flex: 1, minWidth: 0 },
   roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   roomTitle: { ...theme.buzz.type.bodyStrong, flex: 1, color: theme.colors.text },
@@ -462,12 +472,12 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : (
               filteredChatSections.map((section) => (
                 <React.Fragment key={section.kind}>
-                  <RoomListSectionHeader
-                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                  />
+                  {section.kind === 'rooms' && <RoomListSectionHeader title={ROOMS_LABEL} />}
                   {section.data.map((item) => {
                     const rowName = roomRowName(item);
                     const preview = roomRowPreview(item, identityPubkey ?? undefined);
+                    const presence = directMessagePresence(item, Date.now());
+                    const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
                     const attention = roomRowNeedsAttention(item);
                     return (
                       <React.Fragment key={item.room.id}>
@@ -508,6 +518,22 @@ export const SidebarView = React.memo(function SidebarView() {
                                 <Text style={styles.roomSigil}>{rowName.sigil}</Text>
                                 {rowName.name}
                               </Text>
+                              {hasPreview && presence?.dot && (
+                                <View
+                                  style={[
+                                    styles.presenceDot,
+                                    presence.dot === 'working'
+                                      ? styles.presenceWorking
+                                      : styles.presenceIdle,
+                                  ]}
+                                  testID={`desktop-room-presence-${item.room.id}`}
+                                />
+                              )}
+                              {hasPreview &&
+                                presence &&
+                                item.directMessage?.peer.kind === 'human' && (
+                                  <Text style={styles.presenceCaption}>{presence.label}</Text>
+                                )}
                               <Text style={styles.roomTime}>
                                 {item.latestMessage
                                   ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
@@ -515,13 +541,14 @@ export const SidebarView = React.memo(function SidebarView() {
                               </Text>
                             </View>
                             <Text numberOfLines={1} style={styles.roomFact}>
-                              {preview.attribution === 'self' && (
+                              {!hasPreview && presence ? presence.label : null}
+                              {hasPreview && preview.attribution === 'self' && (
                                 <Text style={styles.previewSelf}>you: </Text>
                               )}
-                              {preview.attribution === 'other' && (
+                              {hasPreview && preview.attribution === 'other' && (
                                 <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
                               )}
-                              {preview.text}
+                              {hasPreview ? preview.text : presence ? null : preview.text}
                             </Text>
                           </View>
                         </Pressable>

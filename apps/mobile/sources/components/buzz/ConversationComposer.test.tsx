@@ -95,9 +95,11 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
 
   it('keeps measured multiline sizing on web', () => {
     const f = render('first line\nsecond line\nthird line');
+    // Read the numbers from the constants the harness passes in. Spelling them
+    // out again makes this test fail on a redraw that changed nothing here.
     expect(f.renderer.root.findByType('TextInput').props.style[1]).toEqual({
-      height: 40,
-      maxHeight: 120,
+      height: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+      maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
     });
   });
 

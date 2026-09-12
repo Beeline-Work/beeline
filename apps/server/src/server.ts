@@ -255,6 +255,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       _request: IncomingMessage,
       principal: { identityId: string; kind: 'phone' | 'daemon' },
     ) => {
+      if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
       const releases = new Map<string, () => void>();
       const pendingPaintTraces = new Map<
         string,
@@ -588,6 +589,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         })();
       });
       client.on('close', () => {
+        if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

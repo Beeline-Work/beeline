@@ -32,9 +32,11 @@ describe('desktop layout mode', () => {
     const channels = source('app/(app)/beeline/channels.tsx');
 
     expect(sidebar).toContain('roomListSections(filteredChats)');
-    expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
+    expect(sidebar).toContain("section.kind === 'rooms' && <RoomListSectionHeader");
     expect(sidebar).toContain('<RoomListSectionHeader');
-    expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
+    expect(sidebar).not.toContain("'Direct messages'");
+    expect(channels).not.toContain('<RoomListSectionHeader');
+    expect(channels).not.toContain('renderSectionHeader=');
   });
 
   it('aligns the desktop Workspace identity with the conversation header', () => {

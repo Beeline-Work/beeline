@@ -161,6 +161,12 @@ export class PushDeliveryLoop {
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
           candidate.is_release_catchup,candidate.created_at
         FROM candidates candidate
+        -- The only sender wired here is Firebase, which reads the token as an
+        -- FCM registration token. Handing it an APNs device token fails as
+        -- invalid-registration-token, and the failure path below then deletes
+        -- the row — so an unfiltered loop silently unregisters every iOS device
+        -- it sees. Deliver only to devices this sender can actually reach.
+        JOIN push_devices device ON device.token=candidate.token AND device.platform='android'
         LEFT JOIN push_delivery_claims claim
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
         WHERE claim.message_id IS NULL

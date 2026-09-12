@@ -357,7 +357,7 @@ export default function BuzzOnboarding() {
             await clearPendingGitHubSignInState();
             if (alive)
               router.replace({
-                pathname: '/beeline/settings/identity',
+                pathname: '/beeline/settings',
                 params: { githubReconnect: result },
               });
             return;

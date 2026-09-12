@@ -199,6 +199,50 @@ describe('agent turn stream', () => {
     expect(names()).toEqual(['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput']);
   });
 
+  it('dissolves the draft on a turn that throws, publishing nothing', async () => {
+    // The failed-turn ending: no durable reply will ever arrive to take the
+    // draft's place, so the lane has to settle itself.
+    const { api, writes } = recorder();
+    const stream = streamFor(api);
+    stream.onChunk('', 'The fix is nearly');
+    await settled();
+    await stream.retract();
+    expect(writes.map((write) => write.name)).toEqual(['postAgentDraft', 'retractAgentLiveOutput']);
+    // Closed for good: a delta racing the failure cannot reopen the lane.
+    stream.onChunk('', 'The fix is nearly done.');
+    await settled();
+    expect(writes.map((write) => write.name)).toEqual(['postAgentDraft', 'retractAgentLiveOutput']);
+  });
+
+  it('keeps the retract behind a draft still on the wire', async () => {
+    const { api, release, names, held } = gatedRecorder();
+    const stream = streamFor(api);
+    stream.onChunk('', 'Working on it.');
+    const retracted = stream.retract();
+    await settled();
+    // The retract waits: landing first would let the held draft write reopen
+    // a lane that is supposed to be finished.
+    expect(names()).toEqual(['postAgentDraft']);
+    expect(held()).toBe(1);
+    await release();
+    await retracted;
+    expect(names()).toEqual(['postAgentDraft', 'retractAgentLiveOutput']);
+  });
+
+  it('asks once however many endings ask it to', async () => {
+    // A settled turn that throws afterwards reaches the retract a second time.
+    // One empty lane is the whole point; a second write only restates it.
+    const { api, writes } = recorder();
+    const stream = streamFor(api);
+    await stream.settle('The fix is ready.');
+    await stream.retract();
+    await stream.retract();
+    expect(writes.map((write) => write.name)).toEqual([
+      'postRoomMessage',
+      'retractAgentLiveOutput',
+    ]);
+  });
+
   it('settles a silent turn by dissolving the draft with no durable message', async () => {
     const { api, writes } = recorder();
     const stream = streamFor(api, 'room-id', 'corner room-id');

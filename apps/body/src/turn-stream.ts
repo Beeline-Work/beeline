@@ -66,6 +66,12 @@ export class AgentTurnStream {
   private inFlight: Promise<void> | undefined;
   /** Closed lanes publish nothing more, so the answer never queues behind a draft. */
   private closed = false;
+  /**
+   * The retract this lane already sent. A settled turn that throws afterwards
+   * reaches the same retract a second time, and one empty lane is the whole
+   * point: asking twice would only be a second write saying what is already so.
+   */
+  private retraction: Promise<void> | undefined;
 
   constructor(private readonly options: AgentTurnStreamOptions) {}
 
@@ -135,6 +141,33 @@ export class AgentTurnStream {
   }
 
   /**
+   * Dissolve the draft, publishing nothing.
+   *
+   * Every ending uses this: the settle below calls it once the durable reply is
+   * on the wire, and a turn that THROWS calls it directly. A throw never
+   * reaches a settle, and `close()` alone only stops future writes — the last
+   * snapshot stays live on the page, so a turn the Room has already reported
+   * stopped or failed keeps a half-written answer visibly in progress under it.
+   */
+  async retract(): Promise<void> {
+    this.close();
+    this.retraction ??= (async () => {
+      // A draft write already on the wire can land after this. The retract has
+      // to be the last word on this lane, or that late write puts an obsolete
+      // draft back after the lane was supposed to be empty.
+      await this.inFlight;
+      const { api, agentId, roomId, requestId } = this.options;
+      await api.execute('retractAgentLiveOutput', {
+        agentId,
+        roomId,
+        turnId: requestId,
+        kind: 'draft',
+      });
+    })();
+    await this.retraction;
+  }
+
+  /**
    * Post the durable reply under the turn's request id and dissolve the draft.
    * An empty reply settles through the turn receipt instead, and the lane is
    * retracted either way.
@@ -145,7 +178,7 @@ export class AgentTurnStream {
     onReplyPosted?: (result: { readonly mentionIds?: readonly string[] }) => void,
   ): Promise<void> {
     this.close();
-    const { api, agentId, roomId, requestId } = this.options;
+    const { api, roomId, requestId } = this.options;
     if (reply) {
       const posted = await api.execute('postRoomMessage', {
         roomId,
@@ -156,15 +189,8 @@ export class AgentTurnStream {
       });
       onReplyPosted?.(posted);
     }
-    // A draft write already on the wire can land after the durable reply. The
-    // retract has to be the last word on this lane, or that late write puts an
-    // obsolete draft back under a message the reader has already been given.
-    await this.inFlight;
-    await api.execute('retractAgentLiveOutput', {
-      agentId,
-      roomId,
-      turnId: requestId,
-      kind: 'draft',
-    });
+    // The retract stays after the reply: a late draft write must never put an
+    // obsolete snapshot back under a message the reader has already been given.
+    await this.retract();
   }
 }

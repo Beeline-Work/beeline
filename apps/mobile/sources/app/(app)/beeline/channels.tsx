@@ -1199,14 +1199,15 @@ const styles = StyleSheet.create((theme) => {
     chatActions: {
       flexDirection: 'row',
       minHeight: ROW_HEIGHT,
-      backgroundColor: hull.bgRaised,
+      backgroundColor: hull.bgHighlight,
     },
     swipeAction: {
-      width: 26,
+      // At 390pt this carries the timestamp gutter plus breathing room, so the
+      // row clears the action instead of leaving the glyph cramped at its edge.
+      width: 108,
       height: ROW_HEIGHT,
       alignItems: 'center',
       justifyContent: 'center',
-      marginRight: 8,
     },
     swipeActionButton: {
       width: 26,

@@ -439,11 +439,16 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   agent_id text NOT NULL REFERENCES identities(id),
   status text NOT NULL CHECK (status IN ('working', 'complete', 'failed', 'cancelled')),
   generation_id text,
+  started_at timestamptz NOT NULL DEFAULT now(),
   created_at timestamptz NOT NULL DEFAULT now(),
   failure_reason text,
   PRIMARY KEY (room_id, request_id, agent_id)
 );
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS started_at timestamptz;
+UPDATE agent_turns SET started_at=created_at WHERE started_at IS NULL;
+ALTER TABLE agent_turns ALTER COLUMN started_at SET DEFAULT now();
+ALTER TABLE agent_turns ALTER COLUMN started_at SET NOT NULL;
 -- 'cancelled' joined the vocabulary when the requester gained a stop control.
 -- A table created before that carries the older three-word CHECK, and a CHECK
 -- is not IF NOT EXISTS-able by definition: drop the constraint by its

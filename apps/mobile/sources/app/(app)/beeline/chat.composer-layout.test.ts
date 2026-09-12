@@ -11,7 +11,7 @@ const composerSource = readFileSync(
 describe('Room composer status layout', () => {
   const composerInput = composerSource.slice(
     composerSource.indexOf('      <TextInput'),
-    composerSource.indexOf('      <TouchableOpacity\n        accessibilityLabel="Send message"'),
+    composerSource.indexOf('      <Pressable'),
   );
   const inputStyle = composerSource.slice(
     composerSource.indexOf('  input: {'),
@@ -23,8 +23,8 @@ describe('Room composer status layout', () => {
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 
-  it('lets newline content drive the multiline input height', () => {
-    expect(composerInput).toContain('style={styles.input}');
+  it('applies the measured multiline height within its scrolling cap', () => {
+    expect(composerInput).toContain('style={[styles.input, { height, maxHeight }]}');
     expect(composerInput).toContain('multiline');
     expect(composerInput).not.toContain('numberOfLines=');
     expect(composerInput).not.toContain('height: composerHeight');

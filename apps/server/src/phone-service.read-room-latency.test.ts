@@ -291,7 +291,7 @@ describe('PhoneService.readRoom latency', () => {
     ).rows[0]!;
     const turnRow = (
       await database.query<CommittedTurnLiveRow>(
-        `SELECT turn.room_id,turn.request_id,turn.agent_id,turn.status,turn.created_at,
+        `SELECT turn.room_id,turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,
            turn.generation_id,requester.id requested_by
          FROM agent_turns turn
          LEFT JOIN messages trigger ON trigger.id=turn.request_id AND trigger.room_id=turn.room_id

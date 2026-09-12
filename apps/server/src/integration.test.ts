@@ -5275,7 +5275,8 @@ describe('monolith integration', () => {
       generationId,
     });
     await database.query(
-      `UPDATE agent_turns SET created_at=now()-interval '2 minutes'
+      `UPDATE agent_turns SET started_at=now()-interval '2 minutes',
+         created_at=now()-interval '2 minutes'
        WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
       [ROOM, requestId, AGENT],
     );
@@ -5294,6 +5295,11 @@ describe('monolith integration', () => {
     );
     expect(fresh.rows[0]?.status).toBe('working');
     expect(fresh.rows[0]?.age_seconds).toBeLessThan(5);
+    const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))
+      ?.latestAgentTurns.find((turn) => turn.requestId === requestId);
+    expect(projected).toBeDefined();
+    expect(projected!.createdAt).toBeGreaterThan(projected!.startedAt!);
+    expect(projected!.createdAt - projected!.startedAt!).toBeGreaterThanOrEqual(119);
 
     await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,
@@ -5375,6 +5381,73 @@ describe('monolith integration', () => {
         )
       ).rows[0],
     ).toEqual({ status: 'failed', old: true });
+  });
+
+  it.each(['owner', 'admin'] as const)(
+    'lets a current Room %s stop another requester’s turn',
+    async (role) => {
+      const requestId = 'e'.repeat(64);
+      const aliceToken = await phoneToken('alice');
+      const aliceId = createHash('sha256').update('github:alice').digest('hex');
+      await operation('addWorkspaceMember', {
+        workspaceId: WORKSPACE,
+        memberId: aliceId,
+        role: 'member',
+      });
+      await operation('addRoomMember', { roomId: ROOM, memberId: aliceId });
+      await operation(
+        'sendRoomMessage',
+        { roomId: ROOM, messageId: requestId, text: '@bee help', mentions: [AGENT] },
+        aliceToken,
+      );
+      await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+      await database.query(`UPDATE memberships SET role=$3 WHERE room_id=$1 AND identity_id=$2`, [
+        ROOM,
+        HUMAN,
+        role,
+      ]);
+      expect(
+        (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT })).status,
+      ).toBe(204);
+      expect(
+        (
+          await database.query(
+            `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+            [ROOM, requestId],
+          )
+        ).rows[0],
+      ).toEqual({ status: 'cancelled' });
+      const lines = (
+        await database.query(
+          `SELECT author_id FROM messages WHERE room_id=$1 AND system_event->>'kind'='turn-cancelled'`,
+          [ROOM],
+        )
+      ).rows;
+      expect(lines).toEqual([{ author_id: HUMAN }]);
+    },
+  );
+
+  it('does not let a demoted Room manager stop another requester’s turn', async () => {
+    const requestId = 'e'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee help',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    const token = await phoneToken('alice');
+    const id = createHash('sha256').update('github:alice').digest('hex');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: id, role: 'admin' });
+    await operation('addRoomMember', { roomId: ROOM, memberId: id });
+    await database.query(
+      `UPDATE memberships SET role='member' WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, id],
+    );
+    expect(
+      (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT }, token))
+        .status,
+    ).toBe(403);
   });
 
   it("stops a running turn at the asker's word, and at nobody else's", async () => {
@@ -5589,9 +5662,7 @@ describe('monolith integration', () => {
           [cornerId],
         )
       ).rows,
-    ).toEqual([
-      expect.objectContaining({ woke: [AGENT], request_id: requestId }),
-    ]);
+    ).toEqual([expect.objectContaining({ woke: [AGENT], request_id: requestId })]);
   });
 
   it('inscribes a failed turn once and does not retry its terminal command', async () => {

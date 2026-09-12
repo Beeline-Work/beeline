@@ -152,22 +152,20 @@ describe('the per-turn progress indicator', () => {
     expect(stop.props.testID).toBe('turn-progress-line-stop');
     expect(stop.props.accessibilityRole).toBe('button');
     expect(stop.props.accessibilityLabel).toBe('Stop this turn');
-    expect(stop.props.hitSlop).toBe(17);
+    expect(stop.props.hitSlop).toBe(9);
     expect(stop.props.disabled).toBe(false);
     expect(pressableStyle(stop)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          width: 10,
-          height: 10,
-          borderRadius: groknight.radius,
-          backgroundColor: groknight.accent,
+          minHeight: 26,
+          marginLeft: 'auto',
         }),
       ]),
     );
     expect(pressableStyle(stop, true)).toEqual(
       expect.arrayContaining([expect.objectContaining({ opacity: 0.6 })]),
     );
-    expect(stop.findAllByType('Text')).toHaveLength(0);
+    expect(stop.findByType('Text').props.children).toBe('■ STOP');
     act(() => stop.props.onPress());
     expect(onStop).toHaveBeenCalledTimes(1);
 
@@ -203,9 +201,7 @@ describe('the per-turn progress indicator', () => {
     expect(pressableStyle(stop)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          backgroundColor: 'transparent',
-          borderWidth: 1,
-          borderColor: groknight.accent,
+          opacity: 0.45,
         }),
       ]),
     );
@@ -255,6 +251,23 @@ describe('the per-turn progress indicator', () => {
       vi.advanceTimersByTime(9_000);
     });
     expect(counter()).toBe('12s');
+  });
+
+  it('continues through heartbeat intervals and rolls elapsed seconds into minutes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(89_500);
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const counter = () =>
+      renderer.root.findByProps({ testID: 'turn-progress-line-elapsed' }).props.children;
+    expect(counter()).toBe('1m 19s');
+    act(() => vi.advanceTimersByTime(500));
+    expect(counter()).toBe('1m 20s');
   });
 
   it('shows and announces the server-backed received state beside the running turn', () => {

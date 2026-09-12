@@ -368,6 +368,10 @@ describe('composer ack presentation', () => {
   it('names the requester test once, for the phone and the server to agree on', () => {
     expect(viewerMayStopTurn('aa', 'aa')).toBe(true);
     expect(viewerMayStopTurn('aa', 'bb')).toBe(false);
+    expect(viewerMayStopTurn('aa', 'bb', 'owner')).toBe(true);
+    expect(viewerMayStopTurn('aa', 'bb', 'admin')).toBe(true);
+    expect(viewerMayStopTurn('aa', 'bb', 'member')).toBe(false);
+    expect(viewerMayStopTurn(undefined, 'bb', 'owner')).toBe(false);
     expect(viewerMayStopTurn(undefined, 'aa')).toBe(false);
     expect(viewerMayStopTurn('aa', undefined)).toBe(false);
     expect(viewerMayStopTurn(undefined, undefined)).toBe(false);

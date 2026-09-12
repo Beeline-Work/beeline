@@ -26,6 +26,9 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { isAgentTurnActive } from '@/buzz/agent-presence';
+import { selectComposerAckPresentation } from '@/buzz/room-indicators';
+import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { ConversationComposer } from '@/components/buzz/ConversationComposer';
 import {
   HullActionSheetCancel,
@@ -502,6 +505,47 @@ function CornerCockpit({
   const [height, setHeight] = React.useState(COMPOSER_MIN_HEIGHT);
   const [sending, setSending] = React.useState(false);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  const [stopping, setStopping] = React.useState(false);
+  const [now, setNow] = React.useState(Date.now);
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const turn = detail?.latestAgentTurns.find((candidate) =>
+    isAgentTurnActive(candidate, undefined, now),
+  );
+  const ack = selectComposerAckPresentation({
+    isCorner: true,
+    now,
+    viewerPubkey: detail?.viewer.identity.pubkey,
+    viewerRole: detail?.viewer.role,
+    activeTurnPubkey: turn?.agentPubkey,
+    activeTurnAgentPubkey: turn?.agentPubkey,
+    activeTurnRequestId: turn?.requestId,
+    activeTurnRequestedBy: turn?.requestedBy,
+    activeTurnStartedAt: turn?.startedAt ?? turn?.createdAt,
+    conversationIdentities: new Map(
+      detail?.members.map(({ identity }) => [identity.pubkey, identity]),
+    ),
+  });
+  React.useEffect(() => setStopping(false), [ack?.turnKey]);
+  const stop = async () => {
+    if (!ack?.stop || !detail || stopping) return false;
+    setStopping(true);
+    try {
+      await monolithPhoneOperation('cancelAgentTurn', {
+        roomId: detail.room.id,
+        requestId: ack.stop.requestId,
+        agentId: ack.stop.agentPubkey,
+      });
+      void onRefresh().catch(() => undefined);
+      return true;
+    } catch (error) {
+      setStopping(false);
+      setSendError(`Could not stop turn: ${String(error)}`);
+      return false;
+    }
+  };
   const projector = React.useMemo(() => createRoomMessageProjector(), [detail?.room.id]);
   const messages = React.useMemo(
     () =>
@@ -653,7 +697,20 @@ function CornerCockpit({
       {detail && !detail.room.archived ? (
         <View style={styles.cockpitComposer}>
           {sendError ? <Text style={styles.error}>{sendError}</Text> : null}
+          {ack && (
+            <TurnProgressLine
+              label={ack.label}
+              startedAt={ack.startedAt}
+              onStop={ack.stop ? () => void stop() : undefined}
+              stopping={stopping}
+              testID="desktop-work-corner-progress"
+            />
+          )}
           <ConversationComposer
+            onStop={ack?.stop ? stop : undefined}
+            running={Boolean(turn)}
+            stopKey={ack?.turnKey}
+            stopping={stopping}
             value={input}
             placeholder="Message this corner…"
             height={height}

@@ -197,6 +197,7 @@ interface AgentTurnRow {
   request_id: string;
   agent_id: string;
   status: 'working' | 'complete' | 'failed' | 'cancelled';
+  started_at: Date;
   created_at: Date;
   generation_id: string | null;
   requested_by: string | null;
@@ -516,7 +517,7 @@ export class PhoneService {
     if (target.type === 'turn') {
       const row = (
         await this.database.query<AgentTurnRow>(
-          `SELECT turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+          `SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM rooms room
            JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
@@ -1242,7 +1243,7 @@ export class PhoneService {
            WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
          ), turn_rows AS (
            SELECT DISTINCT ON(turn.agent_id)
-             turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+             turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM authorized_room room
            JOIN agent_turns turn ON turn.room_id=room.id
@@ -1338,7 +1339,7 @@ export class PhoneService {
     if (!row) return undefined;
     reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
     for (const member of row.members) reviveDates(member, ['presence_updated_at']);
-    for (const turn of row.turns) reviveDates(turn, ['created_at']);
+    for (const turn of row.turns) reviveDates(turn, ['started_at', 'created_at']);
     for (const message of [...row.transcript, ...row.activity])
       reviveDates(message, ['created_at']);
     for (const corner of row.corners) {
@@ -2918,9 +2919,8 @@ export class PhoneService {
    */
   private async cancelAgentTurn(input: Input<'cancelAgentTurn'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    // The turn must be running, and the message it answers must be the
-    // viewer's own. A corner's request lives in its parent Room, the same
-    // widening `inscribeTurnFailure` makes.
+    // A corner's root request may live in its parent Room. Authority is
+    // checked against current membership under lock before settling it.
     const running = (
       await this.database.query<{ author_id: string }>(
         `SELECT trigger.author_id
@@ -2934,10 +2934,24 @@ export class PhoneService {
       )
     ).rows[0];
     if (!running) throw new Error('running turn not found');
-    if (running.author_id !== viewerId) throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
     const stopper = await this.requireIdentity(viewerId);
     const agent = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
+      const member = (
+        await database.query<{ role: string }>(
+          `SELECT room_member.role FROM memberships room_member
+         JOIN rooms room ON room.id=room_member.room_id
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=room_member.identity_id
+           AND workspace_member.removed_at IS NULL
+         WHERE room_member.room_id=$1 AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         FOR SHARE OF room_member,workspace_member`,
+          [input.roomId, viewerId],
+        )
+      ).rows[0];
+      if (!member) throw new Error('room access denied');
+      if (running.author_id !== viewerId && member.role !== 'owner' && member.role !== 'admin')
+        throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
       await database.query(
         `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 FOR UPDATE`,
         [input.roomId, input.agentId, input.requestId],
@@ -4893,7 +4907,7 @@ export class PhoneService {
     // corner's request lives in the parent Room, so the join looks there too.
     const turns = await this.database.query<AgentTurnRow>(
       `SELECT DISTINCT ON(turn.agent_id)
-         turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+         turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
          requester.id requested_by
        FROM agent_turns turn
        LEFT JOIN messages trigger ON trigger.id=turn.request_id
@@ -4912,6 +4926,7 @@ export class PhoneService {
         requestId: turn.request_id,
         agentPubkey: turn.agent_id,
         status: turn.status,
+        startedAt: unix(turn.started_at),
         createdAt: unix(turn.created_at),
         ...(turn.generation_id ? { generationId: turn.generation_id } : {}),
         ...(turn.requested_by ? { requestedBy: turn.requested_by } : {}),
@@ -5077,11 +5092,11 @@ export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace adm
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
 
 /**
- * Stopping a turn answers to the REQUEST, not to the Room: a question is the
- * asker's to take back, and no amount of Workspace authority makes it someone
- * else's. Named here so `server.ts` answers 403 rather than a generic failure.
+ * A requester or current Room owner/admin may stop a turn.
+ * Named here so `server.ts` answers 403 rather than a generic failure.
  */
-export const TURN_REQUESTER_AUTHORITY_MESSAGE = 'Only the person who asked can stop this turn';
+export const TURN_REQUESTER_AUTHORITY_MESSAGE =
+  'Only the requester, Room owner or admin can stop this turn';
 
 /** The same owner-only axis, for who may address an agent. */
 export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;

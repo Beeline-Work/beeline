@@ -138,8 +138,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 12,
   },
   errorText: {
+    ...theme.buzz.type.meta,
     color: theme.buzz.danger,
-    fontSize: 12,
-    lineHeight: 17,
+    fontFamily: theme.buzz.proseRegular,
   },
 }));

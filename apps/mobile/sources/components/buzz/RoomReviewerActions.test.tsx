@@ -4,7 +4,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: any) => styles({ buzz: {} }), hairlineWidth: 1 },
+  StyleSheet: {
+    create: (styles: any) => styles({ buzz: { type: { meta: {} } } }),
+    hairlineWidth: 1,
+  },
 }));
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');

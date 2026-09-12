@@ -8,9 +8,11 @@ import { getChangelogEntries, getLatestTitle, setLastViewedTitle } from '@/chang
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/layout';
 import { t } from '@/text';
+import { useLayoutClass } from '@/utils/responsive';
 
 export default function ChangelogScreen() {
     const insets = useSafeAreaInsets();
+    const isCompact = useLayoutClass() === 'compact';
     const entries = getChangelogEntries();
 
     useEffect(() => {
@@ -42,7 +44,7 @@ export default function ChangelogScreen() {
                     styles.content,
                     {
                         paddingBottom: insets.bottom + 40,
-                        maxWidth: layout.maxWidth,
+                        maxWidth: isCompact ? '100%' : layout.maxWidth,
                         alignSelf: 'center',
                         width: '100%'
                     }

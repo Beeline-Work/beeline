@@ -330,7 +330,7 @@ export default function BuzzChat() {
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const { width: windowWidth } = useWindowDimensions();
-  const desktopExperience = Platform.OS === 'web';
+  const desktopExperience = isDesktop;
   const desktopMode = desktopLayoutMode(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
@@ -1554,7 +1554,7 @@ export default function BuzzChat() {
   // Native keeps the established inverted list. React Native Web implements
   // `inverted` with scale transforms, which can leave variable-height rows at
   // stale coordinates after a send. Desktop uses ordinary chronological flow.
-  const desktopTranscript = Platform.OS === 'web';
+  const desktopTranscript = isDesktop;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
   // Captain's rule (2026-09): a new message or live draft always brings the

@@ -50,6 +50,7 @@ import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
+import { useIsDesktop } from '@/utils/responsive';
 
 // Foreground banner policy: suppress banners while the app is active, and
 // always for the Room the person currently has open. Background display and
@@ -207,6 +208,7 @@ async function loadFonts() {
 }
 
 export default function RootLayout() {
+  const isDesktop = useIsDesktop();
   React.useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       // MMKV is synchronous and a warm-cache snapshot may be large, so
@@ -346,7 +348,7 @@ export default function RootLayout() {
       <KeyboardProvider preload={false}>
         <GestureHandlerRootView
           style={
-            Platform.OS === 'web'
+            isDesktop
               ? { flex: 1 }
               : { flex: 1, backgroundColor: theme.colors.groupped.background }
           }

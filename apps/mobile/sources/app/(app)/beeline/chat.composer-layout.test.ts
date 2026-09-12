@@ -63,7 +63,8 @@ describe('Room composer status layout', () => {
   });
 
   it('keeps desktop transcript rows out of transform-based inversion', () => {
-    expect(source).toContain("const desktopTranscript = Platform.OS === 'web';");
+    expect(source).toContain('const desktopTranscript = isDesktop;');
+    expect(source).not.toContain("const desktopTranscript = Platform.OS === 'web';");
     expect(source).toContain('const transcriptMessages = desktopTranscript ? visibleMessages');
     expect(source).toContain('inverted={!desktopTranscript && transcriptMessages.length > 0}');
     expect(source).toContain('flatListRef.current?.scrollToEnd({ animated: false });');

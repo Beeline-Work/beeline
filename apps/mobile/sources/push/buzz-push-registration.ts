@@ -448,7 +448,7 @@ export async function setBuzzPushEnabled(
     retryable: false,
     phase: 'disabled',
   };
-  if (!token) {
+  if (!token || !platform) {
     await saveRegistrationState(identity.publicKey, {
       ...disabledResult,
       failedAttempts: 0,
@@ -460,7 +460,7 @@ export async function setBuzzPushEnabled(
   if (getBuzzRuntimeConfig().monolithEnabled) {
     await monolithPhoneOperation('unregisterPushDevice', {
       token,
-      platform: platform ?? 'android',
+      platform,
       environment: Device.isDevice ? 'physical' : 'emulator',
     });
     await AsyncStorage.removeItem(tokenKey(identity.publicKey));

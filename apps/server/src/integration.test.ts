@@ -3091,7 +3091,7 @@ describe('monolith integration', () => {
     ).json()) as { id: string };
     await operation('registerPushDevice', {
       token: 'owner-person-join-device-token-1234567890',
-      platform: 'ios',
+      platform: 'android',
       environment: 'physical',
     });
     const send = vi.fn().mockResolvedValue(undefined);

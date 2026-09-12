@@ -36,8 +36,8 @@ export function buzzPushPhaseDetail(phase: BuzzPushRegistrationPhase): string | 
 
 /**
  * The switch is ON only when the user asked for push AND the last known
- * registration state agrees a device token is bound. No state yet (iOS/web,
- * or a pre-upgrade install that has not attempted) falls back to the stored
+ * registration state agrees a device token is bound. No state yet (web, or
+ * a pre-upgrade install that has not attempted) falls back to the stored
  * preference so nothing regresses.
  */
 export function pushSwitchValue(
@@ -46,7 +46,7 @@ export function pushSwitchValue(
 ): boolean {
   if (!(enabled ?? false)) return false;
   if (!state) return true;
-  // Platforms without this registration path (iOS/web) keep the preference.
+  // Platforms without a registration path (web) keep the preference.
   return state.registered || state.phase === 'unsupported-platform';
 }
 

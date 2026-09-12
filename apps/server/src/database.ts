@@ -824,6 +824,11 @@ export async function migrate(database: SqlDatabase): Promise<void> {
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
   );
+  await database.query(
+    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_unread_cursor_idx
+     ON messages(room_id,created_at,id) INCLUDE(author_id)
+     WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'`,
+  );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);
   await backfillInheritedCornerMemberships(database);

@@ -11,8 +11,10 @@ import {
   TextInput,
   TouchableOpacity,
   Platform,
+  AppState,
   useWindowDimensions,
 } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -376,15 +378,24 @@ export default function BuzzChat() {
   // Publish the open conversation to the foreground notification policy. The
   // root notification handler runs outside the React tree, so it reads this
   // tracker instead of route state. Synchronous, no relay work.
-  useEffect(() => {
-    pushOpenBuzzChannelId(decodedId || null);
-    return () => releaseOpenBuzzChannelId(decodedId || null);
-  }, [decodedId]);
+  const isFocused = useIsFocused();
   useFocusEffect(
     useCallback(() => {
-      void dismissPresentedNotificationsForChannel(decodedId, Notifications).catch((error) => {
-        console.log('Failed to dismiss notifications for opened conversation:', error);
-      });
+      pushOpenBuzzChannelId(decodedId || null);
+      const dismiss = () => {
+        if (AppState.currentState !== 'active') return;
+        void dismissPresentedNotificationsForChannel(decodedId, Notifications).catch((error) => {
+          console.log('Failed to dismiss notifications for opened conversation:', error);
+        });
+      };
+      dismiss();
+      const appState = AppState.addEventListener('change', dismiss);
+      const received = Notifications.addNotificationReceivedListener(dismiss);
+      return () => {
+        releaseOpenBuzzChannelId(decodedId || null);
+        appState.remove();
+        received.remove();
+      };
     }, [decodedId]),
   );
 
@@ -393,6 +404,7 @@ export default function BuzzChat() {
     adoptTransport: setSessionTransport,
     roomClient,
     roomSurface,
+    firstUnreadMessageId,
     liveOverlays,
     userPubkey,
     heartbeatPresences,
@@ -407,6 +419,7 @@ export default function BuzzChat() {
     outbox,
   } = useRoomSurfaceSession({
     channelId: decodedId,
+    isFocused,
     ...(notificationResponseId ? { notificationResponseId } : {}),
     bindingsRef: roomSurfaceBindingsRef,
   });
@@ -799,10 +812,15 @@ export default function BuzzChat() {
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
-  const foldedMessages = useMemo(
-    () => foldSystemLines(foldSettledActivityRuns(combinedMessages)),
-    [combinedMessages],
-  );
+  const foldedMessages = useMemo(() => {
+    const boundary = combinedMessages.findIndex((message) => message.id === firstUnreadMessageId);
+    if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(combinedMessages));
+    // A folded system/activity run must not swallow the unread boundary.
+    return [
+      ...foldSystemLines(foldSettledActivityRuns(combinedMessages.slice(0, boundary))),
+      ...foldSystemLines(foldSettledActivityRuns(combinedMessages.slice(boundary))),
+    ];
+  }, [combinedMessages, firstUnreadMessageId]);
   const unprojectedMessages = useMemo(
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
@@ -3354,6 +3372,7 @@ export default function BuzzChat() {
   );
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
+    firstUnreadMessageId,
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,

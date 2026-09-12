@@ -1857,7 +1857,7 @@ export default function BuzzChat() {
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
       ...(activeAgentTurn
         ? {
-            activeTurnStartedAt: activeAgentTurn.createdAt,
+            activeTurnStartedAt: activeAgentTurn.startedAt ?? activeAgentTurn.createdAt,
             activeTurnRequestId: activeAgentTurn.requestId,
             activeTurnAgentPubkey: activeAgentTurn.agentPubkey,
             ...(activeAgentTurn.requestedBy
@@ -1955,7 +1955,7 @@ export default function BuzzChat() {
         lastActiveTurnRef.current = {
           requestId: activeAgentTurn.requestId,
           agentPubkey: activeAgentTurn.agentPubkey,
-          startedAt: activeAgentTurn.createdAt * 1_000,
+          startedAt: (activeAgentTurn.startedAt ?? activeAgentTurn.createdAt) * 1_000,
           verb,
         };
       }

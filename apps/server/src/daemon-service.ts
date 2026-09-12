@@ -1694,7 +1694,7 @@ export class DaemonService {
                UPDATE agent_turns SET created_at=now()
                WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'
                  AND generation_id IS NOT DISTINCT FROM $4
-               RETURNING room_id,request_id,agent_id,status,created_at,generation_id
+               RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
              )
              SELECT written.*,requester.id requested_by FROM written
              LEFT JOIN messages trigger ON trigger.id=written.request_id
@@ -1720,7 +1720,7 @@ export class DaemonService {
                status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
                failure_reason=EXCLUDED.failure_reason,created_at=now()
              WHERE agent_turns.status<>'cancelled'
-             RETURNING room_id,request_id,agent_id,status,created_at,generation_id
+             RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
            )
            SELECT written.*,requester.id requested_by FROM written
            LEFT JOIN messages trigger ON trigger.id=written.request_id

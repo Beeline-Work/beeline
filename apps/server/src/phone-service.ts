@@ -197,6 +197,7 @@ interface AgentTurnRow {
   request_id: string;
   agent_id: string;
   status: 'working' | 'complete' | 'failed' | 'cancelled';
+  started_at: Date;
   created_at: Date;
   generation_id: string | null;
   requested_by: string | null;
@@ -516,7 +517,7 @@ export class PhoneService {
     if (target.type === 'turn') {
       const row = (
         await this.database.query<AgentTurnRow>(
-          `SELECT turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+          `SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM rooms room
            JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
@@ -1242,7 +1243,7 @@ export class PhoneService {
            WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
          ), turn_rows AS (
            SELECT DISTINCT ON(turn.agent_id)
-             turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+             turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM authorized_room room
            JOIN agent_turns turn ON turn.room_id=room.id
@@ -1338,7 +1339,7 @@ export class PhoneService {
     if (!row) return undefined;
     reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
     for (const member of row.members) reviveDates(member, ['presence_updated_at']);
-    for (const turn of row.turns) reviveDates(turn, ['created_at']);
+    for (const turn of row.turns) reviveDates(turn, ['started_at', 'created_at']);
     for (const message of [...row.transcript, ...row.activity])
       reviveDates(message, ['created_at']);
     for (const corner of row.corners) {
@@ -4906,7 +4907,7 @@ export class PhoneService {
     // corner's request lives in the parent Room, so the join looks there too.
     const turns = await this.database.query<AgentTurnRow>(
       `SELECT DISTINCT ON(turn.agent_id)
-         turn.request_id,turn.agent_id,turn.status,turn.created_at,turn.generation_id,
+         turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
          requester.id requested_by
        FROM agent_turns turn
        LEFT JOIN messages trigger ON trigger.id=turn.request_id
@@ -4925,6 +4926,7 @@ export class PhoneService {
         requestId: turn.request_id,
         agentPubkey: turn.agent_id,
         status: turn.status,
+        startedAt: unix(turn.started_at),
         createdAt: unix(turn.created_at),
         ...(turn.generation_id ? { generationId: turn.generation_id } : {}),
         ...(turn.requested_by ? { requestedBy: turn.requested_by } : {}),

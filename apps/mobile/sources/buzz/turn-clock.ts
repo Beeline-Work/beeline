@@ -1,10 +1,10 @@
 /**
- * The thinking line's clock: spinner glyph, per-turn verb, elapsed seconds,
+ * The thinking line's clock: spinner glyph, per-turn verb, elapsed duration,
  * and the settled "done" line. Pure functions so the per-second contract is
  * testable without a renderer.
  *
  * Modeled on the Claude Code status line: a spinner frame cycling back and
- * forth, a gerund verb, then elapsed seconds ticking once per second from
+ * forth, a gerund verb, then elapsed time ticking once per second from
  * the server receipt's own time. On completion the line settles briefly to
  * "<Past> for Ns · done h:MM" before the transcript resumes its silence.
  */
@@ -68,14 +68,20 @@ export function elapsedSeconds(startedAtMs: number, nowMs: number): number {
 /** The live counter phase; only the exceptional stopping state needs a label. */
 export type WorkingPhase = 'thinking' | 'stopping';
 
-/** `Ns` while working, or `Ns · stopping` once the asker presses stop. */
+function formatElapsedDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+/** `Ns` below a minute, then `Nm Ns`; append stopping when requested. */
 export function formatWorkingCounter(
   startedAtMs: number,
   nowMs: number,
   phase: WorkingPhase = 'thinking',
 ): string {
-  const seconds = `${elapsedSeconds(startedAtMs, nowMs)}s`;
-  return phase === 'stopping' ? `${seconds} \u00b7 stopping` : seconds;
+  const elapsed = elapsedSeconds(startedAtMs, nowMs);
+  const duration = formatElapsedDuration(elapsed);
+  return phase === 'stopping' ? `${duration} \u00b7 stopping` : duration;
 }
 
 /** Local wall clock as the settled line's "done h:MM" stamp. */
@@ -87,8 +93,8 @@ export function formatDoneTime(whenMs: number): string {
 
 /** `<Past> for Ns · done h:MM` — the static summary a finished turn leaves. */
 export function formatSettledLine(verb: TurnVerb, startedAtMs: number, endedAtMs: number): string {
-  const seconds = elapsedSeconds(startedAtMs, endedAtMs);
-  return `${verb.past} for ${seconds}s \u00b7 done ${formatDoneTime(endedAtMs)}`;
+  const duration = formatElapsedDuration(elapsedSeconds(startedAtMs, endedAtMs));
+  return `${verb.past} for ${duration} \u00b7 done ${formatDoneTime(endedAtMs)}`;
 }
 
 /**
@@ -102,6 +108,6 @@ export function formatSettledLine(verb: TurnVerb, startedAtMs: number, endedAtMs
  * status line's own last word before it clears.
  */
 export function formatStoppedLine(verb: TurnVerb, startedAtMs: number, endedAtMs: number): string {
-  const seconds = elapsedSeconds(startedAtMs, endedAtMs);
-  return `${verb.past} for ${seconds}s \u00b7 stopped ${formatDoneTime(endedAtMs)}`;
+  const duration = formatElapsedDuration(elapsedSeconds(startedAtMs, endedAtMs));
+  return `${verb.past} for ${duration} \u00b7 stopped ${formatDoneTime(endedAtMs)}`;
 }

@@ -523,6 +523,7 @@ function agentTurn(value: unknown): value is RoomViewAgentTurn {
       item.status === 'complete' ||
       item.status === 'failed' ||
       item.status === 'cancelled') &&
+    (item.startedAt === undefined || integer(item.startedAt)) &&
     integer(item.createdAt) &&
     optionalString(item.generationId) &&
     optionalString(item.requestedBy),

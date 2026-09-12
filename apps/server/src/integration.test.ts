@@ -5275,7 +5275,8 @@ describe('monolith integration', () => {
       generationId,
     });
     await database.query(
-      `UPDATE agent_turns SET created_at=now()-interval '2 minutes'
+      `UPDATE agent_turns SET started_at=now()-interval '2 minutes',
+         created_at=now()-interval '2 minutes'
        WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
       [ROOM, requestId, AGENT],
     );
@@ -5294,6 +5295,11 @@ describe('monolith integration', () => {
     );
     expect(fresh.rows[0]?.status).toBe('working');
     expect(fresh.rows[0]?.age_seconds).toBeLessThan(5);
+    const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))
+      ?.latestAgentTurns.find((turn) => turn.requestId === requestId);
+    expect(projected).toBeDefined();
+    expect(projected!.createdAt).toBeGreaterThan(projected!.startedAt!);
+    expect(projected!.createdAt - projected!.startedAt!).toBeGreaterThanOrEqual(119);
 
     await daemonOperation('postAgentTurnReceipt', {
       roomId: ROOM,

@@ -253,6 +253,23 @@ describe('the per-turn progress indicator', () => {
     expect(counter()).toBe('12s');
   });
 
+  it('continues through heartbeat intervals and rolls elapsed seconds into minutes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(89_500);
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const counter = () =>
+      renderer.root.findByProps({ testID: 'turn-progress-line-elapsed' }).props.children;
+    expect(counter()).toBe('1m 19s');
+    act(() => vi.advanceTimersByTime(500));
+    expect(counter()).toBe('1m 20s');
+  });
+
   it('shows and announces the server-backed received state beside the running turn', () => {
     vi.useFakeTimers();
     vi.setSystemTime(12_500);

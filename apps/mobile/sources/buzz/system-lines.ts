@@ -12,6 +12,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * A row from before the grammar has no event and renders its text verbatim.
  */
 export type SystemLineMessage = {
+  relay?: { direction: 'down' | 'up'; anchorMessageId?: string };
+  relayReports?: SystemLineMessage[];
   id: string;
   text: string;
   timestamp: number;
@@ -93,6 +95,27 @@ function subjectKey(subject: SystemSubject): string {
   return subject.id ?? `${subject.kind}:${subject.name}`;
 }
 
+/** Attach before partitioning at the unread boundary, so a new report can reach an older card. */
+export function anchorRelayReports<T extends SystemLineMessage>(messages: readonly T[]): T[] {
+  const reports = new Map<string, T[]>();
+  const anchors = new Set(messages.filter((m) => m.daemonFact).map((m) => m.id));
+  for (const message of messages) {
+    const anchor = message.relay?.direction === 'up' ? message.relay.anchorMessageId : undefined;
+    if (anchor && anchors.has(anchor)) {
+      const group = reports.get(anchor) ?? [];
+      group.push(message);
+      reports.set(anchor, group);
+    }
+  }
+  return messages.flatMap((message) => {
+    const anchor = message.relay?.direction === 'up' ? message.relay.anchorMessageId : undefined;
+    if (anchor && anchors.has(anchor)) return [];
+    return [
+      reports.has(message.id) ? { ...message, relayReports: reports.get(message.id) } : message,
+    ];
+  });
+}
+
 /**
  * Fold adjacent notification cards or same-verb system lines into the first
  * row of each run. `messages` is in transcript order (oldest first); the
@@ -105,8 +128,10 @@ export function foldSystemLines<T extends SystemLineMessage>(messages: readonly 
   let run: { index: number; key: string; subjects: SystemSubject[]; ids: string[] } | null = null;
   let notificationRun:
     { index: number; anchor: T; events: NotificationLifecycleEvent[] } | undefined;
-  for (const message of messages) {
-    const notification = notificationLifecycleEvent(message);
+  for (const message of anchorRelayReports(messages)) {
+    const notification = message.relayReports?.length
+      ? undefined
+      : notificationLifecycleEvent(message);
     if (notification) {
       run = null;
       if (!notificationRun) {

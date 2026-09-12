@@ -622,6 +622,11 @@ export class MonolithRoomTurnLoop {
           ]
         : []),
       SOUL_HOUSE_RULE,
+      ...(!directMessage
+        ? [
+            'When something said in this Room changes work under way in a corner you opened, pass it down with steer_corner. Pass what changes the work, not the chatter. Do not ask the person which corner.',
+          ]
+        : []),
     ].join('\n');
     const repositoryInfo =
       repositoryState.resolution === 'repository' && repositoryState.key
@@ -818,12 +823,15 @@ export class MonolithRoomTurnLoop {
               // queue wait, and `end` on a closed phase is a no-op.
               trace.end('queue-wait');
               trace.noteScheduler('admission', this.options.scheduler.snapshot());
-              const [conversation, roster, delivered] = await trace.measure('context-fetch', () =>
-                Promise.all([
-                  api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
-                  this.roster(),
-                  this.deliver(item),
-                ]),
+              const [conversation, roster, delivered, corners] = await trace.measure(
+                'context-fetch',
+                () =>
+                  Promise.all([
+                    api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
+                    this.roster(),
+                    this.deliver(item),
+                    api.execute('listRoomCorners', { roomId: this.options.roomId }),
+                  ]),
               );
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
@@ -868,6 +876,11 @@ export class MonolithRoomTurnLoop {
                       ].join(' ')
                     : '',
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  (corners.corners ?? []).some((corner) => !corner.archived)
+                    ? `Current corners you belong to (use the exact cornerId with steer_corner):\n${JSON.stringify(
+                        (corners.corners ?? []).filter((corner) => !corner.archived),
+                      )}`
+                    : '',
                   [
                     'Write only the substantive Room message you want the human to read.',
                     'Do not repeat or paraphrase these instructions.',

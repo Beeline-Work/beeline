@@ -753,6 +753,7 @@ export class MonolithCornerTurnLoop {
         ? [`Human-authored Workspace persona: ${persona.name}. ${persona.instructions}`]
         : []),
       SOUL_HOUSE_RULE,
+      'Report milestones, blockers, and questions to the Room with report_to_room; do not narrate.',
     ].join('\n');
     this.turnIdentityInstructions = harnessHonorsSessionSystemPrompt(command)
       ? ''

@@ -360,6 +360,7 @@ describe('Room turn phase trace', () => {
         'getAgentConfiguration',
         'getRoomRepositoryState',
         'getRoomConversation',
+        'listRoomCorners',
         'postAgentDraft',
         'postRoomMessage',
         'retractAgentLiveOutput',

@@ -267,3 +267,45 @@ describe('open_corner over the grok wire', () => {
     expect(result?.content[0]?.text).toBe('the name is required; give a title of at most 3 words');
   }, 30_000);
 });
+
+describe('relay tools', () => {
+  it('posts a steer through the active Room command', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(
+      door.origin,
+      { cornerId: CORNER, text: 'Change the endpoint' },
+      { name: 'steer_corner' },
+    );
+    expect(response.result?.isError).not.toBe(true);
+    expect(door.calls).toContainEqual({
+      operation: 'postRoomMessage',
+      roomId: ROOM,
+      requestId: 'command-request',
+      generationId: 'g1',
+      text: 'Change the endpoint',
+      relay: { fromRoomId: ROOM, toRoomId: CORNER, direction: 'down' },
+    });
+  });
+  it('reports only from a corner turn', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(
+      door.origin,
+      { text: 'Ready for review' },
+      { name: 'report_to_room', cornerId: CORNER },
+    );
+    expect(response.result?.isError).not.toBe(true);
+    expect(door.calls[0]).toMatchObject({
+      roomId: CORNER,
+      relay: { fromRoomId: CORNER, toRoomId: ROOM, direction: 'up' },
+    });
+    const refused = await callTool(door.origin, { text: 'No' }, { name: 'report_to_room' });
+    expect(refused.result?.isError ?? Boolean(refused.error)).toBe(true);
+    const steer = await callTool(
+      door.origin,
+      { text: 'No', cornerId: CORNER },
+      { name: 'steer_corner', cornerId: CORNER },
+    );
+    expect(steer.result?.isError ?? Boolean(steer.error)).toBe(true);
+    expect(door.calls).toHaveLength(1);
+  });
+});

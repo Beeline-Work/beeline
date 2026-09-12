@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { foldSystemLines, joinSystemNames, systemLineText } from './system-lines';
+import {
+  anchorRelayReports,
+  foldSystemLines,
+  joinSystemNames,
+  systemLineText,
+} from './system-lines';
 
 const joined = (
   id: string,
@@ -105,4 +110,39 @@ describe('system lines on the phone', () => {
       '@owner turned yolo on for @bee · grant requests are now approved automatically',
     );
   });
+});
+
+it('anchors up-relays below their corner card and keeps an unanchored report visible', () => {
+  const card = {
+    id: 'card',
+    text: 'Opened',
+    timestamp: 1,
+    daemonFact: {
+      type: 'corner-open' as const,
+      cornerId: 'c',
+      objective: 'Work',
+      name: 'Work',
+    },
+  };
+  const report = {
+    id: 'report',
+    text: 'Ready',
+    timestamp: 3,
+    relay: { direction: 'up' as const, anchorMessageId: 'card' },
+  };
+  const middle = { id: 'middle', text: 'Other conversation', timestamp: 2 };
+  const folded = foldSystemLines([card, middle, report]);
+  expect(folded.map((m) => m.id)).toEqual(['card', 'middle']);
+  expect(folded[0]).toMatchObject({ relayReports: [report] });
+  // A newly unread report still belongs under a previously read corner card.
+  const anchored = anchorRelayReports([card, middle, report]);
+  const boundary = anchored.findIndex(
+    (m) => m.id === report.id || m.relayReports?.some((r) => r.id === report.id),
+  );
+  expect(boundary).toBe(0);
+  expect([
+    ...foldSystemLines(anchored.slice(0, boundary)),
+    ...foldSystemLines(anchored.slice(boundary)),
+  ]).toEqual(folded);
+  expect(foldSystemLines([middle, report])).toEqual([middle, report]);
 });

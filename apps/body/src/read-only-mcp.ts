@@ -243,6 +243,33 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
+    name: 'steer_corner',
+    description:
+      'Pass a change in this Room down to work in a corner you belong to. The hand-off queues input for the corner opener.',
+    inputSchema: {
+      type: 'object',
+      required: ['cornerId', 'text'],
+      properties: {
+        cornerId: { type: 'string' },
+        text: { type: 'string', minLength: 1, maxLength: 16000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'report_to_room',
+    description:
+      'Report a milestone, blocker, or question from this corner to its parent Room as a hand-off.',
+    inputSchema: {
+      type: 'object',
+      required: ['text'],
+      properties: {
+        text: { type: 'string', minLength: 1, maxLength: 16000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'create_schedule',
     description:
       'Create a schedule that runs your prompt as a mention to you in this Room, on an interval (everyMinutes, minimum 1) or a 5-field cron. With maxRuns the schedule deletes itself after that many runs.',
@@ -496,13 +523,24 @@ const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
 
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
-export function agentToolsFor(agentSurface: boolean, directMessage: boolean): ToolDefinition[] {
+export function agentToolsFor(
+  agentSurface: boolean,
+  directMessage: boolean,
+  cornerTurn = false,
+): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
-  if (directMessage) return AGENT_TOOLS.filter((tool) => tool.name !== 'open_corner');
-  return AGENT_TOOLS;
+  return AGENT_TOOLS.filter((tool) => {
+    if (tool.name === 'steer_corner') return !directMessage && !cornerTurn;
+    if (tool.name === 'report_to_room') return !directMessage && cornerTurn;
+    return !directMessage || tool.name !== 'open_corner';
+  });
 }
 
-const TOOLS = agentToolsFor(agentSurface, process.env.BEELINE_AGENT_DM === '1');
+const TOOLS = agentToolsFor(
+  agentSurface,
+  process.env.BEELINE_AGENT_DM === '1',
+  Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
+);
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 const ATTACH_MIME_BY_EXTENSION: Record<string, string> = {
@@ -1050,6 +1088,27 @@ export function cornerCallText(args: JsonObject): { name: string; objective: str
     name: normalizeCornerText(String(args.name)),
     objective: normalizeCornerText(String(args.objective)),
   };
+}
+
+async function relayMessage(direction: 'down' | 'up', args: JsonObject): Promise<string> {
+  const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
+  if (process.env.BEELINE_AGENT_DM === '1' || (direction === 'up' ? !cornerId : Boolean(cornerId)))
+    throw new Error(
+      direction === 'up'
+        ? 'report_to_room requires a corner turn'
+        : 'steer_corner requires a Room turn',
+    );
+  if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
+    throw new Error('relay text must contain 1 to 16000 characters');
+  const context = await activeCommandContext();
+  const toRoomId = direction === 'up' ? requiredEnv('BEELINE_DAEMON_ROOM_ID') : args.cornerId;
+  if (typeof toRoomId !== 'string' || !toRoomId) throw new Error('cornerId is required');
+  return JSON.stringify(
+    await daemonExecute('postRoomMessage', {
+      text: args.text,
+      relay: { fromRoomId: context.roomId, toRoomId, direction },
+    }),
+  );
 }
 
 async function openCorner(args: JsonObject): Promise<string> {
@@ -1781,6 +1840,10 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
     case 'open_corner':
       return openCorner(args);
+    case 'steer_corner':
+      return relayMessage('down', args);
+    case 'report_to_room':
+      return relayMessage('up', args);
     case 'close_corner':
       return closeCorner();
     case 'pr_checks_status':

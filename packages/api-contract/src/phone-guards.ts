@@ -437,6 +437,20 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
     (item.githubEvent === undefined || githubEvent(item.githubEvent)) &&
+    (item.relay === undefined ||
+      (() => {
+        const relay = record(item.relay);
+        return Boolean(
+          relay &&
+          typeof relay.fromRoomId === 'string' &&
+          typeof relay.toRoomId === 'string' &&
+          (relay.direction === 'down' || relay.direction === 'up') &&
+          typeof relay.fromName === 'string' &&
+          typeof relay.cornerId === 'string' &&
+          optionalString(relay.anchorMessageId) &&
+          typeof relay.received === 'boolean',
+        );
+      })()) &&
     (item.daemonFact === undefined || daemonFact(item.daemonFact)) &&
     (item.systemEvent === undefined || isSystemEvent(item.systemEvent)),
   );

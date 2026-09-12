@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { agentToolsFor, cornerCallText, mergeApprovalPending } from './read-only-mcp.js';
@@ -99,4 +100,18 @@ describe('merge approval state', () => {
     );
     expect(mergeApprovalPending(current, undefined)).toBe(false);
   });
+});
+
+it('advertises relays only on their source surface and carries the captain-approved prompt rules', () => {
+  expect(agentToolsFor(true, false).map((t) => t.name)).toContain('steer_corner');
+  expect(agentToolsFor(true, false).map((t) => t.name)).not.toContain('report_to_room');
+  expect(agentToolsFor(true, false, true).map((t) => t.name)).toContain('report_to_room');
+  expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('steer_corner');
+  expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('steer_corner');
+  expect(readFileSync(new URL('./monolith-room-turn.ts', import.meta.url), 'utf8')).toContain(
+    'When something said in this Room changes work under way in a corner you opened, pass it down with steer_corner. Pass what changes the work, not the chatter. Do not ask the person which corner.',
+  );
+  expect(readFileSync(new URL('./monolith-corner-turn.ts', import.meta.url), 'utf8')).toContain(
+    'Report milestones, blockers, and questions to the Room with report_to_room; do not narrate.',
+  );
 });

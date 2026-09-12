@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import {
-  AppState,
   Platform,
   ScrollView,
   Switch,
@@ -10,18 +9,14 @@ import {
   View,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import * as Clipboard from 'expo-clipboard';
 import { getRandomBytes } from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
-import * as LocalAuthentication from 'expo-local-authentication';
 import * as WebBrowser from 'expo-web-browser';
+import * as Updates from 'expo-updates';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as QRCode from 'qrcode';
-import Svg, { Path, Rect } from 'react-native-svg';
 import {
-  adoptGitHubHandle,
   buildOidcBindEvent,
   finishOidcBind,
   fallbackPersonName,
@@ -38,13 +33,10 @@ import {
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   getEffectiveRelayUrl,
+  clearBuzzIdentity,
   loadBuzzIdentity,
-  loadBuzzIdentityNsecForExport,
 } from '@/auth/buzz-identity-storage';
-import { groknight } from '@/buzz/groknight';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
-import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
-import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
 import {
   ensurePersonNameForWorkspace,
   loadPreferredPersonName,
@@ -52,7 +44,7 @@ import {
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Typography } from '@/constants/Typography';
-import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { HullSurface, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
@@ -63,7 +55,7 @@ import {
   type BuzzPushRegistrationResult,
   type BuzzPushRegistrationState,
 } from '@/push/buzz-push-registration';
-import { buzzPushPhaseDetail, pushStatusLabel, pushSwitchValue } from '@/push/buzz-push-status';
+import { buzzPushPhaseDetail, pushSwitchValue } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
@@ -80,9 +72,15 @@ import {
 import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
 import { markSignInInFlight, waitForAuthCallback } from '@/auth/onboarding-state';
 import { t } from '@/text';
-import { useIsDesktop } from '@/utils/responsive';
-
-const TYPED_CONFIRMATION = 'EXPORT';
+import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
+import { loadAppConfig } from '@/sync/appConfig';
+import {
+  createManualUpdateState,
+  isManualUpdateBusy,
+  manualUpdateButtonLabel,
+  manualUpdateMessage,
+  manualUpdateReducer,
+} from './manual-update-state';
 
 function randomState(): string {
   return btoa(String.fromCharCode(...getRandomBytes(32)))
@@ -91,69 +89,15 @@ function randomState(): string {
     .replace(/=/g, '');
 }
 
-type ConfirmationMethod = 'checking' | 'biometric' | 'typed';
-
-function QrCode({ value }: { value: string }) {
-  const { path, size } = useMemo(() => {
-    const qr = QRCode.create(value, { errorCorrectionLevel: 'M' });
-    const commands: string[] = [];
-
-    for (let row = 0; row < qr.modules.size; row += 1) {
-      let start = -1;
-      for (let column = 0; column <= qr.modules.size; column += 1) {
-        const filled = column < qr.modules.size && qr.modules.get(row, column) === 1;
-        if (filled && start < 0) start = column;
-        if (!filled && start >= 0) {
-          commands.push(`M${start} ${row}h${column - start}v1H${start}z`);
-          start = -1;
-        }
-      }
-    }
-
-    return { path: commands.join(''), size: qr.modules.size };
-  }, [value]);
-
-  const quietZone = 4;
-  const viewBoxSize = size + quietZone * 2;
-
-  return (
-    <View
-      accessible
-      accessibilityLabel="QR code containing your Nostr secret key"
-      style={styles.qrFrame}
-    >
-      <Svg width="100%" height="100%" viewBox={`0 0 ${viewBoxSize} ${viewBoxSize}`}>
-        <Rect width={viewBoxSize} height={viewBoxSize} fill={groknight.textPrimary} />
-        <Path
-          d={path}
-          fill={groknight.bgTerminal}
-          transform={`translate(${quietZone} ${quietZone})`}
-        />
-      </Svg>
-    </View>
-  );
-}
-
 export default function BuzzIdentitySettings() {
   const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
   const { theme } = useUnistyles();
-  const isDesktop = useIsDesktop();
   const insets = useSafeAreaInsets();
-  const [confirmationMethod, setConfirmationMethod] = useState<ConfirmationMethod>('checking');
-  const [biometricLabel, setBiometricLabel] = useState('biometrics');
-  const [typedConfirmation, setTypedConfirmation] = useState('');
-  const [secret, setSecret] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(false);
-  const [showQr, setShowQr] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [working, setWorking] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profileClient, setProfileClient] = useState<BuzzClient | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<Identity | null>(null);
   const [profilePubkey, setProfilePubkey] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
-  const [avatarWorking, setAvatarWorking] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [savedProfileName, setSavedProfileName] = useState('');
   const [profileHandle, setProfileHandle] = useState('');
@@ -173,6 +117,20 @@ export default function BuzzIdentitySettings() {
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubWorking, setGitHubWorking] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const manualUpdateRunning = useRef(false);
+  const [manualUpdate, dispatchManualUpdate] = useReducer(
+    manualUpdateReducer,
+    Updates.isEnabled,
+    createManualUpdateState,
+  );
+  const manualUpdateBusy = isManualUpdateBusy(manualUpdate);
+  const release = loadAppConfig();
+  const releaseValue = `${release.releaseVersion ?? 'development'}${
+    release.releaseSha ? ` · ${release.releaseSha.slice(0, 12)}` : ''
+  }`;
   useEffect(() => {
     if (githubReconnect === 'success') setGitHubNotice('GitHub reconnected.');
     else if (githubReconnect === 'mismatch')
@@ -181,6 +139,66 @@ export default function BuzzIdentitySettings() {
       setGitHubNotice('Could not reconnect GitHub. Try again.');
   }, [githubReconnect]);
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
+
+  const signOut = useCallback(async () => {
+    if (!confirmSignOut) {
+      setConfirmSignOut(true);
+      return;
+    }
+    await Promise.all([
+      monolithSession.clear(),
+      clearBuzzIdentity(),
+      clearPendingGitHubSignInState(),
+    ]);
+    clearMobileSurfaceStorage();
+    router.replace('/beeline/onboarding');
+  }, [confirmSignOut]);
+
+  const deleteAccount = useCallback(async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    try {
+      const identity = profileIdentity ?? (await loadBuzzIdentity());
+      if (!identity) throw new Error('identity unavailable');
+      await new BuzzRigTransport(identity).deleteAccount();
+      await Promise.all([
+        monolithSession.clear(),
+        clearBuzzIdentity(),
+        clearPendingGitHubSignInState(),
+      ]);
+      clearMobileSurfaceStorage();
+      router.replace('/beeline/onboarding');
+    } catch {
+      setError('Could not delete the account. Check your connection and try again.');
+      setDeleteBusy(false);
+    }
+  }, [confirmDelete, deleteBusy, profileIdentity]);
+
+  const checkForUpdate = useCallback(async () => {
+    if (!Updates.isEnabled || manualUpdateRunning.current) return;
+    manualUpdateRunning.current = true;
+    dispatchManualUpdate({ type: 'start-check' });
+    try {
+      const update = await Updates.checkForUpdateAsync();
+      if (!update.isAvailable) {
+        dispatchManualUpdate({ type: 'latest' });
+        return;
+      }
+      dispatchManualUpdate({ type: 'update-available' });
+      const fetched = await Updates.fetchUpdateAsync();
+      if (!fetched.isNew && !fetched.isRollBackToEmbedded) throw new Error('download failed');
+      dispatchManualUpdate({ type: 'update-downloaded' });
+      await Updates.reloadAsync();
+    } catch {
+      dispatchManualUpdate({ type: 'failed' });
+    } finally {
+      manualUpdateRunning.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,44 +288,6 @@ export default function BuzzIdentitySettings() {
       cancelled = true;
     };
   }, [monolithEnabled]);
-
-  const changeAvatar = useCallback(async () => {
-    if (!profileClient) return;
-    setAvatarWorking(true);
-    setError(null);
-    try {
-      const next = await pickAndUploadAvatar(profileClient);
-      if (!next) return;
-      await profileClient.setGlobalPersonProfile({
-        name: normalizePersonName(savedProfileName) ?? undefined,
-        handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
-        avatar: next,
-      });
-      setAvatarUrl(next);
-    } catch (caught) {
-      setError(`Could not set your picture: ${String(caught)}`);
-    } finally {
-      setAvatarWorking(false);
-    }
-  }, [profileClient, savedProfileHandle, savedProfileName]);
-
-  const resetAvatar = useCallback(async () => {
-    if (!profileClient) return;
-    setAvatarWorking(true);
-    setError(null);
-    try {
-      await profileClient.setGlobalPersonProfile({
-        name: normalizePersonName(savedProfileName) ?? undefined,
-        handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
-        avatar: '',
-      });
-      setAvatarUrl(undefined);
-    } catch (caught) {
-      setError(`Could not restore your generated mark: ${String(caught)}`);
-    } finally {
-      setAvatarWorking(false);
-    }
-  }, [profileClient, savedProfileHandle, savedProfileName]);
 
   const saveName = useCallback(async () => {
     if (!profileClient || !profilePubkey) return;
@@ -411,7 +391,7 @@ export default function BuzzIdentitySettings() {
         await clearPendingGitHubSignInState();
         setGitHubNotice('GitHub reconnected.');
         router.replace({
-          pathname: '/beeline/settings/identity',
+          pathname: '/beeline/settings',
           params: { githubReconnect: 'success' },
         });
         return;
@@ -430,7 +410,7 @@ export default function BuzzIdentitySettings() {
       if (getBuzzRuntimeConfig().monolithEnabled) {
         await cancelPendingGitHubSignIn().catch(() => undefined);
         router.replace({
-          pathname: '/beeline/settings/identity',
+          pathname: '/beeline/settings',
           params: {
             githubReconnect: caught instanceof GitHubAccountMismatchError ? 'mismatch' : 'failed',
           },
@@ -443,25 +423,6 @@ export default function BuzzIdentitySettings() {
       );
     } finally {
       markSignInInFlight(false);
-      setGitHubWorking(false);
-    }
-  }, [applyHostedIdentity, githubWorking, profileIdentity]);
-
-  const renameToGitHubHandle = useCallback(async () => {
-    if (!profileIdentity || githubWorking) return;
-    setGitHubWorking(true);
-    setGitHubNotice(null);
-    setError(null);
-    try {
-      const hosted = await adoptGitHubHandle(getBuzzRuntimeConfig().relayUrl, profileIdentity);
-      await applyHostedIdentity(hosted);
-      setGitHubNotice(t('beelineIdentity.githubRenameNotice', { handle: hosted.handle }));
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (caught) {
-      setError(
-        `Could not rename your handle: ${caught instanceof Error ? caught.message : String(caught)}`,
-      );
-    } finally {
       setGitHubWorking(false);
     }
   }, [applyHostedIdentity, githubWorking, profileIdentity]);
@@ -519,123 +480,6 @@ export default function BuzzIdentitySettings() {
     }
   }, [applyPushResult, profileIdentity, pushRegistration, pushWorking]);
 
-  const lockExport = useCallback(() => {
-    setSecret(null);
-    setRevealed(false);
-    setShowQr(false);
-    setCopied(false);
-    setTypedConfirmation('');
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (Platform.OS === 'web') {
-        if (!cancelled) setConfirmationMethod('typed');
-        return;
-      }
-
-      try {
-        const [hasHardware, isEnrolled, types] = await Promise.all([
-          LocalAuthentication.hasHardwareAsync(),
-          LocalAuthentication.isEnrolledAsync(),
-          LocalAuthentication.supportedAuthenticationTypesAsync(),
-        ]);
-        if (cancelled) return;
-        if (hasHardware && isEnrolled) {
-          setBiometricLabel(
-            types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)
-              ? 'Face ID'
-              : 'fingerprint',
-          );
-          setConfirmationMethod('biometric');
-        } else {
-          setConfirmationMethod('typed');
-        }
-      } catch {
-        if (!cancelled) setConfirmationMethod('typed');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') lockExport();
-    });
-    return () => subscription.remove();
-  }, [lockExport]);
-
-  const loadSecret = useCallback(async () => {
-    const storedSecret = await loadBuzzIdentityNsecForExport();
-    if (!storedSecret) throw new Error('No identity key is stored on this device.');
-    setSecret(storedSecret);
-    setRevealed(false);
-    setShowQr(false);
-  }, []);
-
-  const handleConfirm = useCallback(async () => {
-    if (confirmationMethod === 'checking' || working) return;
-    if (confirmationMethod === 'typed' && typedConfirmation.trim() !== TYPED_CONFIRMATION) {
-      setError(`Type ${TYPED_CONFIRMATION} exactly to continue.`);
-      return;
-    }
-
-    setWorking(true);
-    setError(null);
-    try {
-      if (confirmationMethod === 'biometric') {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Export your Beeline identity key',
-          promptSubtitle: 'Confirm that it is you',
-          cancelLabel: 'Cancel',
-          fallbackLabel: 'Use device passcode',
-          biometricsSecurityLevel: 'strong',
-        });
-        if (!result.success) {
-          if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
-            setError('Authentication did not complete. Your key is still hidden.');
-          }
-          return;
-        }
-      }
-      await loadSecret();
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch {
-      setError('Beeline could not unlock the identity key on this device.');
-      lockExport();
-    } finally {
-      setWorking(false);
-    }
-  }, [confirmationMethod, loadSecret, lockExport, typedConfirmation, working]);
-
-  const handleCopy = useCallback(async () => {
-    if (!secret) return;
-    try {
-      await Clipboard.setStringAsync(secret);
-      setCopied(true);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      setError('Beeline could not copy the key. You can reveal and copy it manually.');
-    }
-  }, [secret]);
-
-  const maskedSecret = secret
-    ? `${secret.slice(0, 5)}${'•'.repeat(Math.max(8, secret.length - 5))}`
-    : '';
-  const pushPermissionLabel = pushPermission
-    ? pushPermission.status === 'unsupported'
-      ? 'Not supported on this device'
-      : pushPermission.granted
-        ? 'OS permission: allowed'
-        : pushPermission.canAskAgain
-          ? 'OS permission: not allowed yet'
-          : 'OS permission: blocked in device settings'
-    : 'Checking OS permission';
-  const pushStatusLabelText = pushStatusLabel(pushPermissionLabel, pushEnabled, pushRegistration);
   const pushRegistrationFailed =
     pushEnabled === true &&
     pushRegistration !== null &&
@@ -651,6 +495,14 @@ export default function BuzzIdentitySettings() {
           : 'Checking linked account';
   const managedHandle = managedIdentity?.handle ?? profileHandle;
   const managedHandleLabel = managedHandle ? `@${managedHandle}` : '';
+  const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
+  const pushOn = pushSwitchValue(pushEnabled, pushRegistration);
+  const githubCanLink = linkedAccount === 'not-linked' && Platform.OS !== 'web';
+
+  const commitName = () => {
+    if (normalizePersonName(profileName) === savedProfileName) return;
+    void saveName();
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -663,89 +515,65 @@ export default function BuzzIdentitySettings() {
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>My Settings</Text>
+          <Text style={styles.title}>Settings</Text>
         </View>
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {profilePubkey && (
-          <View style={styles.profileSection}>
-            <View style={styles.nameSection} testID="identity-person-name-setting">
-              <Text style={styles.sectionLabel}>GLOBAL IDENTITY</Text>
-              <Text style={styles.heading}>How people see you</Text>
-              <Text style={styles.body}>
-                Your name stays the same in every Workspace, Room, and DM. Your verified Beeline
-                handle comes from GitHub.
-              </Text>
+          <View style={styles.section} testID="identity-settings">
+            <Text style={styles.sectionLabel}>Identity</Text>
+            <View style={styles.row} testID="identity-person-name-setting">
+              <Text style={styles.rowTitle}>Name</Text>
               <TextInput
                 accessibilityLabel="Your display name"
                 autoCapitalize="words"
                 autoCorrect={false}
+                blurOnSubmit
                 editable={!nameWorking}
                 maxLength={60}
-                onBlur={() => setNameFocused(false)}
+                onBlur={() => {
+                  setNameFocused(false);
+                  commitName();
+                }}
                 onChangeText={(value) => {
                   setProfileName(value);
                   setNameSaved(false);
                 }}
                 onFocus={() => setNameFocused(true)}
-                onSubmitEditing={() => void saveName()}
+                onSubmitEditing={commitName}
                 placeholder="Ada"
                 placeholderTextColor={theme.buzz.dim}
                 returnKeyType="done"
-                style={[styles.nameInput, nameFocused && styles.nameInputFocused]}
+                style={[styles.inlineInput, nameFocused && styles.inlineInputFocused]}
                 testID="identity-person-name-input"
                 value={profileName}
               />
-              <View style={styles.managedHandle} testID="identity-managed-handle">
-                <Text style={styles.managedHandleLabel}>BEELINE HANDLE</Text>
-                <Text style={styles.managedHandleValue}>
-                  {managedHandleLabel || 'Connecting GitHub…'}
-                </Text>
-              </View>
-              <View style={styles.nameMetaRow}>
-                <Text style={styles.nameHandle}>MANAGED BY BEELINE</Text>
-                {nameSaved && <Text style={styles.nameSaved}>✓ SAVED</Text>}
-              </View>
-              <MonoButton
-                disabled={
-                  nameWorking ||
-                  !normalizePersonName(profileName) ||
-                  !normalizePersonHandle(managedIdentity?.handle ?? profileHandle) ||
-                  (normalizePersonName(profileName) === savedProfileName &&
-                    normalizePersonHandle(managedIdentity?.handle ?? profileHandle) ===
-                      savedProfileHandle)
-                }
-                label="Save identity"
-                loading={nameWorking}
-                onPress={() => void saveName()}
-                style={styles.nameButton}
-              />
+            </View>
+            <View style={styles.row} testID="identity-managed-handle">
+              <Text style={styles.rowTitle}>Handle</Text>
+              <Text numberOfLines={1} style={styles.monoValue}>
+                {managedHandleLabel || '—'}
+              </Text>
             </View>
             {monolithEnabled && (
-              <View style={styles.avatarSection} testID="identity-face-setting">
+              <TouchableOpacity
+                accessibilityLabel="Change face"
+                accessibilityRole="button"
+                onPress={() => setFacePickerOpen(true)}
+                style={styles.row}
+                testID="identity-face-setting"
+              >
                 <IdentityMark
                   kind="human"
                   seed={profilePubkey}
                   face={face ?? defaultFaceForSeed(profilePubkey)}
                   name={profileName || 'You'}
-                  size={76}
+                  size={38}
                   testID="identity-face-mark"
                 />
-                <View style={styles.avatarCopy}>
-                  <Text style={styles.heading}>Your face</Text>
-                  <Text style={styles.body}>Animals only. You can change it anytime.</Text>
-                  <View style={styles.actions}>
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      onPress={() => setFacePickerOpen(true)}
-                      style={styles.secondaryButton}
-                      testID="identity-face-change"
-                    >
-                      <Text style={styles.secondaryButtonText}>Change face</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                <Text style={styles.rowTitle}>Face</Text>
+                <Text style={styles.chevron}>›</Text>
                 <FacePickerSheet
                   face={face}
                   onClose={() => setFacePickerOpen(false)}
@@ -754,59 +582,16 @@ export default function BuzzIdentitySettings() {
                   seed={profilePubkey}
                   visible={facePickerOpen}
                 />
-              </View>
-            )}
-            {/* Photo-override darkflight: the picture-setting block renders
-                nothing while PHOTO_OVERRIDES_ENABLED is false. The handlers and
-                plumbing above stay intact for revival. */}
-            {PHOTO_OVERRIDES_ENABLED && (
-              <View style={styles.avatarSection}>
-                <IdentityMark
-                  kind="human"
-                  seed={profilePubkey}
-                  avatarUrl={avatarUrl}
-                  face={face ?? undefined}
-                  name={profileName || 'You'}
-                  size={76}
-                />
-                <View style={styles.avatarCopy}>
-                  <Text style={styles.heading}>Your picture</Text>
-                  <Text style={styles.body}>
-                    Cosmetic only. Your generated person mark returns if the image is removed.
-                  </Text>
-                  <View style={styles.actions}>
-                    <TouchableOpacity
-                      style={styles.secondaryButton}
-                      disabled={avatarWorking}
-                      onPress={() => void changeAvatar()}
-                    >
-                      <Text style={styles.secondaryButtonText}>
-                        {avatarWorking ? 'Working…' : avatarUrl ? 'Change picture' : 'Set picture'}
-                      </Text>
-                    </TouchableOpacity>
-                    {avatarUrl && (
-                      <TouchableOpacity
-                        style={styles.secondaryButton}
-                        disabled={avatarWorking}
-                        onPress={() => void resetAvatar()}
-                      >
-                        <Text style={styles.secondaryButtonText}>Use generated mark</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              </View>
+              </TouchableOpacity>
             )}
           </View>
         )}
-        <View style={styles.settingsSection} testID="notifications-setting">
-          <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
-          <View style={styles.settingLine}>
-            <View style={styles.settingCopy}>
-              <Text style={styles.settingTitle}>Push notifications</Text>
-              <Text style={styles.settingSubtitle}>{pushStatusLabelText}</Text>
-            </View>
-            {!(isDesktop && pushPermission?.status === 'unsupported') && (
+
+        {pushSupported ? (
+          <View style={styles.section} testID="notifications-section">
+            <Text style={styles.sectionLabel}>Notifications</Text>
+            <View style={styles.row} testID="notifications-setting">
+              <Text style={styles.rowTitle}>Push notifications</Text>
               <Switch
                 accessibilityLabel="Push notifications"
                 disabled={pushEnabled === null || pushWorking}
@@ -814,180 +599,115 @@ export default function BuzzIdentitySettings() {
                 testID="push-notifications-toggle"
                 thumbColor={theme.buzz.textPrimary}
                 trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.chrome }}
-                value={pushSwitchValue(pushEnabled, pushRegistration)}
-              />
-            )}
-          </View>
-          {pushRegistrationFailed ? (
-            <TouchableOpacity
-              disabled={pushWorking}
-              onPress={() => void retryPushRegistration()}
-              style={styles.pushRetryButton}
-              testID="push-retry-registration"
-            >
-              <Text style={styles.pushRetryText}>{pushWorking ? 'RETRYING…' : 'RETRY NOW'}</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
-        <View style={styles.settingsSection} testID="linked-sign-in-setting">
-          <Text style={styles.sectionLabel}>LINKED SIGN-IN</Text>
-          <View style={styles.settingLine}>
-            <View style={styles.linkedGlyph}>
-              <Text style={styles.linkedGlyphText}>GH</Text>
-            </View>
-            <View style={styles.settingCopy}>
-              <Text style={styles.settingTitle}>GitHub</Text>
-              <Text style={styles.settingSubtitle}>{linkedAccountLabel}</Text>
-            </View>
-            <Text style={styles.linkedState}>{linkedAccount === 'connected' ? '✓' : '·'}</Text>
-          </View>
-          {linkedAccount === 'not-linked' && Platform.OS !== 'web' ? (
-            <MonoButton
-              disabled={githubWorking || !profileIdentity}
-              label={t('beelineIdentity.linkGithub')}
-              loading={githubWorking}
-              onPress={() => void connectGitHub()}
-              style={styles.nameButton}
-              testID="identity-link-github"
-            />
-          ) : null}
-          {managedIdentity?.githubRenameAvailable && managedIdentity.githubLogin ? (
-            <View style={styles.githubRenamePanel} testID="identity-github-rename-offer">
-              <Text style={styles.body}>
-                {t('beelineIdentity.renameOffer', {
-                  current: managedIdentity.handle,
-                  github: managedIdentity.githubLogin,
-                })}
-              </Text>
-              <MonoButton
-                disabled={githubWorking}
-                label={t('beelineIdentity.useGithubHandle', {
-                  handle: managedIdentity.githubLogin,
-                })}
-                loading={githubWorking}
-                onPress={() => void renameToGitHubHandle()}
-                style={styles.nameButton}
-                testID="identity-use-github-handle"
+                value={pushOn}
               />
             </View>
-          ) : null}
-          {githubNotice ? <Text style={styles.githubNotice}>{githubNotice}</Text> : null}
-        </View>
-
-        {!monolithEnabled ? (
-          <>
-            <View style={styles.intro}>
-              <Text style={styles.sectionLabel}>KEY BACKUP</Text>
-              <Text style={styles.heading}>Export your key</Text>
-              <Text style={styles.body}>Save a copy so you can recover your Beeline identity.</Text>
-            </View>
-
-            <View style={styles.warning}>
-              <Text style={styles.warningGlyph}>!</Text>
-              <Text style={styles.warningText}>
-                Anyone with this key controls your identity. Export it only to a trusted app.
-              </Text>
-            </View>
-
-            {!secret ? (
-              <View style={styles.confirmSection}>
-                <Text style={styles.sectionLabel}>Confirm it&apos;s you</Text>
-                {confirmationMethod === 'typed' && (
-                  <>
-                    <Text style={styles.confirmHint}>
-                      Type {TYPED_CONFIRMATION} to unlock the key on this device.
-                    </Text>
-                    <TextInput
-                      accessibilityLabel={`Type ${TYPED_CONFIRMATION} to confirm`}
-                      autoCapitalize="characters"
-                      autoCorrect={false}
-                      editable={!working}
-                      onChangeText={setTypedConfirmation}
-                      onFocus={() => setInputFocused(true)}
-                      onBlur={() => setInputFocused(false)}
-                      onSubmitEditing={() => void handleConfirm()}
-                      placeholder={TYPED_CONFIRMATION}
-                      placeholderTextColor={theme.buzz.dim}
-                      style={[styles.confirmInput, inputFocused && styles.confirmInputFocused]}
-                      value={typedConfirmation}
-                    />
-                  </>
-                )}
-                <MonoButton
-                  label={
-                    confirmationMethod === 'checking'
-                      ? 'Checking device security'
-                      : working
-                        ? 'Confirming'
-                        : confirmationMethod === 'biometric'
-                          ? `Confirm with ${biometricLabel}`
-                          : 'Confirm export'
-                  }
-                  loading={working || confirmationMethod === 'checking'}
-                  disabled={confirmationMethod === 'checking' || working}
-                  onPress={() => void handleConfirm()}
-                  style={styles.primaryButton}
-                />
-              </View>
-            ) : (
-              <View style={styles.exportSection}>
-                <View style={styles.exportHeadingRow}>
-                  <Text style={styles.sectionLabel}>Nostr secret key</Text>
-                  <Text style={styles.unlockedLabel}>Unlocked</Text>
-                </View>
-                <HullSurface strength="code" style={styles.secretBox}>
-                  <Text selectable={revealed} style={styles.secretText}>
-                    {revealed ? secret : maskedSecret}
-                  </Text>
-                </HullSurface>
-                <View style={styles.actions}>
-                  <TouchableOpacity
-                    accessibilityLabel={revealed ? 'Hide secret key' : 'Reveal secret key'}
-                    onPress={() => setRevealed((value) => !value)}
-                    style={styles.secondaryButton}
-                  >
-                    <Text style={styles.secondaryButtonText}>{revealed ? 'Hide' : 'Reveal'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => void handleCopy()}
-                    style={styles.secondaryButton}
-                  >
-                    <Text style={styles.secondaryButtonText}>{copied ? '✓ COPIED' : 'Copy'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    accessibilityState={{ expanded: showQr }}
-                    onPress={() => setShowQr((value) => !value)}
-                    style={styles.secondaryButton}
-                  >
-                    <Text style={styles.secondaryButtonText}>{showQr ? 'Hide QR' : 'Show QR'}</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {showQr && (
-                  <PixelGateReveal style={styles.qrSection}>
-                    <QrCode value={secret} />
-                    <Text style={styles.qrHint}>Scan only with a Nostr signer you trust.</Text>
-                  </PixelGateReveal>
-                )}
-
-                <TouchableOpacity onPress={lockExport} style={styles.lockButton}>
-                  <Text style={styles.lockButtonText}>Lock this screen</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </>
+            {pushRegistrationFailed ? (
+              <TouchableOpacity
+                disabled={pushWorking}
+                onPress={() => void retryPushRegistration()}
+                style={styles.pushRetryButton}
+                testID="push-retry-registration"
+              >
+                <Text style={styles.pushRetryText}>{pushWorking ? 'RETRYING…' : 'RETRY NOW'}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         ) : null}
 
-        {error && (
+        <View style={styles.section} testID="linked-sign-in-section">
+          <Text style={styles.sectionLabel}>Linked sign-in</Text>
+          <TouchableOpacity
+            accessibilityLabel={`GitHub. ${linkedAccountLabel}`}
+            accessibilityRole="button"
+            disabled={!githubCanLink || githubWorking}
+            onPress={() => void connectGitHub()}
+            style={styles.row}
+            testID="linked-sign-in-setting"
+          >
+            <View style={styles.githubMark}>
+              <Text style={styles.linkedGlyphText}>GH</Text>
+            </View>
+            <Text style={styles.rowTitle}>GitHub</Text>
+            <Text style={styles.stateMark}>{linkedAccount === 'connected' ? '✓' : '·'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section} testID="account-settings">
+          <Text style={styles.sectionLabel}>Device &amp; account</Text>
+          <TouchableOpacity
+            accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
+            disabled={!Updates.isEnabled || manualUpdateBusy}
+            onPress={() => void checkForUpdate()}
+            style={[styles.row, (!Updates.isEnabled || manualUpdateBusy) && styles.disabled]}
+            testID="ota-update-info"
+          >
+            <View style={styles.rowCopy}>
+              <Text style={styles.rowTitle}>Version</Text>
+              <Text numberOfLines={1} style={styles.rowMeta}>
+                {[releaseValue, manualUpdateMessage(manualUpdate)]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
+            </View>
+            {manualUpdateBusy ? (
+              <View testID="ota-update-progress">
+                <PixelLoader compact />
+              </View>
+            ) : (
+              <Text style={styles.actionMark} testID="ota-update-check">
+                Check
+              </Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityLabel={confirmSignOut ? 'Confirm sign out' : 'Sign out on this device'}
+            onPress={() => void signOut()}
+            style={styles.row}
+            testID="sign-out-setting"
+          >
+            <Text style={styles.rowTitle}>Sign out</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityLabel={confirmDelete ? 'Confirm delete account' : 'Delete account'}
+            disabled={deleteBusy}
+            onPress={() => void deleteAccount()}
+            style={[styles.row, deleteBusy && styles.disabled]}
+            testID="delete-account-setting"
+          >
+            <Text style={styles.dangerTitle}>{deleteBusy ? 'Deleting…' : 'Delete account'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {nameSaved ? <Text style={styles.savedMark}>✓ Saved</Text> : null}
+        {githubNotice ? <Text style={styles.notice}>{githubNotice}</Text> : null}
+
+        {confirmSignOut ? (
+          <PixelGateReveal style={styles.warning}>
+            <Text style={styles.warningText}>Remove this identity from this device?</Text>
+            <TouchableOpacity onPress={() => setConfirmSignOut(false)} style={styles.cancelAction}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </PixelGateReveal>
+        ) : null}
+
+        {confirmDelete ? (
+          <PixelGateReveal style={styles.warning}>
+            <Text style={styles.warningText}>
+              Permanently delete this account? Shared messages remain attributed to “Deleted
+              account”.
+            </Text>
+            <TouchableOpacity onPress={() => setConfirmDelete(false)} style={styles.cancelAction}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </PixelGateReveal>
+        ) : null}
+
+        {error ? (
           <View accessibilityRole="alert" style={styles.errorPanel}>
             <Text style={styles.errorLabel}>! ERROR</Text>
             <Text style={styles.errorText}>{error}</Text>
           </View>
-        )}
-
-        {!monolithEnabled ? (
-          <Text style={styles.footer}>Copy and QR stay on this device.</Text>
         ) : null}
       </ScrollView>
     </View>
@@ -995,379 +715,108 @@ export default function BuzzIdentitySettings() {
 }
 
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
-    container: { flex: 1, backgroundColor: groknight.bgTerminal },
+    container: { flex: 1, backgroundColor: hull.bgTerminal },
     header: {
       minHeight: 66,
-      paddingHorizontal: 14,
+      paddingHorizontal: hull.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      backgroundColor: groknight.bgBase,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    backButton: {
-      width: 44,
-      height: 44,
-      marginRight: 6,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    backButtonText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.chrome,
-      fontSize: 31,
-      lineHeight: 34,
-    },
+    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
-    title: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 20,
-      lineHeight: 24,
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    content: {
+      padding: hull.space.md,
+      gap: hull.layout.sectionGap,
+      paddingBottom: hull.space.xxl,
     },
-    content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
-    profileSection: {
-      paddingBottom: 24,
-      marginBottom: 28,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-    },
-    nameSection: { marginBottom: 28 },
-    avatarSection: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 16,
-    },
-    avatarCopy: { flex: 1, minWidth: 0 },
-    intro: { maxWidth: 560 },
-    sectionLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
-    },
-    heading: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      marginTop: 7,
-      color: groknight.textPrimary,
-      fontSize: 24,
-    },
-    body: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 9,
-      color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
-    },
-    nameInput: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      minHeight: 48,
-      marginTop: 16,
-      paddingHorizontal: 12,
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: 3,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-      fontSize: 17,
-    },
-    nameInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-    managedHandle: {
-      minHeight: 48,
-      marginTop: 10,
-      paddingHorizontal: 12,
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: 3,
-      backgroundColor: groknight.bgBase,
-    },
-    managedHandleLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 10,
-      letterSpacing: 0.7,
-    },
-    managedHandleValue: {
-      ...Typography.mono('semiBold'),
-      marginTop: 2,
-      color: groknight.textPrimary,
-      fontSize: 15,
-    },
-    nameMetaRow: {
-      minHeight: 26,
+    section: {},
+    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
+    row: {
+      minHeight: hull.layout.row,
+      paddingHorizontal: hull.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
+      gap: hull.space.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    nameHandle: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 11,
-      letterSpacing: 0.4,
+    rowCopy: { flex: 1, minWidth: 0 },
+    rowTitle: { ...Typography.default(), ...hull.type.body, flex: 1, color: hull.textPrimary },
+    rowMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    monoValue: {
+      ...Typography.mono(),
+      ...hull.type.body,
+      flex: 1,
+      color: hull.textSecondary,
+      textAlign: 'right',
     },
-    nameSaved: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 10,
-      letterSpacing: 0.7,
-    },
-    nameButton: { marginTop: 8 },
-    settingsSection: {
-      paddingBottom: 24,
-      marginBottom: 28,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-    },
-    settingLine: {
-      minHeight: 68,
-      marginTop: 9,
-      paddingHorizontal: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      borderTopWidth: 1,
-      borderBottomWidth: 1,
-      borderColor: groknight.border,
-      backgroundColor: groknight.bgBase,
-    },
-    settingCopy: { flex: 1, minWidth: 0, paddingVertical: 12 },
-    pushRetryButton: {
-      marginTop: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      alignSelf: 'flex-start',
-    },
-    pushRetryText: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 16,
-    },
-    settingTitle: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 14,
-    },
-    settingSubtitle: {
+    inlineInput: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 4,
-      color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    linkedGlyph: {
-      width: 32,
-      height: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 3,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-    },
-    linkedGlyphText: {
-      ...Typography.default('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 13,
-    },
-    linkedState: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textSecondary,
-      fontSize: 13,
-    },
-    githubRenamePanel: {
-      marginTop: 14,
-      paddingTop: 14,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-    },
-    githubNotice: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 12,
-      color: groknight.textSecondary,
-      fontSize: 13,
-      lineHeight: 19,
-    },
-    warning: {
-      marginTop: 24,
-      padding: 12,
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    warningGlyph: {
-      ...Typography.default('semiBold'),
-      width: 22,
-      height: 22,
-      borderWidth: 1,
-      borderColor: groknight.chrome,
-      color: groknight.chrome,
-      lineHeight: 20,
-      textAlign: 'center',
-    },
-    warningText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
+      ...hull.type.body,
       flex: 1,
       minWidth: 0,
-      color: groknight.chrome,
-      fontSize: 14,
-      lineHeight: 20,
+      paddingVertical: hull.space.sm,
+      color: hull.textPrimary,
+      textAlign: 'right',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: 'transparent',
     },
-    confirmSection: { marginTop: 28 },
-    confirmHint: {
+    inlineInputFocused: { borderBottomColor: hull.focus },
+    chevron: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 9,
-      color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+      ...hull.type.hero,
+      width: 16,
+      textAlign: 'right',
+      color: hull.textMuted,
     },
-    confirmInput: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      minHeight: 44,
-      marginTop: 12,
-      paddingHorizontal: 12,
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: 3,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-      fontSize: 14,
-      letterSpacing: 1.2,
-    },
-    confirmInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-    primaryButton: {
-      marginTop: 14,
-    },
-    exportSection: { marginTop: 28 },
-    exportHeadingRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    unlockedLabel: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    secretBox: {
-      minHeight: 74,
-      marginTop: 9,
-      padding: 13,
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: 3,
-      backgroundColor: groknight.bgBase,
-    },
-    secretText: {
-      ...Typography.mono(),
-      color: groknight.textPrimary,
-      fontSize: 12,
-      lineHeight: 19,
-    },
-    actions: {
-      marginTop: 10,
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      alignItems: 'center',
-      gap: 8,
-    },
-    secondaryButton: {
-      minHeight: 44,
-      paddingHorizontal: 13,
+    githubMark: {
+      width: 38,
+      height: 38,
       alignItems: 'center',
       justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.borderStrong,
     },
-    secondaryButtonText: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.chrome,
-      fontSize: 12,
-    },
-    qrSection: { marginTop: 22, alignItems: 'center' },
-    qrFrame: {
-      width: 248,
-      height: 248,
-      maxWidth: '100%',
-      padding: 8,
-      borderRadius: 3,
-      backgroundColor: groknight.textPrimary,
-    },
-    qrHint: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      maxWidth: 320,
-      marginTop: 12,
-      color: groknight.muted,
-      fontSize: 12,
-      lineHeight: 17,
-      textAlign: 'center',
-    },
-    lockButton: {
-      minHeight: 44,
-      marginTop: 22,
-      alignSelf: 'center',
-      paddingHorizontal: 14,
-      justifyContent: 'center',
-    },
-    lockButtonText: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.steel,
-      fontSize: 11,
-    },
-    errorPanel: {
-      marginTop: 16,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    errorLabel: {
+    linkedGlyphText: {
       ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
+      ...hull.type.meta,
+      color: hull.textSecondary,
     },
-    errorText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 4,
-      color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+    stateMark: { ...Typography.mono('semiBold'), ...hull.type.body, color: hull.accent },
+    actionMark: { ...Typography.default(), ...hull.type.body, color: hull.accent },
+    dangerTitle: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
+    disabled: { opacity: 0.42 },
+    pushRetryButton: {
+      minHeight: 44,
+      paddingHorizontal: hull.space.sm,
+      justifyContent: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    footer: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 28,
-      color: groknight.textMuted,
-      fontSize: 12,
-      lineHeight: 17,
-      textAlign: 'center',
+    pushRetryText: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
+    savedMark: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    notice: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    warning: {
+      padding: hull.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.md,
     },
+    warningText: { ...Typography.default(), ...hull.type.meta, flex: 1, color: hull.textSecondary },
+    cancelAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
+    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
+    errorPanel: {
+      padding: hull.space.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.borderStrong,
+    },
+    errorLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.danger },
+    errorText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
   };
 });

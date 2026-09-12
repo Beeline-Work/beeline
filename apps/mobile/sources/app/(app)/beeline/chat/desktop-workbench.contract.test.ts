@@ -45,7 +45,7 @@ describe('desktop workbench wiring', () => {
   });
 
   it('keeps the desktop frame and both pane widths persistent', () => {
-    expect(navigator).toContain('usesPersistentDesktopFrame(desktopPlatform, isTablet)');
+    expect(navigator).toContain('usesPersistentDesktopFrame(inDesktopShell || isDesktop, isTablet)');
     expect(navigator).toContain("loadDesktopPaneWidth('navigation')");
     expect(navigator).toContain("saveDesktopPaneWidth('navigation', width)");
     expect(inspector).toContain("loadDesktopPaneWidth('inspector')");

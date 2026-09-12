@@ -176,6 +176,8 @@ export type RoomViewMessage = {
   readonly requestId?: string;
   readonly attachments?: readonly AttachmentReference[];
   readonly mentionPubkeys?: readonly string[];
+  /** Fixed-vocabulary reactions. Reactor identities never leave the server. */
+  readonly reactions?: readonly MessageReactionView[];
   /** Same-Room proof returned by the indexer and passed unchanged to reply signing. */
   readonly reply?: {
     readonly channelId: string;
@@ -239,6 +241,14 @@ export type RoomViewMessage = {
       readonly status: 'pending' | 'in_progress' | 'completed';
     }[];
   };
+};
+
+export const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const;
+export type MessageReactionEmoji = (typeof MESSAGE_REACTION_EMOJIS)[number];
+export type MessageReactionView = {
+  readonly emoji: MessageReactionEmoji;
+  readonly count: number;
+  readonly reacted: boolean;
 };
 
 /** One line of a grant card and one row of the agent profile's grant list. */

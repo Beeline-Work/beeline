@@ -379,6 +379,7 @@ CREATE TABLE IF NOT EXISTS messages (
   text text NOT NULL,
   presentation text NOT NULL DEFAULT 'message' CHECK (presentation IN ('message', 'system', 'activity', 'card')),
   attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  reactions jsonb NOT NULL DEFAULT '{}'::jsonb,
   reply_to_message_id text REFERENCES messages(id),
   root_message_id text,
   request_id text,
@@ -394,6 +395,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- Who a message tags is read from its text against the Room's CURRENT membership
 -- (message-mentions.ts), never from a list frozen at write time. The old column
 -- was that frozen list, and it drifted: a handle renamed, a member removed, or a

@@ -18,6 +18,10 @@ export function typedMentionHandles(text: string): Set<string> {
   const handles = new Set<string>();
   for (const match of text.matchAll(MENTION_TOKEN)) {
     const offset = match.index ?? 0;
+    const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+    // Quoted transcript is attribution, not a fresh address. Forwarded and
+    // manually quoted messages must never wake the people or agents they quote.
+    if (/^\s*>/.test(text.slice(lineStart, offset))) continue;
     const before = codePointBefore(text, offset);
     const punctuation = text.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
     const afterPunctuation = punctuation

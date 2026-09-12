@@ -229,6 +229,7 @@ export type ChatDisplayMessage = {
   durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];
   mentionPubkeys?: string[];
+  reactions?: RoomViewMessage['reactions'];
   replyToId?: string;
   isNew?: boolean;
   roomUpdate?: { digest?: string };
@@ -338,6 +339,9 @@ export function displayRoomMessage(
     ...(message.activity ? { activity: activityItems(message) } : {}),
     ...(message.attachments ? { attachments: [...message.attachments] } : {}),
     ...(message.mentionPubkeys ? { mentionPubkeys: [...message.mentionPubkeys] } : {}),
+    ...(message.reactions
+      ? { reactions: message.reactions.map((reaction) => ({ ...reaction })) }
+      : {}),
     ...(message.reply ? { replyToId: message.reply.eventId } : {}),
     ...(message.durableFact ? { durableFact: { kind: message.durableFact } } : {}),
     ...(message.corner

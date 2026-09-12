@@ -5,11 +5,13 @@ import type {
   AgentPairingClaimView,
   AttachmentReference,
   InviteView,
+  MessageReactionEmoji,
 } from './phone-types.js';
 
 export type PhoneOperationMap = {
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
+  reactToMessage: { input: ReactToMessageInput; output: void };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -137,6 +139,10 @@ export type SendRoomMessageInput = RoomInput & {
   readonly attachments?: readonly AttachmentReference[];
 };
 export type SendRoomReplyInput = SendRoomMessageInput & { readonly parentMessageId: string };
+export type ReactToMessageInput = RoomInput & {
+  readonly messageId: string;
+  readonly emoji: MessageReactionEmoji;
+};
 /**
  * Stop one turn in progress.
  *

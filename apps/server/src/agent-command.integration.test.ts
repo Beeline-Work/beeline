@@ -469,6 +469,58 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(await commands(A, C)).toHaveLength(0);
   expect(await commands(B, C)).toHaveLength(1);
 });
+it('routes a corner merge to its responsible parent Room agent without a subscription', async () => {
+  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE room_id=$1`, [R]);
+  await systemLine(db, {
+    id: id(),
+    roomId: R,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'merged',
+    kind: 'merged',
+    object: 'Do work',
+    presentation: 'card',
+    cardType: 'daemon-fact',
+    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
+  });
+  expect(await commands(A, R)).toEqual([]);
+  expect(await commands(B, R)).toEqual([
+    expect.objectContaining({
+      agentId: B,
+      reason: 'corner_merged',
+      source: expect.objectContaining({
+        body: '@GitHub merged Do work',
+        systemEvent: expect.objectContaining({ kind: 'merged' }),
+      }),
+    }),
+  ]);
+
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    B,
+  ]);
+  await systemLine(db, {
+    id: id(),
+    roomId: R,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'merged',
+    kind: 'merged',
+    object: 'Do work again',
+    presentation: 'card',
+    cardType: 'daemon-fact',
+    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
+  });
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_merged'`,
+        [R, B],
+      )
+    ).rowCount,
+  ).toBe(0);
+});
 it('transfers a corner objective without resetting the authorized chain', async () => {
   await send('@hoots');
   const [c] = await commands();

@@ -393,6 +393,32 @@ export async function routeSystemCommand(
   },
 ): Promise<void> {
   if (!input.kind) return;
+  if (input.kind === 'merged') {
+    // A corner merge is a lifecycle handoff back to the agent that opened it
+    // from the parent Room. The durable completion card identifies that
+    // corner; command creation still enforces current parent membership, so a
+    // retired or removed opener is never revived by history.
+    const responsible = (
+      await db.query<{ agent_id: string }>(
+        `SELECT fact.owner_agent_id agent_id
+         FROM messages source
+         JOIN rooms corner ON corner.id::text=source.card->>'cornerId'
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE source.id=$1 AND source.room_id=$2
+           AND corner.parent_id=source.room_id
+           AND source.card_type='daemon-fact'
+           AND source.card->>'type'='corner-complete'`,
+        [input.sourceMessageId, input.roomId],
+      )
+    ).rows[0]?.agent_id;
+    if (responsible)
+      await createAgentCommand(db, {
+        roomId: input.roomId,
+        agentId: responsible,
+        sourceMessageId: input.sourceMessageId,
+        reason: 'corner_merged',
+      });
+  }
   if (input.kind === 'check-passed' || input.kind === 'check-failed') {
     const fact = (
       await db.query<{

@@ -94,9 +94,8 @@ describe('agent reply completion latency', () => {
       [WORKSPACE, HUMAN, AGENT, ROOM],
     );
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'@agent answer',jsonb_build_array($4::text))`,
-      [REQUEST, ROOM, HUMAN, AGENT],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent answer')`,
+      [REQUEST, ROOM, HUMAN],
     );
     const command = await createAgentCommand(database, {
       roomId: ROOM,
@@ -132,7 +131,6 @@ describe('agent reply completion latency', () => {
         requestId: REQUEST,
         generationId: GENERATION,
         text: 'Answer',
-        mentionIds: [],
       },
       AGENT,
     );
@@ -209,7 +207,6 @@ describe('agent reply completion latency', () => {
         requestId: REQUEST,
         generationId: GENERATION,
         text: 'Answer',
-        mentionIds: [],
       },
       AGENT,
     );
@@ -222,7 +219,6 @@ describe('agent reply completion latency', () => {
           requestId: REQUEST,
           generationId: GENERATION,
           text: 'Different answer',
-          mentionIds: [],
         },
         AGENT,
       ),
@@ -241,9 +237,8 @@ describe('agent reply completion latency', () => {
     const request = 'f'.repeat(64);
     const generation = `${GENERATION}-ordinary`;
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'@agent ordinary',jsonb_build_array($4::text))`,
-      [request, ROOM, HUMAN, AGENT],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent ordinary')`,
+      [request, ROOM, HUMAN],
     );
     const command = await createAgentCommand(database, {
       roomId: ROOM,
@@ -274,9 +269,8 @@ describe('agent reply completion latency', () => {
     const request = '9'.repeat(64);
     const generation = `${GENERATION}-recovery`;
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'@agent recover',jsonb_build_array($4::text))`,
-      [request, ROOM, HUMAN, AGENT],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent recover')`,
+      [request, ROOM, HUMAN],
     );
     const command = await createAgentCommand(database, {
       roomId: ROOM,
@@ -326,9 +320,8 @@ describe('agent reply completion latency', () => {
   it('commits a claimed turn in one representative database round trip', async () => {
     const request = 'd'.repeat(64);
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'@agent again',jsonb_build_array($4::text))`,
-      [request, ROOM, HUMAN, AGENT],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent again')`,
+      [request, ROOM, HUMAN],
     );
     const command = await createAgentCommand(database, {
       roomId: ROOM,
@@ -363,9 +356,8 @@ describe('agent reply completion latency', () => {
     const request = 'e'.repeat(64);
     const generation = `${GENERATION}-live`;
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'@agent live',jsonb_build_array($4::text))`,
-      [request, ROOM, HUMAN, AGENT],
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent live')`,
+      [request, ROOM, HUMAN],
     );
     const command = await createAgentCommand(database, {
       roomId: ROOM,

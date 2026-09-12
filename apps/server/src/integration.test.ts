@@ -29,6 +29,29 @@ import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
 import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { taggedIdentityIdsSql } from './message-mentions.js';
+
+/** Who a message tags, read the way every surface reads it: from its own text. */
+async function taggedBy(database: PgliteDatabase, messageId: string): Promise<string[]> {
+  return (
+    (
+      await database.query<{ tagged_ids: string[] }>(
+        `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m WHERE m.id=$1`,
+        [messageId],
+      )
+    ).rows[0]?.tagged_ids ?? []
+  );
+}
+
+/** Which agents a message actually started a turn for. */
+async function wokenBy(database: PgliteDatabase, messageId: string): Promise<string[]> {
+  return (
+    await database.query<{ agent_id: string }>(
+      `SELECT agent_id FROM agent_commands WHERE source_message_id=$1 ORDER BY agent_id`,
+      [messageId],
+    )
+  ).rows.map((row) => row.agent_id);
+}
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const AGENT = 'b'.repeat(64);
@@ -319,7 +342,7 @@ describe('monolith integration', () => {
   it('resets a reassigned device registration floor', async () => {
     const otherId = createHash('sha256').update('github:other-push-owner').digest('hex');
     await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other push owner')`,
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other push owner','other')`,
       [otherId],
     );
     const roomId = 'b1111111-1111-4111-8111-111111111111';
@@ -333,9 +356,9 @@ describe('monolith integration', () => {
       [DEFAULT_WORKSPACE_ID, roomId, HUMAN, otherId],
     );
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
-       VALUES($1,$2,$3,'old mention',$4::jsonb,now()-interval '1 hour')`,
-      ['d'.repeat(64), roomId, HUMAN, JSON.stringify([otherId])],
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'@other old mention',now()-interval '1 hour')`,
+      ['d'.repeat(64), roomId, HUMAN],
     );
     const token = 'reassigned-device-token-1234567890';
     expect(
@@ -1047,11 +1070,9 @@ describe('monolith integration', () => {
       text: 'Are you there?',
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1`,
-      ['c'.repeat(64)],
-    );
-    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+    // Nothing in 'Are you there?' names the helper. The DM itself is the
+    // address, and the command the server created is where that shows.
+    expect(await wokenBy(database, 'c'.repeat(64))).toEqual([AGENT]);
 
     // A retried phone delivery is idempotent after the server-derived mention
     // is applied and cannot create a second inbox item.
@@ -1085,9 +1106,7 @@ describe('monolith integration', () => {
     const restartedInbox = (await (
       await daemonOperation('getRoomInbox', { roomId: dm.id }, restartedToken)
     ).json()) as { items: Array<{ id: string }> };
-    expect(restartedInbox.items).toEqual([
-      expect.objectContaining({ id: 'c'.repeat(64), mentionIds: [AGENT] }),
-    ]);
+    expect(restartedInbox.items).toEqual([expect.objectContaining({ id: 'c'.repeat(64) })]);
 
     const addressed = await operation('sendRoomMessage', {
       roomId: dm.id,
@@ -1119,14 +1138,7 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(200);
-    expect(
-      (
-        await database.query<{ mention_ids: string[] }>(
-          `SELECT mention_ids FROM messages WHERE id=$1`,
-          [directReplyId],
-        )
-      ).rows[0]?.mention_ids,
-    ).toEqual([AGENT]);
+    expect(await wokenBy(database, directReplyId)).toEqual([AGENT]);
     const directReplyInbox = (await (
       await daemonOperation('getRoomInbox', { roomId: dm.id })
     ).json()) as { items: Array<{ id: string }> };
@@ -1143,14 +1155,7 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(200);
-    expect(
-      (
-        await database.query<{ mention_ids: string[] }>(
-          `SELECT mention_ids FROM messages WHERE id=$1`,
-          [humanParentReplyId],
-        )
-      ).rows[0]?.mention_ids,
-    ).toEqual([AGENT]);
+    expect(await wokenBy(database, humanParentReplyId)).toEqual([AGENT]);
 
     // The chat list names a DM row by its peer, so it carries the one other
     // participant's identity instead of leaving the client the stored name.
@@ -1434,9 +1439,9 @@ describe('monolith integration', () => {
     const cursorId = 'a'.repeat(64);
     const lateId = '1'.repeat(64);
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
-       VALUES($1,$2,$3,'cursor row',$4::jsonb,now() - interval '1 second')`,
-      [cursorId, ROOM, HUMAN, JSON.stringify([AGENT])],
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'@bee cursor row',now() - interval '1 second')`,
+      [cursorId, ROOM, HUMAN],
     );
     const activation = (await (
       await daemonOperation('getRoomInbox', { roomId: ROOM, startAtLatest: true })
@@ -1446,9 +1451,9 @@ describe('monolith integration', () => {
     // This is the observable result of the T5b interleaving: transaction B's
     // older-created row becomes visible only after the cursor has advanced.
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
-       VALUES($1,$2,$3,'late commit',$4::jsonb,now() - interval '3 seconds')`,
-      [lateId, ROOM, HUMAN, JSON.stringify([AGENT])],
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'@bee late commit',now() - interval '3 seconds')`,
+      [lateId, ROOM, HUMAN],
     );
     await database.transaction((tx) =>
       createAgentCommand(tx, {
@@ -1643,15 +1648,14 @@ describe('monolith integration', () => {
       // conversation, exactly as a long working Room carries them.
       const presentation = index % 25 === 0 ? 'system' : index % 3 === 0 ? 'activity' : 'message';
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,mention_ids,activity,created_at)
-         VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,to_timestamp($8::bigint/1000.0))`,
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,activity,created_at)
+         VALUES($1,$2,$3,$4,$5,$6::jsonb,to_timestamp($7::bigint/1000.0))`,
         [
           rowId(index),
           ROOM,
           index % 2 === 0 ? HUMAN : AGENT,
           index === 1 ? OBJECTIVE : `row ${index}`,
           presentation,
-          JSON.stringify(index % 2 === 0 ? [AGENT] : []),
           presentation === 'activity'
             ? JSON.stringify({
                 calls: Array.from({ length: 12 }, (_, call) => ({ title: `call ${call}` })),
@@ -2147,11 +2151,7 @@ describe('monolith integration', () => {
       text: 'Lumen seems to think we need a corner.',
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1`,
-      ['2'.repeat(64)],
-    );
-    expect(stored.rows[0]?.mention_ids).toEqual([]);
+    expect(await taggedBy(database, '2'.repeat(64))).toEqual([]);
   });
 
   it('derives agent mentions only from their exact typed handle', async () => {
@@ -2176,14 +2176,7 @@ describe('monolith integration', () => {
         mentions: [AGENT],
       });
       expect(sent.status).toBe(200);
-      expect(
-        (
-          await database.query<{ mention_ids: string[] }>(
-            `SELECT mention_ids FROM messages WHERE id=$1`,
-            [messageId],
-          )
-        ).rows[0]?.mention_ids,
-      ).toEqual(expected);
+      expect(await taggedBy(database, messageId)).toEqual(expected);
     }
   });
 
@@ -2209,14 +2202,7 @@ describe('monolith integration', () => {
         mentions: [AGENT, peer],
       });
       expect(sent.status).toBe(200);
-      expect(
-        (
-          await database.query<{ mention_ids: string[] }>(
-            `SELECT mention_ids FROM messages WHERE id=$1`,
-            [messageId],
-          )
-        ).rows[0]?.mention_ids,
-      ).toEqual(expected);
+      expect(await taggedBy(database, messageId)).toEqual(expected);
     }
     const duplicatePeer = '0'.repeat(64);
     await database.query(
@@ -2235,14 +2221,7 @@ describe('monolith integration', () => {
       mentions: [peer, duplicatePeer],
     });
     expect(ambiguous.status).toBe(200);
-    expect(
-      (
-        await database.query<{ mention_ids: string[] }>(
-          `SELECT mention_ids FROM messages WHERE id=$1`,
-          ['1'.repeat(64)],
-        )
-      ).rows[0]?.mention_ids,
-    ).toEqual([]);
+    expect(await taggedBy(database, '1'.repeat(64))).toEqual([]);
   });
 
   it('does not persist a typed agent outside the Room as a mention', async () => {
@@ -2267,14 +2246,7 @@ describe('monolith integration', () => {
       mentions: [outsideAgent],
     });
     expect(sent.status).toBe(200);
-    expect(
-      (
-        await database.query<{ mention_ids: string[] }>(
-          `SELECT mention_ids FROM messages WHERE id=$1`,
-          ['3'.repeat(64)],
-        )
-      ).rows[0]?.mention_ids,
-    ).toEqual([]);
+    expect(await taggedBy(database, '3'.repeat(64))).toEqual([]);
   });
 
   it('does not route an untagged threaded human reply to its parent agent', async () => {
@@ -2309,11 +2281,11 @@ describe('monolith integration', () => {
       text: 'Answer this thread.',
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[]; reply_to_message_id: string }>(
-      `SELECT mention_ids,reply_to_message_id FROM messages WHERE id=$1`,
+    const stored = await database.query<{ tagged_ids: string[]; reply_to_message_id: string }>(
+      `SELECT ${taggedIdentityIdsSql('m')} tagged_ids,m.reply_to_message_id FROM messages m WHERE m.id=$1`,
       ['5'.repeat(64)],
     );
-    expect(stored.rows[0]).toEqual({ mention_ids: [], reply_to_message_id: parentId });
+    expect(stored.rows[0]).toEqual({ tagged_ids: [], reply_to_message_id: parentId });
     const inbox = await daemonOperation('getRoomInbox', { roomId: ROOM });
     expect(
       (
@@ -2335,10 +2307,10 @@ describe('monolith integration', () => {
       [WORKSPACE, peer, ROOM],
     );
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'Older direct answer.','[]'::jsonb),
-             ($4,$2,$5,'Later answer.',$6::jsonb)`,
-      [parentId, ROOM, AGENT, 'f'.repeat(64), peer, JSON.stringify([HUMAN])],
+      `INSERT INTO messages(id,room_id,author_id,text)
+       VALUES($1,$2,$3,'Older direct answer.'),
+             ($4,$2,$5,'@owner Later answer.')`,
+      [parentId, ROOM, AGENT, 'f'.repeat(64), peer],
     );
 
     const sent = await operation('sendRoomReply', {
@@ -2369,8 +2341,8 @@ describe('monolith integration', () => {
       [WORKSPACE, peer, ROOM],
     );
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'Direct parent answer.','[]'::jsonb)`,
+      `INSERT INTO messages(id,room_id,author_id,text)
+       VALUES($1,$2,$3,'Direct parent answer.')`,
       [parentId, ROOM, AGENT],
     );
     await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
@@ -2399,9 +2371,9 @@ describe('monolith integration', () => {
 
   it('stays silent for parentless continuity outside the conversation window', async () => {
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
-       VALUES($1,$2,$3,'Aged-out answer.',$4::jsonb,now()-interval '1 hour')`,
-      ['d'.repeat(64), ROOM, AGENT, JSON.stringify([HUMAN])],
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'@owner Aged-out answer.',now()-interval '1 hour')`,
+      ['d'.repeat(64), ROOM, AGENT],
     );
     for (let index = 0; index < 200; index += 1) {
       await database.query(
@@ -2571,11 +2543,11 @@ describe('monolith integration', () => {
       text: 'This is for the human.',
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[]; reply_to_message_id: string }>(
-      `SELECT mention_ids,reply_to_message_id FROM messages WHERE id=$1`,
+    const stored = await database.query<{ tagged_ids: string[]; reply_to_message_id: string }>(
+      `SELECT ${taggedIdentityIdsSql('m')} tagged_ids,m.reply_to_message_id FROM messages m WHERE m.id=$1`,
       [replyId],
     );
-    expect(stored.rows[0]).toEqual({ mention_ids: [], reply_to_message_id: parentId });
+    expect(stored.rows[0]).toEqual({ tagged_ids: [], reply_to_message_id: parentId });
   });
 
   it('keeps explicit agent mentions on replies to humans', async () => {
@@ -2595,11 +2567,7 @@ describe('monolith integration', () => {
       mentions: [AGENT],
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1`,
-      [replyId],
-    );
-    expect(stored.rows[0]?.mention_ids).toEqual([AGENT]);
+    expect(await taggedBy(database, replyId)).toEqual([AGENT]);
   });
 
   it('does not add the only Room agent when the human did not mention it', async () => {
@@ -2609,11 +2577,7 @@ describe('monolith integration', () => {
       text: 'Please take this.',
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1`,
-      ['6'.repeat(64)],
-    );
-    expect(stored.rows[0]?.mention_ids).toEqual([]);
+    expect(await taggedBy(database, '6'.repeat(64))).toEqual([]);
   });
 
   it('leaves an untagged human message unaddressed with two agents and no prior agent message', async () => {
@@ -2632,11 +2596,7 @@ describe('monolith integration', () => {
       text: 'This is for nobody in particular.',
     });
     expect(sent.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1`,
-      ['7'.repeat(64)],
-    );
-    expect(stored.rows[0]?.mention_ids).toEqual([]);
+    expect(await taggedBy(database, '7'.repeat(64))).toEqual([]);
   });
 
   it('manages agent tool schedules over daemon HTTP with agent scoping', async () => {
@@ -3951,9 +3911,9 @@ describe('monolith integration', () => {
     const floor = new PushDeliveryLoop(database, { send: vi.fn().mockResolvedValue(undefined) });
     expect(await floor.runOnce()).toBe(0);
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-       VALUES($1,$2,$3,'push me',$4::jsonb)`,
-      ['d'.repeat(64), ROOM, AGENT, JSON.stringify([HUMAN])],
+      `INSERT INTO messages(id,room_id,author_id,text)
+       VALUES($1,$2,$3,'@owner push me')`,
+      ['d'.repeat(64), ROOM, AGENT],
     );
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
@@ -4865,10 +4825,9 @@ describe('monolith integration', () => {
     });
     const peerInbox = (await (
       await daemonOperation('getCornerCloseRequests', { cornerId }, peerToken)
-    ).json()) as { items: { id: string; mentionIds: string[]; agentMentionIds: string[] }[] };
+    ).json()) as { items: { id: string }[] };
+    // Reaching the peer's inbox at all IS the address.
     expect(peerInbox.items.map((item) => item.id)).toContain(handoff);
-    expect(peerInbox.items.find((item) => item.id === handoff)?.mentionIds).toEqual([peer]);
-    expect(peerInbox.items.find((item) => item.id === handoff)?.agentMentionIds).toEqual([peer]);
     expect(
       (
         await daemonOperation(
@@ -4908,14 +4867,15 @@ describe('monolith integration', () => {
       text: '@Stranger take a look',
       mentions: [stranger],
     });
-    const notes = await database.query<{ text: string; mention_ids: string[] }>(
-      `SELECT text,mention_ids FROM messages WHERE room_id=$1 AND presentation='system'`,
+    const notes = await database.query<{ text: string; tagged_ids: string[] }>(
+      `SELECT text,${taggedIdentityIdsSql('messages')} tagged_ids
+       FROM messages WHERE room_id=$1 AND presentation='system'`,
       [cornerId],
     );
     expect(notes.rows.map((row) => row.text)).toContain(
       '@stranger could not be reached · not a member of this corner',
     );
-    expect(notes.rows.find((row) => row.text.startsWith('@stranger'))?.mention_ids).toEqual([]);
+    expect(notes.rows.find((row) => row.text.startsWith('@stranger'))?.tagged_ids).toEqual([]);
 
     const phoneCorners = await request(`/v1/phone/rooms/${ROOM}/corners`);
     expect(await phoneCorners.json()).toEqual(
@@ -4973,7 +4933,7 @@ describe('monolith integration', () => {
     ).toBe(200);
     const inbox = (await (
       await daemonOperation('getCornerCloseRequests', { cornerId })
-    ).json()) as { items: Array<{ id: string; mentionIds: string[] }> };
+    ).json()) as { items: Array<{ id: string }> };
     expect(inbox.items).not.toContainEqual(expect.objectContaining({ id: followUp }));
     expect(
       (
@@ -5050,7 +5010,6 @@ describe('monolith integration', () => {
       requestId,
       triggerMessageId: requestId,
       text: 'Done.',
-      mentionIds: [],
     });
     expect(finalReply.status).toBe(200);
     expect(
@@ -5228,11 +5187,14 @@ describe('monolith integration', () => {
     const stopLine = (
       await database.query<{
         text: string;
-        mention_ids: string[];
+        woke: string[];
         request_id: string;
         system_event: { kind?: string };
       }>(
-        `SELECT text,mention_ids,request_id,system_event FROM messages
+        `SELECT text,request_id,system_event,
+           ARRAY(SELECT agent_id FROM agent_commands
+                 WHERE source_message_id=messages.id) woke
+         FROM messages
          WHERE room_id=$1 AND presentation='system' AND system_event->>'kind'='turn-cancelled'`,
         [ROOM],
       )
@@ -5240,9 +5202,10 @@ describe('monolith integration', () => {
     expect(stopLine).toEqual([
       expect.objectContaining({
         text: '@owner stopped @bee · turn cancelled',
-        // The mention is the daemon's wake-up, and the request id is how it
-        // knows which of its sessions to cancel.
-        mention_ids: [AGENT],
+        // `@bee` in that sentence is how the line READS, not how it is
+        // addressed: the stop command beside it is the daemon's wake-up, and
+        // the request id is how it knows which session to cancel.
+        woke: [AGENT],
         request_id: requestId,
       }),
     ]);
@@ -5297,7 +5260,6 @@ describe('monolith integration', () => {
           requestId,
           triggerMessageId: requestId,
           text: 'Half of an answer, cut off mid-',
-          mentionIds: [],
         })
       ).status,
     ).toBe(403);
@@ -5345,10 +5307,11 @@ describe('monolith integration', () => {
         id: string;
         author_id: string;
         text: string;
-        mention_ids: string[];
+        tagged_ids: string[];
         card: Record<string, string>;
       }>(
-        `SELECT id,author_id,text,mention_ids,card FROM messages WHERE room_id=$1 AND presentation='system' AND card_type='turn-failed'`,
+        `SELECT id,author_id,text,${taggedIdentityIdsSql('messages')} tagged_ids,card
+         FROM messages WHERE room_id=$1 AND presentation='system' AND card_type='turn-failed'`,
         [ROOM],
       );
     const first = (await lines()).rows;
@@ -5356,7 +5319,7 @@ describe('monolith integration', () => {
       expect.objectContaining({
         author_id: AGENT,
         text: '@bee could not answer · provider error 429 concurrency_limit',
-        mention_ids: [],
+        tagged_ids: [],
         card: { requestId, agentId: AGENT, state: 'failed' },
       }),
     ]);
@@ -5376,7 +5339,6 @@ describe('monolith integration', () => {
       requestId,
       triggerMessageId: requestId,
       text: 'Not much!',
-      mentionIds: [],
     });
     expect(lateReply.status).toBe(403);
     expect((await lines()).rows).toEqual(first);
@@ -5586,16 +5548,16 @@ describe('monolith integration', () => {
       requestId: 'human-mention-turn',
       triggerMessageId: '5'.repeat(64),
       text: '@owner Repository root files: README.md',
-      mentionIds: [unknown],
     });
     expect(reply.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '@owner%'`,
+    const stored = await database.query<{ tagged_ids: string[] }>(
+      `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m
+       WHERE m.room_id=$1 AND m.author_id=$2 AND m.text LIKE '@owner%'`,
       [ROOM, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
     // The human member is a real mention; an unknown name stays plain text.
-    expect(stored.rows[0]!.mention_ids).toEqual([HUMAN]);
+    expect(stored.rows[0]!.tagged_ids).toEqual([HUMAN]);
     const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
     expect(
       projected.messages.find((message) => message.text.startsWith('@owner'))?.mentionPubkeys,
@@ -5628,32 +5590,24 @@ describe('monolith integration', () => {
     const spoofed = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
       text: 'Peer should not receive this untagged message.',
-      mentionIds: [peer],
     });
     expect(spoofed.status).toBe(200);
-    const spoofedBody = (await spoofed.json()) as { id: string; mentionIds: string[] };
-    expect(spoofedBody.mentionIds).toEqual([]);
+    const spoofedBody = (await spoofed.json()) as { id: string };
+    // Untagged words name nobody, whatever the caller hoped.
+    expect(await taggedBy(database, spoofedBody.id)).toEqual([]);
     const reply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
       text: '@bee cannot self-route. @retired-peer and @FUCKFACE are stale. @fuckface investigate the failed build.',
-      mentionIds: [AGENT],
     });
     expect(reply.status).toBe(200);
-    const body = (await reply.json()) as { id: string; mentionIds: string[] };
-    expect(body.mentionIds).toEqual([peer]);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE id=$1`,
-      [body.id],
-    );
-    expect(stored.rows[0]?.mention_ids).toEqual([peer]);
+    const body = (await reply.json()) as { id: string };
+    expect(await taggedBy(database, body.id)).toEqual([peer]);
     const inbox = (await (
       await daemonOperation('getRoomInbox', { roomId: ROOM }, peerToken)
     ).json()) as {
-      items: Array<{ id: string; mentionIds: string[] }>;
+      items: Array<{ id: string }>;
     };
-    expect(inbox.items).toContainEqual(
-      expect.objectContaining({ id: body.id, mentionIds: [peer] }),
-    );
+    expect(inbox.items).toContainEqual(expect.objectContaining({ id: body.id }));
     expect(inbox.items).not.toContainEqual(expect.objectContaining({ id: spoofedBody.id }));
   });
 
@@ -5701,19 +5655,19 @@ describe('monolith integration', () => {
       requestId: 'two-human-tags-turn',
       triggerMessageId: '5'.repeat(64),
       text: '@owner here is where things stand.\n@bananaman614305 you are up next.',
-      mentionIds: [AGENT],
     });
     expect(reply.status).toBe(200);
     // The agent's own durable reply — a server-authored system line about the
     // Room is not a turn's delivery and carries no mention of its own.
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='message'`,
+    const stored = await database.query<{ tagged_ids: string[] }>(
+      `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m
+       WHERE m.room_id=$1 AND m.author_id=$2 AND m.presentation='message'`,
       [ROOM, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
     // Both tags are stored, so both are what the phone highlights and what the
     // push fan-out reads. A correct handle never becomes plain text in silence.
-    expect(stored.rows[0]!.mention_ids).toEqual([HUMAN, human2]);
+    expect(stored.rows[0]!.tagged_ids).toEqual([HUMAN, human2]);
     const projected = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
     expect(
       projected.messages.find(
@@ -5795,17 +5749,17 @@ describe('monolith integration', () => {
       roomId: cornerId,
       requestId: 'corner-complete-tag-done',
       text: '@owner all done, merging now.',
-      mentionIds: [HUMAN],
     });
     expect(reply.status).toBe(200);
-    const stored = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2`,
+    const stored = await database.query<{ tagged_ids: string[] }>(
+      `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m
+       WHERE m.room_id=$1 AND m.author_id=$2`,
       [cornerId, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
     // The merge summary card and its push cover corner completion; a human tag
     // on the settling corner post stays plain text.
-    expect(stored.rows[0]!.mention_ids).toEqual([]);
+    expect(stored.rows[0]!.tagged_ids).toEqual([]);
   });
 
   it('posts one corner-open daemon-fact card and pushes it to human members', async () => {
@@ -6276,10 +6230,11 @@ describe('monolith integration', () => {
       room_id: string;
       text: string;
       presentation: string;
-      mention_ids: string[];
+      tagged_ids: string[];
       author_id: string;
     }>(
-      `SELECT room_id,text,presentation,mention_ids,author_id FROM messages WHERE card_type='agent-yolo' ORDER BY created_at`,
+      `SELECT room_id,text,presentation,${taggedIdentityIdsSql('messages')} tagged_ids,author_id
+       FROM messages WHERE card_type='agent-yolo' ORDER BY created_at`,
     );
     expect(onLines.rows.map((row) => row.room_id).sort()).toEqual([ROOM, second.id, dm.id].sort());
     for (const row of onLines.rows) {
@@ -6287,7 +6242,7 @@ describe('monolith integration', () => {
         expect.objectContaining({
           text: '@owner turned yolo on for @bee · grant requests are now approved automatically',
           presentation: 'system',
-          mention_ids: [],
+          tagged_ids: [],
           author_id: HUMAN,
         }),
       );
@@ -6423,7 +6378,7 @@ describe('monolith integration', () => {
     const cards = await database.query<{
       author_id: string;
       text: string;
-      mention_ids: string[];
+      tagged_ids: string[];
       presentation: string;
       card: {
         grants: Array<Record<string, unknown>>;
@@ -6431,13 +6386,16 @@ describe('monolith integration', () => {
         requester: { pubkey: string };
       };
     }>(
-      `SELECT author_id,text,mention_ids,presentation,card FROM messages WHERE card_type='grant-request'`,
+      `SELECT author_id,text,${taggedIdentityIdsSql('messages')} tagged_ids,presentation,card
+       FROM messages WHERE card_type='grant-request'`,
     );
     expect(cards.rows).toHaveLength(1);
     const card = cards.rows[0]!;
     expect(card.author_id).toBe(AGENT);
     expect(card.presentation).toBe('card');
-    expect(card.mention_ids).toEqual([HUMAN]);
+    // The card names its owner in `card`, not as a tag: a grant request is
+    // addressed by what it IS, and `background.ts` pushes it to that person.
+    expect(card.tagged_ids).toEqual([]);
     expect(card.text).toBe(
       '@bee asked @owner for command fly deploy -a beeline-preview --with FLY_TOKEN and host api.fly.io',
     );
@@ -6515,7 +6473,6 @@ describe('monolith integration', () => {
       items: Array<{
         type: string;
         body: string;
-        mentionIds: string[];
         authorId: string;
         systemEvent?: unknown;
       }>;
@@ -6543,9 +6500,8 @@ describe('monolith integration', () => {
         object: { text: 'host api.fly.io' },
       },
     ]);
-    expect(
-      decisions.every((item) => item.mentionIds.includes(AGENT) && item.authorId === HUMAN),
-    ).toBe(true);
+    // These items are in this agent's inbox because the server routed them here.
+    expect(decisions.every((item) => item.authorId === HUMAN)).toBe(true);
     expect(await pushes.runOnce()).toBe(0);
     // The phone still validates the settled Room read.
     const settledRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
@@ -6668,18 +6624,19 @@ describe('monolith integration', () => {
     const lines = await database.query<{
       text: string;
       presentation: string;
-      mention_ids: string[];
+      tagged_ids: string[];
       author_id: string;
       system_event: unknown;
     }>(
-      `SELECT text,presentation,mention_ids,author_id,system_event FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
+      `SELECT text,presentation,${taggedIdentityIdsSql('messages')} tagged_ids,author_id,system_event
+       FROM messages WHERE room_id=$1 AND card_type IN ('grant-request','grant-auto')`,
       [ROOM],
     );
     expect(lines.rows).toEqual([
       {
         text: '@bee was granted secret FLY_TOKEN · auto-approved under yolo',
         presentation: 'system',
-        mention_ids: [],
+        tagged_ids: [],
         author_id: AGENT,
         system_event: {
           subject: { kind: 'agent', id: AGENT, name: '@bee' },
@@ -6914,36 +6871,37 @@ describe('monolith integration', () => {
 
     await redeemReview(REVIEW_SECRET);
     const joined = await database.query<{
-      mention_ids: string[];
+      tagged_ids: string[];
       text: string;
       system_event: { verb: string; kind?: string };
     }>(
-      `SELECT mention_ids,text,system_event FROM messages
+      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event FROM messages
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
     expect(joined.rows).toEqual([
       expect.objectContaining({
-        mention_ids: [],
+        tagged_ids: [],
         text: '@play-review joined',
         system_event: expect.not.objectContaining({ kind: expect.anything() }),
       }),
     ]);
 
-    const workspaceDms = await database.query<{ text: string; mention_ids: string[] }>(
-      `SELECT message.text,message.mention_ids FROM messages message
+    const workspaceDms = await database.query<{ text: string; tagged_ids: string[] }>(
+      `SELECT message.text,${taggedIdentityIdsSql('message')} tagged_ids FROM messages message
        JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
          AND message.card_type='workspace-member-joined'`,
       [DEFAULT_WORKSPACE_ID],
     );
-    expect(workspaceDms.rows).toEqual([{ text: '@play-review joined', mention_ids: [] }]);
+    expect(workspaceDms.rows).toEqual([{ text: '@play-review joined', tagged_ids: [] }]);
 
-    const otherRoom = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+    const otherRoom = await database.query<{ tagged_ids: string[] }>(
+      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids
+       FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
       [ROOM],
     );
-    expect(otherRoom.rows.every((row) => row.mention_ids.length === 0)).toBe(true);
+    expect(otherRoom.rows.every((row) => row.tagged_ids.length === 0)).toBe(true);
   });
 
   it('lets an agent subscribe itself, and wakes it on the next arrival', async () => {
@@ -6978,11 +6936,13 @@ describe('monolith integration', () => {
     expect((await operation('addRoomMember', { roomId: ROOM, memberId: newcomerId })).status).toBe(
       200,
     );
-    const joins = await database.query<{ mention_ids: string[] }>(
-      `SELECT mention_ids FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation IN ('system','card')`,
+    const joins = await database.query<{ woke: string[] }>(
+      `SELECT ARRAY(SELECT agent_id FROM agent_commands
+                    WHERE source_message_id=messages.id) woke
+       FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation IN ('system','card')`,
       [ROOM, newcomerId],
     );
-    expect(joins.rows.some((row) => row.mention_ids.includes(AGENT))).toBe(true);
+    expect(joins.rows.some((row) => row.woke.includes(AGENT))).toBe(true);
     const ordinaryLine = 'd'.repeat(64);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation)
@@ -6992,16 +6952,12 @@ describe('monolith integration', () => {
     const inbox = (await (await daemonOperation('getRoomInbox', { roomId: ROOM })).json()) as {
       items: Array<{
         id: string;
-        mentionIds: string[];
         systemEvent?: { kind?: string };
       }>;
     };
     expect(inbox.items.map((item) => item.id)).not.toContain(ordinaryLine);
     expect(inbox.items).toContainEqual(
-      expect.objectContaining({
-        mentionIds: expect.arrayContaining([AGENT]),
-        systemEvent: { kind: 'joined' },
-      }),
+      expect.objectContaining({ systemEvent: { kind: 'joined' } }),
     );
   });
 
@@ -7076,13 +7032,15 @@ describe('monolith integration', () => {
     expect(emitted.status).toBe(200);
     const row = await database.query<{
       text: string;
-      mention_ids: string[];
+      tagged_ids: string[];
       system_event: { kind?: string; subject: { id?: string } };
       event_cause_id: string | null;
       event_root_cause_id: string | null;
       event_depth: number | null;
     }>(
-      `SELECT text,mention_ids,system_event,event_cause_id,event_root_cause_id,event_depth
+      `SELECT text,ARRAY(SELECT agent_id FROM agent_commands
+                         WHERE source_message_id=messages.id) woke,
+         system_event,event_cause_id,event_root_cause_id,event_depth
        FROM messages WHERE id=$1`,
       [((await emitted.json()) as { id: string }).id],
     );
@@ -7092,7 +7050,7 @@ describe('monolith integration', () => {
     expect(line.text).toBe('@bee emitted handoff · the branch is ready');
     expect(line.system_event.kind).toBe('agent:handoff');
     expect(line.system_event.subject.id).toBe(AGENT);
-    expect(line.mention_ids).toEqual([peer]);
+    expect(line.woke).toEqual([peer]);
     // The cause came from the receipt, not from the helper.
     expect(line.event_cause_id).toBe(requestId);
     expect(line.event_root_cause_id).toBe(requestId);

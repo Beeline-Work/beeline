@@ -85,7 +85,6 @@ async function runTurn(
               createdAt: 1,
               type: 'message',
               body: 'fix the widget',
-              mentionIds: [agent.publicKey],
               attachments: [],
             },
           ],

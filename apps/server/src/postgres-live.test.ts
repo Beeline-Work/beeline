@@ -331,7 +331,10 @@ describe('Postgres live fanout', () => {
     const agent = 'b'.repeat(64);
     const live = new LiveHub();
     const presence = new ConnectionPresence(database, live, 50);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`,
+      [agent],
+    );
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -342,9 +345,8 @@ describe('Postgres live fanout', () => {
       await presence.start();
       await presence.announce(ROOM, agent, { lifecycleId: 'boot' });
       await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids)
-         VALUES($1,$2,$3,'Are you there?',$4::jsonb)`,
-        ['2'.repeat(64), ROOM, AUTHOR, JSON.stringify([agent])],
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Are you there?')`,
+        ['2'.repeat(64), ROOM, AUTHOR],
       );
       const client = new PgliteListenClient(database);
       const listener = new PostgresLiveListener(database, live, () => client, 1);

@@ -235,9 +235,6 @@ export type RoomInboxResult = {
     readonly createdAt: number;
     readonly type: string;
     readonly body: string;
-    /** Server-validated addressing and reply metadata needed by Room intake. */
-    readonly mentionIds: readonly string[];
-    readonly agentMentionIds?: readonly string[];
     readonly agentAuthor?: boolean;
     readonly replyToMessageId?: string;
     /** Current author of the reply parent, projected by the server. */
@@ -359,7 +356,7 @@ export type RequestCompletionResult = {
   readonly completed: boolean;
 };
 export type WriteResult = { readonly id: string; readonly createdAt: number };
-export type PostRoomMessageResult = WriteResult & { readonly mentionIds: readonly string[] };
+export type PostRoomMessageResult = WriteResult;
 export type PostRoomMessageInput = TurnOutputAuthority &
   RoomInput & {
     readonly requestId?: string;
@@ -367,8 +364,6 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     /** The daemon never phrases a system line; the server does (`system-line.ts`). */
     readonly presentation?: 'message' | 'card';
     readonly tags?: Readonly<Record<string, string>>;
-    /** @deprecated Compatibility input. The server derives persisted mentions from `text`. */
-    readonly mentionIds?: readonly string[];
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */
     readonly triggerMessageId?: string;
@@ -645,7 +640,6 @@ export function isAgentCommand(value: unknown): value is AgentCommand {
     typeof source.authorId === 'string' &&
     typeof source.body === 'string' &&
     typeof source.createdAt === 'number' &&
-    Array.isArray(source.attachments) &&
-    Array.isArray(source.mentionIds),
+    Array.isArray(source.attachments),
   );
 }

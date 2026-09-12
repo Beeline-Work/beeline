@@ -37,7 +37,6 @@ export interface AgentTurnStreamOptions {
 /** Extra fields the durable reply carries on one surface but not the other. */
 export interface DurableReplyFields {
   triggerMessageId?: string;
-  mentionIds?: string[];
 }
 
 /**
@@ -175,19 +174,19 @@ export class AgentTurnStream {
   async settle(
     reply: string,
     fields: DurableReplyFields = {},
-    onReplyPosted?: (result: { readonly mentionIds?: readonly string[] }) => void,
+    onReplyPosted?: () => void,
   ): Promise<void> {
     this.close();
     const { api, roomId, requestId } = this.options;
     if (reply) {
-      const posted = await api.execute('postRoomMessage', {
+      await api.execute('postRoomMessage', {
         roomId,
         requestId,
         text: reply,
         presentation: 'message',
         ...fields,
       });
-      onReplyPosted?.(posted);
+      onReplyPosted?.();
     }
     // The retract stays after the reply: a late draft write must never put an
     // obsolete snapshot back under a message the reader has already been given.

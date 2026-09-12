@@ -8,7 +8,8 @@ export type CommittedMessageLiveRow = {
   text: string;
   presentation: RoomViewMessage['presentation'];
   attachments: unknown[];
-  mention_ids: string[];
+  /** Derived on read from the row's text and the Room's membership, not stored. */
+  tagged_ids: string[];
   reply_to_message_id: string | null;
   root_message_id: string | null;
   request_id: string | null;

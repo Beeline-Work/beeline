@@ -87,7 +87,7 @@ describe('background advisory-lock ownership', () => {
         workspace = '11111111-1111-4111-8111-111111111111',
         room = '22222222-2222-4222-8222-222222222222';
       await db.query(
-        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
         [human, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -110,8 +110,8 @@ describe('background advisory-lock ownership', () => {
       });
       await loop.runOnce();
       await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`,
-        ['1'.repeat(64), room, agent, JSON.stringify([human])],
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
+        ['1'.repeat(64), room, agent],
       );
       expect(await loop.runOnce()).toBe(0);
       expect(
@@ -135,7 +135,7 @@ describe('background advisory-lock ownership', () => {
         room = '22222222-2222-4222-8222-222222222222',
         token = 'unregistered-device-token-1234567890';
       await db.query(
-        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
         [human, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -160,8 +160,8 @@ describe('background advisory-lock ownership', () => {
       });
       await loop.runOnce();
       await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids) VALUES($1,$2,$3,'hello',$4::jsonb)`,
-        ['1'.repeat(64), room, agent, JSON.stringify([human])],
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
+        ['1'.repeat(64), room, agent],
       );
       expect(await loop.runOnce()).toBe(0);
       expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [token])).rowCount).toBe(
@@ -182,7 +182,7 @@ describe('background advisory-lock ownership', () => {
         room = '22222222-2222-4222-8222-222222222222',
         directRoom = '33333333-3333-4333-8333-333333333333';
       await db.query(
-        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Other'),($3,'agent','Bee')`,
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
         [human, otherHuman, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -204,27 +204,26 @@ describe('background advisory-lock ownership', () => {
         [human, otherHuman],
       );
       await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids,created_at)
-         VALUES($1,$2,$3,'old mention',$4::jsonb,now()-interval '1 hour')`,
-        ['0'.repeat(64), room, agent, JSON.stringify([human])],
+        `INSERT INTO messages(id,room_id,author_id,text,created_at)
+         VALUES($1,$2,$3,'@owner old mention',now()-interval '1 hour')`,
+        ['0'.repeat(64), room, agent],
       );
       const send = vi.fn().mockResolvedValue(undefined);
       const loop = new PushDeliveryLoop(db, { send });
       expect(await loop.runOnce()).toBe(0);
       await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,mention_ids,presentation,card_type,card) VALUES
-         ($1,$2,$3,'Please review',$4::jsonb,'message',NULL,NULL),
-         ($5,$2,$3,'Untargeted', '[]'::jsonb,'message',NULL,NULL),
-         ($6,$2,$7,'My own mention',$4::jsonb,'message',NULL,NULL),
-         ($8,$2,$3,'', $4::jsonb,'activity',NULL,NULL),
-         ($9,$2,$3,'@bee opened a corner Ship push policy', '[]'::jsonb,'card','daemon-fact',$10::jsonb),
-         ($11,$2,$3,'@bee merged Ship push policy', '[]'::jsonb,'card','daemon-fact',$12::jsonb),
-         ($13,$14,$3,'A direct message','[]'::jsonb,'message',NULL,NULL)`,
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$2,$3,'@owner Please review','message',NULL,NULL),
+         ($4,$2,$3,'Untargeted','message',NULL,NULL),
+         ($5,$2,$6,'@owner My own mention','message',NULL,NULL),
+         ($7,$2,$3,'','activity',NULL,NULL),
+         ($8,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$9::jsonb),
+         ($10,$2,$3,'@bee merged Ship push policy','card','daemon-fact',$11::jsonb),
+         ($12,$13,$3,'A direct message','message',NULL,NULL)`,
         [
           '1'.repeat(64),
           room,
           agent,
-          JSON.stringify([human]),
           '2'.repeat(64),
           '3'.repeat(64),
           human,
@@ -252,7 +251,7 @@ describe('background advisory-lock ownership', () => {
       expect(send).toHaveBeenCalledTimes(6);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee: Please review' }),
+        expect.objectContaining({ text: 'Bee: @owner Please review' }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
@@ -283,7 +282,7 @@ describe('background advisory-lock ownership', () => {
         workspace = '11111111-1111-4111-8111-111111111111',
         room = '22222222-2222-4222-8222-222222222222';
       await db.query(
-        `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
         [human, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);

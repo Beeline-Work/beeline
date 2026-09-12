@@ -29,7 +29,6 @@ const CONVERSATION = Array.from({ length: 200 }, (_, index) => ({
   createdAt: index + 51,
   type: 'message',
   body: `row ${index + 51}`,
-  mentionIds: [],
   attachments: [],
 }));
 
@@ -80,7 +79,6 @@ describe('monolith Room turn context', () => {
       createdAt: 900,
       type: 'message',
       body,
-      mentionIds: [agent.publicKey],
       attachments: [],
     });
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {

@@ -78,7 +78,6 @@ type HumanMessage = Pick<
   | 'createdAt'
   | 'attachments'
   | 'type'
-  | 'mentionIds'
   | 'replyToMessageId'
   | 'replyToAuthorId'
   | 'requestAuthorId'
@@ -119,15 +118,21 @@ export function roomMcpPermissionDecision(
  * used only against a server too old to answer.
  */
 /** Server-authored scheduled prompts arrive as system lines (`@scheduler ran a
- *  schedule for <agent> · <message>`) mentioning this agent and carrying the structured
- *  event; the scheduler is not a Room principal, so its lines skip the per-author
+ *  schedule for <agent> · <message>`) carrying the structured event; the
+ *  scheduler is not a Room principal, so its lines skip the per-author
  *  authority check (schedule creation was already authority-gated). Recognised by
- *  the event's verb, never by the text. */
-export function isScheduledPrompt(
-  item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
-  agentId: string,
-): boolean {
-  if (item.type !== 'system' || !item.mentionIds.includes(agentId)) return false;
+ *  the event's verb, never by the text.
+ *
+ *  Nothing here re-checks that the line is addressed to this agent. An inbox
+ *  item exists BECAUSE the server routed it to this agent, so the item IS the
+ *  address; asking the line to name the reader again only invites the two to
+ *  disagree. */
+export function isScheduledPrompt(item: {
+  type: string;
+  body: string;
+  systemEvent?: SystemEvent;
+}): boolean {
+  if (item.type !== 'system') return false;
   if (item.systemEvent?.kind) return item.systemEvent.kind === 'schedule-ran';
   // One release of fallback: a line written before the server stamped kinds
   // carries the verb and nothing else. Remove after the next release; the
@@ -148,14 +153,12 @@ export function inboxItemAuthorName(
   item: {
     type: string;
     authorId: string;
-    mentionIds: readonly string[];
     body: string;
     systemEvent?: SystemEvent;
   },
-  agentId: string,
   names: ReadonlyMap<string, string>,
 ): string {
-  if (isScheduledPrompt(item, agentId)) return SCHEDULE_SCHEDULER_NAME;
+  if (isScheduledPrompt(item)) return SCHEDULE_SCHEDULER_NAME;
   const subject = item.systemEvent?.subject;
   if (item.type === 'system' && subject?.name) return subject.name;
   return names.get(item.authorId) ?? item.authorId.slice(0, 12);
@@ -165,13 +168,12 @@ export function inboxItemAuthorName(
  *  itself (the event's consequence), otherwise the row's text. An event line's
  *  own sentence already carries the fact — `Ada joined Beeline Welcome` names
  *  the newcomer — so it is shown as written rather than restated. */
-export function inboxItemPromptBody(
-  item: { type: string; body: string; mentionIds: readonly string[]; systemEvent?: SystemEvent },
-  agentId: string,
-): string {
-  return isScheduledPrompt(item, agentId)
-    ? (item.systemEvent?.consequence ?? item.body)
-    : item.body;
+export function inboxItemPromptBody(item: {
+  type: string;
+  body: string;
+  systemEvent?: SystemEvent;
+}): string {
+  return isScheduledPrompt(item) ? (item.systemEvent?.consequence ?? item.body) : item.body;
 }
 
 /** A `request_grant` call whose reply says the card is posted pauses the turn. */
@@ -872,10 +874,10 @@ export class MonolithRoomTurnLoop {
                     'If the current task is only a nudge to respond, answer the most recent unanswered human message in the conversation instead of echoing the nudge.',
                     MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
                   ].join(' '),
-                  `Current task selected by the server from ${inboxItemAuthorName(item, this.agent.publicKey, names)}:`,
+                  `Current task selected by the server from ${inboxItemAuthorName(item, names)}:`,
                   roomMessagePrompt(
                     '',
-                    inboxItemPromptBody(item, this.agent.publicKey),
+                    inboxItemPromptBody(item),
                     item.attachments,
                     delivered,
                     this.acceptsImages(),

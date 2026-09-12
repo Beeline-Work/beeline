@@ -105,7 +105,6 @@ async function twoTurns(
               createdAt: delivered,
               type: 'message',
               body: ask.body,
-              mentionIds: [agent.publicKey],
               attachments: [],
             },
           ],

@@ -813,9 +813,12 @@ export class RoomRuntimeCoordinator {
         roomId: cornerId,
         limit: 50,
       });
+      // The message that asked is the newest one this agent did not write. A
+      // corner has exactly one helper, so there is nobody else it could be —
+      // and no stored address to consult, since a tag is read from text.
       const asked = [...conversation.items]
         .reverse()
-        .find((item) => item.type === 'message' && item.mentionIds.includes(this.agent.publicKey));
+        .find((item) => item.type === 'message' && item.authorId !== this.agent.publicKey);
       if (!asked) return;
       await this.options.daemonApi.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,

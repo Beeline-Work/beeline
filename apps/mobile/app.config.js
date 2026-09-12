@@ -58,7 +58,7 @@ export default {
         // "a new native build is shipping". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "23",
+        runtimeVersion: "24",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
@@ -159,6 +159,7 @@ export default {
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidBuildTooling.js"),
+            require("./plugins/withRoomNotificationGroups.js"),
             [
                 "expo-router",
                 {

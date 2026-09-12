@@ -19,6 +19,13 @@
 
 /** @type {import('@expo/fingerprint').Config} */
 module.exports = {
+  extraSources: [
+    {
+      type: 'dir',
+      filePath: 'plugins/room-notifications',
+      reasons: ['Room notification native presentation'],
+    },
+  ],
   sourceSkips: [
     // The whole `scripts` section is JS/CI tooling. The library hashes it by
     // default only because `expo prebuild` rewrites the android/ios entries,

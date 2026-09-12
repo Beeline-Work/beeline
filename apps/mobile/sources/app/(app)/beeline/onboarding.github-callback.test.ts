@@ -504,7 +504,7 @@ describe('GitHub callback delivery into onboarding', () => {
       expect(sdk.finish).not.toHaveBeenCalled();
       expect(sdk.recover).not.toHaveBeenCalled();
       expect(navigation.replace).toHaveBeenCalledWith({
-        pathname: '/beeline/settings/identity',
+        pathname: '/beeline/settings',
         params: { githubReconnect: fails ? 'failed' : 'success' },
       });
     },

@@ -5,7 +5,6 @@
   "app/(app)/beeline/community.tsx": 9,
   "app/(app)/beeline/corners/[roomId].tsx": 12,
   "app/(app)/beeline/onboarding.tsx": 20,
-  "app/(app)/beeline/settings/identity.tsx": 28,
   "app/(app)/beeline/settings/schedules.tsx": 5,
   "app/(app)/changelog.tsx": 6,
   "app/(app)/index.tsx": 2,

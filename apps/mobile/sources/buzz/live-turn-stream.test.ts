@@ -237,4 +237,60 @@ describe('two agents streaming at once', () => {
 
     expect(rows.map((row) => row.id)).toEqual([liveDraftRowId(OTHER_AGENT, REQUEST)]);
   });
+
+  /**
+   * The Room turn that opens a corner publishes NO durable reply: the server's
+   * corner card is the whole handoff (`monolith-room-turn.ts`). Its draft was
+   * held for a final that was never coming, so the last streamed sentence — "I
+   * will open a corner for that" — stayed on the transcript as the answer, and
+   * only reopening the Room cleared it.
+   */
+  describe('a turn that completes without a durable reply', () => {
+    const retracted = () =>
+      applyLiveOverlay(stream(draft(AGENT, 'Opening a corner for that.', 100)), {
+        ...draft(AGENT, '', 120),
+        text: undefined,
+        closed: true,
+      });
+
+    it('ends the retracted draft on the complete receipt', () => {
+      const settled = retracted();
+      // Before the receipt lands the streamed text stays put: a draft must
+      // never blink out between the retract and its turn's ending.
+      expect(liveDraftMessages(settled, []).map((row) => row.agentMessageDraft)).toEqual([
+        'Opening a corner for that.',
+      ]);
+      const complete: RoomViewAgentTurn = {
+        requestId: REQUEST,
+        agentPubkey: AGENT,
+        status: 'complete',
+        createdAt: 130,
+      };
+      expect(liveDraftMessages(settled, [], [complete])).toEqual([]);
+    });
+
+    it('keeps a stopped or failed turn exactly where the reader last saw it', () => {
+      for (const status of ['working', 'failed', 'cancelled'] as const) {
+        const rows = liveDraftMessages(
+          retracted(),
+          [],
+          [{ requestId: REQUEST, agentPubkey: AGENT, status, createdAt: 130 }],
+        );
+        expect(rows.map((row) => row.agentMessageDraft)).toEqual(['Opening a corner for that.']);
+      }
+    });
+
+    it('leaves another agent still streaming under the same request id', () => {
+      const overlays = applyLiveOverlay(
+        stream(draft(AGENT, 'Opening a corner.', 100), draft(OTHER_AGENT, 'still writing', 101)),
+        { ...draft(AGENT, '', 120), text: undefined, closed: true },
+      );
+      const rows = liveDraftMessages(
+        overlays,
+        [],
+        [{ requestId: REQUEST, agentPubkey: AGENT, status: 'complete', createdAt: 130 }],
+      );
+      expect(rows.map((row) => row.id)).toEqual([liveDraftRowId(OTHER_AGENT, REQUEST)]);
+    });
+  });
 });

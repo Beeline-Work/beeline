@@ -706,7 +706,10 @@ export default function BuzzChat() {
     [cachedMessages],
   );
   const liveMessages = useMemo<ChatDisplayMessage[]>(
-    () => (roomSurface ? liveDraftMessages(liveOverlays, roomSurface.messages) : []),
+    () =>
+      roomSurface
+        ? liveDraftMessages(liveOverlays, roomSurface.messages, roomSurface.latestAgentTurns)
+        : [],
     [liveOverlays, roomSurface],
   );
   const olderMessages = useMemo(

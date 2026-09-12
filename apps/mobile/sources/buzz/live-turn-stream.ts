@@ -12,12 +12,17 @@ import type { ChatDisplayMessage } from './room-view-presentation';
  *
  * Draft prose is the only live transcript overlay. Presence drives its own
  * indicator, and private thought text never enters message rows.
+ *
+ * The turn receipts are passed so a draft cannot outlive its turn: a turn that
+ * completed without a durable reply has no final for its retracted draft to
+ * dissolve into, and `visibleLiveOverlays` ends the row there.
  */
 export function liveDraftMessages(
   overlays: readonly LiveOverlay[],
   durable: readonly RoomViewMessage[],
+  turns: readonly RoomViewAgentTurn[] = [],
 ): ChatDisplayMessage[] {
-  return visibleLiveOverlays(overlays, durable).flatMap((overlay) => {
+  return visibleLiveOverlays(overlays, durable, turns).flatMap((overlay) => {
     if (overlay.kind !== 'draft') return [];
     return [
       {

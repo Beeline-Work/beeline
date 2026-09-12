@@ -5,7 +5,7 @@ import {
   TAG_AGENT_PRESENCE,
   TAG_AGENT_THOUGHT,
 } from './kinds.js';
-import type { RoomViewMessage } from './room-view.js';
+import type { RoomViewAgentTurn, RoomViewMessage } from './room-view.js';
 
 export type LiveOverlay =
   | { readonly kind: 'draft'; readonly key: string; readonly stableId: string; readonly agentPubkey: string; readonly requestId: string; readonly text?: string; readonly closed: boolean; readonly createdAt: number }
@@ -114,12 +114,38 @@ export function applyLiveOverlay(
   return [...withoutKey, update];
 }
 
+/**
+ * The overlays a transcript may still paint — a draft never outlives its turn
+ * (C108).
+ *
+ * A streamed draft is provisional text, so it lives only until its turn's real
+ * ending is on the page. That ending is normally the durable reply carrying the
+ * same request id: the settled draft holds its last text until the reply lands,
+ * then yields to it.
+ *
+ * A turn can also complete with NO durable reply — a Room turn whose whole
+ * handoff is the server's corner card publishes no message at all — and then
+ * nothing was ever going to arrive for the retracted draft to dissolve into. Its
+ * `complete` receipt is the ending, and the row goes with it; the server deleted
+ * the `live_outputs` row in the same settle, so a reader who opens the Room
+ * again is already shown no draft, and a session that keeps one is the only
+ * reader still being told a provisional sentence is the answer.
+ *
+ * A turn that failed or was stopped is NOT an ending of this kind: its partial
+ * text stays exactly where the reader last saw it.
+ */
 export function visibleLiveOverlays(
   overlays: readonly LiveOverlay[],
   durable: readonly RoomViewMessage[],
+  turns: readonly RoomViewAgentTurn[] = [],
 ): readonly LiveOverlay[] {
   const completed = new Set(durable.flatMap((message) =>
     message.requestId ? [`${message.author.pubkey}:${message.requestId}`] : []));
-  return overlays.filter((overlay) => overlay.kind !== 'draft' ||
-    !completed.has(`${overlay.agentPubkey}:${overlay.requestId}`));
+  const settled = new Set(turns.flatMap((turn) =>
+    turn.status === 'complete' ? [`${turn.agentPubkey}:${turn.requestId}`] : []));
+  return overlays.filter((overlay) => {
+    if (overlay.kind !== 'draft') return true;
+    const turn = `${overlay.agentPubkey}:${overlay.requestId}`;
+    return !completed.has(turn) && !(overlay.closed && settled.has(turn));
+  });
 }

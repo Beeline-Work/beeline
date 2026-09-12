@@ -47,6 +47,7 @@ import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecyc
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
+import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
@@ -208,18 +209,15 @@ async function loadFonts() {
 export default function RootLayout() {
   const isDesktop = useIsDesktop();
   React.useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      // MMKV is synchronous and a warm-cache snapshot may be large, so
-      // this is deliberately the only write point: after Android has
-      // already transitioned away from the foreground. A deferred JS
-      // timer cannot be used here—Android suspends that timer before it
-      // fires, leaving a cold launch with no persisted transcript.
-      if (state === 'background') {
-      }
-    });
-    return () => {
-      subscription.remove();
+    const reconcileBadge = () => {
+      if (AppState.currentState !== 'active' || getOpenBuzzChannelId()) return;
+      void reconcilePresentedNotificationBadge(Notifications, Platform.OS).catch((error) => {
+        console.log('Failed to reconcile the presented notification badge:', error);
+      });
     };
+    reconcileBadge();
+    const subscription = AppState.addEventListener('change', reconcileBadge);
+    return () => subscription.remove();
   }, []);
 
   React.useEffect(

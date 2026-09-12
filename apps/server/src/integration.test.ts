@@ -5555,6 +5555,73 @@ describe('monolith integration', () => {
     ).toBe(404);
   });
 
+  it('lets the requester stop a corner turn that answers a parent-Room message', async () => {
+    const cornerId = '33333333-3333-4333-8333-333333333333';
+    const requestId = 'a'.repeat(64);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Stop corner')`,
+      [cornerId, WORKSPACE, ROOM, AGENT],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, cornerId, HUMAN, AGENT],
+    );
+
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee take this into a corner',
+      mentions: [AGENT],
+    });
+    // A corner carries the parent message's opaque request id into its own
+    // command. The stop endpoint must resolve the requester through that
+    // parent message rather than treating the corner as an unowned turn.
+    await createAgentCommand(database, {
+      roomId: cornerId,
+      agentId: AGENT,
+      sourceMessageId: requestId,
+      turnRequestId: requestId,
+      reason: 'corner_objective',
+    });
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: cornerId,
+      requestId,
+      status: 'working',
+    });
+
+    const working = await new PhoneService(database, origin).readRoom(cornerId, HUMAN);
+    expect(working!.latestAgentTurns).toContainEqual(
+      expect.objectContaining({ requestId, status: 'working', requestedBy: HUMAN }),
+    );
+    expect(
+      (await operation('cancelAgentTurn', { roomId: cornerId, requestId, agentId: AGENT })).status,
+    ).toBe(204);
+    expect(
+      (
+        await database.query(
+          `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+          [cornerId, requestId, AGENT],
+        )
+      ).rows,
+    ).toEqual([{ status: 'cancelled' }]);
+    expect(
+      (
+        await database.query<{
+          mention_ids: string[];
+          request_id: string;
+          system_event: { kind?: string };
+        }>(
+          `SELECT mention_ids,request_id,system_event FROM messages
+           WHERE room_id=$1 AND presentation='system' AND system_event->>'kind'='turn-cancelled'`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      expect.objectContaining({ mention_ids: [AGENT], request_id: requestId }),
+    ]);
+  });
+
   it('inscribes a failed turn once and does not retry its terminal command', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {

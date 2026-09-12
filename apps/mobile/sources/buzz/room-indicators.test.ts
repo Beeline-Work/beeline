@@ -292,7 +292,10 @@ describe('composer ack presentation', () => {
     const asker = 'bb'.repeat(32);
     const bystander = 'cc'.repeat(32);
     const turn = {
-      isCorner: false,
+      // A Corner's channel-local receipt is presented through the same
+      // requester-only control as a Room's; its parent request does not
+      // weaken that authority at the phone boundary.
+      isCorner: true,
       activeTurnPubkey: agent,
       activeTurnAgentPubkey: agent,
       activeTurnRequestId: 'ask-1',

@@ -999,7 +999,8 @@ describe('Room message variant components', () => {
     expect(onMention).toHaveBeenCalledWith('member-id');
   });
 
-  it('leaves a self-mention inert because a direct message requires two members', () => {
+  it('highlights the viewing member while leaving their self-mention inert', () => {
+    const onMention = vi.fn();
     render(
       <OrdinaryLedgerMessage
         message={message({
@@ -1015,7 +1016,7 @@ describe('Room message variant components', () => {
         channelIndex={{ rooms: [], corners: [] }}
         deliveryFailed={false}
         onChannelReference={vi.fn()}
-        onMention={vi.fn()}
+        onMention={onMention}
         onReply={vi.fn()}
         onCopy={vi.fn()}
         onRetry={vi.fn()}
@@ -1023,7 +1024,9 @@ describe('Room message variant components', () => {
       />,
     );
 
-    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual([]);
+    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(['viewer']);
+    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('viewer'));
+    expect(onMention).not.toHaveBeenCalled();
   });
 
   it('renders the grant card with ALWAYS / ONCE / NO only for the owner or a manager, and settles each line into its outcome', () => {

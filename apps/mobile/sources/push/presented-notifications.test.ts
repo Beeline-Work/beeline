@@ -99,6 +99,22 @@ describe('presented notification dismissal', () => {
     expect(setBadgeCountAsync).toHaveBeenCalledWith(2);
   });
 
+  it('leaves Android badge ownership unchanged', async () => {
+    const getPresentedNotificationsAsync = vi.fn(() => Promise.resolve([]));
+    const setBadgeCountAsync = vi.fn(() => Promise.resolve(true));
+    await reconcilePresentedNotificationBadge(
+      {
+        getPresentedNotificationsAsync,
+        dismissNotificationAsync: vi.fn(() => Promise.resolve()),
+        setBadgeCountAsync,
+      },
+      'android',
+    );
+
+    expect(getPresentedNotificationsAsync).not.toHaveBeenCalled();
+    expect(setBadgeCountAsync).not.toHaveBeenCalled();
+  });
+
   it('runs badge reconciliation at launch and on app foreground', () => {
     expect(appLayoutSource).toContain('reconcileBadge();');
     expect(appLayoutSource).toContain("AppState.addEventListener('change', reconcileBadge)");

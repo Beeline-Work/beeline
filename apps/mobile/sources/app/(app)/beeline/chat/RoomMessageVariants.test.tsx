@@ -96,6 +96,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
 import {
   GitHubEventCard,
   DaemonFactCard,
+  NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
@@ -290,21 +291,62 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('renders a folded GitHub run through the existing system line', () => {
+  it('renders a notification run as one raised card, capped at three rows until expanded', () => {
+    const onOpenCorner = vi.fn();
+    const onOpenUrl = vi.fn();
     const renderer = render(
-      <GitHubEventCard
+      <NotificationLifecycleCard
         message={message({
-          githubLifecycleRun: {
-            headline: '3 PRs opened · 2 merged',
-            items: [{ id: 'five', title: 'Ship it', url: 'https://github.test/pr/5' }],
+          notificationLifecycleRun: {
+            headline: '3 merged · 1 checks failed · 1 opened',
+            subline: 'by @sol, @octocat · 09:41 – 10:28',
+            items: [
+              {
+                id: 'corner',
+                title: 'Duplicate draft settle',
+                state: 'Merged',
+                kindLine: 'corner · PR #1126',
+                cornerId: 'corner-1126',
+              },
+              ...Array.from({ length: 4 }, (_, index) => ({
+                id: `pr-${index}`,
+                title: `Change ${index}`,
+                state: index === 3 ? ('Checks failed' as const) : ('Merged' as const),
+                kindLine: `PR #${1130 + index}`,
+                ...(index === 3 ? { danger: true } : {}),
+                url: `https://github.test/pr/${1130 + index}`,
+              })),
+            ],
           },
         })}
-        onOpenUrl={vi.fn()}
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={onOpenUrl}
       />,
     );
-    expect(renderer.root.findByType('LedgerSystemLine' as never).props).toMatchObject({
-      text: '3 PRs opened · 2 merged',
-    });
+    expect(renderer.root.findByProps({ testID: 'notification-run-message' })).toBeDefined();
+    expect(
+      renderer.root.findAll(
+        (node: ReactTestInstance) =>
+          node.type === 'Pressable' && /^notification-run-item-/.test(node.props.testID ?? ''),
+      ),
+    ).toHaveLength(3);
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-item-corner' }).props.onPress(),
+    );
+    expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
+    const disclosure = renderer.root.findByProps({ testID: 'notification-run-expand-message' });
+    expect(JSON.stringify(renderer.toJSON())).toContain('and 2 more');
+    act(() => disclosure.props.onPress());
+    expect(
+      renderer.root.findAll(
+        (node: ReactTestInstance) =>
+          node.type === 'Pressable' && /^notification-run-item-/.test(node.props.testID ?? ''),
+      ),
+    ).toHaveLength(5);
+    act(() => renderer.root.findByProps({ testID: 'notification-run-item-pr-3' }).props.onPress());
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pr/1133');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Checks failed ×');
+    expect(JSON.stringify(renderer.toJSON())).toContain('show less');
   });
 
   it('renders a landed corner as a summary card with its full objective and tappable PR', () => {
@@ -317,6 +359,7 @@ describe('Room message variant components', () => {
             pubkey: 'agent',
             kind: 'agent',
             name: 'Beebee',
+            handle: 'beebee',
           },
           daemonFact: {
             type: 'corner-complete',
@@ -349,8 +392,8 @@ describe('Room message variant components', () => {
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
     // A legacy card carries no name, so the title is the first three words of
     // its objective; the body still carries the objective whole (C89).
-    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Ship fact cards');
-    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Beebee');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Merged Ship fact cards by @beebee');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('MERGED · Beebee');
     expect(JSON.stringify(renderer.toJSON())).toContain('Reviewer: @echo');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Awaiting @echo');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Approved by @echo');

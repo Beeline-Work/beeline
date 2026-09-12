@@ -7,8 +7,9 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * as `<subject> <verb>[ <object>][ · <consequence>]` and stores the structured
  * event beside the text. The phone renders the event (names in brass, the
  * object linked by its URL) and folds consecutive lines that share a verb,
- * object and consequence into one: "@candy, @terra and @codex joined". A row from
- * before the grammar has no event and renders its text verbatim.
+ * object and consequence into one: "@candy, @terra and @codex joined". Adjacent
+ * repository notification cards also become one render-time lifecycle card.
+ * A row from before the grammar has no event and renders its text verbatim.
  */
 export type SystemLineMessage = {
   id: string;
@@ -23,13 +24,38 @@ export type SystemLineMessage = {
   githubEvent?: {
     type: 'pull-request' | 'issue';
     action: 'opened' | 'closed' | 'merged';
+    actor?: string;
     title: string;
     url: string;
+    branch?: string;
   };
-  githubLifecycleRun?: {
-    headline: string;
-    items: { id: string; title: string; url?: string }[];
+  daemonFact?: {
+    type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned' | 'corner-open';
+    cornerId: string;
+    name?: string;
+    objective: string;
+    outcome?: 'landed' | 'abandoned';
+    pullRequest?: { number?: number; title?: string; url: string };
   };
+  authorIdentity?: { kind: 'human' | 'agent'; name: string; handle?: string };
+  notificationLifecycleRun?: NotificationLifecycleRun;
+};
+
+export type NotificationLifecycleState =
+  'Opened' | 'PR opened' | 'Checks failed' | 'Checks passed' | 'Merged' | 'Closed';
+
+export type NotificationLifecycleRun = {
+  headline: string;
+  subline: string;
+  items: {
+    id: string;
+    title: string;
+    state: NotificationLifecycleState;
+    kindLine: string;
+    danger?: boolean;
+    url?: string;
+    cornerId?: string;
+  }[];
 };
 
 /** "@candy" · "@candy and @terra" · "@candy, @terra and @codex". */
@@ -68,40 +94,36 @@ function subjectKey(subject: SystemSubject): string {
 }
 
 /**
- * Fold adjacent system lines sharing one verb (and object and consequence)
- * into the first of the run. `messages` is in transcript order (oldest first);
- * the folded row keeps the first row's id (a stable key for the list and the
- * reveal ledger) and takes the newest row's stamp.
+ * Fold adjacent notification cards or same-verb system lines into the first
+ * row of each run. `messages` is in transcript order (oldest first); the
+ * folded row keeps the first row's id (a stable list/reveal key) and takes the
+ * newest row's stamp. Ordinary messages and every non-notification card end a
+ * notification run before the existing same-verb system-line fold resumes.
  */
 export function foldSystemLines<T extends SystemLineMessage>(messages: readonly T[]): T[] {
   const folded: T[] = [];
   let run: { index: number; key: string; subjects: SystemSubject[]; ids: string[] } | null = null;
-  let githubRun: { index: number; anchor: T; items: GitHubFoldItem[] } | undefined;
+  let notificationRun:
+    { index: number; anchor: T; events: NotificationLifecycleEvent[] } | undefined;
   for (const message of messages) {
-    const githubItem = githubFoldItem(message);
-    if (githubItem) {
+    const notification = notificationLifecycleEvent(message);
+    if (notification) {
       run = null;
-      if (!githubRun) {
-        githubRun = { index: folded.length, anchor: message, items: [githubItem] };
+      if (!notificationRun) {
+        notificationRun = { index: folded.length, anchor: message, events: [notification] };
         folded.push(message);
       } else {
-        githubRun.items.push(githubItem);
-        folded[githubRun.index] = {
-          ...githubRun.anchor,
+        notificationRun.events.push(notification);
+        folded[notificationRun.index] = {
+          ...notificationRun.anchor,
           timestamp: message.timestamp,
-          githubLifecycleRun: {
-            headline: githubHeadline(githubRun.items),
-            items: [...githubRun.items].reverse().map(({ id, title, url }) => ({
-              id,
-              title,
-              ...(url ? { url } : {}),
-            })),
-          },
+          foldedIds: notificationRun.events.map((event) => event.id),
+          notificationLifecycleRun: summarizeNotificationRun(notificationRun.events),
         };
       }
       continue;
     }
-    githubRun = undefined;
+    notificationRun = undefined;
     const event = message.isSystemNotice ? message.systemEvent : undefined;
     if (!event) {
       run = null;
@@ -129,61 +151,217 @@ export function foldSystemLines<T extends SystemLineMessage>(messages: readonly 
   return folded;
 }
 
-type GitHubFoldItem = {
+type NotificationLifecycleEvent = {
   id: string;
+  timestamp: number;
   title: string;
+  titleRank: number;
+  state?: NotificationLifecycleState;
+  actor?: string;
+  cornerId?: string;
+  prNumber?: number;
+  kind: 'corner' | 'pull-request' | 'issue' | 'check';
   url?: string;
-  verb: string;
-  subject: 'PR' | 'issue' | 'push' | 'check' | 'event';
+  refs: string[];
 };
 
-function githubFoldItem(message: SystemLineMessage): GitHubFoldItem | undefined {
+function notificationLifecycleEvent(
+  message: SystemLineMessage,
+): NotificationLifecycleEvent | undefined {
+  const fact = message.daemonFact;
+  if (fact) {
+    const prNumber = fact.pullRequest?.number ?? pullRequestNumber(fact.pullRequest?.url);
+    const state =
+      fact.type === 'corner-open'
+        ? 'Opened'
+        : fact.type === 'checks-failing'
+          ? 'Checks failed'
+          : fact.type === 'corner-complete'
+            ? 'Merged'
+            : undefined;
+    return {
+      id: message.id,
+      timestamp: message.timestamp,
+      title: fact.name ?? fact.pullRequest?.title ?? fact.objective,
+      titleRank: fact.type === 'worktree-cleaned' ? 0 : 3,
+      ...(state ? { state } : {}),
+      ...(message.authorIdentity
+        ? { actor: message.authorIdentity.handle ?? message.authorIdentity.name }
+        : {}),
+      cornerId: fact.cornerId,
+      ...(prNumber ? { prNumber } : {}),
+      kind: 'corner',
+      ...(fact.pullRequest?.url ? { url: fact.pullRequest.url } : {}),
+      refs: [
+        `corner:${fact.cornerId}`,
+        ...repositoryRefs(fact.pullRequest?.url, prNumber, undefined),
+      ],
+    };
+  }
+
+  if (message.githubEvent) {
+    const event = message.githubEvent;
+    const prNumber = event.type === 'pull-request' ? pullRequestNumber(event.url) : undefined;
+    return {
+      id: message.id,
+      timestamp: message.timestamp,
+      title: event.title,
+      titleRank: 2,
+      state:
+        event.type === 'issue'
+          ? event.action === 'opened'
+            ? 'Opened'
+            : 'Closed'
+          : event.action === 'opened'
+            ? 'PR opened'
+            : event.action === 'merged'
+              ? 'Merged'
+              : 'Closed',
+      ...(event.actor ? { actor: event.actor } : {}),
+      ...(prNumber ? { prNumber } : {}),
+      kind: event.type,
+      url: event.url,
+      refs: repositoryRefs(event.url, prNumber, event.branch),
+    };
+  }
+
   const event = message.isSystemNotice ? message.systemEvent : undefined;
-  if (!message.githubEvent && event?.subject.kind !== 'github') return undefined;
-  const verb = message.githubEvent?.action ?? event!.verb;
-  const subject = message.githubEvent
-    ? message.githubEvent.type === 'pull-request'
-      ? 'PR'
-      : 'issue'
-    : /pull request|merge/i.test(verb)
-      ? 'PR'
-      : /check/i.test(verb)
-        ? 'check'
-        : /push/i.test(verb)
-          ? 'push'
-          : 'event';
+  if (event?.subject.kind !== 'github' || !/(passed|failed) a check/i.test(event.verb)) {
+    return undefined;
+  }
+  const url = event.object?.url;
+  const prNumber = pullRequestNumber(url);
   return {
     id: message.id,
-    title: message.githubEvent?.title ?? event?.object?.text ?? message.text,
-    ...((message.githubEvent?.url ?? event?.object?.url)
-      ? { url: message.githubEvent?.url ?? event?.object?.url }
-      : {}),
-    verb,
-    subject,
+    timestamp: message.timestamp,
+    title: event.object?.text ?? message.text,
+    titleRank: 0,
+    state: /failed/i.test(event.verb) ? 'Checks failed' : 'Checks passed',
+    ...(prNumber ? { prNumber } : {}),
+    kind: 'check',
+    ...(url ? { url } : {}),
+    refs: repositoryRefs(url, prNumber, undefined),
   };
 }
 
-function githubHeadline(items: readonly GitHubFoldItem[]): string {
-  const groups = new Map<string, { item: GitHubFoldItem; count: number }>();
-  for (const item of items) {
-    const verb =
-      ['opened', 'merged', 'closed', 'pushed', 'passed', 'failed', 'started'].find((candidate) =>
-        item.verb.toLowerCase().includes(candidate.replace(/ed$/, '')),
-      ) ?? item.verb.toLowerCase();
-    const key = `${item.subject}:${verb}`;
-    const group = groups.get(key);
-    if (group) group.count += 1;
-    else groups.set(key, { item: { ...item, verb }, count: 1 });
+function pullRequestNumber(url: string | undefined): number | undefined {
+  const match = url?.match(/\/pull\/(\d+)(?:\/|$)/i);
+  return match ? Number(match[1]) : undefined;
+}
+
+function repositoryRefs(
+  url: string | undefined,
+  prNumber: number | undefined,
+  branch: string | undefined,
+): string[] {
+  // These are the render-time joins available in the phone DTO. `cornerId`
+  // joins daemon facts; normalized PR URL/number and GitHub head branch join
+  // webhook rows. A completed corner carries both cornerId and PR identity,
+  // making the two sets converge transitively without persisted linkage.
+  return [
+    ...(url
+      ? [
+          `url:${url
+            .replace(/[?#].*$/, '')
+            .replace(/\/$/, '')
+            .toLowerCase()}`,
+        ]
+      : []),
+    ...(prNumber ? [`pr:${prNumber}`] : []),
+    ...(branch ? [`branch:${branch.toLowerCase()}`] : []),
+  ];
+}
+
+function normalizeActor(actor: string): string {
+  return `@${actor.replace(/^@/, '')}`;
+}
+
+function summarizeNotificationRun(
+  events: readonly NotificationLifecycleEvent[],
+): NotificationLifecycleRun {
+  type Subject = { events: NotificationLifecycleEvent[]; refs: Set<string> };
+  const subjects: Subject[] = [];
+  for (const event of events) {
+    const refs = event.refs.length ? event.refs : [`event:${event.id}`];
+    const matches = subjects.filter((subject) => refs.some((ref) => subject.refs.has(ref)));
+    if (!matches.length) {
+      // Cleanup is presentation noise. It can extend an existing corner subject,
+      // but it never creates a row of its own.
+      if (!event.state) continue;
+      subjects.push({ events: [event], refs: new Set(refs) });
+      continue;
+    }
+    const target = matches[0]!;
+    target.events.push(event);
+    refs.forEach((ref) => target.refs.add(ref));
+    for (const merged of matches.slice(1)) {
+      target.events.push(...merged.events);
+      merged.refs.forEach((ref) => target.refs.add(ref));
+      subjects.splice(subjects.indexOf(merged), 1);
+    }
   }
-  const named = new Set<string>();
-  return [...groups.values()]
-    .map(({ item, count }) => {
-      if (item.subject === 'push') return `${count} ${count === 1 ? 'push' : 'pushes'}`;
-      const repeated = named.has(item.subject);
-      named.add(item.subject);
-      if (repeated) return `${count} ${item.verb}`;
-      const noun = item.subject === 'event' ? 'GitHub event' : item.subject;
-      return `${count} ${noun}${count === 1 ? '' : 's'} ${item.verb}`;
+
+  const rows = subjects
+    .map((subject) => {
+      const byRunOrder = (left: NotificationLifecycleEvent, right: NotificationLifecycleEvent) =>
+        events.indexOf(left) - events.indexOf(right);
+      const stateEvent = subject.events
+        .filter((event) => event.state)
+        .sort(byRunOrder)
+        .at(-1)!;
+      const titleRank = Math.max(...subject.events.map((item) => item.titleRank));
+      const titled = subject.events
+        .filter((event) => event.titleRank === titleRank)
+        .sort(byRunOrder)
+        .at(-1)!;
+      const corner = subject.events.find((event) => event.cornerId);
+      const linked = subject.events
+        .filter((event) => event.url)
+        .sort(byRunOrder)
+        .at(-1);
+      const prNumber = subject.events
+        .filter((event) => event.prNumber)
+        .sort(byRunOrder)
+        .at(-1)?.prNumber;
+      const issue = subject.events.some((event) => event.kind === 'issue');
+      return {
+        id: subject.events[0]!.id,
+        title: titled.title,
+        state: stateEvent.state!,
+        kindLine: corner
+          ? `corner${prNumber ? ` · PR #${prNumber}` : ''}`
+          : issue
+            ? 'issue'
+            : prNumber
+              ? `PR #${prNumber}`
+              : 'check',
+        ...(stateEvent.state === 'Checks failed' ? { danger: true } : {}),
+        ...(corner?.cornerId ? { cornerId: corner.cornerId } : {}),
+        ...(!corner?.cornerId && linked?.url ? { url: linked.url } : {}),
+        latestOrder: Math.max(...subject.events.map((event) => events.indexOf(event))),
+      };
     })
+    .sort((left, right) => right.latestOrder - left.latestOrder);
+
+  const stateCounts = new Map<NotificationLifecycleState, number>();
+  for (const row of rows) stateCounts.set(row.state, (stateCounts.get(row.state) ?? 0) + 1);
+  const headline = [...stateCounts]
+    .map(([state, count]) => `${count} ${state === 'PR opened' ? state : state.toLowerCase()}`)
     .join(' · ');
+  const actors = [
+    ...new Set(events.flatMap((event) => (event.actor ? [normalizeActor(event.actor)] : []))),
+  ];
+  const startedAt = Math.min(...events.map((event) => event.timestamp));
+  const endedAt = Math.max(...events.map((event) => event.timestamp));
+  const time = `${clockStamp(startedAt)} – ${clockStamp(endedAt)}`;
+  return {
+    headline,
+    subline: `${actors.length ? `by ${actors.join(', ')} · ` : ''}${time}`,
+    items: rows.map(({ latestOrder: _latestOrder, ...row }) => row),
+  };
+}
+
+function clockStamp(seconds: number): string {
+  const at = new Date(seconds * 1000);
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
 }

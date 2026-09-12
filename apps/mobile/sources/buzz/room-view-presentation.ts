@@ -22,6 +22,7 @@ import type { DisplayableAgent } from '@/buzz/agent-display';
 import type { CornerStatus, CornerSummary } from '@/buzz/corners';
 import { cornerName } from '@/buzz/corners';
 import { remoteTerminalState } from '@/buzz/corner-display-state';
+import type { NotificationLifecycleRun } from '@/buzz/system-lines';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
@@ -212,11 +213,8 @@ export type ChatDisplayMessage = {
   systemSubjects?: SystemSubject[];
   /** The ids of every row folded into this one. */
   foldedIds?: string[];
-  /** A render-time-only run of adjacent GitHub lifecycle rows. */
-  githubLifecycleRun?: {
-    headline: string;
-    items: { id: string; title: string; url?: string }[];
-  };
+  /** A render-time-only run of adjacent repository notification cards. */
+  notificationLifecycleRun?: NotificationLifecycleRun;
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
   isAgentLiveTurn?: boolean;

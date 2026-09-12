@@ -19,6 +19,10 @@ const surfaceGuardSource = readFileSync(
   new URL('../../../../../../packages/api-contract/src/phone-guards.ts', import.meta.url),
   'utf8',
 );
+const desktopInspectorSource = readFileSync(
+  new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
+  'utf8',
+);
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`    ${name}: {`);
@@ -266,5 +270,21 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'cornerName')).toContain('color: hull.textSecondary');
     // Needs-you is announced, never left to colour.
     expect(source).toContain("display.needsYou ? ', needs you' : ''");
+  });
+
+  it('baseline-aligns every corner state word with its chevron on phone and desktop', () => {
+    // The mono state word and proportional chevron have different font metrics.
+    // Center their shared endcap on the row, then align the glyphs by baseline.
+    expect(source).toContain('<View style={styles.cornerEndcap}>');
+    expect(styleBlock(source, 'cornerRow')).toContain("alignItems: 'center'");
+    expect(styleBlock(source, 'cornerEndcap')).toContain("flexDirection: 'row'");
+    expect(styleBlock(source, 'cornerEndcap')).toContain("alignItems: 'baseline'");
+
+    expect(desktopInspectorSource).toContain('<View style={styles.cornerEndcap}>');
+    expect(desktopInspectorSource).toContain('{display.word}');
+    expect(desktopInspectorSource).toContain("cornerRow: {\n    minHeight: 88,\n    flexDirection: 'row',\n    alignItems: 'center'");
+    expect(desktopInspectorSource).toContain(
+      "cornerEndcap: { flexDirection: 'row', alignItems: 'baseline'",
+    );
   });
 });

@@ -39,7 +39,9 @@ describe('Chat-list swipe-left actions', () => {
       source.indexOf('chatActions: {'),
       source.indexOf('composeOverlay: {'),
     );
-    expect(actionStyles).toContain('backgroundColor: hull.bgRaised');
+    expect(actionStyles).toContain('backgroundColor: hull.bgHighlight');
+    expect(actionStyles).toContain('width: 108');
+    expect(actionStyles).not.toContain('marginRight: 8');
     expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?backgroundColor:/);
     expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?border(?:Color|Width):/);
 
@@ -54,8 +56,8 @@ describe('Chat-list swipe-left actions', () => {
     );
     expect(rowStyles).not.toMatch(/border(?:Color|Width):/);
 
-    expect(glyphSource).toContain('height={26}');
-    expect(glyphSource).toContain('width={26}');
+    expect(glyphSource).toContain('height={21}');
+    expect(glyphSource).toContain('width={21}');
     expect(glyphSource).toContain('stroke={theme.buzz.accent}');
     expect(glyphSource).toContain('strokeWidth={1.8}');
     expect(glyphSource).toContain('d="M14 4h6v16h-6"');

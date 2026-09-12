@@ -7,10 +7,10 @@ export const ExitGlyph = React.memo(function ExitGlyph({ testID }: { testID?: st
   const { theme } = useUnistyles();
   return (
     <Svg
-      height={26}
+      height={21}
       testID={testID}
       viewBox="0 0 24 24"
-      width={26}
+      width={21}
     >
       <Path
         d="M14 4h6v16h-6"

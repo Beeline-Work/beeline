@@ -312,7 +312,6 @@ export default function BuzzChat() {
     notificationResponseId,
     notificationTarget,
     notificationMessageId,
-    notificationFallbackChannelId,
     communityId,
     parent,
     title,
@@ -322,7 +321,6 @@ export default function BuzzChat() {
     notificationResponseId?: string;
     notificationTarget?: string;
     notificationMessageId?: string;
-    notificationFallbackChannelId?: string;
     communityId?: string;
     parent?: string;
     title?: string;
@@ -344,7 +342,6 @@ export default function BuzzChat() {
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
-  const handledNotificationFallbackRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
   // immediately taps send. Keep the authoritative in-flight draft beside the
@@ -822,14 +819,7 @@ export default function BuzzChat() {
         loadingOlderMessagesRef.current = false;
         setLoadingOlderMessages(false);
       });
-  }, [
-    cacheViewerPubkey,
-    decodedId,
-    foldedMessages,
-    roomClient,
-    roomSurface,
-    visibleMessageCount,
-  ]);
+  }, [cacheViewerPubkey, decodedId, foldedMessages, roomClient, roomSurface, visibleMessageCount]);
   const availableAgents = useMemo(
     () =>
       (roomSurface?.members ?? [])
@@ -999,12 +989,7 @@ export default function BuzzChat() {
   // pairing command (captain report C74). Read once per open; the sheet
   // shows a loader until it lands and any failure inline.
   useEffect(() => {
-    if (
-      (!participantPickerVisible && !rosterVisible) ||
-      !roomClient ||
-      !activeCommunityId
-    )
-      return;
+    if ((!participantPickerVisible && !rosterVisible) || !roomClient || !activeCommunityId) return;
     let cancelled = false;
     setWorkspaceRoster(null);
     roomClient
@@ -1462,41 +1447,6 @@ export default function BuzzChat() {
         }),
       )
     : 'IDLE';
-  // A notification may outlive the corner it names. Once server truth says the
-  // target disappeared or finished, replace it with the parent Room carried by
-  // the push instead of stranding the reader on an empty/read-only transcript.
-  useEffect(() => {
-    const fallbackId = notificationFallbackChannelId?.trim();
-    if (
-      !notificationResponseId ||
-      !fallbackId ||
-      fallbackId === decodedId ||
-      handledNotificationFallbackRef.current === notificationResponseId
-    ) {
-      return;
-    }
-    const targetFinished =
-      canonicalCornerStatus === 'merged' ||
-      canonicalCornerStatus === 'archived' ||
-      (isCorner && isArchived);
-    const targetMissing =
-      isCorner && roomSurface?.room.id === decodedId && roomSurface.parent === undefined;
-    if (!targetMissing && !targetFinished) return;
-    handledNotificationFallbackRef.current = notificationResponseId;
-    router.replace({
-      pathname: '/beeline/chat/[channelId]',
-      params: { channelId: fallbackId, notificationResponseId },
-    });
-  }, [
-    canonicalCornerStatus,
-    decodedId,
-    isArchived,
-    isCorner,
-    notificationFallbackChannelId,
-    notificationResponseId,
-    roomSurface,
-  ]);
-
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
@@ -1864,9 +1814,9 @@ export default function BuzzChat() {
   }, [activeAgentTurn, stoppingTurn]);
   const stoppingThisTurn = Boolean(
     stoppingTurn &&
-      composerAck?.stop &&
-      stoppingTurn.requestId === composerAck.stop.requestId &&
-      stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
+    composerAck?.stop &&
+    stoppingTurn.requestId === composerAck.stop.requestId &&
+    stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
   );
 
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */

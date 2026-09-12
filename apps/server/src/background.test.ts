@@ -256,11 +256,23 @@ describe('background advisory-lock ownership', () => {
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: '@bee opened a corner Ship push policy' }),
+        expect.objectContaining({
+          text: '@bee opened a corner Ship push policy',
+          target: 'corner',
+          roomId: room,
+          channelId: directRoom,
+          cornerId: directRoom,
+        }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: '@bee merged Ship push policy' }),
+        expect.objectContaining({
+          text: '@bee merged Ship push policy',
+          target: 'corner',
+          roomId: room,
+          channelId: directRoom,
+          cornerId: directRoom,
+        }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',

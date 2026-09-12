@@ -66,7 +66,9 @@ describe('Firebase push credentials', () => {
 
   it('fails startup explicitly when Application Default Credentials are unavailable', async () => {
     const credential = {
-      getAccessToken: vi.fn().mockRejectedValue(new Error('Could not load the default credentials')),
+      getAccessToken: vi
+        .fn()
+        .mockRejectedValue(new Error('Could not load the default credentials')),
     } as unknown as Credential;
 
     await expect(requirePushDeliveryCredentials(credential)).rejects.toThrow(
@@ -84,6 +86,36 @@ describe('Firebase push credentials', () => {
 });
 
 describe('Firebase push routing payload', () => {
+  it.each([
+    ['Room mention', 'room-1', 'room-1', undefined, 'message'],
+    ['corner mention', 'parent-1', 'corner-1', 'corner-1', 'message'],
+    ['corner opened', 'parent-1', 'corner-1', 'corner-1', 'corner'],
+    ['corner closed', 'parent-1', 'corner-1', 'corner-1', 'corner'],
+    ['DM', 'dm-1', 'dm-1', undefined, 'message'],
+    ['system DM', 'system-dm-1', 'system-dm-1', undefined, 'message'],
+  ])('carries the complete %s destination', (_kind, roomId, channelId, cornerId, target) => {
+    expect(
+      firebasePushMessage('device-token', {
+        messageId: 'message-1',
+        workspaceId: 'workspace-1',
+        roomId,
+        channelId,
+        ...(cornerId ? { cornerId } : {}),
+        target: target as 'message' | 'corner',
+        type: 'message',
+        text: 'routing payload',
+      }).data,
+    ).toEqual({
+      type: 'channel-activity',
+      target,
+      workspaceId: 'workspace-1',
+      roomId,
+      channelId,
+      ...(cornerId ? { cornerId } : {}),
+      messageId: 'message-1',
+    });
+  });
+
   it('carries a workspace join to its exact Workspace and Room', () => {
     expect(
       firebasePushMessage('device-token', {

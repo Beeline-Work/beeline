@@ -104,7 +104,9 @@ export async function retireTerminalReleaseCatchups(database: SqlDatabase) {
  * Re-check readership, identity and latest-message status at dispatch time.
  */
 export const RELEASE_CATCHUP_CANDIDATES_SQL = `
-  SELECT m.id message_id,r.workspace_id::text workspace_id,m.room_id::text room_id,
+  SELECT m.id message_id,r.workspace_id::text workspace_id,
+    COALESCE(r.parent_id,r.id)::text room_id,r.id::text channel_id,
+    r.parent_id::text corner_id,'message' target,
     'message' notification_type,concat_ws(': ',author.name,btrim(m.text)) text,
     d.token,catchup.identity_id,true is_release_catchup,m.created_at
   FROM push_release_catchups catchup

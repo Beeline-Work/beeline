@@ -536,6 +536,7 @@ describe('PushGateway', () => {
     const resolver = new NotificationMetadataResolver();
     const firstMessage = event('8', agent.publicKey, roomId);
     await expect(resolver.resolve(firstMessage, authorizedReader)).resolves.toEqual({
+      workspaceId: communityId,
       roomName: 'Launch room',
       isDirectMessage: false,
       persistentWorkspaceRoom: true,

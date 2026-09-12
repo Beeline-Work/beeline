@@ -22,6 +22,9 @@ export interface PushSender {
       | {
           workspaceId: string;
           roomId: string;
+          channelId: string;
+          cornerId?: string;
+          target: 'message' | 'corner';
           type: 'message';
         }
     ),
@@ -57,6 +60,9 @@ export class PushDeliveryLoop {
       message_id: string;
       workspace_id: string;
       room_id: string | null;
+      channel_id: string | null;
+      corner_id: string | null;
+      target: 'message' | 'corner';
       notification_type: 'message' | 'workspace-join';
       text: string;
       token: string;
@@ -64,7 +70,17 @@ export class PushDeliveryLoop {
       is_release_catchup: boolean;
     }>(`
       WITH candidates AS (
-        SELECT m.id message_id,room.workspace_id::text workspace_id,m.room_id::text room_id,
+        SELECT m.id message_id,room.workspace_id::text workspace_id,
+          COALESCE(room.parent_id,room.id)::text room_id,
+          CASE WHEN m.card_type='daemon-fact'
+            AND m.card->>'type' IN ('corner-open','corner-complete')
+            THEN m.card->>'cornerId' ELSE room.id::text END channel_id,
+          CASE WHEN m.card_type='daemon-fact'
+            AND m.card->>'type' IN ('corner-open','corner-complete')
+            THEN m.card->>'cornerId' ELSE room.parent_id::text END corner_id,
+          CASE WHEN m.card_type='daemon-fact'
+            AND m.card->>'type' IN ('corner-open','corner-complete')
+            THEN 'corner' ELSE 'message' END target,
           'message' notification_type,
           CASE
             -- System/card text already came from the one lifecycle grammar.
@@ -106,6 +122,7 @@ export class PushDeliveryLoop {
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,
           notification.room_id::text room_id,
+          notification.room_id::text channel_id,NULL::text corner_id,'message' target,
           'workspace-join' notification_type,
           btrim(notification.text) text,device.device_token token,push_device.identity_id,
           false is_release_catchup,notification.created_at
@@ -123,7 +140,8 @@ export class PushDeliveryLoop {
         ${RELEASE_CATCHUP_CANDIDATES_SQL}
       ), unclaimed AS (
         SELECT DISTINCT ON (candidate.message_id,candidate.token)
-          candidate.message_id,candidate.workspace_id,candidate.room_id,
+          candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
+          candidate.corner_id,candidate.target,
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
           candidate.is_release_catchup,candidate.created_at
         FROM candidates candidate
@@ -132,7 +150,8 @@ export class PushDeliveryLoop {
         WHERE claim.message_id IS NULL
         ORDER BY candidate.message_id,candidate.token,candidate.is_release_catchup DESC
       )
-      SELECT message_id,workspace_id,room_id,notification_type,text,token,identity_id,is_release_catchup
+      SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
+        notification_type,text,token,identity_id,is_release_catchup
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -196,6 +215,9 @@ export class PushDeliveryLoop {
                 messageId: candidate.message_id,
                 workspaceId: candidate.workspace_id,
                 roomId: candidate.room_id!,
+                channelId: candidate.channel_id!,
+                ...(candidate.corner_id ? { cornerId: candidate.corner_id } : {}),
+                target: candidate.target,
                 type: 'message' as const,
                 text: candidate.text,
               };

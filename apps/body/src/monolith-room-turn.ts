@@ -14,6 +14,7 @@ import {
   type AcpPermissionRequest,
   type McpServerWire,
   type PromptResult,
+  type ToolCallEntry,
 } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
@@ -58,7 +59,7 @@ import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './respons
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
-import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
+import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
@@ -776,6 +777,10 @@ export class MonolithRoomTurnLoop {
     // cannot observe an accepted/queued turn as idle in this window.
     this.busy = true;
     const trace = this.beginTurnTrace(item.id);
+    // The draft lane, held where the catch below can reach it: a turn that
+    // throws never reaches its settle, and only this reference can dissolve
+    // what the model had already written.
+    let liveStream: AgentTurnStream | undefined;
     try {
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
@@ -888,6 +893,7 @@ export class MonolithRoomTurnLoop {
                 requestId: item.id,
                 label: `monolith Room ${this.options.roomId}`,
               });
+              liveStream = stream;
               // One prompt run, steers and all. It is a closure because an empty
               // completion re-pins the session to another provider and runs it
               // again (C92) — against the NEW client and session id.
@@ -944,13 +950,9 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
-              let openCornerCall = result.toolCalls.find((call) =>
-                /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
-              );
-              let explained =
-                openCornerCall && !isFailedToolCall(openCornerCall)
-                  ? undefined
-                  : await this.explainEmpty(result);
+              let openCornerCall = openCornerToolCall(result.toolCalls);
+              let cornerOpened = openedACorner(openCornerCall);
+              let explained = cornerOpened ? undefined : await this.explainEmpty(result);
               if (explained && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
@@ -961,31 +963,16 @@ export class MonolithRoomTurnLoop {
                   );
                   result = await runPrompt();
                   trace.promptSettled();
-                  openCornerCall = result.toolCalls.find((call) =>
-                    /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
-                  );
-                  explained =
-                    openCornerCall && !isFailedToolCall(openCornerCall)
-                      ? undefined
-                      : await this.explainEmpty(result);
+                  openCornerCall = openCornerToolCall(result.toolCalls);
+                  cornerOpened = openedACorner(openCornerCall);
+                  explained = cornerOpened ? undefined : await this.explainEmpty(result);
                 }
               }
-              // The requester stopped this turn while it ran.
-              //
-              // What the model had already written STAYS. This is the one place
-              // the stop had to match what a person already expects of a stop
-              // button: everywhere else they have used one, the half-finished
-              // answer remains on the page and the conversation carries on from
-              // it. Retracting it instead would delete words the person had
-              // already read, and make stopping feel like undoing.
-              //
-              // So the partial text settles as an ordinary durable reply —
-              // through the same lane, so the draft dissolves into it rather
-              // than flickering — and it carries NO mentions: a sentence cut
-              // off mid-tag must not wake somebody the answer never finished
-              // naming. A turn stopped before the model said anything settles
-              // to nothing, exactly as it should. Either way the Room's own
-              // record of the stop is the attributed line the server wrote.
+              // The requester stopped this turn while it ran. A stopped turn
+              // publishes nothing at all — no durable reply, no receipt, and no
+              // late write of any kind: the server settled the turn `cancelled`
+              // and wrote the attributed line before this helper even heard,
+              // and that line is the Room's whole record of the stop.
               if (active.cancelled) {
                 stream.close();
                 throw new TurnStoppedError('turn stopped by the requester');
@@ -1005,7 +992,7 @@ export class MonolithRoomTurnLoop {
                 console.log(
                   `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title} (${openCornerCall.status ?? 'no status'})`,
                 );
-                if (!isFailedToolCall(openCornerCall)) this.options.onCornerOpened?.();
+                if (cornerOpened) this.options.onCornerOpened?.();
               }
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result?.toolCalls ?? []) {
@@ -1036,7 +1023,9 @@ export class MonolithRoomTurnLoop {
               // A successful corner open completes this Room turn silently.
               // The server's corner-open card is the complete handoff; publishing
               // any model text here would create a second, competing completion.
-              if (openCornerCall && !isFailedToolCall(openCornerCall)) {
+              // Silence is only correct once that card is a fact, which is why
+              // this waits for `completed` and never merely for "not failed".
+              if (cornerOpened) {
                 reply = '';
               }
               await trace.measure('publish', () =>
@@ -1073,7 +1062,11 @@ export class MonolithRoomTurnLoop {
       // A stopped turn already has its ending — the server wrote `cancelled`
       // and named who stopped it the moment it accepted the request. There is
       // no receipt to post and nothing to blame the helper for, so the turn
-      // ends here quietly and only the operator's trace records it.
+      // ends here quietly and only the operator's trace records it. It is also
+      // the one throw that retracts nothing: a stopped turn writes NOTHING
+      // after its authority ended, and the server stops serving that turn's
+      // draft the moment it settles the turn `cancelled` (`liveDraftSnapshot`
+      // reads working turns only).
       if (error instanceof TurnStoppedError || active.cancelled) {
         console.log(
           `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} stopped by the requester`,
@@ -1081,6 +1074,19 @@ export class MonolithRoomTurnLoop {
         await trace.finish('cancelled');
         return;
       }
+      // A failed turn ends owning no live output. Only `settle` dissolves the
+      // draft on the way out and a throw never reaches one, so without this the
+      // last snapshot the model streamed stays live under a turn the Room has
+      // already reported failed — still pulsing, still claiming to be an answer
+      // on its way. The retract settles that row in place: the words the person
+      // was reading stay, and stop pretending to be in progress. Its own
+      // failure must never replace the error that actually ended the turn.
+      await liveStream?.retract().catch((retractError: unknown) => {
+        console.error(
+          `[thin-core] monolith Room ${this.options.roomId} draft retract failed:`,
+          retractError,
+        );
+      });
       const reason = distillTurnFailureReason(error);
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -1140,6 +1146,25 @@ export class MonolithRoomTurnLoop {
       await this.options.scheduler.suspend(roomId);
     }
   }
+}
+
+/** This turn's `open_corner` call, under whatever prefix the harness titles it. */
+function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | undefined {
+  return calls.find((call) => /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''));
+}
+
+/**
+ * True only for a corner this turn actually opened.
+ *
+ * Everything the Room does about a corner — the silent completion, the corner
+ * card handoff — rests on this, so it asks the harness for an affirmative
+ * `completed` and accepts nothing weaker. A call still `pending` when the turn
+ * ended, or carrying no status at all, opened no corner: read as success it
+ * would delete the model's answer in favour of a card that never comes, and
+ * the Room would show a turn that finished having said nothing.
+ */
+function openedACorner(call: ToolCallEntry | undefined): boolean {
+  return !!call && isCompletedToolCall(call);
 }
 
 function roomMessagePrompt(

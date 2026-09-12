@@ -29,7 +29,11 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
-import { ConversationComposer } from '@/components/buzz/ConversationComposer';
+import {
+  COMPOSER_MAX_INPUT_HEIGHT,
+  COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+  ConversationComposer,
+} from '@/components/buzz/ConversationComposer';
 import {
   HullActionSheetCancel,
   HullActionSheetModal,
@@ -54,8 +58,8 @@ type Props = {
   onOpenRoster(): void;
 };
 
-const COMPOSER_MIN_HEIGHT = 40;
-const COMPOSER_MAX_HEIGHT = 120;
+const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
+const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 
 function stateLine(corner: CornerListItem): string {
   return `${corner.status}${corner.reason ? ` · ${corner.reason}` : ''}`;
@@ -846,7 +850,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   transcript: { flex: 1 },
   transcriptContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 12 },
-  cockpitComposer: { paddingHorizontal: 12, paddingBottom: 12 },
+  cockpitComposer: { paddingHorizontal: 16, paddingBottom: 12 },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, padding: 16 },
   error: {
     ...theme.buzz.type.meta,

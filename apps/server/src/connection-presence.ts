@@ -119,8 +119,13 @@ export class ConnectionPresence {
 
   async observe(roomId?: string): Promise<void> {
     if (this.#stopped) return;
+    // Resolve tags only after evidence/receipt bounds discard history. Inlining
+    // the roster subquery into the broad join can occupy every pool connection
+    // for minutes, starving phone authentication and even the next migration.
     const deliveries = await this.database.query<Delivery>(
-      `SELECT m.room_id,m.id message_id,m.created_at,m.author_id,author.kind author_kind,
+      `WITH candidates AS MATERIALIZED (
+       SELECT m.room_id,m.id message_id,m.created_at,m.author_id,author.kind author_kind,
+         m.text,m.presentation,m.request_id,
          a.agent_id,a.access_policy,a.owner_id,p.body->>'lifecycleId' lifecycle,
          COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt') evidence_token,
          m.system_event->>'kind' system_kind
@@ -132,10 +137,12 @@ export class ConnectionPresence {
        JOIN LATERAL(SELECT body,updated_at FROM live_outputs
          WHERE agent_id=a.agent_id AND kind='presence' ORDER BY updated_at DESC LIMIT 1) p ON true
        WHERE ($1::uuid IS NULL OR m.room_id=$1)
-         AND ${tagsIdentitySql('m', 'a.agent_id')} AND m.author_id<>a.agent_id
+         AND m.author_id<>a.agent_id
          AND p.body->>'status'='online' AND m.created_at>=p.updated_at
          AND NOT EXISTS(SELECT 1 FROM agent_turns t WHERE t.agent_id=a.agent_id AND t.room_id=m.room_id
-           AND (t.request_id=m.id OR t.created_at>=m.created_at))`,
+           AND (t.request_id=m.id OR t.created_at>=m.created_at))
+       ) SELECT m.* FROM candidates m
+       WHERE ${tagsIdentitySql('m', 'm.agent_id')}`,
       [roomId ?? null],
     );
     for (const delivery of deliveries.rows) {

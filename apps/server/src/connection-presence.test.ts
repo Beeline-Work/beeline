@@ -61,6 +61,39 @@ describe('delivery-driven presence', () => {
   async function elapsed() {
     await vi.advanceTimersByTimeAsync(100);
   }
+  it('uses one bounded query and never resolves tags in historical messages during recovery', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(n::text,64,'0'),$1,$2,repeat('@bee historical message ',100),
+         now()-interval '1 day'
+       FROM generate_series(1,21630) n`,
+      [ROOM, HUMAN],
+    );
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'current' });
+    const query = vi.spyOn(database, 'query');
+    await presence.observe();
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, values] = query.mock.calls[0]!;
+    query.mockRestore();
+
+    // Inspect execution, not a timing threshold: the materialization barrier
+    // must discard history BEFORE the expensive current-roster tag subplan.
+    const result = await database.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, values);
+    const root = (result.rows[0]!['QUERY PLAN'] as Array<{ Plan: Record<string, any> }>)[0]!.Plan;
+    const nodes: Array<Record<string, any>> = [];
+    const visit = (node: Record<string, any>) => {
+      nodes.push(node);
+      for (const child of node.Plans ?? []) visit(child);
+    };
+    visit(root);
+    expect(
+      nodes.some((node) => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'candidates'),
+    ).toBe(true);
+    const tagScan = nodes.find((node) => node.Alias === 'tagged_member');
+    expect(tagScan).toBeDefined();
+    expect(tagScan!['Actual Loops']).toBe(0);
+  });
+
   it('keeps the stored evidence unchanged while readers age it out', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });

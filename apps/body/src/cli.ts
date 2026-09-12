@@ -391,6 +391,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           workspaceId: runtime.communityId,
           runtimeDir,
           ...(runtime.modelSelection ? { runtimeSelection: runtime.modelSelection } : {}),
+          ...(config.modelUnavailable
+            ? { startupUnavailable: config.modelUnavailable.unavailable.label }
+            : {}),
         });
       },
       onProgress: async (status) => {

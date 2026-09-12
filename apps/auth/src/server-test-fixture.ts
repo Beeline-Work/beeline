@@ -6,11 +6,7 @@ import { generateKeypair, nip98AuthHeader, signEvent, type Keypair } from '@beel
 import { exportJWK, generateKeyPair, SignJWT, type JWK, type KeyLike } from 'jose';
 import { afterEach, beforeEach, expect } from 'vitest';
 import { OidcClient } from './oidc.js';
-import {
-  GitHubAppClient,
-  GitHubOAuthClient,
-  type GitHubOrganizationMembership,
-} from './github.js';
+import { GitHubAppClient, GitHubOAuthClient, type GitHubOrganizationMembership } from './github.js';
 import { OIDC_BIND_KIND, OIDC_BIND_MARKER } from './protocol.js';
 import { buildAuthServer, type AuthTenant } from './server.js';
 import {
@@ -469,6 +465,7 @@ export function useAuthServerFixture(): void {
         stream: { write: (line: string) => state.logLines.push(line) },
       },
       nativeRedirectUris: ['beeline://beeline/oidc-callback'],
+      webAppOrigins: ['https://web.alpha.example'],
     });
   });
 

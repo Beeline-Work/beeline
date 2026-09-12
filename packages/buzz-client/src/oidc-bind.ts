@@ -178,12 +178,19 @@ function startProviderBind(
   const isGitHubAppScheme =
     provider === 'github' &&
     GITHUB_SIGN_IN_DEEP_LINKS.some((deepLink) => exactRedirect(input.redirectUri, deepLink));
+  const isGitHubWebCallback =
+    provider === 'github' &&
+    (redirect.protocol === 'https:' ||
+      (redirect.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '10.0.2.2'].includes(redirect.hostname))) &&
+    exactRedirect(input.redirectUri, `${redirect.origin}/beeline/github-callback`);
   if (
-    (!isAssociatedLink && !isEmulatorScheme && !isGitHubAppScheme) ||
+    (!isAssociatedLink && !isEmulatorScheme && !isGitHubAppScheme && !isGitHubWebCallback) ||
     redirect.username ||
     redirect.password ||
     rawUrlHasCredentials(input.redirectUri) ||
-    ((isEmulatorScheme || isGitHubAppScheme) && (redirect.search || redirect.hash))
+    ((isEmulatorScheme || isGitHubAppScheme || isGitHubWebCallback) &&
+      (redirect.search || redirect.hash))
   ) {
     throw new OidcBindError(
       'invalid_redirect',

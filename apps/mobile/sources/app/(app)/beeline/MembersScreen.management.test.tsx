@@ -565,10 +565,10 @@ describe('Members workspace management', () => {
       model: 'opus',
       effort: null,
     });
-    // After a model switch the catalog's effort axis no longer applies; the
-    // row stays, offering the generic ladder until a fresh catalog arrives.
+    // After a model switch the old model's effort axis no longer applies.
     await press(renderer, 'model-axis-effort');
-    expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
   });
 
   it('keeps the catalog default effort atomically when selecting its live model', async () => {
@@ -601,7 +601,7 @@ describe('Members workspace management', () => {
     });
   });
 
-  it('shows the current selection with an empty catalog and takes a typed model id', async () => {
+  it('shows the current selection but offers nothing without a live catalog', async () => {
     state.agent = {
       ...baseAgent(),
       catalog: [],
@@ -622,46 +622,26 @@ describe('Members workspace management', () => {
     ).toBe('—');
 
     await press(renderer, 'model-axis-model');
-    const input = renderer.root.findByProps({ testID: 'model-search-model' });
-    expect(input.props.placeholder).toBe('Model id');
-    await act(async () => {
-      input.props.onChangeText('openrouter/openai/gpt-5.6');
-    });
-    await act(async () => {
-      await renderer.root.findByProps({ testID: 'model-search-model' }).props.onSubmitEditing();
-    });
-    expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
-      model: 'openrouter/openai/gpt-5.6',
-      effort: null,
-    });
-    expect(renderer.root.findByProps({ testID: 'model-applies-model' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'model-search-model' })).toHaveLength(0);
+    expect(client.setAgentModelConfig).not.toHaveBeenCalled();
   });
 
-  it('offers the generic effort ladder without a catalog and drops the note after 4s', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    try {
-      state.agent = { ...baseAgent(), catalog: [], selected: undefined };
-      const renderer = await render();
-      await press(renderer, `agent-${AGENT}-identity`);
-      expect(
-        renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
-      ).toBe('—');
+  it('offers no synthetic effort choices without a live catalog', async () => {
+    state.agent = { ...baseAgent(), catalog: [], selected: undefined };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    await press(renderer, 'model-axis-effort');
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-low' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
+  });
 
-      await press(renderer, 'model-axis-effort');
-      expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
-      expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
-      await press(renderer, 'model-option-effort-xhigh');
-      expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, {
-        effort: 'xhigh',
-      });
-      expect(renderer.root.findByProps({ testID: 'model-applies-effort' })).toBeDefined();
-      await act(async () => {
-        vi.advanceTimersByTime(4_000);
-      });
-      expect(renderer.root.findAllByProps({ testID: 'model-applies-effort' })).toHaveLength(0);
-    } finally {
-      vi.useRealTimers();
-    }
+  it('marks a persisted model that failed live startup validation', async () => {
+    state.agent = { ...baseAgent(), modelUnavailable: 'model' };
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    expect(renderer.root.findByProps({ testID: 'model-unavailable-model' }).props.children).toBe(
+      '!',
+    );
   });
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {

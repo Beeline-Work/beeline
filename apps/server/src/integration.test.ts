@@ -4080,6 +4080,22 @@ describe('monolith integration', () => {
       (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
     ).toEqual([{ name: 'Honeybee', handle: 'honeybee' }]);
 
+    await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [
+      AGENT,
+      JSON.stringify([
+        {
+          id: 'model',
+          category: 'model',
+          options: [{ id: 'gpt-5.6' }, { id: 'gpt-5.6-codex' }],
+        },
+        {
+          id: 'effort',
+          category: 'reasoning_effort',
+          options: [{ id: 'high' }, { id: 'max' }],
+        },
+      ]),
+    ]);
+
     const model = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
       workspaceId: WORKSPACE,
       agentId: AGENT,

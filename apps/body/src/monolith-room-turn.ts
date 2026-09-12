@@ -1094,9 +1094,10 @@ export class MonolithRoomTurnLoop {
         requestId: item.id,
         status: 'failed',
         generationId: this.commandContext.generationId,
-        reason,
+        reason: reason.text,
+        ...(reason.kind ? { reasonKind: reason.kind } : {}),
       });
-      await trace.finish('failed', reason);
+      await trace.finish('failed', reason.text);
       throw error;
     } finally {
       this.busy = false;

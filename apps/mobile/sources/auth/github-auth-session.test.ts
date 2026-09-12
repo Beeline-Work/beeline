@@ -86,6 +86,12 @@ describe('GitHub auth session redirects', () => {
     expect(createURL).toHaveBeenCalledWith('beeline/github-callback');
   });
 
+  it('keeps the Expo web callback on the page origin', () => {
+    createURL.mockReturnValueOnce('https://web.usebeeline.app/beeline/github-callback');
+
+    expect(githubSignInRedirectUri()).toBe('https://web.usebeeline.app/beeline/github-callback');
+  });
+
   it('keeps monolith authorization on the monolith so GitHub returns there', () => {
     const start = startGitHubSignInWebFlow(
       STATE,

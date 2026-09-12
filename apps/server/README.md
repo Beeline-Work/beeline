@@ -35,8 +35,10 @@ The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`,
 
 The browser client is hosted separately at `https://web.usebeeline.app`. Set
 `BEELINE_WEB_APP_ORIGINS=https://web.usebeeline.app` in production so the server
-answers that exact origin's API preflights. This allowlist does not change
-`PUBLIC_ORIGIN`, auth callback URLs, app-link hosts, or the landing site at
+answers that exact origin's API preflights and admits its exact
+`/beeline/github-callback` app-completion URL. The same origin gate covers the
+GitHub completion-recovery endpoints used while the browser popup is open. It does not change
+`PUBLIC_ORIGIN`, the GitHub provider callback, app-link hosts, or the landing site at
 `https://usebeeline.app`.
 
 ```sh

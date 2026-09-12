@@ -21,7 +21,13 @@ describe('web app CORS', () => {
     );
   });
 
-  async function start(webAppOrigins: readonly string[]) {
+  async function start(
+    webAppOrigins: readonly string[],
+    authHandler?: (
+      request: import('node:http').IncomingMessage,
+      response: import('node:http').ServerResponse,
+    ) => void,
+  ) {
     const redeem = vi.fn().mockResolvedValue({
       status: 'redeemed',
       tokens: { accessToken: 'bat_test', refreshToken: 'brt_test' },
@@ -35,6 +41,7 @@ describe('web app CORS', () => {
       mediaMaximumBytes: 1,
       review: { redeem } as never,
       webAppOrigins,
+      authHandler,
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -103,5 +110,36 @@ describe('web app CORS', () => {
 
     expect(response.status).toBe(404);
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('allows web GitHub completion recovery through the same exact-origin gate', async () => {
+    const authHandler = vi.fn((_request, response) => {
+      response.writeHead(202, { 'content-type': 'application/json' });
+      response.end('{"status":"pending"}\n');
+    });
+    const { origin } = await start([deployedWebOrigin], authHandler);
+
+    for (const path of ['/auth/github/completion', '/auth/github/completion/cancel']) {
+      const preflight = await fetch(`${origin}${path}`, {
+        method: 'OPTIONS',
+        headers: {
+          origin: deployedWebOrigin,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type',
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(deployedWebOrigin);
+    }
+    expect(authHandler).not.toHaveBeenCalled();
+
+    const completion = await fetch(`${origin}/auth/github/completion`, {
+      method: 'POST',
+      headers: { origin: deployedWebOrigin, 'content-type': 'application/json' },
+      body: JSON.stringify({ recoveryToken: 'r'.repeat(43) }),
+    });
+    expect(completion.status).toBe(202);
+    expect(completion.headers.get('access-control-allow-origin')).toBe(deployedWebOrigin);
+    expect(authHandler).toHaveBeenCalledTimes(1);
   });
 });

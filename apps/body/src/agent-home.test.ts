@@ -434,6 +434,8 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('checks=passed, held=false, approvalPending=false');
+    expect(reviewSkill).toContain('unknown checks');
+    expect(reviewSkill).toContain('do not retry');
     expect(reviewSkill).toContain('--match-head-commit <reviewed sha>');
     expect(reviewSkill).toContain('P0 - OBJECTIVE FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');

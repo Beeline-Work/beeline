@@ -1221,9 +1221,31 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       ? await daemonExecute('getPrChecksStatus', { cornerId, pullRequest })
       : undefined;
   if (verdict) pullRequest = verdict.pullRequest;
+  const checks =
+    verdict?.checks === 'passed' || verdict?.checks === 'failed' || verdict?.checks === 'pending'
+      ? verdict.checks
+      : 'unknown';
+  const headSha = typeof verdict?.headSha === 'string' ? verdict.headSha : lifecycle?.pr?.headSha;
+  const pullRequestNumber =
+    typeof pullRequest === 'number'
+      ? pullRequest
+      : typeof pullRequest === 'string'
+        ? Number(pullRequest.match(/(?:pull\/)?(\d+)(?:\D*)$/)?.[1]) || lifecycle?.pr?.number
+        : lifecycle?.pr?.number;
+  const reason =
+    checks === 'unknown'
+      ? pullRequestNumber
+        ? `no checks are recorded for PR #${pullRequestNumber} (head ${headSha ?? 'unknown'}); the PR may have been opened from a branch that is not this corner's, or checks have not reported yet`
+        : 'no pull request or checks are recorded for this corner'
+      : checks === 'passed'
+        ? 'all recorded checks passed'
+        : checks === 'failed'
+          ? 'one or more recorded checks failed'
+          : 'recorded checks are still pending';
   return JSON.stringify({
-    checks: verdict?.checks ?? 'pending',
-    ...(verdict?.headSha ? { headSha: verdict.headSha } : {}),
+    checks,
+    reason,
+    ...(headSha ? { headSha } : {}),
     held,
     approvalPending: verdict?.approvalPending ?? false,
     archived: authority.archived === true,

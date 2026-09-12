@@ -98,7 +98,7 @@ export function cornerReviewerInstruction(input: {
     return undefined;
   const author = input.authorHandle?.replace(/^@/, '') || 'author';
   const number = input.pullRequestNumber ?? 'N';
-  return `Review PR #${number} with the beeline-review skill. If it fails, reply @${author} with the findings. If it passes and the gate (pr_checks_status: checks=passed, held=false, approvalPending=false) is open and YOUR yolo is on, merge with gh pr merge --squash --match-head-commit <sha you reviewed>; if your yolo is off, reply approved <sha> and stop; if checks are pending, reply approved pending checks <sha> and stop.`;
+  return `Review PR #${number} with the beeline-review skill. If it fails, reply @${author} with the findings. If it passes and the gate (pr_checks_status: checks=passed, held=false, approvalPending=false) is open and YOUR yolo is on, merge with gh pr merge --squash --match-head-commit <sha you reviewed>; if your yolo is off, reply approved <sha> and stop; if checks are pending, reply approved pending checks <sha> and stop; if checks are unknown, report the tool's reason to the Room and stop instead of retrying.`;
 }
 
 export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
@@ -118,7 +118,7 @@ export const CORNER_DELIVERY_NUDGE =
   'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
 
 export const CORNER_YOLO_MERGE_NUDGE =
-  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. Otherwise stop without merging.';
+  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. If checks="unknown", report the tool reason to the Room and stop instead of retrying. Otherwise stop without merging.';
 
 function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
   return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
@@ -627,6 +627,8 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         cliEntrypoint: process.argv[1]!,
         gitBinary,
+        featureBranch: repository.featureBranch,
+        targetBranch: repository.targetBranch,
         ...(ghBinary ? { ghBinary } : {}),
         inheritedPath: this.options.config.agentEnv.PATH ?? process.env.PATH,
       });
@@ -774,7 +776,7 @@ export class MonolithCornerTurnLoop {
                 : [
                     configuration.reviewerHandle
                       ? `Once the pull request exists, reply with its full URL, then @${configuration.reviewerHandle} please review, and end the turn; do not check or wait for CI.`
-                      : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; only a later explicit human resume clears a hold.',
+                      : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", report the tool reason to the Room and stop instead of retrying. Only a later explicit human resume clears a hold.',
                     CORNER_AUTHOR_CONTRACT,
                     cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),

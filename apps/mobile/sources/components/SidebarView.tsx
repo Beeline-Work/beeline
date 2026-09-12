@@ -21,6 +21,7 @@ import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import {
   directMessagePresence,
+  displayGroupedCornerTitle,
   NO_ACTIVITY_PREVIEW,
   roomListSections,
   roomRowName,
@@ -582,7 +583,11 @@ export const SidebarView = React.memo(function SidebarView() {
                               </View>
                               <View style={styles.roomCopy}>
                                 <Text numberOfLines={1} style={styles.cornerTitle}>
-                                  {corner.corner.name}
+                                  {displayGroupedCornerTitle(
+                                    item.room.name,
+                                    corner.corner.name,
+                                    corner.corner.id,
+                                  )}
                                 </Text>
                                 <Text numberOfLines={1} style={styles.cornerMeta}>
                                   {corner.status}

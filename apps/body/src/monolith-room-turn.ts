@@ -944,7 +944,13 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
-              let explained = await this.explainEmpty(result);
+              let openCornerCall = result.toolCalls.find((call) =>
+                /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
+              );
+              let explained =
+                openCornerCall && !isFailedToolCall(openCornerCall)
+                  ? undefined
+                  : await this.explainEmpty(result);
               if (explained && shouldRetryEmptyTurn(explained)) {
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
@@ -955,7 +961,13 @@ export class MonolithRoomTurnLoop {
                   );
                   result = await runPrompt();
                   trace.promptSettled();
-                  explained = await this.explainEmpty(result);
+                  openCornerCall = result.toolCalls.find((call) =>
+                    /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
+                  );
+                  explained =
+                    openCornerCall && !isFailedToolCall(openCornerCall)
+                      ? undefined
+                      : await this.explainEmpty(result);
                 }
               }
               // The requester stopped this turn while it ran.
@@ -989,9 +1001,6 @@ export class MonolithRoomTurnLoop {
                   `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
                 );
               }
-              const openCornerCall = result.toolCalls.find((call) =>
-                /(?:^|[._:/-])open_corner$/i.test(call.title ?? ''),
-              );
               if (openCornerCall) {
                 console.log(
                   `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title} (${openCornerCall.status ?? 'no status'})`,

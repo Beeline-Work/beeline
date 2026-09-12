@@ -239,6 +239,7 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
+import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -4270,6 +4271,20 @@ export default function BuzzChat() {
             </View>
           }
           pickerVisible={showRoomRepoPicker}
+          reviewer={
+            <RoomReviewerActions
+              agents={(roomSurface?.members ?? [])
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity)}
+              canManage={canManageWorkspace}
+              hasRepository={roomRepository !== null}
+              onSaved={() => refreshSignal.force()}
+              reviewerAgentId={roomSurface?.room.reviewerAgentId}
+              roomId={decodedId}
+              roomName={displayRoomName}
+              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            />
+          }
           repositoryName={roomRepository?.binding.name ?? null}
         />
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (

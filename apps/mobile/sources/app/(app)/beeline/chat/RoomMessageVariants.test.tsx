@@ -14,6 +14,10 @@ import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const composerSource = readFileSync(
+  new URL('../../../../components/buzz/ConversationComposer.tsx', import.meta.url),
+  'utf8',
+);
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -132,7 +136,8 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 
 describe('Room message variant components', () => {
   it('keeps Room and corner conversations on one composer, mention, and transcript component path', () => {
-    expect(conversationSource.match(/testID="chat-input"/g)).toHaveLength(1);
+    expect(conversationSource.match(/<ConversationComposer/g)).toHaveLength(1);
+    expect(composerSource).toContain('testID={`${testIDPrefix}-input`}');
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);

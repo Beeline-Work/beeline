@@ -5,8 +5,9 @@ import test from 'node:test';
 
 import {
   DESKTOP_INSTALLERS,
-  initializeDesktopDownload,
+  initializePlatformDownloads,
   selectDesktopInstaller,
+  selectPlatform,
 } from '../relay-stack/web/desktop-download.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -65,67 +66,51 @@ for (const [name, input, expected] of cases) {
   });
 }
 
-function downloadControls({ open = false } = {}) {
-  let click;
-  let desktopMovedAfterStores = false;
-  const desktopDownload = {};
-  const primary = {
-    textContent: '',
-    href: '',
-    addEventListener(type, handler) {
-      if (type === 'click') click = handler;
-    },
-  };
-  const choices = {
-    open,
-    closest(selector) {
-      return selector === '.desktop-download' ? desktopDownload : undefined;
-    },
-  };
-  const stores = {
-    after(element) {
-      desktopMovedAfterStores = element === desktopDownload;
-    },
-  };
-  return {
-    primary,
-    choices,
-    click: () => click?.(),
-    desktopMovedAfterStores: () => desktopMovedAfterStores,
-    documentLike: {
-      querySelector(selector) {
-        if (selector === '[data-desktop-download]') return primary;
-        if (selector === '[data-desktop-choices]') return choices;
-        if (selector === '.hero-text > .stores') return stores;
-        return undefined;
+function platformControls() {
+  const tiles = ['ios', 'android', 'macos', 'windows', 'linux'].map((platform) => {
+    const classes = new Set();
+    const attributes = new Map();
+    return {
+      dataset: { platform },
+      classList: {
+        add: (value) => classes.add(value),
+        remove: (value) => classes.delete(value),
+        contains: (value) => classes.has(value),
       },
-    },
+      setAttribute: (name, value) => attributes.set(name, value),
+      removeAttribute: (name) => attributes.delete(name),
+      getAttribute: (name) => attributes.get(name),
+    };
+  });
+  return {
+    tiles,
+    documentLike: { querySelectorAll: () => tiles },
   };
 }
 
-test('mobile visitors keep desktop choices collapsed until they ask for them', async () => {
-  const controls = downloadControls({ open: true });
-  await initializeDesktopDownload(controls.documentLike, {
+test('Android lights only the Android tile even though its user agent also says Linux', async () => {
+  const controls = platformControls();
+  await initializePlatformDownloads(controls.documentLike, {
     userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) Mobile',
     platform: 'Linux armv8l',
   });
 
-  assert.equal(controls.primary.textContent, 'Choose a desktop download');
-  assert.equal(controls.primary.href, '#desktop-downloads');
-  assert.equal(controls.choices.open, false);
-  assert.equal(controls.desktopMovedAfterStores(), true);
-  controls.click();
-  assert.equal(controls.choices.open, true);
+  assert.deepEqual(
+    controls.tiles.filter((tile) => tile.classList.contains('is-current')).map((tile) => tile.dataset.platform),
+    ['android'],
+  );
+  assert.equal(controls.tiles[1].getAttribute('aria-current'), 'true');
 });
 
-test('unknown desktop visitors still see the installer choices immediately', async () => {
-  const controls = downloadControls();
-  await initializeDesktopDownload(controls.documentLike, {
+test('unknown visitors leave every platform tile muted', async () => {
+  const controls = platformControls();
+  await initializePlatformDownloads(controls.documentLike, {
     userAgent: 'ExampleBrowser/1.0',
     platform: '',
   });
 
-  assert.equal(controls.choices.open, true);
+  assert.equal(controls.tiles.some((tile) => tile.classList.contains('is-current')), false);
+  assert.equal(selectPlatform({ userAgent: 'ExampleBrowser/1.0', platform: '' }), undefined);
 });
 
 test('landing markup exposes one main flow and one accessible animation description', () => {
@@ -133,8 +118,8 @@ test('landing markup exposes one main flow and one accessible animation descript
   assert.match(html, /<figure class="stage-wrap" aria-labelledby="stage-caption">/);
   assert.match(html, /<div class="stage" id="stage" aria-hidden="true" inert>/);
   assert.match(html, /<figcaption class="sr-only" id="stage-caption">/);
-  assert.match(html, /a:focus-visible,summary:focus-visible/);
-  assert.match(html, /\.download-list a\{min-height:44px/);
+  assert.match(html, /a:focus-visible/);
+  assert.match(html, /\.platform-tile\{[^}]*min-height:82px/);
   assert.match(html, /footer a\{display:inline-flex;align-items:center;min-height:44px/);
 });
 
@@ -156,11 +141,12 @@ test('the chooser contains only stable installable release assets', () => {
       /^https:\/\/github\.com\/Beeline-Work\/beeline\/releases\/latest\/download\//,
     );
     assert.doesNotMatch(installer.asset, /(?:\.sig|\.sha\d*|checksums?|source|\.zip|\.tar\.gz)$/i);
-    assert.match(html, new RegExp(`releases/latest/download/${installer.asset.replace('.', '\\.')}`));
   }
-  assert.match(html, /data-desktop-download/);
-  assert.match(html, /<summary>Other platforms<\/summary>/);
-  assert.match(html, /src="\/desktop-download\.mjs"/);
+  for (const asset of ['Beeline-universal.dmg', 'Beeline-x86_64-setup.exe', 'Beeline-x86_64.AppImage']) {
+    assert.match(html, new RegExp(`releases/latest/download/${asset.replace('.', '\\.')}`));
+  }
+  assert.equal(html.match(/data-platform=/g)?.length, 5);
+  assert.match(html, /src="\/desktop-download\.mjs\?v=platform-row"/);
 });
 
 test('the unified release publishes every stable website installer name', () => {

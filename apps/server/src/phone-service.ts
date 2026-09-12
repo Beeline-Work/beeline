@@ -2179,6 +2179,24 @@ export class PhoneService {
           input as Input<'setRoomGitHubEvents'>,
           viewerId,
         )) as Output<Name>;
+      case 'listRoomWorkflows':
+        await this.requireHumanRoomWorkspaceManager(
+          (input as Input<'listRoomWorkflows'>).roomId,
+          viewerId,
+        );
+        return (await this.requireGitHub().listRoomWorkflows(
+          (input as Input<'listRoomWorkflows'>).roomId,
+        )) as Output<Name>;
+      case 'dispatchRoomWorkflow':
+        await this.requireHumanRoomWorkspaceManager(
+          (input as Input<'dispatchRoomWorkflow'>).roomId,
+          viewerId,
+        );
+        await this.requireGitHub().dispatchRoomWorkflow(
+          (input as Input<'dispatchRoomWorkflow'>).roomId,
+          (input as Input<'dispatchRoomWorkflow'>).workflowName,
+        );
+        return undefined as Output<Name>;
       case 'approveCornerMerge':
         return (await this.requireGitHub().approveCornerMerge(
           viewerId,
@@ -4614,6 +4632,18 @@ export class PhoneService {
     );
     if (!row.rowCount) throw new Error('room manager required');
   }
+  private async requireHumanRoomWorkspaceManager(roomId: string, identityId: string) {
+    const row = await this.database.query(
+      `SELECT 1 FROM rooms room
+       JOIN memberships membership ON membership.workspace_id=room.workspace_id
+         AND membership.room_id IS NULL AND membership.identity_id=$2
+         AND membership.role IN ('owner','admin') AND membership.removed_at IS NULL
+       JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='human'
+       WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL`,
+      [roomId, identityId],
+    );
+    if (!row.rowCount) throw new Error('room manager required');
+  }
   private async requireTopLevelChatMember(
     roomId: string,
     identityId: string,
@@ -4944,6 +4974,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'completeGitHubIdentityBind',
   'recoverGitHubIdentity',
   'adoptGitHubHandle',
+  'dispatchRoomWorkflow',
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
@@ -4986,6 +5017,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'setRoomRepository',
   'setRoomTargetBranch',
   'setRoomGitHubEvents',
+  'listRoomWorkflows',
+  'dispatchRoomWorkflow',
   'approveCornerMerge',
   'getAuthCapabilities',
   'beginGitHubIdentityBind',

@@ -1,7 +1,10 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const phoneOperation = vi.hoisted(() => vi.fn());
+const modalConfirm = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -90,7 +93,8 @@ vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', async () => {
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn() }));
 vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/modal', () => ({ Modal: { confirm: modalConfirm } }));
 vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/buzz/desktop-workbench-state')>()),
   loadDesktopPaneWidth: vi.fn(async () => 400),
@@ -210,6 +214,10 @@ beforeAll(() => {
   });
 });
 afterAll(() => vi.restoreAllMocks());
+beforeEach(() => {
+  phoneOperation.mockReset();
+  modalConfirm.mockReset();
+});
 
 function render(options = props()): ReactTestRenderer {
   let tree!: ReactTestRenderer;
@@ -238,8 +246,54 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).toContain('Concluded · 1');
     expect(copy).toContain('1 people · 1 agents');
     expect(copy).toContain('@codex');
-    expect(copy).not.toContain('WORKFLOWS');
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
+  });
+
+  it('renders dispatchable workflows and confirms the name and default branch before running', async () => {
+    phoneOperation
+      .mockResolvedValueOnce({
+        defaultBranch: 'main',
+        workflows: [
+          {
+            name: 'Release',
+            lastRunAt: Math.floor(Date.now() / 1000) - 300,
+            conclusion: 'success',
+          },
+          {
+            name: 'Nightly',
+            lastRunAt: Math.floor(Date.now() / 1000) - 3600,
+            conclusion: 'failure',
+          },
+        ],
+      })
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ defaultBranch: 'main', workflows: [] });
+    modalConfirm.mockResolvedValueOnce(true);
+    const repositoryRoom = {
+      ...room(),
+      repositoryResolution: 'repository',
+      repository: { fullName: 'acme/beeline', defaultBranch: 'main' },
+    } as any;
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<DesktopRoomInspector {...props({ room: repositoryRoom })} />);
+    });
+
+    expect(text(tree)).toContain('WORKFLOWS');
+    expect(text(tree)).toContain('Release');
+    expect(text(tree)).toContain('success');
+    expect(text(tree)).toContain('Run ›');
+    await act(async () => {
+      tree.root.findByProps({ testID: 'desktop-work-workflow-Release' }).props.onPress();
+    });
+    expect(modalConfirm).toHaveBeenCalledWith('Run Release?', 'Run Release on main?', {
+      cancelText: 'Cancel',
+      confirmText: 'Run',
+    });
+    expect(phoneOperation).toHaveBeenNthCalledWith(2, 'dispatchRoomWorkflow', {
+      roomId: 'room',
+      workflowName: 'Release',
+    });
   });
 
   it('opens a corner cockpit and returns to overview without closing the pane', async () => {

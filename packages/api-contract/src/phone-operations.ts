@@ -47,6 +47,8 @@ export type PhoneOperationMap = {
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
   setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
+  listRoomWorkflows: { input: RoomInput; output: RoomWorkflowListResult };
+  dispatchRoomWorkflow: { input: DispatchRoomWorkflowInput; output: void };
   approveCornerMerge: { input: ApproveCornerMergeInput; output: ApproveCornerMergeResult };
   getAuthCapabilities: { input: EmptyInput; output: AuthCapabilitiesResult };
   beginGitHubIdentityBind: { input: BeginBrowserAuthInput; output: BrowserAuthStartResult };
@@ -76,6 +78,17 @@ export type PhoneOperationMap = {
 export type EmptyInput = Record<string, never>;
 export type WorkspaceInput = { readonly workspaceId: string };
 export type RoomInput = { readonly roomId: string };
+export type RoomWorkflowView = {
+  readonly name: string;
+  /** Absolute Unix timestamp in seconds. Omitted when this workflow has never run. */
+  readonly lastRunAt?: number;
+  readonly conclusion?: string;
+};
+export type RoomWorkflowListResult = {
+  readonly defaultBranch: string;
+  readonly workflows: readonly RoomWorkflowView[];
+};
+export type DispatchRoomWorkflowInput = RoomInput & { readonly workflowName: string };
 export type WorkspaceAgentInput = WorkspaceInput & { readonly agentId: string };
 export type RoomMemberInput = RoomInput & { readonly memberId: string };
 export type WorkspaceMemberInput = WorkspaceInput & {

@@ -9,10 +9,18 @@ describe('GitHub-only account and repository access', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ access_token: 'user-token', refresh_token: 'refresh-token', expires_in: 28800, token_type: 'bearer' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
+        new Response(
+          JSON.stringify({
+            access_token: 'user-token',
+            refresh_token: 'refresh-token',
+            expires_in: 28800,
+            token_type: 'bearer',
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: 1234, login: 'octocat', name: 'The Octocat' }), {
@@ -36,19 +44,17 @@ describe('GitHub-only account and repository access', () => {
   });
 
   it('exchanges a refresh token for a fresh user access token', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            access_token: 'fresh-user-token',
-            refresh_token: 'next-refresh-token',
-            expires_in: 28800,
-            token_type: 'bearer',
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-      );
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          access_token: 'fresh-user-token',
+          refresh_token: 'next-refresh-token',
+          expires_in: 28800,
+          token_type: 'bearer',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const client = new GitHubOAuthClient({ clientId: 'client-id', clientSecret: 'secret' });
     await expect(client.refreshUserToken('stale-refresh-token')).resolves.toEqual({
@@ -216,6 +222,88 @@ describe('GitHub-only account and repository access', () => {
     ]);
   });
 
+  it('lists only workflow-dispatch workflows with their latest run result', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              { id: 12, name: 'Release', path: '.github/workflows/release.yml', state: 'active' },
+              {
+                id: 13,
+                name: 'Pull request checks',
+                path: '.github/workflows/checks.yml',
+                state: 'active',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            encoding: 'base64',
+            content: Buffer.from('on:\n  workflow_dispatch:\n  push:\n').toString('base64'),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            encoding: 'base64',
+            content: Buffer.from('on:\n  pull_request:\n').toString('base64'),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [{ created_at: '2026-09-12T12:00:00Z', conclusion: 'success' }],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+    await expect(
+      app.listDispatchableWorkflows('room-token', 'acme/beeline', 'main'),
+    ).resolves.toEqual([
+      { id: 12, name: 'Release', lastRunAt: 1_789_214_400, conclusion: 'success' },
+    ]);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://api.github.com/repos/acme/beeline/actions/workflows?per_page=100&page=1',
+      'https://api.github.com/repos/acme/beeline/contents/.github/workflows/release.yml?ref=main',
+      'https://api.github.com/repos/acme/beeline/contents/.github/workflows/checks.yml?ref=main',
+      'https://api.github.com/repos/acme/beeline/actions/workflows/12/runs?per_page=1',
+    ]);
+  });
+
+  it('dispatches a named workflow id on the repository default branch', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+    await expect(
+      app.dispatchWorkflow('room-token', 'acme/beeline', 12, 'trunk'),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.github.com/repos/acme/beeline/actions/workflows/12/dispatches',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          authorization: 'Bearer room-token',
+          'content-type': 'application/json',
+        }),
+        body: JSON.stringify({ ref: 'trunk' }),
+      }),
+    );
+  });
+
   it('lists the installations visible to a GitHub user token', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);
@@ -247,10 +335,14 @@ describe('GitHub-only account and repository access', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ state: 'pending', role: 'member' }), { status: 200 }),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }),
+      )
       // The App asks for no organization permissions, so GitHub may simply
       // refuse this endpoint — 'unknown' keeps the caller on its old path.
-      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }),
+      )
       .mockResolvedValueOnce(new Response('not json', { status: 200 }))
       .mockRejectedValueOnce(new Error('connection reset'));
     vi.stubGlobal('fetch', fetchMock);

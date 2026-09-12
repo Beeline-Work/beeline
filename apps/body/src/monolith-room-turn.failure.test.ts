@@ -29,6 +29,8 @@ async function runTurn(options: {
   prompt: (input: {
     agentHomeRoot: string;
     attempt: number;
+    /** The ACP delta hook, so a test can stream a draft before it fails. */
+    onChunk: (delta: string, full: string) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
 }): Promise<{
   receipts: Array<Record<string, unknown>>;
@@ -36,6 +38,8 @@ async function runTurn(options: {
   attempts: number;
   promptTimeouts: number[];
   agentHomeRoot: string;
+  /** Every daemon write the turn made, in order. */
+  writes: string[];
 }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-failure-'));
   roots.push(root);
@@ -120,8 +124,10 @@ async function runTurn(options: {
     }),
   } as unknown as DaemonApiClient;
   const posted: Array<Record<string, unknown>> = [];
+  const writes: string[] = [];
   execute.mockImplementation(async (name: string, input: Record<string, unknown>) => {
     if (name === 'postRoomMessage') posted.push(input);
+    writes.push(name);
     return respond(name, input);
   });
   const acp = new AcpClient({ agentBinary: options.agentCommand, agentEnv: {} });
@@ -141,10 +147,14 @@ async function runTurn(options: {
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
   let attempts = 0;
   const promptTimeouts: number[] = [];
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation((_sessionId, _prompt, timeoutMs) => {
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation((_sessionId, _prompt, timeoutMs, onChunk) => {
     attempts += 1;
     promptTimeouts.push(timeoutMs);
-    return options.prompt({ agentHomeRoot, attempt: attempts });
+    return options.prompt({
+      agentHomeRoot,
+      attempt: attempts,
+      onChunk: (delta, full) => onChunk?.(delta, full),
+    });
   });
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
@@ -172,8 +182,14 @@ async function runTurn(options: {
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
-  return { receipts, posted, attempts, promptTimeouts, agentHomeRoot };
+  return { receipts, posted, attempts, promptTimeouts, agentHomeRoot, writes };
 }
+
+/** The turn's writes to the live lane and the transcript, in order. */
+const laneWrites = (writes: readonly string[]): string[] =>
+  writes.filter((name) =>
+    ['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput'].includes(name),
+  );
 
 describe('Room turn failure receipt', () => {
   it('allows a Room model three minutes of inactivity before timing out', async () => {
@@ -366,6 +382,74 @@ describe('Room turn failure receipt', () => {
       'the model ended its turn with no text (stop reason end_turn) · served by phala',
     );
     expect(warnings.join('\n')).toContain('routed to venice, phala; retrying on phala');
+  });
+
+  it('retracts the draft it was writing when the prompt throws', async () => {
+    // The draft is provisional and belongs to a turn in flight. A throw never
+    // reaches the settle that would dissolve it, so the half-written answer
+    // stayed live on the page — still pulsing — under a turn already reported
+    // failed, an answer arriving that never arrives.
+    const { writes, posted, receipts } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onChunk }) => {
+        onChunk('The fix is ', 'The fix is ');
+        // Let the draft reach the wire before the provider hangs up.
+        await new Promise((resolve) => setImmediate(resolve));
+        throw new Error('ACP error -32000: provider closed the stream');
+      },
+    });
+
+    // Nothing is published in the draft's place: the receipt carries the reason.
+    expect(laneWrites(writes)).toEqual(['postAgentDraft', 'retractAgentLiveOutput']);
+    expect(posted).toEqual([]);
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
+    );
+  });
+
+  it('retracts the draft when the turn fails with no answer to settle', async () => {
+    // The other failure shape: the harness returns, having streamed something
+    // and finished with nothing durable. The reason goes on the receipt and
+    // the lane still has to be closed behind it.
+    const { writes, posted } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onChunk }) => {
+        onChunk('Thinking out ', 'Thinking out ');
+        await new Promise((resolve) => setImmediate(resolve));
+        return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+      },
+    });
+
+    expect(posted).toEqual([]);
+    expect(laneWrites(writes)).toEqual(['postAgentDraft', 'retractAgentLiveOutput']);
+  });
+
+  it('leaves one retract on a turn that answers, not two', async () => {
+    // The settle already dissolves the lane. The failure path must not add a
+    // second retract to every ordinary turn.
+    const { writes, posted } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onChunk }) => {
+        onChunk('The fix ', 'The fix ');
+        await new Promise((resolve) => setImmediate(resolve));
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'The fix is ready.',
+          toolCalls: [],
+        };
+      },
+    });
+
+    expect(posted.map((message) => message.text)).toEqual(['The fix is ready.']);
+    expect(laneWrites(writes)).toEqual([
+      'postAgentDraft',
+      'postRoomMessage',
+      'retractAgentLiveOutput',
+    ]);
   });
 
   it('posts answer text pi recorded when the ACP stream delivered none', async () => {

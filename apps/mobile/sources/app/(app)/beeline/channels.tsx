@@ -1117,10 +1117,8 @@ const styles = StyleSheet.create((theme) => {
     presenceWorking: { backgroundColor: theme.colors.success },
     presenceIdle: { backgroundColor: hull.textMuted },
     presenceCaption: {
-      ...Typography.mono('semiBold'),
+      ...theme.buzz.type.sectionHead,
       color: hull.textMuted,
-      fontSize: 9,
-      letterSpacing: 0.6,
       textTransform: 'uppercase',
     },
     preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },

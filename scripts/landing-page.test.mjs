@@ -33,8 +33,9 @@ test('landing page presents one row of five equal platform tiles', () => {
     assert.match(html, new RegExp(`data-platform="${platform}"`));
   }
   assert.match(html, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
-  assert.match(html, /assets\/store-badges\/app-store\.svg/);
-  assert.match(html, /assets\/store-badges\/google-play\.png/);
+  assert.match(html, /data-platform="ios"[\s\S]*?<span>App Store<\/span>/);
+  assert.match(html, /data-platform="android"[\s\S]*?<span>Google Play<\/span>/);
+  assert.doesNotMatch(html, /store-badge|assets\/store-badges/);
 });
 
 test('platform detection prioritizes phones before desktop user-agent fragments', () => {

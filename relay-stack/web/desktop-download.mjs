@@ -58,26 +58,6 @@ export function selectDesktopInstaller(input = {}) {
   return PRIMARY_INSTALLERS[platform];
 }
 
-export async function browserPlatformInput(navigatorLike = globalThis.navigator) {
-  const input = {
-    userAgent: navigatorLike?.userAgent ?? '',
-    platform: navigatorLike?.platform ?? '',
-    maxTouchPoints: navigatorLike?.maxTouchPoints ?? 0,
-    uaDataPlatform: navigatorLike?.userAgentData?.platform ?? '',
-    uaDataMobile: navigatorLike?.userAgentData?.mobile,
-  };
-  if (typeof navigatorLike?.userAgentData?.getHighEntropyValues === 'function') {
-    try {
-      const detail = await navigatorLike.userAgentData.getHighEntropyValues(['architecture', 'bitness']);
-      input.uaDataArchitecture = detail.architecture ?? '';
-      input.uaDataBitness = detail.bitness ?? '';
-    } catch {
-      // Reduced user-agent clients safely keep the chooser instead of guessing.
-    }
-  }
-  return input;
-}
-
 export async function initializePlatformDownloads(
   documentLike = globalThis.document,
   navigatorLike = globalThis.navigator,

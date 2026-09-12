@@ -21,12 +21,14 @@ vi.mock('expo-haptics', () => ({
 }));
 import { ConversationComposer } from './ConversationComposer';
 import { desktopComposerKeyAction } from '@/buzz/desktop-workbench-state';
+import { Platform } from 'react-native';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const renderers: any[] = [];
-function render(value: string, onStop?: () => Promise<boolean>) {
+function render(value: string, onStop?: () => Promise<boolean>, height = 40) {
   const onSend = vi.fn();
   const onKeyPress = vi.fn();
+  const onSelectionChange = vi.fn();
   let renderer: any;
   act(() => {
     renderer = create(
@@ -36,7 +38,7 @@ function render(value: string, onStop?: () => Promise<boolean>) {
         running
         stopKey="turn-one"
         placeholder="Message #beeline…"
-        height={40}
+        height={height}
         maxHeight={120}
         focused={false}
         disabled={false}
@@ -46,24 +48,51 @@ function render(value: string, onStop?: () => Promise<boolean>) {
         onContentSizeChange={vi.fn()}
         onFocus={vi.fn()}
         onKeyPress={onKeyPress}
+        onSelectionChange={onSelectionChange}
         onSend={onSend}
       />,
     );
   });
   renderers.push(renderer);
-  return { renderer, onSend, onKeyPress, button: () => renderer.root.findByType('Pressable') };
+  return {
+    renderer,
+    onSend,
+    onKeyPress,
+    onSelectionChange,
+    button: () => renderer.root.findByType('Pressable'),
+  };
 }
 async function release(fixture: ReturnType<typeof render>) {
   act(() => fixture.button().props.onPressOut({ nativeEvent: { type: 'mouseup' } }));
   await act(async () => fixture.button().props.onPress());
 }
-beforeEach(() => vi.useFakeTimers());
+beforeEach(() => {
+  vi.useFakeTimers();
+  (Platform as { OS: string }).OS = 'web';
+});
 afterEach(() => {
   act(() => renderers.splice(0).forEach((renderer) => renderer.unmount()));
   vi.useRealTimers();
 });
 
 describe('one composer: send on tap, deliberate stop on hold', () => {
+  it('keeps an iOS draft visible and selectable beyond four lines', () => {
+    (Platform as { OS: string }).OS = 'ios';
+    const value = ['one', 'two', 'three', 'four', 'five', 'six'].join('\n');
+    const f = render(value, undefined, 120);
+    const input = f.renderer.root.findByType('TextInput');
+
+    expect(input.props.style[1]).toEqual({ maxHeight: 120 });
+    expect(input.props.style[1]).not.toHaveProperty('height');
+    expect(input.props.value).toBe(value);
+    expect(input.props.multiline).toBe(true);
+    expect(input.props.scrollEnabled).toBe(true);
+
+    const selection = { nativeEvent: { selection: { start: 20, end: value.length } } };
+    act(() => input.props.onSelectionChange(selection));
+    expect(f.onSelectionChange).toHaveBeenCalledWith(selection);
+  });
+
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
     const f = render(value);
     expect(f.button().findByType('Text').props.children).toBe('↑');

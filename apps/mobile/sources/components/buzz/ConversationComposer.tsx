@@ -145,7 +145,12 @@ export function ConversationComposer({
       </TouchableOpacity>
       <TextInput
         ref={inputRef}
-        style={[styles.input, { height, maxHeight }]}
+        style={[
+          styles.input,
+          // An explicit height clips iOS's native text view once the draft
+          // grows beyond a few lines, including its selection surface.
+          Platform.OS === 'ios' ? { maxHeight } : { height, maxHeight },
+        ]}
         value={value}
         onChangeText={onChangeText}
         onContentSizeChange={onContentSizeChange}
@@ -209,7 +214,6 @@ export function ConversationComposer({
 const styles = StyleSheet.create((theme) => ({
   composer: {
     minHeight: 46,
-    maxHeight: 126,
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingVertical: 3,

@@ -23,11 +23,14 @@ describe('Room composer status layout', () => {
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 
-  it('applies the measured multiline height within its scrolling cap', () => {
-    expect(composerInput).toContain('style={[styles.input, { height, maxHeight }]}');
+  it('lets iOS own its native multiline height within the scrolling cap', () => {
+    expect(composerInput).toContain(
+      "Platform.OS === 'ios' ? { maxHeight } : { height, maxHeight }",
+    );
     expect(composerInput).toContain('multiline');
     expect(composerInput).not.toContain('numberOfLines=');
     expect(composerInput).not.toContain('height: composerHeight');
+    expect(composerInput).not.toContain("Platform.OS === 'ios' ? { height");
   });
 
   it('lets soft-wrapped content grow until the 120px scrolling cap', () => {

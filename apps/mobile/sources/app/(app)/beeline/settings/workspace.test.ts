@@ -16,7 +16,7 @@ const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefine
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const runtime = vi.hoisted(() => ({ monolithEnabled: true }));
-const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn() }));
+const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn(), room: vi.fn() }));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   renameCommunity: vi.fn(),
@@ -28,6 +28,7 @@ vi.mock('@beeline/buzz-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
     chats = roomViews.chats;
+    room = roomViews.room;
   },
   SurfaceRefreshScheduler: class<T> {
     constructor(
@@ -77,6 +78,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
     chats = roomViews.chats;
+    room = roomViews.room;
   },
 }));
 vi.mock('@/sync/transport', () => ({
@@ -151,6 +153,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   roomViews.workspace.mockResolvedValue(workspaceView());
   roomViews.chats.mockResolvedValue(chatListView());
+  roomViews.room.mockResolvedValue(roomView());
+  phoneOperation.mockResolvedValue(undefined);
   runtime.monolithEnabled = true;
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
@@ -198,7 +202,14 @@ function workspaceView(
   };
 }
 
-function room(id: string, name: string, createdAt: number, archived = false, direct = false) {
+function room(
+  id: string,
+  name: string,
+  createdAt: number,
+  archived = false,
+  direct = false,
+  reviewerAgentId?: string,
+) {
   return {
     room: {
       id,
@@ -208,6 +219,7 @@ function room(id: string, name: string, createdAt: number, archived = false, dir
       archived,
       createdAt,
       updatedAt: createdAt,
+      ...(reviewerAgentId ? { reviewerAgentId } : {}),
     },
     memberCount: 1,
     cornerCount: 0,
@@ -219,6 +231,41 @@ function room(id: string, name: string, createdAt: number, archived = false, dir
           },
         }
       : {}),
+  };
+}
+
+const ECHO = 'e'.repeat(64);
+const BEE = 'b'.repeat(64);
+
+function agent(pubkey: string, name: string, handle: string) {
+  return {
+    identity: { pubkey, kind: 'agent' as const, name, handle },
+    role: 'member' as const,
+  };
+}
+
+function roomView(reviewerAgentId?: string) {
+  return {
+    room: {
+      id: 'room-1',
+      workspaceId: 'workspace-1',
+      name: 'atlas',
+      visibility: 'public',
+      ...(reviewerAgentId ? { reviewerAgentId } : {}),
+      archived: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    members: [agent(ECHO, 'Echo', 'echo'), agent(BEE, 'Bee', 'bee')],
+    messages: [],
+    latestAgentTurns: [],
+    viewer: {
+      identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },
+      role: 'owner',
+      permissions: { send: true, manage: true },
+    },
+    repositoryResolution: 'none',
+    watchFilters: [],
   };
 }
 
@@ -527,6 +574,66 @@ describe('Workspace Settings authority', () => {
       visibility: 'invite-only',
     });
     expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it('renders the configured Room reviewer and picks another Room agent', async () => {
+    const view = workspaceView();
+    view.agents = [agent(ECHO, 'Echo', 'echo'), agent(BEE, 'Bee', 'bee')];
+    roomViews.workspace.mockResolvedValue(view);
+    roomViews.chats.mockResolvedValue(
+      chatListView([room('room-1', 'atlas', 1, false, false, ECHO)]),
+    );
+    roomViews.room.mockResolvedValue(roomView(ECHO));
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-room-1' }).props).toMatchObject({
+      title: 'Reviewer',
+      value: '@echo',
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-reviewer-room-1' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-sheet' }).props.visible).toBe(true);
+    expect(
+      renderer.root.findByProps({ testID: `room-reviewer-agent-${ECHO}` }).props.selected,
+    ).toBe(true);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(phoneOperation).toHaveBeenCalledWith('updateRoom', {
+      roomId: 'room-1',
+      reviewerAgentId: BEE,
+    });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-room-1' }).props.value).toBe('@bee');
+  });
+
+  it('clears a Room reviewer through the None picker row', async () => {
+    const view = workspaceView();
+    view.agents = [agent(ECHO, 'Echo', 'echo')];
+    roomViews.workspace.mockResolvedValue(view);
+    roomViews.chats.mockResolvedValue(
+      chatListView([room('room-1', 'atlas', 1, false, false, ECHO)]),
+    );
+    roomViews.room.mockResolvedValue(roomView(ECHO));
+    const renderer = await render();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-reviewer-room-1' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-reviewer-none' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(phoneOperation).toHaveBeenCalledWith('updateRoom', {
+      roomId: 'room-1',
+      reviewerAgentId: null,
+    });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-room-1' }).props.value).toBe('None');
   });
 
   it('renders Room rows with the # channel mark while stored names stay unmarked', async () => {

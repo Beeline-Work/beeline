@@ -199,6 +199,7 @@ import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoo
 import {
   GitHubEventCard,
   DaemonFactCard,
+  NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
@@ -239,6 +240,7 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
+import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -3224,7 +3226,17 @@ export default function BuzzChat() {
         return null;
       }
 
-      if (item.githubEvent || item.githubLifecycleRun) {
+      if (item.notificationLifecycleRun) {
+        return (
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={openCorner}
+            onOpenUrl={handleOpenGitHubEvent}
+          />
+        );
+      }
+
+      if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
@@ -4270,6 +4282,20 @@ export default function BuzzChat() {
             </View>
           }
           pickerVisible={showRoomRepoPicker}
+          reviewer={
+            <RoomReviewerActions
+              agents={(roomSurface?.members ?? [])
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity)}
+              canManage={canManageWorkspace}
+              hasRepository={roomRepository !== null}
+              onSaved={() => refreshSignal.force()}
+              reviewerAgentId={roomSurface?.room.reviewerAgentId}
+              roomId={decodedId}
+              roomName={displayRoomName}
+              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            />
+          }
           repositoryName={roomRepository?.binding.name ?? null}
         />
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (

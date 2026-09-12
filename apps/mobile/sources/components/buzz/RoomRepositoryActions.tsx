@@ -9,6 +9,7 @@ type RoomRepositoryActionsProps = {
   onToggle: () => void;
   picker: React.ReactNode;
   pickerVisible: boolean;
+  reviewer?: React.ReactNode;
   repositoryName: string | null;
 };
 
@@ -19,6 +20,7 @@ export function RoomRepositoryActions({
   onToggle,
   picker,
   pickerVisible,
+  reviewer,
   repositoryName,
 }: RoomRepositoryActionsProps) {
   if (!canManage) {
@@ -48,6 +50,7 @@ export function RoomRepositoryActions({
         onPress={onToggle}
         testID="room-repo-action"
       />
+      {reviewer}
       {pickerVisible ? picker : null}
       {notifications}
     </>

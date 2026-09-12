@@ -39,6 +39,7 @@ export interface ModelCatalogSyncInput {
   workspaceId: string;
   runtimeDir: string;
   runtimeSelection?: Selection;
+  startupUnavailable?: 'model' | 'effort' | 'selection';
   fetchCatalog?: CatalogFetcher;
   timeoutMs?: number;
   log?: (line: string) => void;
@@ -49,9 +50,16 @@ export type ModelCatalogSyncResult = 'posted' | 'unchanged' | 'failed';
 export function modelCatalogHash(
   options: readonly AgentModelConfigOption[],
   selection: Selection | undefined,
+  startupUnavailable?: 'model' | 'effort' | 'selection',
 ): string {
   return createHash('sha256')
-    .update(JSON.stringify({ options, selection: selection ?? null }))
+    .update(
+      JSON.stringify({
+        options,
+        selection: selection ?? null,
+        startupUnavailable: startupUnavailable ?? null,
+      }),
+    )
     .digest('hex');
 }
 
@@ -94,11 +102,11 @@ export async function syncAgentModelCatalog(
           }
         : input.runtimeSelection;
     const { catalog } = await withTimeout(
-      fetchCatalog(input.agent, input.agentEnv, selection),
+      fetchCatalog(input.agent, input.agentEnv, input.startupUnavailable ? undefined : selection),
       input.timeoutMs ?? MODEL_CATALOG_PROBE_TIMEOUT_MS,
       'model catalog probe',
     );
-    const hash = modelCatalogHash(catalog, selection);
+    const hash = modelCatalogHash(catalog, selection, input.startupUnavailable);
     const previous = await readFile(hashPath, 'utf8').catch(() => '');
     if (previous.trim() === hash) return 'unchanged';
     await input.api.execute('postAgentModelCatalog', {
@@ -107,6 +115,7 @@ export async function syncAgentModelCatalog(
       // `fetchAgentModelCatalog` already applied the category allow-list.
       options: catalog as Input<'postAgentModelCatalog'>['options'],
       ...(selection ? { selection } : {}),
+      ...(input.startupUnavailable ? { unavailable: input.startupUnavailable } : {}),
     });
     await writeFile(hashPath, `${hash}\n`, { mode: 0o600 });
     log(

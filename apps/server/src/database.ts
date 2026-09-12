@@ -340,6 +340,7 @@ CREATE TABLE IF NOT EXISTS agents (
   selected_model text,
   selected_effort text,
   model_catalog jsonb NOT NULL DEFAULT '[]'::jsonb,
+  model_unavailable text CHECK (model_unavailable IN ('model','effort','selection')),
   commands jsonb NOT NULL DEFAULT '[]'::jsonb,
   schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   yolo_mode boolean NOT NULL DEFAULT true,
@@ -351,6 +352,10 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT 
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
+ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
+ALTER TABLE agents ADD CONSTRAINT agents_model_unavailable_check
+  CHECK (model_unavailable IN ('model','effort','selection'));
 -- An agent nobody but its owner may address is indistinguishable from a dead one,
 -- so a newly connected agent now answers everyone (agent-access.ts). Only the
 -- DEFAULT moves: every existing row keeps the policy its owner is running with and

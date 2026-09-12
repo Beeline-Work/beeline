@@ -1,9 +1,16 @@
+import { ModelSelectionUnavailableError } from './model-config.js';
+
 /**
  * One distilled line for a failed turn receipt. The Room carries the fact
  * ("Candy could not answer · provider error 429"); the full error stays in the
  * daemon log. Never a stack trace, never a credential, at most 200 chars.
  */
 export const TURN_FAILURE_REASON_MAX = 200;
+
+export interface DistilledTurnFailureReason {
+  readonly text: string;
+  readonly kind?: 'model-selection-unavailable';
+}
 
 /** Keep wire-visible tool detail useful without ever carrying credentials. */
 export function redactToolDetail(value: string): string {
@@ -26,7 +33,10 @@ export function redactToolDetail(value: string): string {
     );
 }
 
-export function distillTurnFailureReason(error: unknown): string {
+export function distillTurnFailureReason(error: unknown): DistilledTurnFailureReason {
+  if (error instanceof ModelSelectionUnavailableError) {
+    return { text: 'model selection unavailable', kind: 'model-selection-unavailable' };
+  }
   const raw =
     error instanceof Error
       ? error.message
@@ -44,8 +54,11 @@ export function distillTurnFailureReason(error: unknown): string {
       .find((line) => line && !/^at\s/.test(line)) ?? '';
   const stripped = firstLine.replace(/^(?:[A-Za-z]*Error|Error):\s*/, '').replace(/\s+/g, ' ');
   const clean = redactToolDetail(stripped).trim();
-  if (!clean) return 'turn failed';
-  return clean.length > TURN_FAILURE_REASON_MAX
-    ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
-    : clean;
+  if (!clean) return { text: 'turn failed' };
+  return {
+    text:
+      clean.length > TURN_FAILURE_REASON_MAX
+        ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
+        : clean,
+  };
 }

@@ -264,6 +264,9 @@ describe('agent turn stream', () => {
     // The same holds for a turn whose whole handoff is elsewhere: a corner
     // open completes, card and all, even when the lane cannot be retracted.
     await expect(streamFor(api).settle('')).resolves.toBeUndefined();
+    // And on the failure path #1114 added, which calls the retract directly:
+    // the caller already has a real error to report that this must not replace.
+    await expect(streamFor(api).retract()).resolves.toBeUndefined();
     errors.mockRestore();
   });
 

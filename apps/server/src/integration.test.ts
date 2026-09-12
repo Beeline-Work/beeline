@@ -1343,7 +1343,7 @@ describe('monolith integration', () => {
     ).json()) as { id: string };
     await operation('registerPushDevice', {
       token: 'owner-explicit-add-device-token-1234567890',
-      platform: 'ios',
+      platform: 'android',
       environment: 'physical',
     });
     const send = vi.fn().mockResolvedValue(undefined);
@@ -2403,7 +2403,7 @@ describe('monolith integration', () => {
     await pushes.runOnce();
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('recipient-device-token-12345678901234567890',$1,'ios','physical')`,
+       VALUES('recipient-device-token-12345678901234567890',$1,'android','physical')`,
       [recipient],
     );
 
@@ -4117,7 +4117,7 @@ describe('monolith integration', () => {
 
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'ios','physical')`,
+      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'android','physical')`,
       [HUMAN],
     );
     const floor = new PushDeliveryLoop(database, { send: vi.fn().mockResolvedValue(undefined) });
@@ -4844,7 +4844,7 @@ describe('monolith integration', () => {
     const deviceToken = 'github-merge-device-token-1234567890';
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES($1,$2,'ios','physical')`,
+       VALUES($1,$2,'android','physical')`,
       [deviceToken, HUMAN],
     );
     const send = vi.fn().mockResolvedValue(undefined);
@@ -5924,7 +5924,7 @@ describe('monolith integration', () => {
     await loop.runOnce(); // establish the durable floor before the new events
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('owner-device-token-12345678901234567890',$1,'ios','physical')`,
+       VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
       [HUMAN],
     );
     const sent = await operation('sendRoomMessage', {
@@ -6030,7 +6030,7 @@ describe('monolith integration', () => {
     ] as const)
       await database.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment)
-         VALUES($1,$2,'ios','physical')`,
+         VALUES($1,$2,'android','physical')`,
         [token, identity],
       );
     const floor = new PushDeliveryLoop(database, { send: vi.fn().mockResolvedValue(undefined) });
@@ -6160,7 +6160,7 @@ describe('monolith integration', () => {
     await loop.runOnce(); // establish the durable floor before the new events
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('owner-device-token-12345678901234567890',$1,'ios','physical')`,
+       VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
       [HUMAN],
     );
     const created = await daemonOperation('createCorner', {
@@ -6723,7 +6723,7 @@ describe('monolith integration', () => {
     await pushes.runOnce();
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('grant-owner-device-1234567890123456789012',$1,'ios','physical')`,
+       VALUES('grant-owner-device-1234567890123456789012',$1,'android','physical')`,
       [HUMAN],
     );
     const memberToken = await phoneToken('member');

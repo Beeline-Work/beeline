@@ -143,6 +143,17 @@ async function runTurn(
 const OPEN_CORNER = { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' };
 
 describe('Room turn after open_corner', () => {
+  it('completes silently when the harness result is truly textless', async () => {
+    const { receipts, posted } = await runTurn('', [OPEN_CORNER]);
+    expect(posted).toEqual([]);
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
+    );
+    expect(receipts).not.toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
+    );
+  });
+
   it('drops the "Opened corner …" echo: the server card already announces it', async () => {
     const { receipts, posted } = await runTurn(
       'Opened corner 3f2a9c1e-77d2-4b0e-9d1a-0c5b2e8f4a11 with the objective "Fix the widget".',

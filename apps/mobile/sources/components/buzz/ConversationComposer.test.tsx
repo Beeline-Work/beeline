@@ -25,7 +25,11 @@ vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
-import { ConversationComposer } from './ConversationComposer';
+import {
+  COMPOSER_MAX_INPUT_HEIGHT,
+  COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+  ConversationComposer,
+} from './ConversationComposer';
 import { desktopComposerKeyAction } from '@/buzz/desktop-workbench-state';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,8 +45,8 @@ function render(value: string, onStop?: () => Promise<boolean>) {
         onStop={onStop}
         running
         stopKey="turn-one"
-        height={40}
-        maxHeight={120}
+        height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+        maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
         focused={false}
         disabled={false}
         onAttach={vi.fn()}
@@ -201,7 +205,7 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     const f = render('hello');
     expect(f.renderer.root.findAllByType('View')[0].props.style[0]).toMatchObject({
       flexDirection: 'row',
-      alignItems: 'flex-end',
+      alignItems: 'center',
     });
     expect(f.renderer.root.findByType('TextInput').props.onKeyPress).toBe(f.onKeyPress);
     expect(desktopComposerKeyAction('web', 'Enter', false)).toBe('send');
@@ -215,5 +219,31 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
       expect(source).toContain('stopKey={');
       expect(source).toContain('desktopComposerKeyAction(');
     }
+  });
+
+  it('bottom-aligns the controls only after the field grows beyond one line', () => {
+    const f = render('one line');
+    expect(f.renderer.root.findAllByType('View')[0].props.style[1]).toBe(false);
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer {...props} height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT + 1} />,
+      ),
+    );
+    expect(f.renderer.root.findAllByType('View')[0].props.style[1]).toMatchObject({
+      alignItems: 'flex-end',
+    });
+  });
+
+  it('uses a one-pixel brass focus hairline without changing geometry or adding glow', () => {
+    const f = render('focused');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props} focused />));
+    const [base, , focus] = f.renderer.root.findAllByType('View')[0].props.style;
+    expect(base.borderWidth).toBe(1);
+    expect(focus).toEqual({ borderColor: '#b08a4a' });
+    expect(focus).not.toHaveProperty('borderWidth');
+    expect(focus).not.toHaveProperty('shadowColor');
+    expect(focus).not.toHaveProperty('boxShadow');
   });
 });

@@ -14,6 +14,7 @@ import {
   type TextInputSelectionChangeEventData,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { groknight } from '@/buzz/groknight';
 
 type Props = {
   value: string;
@@ -40,6 +41,9 @@ type Props = {
   inputRef?: React.Ref<TextInput>;
   testIDPrefix?: string;
 };
+
+export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26;
+export const COMPOSER_MAX_INPUT_HEIGHT = 5 * groknight.type.body.lineHeight;
 
 /** The one text-entry row used by both desktop Room and embedded Corner conversations. */
 export function ConversationComposer({
@@ -68,6 +72,7 @@ export function ConversationComposer({
 }: Props) {
   const { theme } = useUnistyles();
   const sendDisabled = disabled || !(canSend ?? Boolean(value.trim()));
+  const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
   const [armed, setArmed] = React.useState(false);
   const [acting, setActing] = React.useState(false);
   const hold = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,11 +135,19 @@ export function ConversationComposer({
     }
   };
   return (
-    <View {...containerProps} style={[styles.composer, focused && styles.composerFocused]}>
+    <View
+      {...containerProps}
+      style={[
+        styles.composer,
+        multiline && styles.composerMultiline,
+        focused && styles.composerFocused,
+      ]}
+    >
       <TouchableOpacity
         accessibilityLabel="Attach photo or document"
         accessibilityRole="button"
         disabled={attachDisabled || !onAttach}
+        hitSlop={9}
         onPress={onAttach}
         style={styles.attachButton}
         testID={`${testIDPrefix}-attach-button`}
@@ -166,6 +179,7 @@ export function ConversationComposer({
         }
         accessibilityRole="button"
         disabled={disabled || stopping || acting || (sendDisabled && !onStop)}
+        hitSlop={9}
         onPressIn={() => {
           clearHold();
           held.current = false;
@@ -186,7 +200,6 @@ export function ConversationComposer({
         onPress={() => void press()}
         style={[
           styles.sendButton,
-          sendDisabled && !armed && styles.sendButtonDisabled,
           armed && styles.sendButtonArmed,
         ]}
         testID={`${testIDPrefix}-send`}
@@ -197,7 +210,9 @@ export function ConversationComposer({
             {!sendDisabled && <Text style={styles.sendTick}>↑</Text>}
           </>
         ) : (
-          <Text style={styles.sendButtonText}>↑</Text>
+          <Text style={[styles.sendButtonText, sendDisabled && styles.sendButtonTextDisabled]}>
+            ↑
+          </Text>
         )}
       </Pressable>
     </View>
@@ -206,27 +221,25 @@ export function ConversationComposer({
 
 const styles = StyleSheet.create((theme) => ({
   composer: {
-    minHeight: 46,
-    maxHeight: 126,
+    minHeight: 44,
+    maxHeight: COMPOSER_MAX_INPUT_HEIGHT + 18,
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingVertical: 3,
+    alignItems: 'center',
+    paddingVertical: 8,
     paddingHorizontal: 10,
-    borderRadius: theme.buzz.radius,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: theme.buzz.border,
-    backgroundColor: theme.buzz.bgBase,
+    backgroundColor: theme.buzz.bgRaised,
   },
+  composerMultiline: { alignItems: 'flex-end' },
   composerFocused: {
-    borderWidth: 2,
-    borderColor: theme.buzz.focus,
-    paddingHorizontal: 9,
+    borderColor: theme.buzz.accent,
   },
   attachButton: {
-    width: 40,
-    height: 40,
-    marginLeft: -6,
-    marginRight: 2,
+    width: 26,
+    height: 26,
+    marginRight: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -240,20 +253,19 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
     color: theme.buzz.textSecondary,
-    minHeight: 40,
-    maxHeight: 120,
-    paddingVertical: 10,
+    minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+    maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
+    paddingVertical: 0,
     textAlignVertical: 'top',
     outlineStyle: 'none',
   } as any,
   sendButton: {
-    width: 40,
-    height: 40,
-    marginRight: 4,
+    width: 26,
+    height: 26,
+    marginLeft: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendButtonDisabled: { opacity: 0.45 },
   sendButtonArmed: { backgroundColor: theme.buzz.accent, borderRadius: theme.buzz.radius },
   stopSquare: {
     width: 11,
@@ -276,4 +288,5 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.body,
     color: theme.buzz.textPrimary,
   },
+  sendButtonTextDisabled: { color: theme.buzz.textMuted },
 }));

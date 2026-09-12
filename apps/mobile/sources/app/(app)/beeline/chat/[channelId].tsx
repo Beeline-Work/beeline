@@ -262,13 +262,17 @@ import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/R
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
-import { ConversationComposer } from '@/components/buzz/ConversationComposer';
+import {
+  COMPOSER_MAX_INPUT_HEIGHT,
+  COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+  ConversationComposer,
+} from '@/components/buzz/ConversationComposer';
 import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
 
-const COMPOSER_MIN_HEIGHT = 40;
-const COMPOSER_MAX_HEIGHT = 120;
+const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
+const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // How close to the visual bottom counts as "already reading the newest end"
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
@@ -4926,7 +4930,7 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
     },
     inputBar: {
-      paddingHorizontal: 8,
+      paddingHorizontal: 16,
       paddingTop: 8,
       borderTopWidth: 1,
       borderTopColor: groknight.border,
@@ -5262,63 +5266,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textSecondary,
       fontSize: 20,
     },
-    composer: {
-      minHeight: 46,
-      maxHeight: 126,
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-      paddingVertical: 3,
-      paddingHorizontal: 10,
-      borderRadius: groknight.radius,
-      borderWidth: 1,
-      borderColor: groknight.border,
-      backgroundColor: groknight.bgBase,
-    },
-    composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
-    attachButton: {
-      width: 40,
-      height: 40,
-      marginLeft: -6,
-      marginRight: 2,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    attachButtonText: {
-      ...Typography.default(),
-      color: groknight.textMuted,
-      fontSize: 18,
-      lineHeight: 22,
-    },
-    input: {
-      ...Typography.default(),
-      flex: 1,
-      fontSize: 14,
-      // React Native's iOS text view can truncate long values when an explicit
-      // line height is applied. Let iOS use the font's native metrics while
-      // preserving the established Android and web composer rhythm.
-      ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
-      color: groknight.textSecondary,
-      minHeight: 40,
-      maxHeight: 120,
-      paddingVertical: 10,
-      textAlignVertical: 'top',
-    },
-    sendButton: {
-      width: 40,
-      height: 40,
-      marginRight: 4,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    sendButtonDisabled: {
-      backgroundColor: groknight.bgBase,
-    },
-    sendButtonText: {
-      ...Typography.default(),
-      color: groknight.textPrimary,
-      fontSize: 16,
-    },
-    sendButtonTextQuiet: { color: groknight.textDisabled },
     archivedInputBar: {
       paddingHorizontal: 16,
       paddingTop: 12,

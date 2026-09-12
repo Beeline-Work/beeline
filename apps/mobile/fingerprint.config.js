@@ -5,8 +5,8 @@
 // ship. It is NOT bound to `runtimeVersion` as a policy — a computed runtime
 // orphans every already-installed binary the moment the stamp moves.
 //
-// @expo/fingerprint reads this shared policy automatically. The native gate
-// additionally excludes the Android-only Room plugin from its iOS hash.
+// @expo/fingerprint reads this file automatically, so `npx expo-updates
+// runtimeversion:resolve` and `npx @expo/fingerprint` agree with the gate.
 //
 // The stamp must be the SAME for every artifact built from one commit: the
 // store AAB/IPA (`production`), the sideload APK (`production-apk`), the OTA
@@ -19,13 +19,6 @@
 
 /** @type {import('@expo/fingerprint').Config} */
 module.exports = {
-  extraSources: [
-    {
-      type: 'dir',
-      filePath: 'plugins/room-notifications',
-      reasons: ['Room notification native presentation'],
-    },
-  ],
   sourceSkips: [
     // The whole `scripts` section is JS/CI tooling. The library hashes it by
     // default only because `expo prebuild` rewrites the android/ios entries,

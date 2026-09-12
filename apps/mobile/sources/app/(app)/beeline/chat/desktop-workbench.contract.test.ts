@@ -60,8 +60,8 @@ describe('desktop workbench wiring', () => {
       inspector.indexOf('function CornerCockpit'),
     );
     expect(cornerRow).toContain('corner.corner.about ?? corner.corner.name');
-    expect(cornerRow).toContain('stateLine(corner)');
-    expect(cornerRow).toContain('roomRowNeedsAttention');
+    expect(cornerRow).toContain('cornerDisplayState(corner)');
+    expect(cornerRow).toContain('{display.word}');
     expect(cornerRow).not.toMatch(/pull request|github|branch|checks|\bPR\b/i);
   });
 

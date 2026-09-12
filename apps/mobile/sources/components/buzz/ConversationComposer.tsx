@@ -49,7 +49,7 @@ export const COMPOSER_MAX_INPUT_HEIGHT = 5 * groknight.type.body.lineHeight;
 export function ConversationComposer({
   value,
   height,
-  maxHeight = 160,
+  maxHeight = 120,
   focused,
   disabled,
   attachDisabled = false,
@@ -156,7 +156,7 @@ export function ConversationComposer({
       </TouchableOpacity>
       <TextInput
         ref={inputRef}
-        style={[styles.input, { height, maxHeight }]}
+        style={[styles.input, Platform.OS === 'ios' ? undefined : { height, maxHeight }]}
         value={value}
         onChangeText={onChangeText}
         onContentSizeChange={onContentSizeChange}

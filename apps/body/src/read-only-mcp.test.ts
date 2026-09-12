@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { CornerLifecycleView } from '@beeline/api-contract/phone';
-import { agentToolsFor, cornerCallText, mergeApprovalPending } from './read-only-mcp.js';
+import { agentToolsFor, cornerCallText } from './read-only-mcp.js';
 
 describe('direct message helper surface', () => {
   it('opens no corners from a direct message', () => {
@@ -69,36 +68,6 @@ describe('open_corner arguments', () => {
     expect(() => cornerCallText({ objective: 'Ship the widget' })).toThrow(
       'the name is required; give a title of at most 3 words',
     );
-  });
-});
-
-describe('merge approval state', () => {
-  const lifecycle = (number: number, headSha: string): CornerLifecycleView => ({
-    lifecycle: 'in-review',
-    branch: 'feature/widget',
-    checks: 'passing',
-    pr: {
-      number,
-      url: `https://github.com/acme/widgets/pull/${number}`,
-      title: 'Ship widget',
-      targetBranch: 'main',
-      headSha,
-    },
-  });
-
-  it('accepts only durable approval for the current pull request and head', () => {
-    const current = lifecycle(42, 'a'.repeat(40));
-
-    expect(mergeApprovalPending(current, { pullRequestNumber: 42, headSha: 'a'.repeat(40) })).toBe(
-      true,
-    );
-    expect(mergeApprovalPending(current, { pullRequestNumber: 41, headSha: 'a'.repeat(40) })).toBe(
-      false,
-    );
-    expect(mergeApprovalPending(current, { pullRequestNumber: 42, headSha: 'b'.repeat(40) })).toBe(
-      false,
-    );
-    expect(mergeApprovalPending(current, undefined)).toBe(false);
   });
 });
 

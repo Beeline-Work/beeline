@@ -10,6 +10,7 @@ import {
   isWorkspaceView,
   type BuzzClient,
   type ChatListView,
+  type RoomViewIdentity,
   type WorkspaceView,
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -39,6 +40,13 @@ type WorkspaceRoomSetting = {
   visibility: 'public' | 'invite-only';
   canManage: boolean;
   createdAt: number;
+  reviewerAgentId?: string;
+};
+
+type RoomReviewerPicker = {
+  room: WorkspaceRoomSetting;
+  reviewerAgentId?: string;
+  agents: readonly RoomViewIdentity[];
 };
 
 const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
@@ -79,30 +87,58 @@ export default function WorkspaceSettings() {
   const [workspaceName, setWorkspaceName] = useState('');
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
+  const [reviewerPicker, setReviewerPicker] = useState<RoomReviewerPicker | null>(null);
+  const [reviewerSelectionByRoom, setReviewerSelectionByRoom] = useState<
+    Record<string, string | null>
+  >({});
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const chatsSchedulerRef = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
+  const roomViewClientRef = useRef<RoomViewClient | null>(null);
 
   const workspace = workspaceView?.workspace;
   const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
-    return (
-      indexedRooms ??
+    const joinedRooms = new Map(
       (chatList?.chats ?? [])
         .filter((item) => !item.room.archived && !item.directMessage)
-        .map((item) => ({
-          id: item.room.id,
-          name: item.room.name,
-          visibility: item.room.visibility ?? 'public',
-          createdAt: item.room.createdAt,
-        }))
-    )
-      .map((room) => ({ ...room, canManage: canManageWorkspace }))
+        .map((item) => [item.room.id, item.room]),
+    );
+    const visibleRooms =
+      indexedRooms ??
+      [...joinedRooms.values()].map((room) => ({
+        id: room.id,
+        name: room.name,
+        visibility: room.visibility ?? 'public',
+        createdAt: room.createdAt,
+      }));
+    return visibleRooms
+      .map((room) => {
+        const selected = reviewerSelectionByRoom[room.id];
+        const reviewerAgentId =
+          selected !== undefined
+            ? (selected ?? undefined)
+            : joinedRooms.get(room.id)?.reviewerAgentId;
+        return {
+          ...room,
+          canManage: canManageWorkspace,
+          ...(reviewerAgentId ? { reviewerAgentId } : {}),
+        };
+      })
       .sort((left, right) => left.name.localeCompare(right.name));
-  }, [canManageWorkspace, chatList, workspaceView?.managerSettings?.rooms]);
+  }, [
+    canManageWorkspace,
+    chatList,
+    reviewerSelectionByRoom,
+    workspaceView?.managerSettings?.rooms,
+  ]);
+  const workspaceAgentById = useMemo(
+    () => new Map((workspaceView?.agents ?? []).map((agent) => [agent.identity.pubkey, agent])),
+    [workspaceView?.agents],
+  );
   const duplicateRoomNames = useMemo(() => {
     const counts = new Map<string, number>();
     for (const room of rooms) {
@@ -141,6 +177,7 @@ export default function WorkspaceSettings() {
           if (cancelled) return;
           setClient(currentClient);
           const http = new RoomViewClient({ baseUrl: currentRelayUrl, identity: currentIdentity });
+          roomViewClientRef.current = http;
           workspaceScheduler = new SurfaceRefreshScheduler({
             fetch: () => http.workspace(communityId),
             apply: (value) => {
@@ -189,6 +226,7 @@ export default function WorkspaceSettings() {
         chatsScheduler?.dispose();
         workspaceSchedulerRef.current = null;
         chatsSchedulerRef.current = null;
+        roomViewClientRef.current = null;
       };
     }, [communityId]),
   );
@@ -277,6 +315,58 @@ export default function WorkspaceSettings() {
       }
     },
     [client],
+  );
+
+  const openRoomReviewerPicker = useCallback(async (room: WorkspaceRoomSetting) => {
+    if (!getBuzzRuntimeConfig().monolithEnabled) {
+      setError(`${ROOM_LABEL} reviewers require the current Beeline runtime.`);
+      return;
+    }
+    const http = roomViewClientRef.current;
+    if (!http || !room.canManage) return;
+    setWorkingKey(`reviewer-${room.id}`);
+    setError(null);
+    try {
+      const view = await http.room(room.id);
+      setReviewerPicker({
+        room,
+        reviewerAgentId: view.room.reviewerAgentId,
+        agents: view.members
+          .map((member) => member.identity)
+          .filter((identity) => identity.kind === 'agent'),
+      });
+    } catch (caught) {
+      setError(`Could not load ${ROOM_LABEL} reviewers: ${String(caught)}`);
+    } finally {
+      setWorkingKey(null);
+    }
+  }, []);
+
+  const changeRoomReviewer = useCallback(
+    async (reviewerAgentId: string | null) => {
+      const picker = reviewerPicker;
+      setReviewerPicker(null);
+      if (!picker || (picker.reviewerAgentId ?? null) === reviewerAgentId) return;
+      setWorkingKey(`reviewer-${picker.room.id}`);
+      setError(null);
+      try {
+        await monolithPhoneOperation('updateRoom', {
+          roomId: picker.room.id,
+          reviewerAgentId,
+        });
+        setReviewerSelectionByRoom((current) => ({
+          ...current,
+          [picker.room.id]: reviewerAgentId,
+        }));
+        workspaceSchedulerRef.current?.force();
+        chatsSchedulerRef.current?.force();
+      } catch (caught) {
+        setError(`Could not change ${ROOM_LABEL} reviewer: ${String(caught)}`);
+      } finally {
+        setWorkingKey(null);
+      }
+    },
+    [reviewerPicker],
   );
 
   const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
@@ -464,27 +554,47 @@ export default function WorkspaceSettings() {
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               const nextVisibilityLabel = ROOM_VISIBILITY_LABELS[nextVisibility];
+              const reviewer = room.reviewerAgentId
+                ? workspaceAgentById.get(room.reviewerAgentId)?.identity
+                : undefined;
               return (
-                <SettingsRow
-                  accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
-                  description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
-                  descriptionAction={
-                    duplicateName
-                      ? {
-                          accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,
-                          label: 'Details',
-                          onPress: () => showRoomDetails(room),
-                          testID: `room-details-${room.id}`,
-                        }
-                      : undefined
-                  }
-                  key={room.id}
-                  disabled={!room.canManage || workingKey === `room-${room.id}`}
-                  onPress={() => void changeRoomVisibility(room)}
-                  testID={`room-visibility-${room.id}`}
-                  title={displayName}
-                  value={ROOM_VISIBILITY_LABELS[room.visibility]}
-                />
+                <View key={room.id}>
+                  <SettingsRow
+                    accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
+                    description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
+                    descriptionAction={
+                      duplicateName
+                        ? {
+                            accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,
+                            label: 'Details',
+                            onPress: () => showRoomDetails(room),
+                            testID: `room-details-${room.id}`,
+                          }
+                        : undefined
+                    }
+                    disabled={!room.canManage || workingKey === `room-${room.id}`}
+                    onPress={() => void changeRoomVisibility(room)}
+                    testID={`room-visibility-${room.id}`}
+                    title={displayName}
+                    value={ROOM_VISIBILITY_LABELS[room.visibility]}
+                  />
+                  <SettingsRow
+                    accessibilityLabel={`Choose reviewer for ${displayName}`}
+                    chevron="right"
+                    description={`Reviews every pull request opened from ${displayName}.`}
+                    disabled={!room.canManage || workingKey === `reviewer-${room.id}`}
+                    onPress={() => void openRoomReviewerPicker(room)}
+                    testID={`room-reviewer-${room.id}`}
+                    title="Reviewer"
+                    value={
+                      reviewer
+                        ? `@${reviewer.handle ?? reviewer.name}`
+                        : room.reviewerAgentId
+                          ? 'Selected'
+                          : 'None'
+                    }
+                  />
+                </View>
               );
             })}
           </View>
@@ -519,6 +629,41 @@ export default function WorkspaceSettings() {
         <HullActionSheetCancel
           onPress={() => setVisibilityPickerOpen(false)}
           testID="workspace-visibility-close"
+        />
+      </HullActionSheetModal>
+
+      <HullActionSheetModal
+        accessibilityLabel="Close reviewer picker"
+        onClose={() => setReviewerPicker(null)}
+        subtitle="This agent reviews every pull request opened from the Room."
+        testID="room-reviewer-sheet"
+        title={
+          reviewerPicker
+            ? `Reviewer for ${displayRoomIndexTitle(reviewerPicker.room.name) ?? reviewerPicker.room.name}`
+            : 'Reviewer'
+        }
+        visible={reviewerPicker !== null}
+      >
+        <HullActionSheetRow
+          disabled={workingKey !== null}
+          label="None"
+          onPress={() => void changeRoomReviewer(null)}
+          selected={!reviewerPicker?.reviewerAgentId}
+          testID="room-reviewer-none"
+        />
+        {(reviewerPicker?.agents ?? []).map((agent) => (
+          <HullActionSheetRow
+            disabled={workingKey !== null}
+            key={agent.pubkey}
+            label={`@${agent.handle ?? agent.name}`}
+            onPress={() => void changeRoomReviewer(agent.pubkey)}
+            selected={reviewerPicker?.reviewerAgentId === agent.pubkey}
+            testID={`room-reviewer-agent-${agent.pubkey}`}
+          />
+        ))}
+        <HullActionSheetCancel
+          onPress={() => setReviewerPicker(null)}
+          testID="room-reviewer-close"
         />
       </HullActionSheetModal>
     </View>

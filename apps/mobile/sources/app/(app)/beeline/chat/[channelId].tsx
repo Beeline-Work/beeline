@@ -900,6 +900,18 @@ export default function BuzzChat() {
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
   );
+  const roomReviewerHandle = useMemo(() => {
+    const reviewerAgentId =
+      roomSurface?.parent?.reviewerAgentId ?? roomSurface?.room.reviewerAgentId;
+    if (!reviewerAgentId) return undefined;
+    const member = roomSurface?.members.find(
+      (candidate) =>
+        candidate.identity.pubkey === reviewerAgentId && candidate.identity.kind === 'agent',
+    )?.identity;
+    if (member?.handle) return member.handle;
+    const agent = agentByPubkey.get(reviewerAgentId);
+    return agent ? resolveAgentDisplayIdentity(reviewerAgentId, agent).handle : undefined;
+  }, [agentByPubkey, roomSurface?.members, roomSurface?.parent, roomSurface?.room]);
   const personProfileByPubkey = useMemo(
     () => new Map(personProfiles.map((profile) => [profile.pubkey, profile])),
     [personProfiles],
@@ -3137,6 +3149,7 @@ export default function BuzzChat() {
         return (
           <DaemonFactCard
             message={item}
+            reviewerHandle={roomReviewerHandle}
             onOpenCorner={openCorner}
             onOpenUrl={handleOpenGitHubEvent}
           />
@@ -3223,6 +3236,7 @@ export default function BuzzChat() {
       personProfileByPubkey,
       cacheViewerPubkey,
       roomRepository,
+      roomReviewerHandle,
       roomParticipants,
       targetBranchActionId,
       targetBranchNotice,

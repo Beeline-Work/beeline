@@ -226,6 +226,48 @@ export interface GitHubInstallationRepository {
   defaultBranch: string;
 }
 
+export interface GitHubDispatchableWorkflow {
+  readonly id: number;
+  readonly name: string;
+  readonly lastRunAt?: number;
+  readonly conclusion?: string;
+}
+
+function repositoryPath(fullName: string): string {
+  const parts = fullName.split('/');
+  if (parts.length !== 2 || parts.some((part) => !part))
+    throw new Error('invalid GitHub repository');
+  return parts.map((part) => encodeURIComponent(part)).join('/');
+}
+
+/** Recognize workflow_dispatch under the top-level YAML `on` key without treating comments as config. */
+function hasWorkflowDispatch(source: string): boolean {
+  const lines = source.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (/^\s|^\s*#/.test(line)) continue;
+    const match = /^(?:on|'on'|"on")\s*:\s*(.*?)\s*$/.exec(line);
+    if (!match) continue;
+    const inline = match[1]!.replace(/\s+#.*$/, '');
+    if (/(?:^|[\s,[{])workflow_dispatch(?:[\s,\]}:]|$)/.test(inline)) return true;
+    let childIndent: number | undefined;
+    for (let child = index + 1; child < lines.length; child++) {
+      const candidate = lines[child]!;
+      if (!candidate.trim() || /^\s*#/.test(candidate)) continue;
+      if (!/^\s/.test(candidate)) break;
+      const indent = /^\s*/.exec(candidate)![0].length;
+      childIndent ??= indent;
+      if (
+        indent === childIndent &&
+        /^\s+(?:workflow_dispatch|'workflow_dispatch'|"workflow_dispatch")\s*:/.test(candidate)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export interface GitHubAppInstallation {
   installationId: number;
   account: GitHubInstallationAccount;
@@ -338,6 +380,112 @@ export class GitHubAppClient {
       throw new Error('GitHub installation token response is invalid');
     }
     return { token, expiresAt };
+  }
+
+  /** List only workflows a person can dispatch, with the latest run on any branch. */
+  async listDispatchableWorkflows(
+    accessToken: string,
+    fullName: string,
+    defaultBranch: string,
+  ): Promise<GitHubDispatchableWorkflow[]> {
+    const path = repositoryPath(fullName);
+    const candidates: { id: number; name: string; path: string; state: string }[] = [];
+    for (let page = 1; ; page++) {
+      const body = await jsonObject(
+        await fetch(
+          `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows?per_page=100&page=${page}`,
+          { headers: githubHeaders(accessToken) },
+        ),
+        'GitHub workflow list',
+      );
+      if (!Array.isArray(body.workflows)) throw new Error('GitHub workflow list is invalid');
+      for (const entry of body.workflows) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new Error('GitHub workflow entry is invalid');
+        }
+        const record = entry as Record<string, unknown>;
+        const id = record.id;
+        const name = record.name;
+        const workflowPath = record.path;
+        const state = record.state;
+        if (
+          typeof id !== 'number' ||
+          !Number.isSafeInteger(id) ||
+          id <= 0 ||
+          typeof name !== 'string' ||
+          !name.trim() ||
+          typeof workflowPath !== 'string' ||
+          !workflowPath ||
+          typeof state !== 'string'
+        ) {
+          throw new Error('GitHub workflow entry is invalid');
+        }
+        candidates.push({ id, name: name.trim(), path: workflowPath, state });
+      }
+      if (body.workflows.length < 100) break;
+    }
+    const workflows = await Promise.all(
+      candidates.map(async (workflow): Promise<GitHubDispatchableWorkflow | undefined> => {
+        if (workflow.state !== 'active') return undefined;
+        const content = await jsonObject(
+          await fetch(
+            `${this.#config.apiBaseUrl}/repos/${path}/contents/${workflow.path
+              .split('/')
+              .map((part) => encodeURIComponent(part))
+              .join('/')}?ref=${encodeURIComponent(defaultBranch)}`,
+            { headers: githubHeaders(accessToken) },
+          ),
+          'GitHub workflow source',
+        );
+        if (content.encoding !== 'base64' || typeof content.content !== 'string') {
+          throw new Error('GitHub workflow source is invalid');
+        }
+        const source = Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8');
+        if (!hasWorkflowDispatch(source)) return undefined;
+        const runs = await jsonObject(
+          await fetch(
+            `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows/${workflow.id}/runs?per_page=1`,
+            { headers: githubHeaders(accessToken) },
+          ),
+          'GitHub workflow runs',
+        );
+        if (!Array.isArray(runs.workflow_runs)) throw new Error('GitHub workflow runs are invalid');
+        const latest = runs.workflow_runs[0];
+        if (!latest) return { id: workflow.id, name: workflow.name };
+        if (typeof latest !== 'object' || Array.isArray(latest)) {
+          throw new Error('GitHub workflow run entry is invalid');
+        }
+        const run = latest as Record<string, unknown>;
+        const runAt = typeof run.created_at === 'string' ? Date.parse(run.created_at) : NaN;
+        const conclusion = typeof run.conclusion === 'string' ? run.conclusion.trim() : '';
+        return {
+          id: workflow.id,
+          name: workflow.name,
+          ...(Number.isFinite(runAt) ? { lastRunAt: Math.floor(runAt / 1_000) } : {}),
+          ...(conclusion ? { conclusion } : {}),
+        };
+      }),
+    );
+    return workflows
+      .filter((workflow): workflow is GitHubDispatchableWorkflow => Boolean(workflow))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async dispatchWorkflow(
+    accessToken: string,
+    fullName: string,
+    workflowId: number,
+    defaultBranch: string,
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/workflows/${workflowId}/dispatches`,
+      {
+        method: 'POST',
+        headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
+        body: JSON.stringify({ ref: defaultBranch }),
+      },
+    );
+    if (!response.ok) throw new GitHubHttpError('GitHub workflow dispatch', response.status);
   }
 
   /** Delete one installation-scoped branch after its corner has been archived. */

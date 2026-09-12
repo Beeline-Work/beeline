@@ -16,7 +16,7 @@ const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefine
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const runtime = vi.hoisted(() => ({ monolithEnabled: true }));
-const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn() }));
+const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn(), room: vi.fn() }));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
   renameCommunity: vi.fn(),
@@ -28,6 +28,7 @@ vi.mock('@beeline/buzz-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
     chats = roomViews.chats;
+    room = roomViews.room;
   },
   SurfaceRefreshScheduler: class<T> {
     constructor(
@@ -77,6 +78,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
     chats = roomViews.chats;
+    room = roomViews.room;
   },
 }));
 vi.mock('@/sync/transport', () => ({
@@ -151,6 +153,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   roomViews.workspace.mockResolvedValue(workspaceView());
   roomViews.chats.mockResolvedValue(chatListView());
+  phoneOperation.mockResolvedValue(undefined);
   runtime.monolithEnabled = true;
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });

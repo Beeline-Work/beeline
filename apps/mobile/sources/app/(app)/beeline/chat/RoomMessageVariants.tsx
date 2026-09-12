@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -357,6 +357,12 @@ export interface GitHubEventCardProps {
   onOpenUrl(url: string): void;
 }
 
+export interface NotificationLifecycleCardProps {
+  message: ChatDisplayMessage;
+  onOpenCorner(cornerId: string): void;
+  onOpenUrl(url: string): void;
+}
+
 type RepositoryFactCardProps = {
   title: string;
   body?: string;
@@ -407,21 +413,79 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
   );
 });
 
+/** One raised card for one uninterrupted run of repository notifications. */
+export const NotificationLifecycleCard = React.memo(function NotificationLifecycleCard({
+  message,
+  onOpenCorner,
+  onOpenUrl,
+}: NotificationLifecycleCardProps) {
+  const run = message.notificationLifecycleRun!;
+  const [expanded, setExpanded] = useState(false);
+  const visibleItems = expanded ? run.items : run.items.slice(0, 3);
+  return (
+    <View style={styles.githubPressable} testID={`notification-run-${message.id}`}>
+      <HullSurface strength="raised" style={styles.githubCard}>
+        <Text style={styles.githubTitle}>{run.headline}</Text>
+        <Text style={styles.notificationRunSubline}>{run.subline}</Text>
+        <View style={styles.notificationRunItems}>
+          {visibleItems.map((item) => {
+            const onPress = item.cornerId
+              ? () => onOpenCorner(item.cornerId!)
+              : item.url
+                ? () => onOpenUrl(item.url!)
+                : undefined;
+            return (
+              <Pressable
+                key={item.id}
+                accessibilityRole={onPress ? 'link' : undefined}
+                accessibilityLabel={`${item.state}: ${item.title}. ${item.kindLine}`}
+                disabled={!onPress}
+                onPress={onPress}
+                style={styles.notificationRunItem}
+                testID={`notification-run-item-${item.id}`}
+              >
+                <Text
+                  style={
+                    item.danger ? styles.notificationRunStateDanger : styles.notificationRunState
+                  }
+                >
+                  {item.danger ? `${item.state} ×` : item.state}
+                </Text>
+                <View style={styles.notificationRunCopy}>
+                  <Text numberOfLines={1} style={styles.notificationRunTitle}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.notificationRunKind}>{item.kindLine}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+        {run.items.length > 3 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              expanded
+                ? 'Show fewer notifications'
+                : `Show ${run.items.length - 3} more notifications`
+            }
+            onPress={() => setExpanded((value) => !value)}
+            testID={`notification-run-expand-${message.id}`}
+          >
+            <Text style={styles.notificationRunMore}>
+              {expanded ? 'show less' : `and ${run.items.length - 3} more`}
+            </Text>
+          </Pressable>
+        ) : null}
+      </HullSurface>
+    </View>
+  );
+});
+
 export const GitHubEventCard = React.memo(function GitHubEventCard({
   message,
   onOpenUrl,
 }: GitHubEventCardProps) {
-  if (message.githubLifecycleRun) {
-    return (
-      <LedgerSystemLine
-        id={message.id}
-        text={message.githubLifecycleRun.headline}
-        summaryItems={message.githubLifecycleRun.items}
-        stamp={ledgerStamp(message.timestamp)}
-        onOpenUrl={onOpenUrl}
-      />
-    );
-  }
   const event = message.githubEvent!;
   const title =
     event.type === 'pull-request'
@@ -445,17 +509,22 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
 
 export interface DaemonFactCardProps {
   message: ChatDisplayMessage;
+  reviewerHandle?: string;
   onOpenCorner(cornerId: string): void;
   onOpenUrl(url: string): void;
 }
 
 export const DaemonFactCard = React.memo(function DaemonFactCard({
   message,
+  reviewerHandle,
   onOpenCorner,
   onOpenUrl,
 }: DaemonFactCardProps) {
   const fact = message.daemonFact!;
-  const agent = message.authorIdentity?.kind === 'agent' ? message.authorIdentity.name : undefined;
+  const agent =
+    message.authorIdentity?.kind === 'agent'
+      ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
+      : undefined;
   const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
   // The NAME titles the card; the objective is its body. A card written
   // before the name existed falls back to the same three-word derivation
@@ -464,7 +533,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   const body =
     fact.type === 'corner-complete'
       ? landedCorner
-        ? `MERGED${agent ? ` · ${agent}` : ''}\n${fact.objective}`
+        ? `${reviewerHandle ? `Reviewer: @${reviewerHandle}\n` : ''}${fact.objective}`
         : 'ABANDONED · Remote branch deleted'
       : fact.type === 'checks-failing'
         ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
@@ -475,7 +544,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
           : 'WORKTREE CLEANED';
   return (
     <RepositoryFactCard
-      title={landedCorner ? `MERGED · ${title}` : title}
+      title={landedCorner ? `Merged ${title}${agent ? ` by @${agent}` : ''}` : title}
       body={body}
       actionLabel={
         fact.type === 'corner-complete' && fact.pullRequest
@@ -603,18 +672,22 @@ function SwipeToReply({
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
-  const message = (
+  const message = isDesktop ? (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
       accessibilityLabel="Message"
       delayLongPress={450}
       onLongPress={onLongPress}
       onPress={onPress}
-      style={Platform.OS === 'web' ? styles.replyDesktopMessage : undefined}
+      style={isDesktop ? styles.replyDesktopMessage : undefined}
       testID={`copy-message-${messageId}`}
     >
       {children}
     </Pressable>
+  ) : (
+    <View onTouchEnd={onPress} testID={`copy-message-${messageId}`}>
+      {children}
+    </View>
   );
   if (isDesktop) {
     return (
@@ -663,26 +736,6 @@ function SwipeToReply({
             <Text style={styles.replyDesktopGlyph}>↩</Text>
           </Pressable>
         </View>
-      </View>
-    );
-  }
-  if (Platform.OS === 'web') {
-    return (
-      <View style={styles.replyDesktopRow}>
-        {message}
-        <Pressable
-          accessibilityLabel="Reply to message"
-          accessibilityRole="button"
-          onPress={onReply}
-          style={({ pressed }) => [
-            styles.replyDesktopAction,
-            pressed && styles.replyDesktopPressed,
-          ]}
-          testID={`reply-button-${messageId}`}
-        >
-          <Text style={styles.replyDesktopGlyph}>↩</Text>
-          <Text style={styles.replyDesktopLabel}>REPLY</Text>
-        </Pressable>
       </View>
     );
   }
@@ -831,12 +884,21 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                 },
               }),
         };
+  // A row with no activity of its own still has its text to show, so it is
+  // lifted into one `output` item — which `buildTurnActivity` renders as
+  // narration, at the settled tier. A LIVE DRAFT is the one row that must
+  // never take that path: its words are provisional, they are already rendered
+  // in the provisional face through `messageDraft`, and promoting them here
+  // printed the same unfinished sentence twice, the first copy dressed as the
+  // durable reply.
   const activity = useMemo(
     () =>
       message.activity?.length
         ? message.activity
-        : [{ kind: 'output' as const, title: 'Output', text: message.text }],
-    [message.activity, message.text],
+        : message.isAgentDraft
+          ? []
+          : [{ kind: 'output' as const, title: 'Output', text: message.text }],
+    [message.activity, message.isAgentDraft, message.text],
   );
   // What the reader is being shown while the turn writes, remembered under the
   // turn's own request id. The durable reply below collects it and fades out
@@ -1150,6 +1212,44 @@ const styles = StyleSheet.create(() => ({
     letterSpacing: 0.45,
   },
   githubActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  notificationRunSubline: {
+    ...groknight.type.meta,
+    color: groknight.textSecondary,
+  },
+  notificationRunItems: { gap: 8, marginTop: 2 },
+  notificationRunItem: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
+    minWidth: 0,
+  },
+  notificationRunState: {
+    ...groknight.type.sectionHead,
+    color: groknight.textSecondary,
+    width: 102,
+  },
+  notificationRunStateDanger: {
+    ...groknight.type.sectionHead,
+    color: groknight.danger,
+    width: 102,
+  },
+  notificationRunCopy: { flex: 1, minWidth: 0 },
+  notificationRunTitle: {
+    ...groknight.type.meta,
+    fontFamily: groknight.proseSemibold,
+    color: groknight.textPrimary,
+    textDecorationLine: 'underline',
+    textDecorationColor: groknight.borderStrong,
+  },
+  notificationRunKind: {
+    ...groknight.type.meta,
+    color: groknight.ledgerQuiet,
+  },
+  notificationRunMore: {
+    ...groknight.type.sectionHead,
+    color: groknight.accent,
+    marginTop: 2,
+  },
   activityGroup: { width: '100%', minWidth: 0, marginBottom: 20 },
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {

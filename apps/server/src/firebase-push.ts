@@ -30,9 +30,7 @@ export function firebaseAppOptions(
   if (!inlineJson) {
     return {
       credential: factories.applicationDefault(),
-      ...(environment.GOOGLE_CLOUD_PROJECT
-        ? { projectId: environment.GOOGLE_CLOUD_PROJECT }
-        : {}),
+      ...(environment.GOOGLE_CLOUD_PROJECT ? { projectId: environment.GOOGLE_CLOUD_PROJECT } : {}),
     };
   }
 
@@ -82,10 +80,12 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
     if (!roomId) throw new Error('routable push is missing its Room');
     data = {
       type: message.type === 'workspace-join' ? 'workspace-join' : 'channel-activity',
-      target: 'message',
+      target: message.type === 'message' ? message.target : 'message',
       workspaceId: message.workspaceId,
       roomId,
-      channelId: roomId,
+      threadId: roomId,
+      channelId: message.type === 'message' ? message.channelId : roomId,
+      ...(message.type === 'message' && message.cornerId ? { cornerId: message.cornerId } : {}),
       ...(message.type === 'message' ? { messageId: message.messageId } : {}),
     };
   }
@@ -93,7 +93,12 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
     token,
     notification: { title: 'Beeline', body: message.text.slice(0, 200) },
     data,
-    apns: { payload: { aps: { sound: 'default' } } },
+    ...(data.roomId ? { android: { notification: { tag: data.roomId } } } : {}),
+    apns: {
+      payload: {
+        aps: { sound: 'default', ...(data.roomId ? { threadId: data.roomId } : {}) },
+      },
+    },
   };
 }
 

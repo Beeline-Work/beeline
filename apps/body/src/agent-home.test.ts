@@ -38,8 +38,8 @@ describe('per-room harness state isolation', () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const cacheDir = resolve(await scratch('beeline-routing-cache-'), 'openrouter-routing');
-    const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS), { status: 200 }),
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS), { status: 200 }),
     ) as unknown as typeof fetch;
 
     await prepareRoomAgentHome({
@@ -49,8 +49,8 @@ describe('per-room harness state isolation', () => {
     });
 
     const models = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'));
-    const routing = models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash'].compat
-      .openRouterRouting;
+    const routing =
+      models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash'].compat.openRouterRouting;
     expect(routing).toMatchObject({ allow_fallbacks: true, require_parameters: false });
     expect(routing.only).toEqual(routing.order);
     expect(routing.only.slice(0, 3)).toEqual(['morph', 'baseten', 'modal']);
@@ -78,8 +78,8 @@ describe('per-room harness state isolation', () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-pin-'), 'agent-home');
     const cacheDir = resolve(await scratch('beeline-routing-cache-'), 'openrouter-routing');
-    const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS), { status: 200 }),
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS), { status: 200 }),
     ) as unknown as typeof fetch;
     // The shape every Beeline OpenRouter agent has: the key is fronted by an
     // egress proxy, so the model is a custom definition, and a custom
@@ -432,6 +432,11 @@ describe('operator skills + MCP passthrough', () => {
     const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
     expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
+    const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
+    expect(reviewSkill).toContain('checks=passed, held=false, approvalPending=false');
+    expect(reviewSkill).toContain('--match-head-commit <reviewed sha>');
+    expect(reviewSkill).toContain('P0 - OBJECTIVE FULFILLED, DEMONSTRATED');
+    expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
     for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'claude')) {
       expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
     }
@@ -650,7 +655,7 @@ describe('operator skills + MCP passthrough', () => {
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       '[agents]\nenabled = false\n\n[features]\nstandalone_web_search = true\n',
-  );
+    );
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
   });
 
@@ -681,7 +686,9 @@ describe('operator skills + MCP passthrough', () => {
     );
     // No operator skills to link, but the managed skill is still shipped —
     // into the selected harness's tree, and only that one.
-    expect(existsSync(resolve(roomRoot, 'codex', 'skills', 'using-beeline', 'SKILL.md'))).toBe(true);
+    expect(existsSync(resolve(roomRoot, 'codex', 'skills', 'using-beeline', 'SKILL.md'))).toBe(
+      true,
+    );
     for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'codex')) {
       expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
     }
@@ -783,24 +790,30 @@ describe('skill provision reuse', () => {
     await utimes(skillMd, stamp, stamp);
     expect(
       (
-        await provisionTwice({ root: editedRoot, operatorHome: edited, agentKind: 'claude' }, async () => {
-          await writeFile(skillMd, 'say HI');
-          await utimes(skillMd, stamp, stamp);
-        })
+        await provisionTwice(
+          { root: editedRoot, operatorHome: edited, agentKind: 'claude' },
+          async () => {
+            await writeFile(skillMd, 'say HI');
+            await utimes(skillMd, stamp, stamp);
+          },
+        )
       ).rebuilt,
     ).toBe(true);
-    expect(
-      readFileSync(resolve(editedRoot, 'claude', 'skills', 'greet', 'SKILL.md'), 'utf8'),
-    ).toBe('say HI');
+    expect(readFileSync(resolve(editedRoot, 'claude', 'skills', 'greet', 'SKILL.md'), 'utf8')).toBe(
+      'say HI',
+    );
 
     const added = await operatorWithSkill('say hi');
     const addedRoot = resolve(await scratch('beeline-reuse-add-'), 'agent-home');
     expect(
       (
-        await provisionTwice({ root: addedRoot, operatorHome: added, agentKind: 'claude' }, async () => {
-          await mkdir(resolve(added, '.agents/skills/audit'), { recursive: true });
-          await writeFile(resolve(added, '.agents/skills/audit/SKILL.md'), 'audit');
-        })
+        await provisionTwice(
+          { root: addedRoot, operatorHome: added, agentKind: 'claude' },
+          async () => {
+            await mkdir(resolve(added, '.agents/skills/audit'), { recursive: true });
+            await writeFile(resolve(added, '.agents/skills/audit/SKILL.md'), 'audit');
+          },
+        )
       ).rebuilt,
     ).toBe(true);
     expect(readdirSync(resolve(addedRoot, 'claude', 'skills')).sort()).toContain('audit');
@@ -809,8 +822,9 @@ describe('skill provision reuse', () => {
     const deletedRoot = resolve(await scratch('beeline-reuse-delete-'), 'agent-home');
     expect(
       (
-        await provisionTwice({ root: deletedRoot, operatorHome: deleted, agentKind: 'claude' }, () =>
-          rm(resolve(deleted, '.agents/skills/greet'), { recursive: true }),
+        await provisionTwice(
+          { root: deletedRoot, operatorHome: deleted, agentKind: 'claude' },
+          () => rm(resolve(deleted, '.agents/skills/greet'), { recursive: true }),
         )
       ).rebuilt,
     ).toBe(true);
@@ -834,8 +848,14 @@ describe('skill provision reuse', () => {
   it('never reuses a destination the session could have changed underneath it', async () => {
     const operatorHome = await operatorWithSkill('say hi');
     const cases: Array<{ what: string; tamper: (skills: string) => Promise<void> }> = [
-      { what: 'an edited file', tamper: (skills) => writeFile(resolve(skills, 'greet/SKILL.md'), 'own words') },
-      { what: 'an added file', tamper: (skills) => writeFile(resolve(skills, 'greet/extra.md'), 'extra') },
+      {
+        what: 'an edited file',
+        tamper: (skills) => writeFile(resolve(skills, 'greet/SKILL.md'), 'own words'),
+      },
+      {
+        what: 'an added file',
+        tamper: (skills) => writeFile(resolve(skills, 'greet/extra.md'), 'extra'),
+      },
       { what: 'a deleted file', tamper: (skills) => rm(resolve(skills, 'greet/SKILL.md')) },
       {
         what: 'a symlink standing in for a file',

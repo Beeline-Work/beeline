@@ -14,6 +14,10 @@ import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const composerSource = readFileSync(
+  new URL('../../../../components/buzz/ConversationComposer.tsx', import.meta.url),
+  'utf8',
+);
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -92,6 +96,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
 import {
   GitHubEventCard,
   DaemonFactCard,
+  NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
@@ -132,7 +137,8 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 
 describe('Room message variant components', () => {
   it('keeps Room and corner conversations on one composer, mention, and transcript component path', () => {
-    expect(conversationSource.match(/testID="chat-input"/g)).toHaveLength(1);
+    expect(conversationSource.match(/<ConversationComposer/g)).toHaveLength(1);
+    expect(composerSource).toContain('testID={`${testIDPrefix}-input`}');
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
@@ -285,21 +291,62 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('renders a folded GitHub run through the existing system line', () => {
+  it('renders a notification run as one raised card, capped at three rows until expanded', () => {
+    const onOpenCorner = vi.fn();
+    const onOpenUrl = vi.fn();
     const renderer = render(
-      <GitHubEventCard
+      <NotificationLifecycleCard
         message={message({
-          githubLifecycleRun: {
-            headline: '3 PRs opened · 2 merged',
-            items: [{ id: 'five', title: 'Ship it', url: 'https://github.test/pr/5' }],
+          notificationLifecycleRun: {
+            headline: '3 merged · 1 checks failed · 1 opened',
+            subline: 'by @sol, @octocat · 09:41 – 10:28',
+            items: [
+              {
+                id: 'corner',
+                title: 'Duplicate draft settle',
+                state: 'Merged',
+                kindLine: 'corner · PR #1126',
+                cornerId: 'corner-1126',
+              },
+              ...Array.from({ length: 4 }, (_, index) => ({
+                id: `pr-${index}`,
+                title: `Change ${index}`,
+                state: index === 3 ? ('Checks failed' as const) : ('Merged' as const),
+                kindLine: `PR #${1130 + index}`,
+                ...(index === 3 ? { danger: true } : {}),
+                url: `https://github.test/pr/${1130 + index}`,
+              })),
+            ],
           },
         })}
-        onOpenUrl={vi.fn()}
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={onOpenUrl}
       />,
     );
-    expect(renderer.root.findByType('LedgerSystemLine' as never).props).toMatchObject({
-      text: '3 PRs opened · 2 merged',
-    });
+    expect(renderer.root.findByProps({ testID: 'notification-run-message' })).toBeDefined();
+    expect(
+      renderer.root.findAll(
+        (node: ReactTestInstance) =>
+          node.type === 'Pressable' && /^notification-run-item-/.test(node.props.testID ?? ''),
+      ),
+    ).toHaveLength(3);
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-item-corner' }).props.onPress(),
+    );
+    expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
+    const disclosure = renderer.root.findByProps({ testID: 'notification-run-expand-message' });
+    expect(JSON.stringify(renderer.toJSON())).toContain('and 2 more');
+    act(() => disclosure.props.onPress());
+    expect(
+      renderer.root.findAll(
+        (node: ReactTestInstance) =>
+          node.type === 'Pressable' && /^notification-run-item-/.test(node.props.testID ?? ''),
+      ),
+    ).toHaveLength(5);
+    act(() => renderer.root.findByProps({ testID: 'notification-run-item-pr-3' }).props.onPress());
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pr/1133');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Checks failed ×');
+    expect(JSON.stringify(renderer.toJSON())).toContain('show less');
   });
 
   it('renders a landed corner as a summary card with its full objective and tappable PR', () => {
@@ -312,6 +359,7 @@ describe('Room message variant components', () => {
             pubkey: 'agent',
             kind: 'agent',
             name: 'Beebee',
+            handle: 'beebee',
           },
           daemonFact: {
             type: 'corner-complete',
@@ -327,6 +375,7 @@ describe('Room message variant components', () => {
             subgoals: [{ step: 'Open the archived transcript', status: 'completed' }],
           },
         })}
+        reviewerHandle="echo"
         onOpenCorner={onOpenCorner}
         onOpenUrl={onOpenUrl}
       />,
@@ -343,8 +392,11 @@ describe('Room message variant components', () => {
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
     // A legacy card carries no name, so the title is the first three words of
     // its objective; the body still carries the objective whole (C89).
-    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Ship fact cards');
-    expect(JSON.stringify(renderer.toJSON())).toContain('MERGED · Beebee');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Merged Ship fact cards by @beebee');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('MERGED · Beebee');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Reviewer: @echo');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Awaiting @echo');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Approved by @echo');
     expect(JSON.stringify(renderer.toJSON())).toContain(
       'Ship fact cards with archived transcript access and preserve the entire objective instead of truncating it into a ledger line',
     );
@@ -507,12 +559,47 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('offers a visible reply action on desktop', () => {
+  it('keeps visible copy and reply actions on desktop', () => {
     const onReply = vi.fn();
+    const onCopy = vi.fn();
     const row = message({ id: 'desktop-reply' });
     const renderer = render(
       <OrdinaryLedgerMessage
         message={row}
+        desktopLayout
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={onReply}
+        onCopy={onCopy}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const copy = renderer.root.findByProps({ testID: 'copy-button-desktop-reply' });
+    expect(copy.props.accessibilityLabel).toBe('Copy message text');
+    act(() => copy.props.onPress());
+    expect(onCopy).toHaveBeenCalledWith(row.text);
+
+    const reply = renderer.root.findByProps({ testID: 'reply-button-desktop-reply' });
+    expect(reply.props.accessibilityLabel).toBe('Reply to message');
+    act(() => reply.props.onPress());
+    expect(onReply).toHaveBeenCalledWith(row);
+  });
+
+  it('uses the phone swipe interaction on compact web', () => {
+    const onReply = vi.fn();
+    const row = message({ id: 'compact-web-reply' });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={row}
+        desktopLayout={false}
         participantsHydrated
         viewerPubkey="viewer"
         speakerWorking={false}
@@ -528,10 +615,12 @@ describe('Room message variant components', () => {
       />,
     );
 
-    const reply = renderer.root.findByProps({ testID: 'reply-button-desktop-reply' });
-    expect(reply.props.accessibilityLabel).toBe('Reply to message');
-    act(() => reply.props.onPress());
+    const swipeable = renderer.root.findByType('Swipeable');
+    act(() => swipeable.props.onSwipeableOpen('right'));
     expect(onReply).toHaveBeenCalledWith(row);
+    expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(
+      0,
+    );
   });
 
   // Attachment bytes are swept 24 hours after upload; the message that carried
@@ -739,6 +828,64 @@ describe('Room message variant components', () => {
       />,
     );
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark).toMatchObject({ face: 'owl' });
+  });
+
+  it('never lifts a live draft into settled narration (C108 duplicate)', () => {
+    const props = {
+      agent: { pubkey: 'agent', displayName: 'ECHO' },
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    // Reported twice from a phone: one unfinished sentence printed twice under
+    // one byline, the upright copy reading as the agent's answer. A row with no
+    // activity of its own has its `text` lifted into an `output` item, and
+    // `buildTurnActivity` renders an `output` as narration — the settled tier —
+    // while the same words also went out through `messageDraft`.
+    const draft = render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'live-turn:agent:request-9',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          isAgentDraft: true,
+          isAgentLiveTurn: true,
+          text: 'Codex gets the review request when the',
+          agentMessageDraft: 'Codex gets the review request when the',
+        })}
+      />,
+    );
+    const lane = draft.root.findByType('ActivityTimeline').props;
+    expect(lane.items).toEqual([]);
+    expect(lane.messageDraft).toBe('Codex gets the review request when the');
+
+    // An ordinary settled activity row still shows its prose.
+    const settled = render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'corner-output',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          text: 'The fix is ready.',
+        })}
+      />,
+    );
+    expect(settled.root.findByType('ActivityTimeline').props.items).toEqual([
+      { kind: 'output', title: 'Output', text: 'The fix is ready.' },
+    ]);
   });
 
   it('hands the streamed words to the reply that settles them, exactly once (C98)', () => {
@@ -1268,10 +1415,10 @@ describe('Room message variant components', () => {
     expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
   });
 
-  it('dismisses the composer keyboard when the transcript row is tapped', () => {
-    // Tapping outside the composer — the transcript being the whole of that
-    // outside — puts the keyboard away. The row keeps its long-press copy, so
-    // one gesture never costs the other.
+  it('leaves compact-row long press to native text selection while retaining tap dismissal', () => {
+    // A parent Pressable claiming long press wins over selectable Text on
+    // device. The compact row observes touch end without becoming that
+    // competing responder; its nested MonoMarkdown text owns selection.
     const onTapOutsideComposer = vi.fn();
     const onCopy = vi.fn();
     const renderer = render(
@@ -1293,11 +1440,10 @@ describe('Room message variant components', () => {
       />,
     );
     const row = renderer.root.findByProps({ testID: 'copy-message-tapped' });
-    act(() => row.props.onPress());
+    expect(row.props.onLongPress).toBeUndefined();
+    expect(row.props.onTouchEnd).toBeTypeOf('function');
+    act(() => row.props.onTouchEnd());
     expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
     expect(onCopy).not.toHaveBeenCalled();
-    act(() => row.props.onLongPress());
-    expect(onCopy).toHaveBeenCalledWith('a settled line');
-    expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
   });
 });

@@ -237,4 +237,79 @@ describe('two agents streaming at once', () => {
 
     expect(rows.map((row) => row.id)).toEqual([liveDraftRowId(OTHER_AGENT, REQUEST)]);
   });
+
+  /**
+   * The Room turn that opens a corner publishes NO durable reply: the server's
+   * corner card is the whole handoff (`monolith-room-turn.ts`). Its draft was
+   * held for a final that was never coming, so the last streamed sentence — "I
+   * will open a corner for that" — stayed on the transcript as the answer, and
+   * only reopening the Room cleared it.
+   */
+  describe('a turn that completes without a durable reply', () => {
+    const retracted = () =>
+      applyLiveOverlay(stream(draft(AGENT, 'Opening a corner for that.', 100)), {
+        ...draft(AGENT, '', 120),
+        text: undefined,
+        closed: true,
+      });
+
+    it('ends the retracted draft on the complete receipt', () => {
+      const settled = retracted();
+      // Before the receipt lands the streamed text stays put: a draft must
+      // never blink out between the retract and its turn's ending.
+      expect(liveDraftMessages(settled, []).map((row) => row.agentMessageDraft)).toEqual([
+        'Opening a corner for that.',
+      ]);
+      const complete: RoomViewAgentTurn = {
+        requestId: REQUEST,
+        agentPubkey: AGENT,
+        status: 'complete',
+        createdAt: 130,
+      };
+      expect(liveDraftMessages(settled, [], [complete])).toEqual([]);
+      // And with no retract seen at all: it is an ephemeral push, so a reader
+      // can miss it outright and hold an open lane nothing will ever close.
+      const never = stream(draft(AGENT, 'Opening a corner for that.', 100));
+      expect(liveDraftMessages(never, [], [complete])).toEqual([]);
+    });
+
+    it('never lets a draft row print its prose as settled narration', () => {
+      // The duplicate as reported: one unfinished sentence painted twice, the
+      // upright copy reading as the answer. A draft's words belong to
+      // `agentMessageDraft` alone — `RoomMessageVariants` lifts a bare `text`
+      // into an `output` item, which renders at the settled tier.
+      const rows = liveDraftMessages(stream(draft(AGENT, 'Codex gets the review', 100)), []);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        text: '',
+        agentMessageDraft: 'Codex gets the review',
+        isAgentDraft: true,
+      });
+      expect(rows[0]?.activity).toBeUndefined();
+    });
+
+    it('keeps a stopped or failed turn exactly where the reader last saw it', () => {
+      for (const status of ['working', 'failed', 'cancelled'] as const) {
+        const rows = liveDraftMessages(
+          retracted(),
+          [],
+          [{ requestId: REQUEST, agentPubkey: AGENT, status, createdAt: 130 }],
+        );
+        expect(rows.map((row) => row.agentMessageDraft)).toEqual(['Opening a corner for that.']);
+      }
+    });
+
+    it('leaves another agent still streaming under the same request id', () => {
+      const overlays = applyLiveOverlay(
+        stream(draft(AGENT, 'Opening a corner.', 100), draft(OTHER_AGENT, 'still writing', 101)),
+        { ...draft(AGENT, '', 120), text: undefined, closed: true },
+      );
+      const rows = liveDraftMessages(
+        overlays,
+        [],
+        [{ requestId: REQUEST, agentPubkey: AGENT, status: 'complete', createdAt: 130 }],
+      );
+      expect(rows.map((row) => row.id)).toEqual([liveDraftRowId(OTHER_AGENT, REQUEST)]);
+    });
+  });
 });

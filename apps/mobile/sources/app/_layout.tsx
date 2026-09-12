@@ -27,7 +27,12 @@ import { initConsoleLogging, setConsoleOutputEnabled } from '@/utils/consoleLogg
 import { useLocalSetting } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
-import { routeBuzzNotificationResponse } from '@/push/notification-response';
+import {
+  routeBuzzNotificationResponse,
+  startNotificationResponseEntries,
+  type TappedNotificationResponse,
+} from '@/push/notification-response';
+import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
 import { whenInitialLandingResolved } from '@/navigation/initial-landing';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
@@ -45,6 +50,7 @@ import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
+import { useIsDesktop } from '@/utils/responsive';
 
 // Foreground banner policy: suppress banners while the app is active, and
 // always for the Room the person currently has open. Background display and
@@ -202,6 +208,7 @@ async function loadFonts() {
 }
 
 export default function RootLayout() {
+  const isDesktop = useIsDesktop();
   React.useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       // MMKV is synchronous and a warm-cache snapshot may be large, so
@@ -288,13 +295,14 @@ export default function RootLayout() {
 
   const handledNotificationIds = React.useRef<Set<string>>(new Set());
   const handleNotificationResponse = React.useCallback(
-    async (response: Notifications.NotificationResponse | null) => {
+    async (response: TappedNotificationResponse | null) => {
       await routeBuzzNotificationResponse(response, {
         router,
         handled: handledNotificationIds.current,
         defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
         waitForInitialLanding: whenInitialLandingResolved,
         clearLastResponse: Notifications.clearLastNotificationResponseAsync,
+        resolveTarget: resolveBuzzNotificationDestination,
       });
     },
     [router],
@@ -305,26 +313,13 @@ export default function RootLayout() {
       return;
     }
 
-    let active = true;
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      void handleNotificationResponse(response);
+    return startNotificationResponseEntries({
+      addResponseListener: Notifications.addNotificationResponseReceivedListener,
+      getLastResponse: Notifications.getLastNotificationResponseAsync,
+      getAppState: () => AppState.currentState,
+      route: (response) => handleNotificationResponse(response),
+      log: (message, error) => console.log(message, error),
     });
-
-    void (async () => {
-      try {
-        const response = await Notifications.getLastNotificationResponseAsync();
-        if (active) {
-          await handleNotificationResponse(response);
-        }
-      } catch (error) {
-        console.log('Failed to read last notification response:', error);
-      }
-    })();
-
-    return () => {
-      active = false;
-      subscription.remove();
-    };
   }, [handleNotificationResponse, initialized]);
 
   // Track the screens
@@ -353,7 +348,7 @@ export default function RootLayout() {
       <KeyboardProvider preload={false}>
         <GestureHandlerRootView
           style={
-            Platform.OS === 'web'
+            isDesktop
               ? { flex: 1 }
               : { flex: 1, backgroundColor: theme.colors.groupped.background }
           }

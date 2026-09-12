@@ -15,6 +15,8 @@ export interface PushNotificationPlan {
 }
 
 export interface NotificationContext {
+  /** Workspace containing the destination Room. */
+  workspaceId?: string;
   roomName?: string;
   /** Stable profile handle when one is available; `senderName` remains the display fallback. */
   senderHandle?: string;
@@ -212,8 +214,7 @@ export function mapEventToNotification(
         : undefined;
   const destinationChannelId = cornerId ?? channelId;
   const roomId = context.parentChannelId ?? channelId;
-  const target =
-    isPullRequestFact || type === 'actionable-failure' ? 'corner' : 'message';
+  const target = isPullRequestFact || type === 'actionable-failure' ? 'corner' : 'message';
 
   return {
     channelId,
@@ -225,6 +226,7 @@ export function mapEventToNotification(
     body: `@${senderHandle}: ${bodyMessage}`,
     data: {
       target,
+      ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
       roomId,
       channelId: destinationChannelId,
       roomName,

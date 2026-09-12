@@ -48,9 +48,18 @@ describe('phone contract', () => {
     ).toBe(true);
     expectTypeOf<PhoneOperationMap['uploadMedia']['output']>().toHaveProperty('url');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
+    expectTypeOf<PhoneOperationMap['sendRoomMessage']['output']>().toHaveProperty(
+      'activeSteerAgentIds',
+    );
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
     expectTypeOf<PhoneOperationMap['approveCornerMerge']['input']>().toHaveProperty('cornerId');
+    expectTypeOf<PhoneOperationMap['listRoomWorkflows']['output']>().toHaveProperty(
+      'defaultBranch',
+    );
+    expectTypeOf<PhoneOperationMap['dispatchRoomWorkflow']['input']>().toHaveProperty(
+      'workflowName',
+    );
     expectTypeOf<PhoneOperationMap['requestCornerClose']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['closeChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['reopenChat']['input']>().toHaveProperty('roomId');

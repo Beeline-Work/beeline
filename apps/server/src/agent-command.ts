@@ -186,12 +186,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       roomId: source.room_id,
       agentId: target,
       sourceMessageId: sourceId,
-      reason:
-        source.direct_participants
-          ? 'direct_message'
-          : continuationAgent === target
-            ? 'human_continuation'
-            : 'human_tag',
+      reason: source.direct_participants
+        ? 'direct_message'
+        : continuationAgent === target
+          ? 'human_continuation'
+          : 'human_tag',
     });
   }
 }
@@ -401,10 +400,53 @@ export async function routeSystemCommand(
   },
 ): Promise<void> {
   if (!input.kind) return;
+  if (input.kind === 'merged') {
+    // A corner merge is a lifecycle handoff back to the agent that opened it
+    // from the parent Room. The durable completion card identifies that
+    // corner; command creation still enforces current parent membership, so a
+    // retired or removed opener is never revived by history.
+    const responsible = (
+      await db.query<{ agent_id: string }>(
+        `SELECT fact.owner_agent_id agent_id
+         FROM messages source
+         JOIN rooms corner ON corner.id::text=source.card->>'cornerId'
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE source.id=$1 AND source.room_id=$2
+           AND corner.parent_id=source.room_id
+           AND source.card_type='daemon-fact'
+           AND source.card->>'type'='corner-complete'`,
+        [input.sourceMessageId, input.roomId],
+      )
+    ).rows[0]?.agent_id;
+    if (responsible)
+      await createAgentCommand(db, {
+        roomId: input.roomId,
+        agentId: responsible,
+        sourceMessageId: input.sourceMessageId,
+        reason: 'corner_merged',
+      });
+  }
   if (input.kind === 'check-passed' || input.kind === 'check-failed') {
     const fact = (
-      await db.query<{ owner_agent_id: string; state: string; command_check_state: string | null }>(
-        `SELECT owner_agent_id,lifecycle->>'checks' state,command_check_state FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+      await db.query<{
+        owner_agent_id: string;
+        reviewer_agent_id: string | null;
+        state: string;
+        command_check_state: string | null;
+      }>(
+        `SELECT fact.owner_agent_id,reviewer.id reviewer_agent_id,
+                fact.lifecycle->>'checks' state,fact.command_check_state
+         FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id
+         JOIN rooms parent ON parent.id=corner.parent_id
+         LEFT JOIN memberships reviewer_membership
+           ON reviewer_membership.room_id=parent.id
+          AND reviewer_membership.identity_id=parent.reviewer_agent_id
+          AND reviewer_membership.removed_at IS NULL
+         LEFT JOIN identities reviewer
+           ON reviewer.id=reviewer_membership.identity_id AND reviewer.kind='agent'
+         WHERE fact.corner_id=$1
+         FOR UPDATE OF fact`,
         [input.roomId],
       )
     ).rows[0];
@@ -415,13 +457,14 @@ export async function routeSystemCommand(
         fact.state === fact.command_check_state
       )
         return;
-      const carrier =
+      const fallbackCarrier =
         (
           await db.query<{ agent_id: string }>(
             `SELECT agent_id FROM agent_commands WHERE room_id=$1 AND result_message_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
             [input.roomId],
           )
         ).rows[0]?.agent_id ?? fact.owner_agent_id;
+      const carrier = fact.reviewer_agent_id ?? fallbackCarrier;
       await createAgentCommand(db, {
         roomId: input.roomId,
         agentId: carrier,

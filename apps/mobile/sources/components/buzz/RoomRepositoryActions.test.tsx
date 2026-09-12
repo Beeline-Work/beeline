@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -13,7 +14,10 @@ vi.mock('./HullActionSheet', async () => {
 
 import { RoomRepositoryActions } from './RoomRepositoryActions';
 
+const source = readFileSync(new URL('./RoomRepositoryActions.tsx', import.meta.url), 'utf8');
+
 const Picker = ({ testID }: { testID: string }) => React.createElement('Picker', { testID });
+const Reviewer = ({ testID }: { testID: string }) => React.createElement('Reviewer', { testID });
 
 beforeAll(() => {
   (
@@ -44,6 +48,7 @@ describe('RoomRepositoryActions', () => {
         onToggle={onToggle}
         picker={<Picker testID="room-repo-picker" />}
         pickerVisible
+        reviewer={<Reviewer testID="room-reviewer" />}
         repositoryName="beeline"
       />,
     );
@@ -53,6 +58,13 @@ describe('RoomRepositoryActions', () => {
     expect(action.props.onPress).toBe(onToggle);
     expect(action.props.chevron).toBe('down');
     expect(renderer.root.findByProps({ testID: 'room-repo-picker' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'room-reviewer' })).toBeDefined();
+    expect(source.indexOf('{reviewer}')).toBeGreaterThan(
+      source.indexOf('testID="room-repo-action"'),
+    );
+    expect(source.indexOf('{reviewer}')).toBeLessThan(
+      source.indexOf('{pickerVisible ? picker : null}'),
+    );
     expect(renderer.root.findAllByProps({ testID: 'room-repo-readonly' })).toHaveLength(0);
     act(() => action.props.onPress());
     expect(onToggle).toHaveBeenCalledTimes(1);
@@ -66,6 +78,7 @@ describe('RoomRepositoryActions', () => {
         onToggle={vi.fn()}
         picker={<Picker testID="room-repo-picker" />}
         pickerVisible
+        reviewer={<Reviewer testID="room-reviewer" />}
         repositoryName="beeline"
       />,
     );
@@ -75,5 +88,6 @@ describe('RoomRepositoryActions', () => {
     expect(readonly.props.onPress).toBeUndefined();
     expect(renderer.root.findAllByProps({ testID: 'room-repo-action' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'room-repo-picker' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-reviewer' })).toHaveLength(0);
   });
 });

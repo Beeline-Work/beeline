@@ -257,6 +257,27 @@ describe('the per-turn progress indicator', () => {
     expect(counter()).toBe('12s');
   });
 
+  it('shows and announces the server-backed received state beside the running turn', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(12_500);
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'Sol Brewing…',
+        startedAt: 10,
+        received: true,
+        testID: 'turn-progress-line',
+      }),
+    );
+
+    expect(
+      renderer.root.findByProps({ testID: 'turn-progress-line-received' }).props.children,
+    ).toBe('· received');
+    expect(renderer.root.findAllByType('View')[0].props.accessibilityLabel).toBe(
+      'Sol Brewing… (2s · received)',
+    );
+    expect(renderer.root.findAllByType('View')[0].props.accessibilityLiveRegion).toBe('polite');
+  });
+
   it('draws the Beeline mark as a brass ribbon, not a cycling text glyph', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, {

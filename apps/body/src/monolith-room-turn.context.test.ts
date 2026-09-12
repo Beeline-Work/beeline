@@ -119,9 +119,13 @@ describe('monolith Room turn context', () => {
       }),
     } as unknown as DaemonApiClient;
     const prompts: string[] = [];
+    const systemPrompts: string[] = [];
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+    vi.spyOn(acp, 'sessionNew').mockImplementation(async (input) => {
+      systemPrompts.push(input.systemPrompt ?? '');
+      return { sessionId: 'room-session', raw: {} };
+    });
     vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
     vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
@@ -150,6 +154,13 @@ describe('monolith Room turn context', () => {
     abort.abort();
     await running.catch(() => undefined);
     await scheduler.dispose();
+
+    expect(systemPrompts[0]).toContain(
+      'For every ask, first reply on one line `Proposed corner: <name> — <objective>`',
+    );
+    expect(systemPrompts[0]).toContain(
+      'If one message contains several asks, list one numbered `Proposed corner:` line per ask; `go on 1 and 3` opens exactly those objectives',
+    );
 
     expect(conversationReads.every((read) => read.window !== 'continuity')).toBe(true);
     const promptConversationRead = conversationReads.find((read) => !('window' in read));

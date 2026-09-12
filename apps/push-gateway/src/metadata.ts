@@ -77,12 +77,7 @@ function earliest(events: NostrEvent[]): NostrEvent | undefined {
   )[0];
 }
 
-const FIXTURE_MARKERS = new Set([
-  'ui-test',
-  'ui-demo',
-  'uidemo',
-  'test-fixture',
-]);
+const FIXTURE_MARKERS = new Set(['ui-test', 'ui-demo', 'uidemo', 'test-fixture']);
 
 function fixtureFields(events: Array<NostrEvent | undefined>): {
   candidates: string[];
@@ -207,6 +202,7 @@ export class NotificationMetadataResolver {
     }
 
     return {
+      ...(room.communityId ? { workspaceId: room.communityId } : {}),
       ...(room.roomName ? { roomName: room.roomName } : {}),
       isDirectMessage: room.isDirectMessage,
       ...(room.isChildChannel ? { isChildChannel: true } : {}),

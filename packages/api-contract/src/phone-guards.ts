@@ -209,6 +209,8 @@ function header(value: unknown): value is RoomViewHeader {
     (item.visibility === undefined ||
       item.visibility === 'public' ||
       item.visibility === 'invite-only') &&
+    (item.reviewerAgentId === undefined ||
+      (typeof item.reviewerAgentId === 'string' && HEX.test(item.reviewerAgentId))) &&
     typeof item.archived === 'boolean' &&
     integer(item.createdAt) &&
     integer(item.updatedAt),

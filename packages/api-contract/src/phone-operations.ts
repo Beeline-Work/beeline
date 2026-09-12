@@ -8,8 +8,8 @@ import type {
 } from './phone-types.js';
 
 export type PhoneOperationMap = {
-  sendRoomMessage: { input: SendRoomMessageInput; output: MessageWriteResult };
-  sendRoomReply: { input: SendRoomReplyInput; output: MessageWriteResult };
+  sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
+  sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -47,6 +47,8 @@ export type PhoneOperationMap = {
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
   setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
+  listRoomWorkflows: { input: RoomInput; output: RoomWorkflowListResult };
+  dispatchRoomWorkflow: { input: DispatchRoomWorkflowInput; output: void };
   approveCornerMerge: { input: ApproveCornerMergeInput; output: ApproveCornerMergeResult };
   getAuthCapabilities: { input: EmptyInput; output: AuthCapabilitiesResult };
   beginGitHubIdentityBind: { input: BeginBrowserAuthInput; output: BrowserAuthStartResult };
@@ -76,6 +78,17 @@ export type PhoneOperationMap = {
 export type EmptyInput = Record<string, never>;
 export type WorkspaceInput = { readonly workspaceId: string };
 export type RoomInput = { readonly roomId: string };
+export type RoomWorkflowView = {
+  readonly name: string;
+  /** Absolute Unix timestamp in seconds. Omitted when this workflow has never run. */
+  readonly lastRunAt?: number;
+  readonly conclusion?: string;
+};
+export type RoomWorkflowListResult = {
+  readonly defaultBranch: string;
+  readonly workflows: readonly RoomWorkflowView[];
+};
+export type DispatchRoomWorkflowInput = RoomInput & { readonly workflowName: string };
 export type WorkspaceAgentInput = WorkspaceInput & { readonly agentId: string };
 export type RoomMemberInput = RoomInput & { readonly memberId: string };
 export type WorkspaceMemberInput = WorkspaceInput & {
@@ -89,6 +102,11 @@ export type IdResult = { readonly id: string };
 export type MembershipResult = { readonly joined: boolean };
 export type InviteMembershipResult = MembershipResult & { readonly workspaceId: string };
 export type MessageWriteResult = { readonly messageId: string };
+/** Active turns that received a server-created command with this human message. */
+export type AgentMessageWriteResult = MessageWriteResult & {
+  /** Optional so a newer phone remains compatible during a rolling server deploy. */
+  readonly activeSteerAgentIds?: readonly string[];
+};
 export type RoomScheduleCadence =
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }
   | { readonly kind: 'interval'; readonly everyMinutes: number; readonly startsAt?: number };
@@ -164,6 +182,8 @@ export type CreateRoomInput = WorkspaceInput & {
 export type UpdateRoomInput = RoomInput & {
   readonly name?: string;
   readonly visibility?: 'public' | 'invite-only';
+  /** Agent member assigned to review every repository corner in this Room; null clears. */
+  readonly reviewerAgentId?: string | null;
 };
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };

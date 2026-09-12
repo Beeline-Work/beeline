@@ -78,6 +78,7 @@ import {
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
+  STEER_RECEIVED_VISIBLE_MS,
   hasComposerAckReceipt,
   selectComposerAckPresentation,
   type ComposerAckPresentation,
@@ -198,6 +199,7 @@ import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoo
 import {
   GitHubEventCard,
   DaemonFactCard,
+  NotificationLifecycleCard,
   GrantRequestCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
@@ -238,6 +240,7 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
+import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -254,6 +257,8 @@ import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/R
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { ConversationComposer } from '@/components/buzz/ConversationComposer';
+import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
 
@@ -312,7 +317,6 @@ export default function BuzzChat() {
     notificationResponseId,
     notificationTarget,
     notificationMessageId,
-    notificationFallbackChannelId,
     communityId,
     parent,
     title,
@@ -322,7 +326,6 @@ export default function BuzzChat() {
     notificationResponseId?: string;
     notificationTarget?: string;
     notificationMessageId?: string;
-    notificationFallbackChannelId?: string;
     communityId?: string;
     parent?: string;
     title?: string;
@@ -330,7 +333,7 @@ export default function BuzzChat() {
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const { width: windowWidth } = useWindowDimensions();
-  const desktopExperience = Platform.OS === 'web';
+  const desktopExperience = isDesktop;
   const desktopMode = desktopLayoutMode(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
@@ -344,7 +347,6 @@ export default function BuzzChat() {
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
   const handledNotificationAnchorRef = useRef<string | null>(null);
-  const handledNotificationFallbackRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
   // immediately taps send. Keep the authoritative in-flight draft beside the
@@ -412,6 +414,8 @@ export default function BuzzChat() {
   const loadedDraftForRef = useRef<string | null>(null);
   const inspectorTriggerRef = useRef<React.ElementRef<typeof TouchableOpacity>>(null);
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(false);
+  const [selectedDesktopCornerId, setSelectedDesktopCornerId] = useState<string | null>(null);
+  const observedCornerCardsRef = useRef<{ roomId: string; ids: Set<string> } | null>(null);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
   >(null);
@@ -493,6 +497,11 @@ export default function BuzzChat() {
   // receipt (API write + pickup + receipt + refetch). See
   // `selectComposerAckState`.
   const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
+  const [receivedSteer, setReceivedSteer] = useState<{
+    agentPubkey: string;
+    turnRequestId: string;
+    receivedAt: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!desktopExperience || !decodedId) return;
@@ -522,8 +531,39 @@ export default function BuzzChat() {
 
   useEffect(() => {
     if (!desktopExperience) return;
-    void loadDesktopInspectorOpen().then(setDesktopInspectorOpen);
-  }, [desktopExperience]);
+    void loadDesktopInspectorOpen().then((open) =>
+      setDesktopInspectorOpen(open || desktopMode === 'three-pane'),
+    );
+  }, [desktopExperience, desktopMode]);
+
+  useEffect(() => {
+    if (!desktopExperience) return;
+    return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
+      if (roomId !== decodedId) return;
+      setSelectedDesktopCornerId(cornerId);
+      setDesktopInspectorOpen(true);
+      void saveDesktopInspectorOpen(true);
+    });
+  }, [decodedId, desktopExperience]);
+
+  useEffect(() => {
+    if (!roomSurface || desktopMode !== 'three-pane') return;
+    const ids = new Set(
+      roomSurface.messages.flatMap((message) => (message.corner ? [message.corner.id] : [])),
+    );
+    const observed = observedCornerCardsRef.current;
+    if (!observed || observed.roomId !== roomSurface.room.id) {
+      observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
+      setSelectedDesktopCornerId(null);
+      return;
+    }
+    const opened = [...ids].find((cornerId) => !observed.ids.has(cornerId));
+    observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
+    if (!opened) return;
+    setSelectedDesktopCornerId(opened);
+    setDesktopInspectorOpen(true);
+    void saveDesktopInspectorOpen(true);
+  }, [desktopMode, roomSurface]);
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
@@ -706,7 +746,10 @@ export default function BuzzChat() {
     [cachedMessages],
   );
   const liveMessages = useMemo<ChatDisplayMessage[]>(
-    () => (roomSurface ? liveDraftMessages(liveOverlays, roomSurface.messages) : []),
+    () =>
+      roomSurface
+        ? liveDraftMessages(liveOverlays, roomSurface.messages, roomSurface.latestAgentTurns)
+        : [],
     [liveOverlays, roomSurface],
   );
   const olderMessages = useMemo(
@@ -822,14 +865,7 @@ export default function BuzzChat() {
         loadingOlderMessagesRef.current = false;
         setLoadingOlderMessages(false);
       });
-  }, [
-    cacheViewerPubkey,
-    decodedId,
-    foldedMessages,
-    roomClient,
-    roomSurface,
-    visibleMessageCount,
-  ]);
+  }, [cacheViewerPubkey, decodedId, foldedMessages, roomClient, roomSurface, visibleMessageCount]);
   const availableAgents = useMemo(
     () =>
       (roomSurface?.members ?? [])
@@ -907,6 +943,18 @@ export default function BuzzChat() {
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
   );
+  const roomReviewerHandle = useMemo(() => {
+    const reviewerAgentId =
+      roomSurface?.parent?.reviewerAgentId ?? roomSurface?.room.reviewerAgentId;
+    if (!reviewerAgentId) return undefined;
+    const member = roomSurface?.members.find(
+      (candidate) =>
+        candidate.identity.pubkey === reviewerAgentId && candidate.identity.kind === 'agent',
+    )?.identity;
+    if (member?.handle) return member.handle;
+    const agent = agentByPubkey.get(reviewerAgentId);
+    return agent ? resolveAgentDisplayIdentity(reviewerAgentId, agent).handle : undefined;
+  }, [agentByPubkey, roomSurface?.members, roomSurface?.parent, roomSurface?.room]);
   const personProfileByPubkey = useMemo(
     () => new Map(personProfiles.map((profile) => [profile.pubkey, profile])),
     [personProfiles],
@@ -999,12 +1047,7 @@ export default function BuzzChat() {
   // pairing command (captain report C74). Read once per open; the sheet
   // shows a loader until it lands and any failure inline.
   useEffect(() => {
-    if (
-      (!participantPickerVisible && !rosterVisible) ||
-      !roomClient ||
-      !activeCommunityId
-    )
-      return;
+    if ((!participantPickerVisible && !rosterVisible) || !roomClient || !activeCommunityId) return;
     let cancelled = false;
     setWorkspaceRoster(null);
     roomClient
@@ -1462,41 +1505,6 @@ export default function BuzzChat() {
         }),
       )
     : 'IDLE';
-  // A notification may outlive the corner it names. Once server truth says the
-  // target disappeared or finished, replace it with the parent Room carried by
-  // the push instead of stranding the reader on an empty/read-only transcript.
-  useEffect(() => {
-    const fallbackId = notificationFallbackChannelId?.trim();
-    if (
-      !notificationResponseId ||
-      !fallbackId ||
-      fallbackId === decodedId ||
-      handledNotificationFallbackRef.current === notificationResponseId
-    ) {
-      return;
-    }
-    const targetFinished =
-      canonicalCornerStatus === 'merged' ||
-      canonicalCornerStatus === 'archived' ||
-      (isCorner && isArchived);
-    const targetMissing =
-      isCorner && roomSurface?.room.id === decodedId && roomSurface.parent === undefined;
-    if (!targetMissing && !targetFinished) return;
-    handledNotificationFallbackRef.current = notificationResponseId;
-    router.replace({
-      pathname: '/beeline/chat/[channelId]',
-      params: { channelId: fallbackId, notificationResponseId },
-    });
-  }, [
-    canonicalCornerStatus,
-    decodedId,
-    isArchived,
-    isCorner,
-    notificationFallbackChannelId,
-    notificationResponseId,
-    roomSurface,
-  ]);
-
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
@@ -1554,7 +1562,7 @@ export default function BuzzChat() {
   // Native keeps the established inverted list. React Native Web implements
   // `inverted` with scale transforms, which can leave variable-height rows at
   // stale coordinates after a send. Desktop uses ordinary chronological flow.
-  const desktopTranscript = Platform.OS === 'web';
+  const desktopTranscript = isDesktop;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
   // Captain's rule (2026-09): a new message or live draft always brings the
@@ -1775,6 +1783,26 @@ export default function BuzzChat() {
     return () => clearTimeout(timer);
   }, [pendingAck]);
 
+  // A committed steer is a brief confirmation, not a new lifecycle. It stays
+  // on the exact running turn the server accepted it into and then clears.
+  useEffect(() => {
+    if (!receivedSteer) return;
+    if (
+      !activeAgentTurn ||
+      activeAgentTurn.agentPubkey !== receivedSteer.agentPubkey ||
+      activeAgentTurn.requestId !== receivedSteer.turnRequestId
+    ) {
+      setReceivedSteer(null);
+      return;
+    }
+    const delay = Math.max(
+      1,
+      receivedSteer.receivedAt + STEER_RECEIVED_VISIBLE_MS - Date.now() + 1,
+    );
+    const timer = setTimeout(() => setReceivedSteer(null), delay);
+    return () => clearTimeout(timer);
+  }, [activeAgentTurn, receivedSteer]);
+
   /**
    * The ordinary turn indicator, and the only thing a plain question in a Room
    * ever lights: "beebee thinking…" while the reply is being composed, gone
@@ -1810,11 +1838,20 @@ export default function BuzzChat() {
         : {}),
       ...(viewerPubkey ? { viewerPubkey } : {}),
       ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
+      ...(receivedSteer ? { receivedSteer } : {}),
       now: pendingAck?.sentAt ?? Date.now(),
       conversationIdentities,
       agentsByPubkey: agentByPubkey,
     });
-  }, [activeAgentTurn, agentByPubkey, conversationIdentities, isCorner, pendingAck, viewerPubkey]);
+  }, [
+    activeAgentTurn,
+    agentByPubkey,
+    conversationIdentities,
+    isCorner,
+    pendingAck,
+    receivedSteer,
+    viewerPubkey,
+  ]);
 
   /**
    * Withdraw the question this turn is answering.
@@ -1864,9 +1901,9 @@ export default function BuzzChat() {
   }, [activeAgentTurn, stoppingTurn]);
   const stoppingThisTurn = Boolean(
     stoppingTurn &&
-      composerAck?.stop &&
-      stoppingTurn.requestId === composerAck.stop.requestId &&
-      stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
+    composerAck?.stop &&
+    stoppingTurn.requestId === composerAck.stop.requestId &&
+    stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
   );
 
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
@@ -2046,6 +2083,7 @@ export default function BuzzChat() {
       isCorner ||
       Boolean(mentionedAgent) ||
       (roomAgents.length === 1 && roomParticipants.length <= 2);
+    setReceivedSteer(null);
     setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
     sendInFlightRef.current = true;
@@ -2134,7 +2172,18 @@ export default function BuzzChat() {
       setReplyTarget(null);
       if (desktopExperience) void saveDesktopDraft(decodedId, '');
       await activeOutbox.attempted(preparedEvent.id);
-      await sendTransport.publishPreparedMessage(preparedEvent);
+      const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+      if (
+        isCorner &&
+        activeAgentTurn &&
+        writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
+      ) {
+        setReceivedSteer({
+          agentPubkey: activeAgentTurn.agentPubkey,
+          turnRequestId: activeAgentTurn.requestId,
+          receivedAt: Date.now(),
+        });
+      }
       if (desktopExperience) setDesktopDeliveryState('delivered');
       // The write ack retires the local bridge: the server has STORED the
       // message, so "sending…" has nothing left to bridge. It used to outlive
@@ -2190,6 +2239,7 @@ export default function BuzzChat() {
     addMessages,
     isArchived,
     isCorner,
+    activeAgentTurn,
     userPubkey,
     parentChannelId,
     roomParticipants,
@@ -3176,7 +3226,17 @@ export default function BuzzChat() {
         return null;
       }
 
-      if (item.githubEvent || item.githubLifecycleRun) {
+      if (item.notificationLifecycleRun) {
+        return (
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={openCorner}
+            onOpenUrl={handleOpenGitHubEvent}
+          />
+        );
+      }
+
+      if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
@@ -3184,6 +3244,7 @@ export default function BuzzChat() {
         return (
           <DaemonFactCard
             message={item}
+            reviewerHandle={roomReviewerHandle}
             onOpenCorner={openCorner}
             onOpenUrl={handleOpenGitHubEvent}
           />
@@ -3270,6 +3331,7 @@ export default function BuzzChat() {
       personProfileByPubkey,
       cacheViewerPubkey,
       roomRepository,
+      roomReviewerHandle,
       roomParticipants,
       targetBranchActionId,
       targetBranchNotice,
@@ -3896,6 +3958,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      received={composerAck.received}
                       stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
@@ -3923,6 +3986,7 @@ export default function BuzzChat() {
                     <TurnProgressLine
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
+                      received={composerAck.received}
                       stopping={stoppingThisTurn}
                       onStop={
                         composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
@@ -3935,133 +3999,108 @@ export default function BuzzChat() {
                   )}
                 </>
               )}
-              <View
-                style={[styles.composer, composerFocused && styles.composerFocused]}
-                {...(desktopExperience
-                  ? ({
-                      onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
-                      onDrop: handleDesktopDrop,
-                      onPaste: handleDesktopPaste,
-                    } as any)
-                  : {})}
-              >
-                <TouchableOpacity
-                  accessibilityLabel="Attach photo or document"
-                  accessibilityRole="button"
-                  disabled={sending}
-                  onPress={chooseAttachment}
-                  style={styles.attachButton}
-                  testID="chat-attach-button"
-                >
-                  <Text style={styles.attachButtonText}>＋</Text>
-                </TouchableOpacity>
-                <TextInput
-                  ref={composerRef}
-                  style={styles.input}
-                  value={inputText}
-                  onChangeText={(value) => {
-                    inputTextRef.current = value;
-                    setInputText(value);
-                  }}
-                  onContentSizeChange={(event) => {
-                    const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
-                    setComposerHeight(
-                      Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
-                    );
-                  }}
-                  onFocus={() => setComposerFocused(true)}
-                  onBlur={() => setComposerFocused(false)}
-                  onKeyPress={(event) => {
-                    const action = mentionKeyboardAction(event.nativeEvent.key);
-                    // Printable keys must never be prevented by the mention
-                    // picker. In particular, `>` is ordinary composer text.
-                    if (slashMenuVisible) {
-                      if (!action) return;
-                      if (action === 'select') {
-                        event.preventDefault();
-                        selectHighlightedPaletteItem();
-                      } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
-                        event.preventDefault();
-                        const direction = action === 'next' ? 1 : -1;
-                        setHighlightedSlashVerbIndex(
-                          (current) => (current + direction + paletteItemCount) % paletteItemCount,
-                        );
-                      } else {
-                        event.preventDefault();
-                        dismissSlashMenu();
-                      }
-                      return;
-                    }
-                    if (!mentionMenuVisible) {
-                      const desktopAction = desktopComposerKeyAction(
-                        Platform.OS,
-                        event.nativeEvent.key,
-                        Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
-                      );
-                      if (desktopAction === 'send') {
-                        event.preventDefault();
-                        void handleSend();
-                      }
-                      return;
-                    }
-                    if (!mentionMenuVisible || !action) return;
+              <ConversationComposer
+                inputRef={composerRef}
+                value={inputText}
+                height={composerHeight}
+                maxHeight={COMPOSER_MAX_HEIGHT}
+                focused={composerFocused}
+                disabled={sending}
+                canSend={
+                  slashMenuVisible
+                    ? Boolean(inputText.trim())
+                    : Boolean(inputText.trim() || pendingAttachments.length)
+                }
+                onAttach={chooseAttachment}
+                attachDisabled={sending}
+                containerProps={
+                  desktopExperience
+                    ? ({
+                        onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
+                        onDrop: handleDesktopDrop,
+                        onPaste: handleDesktopPaste,
+                      } as any)
+                    : undefined
+                }
+                onChangeText={(value) => {
+                  inputTextRef.current = value;
+                  setInputText(value);
+                }}
+                onContentSizeChange={(event) => {
+                  const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
+                  setComposerHeight(
+                    Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
+                  );
+                }}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
+                onKeyPress={(event) => {
+                  const action = mentionKeyboardAction(event.nativeEvent.key);
+                  // Printable keys must never be prevented by the mention
+                  // picker. In particular, `>` is ordinary composer text.
+                  if (slashMenuVisible) {
+                    if (!action) return;
                     if (action === 'select') {
                       event.preventDefault();
-                      const selected = mentionSuggestions.matches[highlightedMentionIndex];
-                      if (selected) selectMention(selected);
-                    } else if (action === 'next' || action === 'previous') {
+                      selectHighlightedPaletteItem();
+                    } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
                       event.preventDefault();
                       const direction = action === 'next' ? 1 : -1;
-                      setHighlightedMentionIndex((current) => {
-                        const count = mentionSuggestions.matches.length;
-                        return (current + direction + count) % count;
-                      });
+                      setHighlightedSlashVerbIndex(
+                        (current) => (current + direction + paletteItemCount) % paletteItemCount,
+                      );
                     } else {
                       event.preventDefault();
-                      setDismissedMentionKey(mentionMenuKey);
+                      dismissSlashMenu();
                     }
-                  }}
-                  onSelectionChange={(event) => {
-                    const nextSelection = event.nativeEvent.selection;
-                    setInputSelection((current) =>
-                      current.start === nextSelection.start && current.end === nextSelection.end
-                        ? current
-                        : nextSelection,
+                    return;
+                  }
+                  if (!mentionMenuVisible) {
+                    const desktopAction = desktopComposerKeyAction(
+                      Platform.OS,
+                      event.nativeEvent.key,
+                      Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
                     );
-                  }}
-                  placeholder={composerPlaceholder}
-                  placeholderTextColor={theme.buzz.dim}
-                  multiline
-                  returnKeyType="default"
-                  scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}
-                  submitBehavior="newline"
-                  testID="chat-input"
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    (slashMenuVisible
-                      ? !inputText.trim()
-                      : (!inputText.trim() && pendingAttachments.length === 0) || sending) &&
-                      styles.sendButtonDisabled,
-                  ]}
-                  onPress={
-                    slashMenuVisible
-                      ? () => {
-                          selectHighlightedPaletteItem();
-                        }
-                      : handleSend
+                    if (desktopAction === 'send') {
+                      event.preventDefault();
+                      void handleSend();
+                    }
+                    return;
                   }
-                  disabled={
-                    slashMenuVisible
-                      ? !inputText.trim()
-                      : (!inputText.trim() && pendingAttachments.length === 0) || sending
+                  if (!mentionMenuVisible || !action) return;
+                  if (action === 'select') {
+                    event.preventDefault();
+                    const selected = mentionSuggestions.matches[highlightedMentionIndex];
+                    if (selected) selectMention(selected);
+                  } else if (action === 'next' || action === 'previous') {
+                    event.preventDefault();
+                    const direction = action === 'next' ? 1 : -1;
+                    setHighlightedMentionIndex((current) => {
+                      const count = mentionSuggestions.matches.length;
+                      return (current + direction + count) % count;
+                    });
+                  } else {
+                    event.preventDefault();
+                    setDismissedMentionKey(mentionMenuKey);
                   }
-                  testID="chat-send"
-                >
-                  <Text style={styles.sendButtonText}>⏎</Text>
-                </TouchableOpacity>
-              </View>
+                }}
+                onSelectionChange={(event) => {
+                  const nextSelection = event.nativeEvent.selection;
+                  setInputSelection((current) =>
+                    current.start === nextSelection.start && current.end === nextSelection.end
+                      ? current
+                      : nextSelection,
+                  );
+                }}
+                placeholder={composerPlaceholder}
+                onSend={
+                  slashMenuVisible
+                    ? () => {
+                        selectHighlightedPaletteItem();
+                      }
+                    : handleSend
+                }
+              />
             </View>
           )}
         </KeyboardAvoidingView>
@@ -4070,8 +4109,11 @@ export default function BuzzChat() {
             room={roomSurface}
             client={roomClient}
             overlay={desktopMode !== 'three-pane'}
+            selectedCornerId={selectedDesktopCornerId}
+            onSelectCorner={setSelectedDesktopCornerId}
             onClose={closeDesktopInspector}
-            onOpenCorner={(cornerId) => openCorner(cornerId)}
+            onNewCorner={focusComposer}
+            onOpenRoster={() => setRosterVisible(true)}
           />
         )}
       </View>
@@ -4240,6 +4282,20 @@ export default function BuzzChat() {
             </View>
           }
           pickerVisible={showRoomRepoPicker}
+          reviewer={
+            <RoomReviewerActions
+              agents={(roomSurface?.members ?? [])
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity)}
+              canManage={canManageWorkspace}
+              hasRepository={roomRepository !== null}
+              onSaved={() => refreshSignal.force()}
+              reviewerAgentId={roomSurface?.room.reviewerAgentId}
+              roomId={decodedId}
+              roomName={displayRoomName}
+              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            />
+          }
           repositoryName={roomRepository?.binding.name ?? null}
         />
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (

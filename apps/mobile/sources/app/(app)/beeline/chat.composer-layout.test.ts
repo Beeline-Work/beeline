@@ -3,21 +3,23 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
+const composerSource = readFileSync(
+  new URL('../../../components/buzz/ConversationComposer.tsx', import.meta.url),
+  'utf8',
+);
 
 describe('Room composer status layout', () => {
-  const composerInput = source.slice(
-    source.indexOf('              <TextInput'),
-    source.indexOf('              <TouchableOpacity\n                style={[\n                  styles.sendButton'),
+  const composerInput = composerSource.slice(
+    composerSource.indexOf('      <TextInput'),
+    composerSource.indexOf('      <TouchableOpacity\n        accessibilityLabel="Send message"'),
   );
-  const inputStyle = source.slice(
-    source.indexOf('    input: {'),
-    source.indexOf('    sendButton: {'),
+  const inputStyle = composerSource.slice(
+    composerSource.indexOf('  input: {'),
+    composerSource.indexOf('  sendButton: {'),
   );
 
   it('lets iOS use native line metrics for long composer text', () => {
-    expect(inputStyle).toContain(
-      "...Platform.select({ ios: {}, default: { lineHeight: 20 } })",
-    );
+    expect(inputStyle).toContain('...Platform.select({ ios: {}, default: { lineHeight: 20 } })');
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 
@@ -29,28 +31,27 @@ describe('Room composer status layout', () => {
   });
 
   it('lets soft-wrapped content grow until the 120px scrolling cap', () => {
-    expect(composerInput).toContain('onContentSizeChange={(event) => {');
-    expect(composerInput).toContain(
+    expect(composerInput).toContain('onContentSizeChange={onContentSizeChange}');
+    expect(source).toContain(
       'Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight))',
     );
-    expect(composerInput).toContain(
-      'scrollEnabled={composerHeight >= COMPOSER_MAX_HEIGHT}',
-    );
+    expect(composerInput).toContain('scrollEnabled={height >= maxHeight}');
+    expect(source).toContain('maxHeight={COMPOSER_MAX_HEIGHT}');
     expect(inputStyle).toContain('maxHeight: 120');
   });
 
   it('keeps turn progress inside the growing composer stack, above the field', () => {
     const inputBar = source.slice(source.indexOf('<View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
-    const composer = inputBar.search(/<View\s+style=\{\[\s*styles\.composer/);
+    const composer = inputBar.indexOf('<ConversationComposer');
     expect(progress).toBeGreaterThanOrEqual(0);
     expect(composer).toBeGreaterThan(progress);
   });
 
   it('keeps the send arrow inset from the focus border', () => {
-    const sendButtonStyle = source.slice(
-      source.indexOf('    sendButton: {'),
-      source.indexOf('    sendButtonDisabled: {'),
+    const sendButtonStyle = composerSource.slice(
+      composerSource.indexOf('  sendButton: {'),
+      composerSource.indexOf('  sendButtonDisabled: {'),
     );
     expect(sendButtonStyle).toContain('marginRight: 4');
   });
@@ -62,7 +63,8 @@ describe('Room composer status layout', () => {
   });
 
   it('keeps desktop transcript rows out of transform-based inversion', () => {
-    expect(source).toContain("const desktopTranscript = Platform.OS === 'web';");
+    expect(source).toContain('const desktopTranscript = isDesktop;');
+    expect(source).not.toContain("const desktopTranscript = Platform.OS === 'web';");
     expect(source).toContain('const transcriptMessages = desktopTranscript ? visibleMessages');
     expect(source).toContain('inverted={!desktopTranscript && transcriptMessages.length > 0}');
     expect(source).toContain('flatListRef.current?.scrollToEnd({ animated: false });');

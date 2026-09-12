@@ -332,6 +332,36 @@ describe('composer ack presentation', () => {
     ).toEqual({ label: 'sending…' });
   });
 
+  it('marks only the exact server-accepted active turn as having received a steer', () => {
+    const base = {
+      isCorner: true,
+      activeTurnPubkey: 'agent-1',
+      activeTurnAgentPubkey: 'agent-1',
+      activeTurnRequestId: 'turn-1',
+      activeTurnStartedAt: NOW / 1_000,
+      now: NOW,
+    } as const;
+
+    expect(
+      selectComposerAckPresentation({
+        ...base,
+        receivedSteer: { agentPubkey: 'agent-1', turnRequestId: 'turn-1' },
+      })?.received,
+    ).toBe(true);
+    expect(
+      selectComposerAckPresentation({
+        ...base,
+        receivedSteer: { agentPubkey: 'agent-1', turnRequestId: 'older-turn' },
+      })?.received,
+    ).toBeUndefined();
+    expect(
+      selectComposerAckPresentation({
+        ...base,
+        receivedSteer: { agentPubkey: 'other-agent', turnRequestId: 'turn-1' },
+      })?.received,
+    ).toBeUndefined();
+  });
+
   it('names the requester test once, for the phone and the server to agree on', () => {
     expect(viewerMayStopTurn('aa', 'aa')).toBe(true);
     expect(viewerMayStopTurn('aa', 'bb')).toBe(false);

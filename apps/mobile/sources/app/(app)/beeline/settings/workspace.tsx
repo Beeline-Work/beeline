@@ -89,18 +89,26 @@ export default function WorkspaceSettings() {
   const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
-    return (
-      indexedRooms ??
+    const joinedRooms = new Map(
       (chatList?.chats ?? [])
         .filter((item) => !item.room.archived && !item.directMessage)
-        .map((item) => ({
-          id: item.room.id,
-          name: item.room.name,
-          visibility: item.room.visibility ?? 'public',
-          createdAt: item.room.createdAt,
-        }))
-    )
-      .map((room) => ({ ...room, canManage: canManageWorkspace }))
+        .map((item) => [item.room.id, item.room]),
+    );
+    const visibleRooms =
+      indexedRooms ??
+      [...joinedRooms.values()].map((room) => ({
+        id: room.id,
+        name: room.name,
+        visibility: room.visibility ?? 'public',
+        createdAt: room.createdAt,
+      }));
+    return visibleRooms
+      .map((room) => {
+        return {
+          ...room,
+          canManage: canManageWorkspace,
+        };
+      })
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [canManageWorkspace, chatList, workspaceView?.managerSettings?.rooms]);
   const duplicateRoomNames = useMemo(() => {
@@ -465,26 +473,27 @@ export default function WorkspaceSettings() {
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               const nextVisibilityLabel = ROOM_VISIBILITY_LABELS[nextVisibility];
               return (
-                <SettingsRow
-                  accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
-                  description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
-                  descriptionAction={
-                    duplicateName
-                      ? {
-                          accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,
-                          label: 'Details',
-                          onPress: () => showRoomDetails(room),
-                          testID: `room-details-${room.id}`,
-                        }
-                      : undefined
-                  }
-                  key={room.id}
-                  disabled={!room.canManage || workingKey === `room-${room.id}`}
-                  onPress={() => void changeRoomVisibility(room)}
-                  testID={`room-visibility-${room.id}`}
-                  title={displayName}
-                  value={ROOM_VISIBILITY_LABELS[room.visibility]}
-                />
+                <View key={room.id}>
+                  <SettingsRow
+                    accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
+                    description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
+                    descriptionAction={
+                      duplicateName
+                        ? {
+                            accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,
+                            label: 'Details',
+                            onPress: () => showRoomDetails(room),
+                            testID: `room-details-${room.id}`,
+                          }
+                        : undefined
+                    }
+                    disabled={!room.canManage || workingKey === `room-${room.id}`}
+                    onPress={() => void changeRoomVisibility(room)}
+                    testID={`room-visibility-${room.id}`}
+                    title={displayName}
+                    value={ROOM_VISIBILITY_LABELS[room.visibility]}
+                  />
+                </View>
               );
             })}
           </View>

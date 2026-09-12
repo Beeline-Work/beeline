@@ -255,11 +255,23 @@ describe('background advisory-lock ownership', () => {
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: '@bee opened a corner Ship push policy' }),
+        expect.objectContaining({
+          text: '@bee opened a corner Ship push policy',
+          target: 'corner',
+          roomId: room,
+          channelId: directRoom,
+          cornerId: directRoom,
+        }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: '@bee merged Ship push policy' }),
+        expect.objectContaining({
+          text: '@bee merged Ship push policy',
+          target: 'corner',
+          roomId: room,
+          channelId: directRoom,
+          cornerId: directRoom,
+        }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
@@ -268,6 +280,34 @@ describe('background advisory-lock ownership', () => {
       expect(send).not.toHaveBeenCalledWith(
         'other-device-token-12345678901234567890',
         expect.objectContaining({ text: 'Untargeted' }),
+      );
+      // Ordinary corner mentions must name the corner, not its parent, in both
+      // destination fields. The phone prefers cornerId over channelId.
+      const corner = '44444444-4444-4444-8444-444444444444';
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
+        [corner, workspace, room],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [workspace, corner, human],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text)
+         VALUES($1,$2,$3,'@owner Review this corner')`,
+        ['8'.repeat(64), corner, agent],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenLastCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({
+          messageId: '8'.repeat(64),
+          target: 'message',
+          roomId: room,
+          channelId: corner,
+          cornerId: corner,
+        }),
       );
     } finally {
       await db.close();

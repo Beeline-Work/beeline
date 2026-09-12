@@ -99,9 +99,46 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
+  it('acknowledges a committed human steer only while its targeted turn is active', async () => {
+    const first = await send('@hoots start', room);
+    const [active] = await commands(A, room);
+    await claim(active!);
+
+    const steerId = id();
+    const received = await phone.execute(
+      'sendRoomMessage',
+      { roomId: room, messageId: steerId, text: '@hoots change course' },
+      H,
+    );
+    expect(received).toEqual({ messageId: steerId, activeSteerAgentIds: [A] });
+    expect((await commands(A, room)).map((command) => command.sourceMessageId)).toContain(steerId);
+
+    // A retried write reads the same committed routing result instead of
+    // falling back to a client-side guess.
+    await expect(
+      phone.execute(
+        'sendRoomMessage',
+        { roomId: room, messageId: steerId, text: '@hoots change course' },
+        H,
+      ),
+    ).resolves.toEqual(received);
+
+    await result(active!, 'Finished');
+    const idleId = id();
+    await expect(
+      phone.execute(
+        'sendRoomMessage',
+        { roomId: room, messageId: idleId, text: '@hoots next task' },
+        H,
+      ),
+    ).resolves.toEqual({ messageId: idleId, activeSteerAgentIds: [] });
+    expect(first.messageId).toBe(active!.sourceMessageId);
+  });
+
   it('routes an untagged continuation only to the immediately preceding agent', async () => {
     await send('@hoots ask Goosy', room);
     const [first] = await commands(A, room);
@@ -401,6 +438,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
     [C],
   );
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
   for (let n = 0; n < 2; n++)
     await systemLine(db, {
       roomId: C,
@@ -408,8 +446,79 @@ it('routes subscribed events, grants and changed corner checks through actions',
       verb: 'passed a check',
       kind: 'check-passed',
     });
+  expect(await commands(B, C)).toHaveLength(0);
+  expect(await commands(A, C)).toHaveLength(1);
+  expect((await commands(A, C))[0]?.reason).toBe('corner_check');
+
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    A,
+  ]);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"failing"}',command_check_state=NULL WHERE corner_id=$1`,
+    [C],
+  );
+  await systemLine(db, {
+    roomId: C,
+    subject: { kind: 'person', id: H, name: 'Human' },
+    verb: 'failed a check',
+    kind: 'check-failed',
+  });
+  expect(await commands(A, C)).toHaveLength(0);
   expect(await commands(B, C)).toHaveLength(1);
-  expect((await commands(B, C))[0]?.reason).toBe('corner_check');
+});
+it('routes a corner merge to its responsible parent Room agent without a subscription', async () => {
+  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE room_id=$1`, [R]);
+  await systemLine(db, {
+    id: id(),
+    roomId: R,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'merged',
+    kind: 'merged',
+    object: 'Do work',
+    presentation: 'card',
+    cardType: 'daemon-fact',
+    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
+  });
+  expect(await commands(A, R)).toEqual([]);
+  expect(await commands(B, R)).toEqual([
+    expect.objectContaining({
+      agentId: B,
+      reason: 'corner_merged',
+      source: expect.objectContaining({
+        body: '@GitHub merged Do work',
+        systemEvent: expect.objectContaining({ kind: 'merged' }),
+      }),
+    }),
+  ]);
+
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    B,
+  ]);
+  await systemLine(db, {
+    id: id(),
+    roomId: R,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'merged',
+    kind: 'merged',
+    object: 'Do work again',
+    presentation: 'card',
+    cardType: 'daemon-fact',
+    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
+  });
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_merged'`,
+        [R, B],
+      )
+    ).rowCount,
+  ).toBe(0);
 });
 it('transfers a corner objective without resetting the authorized chain', async () => {
   await send('@hoots');
@@ -611,9 +720,10 @@ it('settles a failed command instead of redelivering it after its lease expires'
     },
     A,
   );
-  await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [
-    c!.id,
-  ]);
+  await db.query(
+    `UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`,
+    [c!.id],
+  );
   expect(await commands()).toEqual([]);
   await expect(claim(c!, 'retry')).rejects.toThrow('conflict');
 });
@@ -758,6 +868,36 @@ it('accepts and settles draft, thought, activity, attachment and final under one
       await db.query(
         `SELECT 1 FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND kind IN ('draft','thought')`,
         [R, A],
+      )
+    ).rowCount,
+  ).toBe(0);
+});
+
+it('deletes draft and thought rows when a successful turn settles without a reply', async () => {
+  await send('@hoots open a corner');
+  const [command] = await commands();
+  await claim(command!);
+  const input = {
+    roomId: R,
+    agentId: A,
+    requestId: command!.turnRequestId,
+    turnId: command!.turnRequestId,
+    generationId: 'g1',
+  };
+  await daemon.execute('postAgentDraft', { ...input, text: 'Opening a corner.' }, A);
+  await daemon.execute('postAgentThought', { ...input, text: 'Preparing the handoff.' }, A);
+
+  // A successful open_corner turn has no postRoomMessage call. Its terminal
+  // receipt is the durable ending and must reap the live rows itself even if
+  // the best-effort retract never arrived.
+  await daemon.execute('postAgentTurnReceipt', { ...input, status: 'complete' }, A);
+
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM live_outputs
+         WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
+        [R, A, command!.turnRequestId],
       )
     ).rowCount,
   ).toBe(0);

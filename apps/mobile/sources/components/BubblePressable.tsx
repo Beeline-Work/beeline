@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
     GestureResponderEvent,
-    Platform,
     Pressable,
     PressableProps,
     PressableStateCallbackType,
@@ -17,6 +16,7 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 import { resolveBubblePressableFeedback } from './bubblePressableFeedback';
+import { useIsDesktop } from '@/utils/responsive';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -34,17 +34,19 @@ type BubblePressableProps = Omit<PressableProps, 'style'> & {
 export const BubblePressable = React.memo(({
     style,
     pressedStyle,
-    bubbleScale = Platform.OS === 'web' ? 1.01 : 1.025,
+    bubbleScale,
     scaleFeedback = true,
     disabled,
     onPressIn,
     onPressOut,
     ...props
 }: BubblePressableProps) => {
+    const isDesktop = useIsDesktop();
+    const resolvedBubbleScale = bubbleScale ?? (isDesktop ? 1.01 : 1.025);
     const scale = useSharedValue(1);
     const [pressed, setPressed] = React.useState(false);
     const { animateScale } = resolveBubblePressableFeedback({
-        platform: Platform.OS === 'web' ? 'web' : 'native',
+        platform: isDesktop ? 'web' : 'native',
         scaleFeedback,
     });
     React.useEffect(() => {
@@ -62,14 +64,14 @@ export const BubblePressable = React.memo(({
         if (!disabled) {
             setPressed(true);
             if (animateScale) {
-                scale.value = withTiming(bubbleScale, {
+                scale.value = withTiming(resolvedBubbleScale, {
                     duration: 65,
                     easing: Easing.out(Easing.quad),
                 });
             }
         }
         onPressIn?.(event);
-    }, [animateScale, bubbleScale, disabled, onPressIn, scale]);
+    }, [animateScale, disabled, onPressIn, resolvedBubbleScale, scale]);
 
     const handlePressOut = React.useCallback((event: GestureResponderEvent) => {
         setPressed(false);
@@ -86,7 +88,7 @@ export const BubblePressable = React.memo(({
 
     // Bubble feedback belongs to the mobile glass controls. Keep desktop
     // interaction identical to the previous plain Pressable behavior.
-    if (Platform.OS === 'web') {
+    if (isDesktop) {
         return (
             <Pressable
                 {...props}

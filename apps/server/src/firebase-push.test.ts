@@ -66,7 +66,9 @@ describe('Firebase push credentials', () => {
 
   it('fails startup explicitly when Application Default Credentials are unavailable', async () => {
     const credential = {
-      getAccessToken: vi.fn().mockRejectedValue(new Error('Could not load the default credentials')),
+      getAccessToken: vi
+        .fn()
+        .mockRejectedValue(new Error('Could not load the default credentials')),
     } as unknown as Credential;
 
     await expect(requirePushDeliveryCredentials(credential)).rejects.toThrow(
@@ -84,6 +86,39 @@ describe('Firebase push credentials', () => {
 });
 
 describe('Firebase push routing payload', () => {
+  it.each([
+    ['Room mention', 'room-1', 'room-1', undefined, 'message'],
+    ['corner mention', 'parent-1', 'corner-1', 'corner-1', 'message'],
+    ['corner opened', 'parent-1', 'corner-1', 'corner-1', 'corner'],
+    ['corner closed', 'parent-1', 'corner-1', 'corner-1', 'corner'],
+    ['DM', 'dm-1', 'dm-1', undefined, 'message'],
+    ['release notice in system DM', 'system-dm-1', 'system-dm-1', undefined, 'message'],
+  ])('carries the complete %s destination', (_kind, roomId, channelId, cornerId, target) => {
+    const payload = firebasePushMessage('device-token', {
+      messageId: 'message-1',
+      workspaceId: 'workspace-1',
+      roomId,
+      channelId,
+      ...(cornerId ? { cornerId } : {}),
+      target: target as 'message' | 'corner',
+      type: 'message',
+      text: 'routing payload',
+    });
+    expect(payload.data).toEqual({
+      type: 'channel-activity',
+      target,
+      workspaceId: 'workspace-1',
+      roomId,
+      threadId: roomId,
+      channelId,
+      ...(cornerId ? { cornerId } : {}),
+      messageId: 'message-1',
+    });
+    expect(payload.android).toEqual({ notification: { tag: roomId } });
+    expect(payload.apns).toEqual({ payload: { aps: { sound: 'default', threadId: roomId } } });
+    expect(payload.android).not.toHaveProperty('collapseKey');
+  });
+
   it('carries a workspace join to its exact Workspace and Room', () => {
     expect(
       firebasePushMessage('device-token', {
@@ -95,12 +130,15 @@ describe('Firebase push routing payload', () => {
       }),
     ).toMatchObject({
       token: 'device-token',
+      android: { notification: { tag: 'room-welcome' } },
+      apns: { payload: { aps: { sound: 'default', threadId: 'room-welcome' } } },
       data: {
         type: 'workspace-join',
         target: 'message',
         workspaceId: 'workspace-default',
         roomId: 'room-welcome',
         channelId: 'room-welcome',
+        threadId: 'room-welcome',
       },
     });
   });

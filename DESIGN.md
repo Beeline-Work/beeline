@@ -222,7 +222,10 @@ two different lines.** A question being answered is transient and has nowhere
 to go, so it shows as one line with the primary activity verb and elapsed seconds,
 without a redundant `thinking` suffix, that disappears when the
 reply lands — it navigates nowhere and cannot strand a reader in a dead
-channel. The one thing it admits is a **stop in its right-hand slot, offered to
+channel. When the server accepts a human steer into that exact running corner
+turn, the counter briefly appends `· received`; this is the write response made
+visible, not a transcript event or an optimistic client guess. The other thing
+the line admits is a **stop in its right-hand slot, offered to
 the person who asked and to nobody else** (`viewerMayStopTurn`): a question is
 the asker's to take back, and a Room where anyone can silence anyone else's
 agent mid-sentence is a different product. Everyone else sees the line exactly

@@ -20,6 +20,50 @@ describe('GitHub phone operations', () => {
     vi.unstubAllGlobals();
     await database.close();
   });
+  it('uses the Room exact-repository token to list and dispatch on the stored default branch', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','trunk')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,github_installation_id)
+       VALUES($1,$2,'General','github:101','git://github.com/owner/widgets',77)`,
+      [room, workspace],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({
+        token: 'room-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+      listDispatchableWorkflows: vi.fn(async () => [
+        { id: 12, name: 'Release', lastRunAt: 1_789_214_400, conclusion: 'success' },
+      ]),
+      dispatchWorkflow: vi.fn(async () => undefined),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+
+    await expect(operations.listRoomWorkflows(room)).resolves.toEqual({
+      defaultBranch: 'trunk',
+      workflows: [{ name: 'Release', lastRunAt: 1_789_214_400, conclusion: 'success' }],
+    });
+    await expect(operations.dispatchRoomWorkflow(room, 'Release')).resolves.toBeUndefined();
+    expect(app.installationToken).toHaveBeenNthCalledWith(1, 77, { repositoryIds: [101] });
+    expect(app.installationToken).toHaveBeenNthCalledWith(2, 77, { repositoryIds: [101] });
+    expect(app.listDispatchableWorkflows).toHaveBeenCalledWith(
+      'room-token',
+      'owner/widgets',
+      'trunk',
+    );
+    expect(app.dispatchWorkflow).toHaveBeenCalledWith('room-token', 'owner/widgets', 12, 'trunk');
+  });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -713,7 +757,11 @@ describe('GitHub phone operations', () => {
         redirectUri: 'beeline://callback',
         state: 'org-membership',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'org-membership' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'org-membership' },
+        false,
+      );
       await database.query(
         `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
       );
@@ -736,7 +784,11 @@ describe('GitHub phone operations', () => {
         redirectUri: 'beeline://callback',
         state: 'org-non-member',
       });
-      await operations.completeIdentity(HUMAN, { challenge: 'code', proof: 'org-non-member' }, false);
+      await operations.completeIdentity(
+        HUMAN,
+        { challenge: 'code', proof: 'org-non-member' },
+        false,
+      );
       await database.query(
         `UPDATE github_user_tokens SET expires_at=now()-interval '1 minute' WHERE subject='42'`,
       );

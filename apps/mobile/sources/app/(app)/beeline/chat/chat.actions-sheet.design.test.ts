@@ -80,6 +80,13 @@ describe('Room and corner actions sheets', () => {
     expect(cornerSheet).toContain('testID="close-corner-action"');
   });
 
+  it('puts repository reviewer management in the Room sheet only', () => {
+    expect(roomSheet).toContain('<RoomReviewerActions');
+    expect(roomSheet).toContain('canManage={canManageWorkspace}');
+    expect(roomSheet).toContain('hasRepository={roomRepository !== null}');
+    expect(roomSheet).toContain("monolithPhoneOperation('updateRoom', input)");
+  });
+
   it('spends the trailing column on the closed vocabulary and nothing else', () => {
     // A row that toggles gets the switch, never a filled/empty circle.
     const notifications = row(roomSheet, 'room-github-events-toggle');
@@ -108,6 +115,7 @@ describe('Room and corner actions sheets', () => {
     expect(chat).toContain('label="Repo notifications"');
     expect(chat).toContain('label="Scheduled work"');
     expect(chat).toContain('label="Rename"');
+    expect(chat).toContain('<RoomReviewerActions');
     // The old titles crammed the value and the verb into the label, and the
     // notifications row even lost the space before its separator.
     expect(chat).not.toContain('REPO NOTIFICATIONS');

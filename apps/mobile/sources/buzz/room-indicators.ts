@@ -99,6 +99,8 @@ export function selectWorkingAgents(input: WorkingAgentsInput): Readonly<Record<
 /** How long a locally-armed "buzzing" ack waits for the real WORKING receipt
  * before it must stop implying the daemon is still on its way. */
 export const COMPOSER_ACK_BOUND_MS = 15_000;
+/** How long a committed mid-turn steer acknowledgement remains visible. */
+export const STEER_RECEIVED_VISIBLE_MS = 6_000;
 
 export type ComposerAckState = { kind: 'thinking'; agentPubkey: string } | { kind: 'buzzing' };
 
@@ -121,6 +123,8 @@ export type ComposerAckPresentationInput = ComposerAckInput & {
   conversationIdentities?: ReadonlyMap<string, RoomViewIdentity>;
   /** Membership-derived detail supplies soul artwork/profile when available. */
   agentsByPubkey?: ReadonlyMap<string, AgentDisplaySource>;
+  /** A human steer the server routed while this exact turn was working. */
+  receivedSteer?: { agentPubkey: string; turnRequestId: string };
 };
 
 export type ComposerAckPresentation = {
@@ -129,6 +133,8 @@ export type ComposerAckPresentation = {
   startedAt?: number;
   turnKey?: string;
   verb?: TurnVerb;
+  /** The server committed a new human command against this running turn. */
+  received?: boolean;
   /**
    * The coordinates a stop request names, present only when this reader is the
    * one who asked. Absent is the ordinary case: everyone else watching the same
@@ -239,6 +245,10 @@ export function selectComposerAckPresentation(
         label: `${subject} ${verb.gerund}…`,
         turnKey,
         verb,
+        ...(input.receivedSteer?.agentPubkey === state.agentPubkey &&
+        input.receivedSteer.turnRequestId === input.activeTurnRequestId
+          ? { received: true }
+          : {}),
         ...(input.activeTurnStartedAt != null ? { startedAt: input.activeTurnStartedAt } : {}),
         ...(stoppable
           ? {

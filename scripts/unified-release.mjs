@@ -51,6 +51,7 @@ export const COMPONENT_PATH_RULES = [
 const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
 const SHA = /^[0-9a-f]{7,64}$/;
 const FINAL_STATES = new Set(['checked', 'carried']);
+const RUNTIME_PIN_PATH = 'apps/mobile/native-fingerprint.json';
 
 function fail(message) { throw new Error(message); }
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
@@ -84,8 +85,20 @@ function assertComponent(component) {
 }
 function matchesRule(path, rule) { return rule.exact === path || (rule.prefix && path.startsWith(rule.prefix)); }
 
-export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none' } = {}) {
+function runtimePinChangeMessage(runtimePin, requirement) {
+  return `runtime pin changed ${runtimePin.previous} -> ${runtimePin.next}: ${requirement}`;
+}
+
+export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none', runtimePin } = {}) {
   if (!['none', 'internal', 'beta', 'production'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
+  const explicit = selection !== 'auto' && selection !== '';
+  if (runtimePin?.changed && explicit && selection !== 'all'
+      && !selection.split(',').map((value) => value.trim()).includes('mobile-native')) {
+    fail(runtimePinChangeMessage(runtimePin, 'mobile-native (store binaries) must ship in this release; add it or revert the pin'));
+  }
+  if (runtimePin?.changed && storeTrack === 'none') {
+    fail(runtimePinChangeMessage(runtimePin, '--store-track must name the store submission track; set internal, beta, or production'));
+  }
   let selected;
   if (selection === 'all') selected = new Set(RELEASE_COMPONENTS);
   else if (selection === 'auto' || selection === '') {
@@ -99,24 +112,38 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
     selected = new Set(selection.split(',').map((value) => value.trim()).filter(Boolean));
     for (const component of selected) assertComponent(component);
   }
+  if (runtimePin?.changed) selected.add('mobile-native');
   if (storeTrack !== 'none') selected.add('mobile-native');
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
 }
 
 export function selectReleaseComponentsFromPublishedInputs(
   pathsByComponent,
-  { selection = 'auto', storeTrack = 'none' } = {},
+  { selection = 'auto', storeTrack = 'none', runtimePin } = {},
 ) {
   if (selection !== 'auto' && selection !== '') {
-    return selectReleaseComponents([], { selection, storeTrack });
+    return selectReleaseComponents([], { selection, storeTrack, runtimePin });
   }
-  const selected = new Set(selectReleaseComponents([], { storeTrack }));
+  const selected = new Set(selectReleaseComponents([], { storeTrack, runtimePin }));
   for (const component of RELEASE_COMPONENTS) {
     const paths = pathsByComponent?.[component];
     if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
     if (selectReleaseComponents(paths).includes(component)) selected.add(component);
   }
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
+}
+
+export function runtimePinChangeFromPublishedInputs(previous, releaseSha, {
+  gitShow = (sha) => execFileSync('git', ['show', `${sha}:${RUNTIME_PIN_PATH}`], {
+    encoding: 'utf8', timeout: 30_000,
+  }),
+} = {}) {
+  validateReleaseIdentity(previous?.version, previous?.sourceSha);
+  validateReleaseIdentity(previous.version, releaseSha);
+  const readPin = (sha) => String(JSON.parse(gitShow(sha)).runtimeVersion ?? fail(`missing runtimeVersion at ${sha}`));
+  const previousPin = readPin(previous.sourceSha);
+  const nextPin = readPin(releaseSha);
+  return { changed: previousPin !== nextPin, previous: previousPin, next: nextPin };
 }
 
 export function changedPathsFromPublishedInputs(previous, releaseSha, {
@@ -164,7 +191,7 @@ function previousComponent(previous, component) {
   };
 }
 
-export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, retry, startedAt = now() }) {
+export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, retry, startedAt = now() }) {
   validateReleaseIdentity(version, sourceSha);
   const selected = new Set(selectedComponents);
   selected.forEach(assertComponent);
@@ -199,6 +226,7 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
     state.plan = {
       selected: supplemental,
       carried: RELEASE_COMPONENTS.filter((component) => !supplemental.includes(component)),
+      ...(runtimePin ? { runtimePinChanged: runtimePin.changed, previousRuntimeVersion: runtimePin.previous, nextRuntimeVersion: runtimePin.next } : {}),
     };
     state.delivery = { state: 'pending' };
     return state;
@@ -216,6 +244,7 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
     plan: {
       selected: RELEASE_COMPONENTS.filter((component) => selected.has(component)),
       carried: RELEASE_COMPONENTS.filter((component) => !selected.has(component)),
+      ...(runtimePin ? { runtimePinChanged: runtimePin.changed, previousRuntimeVersion: runtimePin.previous, nextRuntimeVersion: runtimePin.next } : {}),
     },
     components, delivery: { state: 'pending' },
   };
@@ -371,11 +400,12 @@ async function main(argv) {
     const paths = args.paths ? readFileSync(args.paths, 'utf8').split(/\r?\n/).map((path) => path.trim()).filter(Boolean) : [];
     const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
     const selection = args.selection ?? (command === 'init' && !args.paths ? 'all' : 'auto');
-    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none' };
+    const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
+    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', runtimePin };
     const selectedComponents = componentPaths
       ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
       : selectReleaseComponents(paths, selectOptions);
-    const state = initializeRelease({ ...identityFromOptions(args), previous, retry, selectedComponents });
+    const state = initializeRelease({ ...identityFromOptions(args), previous, retry, selectedComponents, runtimePin });
     state.plan.paths = paths;
     if (componentPaths) state.plan.componentPaths = componentPaths;
     state.plan.selection = selection;

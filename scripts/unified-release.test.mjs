@@ -19,6 +19,7 @@ import {
   markComponentStage,
   notifyRelease,
   releasePlanSummary,
+  runtimePinChangeFromPublishedInputs,
   retryPlan,
   selectReleaseComponents,
   selectReleaseComponentsFromPublishedInputs,
@@ -109,6 +110,7 @@ test('routine CLI derives lagging consumers from real published git history', ()
     run('git', ['config', 'user.email', 'release-test@usebeeline.app'], root);
     run('git', ['config', 'user.name', 'Release Test'], root);
     writeFixture(root, 'README.md', 'baseline\n');
+    writeFixture(root, 'apps/mobile/native-fingerprint.json', '{"runtimeVersion":"23"}\n');
     run('git', ['add', '.'], root);
     run('git', ['commit', '--quiet', '-m', 'baseline'], root);
     const oldSha = run('git', ['rev-parse', 'HEAD'], root).trim();
@@ -251,6 +253,47 @@ test('store choice explicitly selects a native mobile binary', () => {
   );
   assert.throws(() => selectReleaseComponents([], { storeTrack: 'nightly' }), /invalid store track/);
   assert.ok(!selectReleaseComponents(['.github/workflows/unified-release.yml']).includes('mobile-native'));
+});
+
+test('runtime pin selection requires a native store submission only when the pin changes', () => {
+  const unchanged = { changed: false, previous: '23', next: '23' };
+  const changed = { changed: true, previous: '23', next: '24' };
+  assert.deepEqual(selectReleaseComponents(['apps/mobile/sources/index.ts'], { runtimePin: unchanged }), [
+    'mobile-ota', 'desktop', 'website',
+  ]);
+  assert.throws(
+    () => selectReleaseComponents([], { selection: 'mobile-ota', storeTrack: 'internal', runtimePin: changed }),
+    /runtime pin changed 23 -> 24: mobile-native \(store binaries\) must ship in this release; add it or revert the pin/,
+  );
+  assert.deepEqual(selectReleaseComponents([], { storeTrack: 'internal', runtimePin: changed }), ['mobile-native']);
+});
+
+test('runtime pin change reads the published and release trees', () => {
+  const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
+    gitShow: (sha) => JSON.stringify({ runtimeVersion: sha === OLD_SHA ? '23' : '24' }),
+  });
+  assert.deepEqual(pins, { changed: true, previous: '23', next: '24' });
+  const selected = selectReleaseComponents([], {
+    selection: 'mobile-native', storeTrack: 'internal', runtimePin: pins,
+  });
+  const state = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
+    selectedComponents: selected, runtimePin: pins,
+  });
+  assert.equal(state.plan.runtimePinChanged, true);
+  assert.equal(state.plan.previousRuntimeVersion, '23');
+  assert.equal(state.plan.nextRuntimeVersion, '24');
+});
+
+test('reproduces #1088: a runtime pin bump cannot plan an OTA without store binaries', () => {
+  assert.throws(
+    () => selectReleaseComponents(['apps/mobile/native-fingerprint.json'], {
+      selection: 'auto',
+      storeTrack: 'none',
+      runtimePin: { changed: true, previous: '23', next: '24' },
+    }),
+    /runtime pin changed 23 -> 24/,
+  );
 });
 
 test('the path map has no duplicate matcher and names only real components', () => {
@@ -442,7 +485,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
   assert.match(source, /release ceiling is 20 minutes/);
-  assert.doesNotMatch(source, /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/);
+  assert.doesNotMatch(source.replace(/  mobile_native:[\s\S]*?\n  release_result:/, ''), /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/);
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -454,6 +497,10 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /needs\.initialize\.outputs\.run_server == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_helper == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_mobile_ota == 'true'/);
+  assert.deepEqual(workflow.jobs.mobile_ota.needs, ['initialize', 'mobile_native']);
+  assert.match(workflow.jobs.mobile_ota.if, /runtime_pin_changed != 'true'/);
+  assert.match(workflow.jobs.mobile_ota.if, /stage_mobile_native == 'checked'/);
+  assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native\.result == 'success'/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_website == 'true'/);
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-server/);

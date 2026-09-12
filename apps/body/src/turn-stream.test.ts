@@ -243,6 +243,33 @@ describe('agent turn stream', () => {
     ]);
   });
 
+  it('keeps the posted reply the turn outcome when the retract is refused', async () => {
+    // A refused retract used to raise out of settle, which fails a turn that
+    // has already answered: the server posts the `failed` receipt and writes
+    // "<agent> could not answer" directly under the answer on the page.
+    const writes: Array<{ name: string }> = [];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const api = {
+      execute: vi.fn(async (name: string) => {
+        writes.push({ name });
+        if (name === 'retractAgentLiveOutput') throw new Error('server refused the retract');
+        return { id: 'write-id', createdAt: 1 };
+      }),
+    } as unknown as DaemonApiClient;
+    const stream = streamFor(api);
+    stream.onChunk('', 'Working on it.');
+    await expect(stream.settle('The fix is ready.')).resolves.toBeUndefined();
+    expect(writes.map((write) => write.name)).toContain('postRoomMessage');
+    expect(errors).toHaveBeenCalled();
+    // The same holds for a turn whose whole handoff is elsewhere: a corner
+    // open completes, card and all, even when the lane cannot be retracted.
+    await expect(streamFor(api).settle('')).resolves.toBeUndefined();
+    // And on the failure path #1114 added, which calls the retract directly:
+    // the caller already has a real error to report that this must not replace.
+    await expect(streamFor(api).retract()).resolves.toBeUndefined();
+    errors.mockRestore();
+  });
+
   it('settles a silent turn by dissolving the draft with no durable message', async () => {
     const { api, writes } = recorder();
     const stream = streamFor(api, 'room-id', 'corner room-id');

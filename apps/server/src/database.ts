@@ -283,6 +283,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   repository_resolution text NOT NULL DEFAULT 'none' CHECK (repository_resolution IN ('repository', 'none', 'unverified')),
   github_installation_id bigint,
   github_events_enabled boolean NOT NULL DEFAULT true,
+  reviewer_agent_id text REFERENCES identities(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -291,6 +292,7 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS created_by text REFERENCES identities
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
 

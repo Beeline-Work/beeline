@@ -20,6 +20,16 @@ function event(tags: string[][], content = '  Ship the preview now.  '): NostrEv
 }
 
 describe('mapEventToNotification', () => {
+  it('includes the resolved Workspace in a routable payload', () => {
+    expect(
+      mapEventToNotification(event([['h', 'room-1']]), {
+        roomName: 'Roadmap',
+        workspaceId: 'workspace-1',
+        isDirectMessage: true,
+        persistentWorkspaceRoom: true,
+      })?.data,
+    ).toMatchObject({ workspaceId: 'workspace-1', roomId: 'room-1', channelId: 'room-1' });
+  });
   it('fails closed unless the Room is durably linked to a non-fixture Workspace', () => {
     const relayEvent = event([['h', 'room']]);
     expect(isSuppressedFixtureNotification(relayEvent, { roomName: 'Roadmap' })).toBe(true);

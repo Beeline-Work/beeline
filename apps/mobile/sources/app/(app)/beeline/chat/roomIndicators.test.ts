@@ -130,6 +130,19 @@ describe('the corner line and the turn indicator are independent', () => {
     expect(bridge).toContain('? null');
   });
 
+  it('shows received only from the server response for the currently active corner turn', () => {
+    const at = chatSource.indexOf(
+      'const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);',
+    );
+    expect(at).toBeGreaterThan(0);
+    const received = chatSource.slice(at, chatSource.indexOf('if (desktopExperience)', at));
+    expect(received).toContain('isCorner');
+    expect(received).toContain('writeResult.activeSteerAgentIds?.includes');
+    expect(received).toContain('turnRequestId: activeAgentTurn.requestId');
+    expect(chatSource).toContain('received={composerAck.received}');
+    expect(chatSource).toContain('STEER_RECEIVED_VISIBLE_MS');
+  });
+
   it('keeps the Corner-only transcript policy out of Room rendering', () => {
     expect(chatSource).toContain('const messages = unprojectedMessages;');
     expect(chatSource).not.toContain('projectCornerTranscript');

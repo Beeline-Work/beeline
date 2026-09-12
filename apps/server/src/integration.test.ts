@@ -4872,6 +4872,24 @@ describe('monolith integration', () => {
     ).toBe(1);
     expect(
       (
+        await database.query<{
+          agent_id: string;
+          reason: string;
+          event_subscriptions: string[];
+        }>(
+          `SELECT command.agent_id,command.reason,member.event_subscriptions
+           FROM agent_commands command
+           JOIN messages source ON source.id=command.source_message_id
+           JOIN memberships member
+             ON member.room_id=command.room_id AND member.identity_id=command.agent_id
+           WHERE command.room_id=$1 AND source.card_type='daemon-fact'
+             AND source.card->>'type'='corner-complete'`,
+          [ROOM],
+        )
+      ).rows,
+    ).toEqual([{ agent_id: AGENT, reason: 'corner_merged', event_subscriptions: [] }]);
+    expect(
+      (
         await database.query<{ count: number }>(
           `SELECT count(*)::int count FROM messages
            WHERE room_id=$1 AND card_type='github-event'

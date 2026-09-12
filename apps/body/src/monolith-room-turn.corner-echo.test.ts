@@ -20,8 +20,13 @@ const HUMAN = '22'.repeat(32);
 
 async function runTurn(
   agentText: string,
-  toolCalls: Array<{ id: string; title: string; status: string }>,
-): Promise<{ receipts: Array<Record<string, unknown>>; posted: Array<Record<string, unknown>> }> {
+  toolCalls: Array<{ id: string; title: string; status?: string }>,
+): Promise<{
+  receipts: Array<Record<string, unknown>>;
+  posted: Array<Record<string, unknown>>;
+  /** How many times the loop told the runtime a corner is now open. */
+  cornerOpens: number;
+}> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-corner-echo-'));
   roots.push(root);
   const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -113,7 +118,11 @@ async function runTurn(
   });
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
+  let cornerOpens = 0;
   const loop = new MonolithRoomTurnLoop({
+    onCornerOpened: () => {
+      cornerOpens += 1;
+    },
     roomId: 'room-id',
     workspaceId: 'workspace',
     cwd: config.workspaceRoot,
@@ -137,7 +146,7 @@ async function runTurn(
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
-  return { receipts, posted };
+  return { receipts, posted, cornerOpens };
 }
 
 const OPEN_CORNER = { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' };
@@ -187,5 +196,45 @@ describe('Room turn after open_corner', () => {
     expect(posted.map((message) => message.text)).toEqual([
       'Opened corner earlier today; it is still working.',
     ]);
+  });
+
+  it('opens a corner only on an affirmative completed status', async () => {
+    const { cornerOpens } = await runTurn('', [OPEN_CORNER]);
+    expect(cornerOpens).toBe(1);
+  });
+
+  // The silence, and the corner card that justifies it, both rest on the call
+  // having FINISHED. Every status below is a call that had not, so the answer
+  // the model did write is the only thing the Room has to show for the turn.
+  for (const status of ['in_progress', 'pending', undefined]) {
+    it(`publishes the reply when the open_corner call is ${status ?? 'status-less'}`, async () => {
+      const { posted, receipts, cornerOpens } = await runTurn(
+        'Opening a corner for the widget fix now.',
+        [{ id: 'call-1', title: 'mcp__beeline-agent__open_corner', ...(status ? { status } : {}) }],
+      );
+      expect(posted.map((message) => message.text)).toEqual([
+        'Opening a corner for the widget fix now.',
+      ]);
+      expect(cornerOpens).toBe(0);
+      expect(receipts).toContainEqual(
+        expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
+      );
+    });
+  }
+
+  it('fails the turn when an unfinished open_corner call is all it has', async () => {
+    // The worst shape of reading "not failed" as success: no card, no text, and
+    // a turn reported complete. The person asked for something and got silence.
+    const { posted, receipts, cornerOpens } = await runTurn('', [
+      { ...OPEN_CORNER, status: 'in_progress' },
+    ]);
+    expect(posted).toEqual([]);
+    expect(cornerOpens).toBe(0);
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
+    );
+    expect(receipts).not.toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
+    );
   });
 });

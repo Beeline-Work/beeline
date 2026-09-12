@@ -46,6 +46,20 @@ export function isFailedToolCall(call: ToolCallEntry): boolean {
 }
 
 /**
+ * True only when the harness reported this call as finished, successfully.
+ *
+ * `completed` is ACP's one terminal success status, and this asks for it by
+ * name rather than reading "not failed" as success. The difference is every
+ * OTHER status a call can carry: `pending`, `in_progress`, or none at all when
+ * the harness ended the turn before the tool ever reported back. Those are
+ * unfinished work, not done work, and a caller that acts on a corner it only
+ * hopes was opened will swallow the turn's answer and leave nothing behind.
+ */
+export function isCompletedToolCall(call: ToolCallEntry): boolean {
+  return /^completed$/i.test(call.status ?? '');
+}
+
+/**
  * The line to log for a failed tool call, or `undefined` when the call did
  * not fail. Secrets are scrubbed with the same redactor the failed-turn
  * receipt uses, and the detail is capped — this is a log line, not a dump.

@@ -7379,7 +7379,7 @@ describe('monolith integration', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('does not wake Room subscribers for a Workspace-scoped arrival', async () => {
+  it('wakes a public Room subscriber exactly once for a Workspace-scoped arrival', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
@@ -7396,8 +7396,13 @@ describe('monolith integration', () => {
       tagged_ids: string[];
       text: string;
       system_event: { verb: string; kind?: string };
+      event_woken: number | null;
+      woke: string[];
     }>(
-      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event FROM messages
+      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event,event_woken,
+              ARRAY(SELECT agent_id FROM agent_commands
+                    WHERE source_message_id=messages.id ORDER BY agent_id) woke
+       FROM messages
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
@@ -7405,18 +7410,38 @@ describe('monolith integration', () => {
       expect.objectContaining({
         tagged_ids: [],
         text: '@play-review joined',
-        system_event: expect.not.objectContaining({ kind: expect.anything() }),
+        system_event: expect.objectContaining({ kind: 'joined' }),
+        event_woken: 1,
+        woke: [WELCOME_AGENT],
       }),
     ]);
 
-    const workspaceDms = await database.query<{ text: string; tagged_ids: string[] }>(
-      `SELECT message.text,${taggedIdentityIdsSql('message')} tagged_ids FROM messages message
+    const workspaceDms = await database.query<{
+      text: string;
+      tagged_ids: string[];
+      system_event: { kind?: string };
+      event_woken: number | null;
+      woke: string[];
+    }>(
+      `SELECT message.text,${taggedIdentityIdsSql('message')} tagged_ids,
+              message.system_event,message.event_woken,
+              ARRAY(SELECT agent_id FROM agent_commands
+                    WHERE source_message_id=message.id ORDER BY agent_id) woke
+       FROM messages message
        JOIN rooms room ON room.id=message.room_id
        WHERE room.workspace_id=$1 AND room.direct_participants IS NOT NULL
          AND message.card_type='workspace-member-joined'`,
       [DEFAULT_WORKSPACE_ID],
     );
-    expect(workspaceDms.rows).toEqual([{ text: '@play-review joined', tagged_ids: [] }]);
+    expect(workspaceDms.rows).toEqual([
+      expect.objectContaining({
+        text: '@play-review joined',
+        tagged_ids: [],
+        system_event: expect.not.objectContaining({ kind: expect.anything() }),
+        event_woken: null,
+        woke: [],
+      }),
+    ]);
 
     const otherRoom = await database.query<{ tagged_ids: string[] }>(
       `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids
@@ -7446,6 +7471,7 @@ describe('monolith integration', () => {
     const newcomer = await phoneToken('newcomer');
     const newcomerId = createHash('sha256').update('github:newcomer').digest('hex');
     expect(newcomer).toBeTruthy();
+    await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [ROOM]);
     expect(
       (
         await operation('addWorkspaceMember', {
@@ -7455,16 +7481,27 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(200);
-    expect((await operation('addRoomMember', { roomId: ROOM, memberId: newcomerId })).status).toBe(
-      200,
-    );
-    const joins = await database.query<{ woke: string[] }>(
+    expect(
+      await (await operation('addRoomMember', { roomId: ROOM, memberId: newcomerId })).json(),
+    ).toEqual({ joined: true });
+    const joins = await database.query<{
+      event_woken: number | null;
+      system_event: { kind?: string };
+      woke: string[];
+    }>(
       `SELECT ARRAY(SELECT agent_id FROM agent_commands
-                    WHERE source_message_id=messages.id) woke
-       FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation IN ('system','card')`,
+                    WHERE source_message_id=messages.id ORDER BY agent_id) woke,
+              event_woken,system_event
+       FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type='member-joined'`,
       [ROOM, newcomerId],
     );
-    expect(joins.rows.some((row) => row.woke.includes(AGENT))).toBe(true);
+    expect(joins.rows).toEqual([
+      {
+        event_woken: 1,
+        system_event: expect.objectContaining({ kind: 'joined' }),
+        woke: [AGENT],
+      },
+    ]);
     const ordinaryLine = 'd'.repeat(64);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation)
@@ -7479,7 +7516,7 @@ describe('monolith integration', () => {
     };
     expect(inbox.items.map((item) => item.id)).not.toContain(ordinaryLine);
     expect(inbox.items).toContainEqual(
-      expect.objectContaining({ systemEvent: { kind: 'joined' } }),
+      expect.objectContaining({ systemEvent: expect.objectContaining({ kind: 'joined' }) }),
     );
   });
 

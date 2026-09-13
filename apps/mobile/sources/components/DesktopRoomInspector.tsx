@@ -440,25 +440,8 @@ function CornerRow({
       style={styles.cornerRow}
       testID={`desktop-work-corner-${corner.corner.id}`}
     >
-      <View style={styles.cornerCopy}>
+      <View style={styles.cornerHeadline}>
         <Text style={styles.cornerTitle}>{title}</Text>
-        <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
-        <View style={styles.cornerAgent}>
-          <IdentityMark
-            kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
-            seed={corner.agent?.pubkey ?? corner.corner.id}
-            avatarUrl={corner.agent?.avatar}
-            face={corner.agent?.face}
-            name={corner.agent?.name ?? 'Unassigned'}
-            size={18}
-          />
-          <Text style={styles.cornerMeta}>
-            {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
-            {age(corner)}
-          </Text>
-        </View>
-      </View>
-      <View style={styles.cornerEndcap}>
         <Text
           style={[styles.cornerStatus, display.needsYou && styles.cornerStatusNeedsYou]}
           testID={`desktop-work-corner-state-${corner.corner.id}`}
@@ -466,6 +449,21 @@ function CornerRow({
           {display.word}
         </Text>
         <Text style={styles.chevron}>›</Text>
+      </View>
+      <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
+      <View style={styles.cornerAgent}>
+        <IdentityMark
+          kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
+          seed={corner.agent?.pubkey ?? corner.corner.id}
+          avatarUrl={corner.agent?.avatar}
+          face={corner.agent?.face}
+          name={corner.agent?.name ?? 'Unassigned'}
+          size={18}
+        />
+        <Text style={styles.cornerMeta}>
+          {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
+          {age(corner)}
+        </Text>
       </View>
     </Pressable>
   );
@@ -809,21 +807,27 @@ const styles = StyleSheet.create((theme) => ({
   sectionAction: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   cornerRow: {
     minHeight: 88,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
     paddingHorizontal: 8,
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.divider,
   },
-  cornerCopy: { flex: 1, minWidth: 0 },
-  cornerTitle: { ...theme.buzz.type.bodyStrong, color: theme.colors.text },
+  cornerHeadline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cornerTitle: {
+    ...theme.buzz.type.bodyStrong,
+    color: theme.colors.text,
+    flex: 1,
+    minWidth: 0,
+    includeFontPadding: false,
+  },
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
-  cornerEndcap: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  cornerStatus: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  cornerStatus: {
+    ...theme.buzz.type.sectionHead,
+    color: theme.colors.textSecondary,
+    includeFontPadding: false,
+  },
   cornerStatusNeedsYou: { color: theme.colors.textLink },
   sectionGap: { height: 22 },
   simpleRow: {
@@ -838,7 +842,11 @@ const styles = StyleSheet.create((theme) => ({
   simpleTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
   simpleMeta: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
   workflowCopy: { flex: 1, minWidth: 0, paddingVertical: 8, gap: 2 },
-  chevron: { ...theme.buzz.type.bodyStrong, color: theme.colors.textSecondary },
+  chevron: {
+    ...theme.buzz.type.bodyStrong,
+    color: theme.colors.textSecondary,
+    includeFontPadding: false,
+  },
   memberRow: {
     minHeight: 52,
     flexDirection: 'row',

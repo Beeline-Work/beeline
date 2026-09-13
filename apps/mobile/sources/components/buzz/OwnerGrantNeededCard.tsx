@@ -1,7 +1,6 @@
 import React, { memo, useCallback } from 'react';
-import { Share, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
+import { Share } from 'react-native';
+import { TranscriptCard } from './TranscriptCard';
 
 export type OwnerGrantNeeded = {
   /** The repository waiting for its owner's grant (`owner/repo`). */
@@ -10,9 +9,9 @@ export type OwnerGrantNeeded = {
   installUrl: string;
 };
 
-export const OWNER_GRANT_TITLE = 'OWNER GRANT NEEDED';
+export const OWNER_GRANT_TITLE = 'Owner grant needed';
 export const OWNER_GRANT_COPY = 'Ask the repo owner to grant Beeline access — share this link:';
-export const OWNER_GRANT_SHARE_LABEL = 'SHARE INSTALL LINK';
+export const OWNER_GRANT_SHARE_LABEL = 'Share';
 
 /** The message Share receives; pure so tests pin it without a renderer. */
 export function ownerGrantShareMessage(
@@ -38,46 +37,27 @@ export const OwnerGrantNeededCard = memo(function OwnerGrantNeededCard({
   installUrl,
   testIDPrefix = 'owner-grant',
 }: OwnerGrantNeeded & { testIDPrefix?: string }) {
-  const { theme } = useUnistyles();
-  const groknight = theme.buzz;
   const share = useCallback(() => {
     void Share.share({ message: ownerGrantShareMessage({ repository, installUrl }) });
   }, [repository, installUrl]);
   return (
-    <View style={styles.card} testID={`${testIDPrefix}-card`}>
-      <Text style={styles.title}>{OWNER_GRANT_TITLE}</Text>
-      <Text style={styles.body}>
-        {OWNER_GRANT_COPY} {repository}
-      </Text>
-      <Text selectable style={styles.link} testID={`${testIDPrefix}-url`}>
-        {installUrl}
-      </Text>
-      <TouchableOpacity
-        accessibilityRole="button"
-        onPress={share}
-        style={styles.shareButton}
-        testID={`${testIDPrefix}-share`}
-      >
-        <Text style={styles.shareLabel}>{OWNER_GRANT_SHARE_LABEL}</Text>
-      </TouchableOpacity>
-    </View>
+    <TranscriptCard
+      tier="ask"
+      title={OWNER_GRANT_TITLE}
+      body={OWNER_GRANT_COPY}
+      quietBody
+      code={repository}
+      footerNote={installUrl}
+      footerNoteTestID={`${testIDPrefix}-url`}
+      actions={[
+        {
+          label: OWNER_GRANT_SHARE_LABEL,
+          primary: true,
+          onPress: share,
+          testID: `${testIDPrefix}-share`,
+        },
+      ]}
+      testID={`${testIDPrefix}-card`}
+    />
   );
-});
-
-const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
-  return ({
-    card: {
-      borderWidth: 1,
-      borderColor: groknight.accent,
-      padding: 12,
-      gap: 7,
-      marginVertical: 8,
-    },
-    title: { ...Typography.mono(), color: groknight.accent, fontSize: 9 },
-    body: { ...Typography.default(), color: groknight.textPrimary, fontSize: 12 },
-    link: { ...Typography.mono(), color: groknight.textSecondary, fontSize: 11 },
-    shareButton: { minHeight: 36, justifyContent: 'center', alignItems: 'flex-start' },
-    shareLabel: { ...Typography.mono(), color: groknight.accent, fontSize: 10 },
-  });
 });

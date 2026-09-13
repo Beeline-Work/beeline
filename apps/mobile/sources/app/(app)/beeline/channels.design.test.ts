@@ -19,9 +19,15 @@ const desktopInspectorSource = readFileSync(
   new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
   'utf8',
 );
+const cornerTitleTypeface = readFileSync(
+  new URL('../../../assets/fonts/SpaceGrotesk-SemiBold.ttf', import.meta.url),
+);
+const cornerLabelTypeface = readFileSync(
+  new URL('../../../assets/fonts/SpaceGrotesk-Medium.ttf', import.meta.url),
+);
 
-function styleBlock(text: string, name: string): string {
-  const start = text.indexOf(`    ${name}: {`);
+function styleBlock(text: string, name: string, indent = '    '): string {
+  const start = text.indexOf(`${indent}${name}: {`);
   expect(start, `missing style ${name}`).toBeGreaterThanOrEqual(0);
   let depth = 0;
   for (let index = text.indexOf('{', start); index < text.length; index += 1) {
@@ -32,6 +38,28 @@ function styleBlock(text: string, name: string): string {
     }
   }
   throw new Error(`unterminated style ${name}`);
+}
+
+function tableOffset(font: Buffer, wantedTag: string): number {
+  const tableCount = font.readUInt16BE(4);
+  for (let index = 0; index < tableCount; index += 1) {
+    const record = 12 + index * 16;
+    if (font.toString('ascii', record, record + 4) === wantedTag) {
+      return font.readUInt32BE(record + 8);
+    }
+  }
+  throw new Error(`missing ${wantedTag} font table`);
+}
+
+/** Distance from a capital glyph's center to its centered typographic line box. */
+function capCenterOffset(font: Buffer, fontSize: number): number {
+  const head = tableOffset(font, 'head');
+  const os2 = tableOffset(font, 'OS/2');
+  const unitsPerEm = font.readUInt16BE(head + 18);
+  const ascender = font.readInt16BE(os2 + 68);
+  const descender = font.readInt16BE(os2 + 70);
+  const capHeight = font.readInt16BE(os2 + 88);
+  return ((ascender + descender - capHeight) / 2 / unitsPerEm) * fontSize;
 }
 
 describe('Room list layout contract', () => {
@@ -268,21 +296,47 @@ describe('Room list layout contract', () => {
     expect(source).toContain("display.needsYou ? ', needs you' : ''");
   });
 
-  it('baseline-aligns every corner state word with its chevron on phone and desktop', () => {
-    // The mono state word and proportional chevron have different font metrics.
-    // Center their shared endcap on the row, then align the glyphs by baseline.
-    expect(source).toContain('<View style={styles.cornerEndcap}>');
+  it('centers the corner title, every state word, and chevron on one line', () => {
+    // These are direct children of one centered flex row. No nested endcap gets
+    // centered independently from the title, and no glyph carries a vertical nudge.
+    const phoneRowStart = source.lastIndexOf(
+      '<TouchableOpacity',
+      source.indexOf('testID={`room-corner-${corner.corner.id}`}'),
+    );
+    const phoneRow = source.slice(phoneRowStart, source.indexOf('</TouchableOpacity>', phoneRowStart));
+    expect(phoneRow).not.toContain('cornerEndcap');
+    expect(phoneRow.match(/<Text\b/g)).toHaveLength(3);
     expect(styleBlock(source, 'cornerRow')).toContain("alignItems: 'center'");
-    expect(styleBlock(source, 'cornerEndcap')).toContain("flexDirection: 'row'");
-    expect(styleBlock(source, 'cornerEndcap')).toContain("alignItems: 'baseline'");
 
-    expect(desktopInspectorSource).toContain('<View style={styles.cornerEndcap}>');
-    expect(desktopInspectorSource).toContain('{display.word}');
-    expect(desktopInspectorSource).toContain(
-      "cornerRow: {\n    minHeight: 88,\n    flexDirection: 'row',\n    alignItems: 'center'",
+    const desktopHeadlineStart = desktopInspectorSource.indexOf(
+      '<View style={styles.cornerHeadline}>',
     );
-    expect(desktopInspectorSource).toContain(
-      "cornerEndcap: { flexDirection: 'row', alignItems: 'baseline'",
+    const desktopHeadline = desktopInspectorSource.slice(
+      desktopHeadlineStart,
+      desktopInspectorSource.indexOf('</View>', desktopHeadlineStart),
     );
+    expect(desktopHeadline.match(/<Text\b/g)).toHaveLength(3);
+    expect(desktopHeadline).toContain('{display.word}');
+    expect(styleBlock(desktopInspectorSource, 'cornerHeadline', '  ')).toContain(
+      "alignItems: 'center'",
+    );
+
+    for (const [text, indent, styles] of [
+      [source, '    ', ['cornerName', 'cornerStatus', 'cornerChevron']],
+      [desktopInspectorSource, '  ', ['cornerTitle', 'cornerStatus', 'chevron']],
+    ] as const) {
+      for (const style of styles) {
+        const block = styleBlock(text, style, indent);
+        expect(block, style).toContain('includeFontPadding: false');
+        expect(block, style).not.toMatch(/\b(?:margin|padding|top|bottom|transform):/);
+      }
+    }
+
+    // Both headline faces are Space Grotesk. Read its OpenType cap height and
+    // typographic extents, then compare their rendered cap centers at the role
+    // sizes (meta 13px title, section-head 10px label).
+    const titleCapCenter = capCenterOffset(cornerTitleTypeface, 13);
+    const labelCapCenter = capCenterOffset(cornerLabelTypeface, 10);
+    expect(Math.abs(titleCapCenter - labelCapCenter)).toBeLessThanOrEqual(1);
   });
 });

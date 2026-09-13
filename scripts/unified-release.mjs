@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { runtimeVersionsFromConfig } from '../apps/mobile/scripts/native-fingerprint.mjs';
 
 export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
 export const RELEASE_BUDGET_MINUTES = 20;
@@ -27,6 +28,9 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'apps/mobile/android/', components: ['mobile-native'] },
   { prefix: 'apps/mobile/ios/', components: ['mobile-native'] },
   { prefix: 'apps/mobile/plugins/', components: ['mobile-native'] },
+  { exact: 'apps/mobile/scripts/ota-release.mjs', components: ['mobile-ota'] },
+  { exact: 'apps/mobile/scripts/ota-delivery-index.mjs', components: ['mobile-ota'] },
+  { exact: 'apps/mobile/scripts/ota-canary.sh', components: ['mobile-ota'] },
   { exact: 'apps/mobile/app.config.js', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package-lock.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
@@ -177,7 +181,10 @@ function assertComponent(component) {
 function matchesRule(path, rule) { return rule.exact === path || (rule.prefix && path.startsWith(rule.prefix)); }
 
 function runtimePinChangeMessage(runtimePin, requirement) {
-  return `runtime pin changed ${runtimePin.previous} -> ${runtimePin.next}: ${requirement}`;
+  const changes = runtimePin.changedPlatforms?.map((platform) =>
+    `${platform} ${runtimePin.previous[platform]} -> ${runtimePin.next[platform]}`).join(', ')
+    ?? `${runtimePin.previous} -> ${runtimePin.next}`;
+  return `runtime pin changed ${changes}: ${requirement}`;
 }
 
 export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none', runtimePin } = {}) {
@@ -231,10 +238,11 @@ export function runtimePinChangeFromPublishedInputs(previous, releaseSha, {
 } = {}) {
   validateReleaseIdentity(previous?.version, previous?.sourceSha);
   validateReleaseIdentity(previous.version, releaseSha);
-  const readPin = (sha) => String(JSON.parse(gitShow(sha)).runtimeVersion ?? fail(`missing runtimeVersion at ${sha}`));
+  const readPin = (sha) => runtimeVersionsFromConfig(JSON.parse(gitShow(sha)));
   const previousPin = readPin(previous.sourceSha);
   const nextPin = readPin(releaseSha);
-  return { changed: previousPin !== nextPin, previous: previousPin, next: nextPin };
+  const changedPlatforms = ['android', 'ios'].filter((platform) => previousPin[platform] !== nextPin[platform]);
+  return { changed: changedPlatforms.length > 0, changedPlatforms, previous: previousPin, next: nextPin };
 }
 
 export function changedPathsFromPublishedInputs(previous, releaseSha, {
@@ -317,6 +325,7 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
     state.plan = {
       selected: supplemental,
       carried: RELEASE_COMPONENTS.filter((component) => !supplemental.includes(component)),
+      nativePlatforms: runtimePin?.changed ? (runtimePin.changedPlatforms ?? ['android', 'ios']) : ['android', 'ios'],
       ...(runtimePin ? { runtimePinChanged: runtimePin.changed, previousRuntimeVersion: runtimePin.previous, nextRuntimeVersion: runtimePin.next } : {}),
     };
     state.delivery = { state: 'pending' };
@@ -335,6 +344,7 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
     plan: {
       selected: RELEASE_COMPONENTS.filter((component) => selected.has(component)),
       carried: RELEASE_COMPONENTS.filter((component) => !selected.has(component)),
+      nativePlatforms: runtimePin?.changed ? (runtimePin.changedPlatforms ?? ['android', 'ios']) : ['android', 'ios'],
       ...(runtimePin ? { runtimePinChanged: runtimePin.changed, previousRuntimeVersion: runtimePin.previous, nextRuntimeVersion: runtimePin.next } : {}),
     },
     components, delivery: { state: 'pending' },

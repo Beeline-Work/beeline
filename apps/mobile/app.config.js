@@ -8,6 +8,10 @@ const bundleId = "app.usebeeline.mobile";
 const androidPackage = "app.usebeeline";
 const scheme = "beeline";
 const updatesChannel = process.env.EXPO_UPDATES_CHANNEL || "production";
+const runtimeVersionOverride = process.env.EXPO_RUNTIME_OVERRIDE?.trim();
+if (runtimeVersionOverride && !/^\d+$/.test(runtimeVersionOverride)) {
+    throw new Error('EXPO_RUNTIME_OVERRIDE must be a numeric runtime version');
+}
 const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
 const buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL || 'https://server.usebeeline.app';
 
@@ -54,16 +58,16 @@ export default {
         // installed binary carries whatever stamp it was BUILT with, so a
         // policy that recomputes the stamp per commit silently cuts every
         // already-installed app off from OTA updates (v0.0.42 did exactly
-        // that). Bumping this number is therefore a deliberate act that says
-        // "a new native build is shipping". `scripts/native-fingerprint.mjs`
+        // that). Each platform pins its own runtime below. A bump says
+        // "a new native build is shipping for this platform". `scripts/native-fingerprint.mjs`
         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
         // without bumping it.
-        runtimeVersion: "23",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
+            runtimeVersion: runtimeVersionOverride || "24",
             icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -91,6 +95,7 @@ export default {
             }
         },
         android: {
+            runtimeVersion: runtimeVersionOverride || "23",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -176,7 +181,6 @@ export default {
             ],
             "expo-secure-store",
             "expo-web-browser",
-            require("./plugins/withoutIosPushCapabilities.js"),
             [
                 "expo-notifications",
                 {

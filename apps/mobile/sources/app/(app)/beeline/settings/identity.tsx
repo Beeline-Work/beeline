@@ -6,7 +6,6 @@ import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import * as Updates from 'expo-updates';
-import * as Notifications from 'expo-notifications';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -472,9 +471,10 @@ export default function BuzzIdentitySettings() {
         });
         setPushLevel(updated.pushLevel);
         await saveStoredPushLevel(profileIdentity.publicKey, updated.pushLevel);
-        if (updated.pushLevel === 'off')
-          await reconcilePresentedNotificationBadge(Notifications, Platform.OS, 'off');
-        else if (!pushOn) {
+        if (updated.pushLevel === 'off') {
+          const notifications = await import('expo-notifications');
+          await reconcilePresentedNotificationBadge(notifications, Platform.OS, 'off');
+        } else if (!pushOn) {
           const result = await setBuzzPushEnabled(profileIdentity, true);
           await applyPushResult(profileIdentity, result, pushRegistration);
         }

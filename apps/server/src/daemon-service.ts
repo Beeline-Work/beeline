@@ -1277,18 +1277,18 @@ export class DaemonService {
       input.text.length > 16000
     )
       throw new Error('invalid relay');
+    if (relay.direction === 'up') throw new Error('relay up is retired');
     const command = this.authorizedCommand;
     if (!this.commandTransaction || !command) throw new Error('relay requires an active command');
-    const cornerId = relay.direction === 'down' ? relay.toRoomId : relay.fromRoomId;
-    const roomId = relay.direction === 'down' ? relay.fromRoomId : relay.toRoomId;
+    const cornerId = relay.toRoomId;
+    const roomId = relay.fromRoomId;
     // Lock both current memberships and rooms against removal/closure for the whole write.
     const pair = (
       await this.database.query<{
-        corner_name: string;
         room_name: string;
         owner_agent_id: string;
       }>(
-        `SELECT corner.name corner_name,parent.name room_name,f.owner_agent_id
+        `SELECT parent.name room_name,f.owner_agent_id
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN corner_facts f ON f.corner_id=corner.id
        JOIN memberships cm ON cm.room_id=corner.id AND cm.identity_id=$3 AND cm.removed_at IS NULL
@@ -1300,19 +1300,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!pair) throw new Error('relay requires current Room and corner membership');
-    const anchor =
-      relay.direction === 'up'
-        ? (
-            await this.database.query<{ id: string }>(
-              `SELECT id FROM messages WHERE room_id=$1 AND
-       card_type='daemon-fact' AND card->>'cornerId'=$2
-       AND card->>'type' IN ('corner-open','corner-complete')
-       ORDER BY created_at DESC,id DESC LIMIT 1`,
-              [roomId, cornerId],
-            )
-          ).rows[0]?.id
-        : undefined;
-    const target = relay.direction === 'down' ? pair.owner_agent_id : agentId;
+    const target = pair.owner_agent_id;
     const received = Boolean(
       (
         await this.database.query(
@@ -1326,16 +1314,15 @@ export class DaemonService {
       fromRoomId: relay.fromRoomId,
       toRoomId: relay.toRoomId,
       direction: relay.direction,
-      fromName: relay.direction === 'down' ? pair.room_name : pair.corner_name,
+      fromName: pair.room_name,
       cornerId,
-      ...(anchor ? { anchorMessageId: anchor } : {}),
       received,
     };
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,reply_to_message_id,root_message_id)
        VALUES($1,$2,$3,$4,'card','relay',$5::jsonb,$6,$6) RETURNING id,created_at`,
-        [id(), relay.toRoomId, agentId, input.text.trim(), JSON.stringify(card), anchor ?? null],
+        [id(), relay.toRoomId, agentId, input.text.trim(), JSON.stringify(card), null],
       )
     ).rows[0]!;
     const queued = await createAgentCommand(this.database, {
@@ -1343,7 +1330,7 @@ export class DaemonService {
       agentId: target,
       sourceMessageId: saved.id,
       parent: command,
-      reason: relay.direction === 'down' ? 'relay_steer' : 'relay_report',
+      reason: 'relay_steer',
     });
     if (!queued) throw new Error('relay target unavailable or delegation limit reached');
     this.live.publish({ type: 'invalidate', roomId: relay.toRoomId, reason: 'message', agentId });

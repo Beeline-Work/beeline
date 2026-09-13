@@ -3,7 +3,7 @@
 Captured in Chrome at **390 × 844**, using the production `RelayHandOff`, `DaemonFactCard`, and `HullSurface` declarations and styles. The preview extracts those declarations verbatim to avoid initializing unrelated native modules; its outer header is a component harness. Fonts and colors come from the mobile app. These are browser component captures backed by real `DaemonService` writes and `PhoneService` projections in isolated PGLite.
 
 - [Collapsed steer](steer-collapsed.png) and [expanded steer](steer-expanded.png): Sol relays to Sol's active corner; the line has a source caption and received mark, with no speaker bubble.
-- [Report in the Room](report-in-room.png): the up-relay appears beneath its corner card.
+- [Historical report in the Room](report-in-room.png): a stored up-relay still renders beneath its corner card. Creating a new up-relay is retired.
 - [Corner transcript](corner-transcript.png) and [queued command](queued-steer.json): the visible received steer is also a pending `relay_steer` input for Sol. The JSON is returned by `getAgentCommands` after the real relay write. The intake test proves busy turns leave this input unclaimed until the next boundary.
 
 Browser checks verified more/less in place and no toggle at 1280px when the report fits within two lines. Native line-layout behavior and short-text toggles are covered by the mobile component tests.
@@ -24,7 +24,7 @@ Open `http://127.0.0.1:4187` for the corner or `http://127.0.0.1:4187/?room` for
 
 ## Validation
 
-`npm run typecheck` passes. Focused tests cover membership and active-command authority, both relay directions, same-agent delivery, queued intake, root-human stop authority, current-corner prompt context, card anchoring, unread boundaries, and collapse/expand.
+`npm run typecheck` passes. Focused tests cover membership and active-command authority, downward steering, refusal of new up-relays, same-agent delivery, queued intake, root-human stop authority, current-corner prompt context, historical card rendering, unread boundaries, and collapse/expand.
 
 The existing `phone-service.read-room-latency` concurrency-four gate exceeds its 250ms ceiling on both trees: **266ms on this branch**, **281ms on clean origin/main (`6d77cc6f`)**. Both have six passing cases and that one timing failure. The root-requester projection uses the existing `agent_commands_turn` index inside the existing read statement; it adds no Room-read round trip. Per the approved baseline comparison, this timing failure is recorded rather than chased.
 

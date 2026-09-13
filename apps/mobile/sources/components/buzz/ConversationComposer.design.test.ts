@@ -25,6 +25,12 @@ describe('Option A composer chrome', () => {
     expect(surface).toContain('backgroundColor: theme.buzz.bgRaised');
   });
 
+  it('centers Android text within the fixed-height input without trimming font bounds', () => {
+    expect(composer).toContain("inputAndroid: { textAlignVertical: 'center' }");
+    expect(composer).not.toContain('includeFontPadding: false');
+    expect(composer).toContain("textAlignVertical: 'top'");
+  });
+
   it('keeps reply quotes and staged files inside the one composer hairline', () => {
     expect(composer).toContain('testID={`${testIDPrefix}-composer-adjuncts`}');
     expect(composer).toContain('testID="reply-composer-banner"');

@@ -4,6 +4,7 @@ import * as React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -47,7 +48,10 @@ import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecyc
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
-import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
+import {
+  clearLegacyPresentedNotificationsOnce,
+  reconcilePresentedNotificationBadge,
+} from '@/push/presented-notifications';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
@@ -215,6 +219,11 @@ export default function RootLayout() {
         console.log('Failed to reconcile the presented notification badge:', error);
       });
     };
+    void clearLegacyPresentedNotificationsOnce(Notifications, Platform.OS, AsyncStorage).catch(
+      (error) => {
+        console.log('Failed to clear legacy presented notifications:', error);
+      },
+    );
     reconcileBadge();
     const subscription = AppState.addEventListener('change', reconcileBadge);
     return () => subscription.remove();
@@ -344,9 +353,7 @@ export default function RootLayout() {
       <KeyboardProvider preload={false}>
         <GestureHandlerRootView
           style={
-            isDesktop
-              ? { flex: 1 }
-              : { flex: 1, backgroundColor: theme.colors.groupped.background }
+            isDesktop ? { flex: 1 } : { flex: 1, backgroundColor: theme.colors.groupped.background }
           }
         >
           <UpdateProvider>

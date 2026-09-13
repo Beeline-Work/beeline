@@ -7,7 +7,53 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
-import { Pool, type PoolClient, type QueryResultRow } from 'pg';
+import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
+
+export const APP_STATEMENT_TIMEOUT_MS = 5_000;
+export const APP_POOL_WAIT_TIMEOUT_MS = 2_000;
+export const ENRICHMENT_STATEMENT_TIMEOUT_MS = 750;
+export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
+export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
+export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
+export const APP_DATABASE_NAME = 'beeline_app';
+export const ENRICHMENT_DATABASE_NAME = 'beeline_enrichment';
+export const LONG_RUNNING_DATABASE_NAME = 'beeline_long_running';
+export const DIAGNOSTICS_DATABASE_NAME = 'beeline_diagnostics';
+
+export function postgresPoolConfig(
+  connectionString: string,
+  maximumConnections: number,
+  mode: 'app' | 'enrichment' | 'long-running' | 'diagnostics' = 'app',
+): PoolConfig {
+  return {
+    connectionString,
+    max: maximumConnections,
+    application_name:
+      mode === 'enrichment'
+        ? ENRICHMENT_DATABASE_NAME
+        : mode === 'long-running'
+          ? LONG_RUNNING_DATABASE_NAME
+          : mode === 'diagnostics'
+            ? DIAGNOSTICS_DATABASE_NAME
+            : APP_DATABASE_NAME,
+    ...(mode === 'app'
+      ? {
+          statement_timeout: APP_STATEMENT_TIMEOUT_MS,
+          connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
+        }
+      : mode === 'enrichment'
+        ? {
+            statement_timeout: ENRICHMENT_STATEMENT_TIMEOUT_MS,
+            connectionTimeoutMillis: ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
+          }
+        : mode === 'diagnostics'
+          ? {
+              statement_timeout: HEALTH_STATEMENT_TIMEOUT_MS,
+              connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
+            }
+          : {}),
+  };
+}
 
 const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000']);
 const TRANSIENT_CONNECTION_MESSAGE =
@@ -44,6 +90,7 @@ export interface SqlDatabase {
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
   poolCounts?(): { total: number; idle: number; waiting: number };
+  oldestActiveQueryAgeMs?(applicationNames?: readonly string[]): Promise<number | null>;
 }
 
 export interface ClosableDatabase extends SqlDatabase {
@@ -61,9 +108,13 @@ export class PostgresDatabase implements ClosableDatabase {
   constructor(
     connectionString: string,
     maximumConnections = 5,
-    options: PostgresDatabaseOptions = {},
+    options: PostgresDatabaseOptions & {
+      mode?: 'app' | 'enrichment' | 'long-running' | 'diagnostics';
+    } = {},
   ) {
-    this.#pool = options.pool ?? new Pool({ connectionString, max: maximumConnections });
+    this.#pool =
+      options.pool ??
+      new Pool(postgresPoolConfig(connectionString, maximumConnections, options.mode));
     this.#pause = options.pause ?? pause;
     this.#pool.on('error', (error) => {
       console.error('postgres idle client error', error);
@@ -76,6 +127,18 @@ export class PostgresDatabase implements ClosableDatabase {
       idle: this.#pool.idleCount,
       waiting: this.#pool.waitingCount,
     };
+  }
+
+  async oldestActiveQueryAgeMs(
+    applicationNames: readonly string[] = [APP_DATABASE_NAME, ENRICHMENT_DATABASE_NAME],
+  ): Promise<number | null> {
+    const result = await this.query<{ age_ms: number | null }>(
+      `SELECT max(extract(epoch FROM (clock_timestamp()-query_start))*1000)::float8 age_ms
+       FROM pg_stat_activity
+       WHERE pid<>pg_backend_pid() AND state='active' AND application_name=ANY($1::text[])`,
+      [applicationNames],
+    );
+    return result.rows[0]?.age_ms ?? null;
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(

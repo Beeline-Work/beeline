@@ -29,6 +29,10 @@ const unifiedWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/unified-release.yml'),
   'utf8',
 );
+const serverReleaseSmoke = readFileSync(
+  resolve(mobileRoot, '../../scripts/server-release-smoke.mjs'),
+  'utf8',
+);
 const daemonWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/actions/daemon-leg/action.yml'),
   'utf8',
@@ -2140,8 +2144,14 @@ esac
     expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
     expect(serverWorkflow).toContain('--build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA"');
     expect(unifiedWorkflow).toContain('Bounded exact server smoke check');
-    expect(unifiedWorkflow).toContain('https://server.usebeeline.app/readyz');
-    expect(unifiedWorkflow).toContain('https://server.usebeeline.app/version');
+    expect(unifiedWorkflow).toContain('run: node scripts/server-release-smoke.mjs');
+    expect(serverReleaseSmoke).toContain('SERVER_BOOT_BUDGET_MS = 8 * 60_000');
+    expect(serverReleaseSmoke).toContain('ROOM_READ_BUDGET_MS = 2_000');
+    expect(serverReleaseSmoke).toContain('fetchImpl(`${origin}/health`');
+    expect(serverReleaseSmoke).toContain('/v1/auth/review/exchange');
+    expect(serverReleaseSmoke).toContain('authorization: `Bearer ${session.accessToken}`');
+    expect(serverReleaseSmoke).toContain('fetchImpl(`${origin}/v1/phone/rooms/${roomId}`');
+    expect(serverReleaseSmoke).toContain('signal: AbortSignal.timeout(roomReadBudgetMs)');
   });
 
   it('the canary script owns the parked-reason contract for every preflight stage', () => {

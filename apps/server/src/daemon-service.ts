@@ -2739,6 +2739,21 @@ export class DaemonService {
         cornerId = existing.corner_id;
         return;
       }
+      const parentCommand = await authorizeCommandOutput(
+        db,
+        input.roomId,
+        agentId,
+        input.requestId,
+        input.generationId,
+      );
+      const commissionedBy = (
+        await db.query<{ author_id: string }>(
+          `SELECT message.author_id FROM messages message
+           JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
+           WHERE message.id=$1`,
+          [parentCommand.root_source_message_id],
+        )
+      ).rows[0]?.author_id;
       await db.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,repository_key,repository_target_branch) VALUES($1,$2,$3,$4,$5,$6,$7)`,
         [
@@ -2764,15 +2779,9 @@ export class DaemonService {
         [parent.workspace_id, cornerId, agentId],
       );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,request_id,lifecycle) VALUES($1,$2,$3,$4,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, agentId, objective, input.requestId],
-      );
-      const parentCommand = await authorizeCommandOutput(
-        db,
-        input.roomId,
-        agentId,
-        input.requestId,
-        input.generationId,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,lifecycle)
+         VALUES($1,$2,$3,$4,$5,'{"lifecycle":"working","checks":"unknown"}')`,
+        [cornerId, agentId, commissionedBy ?? null, objective, input.requestId],
       );
       await createAgentCommand(db, {
         roomId: cornerId,

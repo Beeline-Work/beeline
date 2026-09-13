@@ -1,5 +1,6 @@
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { AgentAccessPolicy } from './agent-access.js';
+import type { PushLevel } from './push-level.js';
 import type {
   AgentModelSelection,
   AgentPairingClaimView,
@@ -46,6 +47,7 @@ export type PhoneOperationMap = {
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };
+  updateIdentityPushLevel: { input: UpdateIdentityPushLevelInput; output: ManagedIdentityResult };
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
   setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
@@ -222,6 +224,7 @@ export type UpdatePersonProfileInput = {
 };
 /** One of `FACE_IDS`, or `null` to clear the chosen face. */
 export type UpdateIdentityFaceInput = { readonly faceId: string | null };
+export type UpdateIdentityPushLevelInput = { readonly pushLevel: PushLevel };
 export type PersonProfileResult = {
   readonly personId: string;
   readonly name: string;
@@ -274,6 +277,7 @@ export type ManagedIdentityResult = {
   readonly handle?: string;
   readonly avatar?: string;
   readonly face?: string;
+  readonly pushLevel: PushLevel;
 };
 export type ClaimManagedHandleInput = { readonly handle: string };
 export type RefreshInput = { readonly refresh?: boolean };

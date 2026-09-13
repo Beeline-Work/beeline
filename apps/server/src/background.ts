@@ -112,6 +112,13 @@ export class PushDeliveryLoop {
           AND workspace_member.removed_at IS NULL
         JOIN identities author ON author.id=m.author_id
         JOIN identities recipient ON recipient.id=member.identity_id AND recipient.kind='human'
+        LEFT JOIN corner_facts event_corner ON event_corner.corner_id::text=CASE
+          WHEN m.card_type='daemon-fact'
+            AND m.card->>'type' IN ('corner-open','corner-complete')
+            THEN m.card->>'cornerId'
+          WHEN room.parent_id IS NOT NULL THEN room.id::text
+          ELSE NULL
+        END
         WHERE m.presentation IS DISTINCT FROM 'activity'
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
           AND m.card_type IS DISTINCT FROM 'turn-failed'
@@ -123,13 +130,51 @@ export class PushDeliveryLoop {
             OR workspace_member.identity_id IS NOT NULL
           )
           AND (
-            ${tagsIdentitySql('m', 'member.identity_id')}
-            OR room.direct_participants IS NOT NULL
-            OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
-            -- A grant request names its owner in the card, not in its sentence:
-            -- the line is phrased about the agent, and the person who must answer
-            -- it is the only one it is for.
-            OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=member.identity_id)
+            recipient.push_level<>'off'
+            AND (
+              -- Direct attention is eligible at every level except off.
+              ${tagsIdentitySql('m', 'member.identity_id')}
+              OR room.direct_participants IS NOT NULL
+              OR EXISTS (
+                SELECT 1 FROM messages addressed
+                WHERE addressed.id IN (m.reply_to_message_id,m.request_id)
+                  AND addressed.author_id=member.identity_id
+              )
+              OR (
+                m.card_type='permission'
+                AND COALESCE(m.card->>'status','pending')='pending'
+                AND (
+                  m.card->'requester'->>'pubkey'=member.identity_id
+                  OR member.role IN ('owner','admin')
+                )
+              )
+              -- A grant request names its owner in the card, not in its sentence.
+              OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=member.identity_id)
+              OR (m.card_type='target-branch' AND member.role IN ('owner','admin'))
+              OR (
+                -- Corner lifecycle widens to all corners for all, and only the
+                -- recorded commissioner's corners for the default mine level.
+                (
+                  (m.card_type='daemon-fact'
+                    AND m.card->>'type' IN ('corner-open','corner-complete'))
+                  OR (
+                    room.parent_id IS NOT NULL
+                    AND m.card_type='github-corner-note'
+                    AND (
+                      m.system_event->>'verb'='opened a pull request'
+                      OR m.system_event->>'kind'='check-failed'
+                    )
+                  )
+                )
+                AND (
+                  recipient.push_level='all'
+                  OR (
+                    recipient.push_level='mine'
+                    AND event_corner.commissioned_by=member.identity_id
+                  )
+                )
+              )
+            )
           )
           AND (
             btrim(m.text)<>''
@@ -145,6 +190,8 @@ export class PushDeliveryLoop {
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
+        JOIN identities recipient ON recipient.id=push_device.identity_id
+          AND recipient.kind='human' AND recipient.push_level<>'off'
         JOIN memberships workspace_member ON workspace_member.workspace_id=notification.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=push_device.identity_id
           AND workspace_member.removed_at IS NULL
@@ -191,6 +238,7 @@ export class PushDeliveryLoop {
                 `INSERT INTO push_delivery_claims(message_id,device_token,status)
                  SELECT $1,$2,'claimed'
                  WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
+                   AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
                    AND (
                      ($6='workspace-join' AND EXISTS (
                        SELECT 1 FROM memberships

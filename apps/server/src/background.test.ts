@@ -290,7 +290,9 @@ describe('background advisory-lock ownership', () => {
       expect(await loop.runOnce()).toBe(0);
       expect(send).not.toHaveBeenCalled();
       // The registration survives: an APNs token is not FCM's to reject.
-      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [apns])).rowCount).toBe(1);
+      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [apns])).rowCount).toBe(
+        1,
+      );
     } finally {
       await db.close();
     }
@@ -309,6 +311,7 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
         [human, otherHuman, agent],
       );
+      await db.query(`UPDATE identities SET push_level='all' WHERE kind='human'`);
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
       await db.query(
         `INSERT INTO rooms(id,workspace_id,name,direct_participants)
@@ -432,6 +435,174 @@ describe('background advisory-lock ownership', () => {
           channelId: corner,
           cornerId: corner,
         }),
+      );
+    } finally {
+      await db.close();
+    }
+  });
+  it("does not deliver another person's corner event to a default mine member", async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        corner = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
+        [human, other, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
+         ($1,$3,'Room',NULL),($2,$3,'Corner',$1)`,
+        [room, corner, workspace],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
+        [workspace, room, human, other, agent],
+      );
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective)
+         VALUES($1,$2,$3,'Other work')`,
+        [corner, agent, other],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES($1,$2,$3,'@bee opened a corner Other work','card','daemon-fact',$4::jsonb)`,
+        [
+          '1'.repeat(64),
+          room,
+          agent,
+          JSON.stringify({ type: 'corner-open', cornerId: corner, objective: 'Other work' }),
+        ],
+      );
+
+      expect(await loop.runOnce()).toBe(0);
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      await db.close();
+    }
+  });
+  it.each([
+    ['off', []],
+    ['direct', ['dm', 'mention', 'reply', 'implicit', 'ask']],
+    ['mine', ['dm', 'mention', 'reply', 'implicit', 'ask', 'my-corner']],
+    ['all', ['dm', 'mention', 'reply', 'implicit', 'ask', 'my-corner', 'other-corner']],
+  ] as const)('selects the push candidate matrix for %s', async (level, expected) => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        directRoom = '33333333-3333-4333-8333-333333333333',
+        mineCorner = '44444444-4444-4444-8444-444444444444',
+        otherCorner = '55555555-5555-4555-8555-555555555555';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
+         ($1,'human','Owner','owner',$4),($2,'human','Other','other','mine'),
+         ($3,'agent','Bee','bee','mine')`,
+        [human, other, agent, level],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id,direct_participants) VALUES
+         ($1,$4,'Room',NULL,NULL),($2,$4,'Direct',NULL,$5::jsonb),
+         ($3,$4,'Mine',$1,NULL),($6,$4,'Other',$1,NULL)`,
+        [
+          room,
+          directRoom,
+          mineCorner,
+          workspace,
+          JSON.stringify([human, agent].sort()),
+          otherCorner,
+        ],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
+         ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
+        [workspace, room, human, other, agent, directRoom],
+      );
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES
+         ($1,$3,$4,'Mine'),($2,$3,$5,'Other')`,
+        [mineCorner, otherCorner, agent, human, other],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+
+      const authored = '0'.repeat(64);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'My prior turn')`,
+        [authored, room, human],
+      );
+      const cases = {
+        mention: '1'.repeat(64),
+        reply: '2'.repeat(64),
+        implicit: '3'.repeat(64),
+        ask: '4'.repeat(64),
+        'my-corner': '5'.repeat(64),
+        'other-corner': '6'.repeat(64),
+        plain: '7'.repeat(64),
+        dm: '8'.repeat(64),
+      } as const;
+      await db.query(
+        `INSERT INTO messages
+           (id,room_id,author_id,text,presentation,reply_to_message_id,request_id,card_type,card)
+         VALUES
+           ($1,$9,$10,'@owner mention','message',NULL,NULL,NULL,NULL),
+           ($2,$9,$10,'Reply','message',$11,NULL,NULL,NULL),
+           ($3,$9,$10,'Implicit','message',NULL,$11,NULL,NULL),
+           ($4,$9,$10,'Bee asks Owner','card',NULL,NULL,'permission',$12::jsonb),
+           ($5,$9,$10,'Mine opened','card',NULL,NULL,'daemon-fact',$13::jsonb),
+           ($6,$9,$10,'Other opened','card',NULL,NULL,'daemon-fact',$14::jsonb),
+           ($7,$9,$10,'Plain agent message','message',NULL,NULL,NULL,NULL),
+           ($8,$15,$10,'Direct message','message',NULL,NULL,NULL,NULL)`,
+        [
+          cases.mention,
+          cases.reply,
+          cases.implicit,
+          cases.ask,
+          cases['my-corner'],
+          cases['other-corner'],
+          cases.plain,
+          cases.dm,
+          room,
+          agent,
+          authored,
+          JSON.stringify({ status: 'pending', requester: { pubkey: human } }),
+          JSON.stringify({ type: 'corner-open', cornerId: mineCorner }),
+          JSON.stringify({ type: 'corner-open', cornerId: otherCorner }),
+          directRoom,
+        ],
+      );
+
+      await loop.runOnce();
+      const byId = new Map(Object.entries(cases).map(([name, id]) => [id, name]));
+      expect(send.mock.calls.map(([, message]) => byId.get(message.messageId)).sort()).toEqual(
+        [...expected].sort(),
       );
     } finally {
       await db.close();

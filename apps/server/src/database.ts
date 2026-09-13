@@ -240,12 +240,19 @@ CREATE TABLE IF NOT EXISTS identities (
   handle text,
   avatar text,
   hidden_from_roster boolean NOT NULL DEFAULT false,
+  push_level text NOT NULL DEFAULT 'mine' CHECK(push_level IN ('off','direct','mine','all')),
   github_subject text UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'mine';
+DO $$ BEGIN
+  ALTER TABLE identities ADD CONSTRAINT identities_push_level_check
+    CHECK(push_level IN ('off','direct','mine','all'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS identity_external_links (
   provider text NOT NULL,
@@ -635,6 +642,7 @@ CREATE TABLE IF NOT EXISTS agent_mandates (
 CREATE TABLE IF NOT EXISTS corner_facts (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   owner_agent_id text REFERENCES identities(id),
+  commissioned_by text REFERENCES identities(id),
   objective text NOT NULL DEFAULT '',
   lifecycle jsonb NOT NULL DEFAULT '{"lifecycle":"unknown","checks":"unknown"}'::jsonb,
   plan jsonb,
@@ -644,7 +652,9 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
+CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 
 CREATE TABLE IF NOT EXISTS corner_check_facts (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

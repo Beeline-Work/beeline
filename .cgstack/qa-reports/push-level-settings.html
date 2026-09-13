@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Beeline push notification setting review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background:#0b0e0c; color:#f1efe7 }
+      * { box-sizing:border-box }
+      body { margin:0; min-height:100vh; background:radial-gradient(circle at 60% 0,#20251d 0,#0b0e0c 48%); display:flex; justify-content:center }
+      main { width:min(720px,100%); min-height:100vh; border-inline:1px solid #292e28; background:rgba(12,15,13,.92) }
+      header { height:66px; display:flex; align-items:center; gap:18px; padding:0 20px; border-bottom:1px solid #2b302a; background:#111512 }
+      .back { color:#d7af5f; font:30px Georgia }
+      h1 { margin:0; font:600 20px Georgia,serif }
+      section { margin-top:26px }
+      .section-label { margin:0 18px 8px; color:#8d958a; font:700 11px ui-monospace; letter-spacing:.13em; text-transform:uppercase }
+      .row { width:100%; min-height:60px; padding:0 18px; border:0; border-block:1px solid #292e28; background:#111512; color:inherit; display:flex; align-items:center; gap:12px; text-align:left }
+      .title { flex:1; font-size:16px }
+      .value { color:#b9bdb5; font:13px ui-monospace }
+      .chev { color:#d7af5f; font-size:22px }
+      dialog { width:min(620px,calc(100% - 24px)); padding:0; border:1px solid #454b42; border-radius:14px 14px 0 0; background:#151a16; color:inherit; position:fixed; inset:auto 0 0; margin:auto; box-shadow:0 -18px 70px #000a }
+      dialog::backdrop { background:#050706aa }
+      .sheet-head { padding:20px 18px 13px; border-bottom:1px solid #30362f }
+      h2 { margin:0; font:600 19px Georgia,serif }
+      .choice { width:100%; min-height:58px; padding:12px 18px; border:0; border-bottom:1px solid #2d332c; background:transparent; color:inherit; display:flex; align-items:center; text-align:left; font-size:15px }
+      .choice span { flex:1 }
+      .check { color:#d7af5f; font:bold 16px ui-monospace }
+      .close { width:calc(100% - 24px); margin:12px; min-height:48px; border:1px solid #4a5147; border-radius:8px; background:#20251f; color:#e8e5dc; font-weight:650 }
+      @media (min-width:900px) { main { margin-left:260px; box-shadow:-260px 0 #0e120f } section { margin-top:38px } dialog { border-radius:14px; inset:50% auto auto 50%; transform:translate(-35%,-50%) } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><span class="back">‹</span><h1>Settings</h1></header>
+      <section>
+        <p class="section-label">Notifications</p>
+        <button class="row" id="push-row" aria-label="Push notifications. Direct messages, mentions, and my corners">
+          <span class="title">Push notifications</span><span class="value">My corners</span><span class="chev">›</span>
+        </button>
+      </section>
+    </main>
+    <dialog id="picker" open>
+      <div class="sheet-head"><h2>Push notifications</h2></div>
+      <button class="choice"><span>Off</span></button>
+      <button class="choice"><span>Direct messages and mentions</span></button>
+      <button class="choice"><span>Direct messages, mentions, and my corners</span><b class="check">✓</b></button>
+      <button class="choice"><span>Everything</span></button>
+      <button class="close">Close</button>
+    </dialog>
+  </body>
+</html>

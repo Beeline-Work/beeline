@@ -219,10 +219,28 @@ describe('presented notification dismissal', () => {
     expect(setBadgeCountAsync).not.toHaveBeenCalled();
   });
 
+  it('forces the badge to zero on every platform when push is off', async () => {
+    const getPresentedNotificationsAsync = vi.fn(() => Promise.resolve([]));
+    const setBadgeCountAsync = vi.fn(() => Promise.resolve(true));
+    await reconcilePresentedNotificationBadge(
+      {
+        getPresentedNotificationsAsync,
+        dismissNotificationAsync: vi.fn(() => Promise.resolve()),
+        setBadgeCountAsync,
+      },
+      'android',
+      'off',
+    );
+    expect(setBadgeCountAsync).toHaveBeenCalledWith(0);
+    expect(getPresentedNotificationsAsync).not.toHaveBeenCalled();
+  });
+
   it('runs badge reconciliation at launch and on app foreground', () => {
     expect(appLayoutSource).toContain('clearLegacyPresentedNotificationsOnce(');
     expect(appLayoutSource).toContain('reconcileBadge();');
     expect(appLayoutSource).toContain("AppState.addEventListener('change', reconcileBadge)");
+    expect(appLayoutSource).toContain('loadStoredPushLevel(identity.publicKey)');
+    expect(appLayoutSource).toContain("pushLevel !== 'off' && getOpenBuzzChannelId()");
   });
 });
 

@@ -47,6 +47,7 @@ import {
   MESSAGE_REACTION_EMOJIS,
   resolveFace,
   type PhoneOperationMap,
+  isPushLevel,
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
@@ -2398,6 +2399,11 @@ export class PhoneService {
       case 'updateIdentityFace':
         await this.updateFace(input as Input<'updateIdentityFace'>, viewerId);
         return undefined as Output<Name>;
+      case 'updateIdentityPushLevel':
+        return (await this.updatePushLevel(
+          input as Input<'updateIdentityPushLevel'>,
+          viewerId,
+        )) as Output<Name>;
       case 'setRoomRepository':
         return (await this.setRepository(
           input as Input<'setRoomRepository'>,
@@ -4640,6 +4646,15 @@ export class PhoneService {
     );
     if (!updated.rowCount) throw new Error('identity not found');
   }
+  private async updatePushLevel(input: Input<'updateIdentityPushLevel'>, viewerId: string) {
+    if (!isPushLevel(input.pushLevel)) throw new Error('invalid push level');
+    const updated = await this.database.query(
+      `UPDATE identities SET push_level=$2,updated_at=now() WHERE id=$1 AND kind='human'`,
+      [viewerId, input.pushLevel],
+    );
+    if (!updated.rowCount) throw new Error('identity not found');
+    return this.managedIdentity(viewerId);
+  }
   private async setRepository(input: Input<'setRoomRepository'>, viewerId: string) {
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     if (input.githubInstallationId !== undefined) {
@@ -4708,12 +4723,19 @@ export class PhoneService {
   }
   private async managedIdentity(viewerId: string) {
     const id = await this.requireIdentity(viewerId);
+    const pushLevel = (
+      await this.database.query<{ push_level: import('@beeline/api-contract/phone').PushLevel }>(
+        `SELECT push_level FROM identities WHERE id=$1`,
+        [viewerId],
+      )
+    ).rows[0]?.push_level;
     return {
       personId: id.pubkey,
       name: id.name,
       ...(id.handle ? { handle: id.handle } : {}),
       ...(id.avatar ? { avatar: id.avatar } : {}),
       ...(id.face ? { face: id.face } : {}),
+      pushLevel: pushLevel ?? 'mine',
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
@@ -5374,6 +5396,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'removeAgent',
   'updatePersonProfile',
   'updateIdentityFace',
+  'updateIdentityPushLevel',
   'setRoomRepository',
   'setRoomTargetBranch',
   'setRoomGitHubEvents',

@@ -52,6 +52,8 @@ import {
   clearLegacyPresentedNotificationsOnce,
   reconcilePresentedNotificationBadge,
 } from '@/push/presented-notifications';
+import { loadStoredPushLevel, saveStoredPushLevel } from '@/push/push-level-storage';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
@@ -214,8 +216,20 @@ export default function RootLayout() {
   const isDesktop = useIsDesktop();
   React.useEffect(() => {
     const reconcileBadge = () => {
-      if (AppState.currentState !== 'active' || getOpenBuzzChannelId()) return;
-      void reconcilePresentedNotificationBadge(Notifications, Platform.OS).catch((error) => {
+      if (AppState.currentState !== 'active') return;
+      void (async () => {
+        const identity = await loadBuzzIdentity();
+        let pushLevel = identity ? await loadStoredPushLevel(identity.publicKey) : 'mine';
+        if (identity) {
+          const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
+          if (managed) {
+            pushLevel = managed.pushLevel;
+            await saveStoredPushLevel(identity.publicKey, pushLevel);
+          }
+        }
+        if (pushLevel !== 'off' && getOpenBuzzChannelId()) return;
+        await reconcilePresentedNotificationBadge(Notifications, Platform.OS, pushLevel);
+      })().catch((error) => {
         console.log('Failed to reconcile the presented notification badge:', error);
       });
     };

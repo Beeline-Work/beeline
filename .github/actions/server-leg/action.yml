@@ -116,9 +116,54 @@ runs:
     - name: Run schema migrations and backfills once before Machine updates
       if: inputs.phase == 'promote'
       shell: bash
+      env:
+        # `flyctl mpg status --json` does not expose the cluster's private address.
+        SERVER_DB_DIRECT_IP: fdaa:67:2f3e:0:1::11
       run: |
         set -euo pipefail
         test -n "${MIGRATION_DATABASE_URL:-}" || { echo 'MIGRATION_DATABASE_URL is required' >&2; exit 1; }
+
+        flyctl proxy "15432:5432" "$SERVER_DB_DIRECT_IP" -a beeline-server &
+        proxy_pid=$!
+        trap 'kill "$proxy_pid" 2>/dev/null || true; wait "$proxy_pid" 2>/dev/null || true' EXIT
+
+        proxy_ready=false
+        for _ in $(seq 1 30); do
+          if (: > /dev/tcp/127.0.0.1/15432) 2>/dev/null; then
+            proxy_ready=true
+            break
+          fi
+          sleep 1
+        done
+        if [ "$proxy_ready" != true ]; then
+          echo 'database proxy did not open within 30s' >&2
+          exit 1
+        fi
+
+        node <<'NODE'
+        const { Client } = require('pg');
+
+        const client = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
+        (async () => {
+          try {
+            await client.connect();
+            const result = await client.query(
+              "SELECT current_database() AS database, to_regclass('public.messages') IS NOT NULL AS has_messages",
+            );
+            const { database, has_messages: hasMessages } = result.rows[0] ?? {};
+            if (database !== 'fly-db' || hasMessages !== true) {
+              console.error(`MIGRATION_DATABASE_URL does not point at the production database (${database ?? 'unknown'})`);
+              process.exitCode = 1;
+            }
+          } catch (error) {
+            console.error(`database target guard failed: ${error.message}`);
+            process.exitCode = 1;
+          } finally {
+            await client.end().catch(() => {});
+          }
+        })();
+        NODE
+
         npm run migrate -w @beeline/server
 
     - name: Canary one Machine, observe for five minutes, then update its peer

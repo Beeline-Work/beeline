@@ -678,8 +678,19 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'push-gateway', 'server']) {
     assert.match(prepareMigration, new RegExp(`npm run build -w @beeline/${workspace}`));
   }
-  const migrate = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates').run;
+  const migrationStep = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates');
+  const migrate = migrationStep.run;
+  assert.equal(migrationStep.env.SERVER_DB_DIRECT_IP, 'fdaa:67:2f3e:0:1::11');
   assert.match(migrate, /MIGRATION_DATABASE_URL is required/);
+  assert.match(migrate, /flyctl proxy "15432:5432" "\$SERVER_DB_DIRECT_IP" -a beeline-server/);
+  assert.match(migrate, /trap 'kill "\$proxy_pid".*wait "\$proxy_pid"/);
+  assert.match(migrate, /\/dev\/tcp\/127\.0\.0\.1\/15432/);
+  assert.match(migrate, /database proxy did not open within 30s/);
+  assert.match(migrate, /current_database\(\) AS database/);
+  assert.match(migrate, /to_regclass\('public\.messages'\) IS NOT NULL AS has_messages/);
+  assert.match(migrate, /database !== 'fly-db' \|\| hasMessages !== true/);
+  assert.match(migrate, /MIGRATION_DATABASE_URL does not point at the production database/);
+  assert.ok(migrate.indexOf('database !== \'fly-db\'') < migrate.indexOf('npm run migrate -w @beeline/server'));
   assert.match(migrate, /npm run migrate -w @beeline\/server/);
   assert.doesNotMatch(migrate, /npm ci|npm run build/);
   assert.match(serverLeg, /seq 0 20/);

@@ -69,7 +69,7 @@ describe('notification headline grammar', () => {
         row('merged-1', 'Merged', 'PR #1'),
         row('merged-2', 'Merged', 'PR #3'),
       ]),
-    ).toEqual(['PR 2 merged, 1 opened']);
+    ).toEqual(['PR 1 opened, 2 merged']);
   });
 
   it('orders mixed kinds as PR, Issue, Star, Workflow', () => {
@@ -99,17 +99,27 @@ describe('notification headline grammar', () => {
   });
 });
 
-function check(id: string, result: 'passed' | 'failed', prNumber: number): ChatDisplayMessage {
+function check(
+  id: string,
+  result: 'started' | 'passed' | 'failed',
+  prNumber: number,
+  name = 'Build',
+  headSha?: string,
+): ChatDisplayMessage {
   return {
     id,
-    text: `GitHub ${result} a check Build`,
+    text: `GitHub ${result} a check ${name}`,
     timestamp: Number(id.replace(/\D/g, '')) || 1,
     isUser: false,
     isSystemNotice: true,
     systemEvent: {
       subject: { kind: 'github', name: 'GitHub' },
       verb: `${result} a check`,
-      object: { text: 'Build', url: `https://github.test/acme/repo/pull/${prNumber}` },
+      object: {
+        text: name,
+        url: `https://github.test/acme/repo/pull/${prNumber}/checks/${name}`,
+        ...(headSha ? { headSha } : {}),
+      },
     },
   };
 }
@@ -125,6 +135,83 @@ function prose(id: string, kind: 'human' | 'agent'): ChatDisplayMessage {
 }
 
 describe('notification lifecycle folding', () => {
+  it('uses check nouns and passed, failed, running grammar for check batches', () => {
+    const allPassed = foldSystemLines([
+      check('1', 'passed', 42, 'Build'),
+      check('2', 'passed', 42, 'Lint'),
+      check('3', 'passed', 42, 'Test'),
+      check('4', 'passed', 42, 'Mobile'),
+      check('5', 'passed', 42, 'Server'),
+    ])[0]!.notificationLifecycleRun!;
+    expect(allPassed.headline).toBe('Check 5 passed');
+
+    const mixed = foldSystemLines([
+      check('1', 'passed', 42, 'Build'),
+      check('2', 'passed', 42, 'Lint'),
+      check('3', 'passed', 42, 'Test'),
+      check('4', 'passed', 42, 'Mobile'),
+      check('5', 'failed', 42, 'Server'),
+    ])[0]!.notificationLifecycleRun!;
+    expect(mixed.headline).toBe('Check 4 passed, 1 failed');
+
+    const running = foldSystemLines([
+      check('1', 'started', 42, 'Build'),
+      check('2', 'started', 42, 'Lint'),
+      check('3', 'started', 42, 'Test'),
+    ])[0]!.notificationLifecycleRun!;
+    expect(running.headline).toBe('Check 3 running');
+  });
+
+  it('folds started and completed check system lines into the same batch', () => {
+    const folded = foldSystemLines([
+      check('1', 'started', 42, 'Build'),
+      check('2', 'started', 42, 'Lint'),
+      check('3', 'passed', 42, 'Build'),
+      check('4', 'failed', 42, 'Lint'),
+    ]);
+    expect(folded).toHaveLength(1);
+    expect(folded[0]!.foldedIds).toEqual(['1', '2', '3', '4']);
+    expect(folded[0]!.notificationLifecycleRun?.headline).toBe('Check 1 passed, 1 failed');
+  });
+
+  it('updates one check batch across webhook bursts and starts a new batch for a new head', () => {
+    const firstHead = 'a'.repeat(40);
+    const secondHead = 'b'.repeat(40);
+    const names = ['Build', 'Lint', 'Typecheck', 'Mobile', 'Server', 'Body', 'Auth', 'Docs'];
+    const started = names.map((name, index) =>
+      check(`start-${index}`, 'started', 42, name, firstHead),
+    );
+    const firstResults = names
+      .slice(0, 3)
+      .map((name, index) => check(`pass-${index}`, 'passed', 42, name, firstHead));
+    const betweenBursts = prose('between-bursts', 'agent');
+    const midRun = foldSystemLines([...started, betweenBursts, ...firstResults]);
+    expect(midRun.filter((message) => message.notificationLifecycleRun)).toHaveLength(1);
+    expect(midRun[0]!.notificationLifecycleRun?.headline).toBe('Check 3 passed, 5 running');
+    expect(midRun.map((message) => message.id)).toEqual(['start-0', 'between-bursts']);
+
+    const finalResults = names
+      .slice(3)
+      .map((name, index) => check(`pass-${index + 3}`, 'passed', 42, name, firstHead));
+    const nextPush = check('next-head', 'started', 42, 'Build', secondHead);
+    const complete = foldSystemLines([
+      ...started,
+      betweenBursts,
+      ...firstResults,
+      prose('later-burst', 'human'),
+      ...finalResults,
+      nextPush,
+    ]);
+    const batches = complete.flatMap((message) =>
+      message.notificationLifecycleRun ? [message.notificationLifecycleRun] : [],
+    );
+    expect(batches).toHaveLength(2);
+    expect(batches.map((batch) => batch.headline)).toEqual([
+      'Check 8 passed',
+      'Check 1 running',
+    ]);
+  });
+
   it('leaves a single notification exactly as it arrived', () => {
     for (const only of [github('1', 'opened'), corner('2', 'corner-complete', 'c2', 2)]) {
       expect(foldSystemLines([only])).toEqual([only]);
@@ -157,7 +244,7 @@ describe('notification lifecycle folding', () => {
       github('6', 'opened', '77'),
     ]);
     const run = folded[0]!.notificationLifecycleRun!;
-    expect(run.headline).toBe('PR 1 merged, 1 opened');
+    expect(run.headline).toBe('PR 1 opened, 1 merged');
     expect(run.items).toHaveLength(2);
     expect(run.items[0]).toMatchObject({ state: 'PR opened', kindLine: 'PR #77' });
     expect(run.items[1]).toMatchObject({
@@ -168,7 +255,7 @@ describe('notification lifecycle folding', () => {
     expect(run.items.every((item) => item.title !== 'worktree-cleaned 5')).toBe(true);
   });
 
-  it('uses the latest of all six states and marks check failure as danger', () => {
+  it('keeps check subjects separate from their PR and marks check failure as danger', () => {
     const folded = foldSystemLines([
       github('1', 'opened', '42'),
       check('2', 'failed', 42),
@@ -184,9 +271,10 @@ describe('notification lifecycle folding', () => {
       'Opened',
       'Closed',
       'Merged',
+      'Checks passed',
     ]);
     expect(run.items[0]).toMatchObject({ danger: true });
-    expect(run.headline).toBe('PR 1 merged, 1 closed, 1 failed\nIssue 1 opened');
+    expect(run.headline).toBe('PR 1 closed, 1 merged · Check 1 passed, 1 failed · Issue 1 opened');
   });
 
   it.each(['human', 'agent'] as const)('%s prose ends a notification run', (kind) => {

@@ -22,7 +22,6 @@ import { useHeaderHeight } from '@/utils/responsive';
 import { isDesktopPlatform } from '@/utils/platform';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import {
-  directMessagePresence,
   displayGroupedCornerTitle,
   NO_ACTIVITY_PREVIEW,
   roomListSections,
@@ -144,14 +143,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   cornerStateWaiting: { backgroundColor: theme.buzz.accent },
   cornerStateQuiet: { backgroundColor: theme.buzz.ledgerQuiet },
   cornerStateGhost: { backgroundColor: theme.buzz.ledgerGhost },
-  presenceDot: { width: 7, height: 7, borderRadius: 4 },
-  presenceWorking: { backgroundColor: theme.colors.success },
-  presenceIdle: { backgroundColor: theme.colors.textSecondary },
-  presenceCaption: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.colors.textSecondary,
-    textTransform: 'uppercase',
-  },
   roomCopy: { flex: 1, minWidth: 0 },
   roomTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   roomTitle: { ...theme.buzz.type.bodyStrong, flex: 1, color: theme.colors.text },
@@ -522,7 +513,6 @@ export const SidebarView = React.memo(function SidebarView() {
                 {section.data.map((item) => {
                   const rowName = roomRowName(item);
                   const preview = roomRowPreview(item, identityPubkey ?? undefined);
-                  const presence = directMessagePresence(item, Date.now());
                   const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
                   const attention = roomRowNeedsAttention(item);
                   return (
@@ -561,22 +551,6 @@ export const SidebarView = React.memo(function SidebarView() {
                               <Text style={styles.roomSigil}>{rowName.sigil}</Text>
                               {rowName.name}
                             </Text>
-                            {hasPreview && presence?.dot && (
-                              <View
-                                style={[
-                                  styles.presenceDot,
-                                  presence.dot === 'working'
-                                    ? styles.presenceWorking
-                                    : styles.presenceIdle,
-                                ]}
-                                testID={`desktop-room-presence-${item.room.id}`}
-                              />
-                            )}
-                            {hasPreview &&
-                              presence &&
-                              item.directMessage?.peer.kind === 'human' && (
-                                <Text style={styles.presenceCaption}>{presence.label}</Text>
-                              )}
                             <Text style={styles.roomTime}>
                               {item.latestMessage
                                 ? compactRelativeTime(item.latestMessage.createdAt, Date.now())
@@ -584,14 +558,13 @@ export const SidebarView = React.memo(function SidebarView() {
                             </Text>
                           </View>
                           <Text numberOfLines={1} style={styles.roomFact}>
-                            {!hasPreview && presence ? presence.label : null}
                             {hasPreview && preview.attribution === 'self' && (
                               <Text style={styles.previewSelf}>you: </Text>
                             )}
                             {hasPreview && preview.attribution === 'other' && (
                               <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
                             )}
-                            {hasPreview ? preview.text : presence ? null : preview.text}
+                            {preview.text}
                           </Text>
                         </View>
                       </Pressable>

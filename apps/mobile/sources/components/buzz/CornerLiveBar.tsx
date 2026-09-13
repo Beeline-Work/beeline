@@ -1,9 +1,25 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { isPinnedCornerLive } from '@/buzz/room-indicators';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from './MonoHull';
 import type { CornerState } from '@beeline/api-contract/phone';
+
+/**
+ * One corner-working motion vocabulary for pinned and list surfaces. Bright
+ * ink at the shared pulse's 0.55 floor lands near the quiet ledger tone, so
+ * the cycle visibly breathes quiet-to-ink without ever borrowing brass.
+ */
+export function CornerWorkingPulse({
+  children,
+  state,
+}: {
+  children: React.ReactNode;
+  state: CornerState;
+}) {
+  return isPinnedCornerLive(state) ? <HullLivePulse>{children}</HullLivePulse> : children;
+}
 
 /**
  * The Room's one active-corner affordance: a single line pinned directly above
@@ -21,7 +37,8 @@ import type { CornerState } from '@beeline/api-contract/phone';
  * While the work is live the line breathes on the shared clock: a calm
  * heartbeat, not a sweep, not a progress bar, and never a dashed rule.
  * Brass is reserved for `waiting`, the state that wants the viewer; working
- * and review stay quiet, and archived recedes to the ghost tier.
+ * breathes from quiet to bright ink, review stays quiet, and archived recedes
+ * to the ghost tier.
  * Reduced motion and a backgrounded app both settle it, via `HullLivePulse`.
  */
 export function CornerLiveBar({
@@ -38,6 +55,7 @@ export function CornerLiveBar({
   testID?: string;
 }) {
   const displayState = state ?? (live ? 'working' : 'waiting');
+  const working = isPinnedCornerLive(displayState);
   const row = (
     <View style={styles.row}>
       <Text numberOfLines={1} style={[
@@ -57,8 +75,8 @@ export function CornerLiveBar({
 
   // Mounted only when something is genuinely live: a quiet Room must never pay
   // for a clock it does not use.
-  const body = live ? <HullLivePulse>{row}</HullLivePulse> : row;
-  const resolvedTestID = testID ?? (live ? 'corner-status-working' : 'corner-live-bar');
+  const body = <CornerWorkingPulse state={displayState}>{row}</CornerWorkingPulse>;
+  const resolvedTestID = testID ?? (working ? 'corner-status-working' : 'corner-live-bar');
 
   if (!onPress) {
     return (
@@ -115,7 +133,7 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 18,
     letterSpacing: 0.4,
   },
-  labelWorking: { color: groknight.ledgerQuiet },
+  labelWorking: { color: groknight.ledgerBright },
   labelReview: { color: groknight.ledgerQuiet },
   labelWaiting: { color: groknight.accent },
   labelArchived: { color: groknight.ledgerGhost },
@@ -126,6 +144,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 11,
     lineHeight: 18,
   },
-  enterLive: { color: groknight.ledgerQuiet },
+  enterLive: { color: groknight.ledgerBright },
   });
 });

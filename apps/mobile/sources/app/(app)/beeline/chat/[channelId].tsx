@@ -41,9 +41,10 @@ import {
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
-  type KnownMessageReference,
   type MessageReactionEmoji,
+  type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
+  isChatListView,
 } from '@beeline/buzz-client';
 import {
   createRoomMessageProjector,
@@ -99,6 +100,7 @@ import {
   type DesktopWorkPaneEvent,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
@@ -123,6 +125,7 @@ import {
   fallbackMemberName,
   personIdentityLabel,
 } from '@/buzz/member-display';
+import { directMessageHeaderPresence } from '@/buzz/direct-message-header-presence';
 import {
   createCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
@@ -150,7 +153,7 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { scrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
+import { useScrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -186,7 +189,8 @@ import {
 } from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
-  replyMessageText,
+  activityMessageReplyTarget,
+  prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
 } from '@/buzz/message-reply';
@@ -521,6 +525,7 @@ export default function BuzzChat() {
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
+  const [directMessageListItem, setDirectMessageListItem] = useState<ChatListItem | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
@@ -1309,6 +1314,39 @@ export default function BuzzChat() {
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
+  useEffect(() => {
+    if (!isDirectMessage || !roomClient || !activeCommunityId || !userPubkey) {
+      setDirectMessageListItem(null);
+      return;
+    }
+    let cancelled = false;
+    let painted = false;
+    void (async () => {
+      const address = surfaceAddress(
+        await getEffectiveRelayUrl(),
+        userPubkey,
+        '/workspace/:id/chats',
+        { workspaceId: activeCommunityId },
+      );
+      const apply = (view: { readonly chats: readonly ChatListItem[] }) => {
+        if (cancelled) return;
+        painted = true;
+        setDirectMessageListItem(
+          view.chats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
+        );
+      };
+      const cached = await mobileSurfaceCache.read(address, isChatListView);
+      if (cached) apply(cached);
+      const fresh = await roomClient.chats(activeCommunityId);
+      apply(fresh);
+      void mobileSurfaceCache.write(address, fresh, isChatListView);
+    })().catch(() => {
+      if (!cancelled && !painted) setDirectMessageListItem(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCommunityId, decodedId, isDirectMessage, roomClient, userPubkey]);
   const memberManagement = roomMemberManagementState({
     isDirectMessage,
     participantsHydrated,
@@ -1489,6 +1527,10 @@ export default function BuzzChat() {
     dmPeerPubkey && dmPeerAgent
       ? resolveAgentDisplayIdentity(dmPeerPubkey, dmPeerAgent)
       : undefined;
+  const dmHeaderPresence = directMessageHeaderPresence(
+    directMessageListItem?.room.id === decodedId ? directMessageListItem : null,
+    presenceNow,
+  );
   const dmAnnouncementAuthor = dmPeerPubkey
     ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
     : undefined;
@@ -1644,18 +1686,13 @@ export default function BuzzChat() {
         ) ?? []),
       ].join('|')
     : null;
-  const prevNewestIdRef = useRef<string | null>(null);
+  const arrivalFollow = useScrollFollowOnArrival({
+    newestId: newestMessageId,
+    isPinnedToTail: isPinnedToTailRef.current,
+    isUserDragging: userDraggingRef.current,
+  });
   useLayoutEffect(() => {
-    const previousNewestId = prevNewestIdRef.current;
-    prevNewestIdRef.current = newestMessageId;
-    if (
-      scrollFollowOnArrival({
-        previousNewestId,
-        nextNewestId: newestMessageId,
-        isPinnedToTail: isPinnedToTailRef.current,
-        isUserDragging: userDraggingRef.current,
-      }) === 'hold'
-    ) {
+    if (arrivalFollow === 'hold') {
       if (!desktopTranscript && !isPinnedToTailRef.current) {
         // An appended fold row grows inside the existing index-0 card, which
         // Android's maintainVisibleContentPosition cannot anchor by itself.
@@ -1780,9 +1817,9 @@ export default function BuzzChat() {
 
     // selectPinnedCorner names any open corner — working, waiting on a
     // human, or review-ready — and excludes only a terminal one. The line's
-    // mere presence means "open," not "live"; gold and the breathing pulse
-    // are reserved for a fresh canonical WORKING lease. Presence is displayed
-    // separately and cannot rewrite this lifecycle.
+    // mere presence means "open," not "live"; the bright-ink breathing pulse
+    // is reserved for a fresh canonical WORKING lease, while brass means
+    // waiting. Presence is displayed separately and cannot rewrite this lifecycle.
     if (!pinnedCorner) return null;
     const agentPubkey = resolveCornerCardAgentPubkey(
       pinnedCornerCard?.corner?.agentPubkey,
@@ -2104,15 +2141,21 @@ export default function BuzzChat() {
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      const install = (reference: KnownMessageReference) => {
-        setReplyTarget({ ...replyTargetForMessage(message), reference });
+      const target = message.isAgentActivity
+        ? activityMessageReplyTarget(message, visibleMessages, replyTargetForMessage(message))
+        : {
+            ...replyTargetForMessage(message),
+            ...(message.reference ? { reference: message.reference } : {}),
+          };
+      const install = () => {
+        setReplyTarget(target);
         setDismissedMentionKey(null);
         void Haptics.selectionAsync();
         requestAnimationFrame(() => composerRef.current?.focus());
       };
-      if (message.reference?.channelId === decodedId) install(message.reference);
+      if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
     },
-    [decodedId, replyTargetForMessage],
+    [decodedId, replyTargetForMessage, visibleMessages],
   );
 
   const handleReactToMessage = useCallback(
@@ -2214,9 +2257,8 @@ export default function BuzzChat() {
       }
       return;
     }
-    const text = replyTarget
-      ? replyMessageText(rawText, replyTarget.isAgent ? replyTarget.authorHandle : undefined)
-      : rawText;
+    const preparedReply = replyTarget ? prepareMessageReply(rawText, replyTarget) : undefined;
+    const text = preparedReply?.text ?? rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
@@ -2228,6 +2270,7 @@ export default function BuzzChat() {
     );
     const mentionedAgent =
       selectedMentionedAgent ??
+      preparedReply?.agentPubkey ??
       mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
       mentionedAgentPubkey(text, roomAgents);
     // Resolve before attachment upload or cold transport creation so the ack
@@ -2265,10 +2308,10 @@ export default function BuzzChat() {
       );
       // Sign before append. The authoritative event id is the optimistic row
       // identity and the durable outbox key from its first frame onward.
-      preparedEvent = replyTarget
+      preparedEvent = preparedReply?.reference
         ? await sendTransport.composeReplyMessage(
             text,
-            replyTarget.reference,
+            preparedReply.reference,
             mentionedAgent,
             attachments,
             mentionedPubkeys,
@@ -2300,7 +2343,7 @@ export default function BuzzChat() {
         pubkey: userPubkey,
         reference: undefined,
         ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-        ...(replyTarget ? { replyToId: replyTarget.reference.eventId } : {}),
+        ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
         ...(attachments.length ? { attachments } : {}),
       } satisfies ChatDisplayMessage;
       const activeOutbox = outbox.current();
@@ -3717,7 +3760,7 @@ export default function BuzzChat() {
                   </Text>
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
-                <HeaderMetaCaps testID="room-header-meta">{'Direct message'}</HeaderMetaCaps>
+                <HeaderMetaCaps testID="room-header-meta">{dmHeaderPresence}</HeaderMetaCaps>
               ) : null}
             </View>
             {/* The trailing slot holds ONE control. There is no `+` beside it:
@@ -3908,8 +3951,9 @@ export default function BuzzChat() {
           />
 
           {/* The Room's only active-corner affordance: one pinned line naming
-            who is working and what on, gold and breathing while the work is
-            live. Never a scroll element — see CornerLiveBar. */}
+            who is working and what on, bright ink breathing while the work is
+            live and still brass while waiting. Never a scroll element — see
+            CornerLiveBar. */}
           {!isCorner && !isArchived && cornerLiveBar && (
             <CornerLiveBar
               label={cornerLiveBar.label}

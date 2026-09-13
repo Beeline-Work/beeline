@@ -103,12 +103,10 @@ function handleWrittenIn(textExpr: string, handleExpr: string): string {
  * named, changes who an old line reaches, and that is the intended meaning. A
  * message addresses whoever is in the Room under that handle now.
  *
- * Four rules ride along, each of them the durable behaviour the retired
+ * Three rules ride along, each of them the durable behaviour the retired
  * stored-mention column used to carry:
  *  - the author never tags themself;
  *  - an ambiguous handle names NOBODY, rather than everyone who shares it;
- *  - a corner agent's turn reply never tags a person, because the merge
- *    summary card and its push already say the work is done;
  *  - a system line tags nobody at all. Its sentence names people as GRAMMAR —
  *    `@greeter did not answer @ada · only @bee may address @greeter` names
  *    three handles and is addressed to none of them. A system line reaches
@@ -136,16 +134,32 @@ export function taggedIdentityIdsSql(message: string): string {
           AND rival_member.identity_id<>tagged_member.identity_id
           AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(tagged.handle,'@'))
       )
-      AND NOT (
-        tagged.kind='human' AND ${message}.request_id IS NOT NULL
-        AND EXISTS(SELECT 1 FROM identities reply_author
-                   WHERE reply_author.id=${message}.author_id AND reply_author.kind='agent')
-        AND EXISTS(SELECT 1 FROM corner_facts WHERE corner_facts.corner_id=${message}.room_id)
-      )
   )`;
 }
 
-/** Whether `message` tags `identityExpr`, by the same reading as `taggedIdentityIdsSql`. */
-export function tagsIdentitySql(message: string, identityExpr: string): string {
-  return `${identityExpr} = ANY(${taggedIdentityIdsSql(message)})`;
+/**
+ * Whether one already-resolved current Room member is tagged by a message.
+ *
+ * Delivery queries already know the candidate recipient. Rebuilding the full
+ * Room tag array for every message/device pair multiplies regex work by the
+ * whole roster. Keep the same ambiguity rule while testing only that known
+ * identity.
+ */
+export function tagsKnownIdentitySql(
+  message: string,
+  identityIdExpr: string,
+  identityHandleExpr: string,
+): string {
+  return `(
+    ${message}.presentation NOT IN ('system','card')
+    AND ${identityHandleExpr} IS NOT NULL AND btrim(${identityHandleExpr})<>''
+    AND ${handleWrittenIn(`${message}.text`, identityHandleExpr)}
+    AND NOT EXISTS (
+      SELECT 1 FROM memberships rival_member
+      JOIN identities rival ON rival.id=rival_member.identity_id
+      WHERE rival_member.room_id=${message}.room_id AND rival_member.removed_at IS NULL
+        AND rival_member.identity_id<>${identityIdExpr}
+        AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(${identityHandleExpr},'@'))
+    )
+  )`;
 }

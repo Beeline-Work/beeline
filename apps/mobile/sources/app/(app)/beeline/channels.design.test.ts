@@ -214,6 +214,13 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain('No activity yet');
   });
 
+  it('keeps DM presence out of list rows', () => {
+    expect(source).not.toContain('directMessagePresence');
+    expect(source).not.toContain('presenceCaption');
+    expect(source).not.toContain('presenceDot');
+    expect(source).not.toContain('room-presence-');
+  });
+
   it('leads every row with one 7×7 brass state mark and nothing else; the gutter keeps only the timestamp', () => {
     // `unread` is server-owned and cross-device; a corner waiting on a human
     // lights the same mark. The leading slot exists on every row — DM and
@@ -300,12 +307,14 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain("lifecycle.lifecycle !== 'done'");
   });
 
-  it('spends brass only on waiting corner state', () => {
+  it('pulses bright working ink and spends still brass only on waiting corner state', () => {
     expect(source).toContain("display.status === 'working'");
     expect(source).toContain("display.status === 'review'");
     expect(source).toContain("display.status === 'archived'");
     expect(source).toContain('display.needsYou && styles.cornerNameNeedsYou');
-    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.ledgerQuiet');
+    expect(source).toContain('<CornerWorkingPulse state={display.status}>');
+    expect(source).toContain('</CornerWorkingPulse>');
+    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.ledgerBright');
     expect(styleBlock(source, 'cornerStatusReview')).toContain('color: hull.ledgerQuiet');
     expect(styleBlock(source, 'cornerStatusWaiting')).toContain('color: hull.accent');
     expect(styleBlock(source, 'cornerStatusArchived')).toContain('color: hull.ledgerGhost');

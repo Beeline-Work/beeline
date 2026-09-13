@@ -21,6 +21,11 @@ vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
+vi.mock('react-native-svg', () => ({
+  default: (props: any) => null,
+  Svg: (props: any) => null,
+  Line: (props: any) => null,
+}));
 
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer } from './ConversationComposer';
 

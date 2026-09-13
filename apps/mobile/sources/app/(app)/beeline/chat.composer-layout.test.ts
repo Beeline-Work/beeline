@@ -9,9 +9,11 @@ const composerSource = readFileSync(
 );
 
 describe('Room composer status layout', () => {
+  // The invariant is about the TextInput element itself; the region after it
+  // (the listening interim overlay, added with speech input) is a Text.
   const composerInput = composerSource.slice(
     composerSource.indexOf('      <TextInput'),
-    composerSource.indexOf('      <Pressable'),
+    composerSource.indexOf('/>', composerSource.indexOf('      <TextInput')),
   );
   const inputStyle = composerSource.slice(
     composerSource.indexOf('  input: {'),

@@ -67,7 +67,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "24",
+            runtimeVersion: runtimeVersionOverride || "25",
             icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -79,6 +79,9 @@ export default {
                 usesNonExemptEncryption: false
             },
             infoPlist: {
+                // Free platform speech recognition
+                NSSpeechRecognitionUsageDescription: "Allow Beeline to recognize your speech so it can type what you say.",
+                NSMicrophoneUsageDescription: "Allow Beeline to use the microphone for speech input.",
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"],
                 // ATS:
@@ -95,7 +98,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "23",
+            runtimeVersion: runtimeVersionOverride || "24",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -107,6 +110,7 @@ export default {
             permissions: [
                 "android.permission.ACCESS_NETWORK_STATE",
                 "android.permission.POST_NOTIFICATIONS",
+                "android.permission.RECORD_AUDIO",
             ],
             blockedPermissions: [
                 "android.permission.ACTIVITY_RECOGNITION",

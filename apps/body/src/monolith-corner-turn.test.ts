@@ -49,8 +49,9 @@ describe('corner merge instructions', () => {
     expect(cornerMergeInstruction(false)).toContain('explicit human approval');
     for (const yolo of [false, true]) {
       const instruction = cornerMergeInstruction(yolo, 'echo');
-      expect(instruction).toContain('@echo please review');
-      expect(instruction).toContain('never merge this PR yourself');
+      expect(instruction).not.toContain('please review');
+      expect(instruction).toContain('do not merge until @echo tags you with approval');
+      expect(instruction).toContain('gh pr merge --squash --match-head-commit <sha>');
     }
   });
 
@@ -61,10 +62,16 @@ describe('corner merge instructions', () => {
       authorHandle: 'bee',
       openedByAgent: false,
       pullRequestNumber: 42,
-      yoloMode: true,
+      headSha: 'a'.repeat(40),
     };
-    expect(cornerReviewerInstruction(reviewer)).toContain('Review PR #42');
-    expect(cornerReviewerInstruction(reviewer)).toContain('@bee');
+    const instruction = cornerReviewerInstruction(reviewer)!;
+    expect(instruction).toContain(`Checks are green on PR #42 at ${'a'.repeat(40)}`);
+    expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
+    expect(instruction).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
+    expect(instruction).toContain('Never merge yourself');
+    expect(instruction).toContain('Never say you are holding or waiting for checks');
+    expect(instruction).not.toContain('pending checks');
+    expect(instruction).not.toContain('unknown checks');
     expect(cornerReviewerInstruction({ ...reviewer, openedByAgent: true })).toBeUndefined();
     expect(cornerReviewerInstruction({ ...reviewer, agentHandle: 'bee' })).toBeUndefined();
   });
@@ -224,8 +231,10 @@ describe('corner merge instructions', () => {
 
     await (loop as unknown as { activate(): Promise<string> }).activate();
     const input = sessionNew.mock.calls[0]?.[0];
-    expect(input?.systemPrompt).toContain('Review PR #7 with the beeline-review skill');
-    expect(input?.systemPrompt).toContain('@bee with the findings');
+    expect(input?.systemPrompt).toContain(
+      `Checks are green on PR #7 at ${'a'.repeat(40)}`,
+    );
+    expect(input?.systemPrompt).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
     expect(input?.systemPrompt).not.toContain('reply only with its full URL');
     expect(input?.mcpServers).toContainEqual(
       expect.objectContaining({
@@ -234,6 +243,12 @@ describe('corner merge instructions', () => {
           { name: 'GH_TOKEN', value: 'room-token' },
           { name: 'GITHUB_TOKEN', value: 'room-token' },
         ]),
+      }),
+    );
+    expect(input?.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: 'beeline-agent',
+        env: expect.arrayContaining([{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }]),
       }),
     );
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();

@@ -438,21 +438,23 @@ export async function routeSystemCommand(
     const fact = (
       await db.query<{
         owner_agent_id: string;
-        reviewer_agent_id: string | null;
+        reviewer_configured: boolean;
         state: string;
         command_check_state: string | null;
       }>(
-        `SELECT fact.owner_agent_id,reviewer.id reviewer_agent_id,
+        `SELECT fact.owner_agent_id,
+                EXISTS(
+                  SELECT 1 FROM memberships reviewer_membership
+                  JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
+                    AND reviewer.kind='agent'
+                  WHERE reviewer_membership.room_id=parent.id
+                    AND reviewer_membership.identity_id=parent.reviewer_agent_id
+                    AND reviewer_membership.removed_at IS NULL
+                ) reviewer_configured,
                 fact.lifecycle->>'checks' state,fact.command_check_state
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
          JOIN rooms parent ON parent.id=corner.parent_id
-         LEFT JOIN memberships reviewer_membership
-           ON reviewer_membership.room_id=parent.id
-          AND reviewer_membership.identity_id=parent.reviewer_agent_id
-          AND reviewer_membership.removed_at IS NULL
-         LEFT JOIN identities reviewer
-           ON reviewer.id=reviewer_membership.identity_id AND reviewer.kind='agent'
          WHERE fact.corner_id=$1
          FOR UPDATE OF fact`,
         [input.roomId],
@@ -465,20 +467,29 @@ export async function routeSystemCommand(
         fact.state === fact.command_check_state
       )
         return;
-      const fallbackCarrier =
-        (
-          await db.query<{ agent_id: string }>(
-            `SELECT agent_id FROM agent_commands WHERE room_id=$1 AND result_message_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
-            [input.roomId],
-          )
-        ).rows[0]?.agent_id ?? fact.owner_agent_id;
-      const carrier = fact.reviewer_agent_id ?? fallbackCarrier;
-      await createAgentCommand(db, {
-        roomId: input.roomId,
-        agentId: carrier,
-        sourceMessageId: input.sourceMessageId,
-        reason: 'corner_check',
-      });
+      if (input.kind === 'check-failed' || !fact.reviewer_configured) {
+        const fallbackCarrier =
+          (
+            await db.query<{ agent_id: string }>(
+              `SELECT agent_id FROM agent_commands WHERE room_id=$1 AND result_message_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
+              [input.roomId],
+            )
+          ).rows[0]?.agent_id ?? fact.owner_agent_id;
+        await createAgentCommand(db, {
+          roomId: input.roomId,
+          agentId: fallbackCarrier,
+          sourceMessageId: input.sourceMessageId,
+          reason: 'corner_check',
+        });
+      } else {
+        for (const agentId of new Set(input.targets))
+          await createAgentCommand(db, {
+            roomId: input.roomId,
+            agentId,
+            sourceMessageId: input.sourceMessageId,
+            reason: 'subscribed_event',
+          });
+      }
       await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
         input.roomId,
         fact.state,

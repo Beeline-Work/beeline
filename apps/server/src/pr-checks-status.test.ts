@@ -219,14 +219,29 @@ describe('PR-scoped check gate', () => {
     expect(checkRequests()).toHaveLength(1);
   });
 
-  it('keeps pending approvals bound to the requested PR and exact head across author/reviewer corners', async () => {
+  it('keeps reviewer approval bound to the requested PR and exact head across corners', async () => {
+    await ownPr();
     await db.query(
-      `INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha) VALUES($1,$2,614,$3)`,
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha)
+       VALUES($1,$2,614,$3)`,
       [AUTHOR, H, SHA],
     );
     expect(await gate()).toMatchObject({ approvalPending: true });
-    await db.query(`UPDATE corner_merge_approvals SET head_sha=$1`, ['9'.repeat(40)]);
+    await db.query(`DELETE FROM corner_merge_approvals`);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    expect(await gate()).toMatchObject({ approvalPending: true });
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
+    ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
     expect(await gate()).toMatchObject({ approvalPending: false });
+    await db.query(`UPDATE corner_merge_approvals SET head_sha=$1`, ['9'.repeat(40)]);
+    expect(await gate()).toMatchObject({ approvalPending: true });
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: '8'.repeat(40) }, A),
+    ).rejects.toThrow('pull request head changed');
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, H),
+    ).rejects.toThrow('corner reviewer approval denied');
   });
 
   it('reconciles an expired snapshot and never promotes a head with no checks', async () => {

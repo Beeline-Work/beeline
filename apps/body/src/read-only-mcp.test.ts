@@ -18,6 +18,15 @@ describe('direct message helper surface', () => {
     // A top-level Room keeps the bounded daemon controls.
     expect(agentToolsFor(true, false).map((tool) => tool.name)).toContain('open_corner');
     expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain('delegate_to_agent');
+    expect(agentToolsFor(true, false, true).map((tool) => tool.name)).not.toContain(
+      'approve_merge',
+    );
+    expect(agentToolsFor(true, false, true, true).map((tool) => tool.name)).toContain(
+      'approve_merge',
+    );
+    expect(agentToolsFor(true, false, false, true).map((tool) => tool.name)).not.toContain(
+      'approve_merge',
+    );
   });
 });
 

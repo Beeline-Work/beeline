@@ -408,13 +408,30 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the human merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. Never infer passing checks from local git, gh output, or chat prose.',
+      'Read GitHub checks and the reviewer approval gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. Never infer passing checks from local git, gh output, or chat prose.',
     inputSchema: {
       type: 'object',
       properties: {
         pullRequest: {
           anyOf: [{ type: 'integer', minimum: 1 }, { type: 'string' }],
           description: 'PR number in this Room repository, or its full GitHub pull request URL.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'approve_merge',
+    description:
+      'Record the configured reviewer’s PASS for the exact pull-request head you reviewed. This does not merge. Call it only after a complete beeline-review PASS, using that review’s full head SHA; then tag the implementer with approval and clearance to merge.',
+    inputSchema: {
+      type: 'object',
+      required: ['headSha'],
+      properties: {
+        headSha: {
+          type: 'string',
+          pattern: '^[0-9a-fA-F]{40}$',
+          description: 'The exact 40-character Git head SHA that passed review.',
         },
       },
       additionalProperties: false,
@@ -522,10 +539,12 @@ export function agentToolsFor(
   agentSurface: boolean,
   directMessage: boolean,
   cornerTurn = false,
+  reviewer = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
     if (tool.name === 'steer_corner') return !directMessage && !cornerTurn;
+    if (tool.name === 'approve_merge') return cornerTurn && reviewer;
     return !directMessage || tool.name !== 'open_corner';
   });
 }
@@ -534,6 +553,7 @@ const TOOLS = agentToolsFor(
   agentSurface,
   process.env.BEELINE_AGENT_DM === '1',
   Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
+  process.env.BEELINE_CORNER_REVIEWER === '1',
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -1241,6 +1261,13 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   });
 }
 
+export async function approveMerge(args: JsonObject = {}): Promise<string> {
+  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
+  if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
+  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha }));
+}
+
 export interface WriteScratchFileDeps {
   /** The agent's own writable session area - the same scratch root
    *  attach_file treats as a second legal root, never the checkout/worktree. */
@@ -1842,6 +1869,8 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return closeCorner();
     case 'pr_checks_status':
       return prChecksStatus(args);
+    case 'approve_merge':
+      return approveMerge(args);
     case 'write_scratch_file':
       return writeScratchFile(args);
     case 'attach_file':

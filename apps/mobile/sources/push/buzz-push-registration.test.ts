@@ -402,7 +402,35 @@ describe('Buzz push preference on iOS', () => {
 
   afterEach(() => {
     platformState.OS = 'android';
+    vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('silently marks a build without the APNs entitlement unsupported and never retries', async () => {
+    let savedState: string | null = null;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    notifications.getDevicePushTokenAsync.mockRejectedValue(
+      new Error('No valid aps-environment entitlement string found for application'),
+    );
+    storage.setItem.mockImplementation(async (key: string, value: string) => {
+      if (key === REGISTRATION_STATE_KEY) savedState = value;
+    });
+
+    const result = await registerBuzzPushNotifications(identity);
+
+    expect(result).toMatchObject({
+      registered: false,
+      retryable: false,
+      phase: 'unsupported-platform',
+      failedAttempts: 0,
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    storage.getItem.mockImplementation(async (key: string) =>
+      key === REGISTRATION_STATE_KEY ? savedState : null,
+    );
+    await expect(retryBuzzPushRegistration(identity)).resolves.toBeNull();
+    expect(notifications.getDevicePushTokenAsync).toHaveBeenCalledTimes(1);
   });
 
   it('registers the APNs device token with platform "ios"', async () => {

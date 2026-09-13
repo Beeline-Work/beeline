@@ -167,7 +167,7 @@ describe('scrollFollowOnLayoutChange', () => {
 describe('the chat screen wires the scroll rule', () => {
   it('scrolls once per arrival through the pure decision, tracking drags on the FlatList', () => {
     expect(chatSource).toContain("from '@/buzz/room-scroll-follow'");
-    expect(chatSource).toContain('scrollFollowOnArrival(');
+    expect(chatSource).toContain('useScrollFollowOnArrival({');
     // One scroll call per arrival, off the render path.
     expect(chatSource.match(/scrollToOffset\({ offset: 0/g)).toHaveLength(1);
     // Drag and momentum tracking feed the hold decision.

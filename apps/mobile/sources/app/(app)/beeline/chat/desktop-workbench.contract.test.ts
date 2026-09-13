@@ -75,6 +75,15 @@ describe('desktop workbench wiring', () => {
     expect(inspector).toContain('<DaemonFactCard');
   });
 
+  it('lets a selected corner cockpit maximize over the main pane, not just the side rail', () => {
+    expect(room).toContain('desktopCockpitMaximized');
+    expect(room).toContain('maximized={desktopCockpitMaximized}');
+    expect(room).toContain('onToggleMaximize={toggleDesktopCockpitMaximized}');
+    expect(room).toContain('styles.desktopMainPaneHidden');
+    expect(inspector).toContain('desktop-work-cockpit-maximize');
+    expect(inspector).toContain('maximized ? styles.maximized : { width }');
+  });
+
   it('keeps the desktop frame and both pane widths persistent', () => {
     expect(navigator).toContain(
       'usesPersistentDesktopFrame(inDesktopShell || isDesktop, isTablet)',

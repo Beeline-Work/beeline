@@ -52,6 +52,8 @@ type Props = {
   room: RoomView;
   client: RoomViewClient | null;
   overlay: boolean;
+  maximized: boolean;
+  onToggleMaximize(): void;
   selectedCornerId: string | null;
   onSelectCorner(cornerId: string | null): void;
   onClose(): void;
@@ -78,6 +80,8 @@ export function DesktopRoomInspector({
   room,
   client,
   overlay,
+  maximized,
+  onToggleMaximize,
   selectedCornerId,
   onSelectCorner,
   onClose,
@@ -238,10 +242,14 @@ export function DesktopRoomInspector({
 
   return (
     <View
-      style={[styles.inspector, { width }, overlay && styles.overlay]}
-      testID={overlay ? 'desktop-inspector-overlay' : 'desktop-inspector'}
+      style={[
+        styles.inspector,
+        maximized ? styles.maximized : { width },
+        overlay && !maximized && styles.overlay,
+      ]}
+      testID={overlay && !maximized ? 'desktop-inspector-overlay' : 'desktop-inspector'}
     >
-      {!overlay && (
+      {!overlay && !maximized && (
         <View
           {...resizePan.panHandlers}
           style={styles.resizer}
@@ -253,6 +261,8 @@ export function DesktopRoomInspector({
           detail={detail}
           loading={loading}
           summary={summary}
+          maximized={maximized}
+          onToggleMaximize={onToggleMaximize}
           onBack={() => onSelectCorner(null)}
           onOpenCorner={onSelectCorner}
           onRefresh={refreshCorner}
@@ -513,6 +523,8 @@ function CornerCockpit({
   detail,
   loading,
   summary,
+  maximized,
+  onToggleMaximize,
   onBack,
   onOpenCorner,
   onRefresh,
@@ -520,6 +532,8 @@ function CornerCockpit({
   detail: RoomView | null;
   loading: boolean;
   summary?: CornerListItem;
+  maximized: boolean;
+  onToggleMaximize(): void;
   onBack(): void;
   onOpenCorner(cornerId: string): void;
   onRefresh(): Promise<void>;
@@ -700,6 +714,16 @@ function CornerCockpit({
               : 'loading'}
           </Text>
         </View>
+        <Pressable
+          accessibilityLabel={maximized ? 'Restore corner pane' : 'Maximize corner pane'}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: maximized }}
+          onPress={onToggleMaximize}
+          style={styles.headerButton}
+          testID="desktop-work-cockpit-maximize"
+        >
+          <Text style={styles.headerGlyph}>{maximized ? '⤡' : '⤢'}</Text>
+        </Pressable>
       </View>
       <Text style={styles.pinnedObjective} testID="desktop-work-objective">
         {objective}
@@ -788,6 +812,7 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: 100,
     boxShadow: '-12px 0 28px rgba(0,0,0,0.28)',
   } as any,
+  maximized: { flex: 1, borderLeftWidth: 0 },
   resizer: { position: 'absolute', left: -4, top: 0, bottom: 0, width: 8, zIndex: 4 },
   header: {
     minHeight: 58,

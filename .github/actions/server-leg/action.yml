@@ -119,15 +119,6 @@ runs:
       run: |
         set -euo pipefail
         test -n "${MIGRATION_DATABASE_URL:-}" || { echo 'MIGRATION_DATABASE_URL is required' >&2; exit 1; }
-        npm ci --ignore-scripts
-        npm run build -w @beeline/nostr
-        npm run build -w @beeline/api-contract
-        npm run build -w @beeline/buzz-client
-        npm run build -w @beeline/gate
-        npm run build -w @beeline/body
-        npm run build -w @beeline/auth
-        npm run build -w @beeline/push-gateway
-        npm run build -w @beeline/server
         npm run migrate -w @beeline/server
 
     - name: Canary one Machine, observe for five minutes, then update its peer

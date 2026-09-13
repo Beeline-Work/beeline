@@ -41,8 +41,8 @@ export async function createMonolithAuth(
 
   // Both schemas live in the monolith's one PostgreSQL database. AuthStore only
   // needs the same query/transaction contract and must not own or close the pool.
+  // Its migrations run once in migrate-cli before any Machine is updated.
   const store = new AuthStore(database as unknown as TransactionalDatabase);
-  await store.migrate();
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,

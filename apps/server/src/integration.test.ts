@@ -15,6 +15,7 @@ import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   isCommunityInviteToken,
   isAgentDetailView,
@@ -80,6 +81,7 @@ describe('monolith integration', () => {
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
       [HUMAN, AGENT],

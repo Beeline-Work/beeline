@@ -35,6 +35,7 @@ describe('mounted monolith auth', () => {
     vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     database = new PgliteDatabase();
     await migrate(database);
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     let mountedForVerification: MonolithAuthMount | undefined;
     const tokenAuth = new TokenAuth(
       database,

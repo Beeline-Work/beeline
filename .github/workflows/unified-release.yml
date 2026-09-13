@@ -289,8 +289,9 @@ jobs:
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          SERVER_CANARY_REVIEW_SECRET: ${{ secrets.SERVER_CANARY_REVIEW_SECRET }}
           SERVER_CANARY_PHONE_TOKEN: ${{ secrets.SERVER_CANARY_PHONE_TOKEN }}
-          SERVER_CANARY_ROOM_ID: ${{ vars.SERVER_CANARY_ROOM_ID }}
+          SERVER_CANARY_ROOM_ID: ${{ secrets.SERVER_CANARY_ROOM_ID }}
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}

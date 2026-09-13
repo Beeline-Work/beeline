@@ -687,6 +687,18 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(serverLeg, /fly-force-instance-id/);
   assert.match(serverLeg, /server\.usebeeline\.app\/health(?:\s|\\)/);
   assert.doesNotMatch(serverLeg, /server\.usebeeline\.app\/healthz/);
+  const promote = serverLegAction.runs.steps.find((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer').run;
+  assert.match(release, /SERVER_CANARY_REVIEW_SECRET: \$\{\{ secrets\.SERVER_CANARY_REVIEW_SECRET \}\}/);
+  assert.match(release, /SERVER_CANARY_ROOM_ID: \$\{\{ secrets\.SERVER_CANARY_ROOM_ID \}\}/);
+  assert.match(promote, /v1\/auth\/review\/exchange/);
+  assert.match(promote, /JSON\.stringify\(\{ secret: process\.env\.SERVER_CANARY_REVIEW_SECRET \}\)/);
+  assert.match(promote, /::add-mask::\$canary_access_token/);
+  assert.match(promote, /::add-mask::\$canary_refresh_token/);
+  assert.match(promote, /Authorization: Bearer \$canary_access_token/);
+  assert.match(promote, /SERVER_CANARY_REVIEW_SECRET is unset; using the legacy canary phone token/);
+  assert.match(promote, /requires SERVER_CANARY_REVIEW_SECRET or SERVER_CANARY_PHONE_TOKEN/);
+  assert.ok(promote.indexOf('/v1/auth/review/exchange') < promote.indexOf('for sample in $(seq 0 20)'));
+  assert.equal(promote.match(/v1\/auth\/review\/exchange/g)?.length, 1);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);

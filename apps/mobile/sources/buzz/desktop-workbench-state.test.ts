@@ -14,6 +14,7 @@ import {
   desktopComposerKeyAction,
   desktopDraftKey,
   desktopLayoutMode,
+  desktopWorkspaceRoute,
   loadDesktopDraft,
   loadDesktopInspectorOpen,
   loadDesktopPaneWidth,
@@ -66,5 +67,25 @@ describe('desktop workbench state', () => {
     expect(desktopComposerKeyAction('web', 'Enter', true)).toBe('newline');
     expect(desktopComposerKeyAction('ios', 'Enter', false)).toBe('none');
     expect(desktopComposerKeyAction('web', 'Escape', false)).toBe('none');
+  });
+
+  it('routes a Workspace switch to its last Room, then its first available Room', () => {
+    expect(desktopWorkspaceRoute('workspace-b', ['room-b1', 'room-b2'], 'room-b2')).toEqual({
+      pathname: '/beeline/chat/[channelId]',
+      params: { channelId: 'room-b2', communityId: 'workspace-b' },
+    });
+    expect(desktopWorkspaceRoute('workspace-b', ['room-b1'], 'room-from-another-workspace')).toEqual(
+      {
+        pathname: '/beeline/chat/[channelId]',
+        params: { channelId: 'room-b1', communityId: 'workspace-b' },
+      },
+    );
+  });
+
+  it('routes an empty Workspace to its addressable Room-list state', () => {
+    expect(desktopWorkspaceRoute('workspace-empty', [], null)).toEqual({
+      pathname: '/beeline/channels',
+      params: { communityId: 'workspace-empty' },
+    });
   });
 });

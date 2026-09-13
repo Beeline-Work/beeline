@@ -118,6 +118,14 @@ export type DaemonOperationMap = {
       approvalPending: boolean;
     }
   >;
+  approveCornerMerge: Operation<
+    CornerInput & { readonly headSha: string },
+    {
+      readonly status: 'approved';
+      readonly pullRequestNumber: number;
+      readonly headSha: string;
+    }
+  >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
   waitForCornerWake: Operation<CornerInput, CornerWakeResult>;

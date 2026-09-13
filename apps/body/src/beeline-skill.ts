@@ -165,8 +165,7 @@ Follow these steps in order. Do not skip or reorder them.
 
 ## 8. Gate and verdict
 
-- The merge gate is open only when \`pr_checks_status\` reports checks=passed, held=false, approvalPending=false.
-- Green \`gh pr checks\` alone never opens the gate.
+- Review the exact green head named in your reviewer instruction. If the head moved, do not approve it.
 - Always use this exact verdict shape:
 
 \`objective quoted:\`
@@ -180,10 +179,8 @@ Follow these steps in order. Do not skip or reorder them.
 
 Then take exactly one action:
 
-- FAIL: reply \`@author\` with the confirmed findings; do not merge.
-- PASS with pending checks: reply \`approved pending checks <reviewed sha>\` and stop.
-- PASS with unknown checks: reply in this corner with the \`pr_checks_status\` reason and stop; do not retry.
-- PASS with the gate open and your yolo on: run \`gh pr merge --squash --match-head-commit <reviewed sha> N\`.
-- PASS with the gate open and your yolo off: reply \`approved <reviewed sha>\` and stop.
+- FAIL: reply \`@author\` with the confirmed findings to fix.
+- PASS: call \`approve_merge\` with the reviewed head SHA, then reply \`@author approved <reviewed sha>, merge\`.
+- Never merge the pull request yourself.
 `;
 }

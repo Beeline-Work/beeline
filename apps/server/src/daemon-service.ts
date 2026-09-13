@@ -14,6 +14,7 @@ import type {
   DaemonOperationMap,
   SystemEvent,
 } from '@beeline/api-contract/daemon';
+import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
   cornerTextRefusal,
@@ -441,6 +442,11 @@ export class DaemonService {
       case 'getPrChecksStatus':
         if (!this.prChecksStatus) throw new Error('GitHub PR checks service unavailable');
         return (await this.prChecksStatus(input as Input<'getPrChecksStatus'>)) as Output<Name>;
+      case 'approveCornerMerge':
+        return (await this.approveCornerMerge(
+          input as Input<'approveCornerMerge'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
@@ -1083,6 +1089,41 @@ export class DaemonService {
         : {}),
     };
   }
+  private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
+    const target = (
+      await this.database.query<{
+        pull_request_number: number | null;
+        head_sha: string | null;
+      }>(
+        `SELECT (fact.lifecycle->'pr'->>'number')::int pull_request_number,
+                fact.lifecycle->'pr'->>'headSha' head_sha
+         FROM rooms corner
+         JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN memberships reviewer ON reviewer.room_id=parent.id
+           AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL
+         JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
+         WHERE corner.id=$1 AND parent.reviewer_agent_id=$2`,
+        [input.cornerId, agentId],
+      )
+    ).rows[0];
+    if (!target) throw new Error('corner reviewer approval denied');
+    if (!target.pull_request_number || !target.head_sha) throw new Error('corner has no pull request');
+    if (target.head_sha !== input.headSha)
+      throw new Error('pull request head changed; review the current head before approving');
+    await recordCornerMergeApproval(this.database, {
+      cornerId: input.cornerId,
+      approvedBy: agentId,
+      force: false,
+      pullRequestNumber: target.pull_request_number,
+      headSha: target.head_sha,
+    });
+    return {
+      pullRequestNumber: target.pull_request_number,
+      headSha: target.head_sha,
+      status: 'approved' as const,
+    };
+  }
   private async repository(roomId: string, agentId: string) {
     await this.access(roomId, agentId);
     const row = (
@@ -1149,12 +1190,14 @@ export class DaemonService {
       }>(
         `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
-                CASE WHEN room.parent_id IS NOT NULL AND reviewer.id<>a.agent_id
+                CASE WHEN room.parent_id IS NOT NULL
+                           AND reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
                      THEN reviewer.handle END reviewer_handle
          FROM agents a
          LEFT JOIN rooms room ON room.id=$2
          LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
          LEFT JOIN rooms parent ON parent.id=room.parent_id
+         LEFT JOIN corner_facts fact ON fact.corner_id=room.id
          LEFT JOIN memberships reviewer_membership
            ON reviewer_membership.room_id=parent.id
           AND reviewer_membership.identity_id=parent.reviewer_agent_id
@@ -2754,8 +2797,8 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT workspace_id,$2,identity_id,role FROM memberships
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
          WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
         [input.roomId, cornerId],
       );
@@ -3027,6 +3070,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listRoomCorners: true,
   getCornerRestoreState: true,
   getPrChecksStatus: true,
+  approveCornerMerge: true,
   getCornerCloseRequests: true,
   waitForCornerWake: true,
   listUntrackedCorners: true,

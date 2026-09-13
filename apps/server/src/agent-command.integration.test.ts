@@ -99,6 +99,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
+  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
 });
 
@@ -438,7 +439,10 @@ it('routes subscribed events, grants and changed corner checks through actions',
     `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
     [C],
   );
-  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+  await expect(
+    daemon.execute('getAgentConfiguration', { agentId: A, roomId: C }, A),
+  ).resolves.toEqual(expect.objectContaining({ reviewerHandle: 'hoots' }));
   for (let n = 0; n < 2; n++)
     await systemLine(db, {
       roomId: C,
@@ -448,7 +452,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     });
   expect(await commands(B, C)).toHaveLength(0);
   expect(await commands(A, C)).toHaveLength(1);
-  expect((await commands(A, C))[0]?.reason).toBe('corner_check');
+  expect((await commands(A, C))[0]?.reason).toBe('subscribed_event');
 
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
@@ -467,6 +471,91 @@ it('routes subscribed events, grants and changed corner checks through actions',
   });
   expect(await commands(A, C)).toHaveLength(0);
   expect(await commands(B, C)).toHaveLength(1);
+
+  await db.query(`DELETE FROM agent_commands`);
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    [C],
+  );
+  await systemLine(db, {
+    roomId: C,
+    subject: { kind: 'person', id: H, name: 'Human' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+  });
+  expect(await commands(B, C)).toHaveLength(1);
+  expect((await commands(B, C))[0]?.reason).toBe('corner_check');
+});
+it('runs green review, fixes, exact-head approval, and implementer clearance as commands', async () => {
+  const firstHead = '1'.repeat(40);
+  const approvedHead = '2'.repeat(40);
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'passing',
+        lifecycle: 'in-review',
+        pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: firstHead },
+      }),
+    ],
+  );
+  for (let n = 0; n < 2; n++)
+    await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'passed a check',
+      kind: 'check-passed',
+    });
+  const [firstReview] = await commands(A, C);
+  expect(firstReview?.reason).toBe('subscribed_event');
+  expect(await commands(A, C)).toHaveLength(1);
+  await claim(firstReview!);
+  await result(firstReview!, '@goosy confirmed finding: fix the race');
+
+  const [fix] = await commands(B, C);
+  expect(fix?.reason).toBe('agent_tag');
+  await claim(fix!);
+  await result(fix!, 'Pushed the fix');
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'passing',
+        lifecycle: 'in-review',
+        pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: approvedHead },
+      }),
+    ],
+  );
+  await systemLine(db, {
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+  });
+  const [secondReview] = await commands(A, C);
+  await claim(secondReview!, 'g2');
+  await expect(
+    daemon.execute('approveCornerMerge', { cornerId: C, headSha: approvedHead }, A),
+  ).resolves.toEqual({ status: 'approved', pullRequestNumber: 7, headSha: approvedHead });
+  await result(secondReview!, `@goosy approved ${approvedHead}, merge`, 'g2');
+
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM corner_merge_approvals
+         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=7 AND head_sha=$3`,
+        [C, A, approvedHead],
+      )
+    ).rowCount,
+  ).toBe(1);
+  const [mergeClearance] = await commands(B, C);
+  expect(mergeClearance?.source.body).toBe(`@goosy approved ${approvedHead}, merge`);
 });
 it('routes a corner merge to its responsible parent Room agent without a subscription', async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE room_id=$1`, [R]);
@@ -521,6 +610,7 @@ it('routes a corner merge to its responsible parent Room agent without a subscri
   ).toBe(0);
 });
 it('transfers a corner objective without resetting the authorized chain', async () => {
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
@@ -539,6 +629,14 @@ it('transfers a corner objective without resetting the authorized chain', async 
   expect(objective?.reason).toBe('corner_objective');
   expect(objective?.rootCommandId).toBe(c!.id);
   expect(await commands(B, opened.cornerId)).toEqual([]);
+  expect(
+    (
+      await db.query<{ event_subscriptions: string[] }>(
+        `SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+        [opened.cornerId, B],
+      )
+    ).rows,
+  ).toEqual([{ event_subscriptions: ['check-passed'] }]);
 });
 it('makes the depth boundary explicit', () => {
   expect([0, 1, 2, 3].map(nextAgentDepth)).toEqual([1, 2, 3, undefined]);

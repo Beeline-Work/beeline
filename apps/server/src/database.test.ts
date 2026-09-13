@@ -415,6 +415,11 @@ describe('the inherited corner membership migration', () => {
        ($1,$2,$5,'member',NULL),($1,$6,$5,'member',now())`,
       [WORKSPACE, ROOM, OWNER, LATE_MEMBER, REMOVED_MEMBER, CORNER],
     );
+    await database.query(
+      `UPDATE memberships SET event_subscriptions='["check-passed"]'::jsonb
+       WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, LATE_MEMBER],
+    );
   });
 
   afterEach(() => database.close());
@@ -425,15 +430,26 @@ describe('the inherited corner membership migration', () => {
       identity_id: string;
       role: string;
       removed_at: Date | null;
+      event_subscriptions: string[];
     }>(
-      `SELECT identity_id,role,removed_at FROM memberships
+      `SELECT identity_id,role,removed_at,event_subscriptions FROM memberships
        WHERE room_id=$1 ORDER BY identity_id`,
       [CORNER],
     );
     expect(memberships.rows).toEqual([
-      { identity_id: OWNER, role: 'owner', removed_at: null },
-      { identity_id: LATE_MEMBER, role: 'member', removed_at: null },
-      { identity_id: REMOVED_MEMBER, role: 'member', removed_at: expect.any(Date) },
+      { identity_id: OWNER, role: 'owner', removed_at: null, event_subscriptions: [] },
+      {
+        identity_id: LATE_MEMBER,
+        role: 'member',
+        removed_at: null,
+        event_subscriptions: ['check-passed'],
+      },
+      {
+        identity_id: REMOVED_MEMBER,
+        role: 'member',
+        removed_at: expect.any(Date),
+        event_subscriptions: [],
+      },
     ]);
     await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(0);
   });

@@ -3462,8 +3462,11 @@ export class PhoneService {
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
     await this.database.transaction(async (database) => {
       const current = (
-        await database.query<{ visibility: 'public' | 'invite-only' }>(
-          'SELECT visibility FROM rooms WHERE id=$1 FOR UPDATE',
+        await database.query<{
+          visibility: 'public' | 'invite-only';
+          reviewer_agent_id: string | null;
+        }>(
+          'SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE',
           [input.roomId],
         )
       ).rows[0];
@@ -3493,6 +3496,35 @@ export class PhoneService {
           input.reviewerAgentId ?? null,
         ],
       );
+      if (
+        input.reviewerAgentId !== undefined &&
+        input.reviewerAgentId !== current?.reviewer_agent_id
+      ) {
+        if (current?.reviewer_agent_id)
+          await database.query(
+            `UPDATE memberships member
+             SET event_subscriptions=member.event_subscriptions-'check-passed'
+             FROM rooms room
+             WHERE member.room_id=room.id AND member.identity_id=$2
+               AND member.removed_at IS NULL
+               AND (room.id=$1 OR room.parent_id=$1)`,
+            [input.roomId, current.reviewer_agent_id],
+          );
+        if (input.reviewerAgentId)
+          await database.query(
+            `UPDATE memberships member
+             SET event_subscriptions=CASE
+               WHEN member.event_subscriptions @> '["check-passed"]'::jsonb
+                 THEN member.event_subscriptions
+               ELSE member.event_subscriptions||'["check-passed"]'::jsonb
+             END
+             FROM rooms room
+             WHERE member.room_id=room.id AND member.identity_id=$2
+               AND member.removed_at IS NULL
+               AND (room.id=$1 OR room.parent_id=$1)`,
+            [input.roomId, input.reviewerAgentId],
+          );
+      }
       if (input.visibility && input.visibility !== current?.visibility) {
         if (input.visibility === 'public')
           await joinWorkspaceMembersToPublicRoom(database, room.workspace_id, input.roomId);

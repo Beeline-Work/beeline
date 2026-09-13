@@ -19,6 +19,8 @@ export function beelineAgentMcpServer(
     turnContextPath?: string;
     workspaceId: string;
     cornerId?: string;
+    /** This corner session belongs to the parent Room's configured reviewer. */
+    reviewer?: boolean;
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its
      *  TMPDIR): a second legal attach_file root covering anywhere the
@@ -51,6 +53,7 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
+      ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
       ...(context.attachScratchRoot
         ? [{ name: 'BEELINE_ATTACH_SCRATCH_ROOT', value: context.attachScratchRoot }]

@@ -13,6 +13,7 @@ import {
   lockIdentityHandleWorkspaces,
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
+import { recordCornerMergeApproval } from './corner-merge-approval.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -517,8 +518,15 @@ export class GitHubOperations {
       await this.database.query<{
         parent_id: string;
         lifecycle: CornerLifecycleView;
+        reviewer_agent_id: string | null;
       }>(
-        `SELECT r.parent_id,f.lifecycle FROM rooms r JOIN corner_facts f ON f.corner_id=r.id WHERE r.id=$1`,
+        `SELECT r.parent_id,f.lifecycle,reviewer.identity_id reviewer_agent_id
+         FROM rooms r
+         JOIN corner_facts f ON f.corner_id=r.id
+         JOIN rooms parent ON parent.id=r.parent_id
+         LEFT JOIN memberships reviewer ON reviewer.room_id=parent.id
+           AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
+         WHERE r.id=$1`,
         [input.cornerId],
       )
     ).rows[0];
@@ -586,14 +594,17 @@ export class GitHubOperations {
         : ('passed' as const);
     const approval = await this.database.query(
       `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
-       WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3 LIMIT 1`,
-      [corner.parent_id, number, pr.headSha],
+       WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
+         AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
+      [corner.parent_id, number, pr.headSha, corner.reviewer_agent_id],
     );
     return {
       checks,
       pullRequest: pr.url,
       headSha: pr.headSha,
-      approvalPending: approval.rowCount > 0,
+      approvalPending: corner.reviewer_agent_id
+        ? approval.rowCount === 0
+        : approval.rowCount > 0,
     };
   }
 
@@ -662,20 +673,14 @@ export class GitHubOperations {
         `corner checks are failing${names.length ? `: ${names.join(', ')}` : ''}; retry with force=true`,
       );
     }
-    const approval = await this.database.query(
-      `INSERT INTO corner_merge_approvals(
-         corner_id,approved_by,force,pull_request_number,head_sha
-       ) VALUES($1,$2,$3,$4,$5)
-       ON CONFLICT(corner_id) DO UPDATE SET
-         approved_by=EXCLUDED.approved_by,force=EXCLUDED.force,
-         pull_request_number=EXCLUDED.pull_request_number,head_sha=EXCLUDED.head_sha,
-         approved_at=now()
-       WHERE corner_merge_approvals.pull_request_number IS DISTINCT FROM EXCLUDED.pull_request_number
-          OR corner_merge_approvals.head_sha IS DISTINCT FROM EXCLUDED.head_sha
-       RETURNING corner_id`,
-      [input.cornerId, viewerId, input.force === true, pullRequest.number, pullRequest.headSha],
-    );
-    if (!approval.rowCount) {
+    const recorded = await recordCornerMergeApproval(this.database, {
+      cornerId: input.cornerId,
+      approvedBy: viewerId,
+      force: input.force === true,
+      pullRequestNumber: pullRequest.number,
+      headSha: pullRequest.headSha,
+    });
+    if (!recorded) {
       return { status: 'already-requested' as const, pullRequestUrl: pullRequest.url };
     }
     try {

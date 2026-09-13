@@ -433,10 +433,12 @@ describe('operator skills + MCP passthrough', () => {
     expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
-    expect(reviewSkill).toContain('checks=passed, held=false, approvalPending=false');
-    expect(reviewSkill).toContain('unknown checks');
-    expect(reviewSkill).toContain('do not retry');
-    expect(reviewSkill).toContain('--match-head-commit <reviewed sha>');
+    expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
+    expect(reviewSkill).toContain('@author approved <reviewed sha>, merge');
+    expect(reviewSkill).toContain('Never merge the pull request yourself');
+    expect(reviewSkill).not.toContain('approved pending checks');
+    expect(reviewSkill).not.toContain('unknown checks');
+    expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
     expect(reviewSkill).toContain('P0 - OBJECTIVE FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
     for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'claude')) {

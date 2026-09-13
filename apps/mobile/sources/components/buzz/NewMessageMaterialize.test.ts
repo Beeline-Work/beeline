@@ -94,6 +94,10 @@ function animatedWrappers(renderer: ReactTestRenderer) {
   return renderer.root.findAllByType('AnimatedView');
 }
 
+function enteringConfig(renderer: ReactTestRenderer) {
+  return animatedWrappers(renderer)[0]?.props.entering;
+}
+
 describe('NewMessageMaterialize', () => {
   it('animates a genuinely new message exactly once', () => {
     const renderer = render(materialize('m1', true, 'hello'));
@@ -118,6 +122,18 @@ describe('NewMessageMaterialize', () => {
     // Same id, already revealed this session: a plain static wrapper.
     expect(animatedWrappers(second)).toHaveLength(0);
     expect(second.root.findByType('View')).toBeDefined();
+  });
+
+  it('keeps the same entering config identity across a sibling-driven re-render, so Reanimated does not restart the animation mid-flight', () => {
+    const renderer = render(materialize('m1', true, 'hello'));
+    const first = enteringConfig(renderer);
+    expect(first).toBeDefined();
+    // A sibling re-render (presence tick, roster update) re-renders this row
+    // too; the `entering` prop must be the same reference or Reanimated
+    // treats it as a new animation and restarts it mid-flight.
+    act(() => renderer.update(materialize('m1', true, 'hello')));
+    const second = enteringConfig(renderer);
+    expect(second).toBe(first);
   });
 
   it('still gives a different message its own entrance', () => {

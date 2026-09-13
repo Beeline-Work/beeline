@@ -440,6 +440,7 @@ export default function BuzzChat() {
   const inspectorTriggerRef = useRef<React.ElementRef<typeof TouchableOpacity>>(null);
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(false);
   const [selectedDesktopCornerId, setSelectedDesktopCornerId] = useState<string | null>(null);
+  const [desktopCockpitMaximized, setDesktopCockpitMaximized] = useState(false);
   const observedCornerCardsRef = useRef<{ roomId: string; ids: Set<string> } | null>(null);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
@@ -595,6 +596,14 @@ export default function BuzzChat() {
     setDesktopInspectorOpen(true);
     void saveDesktopInspectorOpen(true);
   }, [desktopMode, roomSurface]);
+
+  useEffect(() => {
+    if (!desktopInspectorOpen || !selectedDesktopCornerId) setDesktopCockpitMaximized(false);
+  }, [desktopInspectorOpen, selectedDesktopCornerId]);
+
+  const toggleDesktopCockpitMaximized = useCallback(() => {
+    setDesktopCockpitMaximized((maximized) => !maximized);
+  }, []);
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
@@ -3574,7 +3583,7 @@ export default function BuzzChat() {
     >
       <View style={styles.desktopConversationFrame}>
         <KeyboardAvoidingView
-          style={styles.container}
+          style={[styles.container, desktopCockpitMaximized && styles.desktopMainPaneHidden]}
           behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
@@ -4270,6 +4279,8 @@ export default function BuzzChat() {
             room={roomSurface}
             client={roomClient}
             overlay={desktopMode !== 'three-pane'}
+            maximized={desktopCockpitMaximized}
+            onToggleMaximize={toggleDesktopCockpitMaximized}
             selectedCornerId={selectedDesktopCornerId}
             onSelectCorner={setSelectedDesktopCornerId}
             onClose={closeDesktopInspector}
@@ -4617,6 +4628,9 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       flexDirection: 'row',
       position: 'relative',
+    },
+    desktopMainPaneHidden: {
+      display: 'none',
     },
     desktopStatusSlot: {
       minHeight: 28,

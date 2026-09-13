@@ -54,12 +54,15 @@ async function inheritCornerMemberships(
 ): Promise<void> {
   if (!parentRoomIds.length) return;
   await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT corner.workspace_id,corner.id,$2,'member'
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+     SELECT corner.workspace_id,corner.id,$2,'member',parent_member.event_subscriptions
      FROM rooms corner
+     JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
+       AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
      WHERE corner.workspace_id=$1 AND corner.parent_id=ANY($3::uuid[])
      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-     DO UPDATE SET role='member',removed_at=NULL
+     DO UPDATE SET role='member',removed_at=NULL,
+       event_subscriptions=EXCLUDED.event_subscriptions
        WHERE memberships.removed_at IS NOT NULL`,
     [workspaceId, identityId, parentRoomIds],
   );
@@ -106,8 +109,9 @@ export async function joinWorkspaceMembersToPublicRoom(
  */
 export async function backfillInheritedCornerMemberships(database: SqlDatabase): Promise<number> {
   const result = await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT corner.workspace_id,corner.id,parent_member.identity_id,parent_member.role
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+     SELECT corner.workspace_id,corner.id,parent_member.identity_id,parent_member.role,
+            parent_member.event_subscriptions
      FROM rooms corner
      JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
        AND parent_member.removed_at IS NULL

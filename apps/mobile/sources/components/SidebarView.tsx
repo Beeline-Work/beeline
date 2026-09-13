@@ -18,7 +18,8 @@ import {
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
+import { useHeaderHeight } from '@/utils/responsive';
+import { isDesktopPlatform } from '@/utils/platform';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import {
   displayGroupedCornerTitle,
@@ -32,7 +33,7 @@ import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
+import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 
 function selectedRoomId(pathname: string): string | null {
@@ -47,6 +48,23 @@ function selectedRoomId(pathname: string): string | null {
 
 function firstParam(value: string | string[] | undefined): string | null {
   return (Array.isArray(value) ? value[0] : value)?.trim() || null;
+}
+
+function DesktopCornerDragSource({
+  roomId,
+  cornerId,
+  children,
+}: React.PropsWithChildren<{ roomId: string; cornerId: string }>) {
+  if (Platform.OS !== 'web') return children;
+  return React.createElement(
+    'div',
+    {
+      draggable: true,
+      onDragStart: (event: React.DragEvent<HTMLElement>) =>
+        writeDesktopCornerDrag(event.dataTransfer, { roomId, cornerId }),
+    },
+    children,
+  );
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -172,13 +190,18 @@ export const SidebarView = React.memo(function SidebarView() {
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
-  const isDesktop = useIsDesktop();
+  const isDesktop = isDesktopPlatform();
   const router = useRouter();
   const pathname = usePathname();
-  const routeWorkspaceId = firstParam(
-    useGlobalSearchParams<{ communityId?: string | string[] }>().communityId,
-  );
-  const activeRoomId = selectedRoomId(pathname);
+  const routeParams = useGlobalSearchParams<{
+    communityId?: string | string[];
+    parent?: string | string[];
+  }>();
+  const routeWorkspaceId = firstParam(routeParams.communityId);
+  // A corner promoted into the main pane still belongs beneath its parent
+  // Room in the permanent list. The route's parent hint is presentation-only,
+  // but it is enough to keep that already-loaded navigation family expanded.
+  const activeRoomId = firstParam(routeParams.parent) ?? selectedRoomId(pathname);
   const searchRef = React.useRef<TextInput>(null);
   const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
@@ -548,54 +571,59 @@ export const SidebarView = React.memo(function SidebarView() {
                       {isDesktop &&
                         activeRoomId === item.room.id &&
                         activeCorners.map((corner) => (
-                          <Pressable
+                          <DesktopCornerDragSource
                             key={corner.corner.id}
-                            accessibilityLabel={`Open corner ${corner.corner.name} in work pane`}
-                            accessibilityRole="button"
-                            onPress={() =>
-                              selectDesktopWorkCorner({
-                                roomId: item.room.id,
-                                cornerId: corner.corner.id,
-                              })
-                            }
-                            style={styles.cornerRow}
-                            testID={`desktop-corner-${corner.corner.id}`}
+                            roomId={item.room.id}
+                            cornerId={corner.corner.id}
                           >
-                            <View style={styles.roomStateSlot}>
-                              <View
-                                style={[
-                                  styles.roomStateMark,
-                                  corner.state === 'waiting'
-                                    ? styles.cornerStateWaiting
-                                    : corner.state === 'archived'
-                                      ? styles.cornerStateGhost
-                                      : styles.cornerStateQuiet,
-                                ]}
-                              />
-                            </View>
-                            <View style={styles.roomCopy}>
-                              <Text numberOfLines={1} style={styles.cornerTitle}>
-                                {displayGroupedCornerTitle(
-                                  item.room.name,
-                                  corner.corner.name,
-                                  corner.corner.id,
-                                )}
-                              </Text>
-                              <Text
-                                numberOfLines={1}
-                                style={[
-                                  styles.cornerMeta,
-                                  corner.state === 'waiting'
-                                    ? styles.cornerMetaWaiting
-                                    : corner.state === 'archived'
-                                      ? styles.cornerMetaGhost
-                                      : styles.cornerMetaQuiet,
-                                ]}
-                              >
-                                {corner.state}
-                              </Text>
-                            </View>
-                          </Pressable>
+                            <Pressable
+                              accessibilityLabel={`Open corner ${corner.corner.name}`}
+                              accessibilityRole="button"
+                              onPress={() =>
+                                selectDesktopWorkCorner({
+                                  roomId: item.room.id,
+                                  cornerId: corner.corner.id,
+                                })
+                              }
+                              style={styles.cornerRow}
+                              testID={`desktop-corner-${corner.corner.id}`}
+                            >
+                              <View style={styles.roomStateSlot}>
+                                <View
+                                  style={[
+                                    styles.roomStateMark,
+                                    corner.state === 'waiting'
+                                      ? styles.cornerStateWaiting
+                                      : corner.state === 'archived'
+                                        ? styles.cornerStateGhost
+                                        : styles.cornerStateQuiet,
+                                  ]}
+                                />
+                              </View>
+                              <View style={styles.roomCopy}>
+                                <Text numberOfLines={1} style={styles.cornerTitle}>
+                                  {displayGroupedCornerTitle(
+                                    item.room.name,
+                                    corner.corner.name,
+                                    corner.corner.id,
+                                  )}
+                                </Text>
+                                <Text
+                                  numberOfLines={1}
+                                  style={[
+                                    styles.cornerMeta,
+                                    corner.state === 'waiting'
+                                      ? styles.cornerMetaWaiting
+                                      : corner.state === 'archived'
+                                        ? styles.cornerMetaGhost
+                                        : styles.cornerMetaQuiet,
+                                  ]}
+                                >
+                                  {corner.state}
+                                </Text>
+                              </View>
+                            </Pressable>
+                          </DesktopCornerDragSource>
                         ))}
                     </React.Fragment>
                   );

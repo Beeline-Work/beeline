@@ -6,7 +6,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const routerPush = vi.hoisted(() => vi.fn());
 const saveActiveCommunityId = vi.hoisted(() => vi.fn(async () => undefined));
 const loadLastViewedChannel = vi.hoisted(() => vi.fn(async () => null));
-const route = vi.hoisted(() => ({ communityId: undefined as string | undefined }));
+const route = vi.hoisted(() => ({
+  communityId: undefined as string | undefined,
+  parent: undefined as string | undefined,
+}));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId },
@@ -62,6 +65,7 @@ vi.mock('expo-router', () => ({
   useRouter: () => ({ push: routerPush }),
 }));
 vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 0, useIsDesktop: () => true }));
+vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'http://server.test'),
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer' })),
@@ -98,7 +102,10 @@ vi.mock('@/buzz/room-view-presentation', () => ({
     name: workspace.name,
   }),
 }));
-vi.mock('@/buzz/desktop-work-pane', () => ({ selectDesktopWorkCorner: vi.fn() }));
+vi.mock('@/buzz/desktop-work-pane', () => ({
+  selectDesktopWorkCorner: vi.fn(),
+  writeDesktopCornerDrag: vi.fn(),
+}));
 vi.mock('@/components/buzz/RoomListSectionHeader', async () => {
   const ReactModule = await import('react');
   return {
@@ -156,6 +163,7 @@ describe('desktop Workspace navigation', () => {
     vi.clearAllMocks();
     windowListeners.clear();
     route.communityId = undefined;
+    route.parent = undefined;
     await act(async () => {
       tree = create(<SidebarView />);
     });

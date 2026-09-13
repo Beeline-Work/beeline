@@ -260,6 +260,7 @@ kind:9007 slug, never the word "Room"; while either the channel kind or its name
 is still resolving, a skeleton stands in rather than a guess. A Room keeps its
 linked repository as the subtitle. A Corner's subtitle names its opener and its
 server-owned canonical state: `working`, `waiting`, `review`, or `archived`.
+Only `waiting` takes brass; `working` and `review` use `ledgerQuiet`, and `archived` uses `ledgerGhost`, because brass marks what wants the viewer.
 Every phone and desktop surface renders that contract field directly; PR and
 check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no

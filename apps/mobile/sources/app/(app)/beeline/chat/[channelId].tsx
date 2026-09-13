@@ -4658,9 +4658,9 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
-    cornerHeaderWorking: { color: groknight.warning },
-    cornerHeaderReview: { color: groknight.accent },
-    cornerHeaderWaiting: { color: groknight.ledgerQuiet },
+    cornerHeaderWorking: { color: groknight.ledgerQuiet },
+    cornerHeaderReview: { color: groknight.ledgerQuiet },
+    cornerHeaderWaiting: { color: groknight.accent },
     cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
     roomActionsButton: {

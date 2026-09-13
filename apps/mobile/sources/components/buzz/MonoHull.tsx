@@ -357,11 +357,13 @@ export const stateCircleDiameter = { room: 9, corner: 7 } as const;
  */
 export function StateCircle({
   state,
+  tone,
   scale = 'corner',
   style,
   testID,
 }: {
   state: CornerVisualState;
+  tone?: 'brass' | 'quiet' | 'ghost';
   scale?: 'corner' | 'room';
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -406,6 +408,9 @@ export function StateCircle({
           geometry,
           styles.stateCircleWorking,
           reducedMotion && styles.stateCircleWorkingStill,
+          tone === 'brass' && styles.stateCircleWorkingBrass,
+          tone === 'quiet' && styles.stateCircleWorkingQuiet,
+          tone === 'ghost' && styles.stateCircleWorkingGhost,
           spin,
         ]}
       />
@@ -414,6 +419,12 @@ export function StateCircle({
         style={[
           geometry,
           state === 'needs-you' ? styles.stateCircleNeedsYou : styles.stateCircleIdle,
+          tone === 'brass' &&
+            (state === 'needs-you' ? styles.stateCircleFillBrass : styles.stateCircleStrokeBrass),
+          tone === 'quiet' &&
+            (state === 'needs-you' ? styles.stateCircleFillQuiet : styles.stateCircleStrokeQuiet),
+          tone === 'ghost' &&
+            (state === 'needs-you' ? styles.stateCircleFillGhost : styles.stateCircleStrokeGhost),
         ]}
       />
     );
@@ -428,7 +439,13 @@ export function StateCircle({
       {state === 'needs-you' && !reducedMotion && (
         <Animated.View
           pointerEvents="none"
-          style={[geometry, styles.stateCircleNeedsYouPulse, pulseRing]}
+          style={[
+            geometry,
+            styles.stateCircleNeedsYouPulse,
+            tone === 'quiet' && styles.stateCirclePulseQuiet,
+            tone === 'ghost' && styles.stateCirclePulseGhost,
+            pulseRing,
+          ]}
         />
       )}
       {mark}
@@ -886,6 +903,26 @@ const styles = StyleSheet.create((theme) => {
       borderTopColor: groknight.accent,
       backgroundColor: 'transparent',
     },
+    stateCircleWorkingBrass: {
+      borderColor: groknight.accent,
+      borderTopColor: groknight.accent,
+    },
+    stateCircleWorkingQuiet: {
+      borderColor: groknight.ledgerQuiet,
+      borderTopColor: groknight.ledgerQuiet,
+    },
+    stateCircleWorkingGhost: {
+      borderColor: groknight.ledgerGhost,
+      borderTopColor: groknight.ledgerGhost,
+    },
+    stateCircleFillBrass: { backgroundColor: groknight.accent },
+    stateCircleFillQuiet: { backgroundColor: groknight.ledgerQuiet },
+    stateCircleFillGhost: { backgroundColor: groknight.ledgerGhost },
+    stateCircleStrokeBrass: { borderColor: groknight.accent },
+    stateCircleStrokeQuiet: { borderColor: groknight.ledgerQuiet },
+    stateCircleStrokeGhost: { borderColor: groknight.ledgerGhost },
+    stateCirclePulseQuiet: { borderColor: groknight.ledgerQuiet },
+    stateCirclePulseGhost: { borderColor: groknight.ledgerGhost },
     stateCircleWorkingStill: {
       borderColor: groknight.steel,
       borderTopColor: groknight.steel,

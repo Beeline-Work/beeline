@@ -191,7 +191,7 @@ export default function BuzzCorners() {
                       : (item.latestMessage?.text ?? 'No activity yet')}
                   </Text>
                 </View>
-                <StateCircle state={display.visual} />
+                <StateCircle state={display.visual} tone={display.tone} />
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             );

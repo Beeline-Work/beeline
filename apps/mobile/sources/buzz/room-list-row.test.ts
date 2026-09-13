@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AttachmentReference, ChatListItem } from '@beeline/buzz-client';
 
-import type { CornerSummary, CornerStatus } from './corners';
+import type { CornerSummary } from './corners';
+import type { CornerState } from '@beeline/api-contract/phone';
 import { cornerName } from './corners';
 import {
   displayCornerTitle,
@@ -37,29 +38,19 @@ describe('expanded corner watch refresh', () => {
   });
 });
 
-function corner(status: CornerStatus | null, name = `corner-${status ?? 'idle'}`): CornerSummary {
-  const machine =
-    status === 'live'
-      ? ({ machineState: 'working' } as const)
-      : status === 'open'
-        ? ({ machineState: 'waiting', machineReason: 'review' } as const)
-        : status === 'needs-attention'
-          ? ({ machineState: 'waiting', machineReason: 'question' } as const)
-          : status === 'failed'
-            ? ({ machineState: 'waiting', machineReason: 'failure' } as const)
-            : status === 'merged'
-              ? ({ machineState: 'concluded' } as const)
-              : status === 'archived'
-                ? ({ machineState: 'closed' } as const)
-                : ({ machineState: 'idle' } as const);
+function corner(
+  state: CornerState,
+  name = `corner-${state}`,
+  reason?: CornerSummary['reason'],
+): CornerSummary {
   return {
-    id: `${status ?? 'idle'}-id`,
+    id: `${state}-id`,
     name,
     openerPubkey: 'opener',
-    status,
-    ...machine,
+    state,
+    ...(reason ? { reason } : {}),
     stateAt: Math.floor(Date.now() / 1_000),
-    ...(status === 'needs-attention' ? { awaitingReply: true } : {}),
+    ...(reason === 'question' ? { awaitingReply: true } : {}),
     lastActivityAt: 10,
   };
 }
@@ -165,14 +156,16 @@ describe('direct-message presence', () => {
 describe('Room row presentation', () => {
   it('derives the three deck states from real corner lifecycle', () => {
     // needs-you: a person must answer a decision or hear about a failure.
-    expect(roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES).zone).toBe(
-      'needs-you',
-    );
-    expect(roomRowPresentation({ corners: [corner('failed')] }, NO_NAMES).zone).toBe('needs-you');
+    expect(
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'question')] }, NO_NAMES).zone,
+    ).toBe('needs-you');
+    expect(
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'failed')] }, NO_NAMES).zone,
+    ).toBe('needs-you');
     // working: an agent turn is live in a corner.
-    expect(roomRowPresentation({ corners: [corner('live')] }, NO_NAMES).zone).toBe('working');
+    expect(roomRowPresentation({ corners: [corner('working')] }, NO_NAMES).zone).toBe('working');
     // idle: nothing happening.
-    expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).zone).toBe('idle');
+    expect(roomRowPresentation({ corners: [corner('archived')] }, NO_NAMES).zone).toBe('idle');
     expect(roomRowPresentation({}, NO_NAMES).zone).toBe('idle');
   });
 
@@ -193,7 +186,7 @@ describe('Room row presentation', () => {
     // But a fresh unanswered agent ask (`awaitingReply` — the same null word,
     // carried by the transport when the oracle says the ask IS the wait) is
     // exactly what NEEDS YOU exists for, with REPLY as its affordance.
-    const asked = corner('needs-attention');
+    const asked = corner('waiting', undefined, 'question');
     expect(roomRowPresentation({ corners: [asked] }, NO_NAMES)).toMatchObject({
       zone: 'needs-you',
       attention: true,
@@ -210,7 +203,7 @@ describe('Room row presentation', () => {
     // because only newer work (which a dead agent cannot produce) clears it.
     // The transport carries the oracle's STALLED verdict as `agentOffline`,
     // and the deck answers it: no gold, no action pill, an honest fact line.
-    const stalled = { ...corner(null, 'charles-fix'), agentOffline: true };
+    const stalled = { ...corner('waiting', 'charles-fix'), agentOffline: true };
     const row = roomRowPresentation({ corners: [stalled] }, NO_NAMES);
     expect(row).toMatchObject({ zone: 'idle', attention: false, live: false, glyph: '○' });
     expect(row.fact).toBe('Agent offline · charles-fix');
@@ -218,7 +211,7 @@ describe('Room row presentation', () => {
     // Presence is a separate fact and cannot demote a canonical wait.
     expect(
       roomRowPresentation(
-        { corners: [{ ...corner('needs-attention', 'stale-ask'), agentOffline: true }] },
+        { corners: [{ ...corner('waiting', 'stale-ask', 'question'), agentOffline: true }] },
         NO_NAMES,
       ).attention,
     ).toBe(true);
@@ -226,7 +219,7 @@ describe('Room row presentation', () => {
 
   it('ranks needs-you > working > idle when several corners disagree', () => {
     const row = roomRowPresentation(
-      { corners: [corner('live'), corner('needs-attention')] },
+      { corners: [corner('working'), corner('waiting', undefined, 'question')] },
       NO_NAMES,
     );
     expect(row.zone).toBe('needs-you');
@@ -246,7 +239,7 @@ describe('Room row presentation', () => {
     // is working, so the corner contribution cannot be masked.
     expect(
       roomRowPresentation(
-        { agentTurnWorking: true, corners: [corner('needs-attention')] },
+        { agentTurnWorking: true, corners: [corner('waiting', undefined, 'question')] },
         NO_NAMES,
       ).zone,
     ).toBe('needs-you');
@@ -254,7 +247,7 @@ describe('Room row presentation', () => {
     // work still wins, while a Room with no live corner returns to idle.
     expect(roomRowPresentation({ agentTurnWorking: false }, NO_NAMES).zone).toBe('idle');
     expect(
-      roomRowPresentation({ agentTurnWorking: false, corners: [corner('live')] }, NO_NAMES).zone,
+      roomRowPresentation({ agentTurnWorking: false, corners: [corner('working')] }, NO_NAMES).zone,
     ).toBe('working');
   });
 
@@ -264,8 +257,8 @@ describe('Room row presentation', () => {
       name: 'ghost',
       openerPubkey: 'agent',
       // This is the exact word an unmatched parent body-control OPEN card used
-      // to persist forever. Without machineState/stateAt it has no authority.
-      status: 'live',
+      // to persist forever. Without a server corner projection it has no authority.
+      state: 'archived',
     };
     expect(roomRowPresentation({ corners: [controlProjectedGhost] }, NO_NAMES)).toMatchObject({
       zone: 'idle',
@@ -276,28 +269,28 @@ describe('Room row presentation', () => {
     });
   });
 
-  it('expires a stale working turn without changing durable GitHub lifecycle', () => {
+  it('does not override an old server-owned working state on the client', () => {
     const stale = {
-      ...corner('live'),
+      ...corner('working'),
       stateAt: Math.floor((NOW - 90_001) / 1_000),
     };
     expect(roomRowPresentation({ corners: [stale] }, NO_NAMES)).toMatchObject({
-      zone: 'idle',
-      state: 'idle',
-      live: false,
+      zone: 'working',
+      state: 'working',
+      live: true,
     });
   });
 
   it('marks a Room with a working agent as alive, and an idle one not', () => {
     // Motion is spent here and nowhere else on the index, so this is the
     // single condition the whole working-state rule rests on.
-    expect(roomRowPresentation({ corners: [corner('live')] }, NO_NAMES)).toMatchObject({
+    expect(roomRowPresentation({ corners: [corner('working')] }, NO_NAMES)).toMatchObject({
       live: true,
       glyph: '◌',
     });
-    expect(isRoomAlive([corner('live')])).toBe(true);
+    expect(isRoomAlive([corner('working')])).toBe(true);
 
-    for (const idle of ['needs-attention', 'merged', 'archived', 'failed'] as const) {
+    for (const idle of ['waiting', 'review', 'archived'] as const) {
       const row = roomRowPresentation({ corners: [corner(idle)] }, NO_NAMES);
       expect(row.live, `a ${idle} corner is not live work`).toBe(false);
       expect(isRoomAlive([corner(idle)])).toBe(false);
@@ -309,25 +302,32 @@ describe('Room row presentation', () => {
   });
 
   it('escalates a corner waiting on a person without spending motion', () => {
-    const row = roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES);
+    const row = roomRowPresentation(
+      { corners: [corner('waiting', undefined, 'question')] },
+      NO_NAMES,
+    );
     expect(row).toMatchObject({ attention: true, live: false, glyph: '●' });
   });
 
   it('carries exactly one loud action word per needs-you row', () => {
     expect(
-      roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES).pills[0],
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'question')] }, NO_NAMES)
+        .pills[0],
     ).toEqual({ kind: 'status', label: 'REPLY' });
-    expect(roomRowPresentation({ corners: [corner('failed')] }, NO_NAMES).pills[0]).toEqual({
+    expect(
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'failed')] }, NO_NAMES).pills[0],
+    ).toEqual({
       kind: 'status',
       label: 'RETRY',
     });
     // A fresh ask waits on a reply too.
     expect(
-      roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES).pills[0],
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'question')] }, NO_NAMES)
+        .pills[0],
     ).toEqual({ kind: 'status', label: 'REPLY' });
     // Working and idle rows never carry one — including merely-idle stalls.
     expect(
-      roomRowPresentation({ corners: [corner('live')] }, NO_NAMES).pills.some(
+      roomRowPresentation({ corners: [corner('working')] }, NO_NAMES).pills.some(
         (pill) => pill.kind === 'status',
       ),
     ).toBe(false);
@@ -344,7 +344,7 @@ describe('Room row presentation', () => {
   it('keeps brass out of every quiet pill and builds the strip in reading order', () => {
     const row = roomRowPresentation(
       {
-        corners: [corner('needs-attention')],
+        corners: [corner('waiting', undefined, 'question')],
         modelLabel: 'ox-alpha',
         participantCount: 3,
         unreadNew: 2,
@@ -382,17 +382,17 @@ describe('Room row presentation', () => {
     const row = roomRowPresentation(
       {
         corners: [
-          corner('live'),
-          corner('needs-attention'),
-          corner('failed'),
-          corner('merged'),
+          corner('working'),
+          corner('waiting', undefined, 'question'),
+          corner('waiting', undefined, 'failed'),
+          corner('archived'),
           corner('archived'),
         ],
       },
       NO_NAMES,
     );
-    expect(row.corners.map((entry) => entry.status)).toEqual(['live', 'needs-attention', 'failed']);
-    expect(roomRowPresentation({ corners: [corner('merged')] }, NO_NAMES).corners).toEqual([]);
+    expect(row.corners.map((entry) => entry.state)).toEqual(['working', 'waiting', 'waiting']);
+    expect(roomRowPresentation({ corners: [corner('archived')] }, NO_NAMES).corners).toEqual([]);
     expect(roomRowPresentation({ corners: [corner('archived')] }, NO_NAMES).corners).toEqual([]);
   });
 
@@ -401,7 +401,7 @@ describe('Room row presentation', () => {
     expect(roomRowPresentation({}, NO_NAMES).glyph).toBe('○');
     // A fresh question is a first-class Room fact, so it owns the leading mark.
     const idle = roomRowPresentation(
-      { corners: [corner('needs-attention')], latestMessage: 'we shipped it' },
+      { corners: [corner('waiting', undefined, 'question')], latestMessage: 'we shipped it' },
       NO_NAMES,
     );
     expect(idle.glyph).toBe('●');
@@ -456,19 +456,19 @@ describe('Room row presentation', () => {
 
   it('states the current fact with the responsible actor', () => {
     const names = new Map([['opener', 'Lena']]);
-    expect(roomRowPresentation({ corners: [corner('open', 'login-fix')] }, names).fact).toBe(
+    expect(roomRowPresentation({ corners: [corner('review', 'login-fix')] }, names).fact).toBe(
       'login-fix',
     );
     // Idle-without-finishing is no longer a needs-you fact — a merely idle
     // corner's Room falls back to its spoken history. Only an ask-wait keeps
     // the "waiting on you" line.
-    expect(roomRowPresentation({ corners: [corner(null, 'login-fix')] }, names).fact).toBe(
+    expect(roomRowPresentation({ corners: [corner('waiting', 'login-fix')] }, names).fact).toBe(
       NO_ACTIVITY_PREVIEW,
     );
     expect(
-      roomRowPresentation({ corners: [corner('needs-attention', 'login-fix')] }, names).fact,
+      roomRowPresentation({ corners: [corner('waiting', 'login-fix', 'question')] }, names).fact,
     ).toBe('login-fix');
-    expect(roomRowPresentation({ corners: [corner('live', 'rebase-main')] }, names).fact).toBe(
+    expect(roomRowPresentation({ corners: [corner('working', 'rebase-main')] }, names).fact).toBe(
       'Lena · rebase-main',
     );
     // Idle previews attribute their speaker off the same roster ("you · …"),
@@ -492,7 +492,7 @@ describe('Room row presentation', () => {
       roomRowPresentation({ latestMessage: 'the relay is back up', roomUnread: false }, NO_NAMES),
     ).toMatchObject({ zone: 'idle', state: 'idle', attention: false, unread: false });
     expect(
-      roomRowPresentation({ corners: [corner('live')], roomUnread: true }, NO_NAMES),
+      roomRowPresentation({ corners: [corner('working')], roomUnread: true }, NO_NAMES),
     ).toMatchObject({ zone: 'working', state: 'working', unread: true });
   });
 
@@ -500,9 +500,12 @@ describe('Room row presentation', () => {
     const feed = roomListFeed(
       [
         { id: 'quiet-old', latestMessageAt: EARLIER_S },
-        { id: 'review-old', corners: [{ ...corner('open'), lastActivityAt: 4 }] },
-        { id: 'live-new', corners: [{ ...corner('live'), lastActivityAt: TODAY_S }] },
-        { id: 'review-new', corners: [{ ...corner('failed'), lastActivityAt: 9 }] },
+        { id: 'review-old', corners: [{ ...corner('review'), lastActivityAt: 4 }] },
+        { id: 'live-new', corners: [{ ...corner('working'), lastActivityAt: TODAY_S }] },
+        {
+          id: 'review-new',
+          corners: [{ ...corner('waiting', undefined, 'failed'), lastActivityAt: 9 }],
+        },
         { id: 'quiet-new', latestMessageAt: TODAY_S + 5 },
       ],
       NO_NAMES,
@@ -590,7 +593,7 @@ describe('Room row presentation', () => {
   });
 
   it('keeps corner state and corner count stable across read/unread rows', () => {
-    const corners = [corner('open'), corner('live')];
+    const corners = [corner('review'), corner('working')];
     const read = roomRowPresentation({ corners, roomUnread: false }, NO_NAMES);
     const unread = roomRowPresentation({ corners, roomUnread: true, unreadNew: 2 }, NO_NAMES);
     // The chip replaces the AGE, never the corner affordance: zone, corner
@@ -622,7 +625,7 @@ describe('Room row presentation', () => {
     const clustered = roomListFeed(
       [
         { id: 'unread-idle', latestMessageAt: TODAY_S, roomUnread: true, unreadNew: 1 },
-        { id: 'read-needs-you', corners: [{ ...corner('open'), lastActivityAt: 5 }] },
+        { id: 'read-needs-you', corners: [{ ...corner('review'), lastActivityAt: 5 }] },
       ],
       NO_NAMES,
     );

@@ -164,9 +164,8 @@ export default function BuzzCorners() {
           contentContainerStyle={surface.corners.length ? undefined : styles.emptyContainer}
           renderItem={({ item }) => {
             const label = displayCornerTitle(surface.room.name, item.corner.name, item.corner.id);
-            // Same resolver as the Room-list dropdown. This screen used to map
-            // `lifecycle.lifecycle` onto a status with its own ternary, so the
-            // two surfaces could disagree about one corner.
+            // Same presentation map as the Room-list dropdown; the state
+            // itself is already canonical on the server projection.
             const display = cornerDisplayState(item);
             return (
               <TouchableOpacity

@@ -577,13 +577,13 @@ describe('RoomIndexer', () => {
     const room = await indexer.readRoom(ROOM, VIEWER);
     expect(room?.latestAgentTurns).toEqual([]);
     expect(room?.members.some((member) => member.identity.pubkey === AGENT)).toBe(false);
-    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'idle' }]);
+    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, state: 'waiting' }]);
 
     const chats = await indexer.readChats(WORKSPACE, VIEWER);
     expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
 
     const corners = await indexer.readCorners(ROOM, VIEWER);
-    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'idle' }]);
+    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, state: 'waiting' }]);
   });
 
   it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
@@ -996,8 +996,8 @@ describe('RoomIndexer', () => {
     ).toBe('working');
     // The same receipt, read by the corner list: one fact, two surfaces.
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]).toMatchObject({
-      status: 'working',
-      statusAt: 32,
+      state: 'working',
+      stateAt: 32,
     });
 
     // The corner's own terminal receipt puts the row back to quiet: an old
@@ -2055,7 +2055,7 @@ describe('RoomIndexer', () => {
       ],
     );
 
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
 
     const publishAgentTurn = async (id: string, createdAt: number, status: string) => {
       await postgres.query(
@@ -2081,20 +2081,20 @@ describe('RoomIndexer', () => {
 
     await publishAgentTurn('4', 49, 'working');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]).toMatchObject({
-      status: 'working',
-      statusAt: 49,
+      state: 'working',
+      stateAt: 49,
     });
     expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]).toMatchObject({
-      status: 'working',
-      statusAt: 49,
+      state: 'working',
+      stateAt: 49,
     });
 
     await publishAgentTurn('5', 52, 'complete');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
-    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
+    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
 
     await publishAgentTurn('6', 53, 'failed');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('idle');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
   });
 
   it('projects the agent soul and allow-listed model catalog through the indexed agent read', async () => {

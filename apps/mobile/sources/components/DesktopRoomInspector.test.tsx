@@ -135,8 +135,8 @@ const corners = [
       updatedAt: 2,
     },
     lifecycle: { lifecycle: 'active', checks: 'unknown' },
-    status: 'working',
-    statusAt: 2,
+    state: 'working',
+    stateAt: 2,
     agent,
   },
   {
@@ -150,9 +150,8 @@ const corners = [
       updatedAt: 3,
     },
     lifecycle: { lifecycle: 'in-review', checks: 'passing' },
-    status: 'waiting',
-    reason: 'review',
-    statusAt: 3,
+    state: 'review',
+    stateAt: 3,
     agent,
   },
   {
@@ -166,8 +165,8 @@ const corners = [
       updatedAt: 4,
     },
     lifecycle: { lifecycle: 'done', checks: 'passing' },
-    status: 'concluded',
-    statusAt: 4,
+    state: 'archived',
+    stateAt: 4,
     agent,
   },
 ] as any;

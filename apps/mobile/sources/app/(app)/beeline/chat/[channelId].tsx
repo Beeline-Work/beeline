@@ -116,13 +116,8 @@ import {
   resolveCornerCardAgentPubkey,
   resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
-import {
-  currentCornerStatus,
-  roomListCorners,
-  type CornerStatus,
-  type CornerSummary,
-} from '@/buzz/corners';
-import { cornerHeaderStateLabel, resolveCornerDisplayState } from '@/buzz/corner-display-state';
+import { roomListCorners, type CornerSummary } from '@/buzz/corners';
+import { cornerDisplayState, cornerHeaderStateLabel } from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -631,8 +626,6 @@ export default function BuzzChat() {
     () => (roomSurface ? cornerSummaries(roomSurface) : []),
     [roomSurface?.corners],
   );
-  const cornerLifecycleStatus =
-    cornerLifecycle.find((corner) => corner.id === decodedId)?.status ?? null;
   const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository) return null;
@@ -1499,33 +1492,22 @@ export default function BuzzChat() {
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  const canonicalCorner = isCorner
-    ? cornerLifecycle.find((corner) => corner.id === decodedId)
+  const canonicalCornerItem = isCorner
+    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)
     : undefined;
-  const canonicalCornerLifecycle = isCorner
-    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)?.lifecycle
-    : undefined;
-  const canonicalCornerStatus = canonicalCorner
-    ? currentCornerStatus(canonicalCorner)
-    : cornerLifecycleStatus;
   const sessionState = !isCorner
     ? 'idle'
-    : canonicalCorner?.machineState === 'working' && canonicalCornerStatus === 'live'
+    : canonicalCornerItem?.state === 'working'
       ? 'working'
-      : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
+      : canonicalCornerItem?.state === 'archived'
         ? 'done'
         : 'idle';
-  const cornerHeaderDisplay = canonicalCorner
-    ? resolveCornerDisplayState({
-          ...(canonicalCorner.machineState ? { machineState: canonicalCorner.machineState } : {}),
-          ...(canonicalCorner.machineReason
-            ? { machineReason: canonicalCorner.machineReason }
-            : {}),
-          ...(canonicalCorner.stateAt === undefined ? {} : { stateAt: canonicalCorner.stateAt }),
-          ...(canonicalCornerLifecycle ? { lifecycle: canonicalCornerLifecycle } : {}),
-          archived: isArchived,
-        })
-    : resolveCornerDisplayState({});
+  const cornerHeaderDisplay = cornerDisplayState(
+    canonicalCornerItem ?? {
+      state: isArchived ? 'archived' : 'waiting',
+      lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+    },
+  );
   const cornerHeaderState = cornerHeaderStateLabel(cornerHeaderDisplay);
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),

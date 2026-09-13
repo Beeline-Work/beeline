@@ -1,7 +1,7 @@
 import { type CornerSummary } from './corners';
-import { resolveCornerDisplayState, type CornerDisplayStatus } from './corner-display-state';
 import { resolveAgentDisplayIdentity } from './agent-display';
 import { pickTurnVerb, type TurnVerb } from './turn-clock';
+import type { CornerState } from '@beeline/api-contract/phone';
 import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-client';
 
 /**
@@ -24,7 +24,7 @@ import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-c
  */
 export type PinnedCorner = {
   cornerId: string;
-  status: CornerDisplayStatus;
+  status: CornerState;
 };
 
 export type PinnedCornerInput = {
@@ -283,20 +283,7 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   const seenAt = new Map<string, number>();
 
   for (const corner of input.lifecycle) {
-    // A transcript-derived `status` without the canonical machine record is
-    // not lifecycle authority. In particular, a parent kind:9 corner-open
-    // control message can remain in history forever and must never pin itself.
-    if (!corner.machineState) continue;
-    const display = resolveCornerDisplayState(
-      {
-        machineState: corner.machineState,
-        ...(corner.machineReason ? { machineReason: corner.machineReason } : {}),
-        ...(corner.stateAt === undefined ? {} : { stateAt: corner.stateAt }),
-        ...(corner.awaitingReply === undefined ? {} : { awaitingReply: corner.awaitingReply }),
-      },
-      input.now,
-    );
-    status.set(corner.id, display.status);
+    status.set(corner.id, corner.state);
     seenAt.set(
       corner.id,
       Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0),

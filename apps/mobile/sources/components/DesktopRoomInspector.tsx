@@ -63,15 +63,15 @@ const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 
 function stateLine(corner: CornerListItem): string {
-  return `${corner.status}${corner.reason ? ` · ${corner.reason}` : ''}`;
+  return corner.state;
 }
 
 function age(corner: CornerListItem): string {
-  return compactRelativeTime(corner.statusAt ?? corner.corner.updatedAt, Date.now());
+  return compactRelativeTime(corner.stateAt ?? corner.corner.updatedAt, Date.now());
 }
 
 function terminal(corner: CornerListItem): boolean {
-  return corner.status === 'concluded' || corner.status === 'closed';
+  return corner.state === 'archived';
 }
 
 export function DesktopRoomInspector({

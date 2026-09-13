@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from './MonoHull';
-import type { CornerDisplayStatus } from '@/buzz/corner-display-state';
+import type { CornerState } from '@beeline/api-contract/phone';
 
 /**
  * The Room's one active-corner affordance: a single line pinned directly above
@@ -36,7 +36,7 @@ export function CornerLiveBar({
 }: {
   label: string;
   live: boolean;
-  state?: CornerDisplayStatus;
+  state?: CornerState;
   onPress?: () => void;
   testID?: string;
 }) {

@@ -278,10 +278,10 @@ describe('Room list layout contract', () => {
     // nowhere else. A screen that re-derives any of the three can disagree with
     // the count on the row above it.
     expect(source).toContain(
-      "import { cornerDisplayState, unfinishedCornerDisplay } from '@/buzz/corner-display-state';",
+      "import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';",
     );
     expect(source).toContain('const display = cornerDisplayState(corner);');
-    expect(source).toContain('unfinishedCornerDisplay(corners).map((entry) => entry.item)');
+    expect(source).toContain('cornerDisplayItems(corners).map((entry) => entry.item)');
     // The old collapses: a raw lifecycle word as the status, and a filter that
     // read `lifecycle` while the row's count read the daemon.
     expect(source).not.toContain('cornerStatusWord');

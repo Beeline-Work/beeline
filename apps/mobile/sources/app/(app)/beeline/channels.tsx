@@ -32,7 +32,7 @@ import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { cornerDisplayState, unfinishedCornerDisplay } from '@/buzz/corner-display-state';
+import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { claimFirstLaunchLanding, welcomeRoomHref } from '@/buzz/welcome-landing';
 import {
@@ -144,7 +144,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * already dropped it.
  */
 function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
-  return unfinishedCornerDisplay(corners).map((entry) => entry.item);
+  return cornerDisplayItems(corners).map((entry) => entry.item);
 }
 
 function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayItem[] {
@@ -991,9 +991,8 @@ export default function BuzzChannels() {
                           corner.corner.name,
                           corner.corner.id,
                         );
-                        // One resolver, three fact families: the daemon state
-                        // the Room row's count came from, the PR, and its
-                        // checks. The row never re-collapses them itself.
+                        // The server owns the state; this maps it only to the
+                        // shared visual tokens and optional PR narration.
                         const display = cornerDisplayState(corner);
                         return (
                           <TouchableOpacity

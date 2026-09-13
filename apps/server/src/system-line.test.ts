@@ -53,16 +53,21 @@ describe('composeSystemLine', () => {
     });
   });
 
-  it('keeps a URL out of the text and on the object', () => {
+  it('keeps check linkage out of the text and on the object', () => {
     const line = composeSystemLine({
       subject: { kind: 'github', name: 'GitHub' },
       verb: 'passed a check',
-      object: { text: 'Beeline CI', url: 'https://github.com/acme/w/runs/1' },
+      object: {
+        text: 'Beeline CI',
+        url: 'https://github.com/acme/w/runs/1',
+        headSha: 'a'.repeat(40),
+      },
     });
     expect(line.text).toBe('GitHub passed a check Beeline CI');
     expect(line.event.object).toEqual({
       text: 'Beeline CI',
       url: 'https://github.com/acme/w/runs/1',
+      headSha: 'a'.repeat(40),
     });
   });
 

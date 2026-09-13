@@ -149,10 +149,42 @@ runs:
           fi
           exit "$status"
         }
+        wait_for_machine_ready() {
+          machine="$1"
+          force_header="fly-force-instance-id: $machine"
+          ready_response="$RUNNER_TEMP/server-release/ready-$machine.json"
+          version_response="$RUNNER_TEMP/server-release/ready-version-$machine.json"
+          deadline=$((SECONDS + 180))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            remaining=$((deadline - SECONDS))
+            curl_timeout=$((remaining < 10 ? remaining : 10))
+            ready_status="$(curl -sS --max-time "$curl_timeout" -o "$ready_response" -w '%{http_code}' \
+              -H "$force_header" https://server.usebeeline.app/readyz || true)"
+            if [ "$ready_status" = 200 ]; then
+              remaining=$((deadline - SECONDS))
+              if [ "$remaining" -gt 0 ]; then
+                curl_timeout=$((remaining < 10 ? remaining : 10))
+                if curl -fsS --max-time "$curl_timeout" -H "$force_header" \
+                  https://server.usebeeline.app/version -o "$version_response" && \
+                  node -e 'const v=require(process.argv[1]);process.exit(v.version === process.argv[2] ? 0 : 1)' \
+                    "$version_response" "$RELEASE_VERSION"; then
+                  return 0
+                fi
+              fi
+            fi
+            remaining=$((deadline - SECONDS))
+            [ "$remaining" -gt 0 ] || break
+            sleep_for=$((remaining < 5 ? remaining : 5))
+            sleep "$sleep_for"
+          done
+          echo "$machine did not become ready within 180s" >&2
+          return 1
+        }
         trap rollback_canary ERR
 
         canary_updated=1
         flyctl machine update "$canary" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+        wait_for_machine_ready "$canary"
 
         if [ -n "${SERVER_CANARY_REVIEW_SECRET:-}" ]; then
           echo "::add-mask::$SERVER_CANARY_REVIEW_SECRET"
@@ -162,9 +194,19 @@ runs:
         const fs = require('node:fs');
         fs.writeFileSync(process.argv[2], JSON.stringify({ secret: process.env.SERVER_CANARY_REVIEW_SECRET }));
         NODE
-          exchange_status="$(curl -sS --max-time 12 -o "$exchange_response" -w '%{http_code}' \
-            -H 'Content-Type: application/json' --data-binary "@$exchange_request" \
-            https://server.usebeeline.app/v1/auth/review/exchange)"
+          exchange_status='000'
+          for exchange_attempt in 1 2 3; do
+            if exchange_status="$(curl -sS --max-time 12 -o "$exchange_response" -w '%{http_code}' \
+              -H "fly-force-instance-id: $second" -H 'Content-Type: application/json' \
+              --data-binary "@$exchange_request" \
+              https://server.usebeeline.app/v1/auth/review/exchange)"; then
+              case "$exchange_status" in
+                5??) ;;
+                *) break ;;
+              esac
+            fi
+            if [ "$exchange_attempt" -lt 3 ]; then sleep 5; fi
+          done
           rm -f "$exchange_request"
           if [ "$exchange_status" != 200 ]; then
             echo "Canary access-token exchange failed with HTTP $exchange_status" >&2
@@ -214,6 +256,7 @@ runs:
         done
         second_update_attempted=1
         flyctl machine update "$second" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+        wait_for_machine_ready "$second"
         fleet_updated=1
         trap - ERR
         node scripts/unified-release.mjs server-ledger --plan "$plan" \

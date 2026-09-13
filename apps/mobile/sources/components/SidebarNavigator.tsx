@@ -30,6 +30,7 @@ import {
   clampDesktopPaneWidth,
   DESKTOP_NAV_DEFAULT_WIDTH,
   DESKTOP_NAV_MIN_WIDTH,
+  DESKTOP_TRANSCRIPT_MIN_WIDTH,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
@@ -38,7 +39,6 @@ const TAURI_HEADER_CONTROL_LEFT = Math.ceil(92 / DEFAULT_APP_ZOOM);
 
 export const SidebarNavigator = React.memo(() => {
   const isTablet = useIsTablet();
-  const isDesktop = useIsDesktop();
   const inDesktopShell = isTauri();
   const desktopPlatform = isDesktopPlatform();
   const pathname = usePathname();
@@ -46,11 +46,11 @@ export const SidebarNavigator = React.memo(() => {
   const [desktopSession, setDesktopSession] = React.useState<DesktopSessionState>(
     inDesktopShell ? 'checking' : 'signed-in',
   );
-  const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell || isDesktop, isTablet);
+  const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell || desktopPlatform, isTablet);
   const isAppSurface = pathname.startsWith('/beeline/') && !pathname.includes('/onboarding');
   const showSessionChrome =
     isAppSurface &&
-    showsDesktopSessionChrome(inDesktopShell, isDesktop || isTablet, desktopSession);
+    showsDesktopSessionChrome(inDesktopShell, desktopPlatform || isTablet, desktopSession);
   const showSidebar = showSessionChrome && !zenMode;
   const { width: windowWidth } = useWindowDimensions();
 
@@ -86,7 +86,7 @@ export const SidebarNavigator = React.memo(() => {
   // Otherwise `Math.min` against a ceiling below that minimum always loses to
   // clampDesktopPaneWidth's floor, pinning the rendered width to the floor no
   // matter what the user drags to — the resize handle stops moving anything.
-  const maxWidthForContent = windowWidth - 440;
+  const maxWidthForContent = windowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH;
   const fullDrawerWidth = isDesktopLayout
     ? clampDesktopPaneWidth(
         'navigation',

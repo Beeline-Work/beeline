@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { prChecksStatus } from './read-only-mcp.js';
+import { approveMerge, prChecksStatus } from './read-only-mcp.js';
 
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
@@ -33,6 +33,8 @@ beforeEach(() => {
               ? { archived: false }
               : name === 'getPrChecksStatus'
                 ? { checks, pullRequest: url, headSha: 'a'.repeat(40), approvalPending }
+                : name === 'approveCornerMerge'
+                  ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
                 : {};
     return Response.json(result);
   });
@@ -43,7 +45,7 @@ afterEach(() => {
 });
 const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus');
 
-describe('pr_checks_status PR selection and human gate', () => {
+describe('pr_checks_status PR selection and reviewer gate', () => {
   it.each([614, url])(
     'asks the server about an explicit reviewer target %s',
     async (pullRequest) => {
@@ -121,5 +123,22 @@ describe('pr_checks_status PR selection and human gate', () => {
       next: expect.any(String),
     });
     expect(gateCalls()).toHaveLength(0);
+  });
+});
+
+describe('approve_merge', () => {
+  it('records the exact full head through the reviewer-only daemon operation', async () => {
+    await expect(approveMerge({ headSha: 'A'.repeat(40) })).resolves.toContain('"approved"');
+    expect(calls).toContainEqual({
+      name: 'approveCornerMerge',
+      input: { cornerId: 'corner', headSha: 'a'.repeat(40) },
+    });
+  });
+
+  it('refuses a shortened revision before calling the server', async () => {
+    await expect(approveMerge({ headSha: 'abc123' })).rejects.toThrow(
+      'headSha must be a full 40-character SHA',
+    );
+    expect(calls).toEqual([]);
   });
 });

@@ -56,15 +56,15 @@ describe('the chat header title (C72)', () => {
     expect(chatSource).not.toContain('testID="room-header-identity"');
   });
 
-  it('speaks the Direct Message subtitle in sentence case through the shared meta voice', () => {
-    // The DM header's one meta line reads through HeaderMetaCaps (the shared
-    // `meta`-role voice, C72) and is sentence case — "Direct message", never
-    // the tracked-caps "DIRECT MESSAGE" that belongs to section heads only.
+  it('puts the shared quiet presence grammar in the Direct Message subtitle', () => {
     const meta = chatSource.match(
       /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
     );
     expect(meta, 'missing room-header-meta subtitle').toBeTruthy();
-    expect(meta![0]).toContain("'Direct message'");
-    expect(meta![0]).not.toContain("'DIRECT MESSAGE'");
+    expect(meta![0]).toContain('{dmHeaderPresence}');
+    expect(chatSource).toContain(
+      "import { directMessageHeaderPresence } from '@/buzz/direct-message-header-presence'",
+    );
+    expect(chatSource).not.toContain("{'Direct message'}");
   });
 });

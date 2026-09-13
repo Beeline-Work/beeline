@@ -688,6 +688,15 @@ describe('monolith integration', () => {
        VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
       [WORKSPACE, reviewerId, ROOM],
     );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
+      [cornerId, WORKSPACE, ROOM, AGENT],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, cornerId, AGENT, reviewerId],
+    );
 
     expect(
       (await operation('updateRoom', { roomId: ROOM, reviewerAgentId: reviewerId })).status,
@@ -701,18 +710,21 @@ describe('monolith integration', () => {
       ).rows,
     ).toEqual([{ reviewer_agent_id: reviewerId }]);
     expect(
+      (
+        await database.query<{ room_id: string; event_subscriptions: string[] }>(
+          `SELECT room_id,event_subscriptions FROM memberships
+           WHERE identity_id=$1 AND room_id=ANY($2::uuid[]) ORDER BY room_id`,
+          [reviewerId, [ROOM, cornerId]],
+        )
+      ).rows,
+    ).toEqual([
+      { room_id: ROOM, event_subscriptions: ['check-passed'] },
+      { room_id: cornerId, event_subscriptions: ['check-passed'] },
+    ]);
+    expect(
       ((await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView).room.reviewerAgentId,
     ).toBe(reviewerId);
 
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
-      [cornerId, WORKSPACE, ROOM, AGENT],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, cornerId, AGENT],
-    );
     expect(
       await (
         await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: cornerId })
@@ -730,6 +742,14 @@ describe('monolith integration', () => {
       204,
     );
     expect(
+      (
+        await database.query<{ event_subscriptions: string[] }>(
+          `SELECT event_subscriptions FROM memberships WHERE identity_id=$1 AND room_id=$2`,
+          [reviewerId, ROOM],
+        )
+      ).rows,
+    ).toEqual([{ event_subscriptions: [] }]);
+    expect(
       await (
         await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: cornerId })
       ).json(),
@@ -746,6 +766,15 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([{ reviewer_agent_id: null }]);
+    expect(
+      (
+        await database.query<{ event_subscriptions: string[] }>(
+          `SELECT event_subscriptions FROM memberships
+           WHERE identity_id=$1 AND room_id=ANY($2::uuid[]) ORDER BY room_id`,
+          [AGENT, [ROOM, cornerId]],
+        )
+      ).rows,
+    ).toEqual([{ event_subscriptions: [] }, { event_subscriptions: [] }]);
   });
 
   it('derives Room and corner management from the active Workspace role', async () => {

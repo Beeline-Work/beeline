@@ -75,7 +75,7 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (reviewerHandle)
-    return `Commit, push, open the pull request, reply with the PR URL and then @${reviewerHandle} please review; never merge this PR yourself. If you asked any other agent to review in this corner, do not merge until they answer.`;
+    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then merge with gh pr merge --squash --match-head-commit <sha>.`;
   return yoloMode
     ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
     : 'Yolo is off: never merge; wait for explicit human approval in the app.';
@@ -87,7 +87,7 @@ export function cornerReviewerInstruction(input: {
   authorHandle?: string;
   openedByAgent: boolean;
   pullRequestNumber?: number;
-  yoloMode: boolean;
+  headSha?: string;
 }): string | undefined {
   if (
     !input.reviewerHandle ||
@@ -98,7 +98,8 @@ export function cornerReviewerInstruction(input: {
     return undefined;
   const author = input.authorHandle?.replace(/^@/, '') || 'author';
   const number = input.pullRequestNumber ?? 'N';
-  return `Review PR #${number} with the beeline-review skill. If it fails, reply @${author} with the findings. If it passes and the gate (pr_checks_status: checks=passed, held=false, approvalPending=false) is open and YOUR yolo is on, merge with gh pr merge --squash --match-head-commit <sha you reviewed>; if your yolo is off, reply approved <sha> and stop; if checks are pending, reply approved pending checks <sha> and stop; if checks are unknown, reply in this corner with the tool's reason and stop instead of retrying.`;
+  const headSha = input.headSha ?? '<head sha>';
+  return `Checks are green on PR #${number} at ${headSha}. Review it now with the beeline-review skill against that exact head. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
 }
 
 export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
@@ -571,7 +572,6 @@ export class MonolithCornerTurnLoop {
       agentHandle: self?.handle,
       authorHandle: opener?.handle,
       openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
-      yoloMode: configuration.yoloMode,
     };
     let reviewerInstruction = cornerReviewerInstruction(reviewerInput);
     if (reviewerInstruction) {
@@ -581,6 +581,7 @@ export class MonolithCornerTurnLoop {
       reviewerInstruction = cornerReviewerInstruction({
         ...reviewerInput,
         pullRequestNumber: restore.lifecycle?.pr?.number,
+        headSha: restore.lifecycle?.pr?.headSha,
       });
     }
     this.cornerTurnEndNudge =
@@ -729,6 +730,7 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
+        reviewer: Boolean(reviewerInstruction),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
@@ -774,13 +776,13 @@ export class MonolithCornerTurnLoop {
                 ? [reviewerInstruction]
                 : [
                     configuration.reviewerHandle
-                      ? `Once the pull request exists, reply with its full URL, then @${configuration.reviewerHandle} please review, and end the turn; do not check or wait for CI.`
+                      ? `Once the pull request exists, reply with its full URL and end the turn; do not tag the reviewer, check, or wait for CI.`
                       : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Only a later explicit human resume clears a hold.',
                     CORNER_AUTHOR_CONTRACT,
                     cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When approval is pending, wait for the server close request. Never merge another pull request.',
+              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request.',
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',

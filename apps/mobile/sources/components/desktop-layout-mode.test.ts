@@ -90,7 +90,7 @@ describe('desktop layout mode', () => {
     expect(messages).toContain('style={isDesktop ? styles.replyDesktopMessage : undefined}');
     expect(messages).not.toContain("if (Platform.OS === 'web') {");
     expect(messages).not.toContain('<Text style={styles.replyDesktopLabel}>REPLY</Text>');
-    expect(room).toContain('const desktopExperience = isDesktop;');
+    expect(room).toContain('const desktopExperience = isDesktopPlatform();');
     expect(room).toContain('const desktopTranscript = isDesktop;');
   });
 

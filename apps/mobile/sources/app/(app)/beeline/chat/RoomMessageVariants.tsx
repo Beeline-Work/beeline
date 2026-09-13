@@ -10,7 +10,7 @@ import {
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
-import type { MessageReplyDisplayTarget } from '@/buzz/message-reply';
+import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
@@ -715,6 +715,7 @@ function SwipeToReply({
   onReact,
   onForward,
   isDesktop,
+  replyOnly = false,
 }: {
   children: React.ReactNode;
   messageId: string;
@@ -724,6 +725,7 @@ function SwipeToReply({
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
   isDesktop: boolean;
+  replyOnly?: boolean;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
@@ -763,20 +765,22 @@ function SwipeToReply({
           ]}
           testID={`message-actions-${messageId}`}
         >
-          <Pressable
-            accessibilityLabel="Copy message text"
-            accessibilityRole="button"
-            onFocus={() => setDesktopActionsVisible(true)}
-            onBlur={() => setDesktopActionsVisible(false)}
-            onPress={onLongPress}
-            style={({ pressed }) => [
-              styles.replyDesktopAction,
-              pressed && styles.replyDesktopPressed,
-            ]}
-            testID={`copy-button-${messageId}`}
-          >
-            <Text style={styles.replyDesktopGlyph}>⧉</Text>
-          </Pressable>
+          {!replyOnly ? (
+            <Pressable
+              accessibilityLabel="Copy message text"
+              accessibilityRole="button"
+              onFocus={() => setDesktopActionsVisible(true)}
+              onBlur={() => setDesktopActionsVisible(false)}
+              onPress={onLongPress}
+              style={({ pressed }) => [
+                styles.replyDesktopAction,
+                pressed && styles.replyDesktopPressed,
+              ]}
+              testID={`copy-button-${messageId}`}
+            >
+              <Text style={styles.replyDesktopGlyph}>⧉</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityLabel="Reply to message"
             accessibilityRole="button"
@@ -791,34 +795,38 @@ function SwipeToReply({
           >
             <Text style={styles.replyDesktopGlyph}>↩</Text>
           </Pressable>
-          <Pressable
-            accessibilityLabel="React to message"
-            accessibilityRole="button"
-            onFocus={() => setDesktopActionsVisible(true)}
-            onPress={() => setReactionPickerVisible((visible) => !visible)}
-            style={({ pressed }) => [
-              styles.replyDesktopAction,
-              pressed && styles.replyDesktopPressed,
-            ]}
-            testID={`react-button-${messageId}`}
-          >
-            <Text style={styles.replyDesktopGlyph}>☺</Text>
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Forward message"
-            accessibilityRole="button"
-            onFocus={() => setDesktopActionsVisible(true)}
-            onPress={onForward}
-            style={({ pressed }) => [
-              styles.replyDesktopAction,
-              pressed && styles.replyDesktopPressed,
-            ]}
-            testID={`forward-button-${messageId}`}
-          >
-            <Text style={styles.replyDesktopGlyph}>↗</Text>
-          </Pressable>
+          {!replyOnly ? (
+            <>
+              <Pressable
+                accessibilityLabel="React to message"
+                accessibilityRole="button"
+                onFocus={() => setDesktopActionsVisible(true)}
+                onPress={() => setReactionPickerVisible((visible) => !visible)}
+                style={({ pressed }) => [
+                  styles.replyDesktopAction,
+                  pressed && styles.replyDesktopPressed,
+                ]}
+                testID={`react-button-${messageId}`}
+              >
+                <Text style={styles.replyDesktopGlyph}>☺</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Forward message"
+                accessibilityRole="button"
+                onFocus={() => setDesktopActionsVisible(true)}
+                onPress={onForward}
+                style={({ pressed }) => [
+                  styles.replyDesktopAction,
+                  pressed && styles.replyDesktopPressed,
+                ]}
+                testID={`forward-button-${messageId}`}
+              >
+                <Text style={styles.replyDesktopGlyph}>↗</Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
-        {reactionPickerVisible ? (
+        {!replyOnly && reactionPickerVisible ? (
           <View style={styles.reactionPicker} testID={`reaction-picker-${messageId}`}>
             {MESSAGE_REACTION_EMOJIS.map((emoji) => (
               <Pressable
@@ -1122,30 +1130,42 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey],
   );
   if (message.isAgentActivity) {
+    const excerpt = agentActivityReplyExcerpt(message);
     return (
       <View style={styles.activityGroup} testID="corner-activity">
-        <ActivityTimeline
-          active={message.isAgentLiveTurn === true}
-          handle={!continued && isAgent ? voiceName : undefined}
-          mark={
-            !continued && isAgent
-              ? {
-                  seed: markSeed,
-                  kind: 'agent',
-                  // Same axes the settled byline mark renders (its creature,
-                  // and working → gold ring): the streaming lane is the same
-                  // speaker, so it must not wear a different animal for the
-                  // length of the turn.
-                  ...(speakerFace ? { face: speakerFace } : {}),
-                  alive: message.isAgentLiveTurn === true,
-                }
-              : undefined
-          }
-          items={activity}
-          messageDraft={message.agentMessageDraft}
-          stamp={ledgerStamp(message.timestamp)}
-          testID="corner-activity-timeline"
-        />
+        <SwipeToReply
+          messageId={message.id}
+          onLongPress={() => onCopy(excerpt)}
+          {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
+          onReply={() => onReply(message)}
+          onReact={() => undefined}
+          onForward={() => undefined}
+          isDesktop={desktopLayout}
+          replyOnly
+        >
+          <ActivityTimeline
+            active={message.isAgentLiveTurn === true}
+            handle={!continued && isAgent ? voiceName : undefined}
+            mark={
+              !continued && isAgent
+                ? {
+                    seed: markSeed,
+                    kind: 'agent',
+                    // Same axes the settled byline mark renders (its creature,
+                    // and working → gold ring): the streaming lane is the same
+                    // speaker, so it must not wear a different animal for the
+                    // length of the turn.
+                    ...(speakerFace ? { face: speakerFace } : {}),
+                    alive: message.isAgentLiveTurn === true,
+                  }
+                : undefined
+            }
+            items={activity}
+            messageDraft={message.agentMessageDraft}
+            stamp={ledgerStamp(message.timestamp)}
+            testID="corner-activity-timeline"
+          />
+        </SwipeToReply>
       </View>
     );
   }

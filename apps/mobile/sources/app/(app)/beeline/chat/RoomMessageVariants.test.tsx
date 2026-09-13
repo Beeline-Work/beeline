@@ -693,6 +693,58 @@ describe('Room message variant components', () => {
     );
   });
 
+  it('uses the same reply swipe for corner narration and tool-call activity', () => {
+    const onNarrationReply = vi.fn();
+    const narration = message({
+      id: 'corner-narration',
+      text: '',
+      pubkey: 'agent-sol',
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      requestId: 'turn-sol',
+      activity: [{ kind: 'output', title: 'Output', text: 'The deploy needs one more check.' }],
+    });
+    const tool = message({
+      id: 'corner-tool',
+      text: '',
+      pubkey: 'agent-sol',
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      requestId: 'turn-sol',
+      activity: [{ kind: 'tool', title: 'Run tests', command: 'npm test', status: 'completed' }],
+    });
+    const props = {
+      desktopLayout: false,
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } as const;
+    const narrationRow = render(
+      <OrdinaryLedgerMessage {...props} message={narration} onReply={onNarrationReply} />,
+    );
+    const narrationSwipe = narrationRow.root.findByProps({
+      testID: 'swipe-reply-corner-narration',
+    });
+    act(() => narrationSwipe.props.onSwipeableOpen('right'));
+    expect(onNarrationReply).toHaveBeenCalledWith(narration);
+
+    const onToolReply = vi.fn();
+    const toolRow = render(
+      <OrdinaryLedgerMessage {...props} message={tool} onReply={onToolReply} />,
+    );
+    const toolSwipe = toolRow.root.findByProps({ testID: 'swipe-reply-corner-tool' });
+    act(() => toolSwipe.props.onSwipeableOpen('right'));
+    expect(onToolReply).toHaveBeenCalledWith(tool);
+  });
+
   // Attachment bytes are swept 24 hours after upload; the message that carried
   // them is kept. The row says what is gone instead of hanging on a dead URL.
   it('renders an expired attachment as a named placeholder, not an image or a link', () => {

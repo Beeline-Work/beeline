@@ -14,14 +14,27 @@ const styleBlock = (start: string, end: string) =>
 describe('Option A composer chrome', () => {
   it('draws the single-line 44px surface with approved geometry and semantic tokens', () => {
     const surface = styleBlock('  composer: {', '  composerMultiline:');
+    const inputRow = styleBlock('  inputRow: {', '  composerMultiline:');
     expect(surface).toContain('minHeight: 44');
-    expect(surface).toContain("alignItems: 'center'");
-    expect(surface).toContain('paddingVertical: 8');
-    expect(surface).toContain('paddingHorizontal: 10');
+    expect(inputRow).toContain("alignItems: 'center'");
+    expect(inputRow).toContain('paddingVertical: 8');
+    expect(inputRow).toContain('paddingHorizontal: 10');
     expect(surface).toContain('borderRadius: 10');
     expect(surface).toContain('borderWidth: 1');
     expect(surface).toContain('borderColor: theme.buzz.border');
     expect(surface).toContain('backgroundColor: theme.buzz.bgRaised');
+  });
+
+  it('keeps reply quotes and staged files inside the one composer hairline', () => {
+    expect(composer).toContain('testID={`${testIDPrefix}-composer-adjuncts`}');
+    expect(composer).toContain('testID="reply-composer-banner"');
+    expect(composer).toContain('Replying to');
+    expect(composer).toContain('visibleAttachments = attachments.slice(0, 3)');
+    expect(composer).toContain('{hiddenAttachmentCount} more');
+    expect(composer).not.toContain('borderStrong');
+    expect(room.indexOf('reply-composer-banner')).toBe(-1);
+    expect(room).toContain('reply={');
+    expect(room).toContain('attachments={pendingAttachments.map');
   });
 
   it('keeps the border one pixel and changes only its token on focus', () => {
@@ -35,12 +48,14 @@ describe('Option A composer chrome', () => {
     expect(composer).toContain('sendDisabled && styles.sendButtonTextDisabled');
     expect(composer).toContain('sendButtonTextDisabled: { color: theme.buzz.textMuted }');
     expect(composer).toContain('sendButtonArmed: { backgroundColor: theme.buzz.accent');
-    expect(composer).toContain('attachButtonText: {\n    ...theme.buzz.type.body,\n    color: theme.buzz.textMuted');
+    expect(composer).toContain(
+      'attachButtonText: {\n    ...theme.buzz.type.body,\n    color: theme.buzz.textMuted',
+    );
     expect(composer.match(/hitSlop=\{9\}/g)).toHaveLength(2);
   });
 
   it('holds Rooms, DMs, corners, and desktop to 16px side margins', () => {
-    expect(room).toContain("inputBar: {\n      paddingHorizontal: 16");
+    expect(room).toContain('inputBar: {\n      paddingHorizontal: 16');
     expect(desktop).toContain('cockpitComposer: { paddingHorizontal: 16');
     expect(room).toContain('<ConversationComposer');
     expect(desktop).toContain('<ConversationComposer');

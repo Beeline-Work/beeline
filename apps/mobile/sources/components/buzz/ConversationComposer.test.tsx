@@ -25,6 +25,10 @@ vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
+vi.mock('expo-image', async () => {
+  const React = await import('react');
+  return { Image: (props: any) => React.createElement('Image', props, props.children) };
+});
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -79,6 +83,90 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
   it('uses the same empty placeholder on every surface', () => {
     const f = render('');
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
+  });
+
+  it('renders a sentence-case reply quote inside the composer frame', () => {
+    const cancelReply = vi.fn();
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer
+          {...props}
+          reply={{ handle: 'bananaman614305', preview: 'The quoted text stays to one line.' }}
+          onCancelReply={cancelReply}
+        />,
+      ),
+    );
+    const adjuncts = f.renderer.root.findByProps({ testID: 'chat-composer-adjuncts' });
+    const reply = adjuncts.findByProps({ testID: 'reply-composer-banner' });
+    expect(
+      reply
+        .findAllByType('Text')
+        .map((node: any) => node.props.children)
+        .flat(Infinity),
+    ).toContain(' Replying to');
+    expect(
+      reply
+        .findAllByType('Text')
+        .map((node: any) => node.props.children)
+        .flat(Infinity),
+    ).toContain('bananaman614305');
+    expect(reply.findAllByProps({ numberOfLines: 1 }).length).toBeGreaterThanOrEqual(2);
+    expect(reply.findAllByProps({ ellipsizeMode: 'tail' }).length).toBeGreaterThan(0);
+    act(() => reply.findByProps({ testID: 'reply-composer-cancel' }).props.onPress());
+    expect(cancelReply).toHaveBeenCalledOnce();
+  });
+
+  it('shows three staged-file rows, their metadata, and a calm overflow count', () => {
+    const removeAttachment = vi.fn();
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    const attachments = [
+      { uri: 'file:///photo.jpg', name: 'photo.jpg', mimeType: 'image/jpeg', sizeLabel: '2.1 MB' },
+      {
+        uri: 'file:///notes.pdf',
+        name: 'notes.pdf',
+        mimeType: 'application/pdf',
+        sizeLabel: '18 KB',
+      },
+      { uri: 'file:///brief.txt', name: 'brief.txt', mimeType: 'text/plain', sizeLabel: '4 KB' },
+      { uri: 'file:///hidden.csv', name: 'hidden.csv', mimeType: 'text/csv', sizeLabel: '8 KB' },
+    ];
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer
+          {...props}
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
+        />,
+      ),
+    );
+    const adjuncts = f.renderer.root.findByProps({ testID: 'chat-composer-adjuncts' });
+    expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-0' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-1' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-2' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-3' })).toHaveLength(0);
+    expect(adjuncts.findAllByType('Image')).toHaveLength(1);
+    const text = adjuncts
+      .findAllByType('Text')
+      .map((node: any) => node.props.children)
+      .flat(Infinity);
+    expect(text).toContain('photo.jpg');
+    expect(text).toContain('2.1 MB');
+    expect(text).toContain('IMAGE/JPEG');
+    expect(
+      adjuncts.findByProps({ testID: 'pending-chat-attachments-more' }).findByType('Text').props
+        .children,
+    ).toEqual([1, ' more']);
+    act(() => adjuncts.findByProps({ testID: 'pending-chat-attachment-remove-1' }).props.onPress());
+    expect(removeAttachment).toHaveBeenCalledWith(1);
   });
 
   it('leaves multiline text visible through native auto-growth', () => {
@@ -205,7 +293,9 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
 
   it('shares one row across Room and corner with unchanged desktop keyboard dispatch', () => {
     const f = render('hello');
-    expect(f.renderer.root.findAllByType('View')[0].props.style[0]).toMatchObject({
+    expect(
+      f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[0],
+    ).toMatchObject({
       flexDirection: 'row',
       alignItems: 'center',
     });
@@ -225,14 +315,18 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
 
   it('bottom-aligns the controls only after the field grows beyond one line', () => {
     const f = render('one line');
-    expect(f.renderer.root.findAllByType('View')[0].props.style[1]).toBe(false);
+    expect(f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[1]).toBe(
+      false,
+    );
     const props = f.renderer.root.findByType(ConversationComposer).props;
     act(() =>
       f.renderer.update(
         <ConversationComposer {...props} height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT + 1} />,
       ),
     );
-    expect(f.renderer.root.findAllByType('View')[0].props.style[1]).toMatchObject({
+    expect(
+      f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[1],
+    ).toMatchObject({
       alignItems: 'flex-end',
     });
   });
@@ -241,7 +335,7 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     const f = render('focused');
     const props = f.renderer.root.findByType(ConversationComposer).props;
     act(() => f.renderer.update(<ConversationComposer {...props} focused />));
-    const [base, , focus] = f.renderer.root.findAllByType('View')[0].props.style;
+    const [base, focus] = f.renderer.root.findAllByType('View')[0].props.style;
     expect(base.borderWidth).toBe(1);
     expect(focus).toEqual({ borderColor: '#b08a4a' });
     expect(focus).not.toHaveProperty('borderWidth');

@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef } from 'react';
+
 /**
  * The captain's scroll rule for the transcript (2026-09): whenever a new
  * message or live card mutation arrives for the open Room or corner, the
@@ -46,6 +48,8 @@ export function scrollFollowOnArrival({
 export function scrollFollowOnLayoutChange({
   previousFootprint,
   nextFootprint,
+  previousLayoutKey,
+  nextLayoutKey,
   isPinnedToTail,
   isUserDragging,
 }: {
@@ -53,6 +57,10 @@ export function scrollFollowOnLayoutChange({
   previousFootprint: number | null;
   /** Composer height + keyboard height in this commit. */
   nextFootprint: number;
+  /** Fixed chrome rendered below the list before this commit. */
+  previousLayoutKey?: string | null;
+  /** Fixed chrome rendered below the list in this commit. */
+  nextLayoutKey?: string;
   /** The reader was already at (or within the tail threshold of) the newest end. */
   isPinnedToTail: boolean;
   /** A drag (or its momentum) is in progress right now. */
@@ -60,11 +68,50 @@ export function scrollFollowOnLayoutChange({
 }): ScrollFollowDecision {
   // First measurement; nothing to compare against yet.
   if (previousFootprint === null) return 'hold';
-  // Only a shrink (composer collapsing, keyboard dismissing) opens a gap.
-  if (nextFootprint >= previousFootprint) return 'hold';
+  const fixedChromeChanged =
+    previousLayoutKey != null && nextLayoutKey != null && previousLayoutKey !== nextLayoutKey;
+  // A composer/keyboard shrink makes the viewport taller. Mounting or
+  // unmounting either fixed status line changes the viewport in the other
+  // direction, but maintainVisibleContentPosition can retain an offset in
+  // both cases. Growth from opening the keyboard alone remains native-owned.
+  if (nextFootprint >= previousFootprint && !fixedChromeChanged) return 'hold';
   // A reader who scrolled back to read history keeps their place.
   if (!isPinnedToTail) return 'hold';
   // Never fight the user's finger mid-drag.
   if (isUserDragging) return 'hold';
   return 'scroll';
+}
+
+/**
+ * Capture the tail verdict during render, before the native list lays out the
+ * new footer height and reports the resulting offset. Reading the pinned ref
+ * from an effect is too late: `maintainVisibleContentPosition` has already
+ * moved it away from zero by then, so the old composer-sized gap is retained.
+ */
+export function useScrollFollowOnLayoutChange({
+  footprint,
+  layoutKey,
+  isPinnedToTail,
+  isUserDragging,
+}: {
+  footprint: number;
+  layoutKey?: string;
+  isPinnedToTail: boolean;
+  isUserDragging: boolean;
+}): ScrollFollowDecision {
+  const previousFootprintRef = useRef<number | null>(null);
+  const previousLayoutKeyRef = useRef<string | null>(null);
+  const decision = scrollFollowOnLayoutChange({
+    previousFootprint: previousFootprintRef.current,
+    nextFootprint: footprint,
+    previousLayoutKey: previousLayoutKeyRef.current,
+    nextLayoutKey: layoutKey,
+    isPinnedToTail,
+    isUserDragging,
+  });
+  useLayoutEffect(() => {
+    previousFootprintRef.current = footprint;
+    previousLayoutKeyRef.current = layoutKey ?? null;
+  }, [footprint, layoutKey]);
+  return decision;
 }

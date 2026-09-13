@@ -710,9 +710,13 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          # Use --package with a bare `eas` command (never `npx eas-cli@version ...`): a bare
+          # package spec that matches the eas-cli also installed globally on this runner makes
+          # npm exec resolve that global install and prepend its bin dir (/usr/local/bin) to
+          # PATH, reintroducing Homebrew rsync ahead of /usr/bin for the Xcode export above.
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
           npm ci
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
+          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- eas build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
           sha256=$(shasum -a 256 "$RUNNER_TEMP/beeline-ios.ipa" | awk '{print $1}')
           node - "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/beeline-ios.ipa" "$sha256" <<'NODE'
@@ -726,8 +730,12 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          # Use --package with a bare `eas` command (never `npx eas-cli@version ...`): a bare
+          # package spec that matches the eas-cli also installed globally on this runner makes
+          # npm exec resolve that global install and prepend its bin dir (/usr/local/bin) to
+          # PATH, reintroducing Homebrew rsync ahead of /usr/bin for the Xcode export above.
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
-          npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
+          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- eas submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:

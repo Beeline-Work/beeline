@@ -53,6 +53,7 @@ import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
+import { CornerWorkingPulse } from '@/components/buzz/CornerLiveBar';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import {
   RoomDeckComposeMenu,
@@ -1009,21 +1010,23 @@ export default function BuzzChannels() {
                             >
                               └ {label}
                             </Text>
-                            <Text
-                              style={[
-                                styles.cornerStatus,
-                                display.status === 'working'
-                                  ? styles.cornerStatusWorking
-                                  : display.status === 'review'
-                                    ? styles.cornerStatusReview
-                                    : display.status === 'archived'
-                                      ? styles.cornerStatusArchived
-                                      : styles.cornerStatusWaiting,
-                              ]}
-                              testID={`room-corner-status-${corner.corner.id}`}
-                            >
-                              {display.word}
-                            </Text>
+                            <CornerWorkingPulse state={display.status}>
+                              <Text
+                                style={[
+                                  styles.cornerStatus,
+                                  display.status === 'working'
+                                    ? styles.cornerStatusWorking
+                                    : display.status === 'review'
+                                      ? styles.cornerStatusReview
+                                      : display.status === 'archived'
+                                        ? styles.cornerStatusArchived
+                                        : styles.cornerStatusWaiting,
+                                ]}
+                                testID={`room-corner-status-${corner.corner.id}`}
+                              >
+                                {display.word}
+                              </Text>
+                            </CornerWorkingPulse>
                             <Text style={styles.cornerChevron}>›</Text>
                           </TouchableOpacity>
                         );
@@ -1298,7 +1301,7 @@ const styles = StyleSheet.create((theme) => {
       includeFontPadding: false,
     },
     // Brass is reserved for the state that wants the viewer.
-    cornerStatusWorking: { color: hull.ledgerQuiet },
+    cornerStatusWorking: { color: hull.ledgerBright },
     cornerStatusReview: { color: hull.ledgerQuiet },
     cornerStatusWaiting: { color: hull.accent },
     cornerStatusArchived: { color: hull.ledgerGhost },

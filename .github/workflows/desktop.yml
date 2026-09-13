@@ -200,6 +200,33 @@ jobs:
           esac
           npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"}
 
+      - name: Prove the bundled macOS app icon
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          bundle="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          app=$(find "$bundle" -type d -name '*.app' -print -quit)
+          if [ -z "$app" ]; then
+            echo "::error::the macOS bundle has no .app"
+            exit 1
+          fi
+          icon=$(find "$app/Contents/Resources" -type f -name '*.icns' -print -quit)
+          if [ -z "$icon" ]; then
+            echo "::error::$app has no .icns icon"
+            exit 1
+          fi
+          iconset="$RUNNER_TEMP/beeline-app-icon.iconset"
+          iconutil --convert iconset "$icon" --output "$iconset"
+          master="$iconset/icon_512x512@2x.png"
+          {
+            echo '### Bundled macOS app icon'
+            echo
+            echo '```'
+            echo "$icon"
+            sips --getProperty pixelWidth --getProperty pixelHeight --getProperty hasAlpha "$master"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # A bundler that produced nothing still exits 0 in some failure modes;
       # the installer files are the evidence. The same listing tells whoever
       # opens the run which downloads it produced.

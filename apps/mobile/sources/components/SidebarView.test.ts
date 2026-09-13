@@ -33,4 +33,11 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('cornerMetaQuiet: { color: theme.buzz.ledgerQuiet }');
     expect(source).toContain('cornerMetaGhost: { color: theme.buzz.ledgerGhost }');
   });
+
+  it('keeps DM presence out of list rows', () => {
+    expect(source).not.toContain('directMessagePresence');
+    expect(source).not.toContain('presenceCaption');
+    expect(source).not.toContain('presenceDot');
+    expect(source).not.toContain('desktop-room-presence-');
+  });
 });

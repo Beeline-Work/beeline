@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Folded repository batch decision mock</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --void: #14091a;
+        --raised: #190e21;
+        --highlight: #1e1326;
+        --pressed: #271c31;
+        --border: #291e33;
+        --border-strong: #3b3048;
+        --primary: #f0f0f3;
+        --secondary: #c9c9d1;
+        --muted: #83838d;
+        --ghost: #6c6c76;
+        --accent: #b08a4a;
+        --danger: #c98a8a;
+        --phone: 390px;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--void);
+        color: var(--primary);
+        font-family: "Space Grotesk", sans-serif;
+      }
+
+      header {
+        max-width: 1760px;
+        margin: 0 auto;
+        padding: 32px 24px 24px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: -0.3px;
+      }
+
+      header p {
+        max-width: 720px;
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: repeat(4, var(--phone));
+        gap: 24px;
+        width: max-content;
+        min-width: 100%;
+        padding: 24px;
+      }
+
+      figure { width: var(--phone); margin: 0; }
+
+      figcaption {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        min-height: 39px;
+        margin-bottom: 8px;
+      }
+
+      .state {
+        color: var(--secondary);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+      }
+
+      .measure {
+        color: var(--ghost);
+        font: 13px/19px "IBM Plex Mono", monospace;
+      }
+
+      .phone {
+        width: var(--phone);
+        min-height: 690px;
+        overflow: hidden;
+        background: var(--void);
+        border: 1px solid var(--border-strong);
+        border-radius: 28px;
+      }
+
+      .status {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px 18px 8px;
+        color: var(--secondary);
+        font-size: 13px;
+      }
+
+      .room-head {
+        padding: 18px 16px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .room-head strong { font-size: 16px; font-weight: 600; }
+
+      .room-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      .transcript { padding: 28px 16px; }
+
+      .narration {
+        margin: 0 0 12px;
+        color: var(--secondary);
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      .card {
+        margin-bottom: 16px;
+        overflow: hidden;
+        background: var(--raised);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        min-height: 52px;
+        padding: 12px 16px;
+        color: inherit;
+        text-align: left;
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+      }
+
+      .card-head:hover { background: var(--highlight); }
+      .card-head:active { background: var(--pressed); }
+      .card-head:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
+
+      .title {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        color: var(--primary);
+        font-size: 15px;
+        font-weight: 500;
+        line-height: 23px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      time { color: var(--muted); font-size: 13px; line-height: 19px; }
+
+      .chevron {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+        color: var(--muted);
+        transition: transform 140ms ease;
+      }
+
+      .card[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+
+      .rows { border-top: 1px solid var(--border); }
+      .rows[hidden] { display: none; }
+
+      .row {
+        display: grid;
+        grid-template-columns: 78px minmax(0, 1fr);
+        gap: 12px;
+        min-height: 58px;
+        padding: 9px 16px;
+        align-items: center;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .row:last-child { border-bottom: 0; }
+
+      .row-state {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      .row.failed .row-state { color: var(--danger); }
+
+      .row-title {
+        overflow: hidden;
+        color: var(--secondary);
+        font-size: 15px;
+        line-height: 23px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-kind {
+        color: var(--ghost);
+        font: 12px/17px "IBM Plex Mono", monospace;
+      }
+
+      .failure-note {
+        padding: 10px 16px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 17px;
+        border-top: 1px solid var(--border);
+      }
+
+      .annotation {
+        margin: 16px 4px 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      .annotation b { color: var(--secondary); font-weight: 500; }
+
+      @media (max-width: 767px) {
+        header { padding: 24px 16px 20px; }
+        main { grid-template-columns: var(--phone); padding: 16px 0 32px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .chevron { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Folded repository batches</h1>
+      <p>Decision mock for a shared PR/check disclosure pattern. Every device frame is exactly 390px wide and uses the app’s Obsidian Refined tokens.</p>
+    </header>
+
+    <main>
+      <figure>
+        <figcaption><span class="state">Collapsed check</span><span class="measure">390 px</span></figcaption>
+        <section class="phone" aria-label="Collapsed check batch">
+          <div class="status"><span>11:07</span><span>5G&nbsp;&nbsp;92%</span></div>
+          <div class="room-head"><strong>#beeline / Card clarity</strong><p>12/16 tests passed · running</p></div>
+          <div class="transcript">
+            <p class="narration">GitHub finished the latest test batch.</p>
+            <article class="card" aria-expanded="false">
+              <button class="card-head" type="button">
+                <span class="title">Check 5 passed</span><time>11:07</time>
+                <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5.5 4.5 4 4.5-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+              </button>
+            </article>
+            <p class="annotation"><b>One calm line.</b> The corner header owns overall progress; the card records this completed batch.</p>
+          </div>
+        </section>
+      </figure>
+
+      <figure>
+        <figcaption><span class="state">Collapsed PR proposal</span><span class="measure">390 px</span></figcaption>
+        <section class="phone" aria-label="Collapsed pull request batch proposal">
+          <div class="status"><span>11:07</span><span>5G&nbsp;&nbsp;92%</span></div>
+          <div class="room-head"><strong>#beeline / Card clarity</strong><p>Review · PR #1208 open</p></div>
+          <div class="transcript">
+            <p class="narration">Repository activity since the last reply.</p>
+            <article class="card" aria-expanded="false">
+              <button class="card-head" type="button">
+                <span class="title">PR 1 opened, 2 merged</span><time>11:07</time>
+                <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5.5 4.5 4 4.5-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+              </button>
+            </article>
+            <p class="annotation"><b>Proposal only.</b> Same single-line disclosure as checks; PR titles remain available one tap away.</p>
+          </div>
+        </section>
+      </figure>
+
+      <figure>
+        <figcaption><span class="state">Expanded</span><span class="measure">390 px</span></figcaption>
+        <section class="phone" aria-label="Expanded repository batches">
+          <div class="status"><span>11:07</span><span>5G&nbsp;&nbsp;92%</span></div>
+          <div class="room-head"><strong>#beeline / Card clarity</strong><p>12/16 tests passed · running</p></div>
+          <div class="transcript">
+            <article class="card" aria-expanded="true">
+              <button class="card-head" type="button">
+                <span class="title">Check 3 passed</span><time>11:07</time>
+                <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5.5 4.5 4 4.5-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+              </button>
+              <div class="rows">
+                <div class="row"><span class="row-state">passed</span><span><span class="row-title">Mobile suite</span><br /><span class="row-kind">check</span></span></div>
+                <div class="row"><span class="row-state">passed</span><span><span class="row-title">Calm lint</span><br /><span class="row-kind">check</span></span></div>
+                <div class="row"><span class="row-state">passed</span><span><span class="row-title">Typecheck</span><br /><span class="row-kind">check</span></span></div>
+              </div>
+            </article>
+            <article class="card" aria-expanded="true">
+              <button class="card-head" type="button">
+                <span class="title">PR 1 opened, 2 merged</span><time>11:07</time>
+                <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5.5 4.5 4 4.5-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+              </button>
+              <div class="rows">
+                <div class="row"><span class="row-state">opened</span><span><span class="row-title">Clarify check cards</span><br /><span class="row-kind">PR #1208</span></span></div>
+                <div class="row"><span class="row-state">merged</span><span><span class="row-title">Quiet system rows</span><br /><span class="row-kind">PR #1205</span></span></div>
+                <div class="row"><span class="row-state">merged</span><span><span class="row-title">Fold GitHub cards</span><br /><span class="row-kind">PR #1204</span></span></div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </figure>
+
+      <figure>
+        <figcaption><span class="state">Failure inline</span><span class="measure">390 px</span></figcaption>
+        <section class="phone" aria-label="Failed check shown inline">
+          <div class="status"><span>11:08</span><span>5G&nbsp;&nbsp;91%</span></div>
+          <div class="room-head"><strong>#beeline / Card clarity</strong><p>14/16 tests passed · failed</p></div>
+          <div class="transcript">
+            <p class="narration">One check needs action.</p>
+            <article class="card" aria-expanded="false">
+              <button class="card-head" type="button">
+                <span class="title">Check 4 passed, 1 failed</span><time>11:08</time>
+                <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5.5 4.5 4 4.5-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+              </button>
+              <div class="rows">
+                <div class="row failed"><span class="row-state">failed</span><span><span class="row-title">Android screenshot test</span><br /><span class="row-kind">check</span></span></div>
+              </div>
+              <div class="failure-note">Passed rows stay folded. Tap the header to inspect the full batch.</div>
+            </article>
+            <p class="annotation"><b>Action survives the fold.</b> Failed names remain visible with no tap; green rows do not consume the transcript.</p>
+          </div>
+        </section>
+      </figure>
+    </main>
+
+    <script>
+      for (const card of document.querySelectorAll('.card')) {
+        const button = card.querySelector('.card-head');
+        const rows = card.querySelector('.rows');
+        if (!button || !rows) continue;
+        button.addEventListener('click', () => {
+          const expanded = card.getAttribute('aria-expanded') === 'true';
+          card.setAttribute('aria-expanded', String(!expanded));
+          rows.hidden = expanded;
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -76,6 +76,33 @@ const TOOLS = [
 ];
 
 describe('live streaming turn', () => {
+  it('adds adjacent collapsed summary counts across thinking-only rows', () => {
+    const agent = 'b'.repeat(64);
+    const row = (
+      id: string,
+      activity: Array<NonNullable<Parameters<typeof ActivityTimeline>[0]['items']>[number]>,
+    ) => ({
+      id,
+      text: '',
+      isUser: false,
+      timestamp: Number(id.replace(/\D/g, '')),
+      pubkey: agent,
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      activity,
+    });
+    const [group, ...rest] = foldSettledActivityRuns([
+      row('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),
+      row('thought-2', [{ kind: 'thinking', title: 'Thinking', text: 'Checking.' }]),
+      row('note-3', [{ kind: 'summary', title: 'Summary', rollup: { searched: 2 } }]),
+    ]);
+    expect(rest).toHaveLength(0);
+    const renderer = render(<ActivityTimeline items={group.activity!} />);
+    expect(
+      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children,
+    ).toBe('3 TOOL CALLS');
+  });
+
   it('renders a folded run of per-call rows as one chevron over all six calls (C55)', () => {
     const agent = 'b'.repeat(64);
     const call = (id: string, status: 'completed' | 'failed') => ({

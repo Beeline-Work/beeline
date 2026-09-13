@@ -852,7 +852,16 @@ jobs:
           no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
           now=$(date +%s)
           elapsed=$((now - TRIGGER_EPOCH))
-          if [ "$elapsed" -ge 1200 ]; then
+          # The 20-minute budget is the fix-to-phone promise (server + OTA). A store
+          # binary built in this attempt (local iOS archive+export ~30 min on the Mac
+          # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
+          # every component yet was classified "budget" and never published its
+          # release record. When a native build ran, allow 60 minutes instead.
+          budget_seconds=1200
+          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ]; then
+            budget_seconds=3600
+          fi
+          if [ "$elapsed" -ge "$budget_seconds" ]; then
             failure_class=budget
           elif [ -n "$incomplete" ]; then
             failure_class="component:$incomplete"

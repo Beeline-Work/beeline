@@ -14,17 +14,22 @@ export function ChannelHeaderTitle({
   title,
   kind,
   numberOfLines = 1,
+  onPress,
   testID = 'chat-title',
 }: {
   title: string;
   kind: ChannelHeaderKind;
   numberOfLines?: number;
+  onPress?: () => void;
   testID?: string;
 }) {
   const mark = splitChannelHeaderTitle(title, kind);
   return (
     <Text
+      accessibilityLabel={onPress ? `Open ${mark.name} settings` : undefined}
+      accessibilityRole={onPress ? 'button' : undefined}
       numberOfLines={numberOfLines}
+      onPress={onPress}
       style={[styles.name, kind === 'corner' && styles.cornerName]}
       testID={testID}
     >

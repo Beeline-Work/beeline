@@ -699,6 +699,25 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(promote, /requires SERVER_CANARY_REVIEW_SECRET or SERVER_CANARY_PHONE_TOKEN/);
   assert.ok(promote.indexOf('/v1/auth/review/exchange') < promote.indexOf('for sample in $(seq 0 20)'));
   assert.equal(promote.match(/v1\/auth\/review\/exchange/g)?.length, 1);
+  assert.match(promote, /wait_for_machine_ready\(\)/);
+  assert.match(promote, /deadline=\$\(\(SECONDS \+ 180\)\)/);
+  assert.match(promote, /server\.usebeeline\.app\/readyz/);
+  assert.match(promote, /did not become ready within 180s/);
+  assert.match(promote, /wait_for_machine_ready "\$canary"/);
+  assert.match(promote, /wait_for_machine_ready "\$second"/);
+  assert.match(
+    promote,
+    /flyctl machine update "\$canary" --app beeline-server --image "\$image_ref" --wait-timeout 300 --yes\nwait_for_machine_ready "\$canary"/,
+  );
+  assert.match(
+    promote,
+    /flyctl machine update "\$second" --app beeline-server --image "\$image_ref" --wait-timeout 300 --yes\nwait_for_machine_ready "\$second"/,
+  );
+  assert.ok(promote.indexOf('wait_for_machine_ready "$canary"') < promote.indexOf('/v1/auth/review/exchange'));
+  assert.match(promote, /v\.version === process\.argv\[2\]/);
+  assert.match(promote, /for exchange_attempt in 1 2 3/);
+  assert.match(promote, /-H "fly-force-instance-id: \$second" -H 'Content-Type: application\/json'/);
+  assert.match(promote, /5\?\?\) ;;/);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);

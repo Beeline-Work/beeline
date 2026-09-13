@@ -25,6 +25,7 @@ export type ExpandedCornerRefreshAction =
 
 export type RoomListSection = {
   kind: 'rooms' | 'messages';
+  title?: 'Messages';
   data: ChatListItem[];
 };
 
@@ -41,7 +42,9 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
     );
   return [
     ...(rooms.length ? [{ kind: 'rooms' as const, data: rooms }] : []),
-    ...(messages.length ? [{ kind: 'messages' as const, data: messages }] : []),
+    ...(messages.length
+      ? [{ kind: 'messages' as const, title: 'Messages' as const, data: messages }]
+      : []),
   ];
 }
 

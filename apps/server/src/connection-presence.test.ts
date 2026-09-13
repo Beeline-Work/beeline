@@ -89,9 +89,70 @@ describe('delivery-driven presence', () => {
     expect(
       nodes.some((node) => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'candidates'),
     ).toBe(true);
-    const tagScan = nodes.find((node) => node.Alias === 'tagged_member');
-    expect(tagScan).toBeDefined();
-    expect(tagScan!['Actual Loops']).toBe(0);
+    const messageScan = nodes.find((node) => node['Relation Name'] === 'messages');
+    expect(messageScan).toBeDefined();
+    expect(String(messageScan!['Index Cond'] ?? messageScan!['Recheck Cond'])).toContain(
+      'created_at',
+    );
+    expect(nodes.some((node) => node.Alias === 'tagged_member')).toBe(false);
+    const ambiguityScan = nodes.find((node) => node.Alias === 'rival_member');
+    expect(ambiguityScan).toBeDefined();
+    expect(ambiguityScan!['Actual Loops']).toBe(0);
+  });
+
+  it('serializes and coalesces overlapping observations across Rooms', async () => {
+    await presence.stop();
+    const releases: Array<() => void> = [];
+    const rooms: unknown[] = [];
+    let inFlight = 0;
+    let maximumInFlight = 0;
+    const observingDatabase = {
+      query: async (_sql: string, values: unknown[] = []) => {
+        rooms.push(values[0]);
+        inFlight += 1;
+        maximumInFlight = Math.max(maximumInFlight, inFlight);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        inFlight -= 1;
+        return { rows: [], rowCount: 0 };
+      },
+      transaction: async () => {
+        throw new Error('not used');
+      },
+    } as unknown as SqlDatabase;
+    presence = new ConnectionPresence(observingDatabase, new LiveHub());
+
+    const first = presence.observe(ROOM);
+    await vi.waitFor(() => expect(rooms).toHaveLength(1));
+    const burst = [
+      ...Array.from({ length: 50 }, () => presence.observe(ROOM)),
+      ...Array.from({ length: 50 }, () => presence.observe(OTHER)),
+    ];
+    releases.shift()!();
+    await vi.waitFor(() => expect(rooms).toHaveLength(2));
+    releases.shift()!();
+    await vi.waitFor(() => expect(rooms).toHaveLength(3));
+    releases.shift()!();
+    await Promise.all([first, ...burst]);
+
+    expect(rooms).toEqual([ROOM, ROOM, OTHER]);
+    expect(maximumInFlight).toBe(1);
+  });
+
+  it('debounces a burst of live invalidations for one Room into one observation', async () => {
+    await presence.stop();
+    const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
+    const observingDatabase = {
+      query,
+      transaction: async () => {
+        throw new Error('not used');
+      },
+    } as unknown as SqlDatabase;
+    live = new LiveHub();
+    presence = new ConnectionPresence(observingDatabase, live);
+
+    for (let event = 0; event < 100; event += 1)
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
+    await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
   });
 
   it('keeps the stored evidence unchanged while readers age it out', async () => {

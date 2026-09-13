@@ -118,6 +118,18 @@ describe('background advisory-lock ownership', () => {
            now()-interval '1 day' FROM generate_series(1,21630) n`,
         [room, agent],
       );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         SELECT 'device-token-' || n::text || '-12345678901234567890',$1,'android','physical',
+           now()-interval '2 days' FROM generate_series(1,6) n`,
+        [human],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+         SELECT 'recent-activity-' || lpad(n::text,6,'0'),$1,$2,'heartbeat','activity',
+           now()-interval '30 minutes' FROM generate_series(1,960) n`,
+        [room, agent],
+      );
       const send = vi.fn().mockResolvedValue(undefined);
       const loop = new PushDeliveryLoop(db, { send });
       const query = vi.spyOn(db, 'query');
@@ -142,17 +154,51 @@ describe('background advisory-lock ownership', () => {
           (node) => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'recent_messages',
         ),
       ).toBe(true);
-      const tagScan = nodes.find((node) => node.Alias === 'tagged_member');
-      expect(tagScan).toBeDefined();
-      expect(tagScan!['Actual Loops']).toBe(0);
+      expect(
+        Number(
+          nodes.find((node) => node['Subplan Name'] === 'CTE recent_messages')?.['Actual Rows'],
+        ),
+      ).toBe(0);
+      expect(nodes.some((node) => node.Alias === 'tagged_member')).toBe(false);
+      for (const node of nodes.filter(
+        (node) =>
+          node['Node Type'] === 'Seq Scan' &&
+          ['identities', 'push_devices'].includes(String(node['Relation Name'])),
+      ))
+        expect(Number(node['Actual Loops'])).toBeLessThanOrEqual(1);
+      const ambiguityScan = nodes.find((node) => node.Alias === 'rival_member');
+      expect(ambiguityScan).toBeDefined();
+      expect(ambiguityScan!['Actual Loops']).toBe(0);
 
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner new message')`,
         ['f'.repeat(64), room, agent],
       );
-      expect(await loop.runOnce()).toBe(1);
-      expect(send).toHaveBeenCalledTimes(1);
+      expect(await loop.runOnce()).toBe(7);
+      expect(send).toHaveBeenCalledTimes(7);
       expect(await loop.runOnce()).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('holds a cadence floor even when wakeups ask for back-to-back push scans', async () => {
+    const db = new PgliteDatabase();
+    let now = 1_000;
+    try {
+      await migrate(db);
+      const query = vi.spyOn(db, 'query');
+      const loop = new PushDeliveryLoop(db, { send: async () => {} }, undefined, 5_000, () => now);
+
+      await loop.runIfDue();
+      const afterFirst = query.mock.calls.length;
+      await loop.runIfDue();
+      expect(query).toHaveBeenCalledTimes(afterFirst);
+      expect(loop.millisecondsUntilNextRun()).toBe(5_000);
+
+      now += 5_000;
+      await loop.runIfDue();
+      expect(query.mock.calls.length).toBeGreaterThan(afterFirst);
     } finally {
       await db.close();
     }

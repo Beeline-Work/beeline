@@ -1,8 +1,8 @@
 /**
  * The captain's scroll rule for the transcript (2026-09): whenever a new
- * message or live draft arrives for the open Room or corner, the viewport
- * always goes to the newest end, once per arrival — unless the user's finger
- * is mid-drag, which is never interrupted.
+ * message or live card mutation arrives for the open Room or corner, the
+ * viewport follows only if the reader was already at the newest end. Reading
+ * history is never interrupted.
  *
  * C97: a send that collapses the composer (pending attach unmounts, field
  * snaps back to its minimum height, keyboard usually drops) makes the list
@@ -21,12 +21,15 @@ export type ScrollFollowDecision = 'scroll' | 'hold';
 export function scrollFollowOnArrival({
   previousNewestId,
   nextNewestId,
+  isPinnedToTail,
   isUserDragging,
 }: {
   /** Newest row id seen before this commit; null on a cold open. */
   previousNewestId: string | null;
   /** Newest row id in this commit; null when the transcript is empty. */
   nextNewestId: string | null;
+  /** The reader was already at (or within the threshold of) the newest end. */
+  isPinnedToTail: boolean;
   /** A drag (or its momentum) is in progress right now. */
   isUserDragging: boolean;
 }): ScrollFollowDecision {
@@ -34,6 +37,7 @@ export function scrollFollowOnArrival({
   if (!nextNewestId || nextNewestId === previousNewestId) return 'hold';
   // Cold open already lands on the tail; no scroll call.
   if (previousNewestId === null) return 'hold';
+  if (!isPinnedToTail) return 'hold';
   // Never fight the user's finger mid-drag.
   if (isUserDragging) return 'hold';
   return 'scroll';

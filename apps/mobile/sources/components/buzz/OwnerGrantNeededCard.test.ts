@@ -25,11 +25,13 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-unistyles', async () => {
   const { beelineThemes } = await import('@/buzz/groknight');
+  const theme = { buzz: beelineThemes.obsidian };
   return {
     StyleSheet: {
       create: (factory: (theme: { buzz: typeof beelineThemes.obsidian }) => unknown) =>
-        factory({ buzz: beelineThemes.obsidian }),
+        factory(theme),
     },
+    useUnistyles: () => ({ theme }),
   };
 });
 

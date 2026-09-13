@@ -140,7 +140,6 @@ export interface UseRoomSurfaceSessionResult {
   adoptTransport(transport: BuzzRigTransport): void;
   roomClient: RoomViewClient | null;
   roomSurface: RoomView | null;
-  firstUnreadMessageId: string | null;
   liveOverlays: readonly LiveOverlay[];
   userPubkey: string;
   heartbeatPresences: Record<string, RoomAgentPresence>;
@@ -165,7 +164,6 @@ export function useRoomSurfaceSession({
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
   const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
-  const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
   const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
   const [userPubkey, setUserPubkey] = useState('');
   const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
@@ -281,7 +279,6 @@ export function useRoomSurfaceSession({
   useEffect(() => {
     if (!channelId) return;
     if (!isFocused) return;
-    setFirstUnreadMessageId(null);
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
@@ -337,13 +334,6 @@ export function useRoomSurfaceSession({
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
-      if (fresh) {
-        // Capture before markRead advances. Once placed, this visit's line stays
-        // anchored even when a later refresh returns the advanced read cursor.
-        setFirstUnreadMessageId(
-          (current) => current ?? view.viewer.readCursor?.firstUnreadMessageId ?? null,
-        );
-      }
       setRoomSurface(stableView);
       setHydrationFailed(false);
       setHydrationError(null);
@@ -792,7 +782,6 @@ export function useRoomSurfaceSession({
     adoptTransport: setTransport,
     roomClient,
     roomSurface,
-    firstUnreadMessageId,
     liveOverlays,
     userPubkey,
     heartbeatPresences,

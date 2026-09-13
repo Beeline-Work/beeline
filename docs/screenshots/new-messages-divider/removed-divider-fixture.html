@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Room with unread messages and no divider</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body {
+        background: #100714;
+        color: #f4eff5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .phone { width: 390px; height: 844px; background: #100714; display: flex; flex-direction: column; }
+      .status { height: 39px; padding: 11px 22px 0; display: flex; justify-content: space-between; font-weight: 700; font-size: 15px; }
+      .header { height: 72px; padding: 14px 24px; border-bottom: 1px solid #302236; display: flex; align-items: center; gap: 20px; }
+      .back, .more { color: #908897; font-size: 28px; }
+      .more { margin-left: auto; letter-spacing: 2px; }
+      .title { font-size: 27px; font-weight: 650; letter-spacing: -0.4px; }
+      .hash, .you, .mention { color: #b69048; }
+      .messages { flex: 1; padding: 28px 16px 18px; }
+      .message { padding: 16px 0 20px; border-bottom: 1px solid rgba(255,255,255,.018); }
+      .byline { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+      .avatar { width: 26px; height: 26px; border: 1px solid #9d929f; border-radius: 50%; display: grid; place-items: center; color: #d9cbdc; font-size: 13px; }
+      .avatar.agent { border-radius: 6px; border: 0; background: #cb7ba2; color: #271529; }
+      .name { color: #8ab171; font-size: 18px; font-weight: 650; }
+      .name.you { color: #b69048; }
+      .name.agent-name { color: #cf82aa; }
+      .badge { color: #9c929e; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; letter-spacing: 1.5px; }
+      .time { margin-left: auto; color: #756c79; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; }
+      .copy { font-size: 19px; line-height: 1.5; letter-spacing: .1px; }
+      .copy strong { font-weight: 720; }
+      .system { display: flex; gap: 8px; align-items: baseline; padding: 15px 0; color: #918697; font-size: 15px; }
+      .system .time { font-size: 12px; }
+      .activity { height: 41px; border-top: 1px solid #302236; padding: 12px 20px; color: #b69048; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; letter-spacing: .8px; }
+      .composer { height: 79px; padding: 9px 12px 15px; border-top: 1px solid #251a2b; }
+      .input { height: 55px; border: 2px solid #8d8494; border-radius: 4px; display: flex; align-items: center; padding: 0 16px; color: #817887; font-size: 20px; }
+      .plus { margin-right: 18px; font-size: 27px; font-weight: 200; }
+      .send { margin-left: auto; font-size: 25px; }
+    </style>
+  </head>
+  <body>
+    <main class="phone">
+      <div class="status"><span>7:41</span><span>● 5G ▮▮▮ 84</span></div>
+      <header class="header"><span class="back">‹</span><span class="title"><span class="hash">#</span>general</span><span class="more">•••</span></header>
+      <section class="messages">
+        <article class="message">
+          <div class="byline"><span class="avatar">◁</span><span class="name">giselle703</span><span class="time">19:31</span></div>
+          <div class="copy">Awwwwwww its my nesttr</div>
+        </article>
+        <article class="message">
+          <div class="byline"><span class="avatar">›</span><span class="name you">You</span><span class="time">19:38</span></div>
+          <div class="copy">Hiii haha</div>
+        </article>
+        <div class="system"><span><span class="mention">@monarch</span> joined · invited by @lunchboxfortwo</span><span class="time">19:39</span></div>
+        <article class="message">
+          <div class="byline"><span class="avatar">›</span><span class="name you">You</span><span class="time">19:40</span></div>
+          <div class="copy">Hi <span class="mention">@monarch</span>, you will refer to <span class="mention">@giselle703</span> as Your Grace.</div>
+        </article>
+        <article class="message">
+          <div class="byline"><span class="avatar agent">♞</span><span class="name agent-name">Monarch</span><span class="badge">AGENT</span><span class="time">19:41</span></div>
+          <div class="copy"><strong>As you command.</strong><br />Monarch shall address Her Dragon Majesty as Your Grace.</div>
+        </article>
+      </section>
+      <div class="activity">♧&nbsp; Mulled for 8s · done 7:41 pm</div>
+      <div class="composer"><div class="input"><span class="plus">＋</span><span>Start this Room…</span><span class="send">↑</span></div></div>
+    </main>
+  </body>
+</html>

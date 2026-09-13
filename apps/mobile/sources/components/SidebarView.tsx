@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { type Href, usePathname, useRouter } from 'expo-router';
+import { type Href, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +13,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
   loadActiveCommunityId,
+  loadLastViewedChannel,
   saveActiveCommunityId,
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
@@ -32,6 +33,7 @@ import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunityRail, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
+import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -41,6 +43,10 @@ function selectedRoomId(pathname: string): string | null {
   } catch {
     return pathname.slice(prefix.length).split('/')[0] ?? null;
   }
+}
+
+function firstParam(value: string | string[] | undefined): string | null {
+  return (Array.isArray(value) ? value[0] : value)?.trim() || null;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -172,6 +178,9 @@ export const SidebarView = React.memo(function SidebarView() {
   const isDesktop = useIsDesktop();
   const router = useRouter();
   const pathname = usePathname();
+  const routeWorkspaceId = firstParam(
+    useGlobalSearchParams<{ communityId?: string | string[] }>().communityId,
+  );
   const activeRoomId = selectedRoomId(pathname);
   const searchRef = React.useRef<TextInput>(null);
   const switcherTriggerRef = React.useRef<any>(null);
@@ -269,6 +278,21 @@ export const SidebarView = React.memo(function SidebarView() {
   }, [identityPubkey, workspaces]);
 
   React.useEffect(() => {
+    if (
+      !routeWorkspaceId ||
+      !workspaces.some((workspace) => workspace.id === routeWorkspaceId) ||
+      workspaceIdRef.current === routeWorkspaceId
+    ) {
+      return;
+    }
+    workspaceIdRef.current = routeWorkspaceId;
+    setWorkspaceId(routeWorkspaceId);
+    setSurface(null);
+    setQuery('');
+    if (identityPubkey) void saveActiveCommunityId(identityPubkey, routeWorkspaceId);
+  }, [identityPubkey, routeWorkspaceId, workspaces]);
+
+  React.useEffect(() => {
     if (!client || !workspaces.length) return;
     let cancelled = false;
     void Promise.all(
@@ -360,14 +384,25 @@ export const SidebarView = React.memo(function SidebarView() {
       if (identityPubkey) void saveActiveCommunityId(identityPubkey, nextId);
       if (client) {
         setNavigationError(null);
-        void client
-          .chats(nextId)
-          .then((chats) => {
+        void Promise.all([
+          client.chats(nextId),
+          identityPubkey ? loadLastViewedChannel(identityPubkey, nextId) : Promise.resolve(null),
+        ])
+          .then(([chats, lastViewedRoomId]) => {
+            if (workspaceIdRef.current !== nextId) return;
             setSurface(chats);
-            const firstRoom = chats.chats[0]?.room.id;
-            if (firstRoom) router.replace(`/beeline/chat/${encodeURIComponent(firstRoom)}` as Href);
+            router.push(
+              desktopWorkspaceRoute(
+                nextId,
+                chats.chats.map((chat) => chat.room.id),
+                lastViewedRoomId,
+              ) as Href,
+            );
           })
-          .catch(() => setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`));
+          .catch(() => {
+            if (workspaceIdRef.current === nextId)
+              setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`);
+          });
       }
     },
     [client, identityPubkey, router],
@@ -465,7 +500,9 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : !filteredChats.length ? (
               <Text style={styles.empty}>
                 {surface
-                  ? `No ${ROOMS_LABEL.toLowerCase()} match this search.`
+                  ? query.trim()
+                    ? `No ${ROOMS_LABEL.toLowerCase()} match this search.`
+                    : `No ${ROOMS_LABEL.toLowerCase()} yet.`
                   : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
               </Text>
             ) : (

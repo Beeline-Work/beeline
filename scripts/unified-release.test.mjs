@@ -655,7 +655,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
   assert.match(source, /release ceiling is 20 minutes/);
-  assert.doesNotMatch(source.replace(/  mobile_native:[\s\S]*?\n  release_result:/, ''), /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/);
+  assert.doesNotMatch(source.replace(/  mobile_native_android:[\s\S]*?\n  release_result:/, ''), /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/);
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -670,14 +670,20 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /needs\.initialize\.outputs\.run_server == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_helper == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_mobile_ota == 'true'/);
-  assert.deepEqual(workflow.jobs.mobile_ota.needs, ['initialize', 'mobile_native']);
+  assert.deepEqual(workflow.jobs.mobile_ota.needs, ['initialize', 'mobile_native_android', 'mobile_native_ios']);
   assert.match(workflow.jobs.mobile_ota.if, /runtime_pin_changed != 'true'/);
   assert.match(workflow.jobs.mobile_ota.if, /stage_mobile_native == 'checked'/);
-  assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native\.result == 'success'/);
+  assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_android\.result == 'success'/);
+  assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_ios\.result == 'success'/);
+  assert.deepEqual(workflow.jobs.release_result.needs, [
+    'initialize', 'server', 'helper', 'mobile_ota', 'mobile_native_android', 'mobile_native_ios',
+    'desktop_installers', 'desktop_checkpoint', 'website',
+  ]);
+  assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_website == 'true'/);
   assert.equal(workflow.jobs.server_deploy_plan.if, 'inputs.plan_only == true');
-  for (const job of ['server', 'helper', 'mobile_ota', 'desktop_installers', 'desktop_checkpoint', 'website', 'mobile_native', 'release_result', 'retry']) {
+  for (const job of ['server', 'helper', 'mobile_ota', 'desktop_installers', 'desktop_checkpoint', 'website', 'mobile_native_android', 'mobile_native_ios', 'release_result', 'retry']) {
     assert.match(String(workflow.jobs[job].if), /inputs\.plan_only != true/);
   }
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-server/);
@@ -811,57 +817,70 @@ test('canonical routine release guidance is a single no-input dispatch', () => {
   assert.match(agents, /with no release worker and no inputs/);
 });
 
-test('native workflow builds and submits only the selected platform', () => {
+test('native workflow keeps Android on EAS cloud and builds iOS locally on the Mac runner', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
-  const steps = workflow.jobs.mobile_native.steps;
-  const build = steps.find(
-    (step) => step.name === 'Build immutable store binaries for selected platforms',
-  );
-  const credentials = steps.find((step) => step.name === 'Require native release credentials');
+  const android = workflow.jobs.mobile_native_android;
+  const ios = workflow.jobs.mobile_native_ios;
+  assert.match(android.if, /native_android == 'true'/);
+  assert.equal(android['runs-on'], 'ubuntu-latest');
+  assert.equal(android['timeout-minutes'], 60);
+  assert.match(ios.if, /native_ios == 'true'/);
+  assert.deepEqual(ios['runs-on'], ['self-hosted', 'macOS', 'X64', 'ios-builder']);
+  assert.equal(ios['timeout-minutes'], 90);
+  assert.equal(ios.steps.some((step) => step.uses === 'actions/setup-node@v4'), false);
+
+  const androidSteps = android.steps;
+  const androidBuild = androidSteps.find((step) => step.name === 'Build immutable Android store binary');
+  const credentials = androidSteps.find((step) => step.name === 'Require native release credentials');
   const project = mkdtempSync(join(tmpdir(), 'beeline-native-platforms-'));
   try {
-    for (const platform of ['android', 'ios']) {
-      const root = join(project, platform);
-      mkdirSync(root);
-      const env = {
-        ...process.env,
-        RUNNER_TEMP: root,
-        EAS_CLI_VERSION: 'test',
-        NATIVE_ANDROID: String(platform === 'android'),
-        NATIVE_IOS: String(platform === 'ios'),
-        EXPO_TOKEN: 'fixture',
-      };
-      if (platform === 'android') {
-        delete env.EXPO_ASC_KEY_ID;
-        delete env.EXPO_ASC_ISSUER_ID;
-        delete env.EXPO_ASC_API_KEY_P8;
-        execFileSync('bash', ['-euc', credentials.run], { env });
-      }
-      execFileSync(
-        'bash',
-        [
-          '-euc',
-          `npm() { :; }
-          npx() { printf '%s\\n' "$*" >> "$RUNNER_TEMP/calls"; printf '{"id":"fixture","status":"FINISHED"}'; }
-          ${build.run}`,
-        ],
-        { env },
-      );
-      const calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n');
-      assert.equal(calls.length, 1);
-      assert.match(calls[0], new RegExp(`--platform ${platform} `));
-    }
-    for (const step of steps.filter((step) =>
+    const env = { ...process.env, RUNNER_TEMP: project, EAS_CLI_VERSION: 'test', EXPO_TOKEN: 'fixture' };
+    execFileSync('bash', ['-euc', credentials.run], { env });
+    execFileSync(
+      'bash',
+      [
+        '-euc',
+        `npm() { :; }
+        npx() { printf '%s\\n' "$*" >> "$RUNNER_TEMP/calls"; printf '{"id":"fixture","status":"FINISHED"}'; }
+        ${androidBuild.run}`,
+      ],
+      { env },
+    );
+    const calls = readFileSync(join(project, 'calls'), 'utf8').trim().split('\n');
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /build --profile production --platform android --non-interactive --wait --json/);
+    for (const step of androidSteps.filter((step) =>
       ['Authenticate to Google Play', 'Upload Android to the selected Play track'].includes(step.name)
     )) {
-      assert.match(step.if, /native_android == 'true'/);
+      assert.match(step.if, /store_track != 'none'/);
     }
-    assert.match(
-      steps.find((step) => step.name?.startsWith('Submit iOS')).if,
-      /native_ios == 'true'/,
-    );
+
+    const iosCredentials = ios.steps.find((step) => step.name === 'Require iOS release credentials');
+    const iosBuild = ios.steps.find((step) => step.name === 'Build immutable iOS store binary locally');
+    const iosSubmit = ios.steps.find((step) => step.name?.startsWith('Submit iOS'));
+    const isolateKeychain = ios.steps.find((step) => step.name === 'Isolate the iOS signing keychain');
+    const cleanup = ios.steps.find((step) => step.name === 'Remove iOS credentials and build output');
+    const restoreKeychains = ios.steps.find((step) => step.name === 'Restore the runner user keychains');
+    assert.match(isolateKeychain.run, /security list-keychains -d user > "\$RUNNER_TEMP\/user-keychains\.txt"/);
+    assert.match(isolateKeychain.run, /security default-keychain -d user > "\$RUNNER_TEMP\/user-default-keychain\.txt"/);
+    assert.match(isolateKeychain.run, /security list-keychains -d user -s ~\/Library\/Keychains\/login\.keychain-db/);
+    assert.ok(ios.steps.indexOf(isolateKeychain) < ios.steps.indexOf(iosBuild));
+    assert.match(iosCredentials.run, /export PATH=\/usr\/local\/opt\/node@20\/bin:\/usr\/local\/bin:\$PATH/);
+    assert.match(iosCredentials.run, /EXPO_APPLE_TEAM_ID=89KT3SWYAF/);
+    assert.match(iosCredentials.run, /EXPO_NO_CAPABILITY_SYNC=1/);
+    assert.match(iosCredentials.run, /EAS_SKIP_AUTO_FINGERPRINT=1/);
+    assert.match(iosBuild.run, /build --local --platform ios --profile production-ci --non-interactive --output/);
+    assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
+    assert.match(iosBuild.run, /id:`local-\$\{sha256\}`/);
+    assert.match(iosSubmit.run, /submit --platform ios --profile production --path "\$RUNNER_TEMP\/beeline-ios\.ipa" --non-interactive --wait/);
+    assert.equal(cleanup.if, 'always()');
+    assert.match(cleanup.run, /rm -f .*AuthKey_.*beeline-ios\.ipa/);
+    assert.equal(restoreKeychains.if, 'always()');
+    assert.ok(ios.steps.indexOf(restoreKeychains) > ios.steps.indexOf(cleanup));
+    assert.match(restoreKeychains.run, /xargs security list-keychains -d user -s < "\$RUNNER_TEMP\/user-keychains\.txt"/);
+    assert.match(restoreKeychains.run, /xargs security default-keychain -d user -s < "\$RUNNER_TEMP\/user-default-keychain\.txt"/);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

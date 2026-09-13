@@ -36,6 +36,11 @@ platforms whose pins changed. Legacy release records with one global
 until the selected store binaries have been submitted. A retry with the same
 pinned release identity resumes both components from their saved stages.
 
+iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
+and are submitted to TestFlight from its generated IPA. Android store binaries
+continue to build on EAS cloud and use the existing Google Play authentication
+and upload path.
+
 Selected jobs build immutable artifacts named with both release version and
 source SHA, promote them, run bounded checks, and publish a component
 checkpoint. Unselected entries retain the prior release's version, SHA, and

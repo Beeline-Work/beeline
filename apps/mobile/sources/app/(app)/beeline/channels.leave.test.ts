@@ -23,7 +23,7 @@ describe('Chat-list swipe-left actions', () => {
     expect(source).toContain('testID={`chat-close-action-${item.room.id}`}');
   });
 
-  it('reveals the same unframed brass exit glyph for Rooms and DMs', () => {
+  it('reveals one row-height square with the same unframed brass exit glyph for Rooms and DMs', () => {
     const reveal = source.slice(
       source.indexOf('renderRightActions'),
       source.indexOf('testID={`chat-close-swipe-'),
@@ -40,7 +40,8 @@ describe('Chat-list swipe-left actions', () => {
       source.indexOf('composeOverlay: {'),
     );
     expect(actionStyles).toContain('backgroundColor: hull.bgHighlight');
-    expect(actionStyles).toContain('width: 108');
+    expect(actionStyles).toContain('width: ROW_HEIGHT');
+    expect(actionStyles).toContain('height: ROW_HEIGHT');
     expect(actionStyles).not.toContain('marginRight: 8');
     expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?backgroundColor:/);
     expect(actionStyles).not.toMatch(/swipeActionButton:[\s\S]*?border(?:Color|Width):/);
@@ -63,6 +64,16 @@ describe('Chat-list swipe-left actions', () => {
     expect(glyphSource).toContain('d="M14 4h6v16h-6"');
     expect(glyphSource).toContain('d="M4 12h11"');
     expect(glyphSource).toContain('d="M11 8l4 4-4 4"');
+  });
+
+  it('matches swipe travel and reveal threshold to the square without overshoot', () => {
+    const swipe = source.slice(
+      source.indexOf('<Swipeable', source.indexOf('const row =')),
+      source.indexOf('testID={`chat-close-swipe-'),
+    );
+    expect(swipe).toContain('friction={1}');
+    expect(swipe).toContain('rightThreshold={ROW_HEIGHT}');
+    expect(swipe).toContain('overshootRight={false}');
   });
 
   it('keeps the distinct spoken consequences on the shared glyph', () => {

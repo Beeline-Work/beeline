@@ -826,8 +826,9 @@ export default function BuzzChannels() {
                       if (ref) swipeableRefs.current.set(item.room.id, ref);
                       else swipeableRefs.current.delete(item.room.id);
                     }}
-                    friction={1.35}
+                    friction={1}
                     overshootRight={false}
+                    rightThreshold={ROW_HEIGHT}
                     renderRightActions={() => (
                       <View style={styles.chatActions}>
                         {!item.directMessage && canLeaveRooms && (
@@ -1234,9 +1235,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: hull.bgHighlight,
     },
     swipeAction: {
-      // At 390pt this carries the timestamp gutter plus breathing room, so the
-      // row clears the action instead of leaving the glyph cramped at its edge.
-      width: 108,
+      width: ROW_HEIGHT,
       height: ROW_HEIGHT,
       alignItems: 'center',
       justifyContent: 'center',

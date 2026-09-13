@@ -520,7 +520,7 @@ it('routes a corner merge to its responsible parent Room agent without a subscri
     ).rowCount,
   ).toBe(0);
 });
-it('transfers a corner objective without resetting the authorized chain', async () => {
+it('transfers a corner objective to every agent member without resetting the authorized chain', async () => {
   await send('@hoots');
   const [c] = await commands();
   await claim(c!);
@@ -535,10 +535,17 @@ it('transfers a corner objective without resetting the authorized chain', async 
     },
     A,
   );
-  const [objective] = await commands(A, opened.cornerId);
-  expect(objective?.reason).toBe('corner_objective');
-  expect(objective?.rootCommandId).toBe(c!.id);
-  expect(await commands(B, opened.cornerId)).toEqual([]);
+  const [objective, helperObjective] = await Promise.all([
+    commands(A, opened.cornerId).then(([command]) => command),
+    commands(B, opened.cornerId).then(([command]) => command),
+  ]);
+  for (const command of [objective, helperObjective]) {
+    expect(command?.reason).toBe('corner_objective');
+    expect(command?.rootCommandId).toBe(c!.id);
+    expect(command?.parentCommandId).toBe(c!.id);
+    expect(command?.agentDepth).toBe(c!.agentDepth);
+    expect(command?.source.body).toBe('Do this task');
+  }
 });
 it('makes the depth boundary explicit', () => {
   expect([0, 1, 2, 3].map(nextAgentDepth)).toEqual([1, 2, 3, undefined]);

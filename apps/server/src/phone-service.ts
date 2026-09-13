@@ -4244,8 +4244,8 @@ export class PhoneService {
     if (agent.owner_id !== viewerId) throw new Error(ACCESS_POLICY_AUTHORITY_MESSAGE);
     await this.database.transaction(async (database) => {
       const changed = await database.query(
-        `UPDATE agents SET access_policy=$2::jsonb,access_policy_set_at=now(),updated_at=now()
-         WHERE agent_id=$1 AND (access_policy<>$2::jsonb OR access_policy_set_at IS NULL)`,
+        `UPDATE agents SET access_policy=$2::jsonb,updated_at=now()
+         WHERE agent_id=$1 AND access_policy<>$2::jsonb`,
         [input.agentId, JSON.stringify(agentAccessPolicyRecord(input.policy, allow))],
       );
       if (!changed.rowCount) return;

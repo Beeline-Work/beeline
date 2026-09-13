@@ -4,7 +4,6 @@ import type { Pool } from 'pg';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import {
   assertSchemaCurrent,
-  backfillAgentAccessPolicyDefault,
   backfillAgentHandles,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
@@ -257,46 +256,6 @@ describe('the membership inviter migration', () => {
         )
       ).rows,
     ).toEqual([{ invited_by: null }]);
-  });
-});
-
-describe('the agent access default migration', () => {
-  const OWNER = 'a'.repeat(64);
-  const LEGACY_AGENT = '1'.repeat(64);
-  const CHOSEN_AGENT = '2'.repeat(64);
-  let database: PgliteDatabase;
-  beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES
-       ($1,'human','Owner'),($2,'agent','Legacy'),($3,'agent','Chosen')`,
-      [OWNER, LEGACY_AGENT, CHOSEN_AGENT],
-    );
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id,access_policy,access_policy_set_at) VALUES
-       ($1,$3,'{"type":"creator"}',NULL),
-       ($2,$3,'{"type":"creator"}',now())`,
-      [LEGACY_AGENT, CHOSEN_AGENT, OWNER],
-    );
-  });
-  afterEach(() => database.close());
-
-  it('opens a legacy default without overwriting an owner-selected policy', async () => {
-    await expect(backfillAgentAccessPolicyDefault(database)).resolves.toBe(1);
-    const rows = await database.query<{
-      agent_id: string;
-      access_policy: { type: string };
-      selected: boolean;
-    }>(
-      `SELECT agent_id,access_policy,access_policy_set_at IS NOT NULL selected
-       FROM agents ORDER BY agent_id`,
-    );
-    expect(rows.rows).toEqual([
-      { agent_id: LEGACY_AGENT, access_policy: { type: 'everyone' }, selected: false },
-      { agent_id: CHOSEN_AGENT, access_policy: { type: 'creator' }, selected: true },
-    ]);
-    await expect(backfillAgentAccessPolicyDefault(database)).resolves.toBe(0);
   });
 });
 

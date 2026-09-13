@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
 import {
   RELEASE_PLATFORMS,
   classifyFailure,
@@ -22,10 +25,39 @@ import {
 } from './ota-delivery-index.mjs';
 
 const EAS_CLI_VERSION = '22.2.0';
-// The production branch can carry one newest update group per platform (it does
-// whenever the platforms do not share a runtime version). Read enough of the
-// branch to see both of them, then pick newest-per-platform.
+// During a compatibility rollout the production branch carries more than one
+// iOS runtime. Read enough history to resolve every current release target.
 const PRODUCTION_LOOKUP_LIMIT = '10';
+// Keep this committed rollout switch on until runtime-24 adoption is high
+// enough that operators intentionally stop serving the App Store build-8
+// runtime. Turning it off removes only the iOS@23 compatibility target.
+export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
+
+function targetKey(target) {
+  return `${target.platform}@${target.runtimeVersion}`;
+}
+
+// Current runtimes come from the same resolved Expo config that EAS reads.
+// The compatibility runtime is the one exceptional, explicitly temporary
+// target. Keep this list ordered so the release log is deterministic.
+export function releaseUpdateTargets(
+  projectDir = process.cwd(),
+  publishIosRuntime23 = PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
+) {
+  if (process.env.EXPO_RUNTIME_OVERRIDE) {
+    throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
+  }
+  const pins = readPinnedRuntimeVersion(projectDir);
+  const targets = [
+    { platform: 'android', runtimeVersion: pins.android },
+    ...(publishIosRuntime23 ? [{ platform: 'ios', runtimeVersion: '23' }] : []),
+    { platform: 'ios', runtimeVersion: pins.ios },
+  ];
+  return targets.filter(
+    (target, index) =>
+      targets.findIndex((candidate) => targetKey(candidate) === targetKey(target)) === index,
+  );
+}
 
 function fail(message) {
   console.error(message);
@@ -62,15 +94,16 @@ function commandParts(args) {
   return ['npx', '--yes', `eas-cli@${EAS_CLI_VERSION}`, ...args];
 }
 
-function runEas(args, { allowFailure = false, dryRun = false } = {}) {
+function runEas(args, { allowFailure = false, dryRun = false, env = {} } = {}) {
   const parts = commandParts(args);
   if (dryRun) {
-    console.log(parts.map(shellQuote).join(' '));
+    const prefix = Object.entries(env).map(([key, value]) => `${key}=${shellQuote(value)}`);
+    console.log([...prefix, ...parts.map(shellQuote)].join(' '));
     return null;
   }
   const result = spawnSync(parts[0], parts.slice(1), {
     encoding: 'utf8',
-    env: process.env,
+    env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const output = result.stdout.trim();
@@ -96,6 +129,12 @@ function groupIdOf(value) {
   return null;
 }
 
+function runtimeVersionOf(value) {
+  if (typeof value.runtimeVersion === 'string') return value.runtimeVersion;
+  if (typeof value.runtime?.version === 'string') return value.runtime.version;
+  return null;
+}
+
 // Every EAS update belongs to exactly one update group, named either on the
 // update itself or on the group object enclosing it. Anything update-shaped
 // (an id plus a platform) that resolves to no group is an unusable publish
@@ -113,6 +152,7 @@ function collectUpdates(payload) {
     const group = groupIdOf(value) ?? inherited;
     const id = typeof value.id === 'string' ? value.id : null;
     const platform = typeof value.platform === 'string' ? value.platform : null;
+    const runtimeVersion = runtimeVersionOf(value);
     if (id && platform && !seen.has(id)) {
       seen.add(id);
       if (group) {
@@ -120,15 +160,28 @@ function collectUpdates(payload) {
           id,
           platform,
           group,
-          runtimeVersion:
-            typeof value.runtimeVersion === 'string'
-              ? value.runtimeVersion
-              : typeof value.runtime?.version === 'string'
-                ? value.runtime.version
-                : null,
+          runtimeVersion,
         });
       } else {
         groupless.push({ id, platform });
+      }
+    }
+    // eas-cli@22.2.0 renders `update:list --json` as update-group
+    // descriptions. Those rows deliberately omit individual update IDs and
+    // use a comma-separated `platforms` field, but still prove the exact
+    // (platform, runtime, group) tuple needed by the rollout governor.
+    if (group && runtimeVersion && typeof value.platforms === 'string') {
+      for (const listedPlatform of value.platforms.split(',').map((item) => item.trim())) {
+        if (!RELEASE_PLATFORMS.includes(listedPlatform)) continue;
+        const syntheticId = `${group}:${listedPlatform}:${runtimeVersion}`;
+        if (seen.has(syntheticId)) continue;
+        seen.add(syntheticId);
+        updates.push({
+          id: syntheticId,
+          platform: listedPlatform,
+          group,
+          runtimeVersion,
+        });
       }
     }
     for (const child of Object.values(value)) walk(child, group);
@@ -191,6 +244,60 @@ function newestGroupByPlatform(payload) {
     map[update.platform] ??= update.group;
   }
   return map;
+}
+
+function newestTargets(payload, expectedTargets) {
+  const expected = new Set(expectedTargets.map(targetKey));
+  const newest = new Map();
+  for (const update of collectUpdates(payload).updates) {
+    const key = targetKey(update);
+    if (!expected.has(key) || newest.has(key)) continue;
+    newest.set(key, {
+      platform: update.platform,
+      runtimeVersion: update.runtimeVersion,
+      group: update.group,
+      updateId: update.id,
+    });
+  }
+  return expectedTargets.flatMap((target) => {
+    const found = newest.get(targetKey(target));
+    return found ? [found] : [];
+  });
+}
+
+function requireTargetUpdate(payload, label, target) {
+  const published = requirePublishedGroups(payload, label, [target.platform]);
+  const matches = published.updates.filter(
+    (update) =>
+      update.platform === target.platform && update.runtimeVersion === target.runtimeVersion,
+  );
+  if (matches.length !== 1 || published.updates.length !== 1) {
+    fail(
+      `${label} must return exactly ${targetKey(target)}; received ${
+        published.updates.map((update) => targetKey(update)).join(', ') || 'no target'
+      }.`,
+    );
+  }
+  return {
+    ...target,
+    group: matches[0].group,
+    updateId: matches[0].id,
+    update: matches[0],
+  };
+}
+
+function platformGroupSummary(targets, configuredPins) {
+  return Object.fromEntries(
+    RELEASE_PLATFORMS.flatMap((platform) => {
+      const exact = targets.find(
+        (target) =>
+          target.platform === platform && target.runtimeVersion === configuredPins[platform],
+      );
+      const fallback = targets.find((target) => target.platform === platform);
+      const selected = exact ?? fallback;
+      return selected?.group ? [[platform, selected.group]] : [];
+    }),
+  );
 }
 
 // Republish each distinct source group once, carrying only the platforms that
@@ -274,6 +381,8 @@ function readLedger(path) {
 
 function publish(options) {
   if (!options.sha || !options.ref) fail('publish requires --sha and --ref');
+  const configuredPins = readPinnedRuntimeVersion(process.cwd());
+  const targets = releaseUpdateTargets(process.cwd());
 
   const channel = runEas(['channel:view', 'beta', '--json', '--non-interactive'], {
     allowFailure: true,
@@ -298,50 +407,81 @@ function publish(options) {
       '--json',
       '--non-interactive',
     ],
-    { allowFailure: true, dryRun: options.dryRun },
-  );
-  const message = `ota candidate: ${options.sha.slice(0, 12)} ${options.ref}`;
-  const candidate = runEas(
-    [
-      'update',
-      '--branch',
-      'beta',
-      '--environment',
-      'production',
-      '--platform',
-      'all',
-      '--message',
-      message,
-      '--json',
-      '--non-interactive',
-    ],
     { dryRun: options.dryRun },
   );
+  const previousProductionTargets = options.dryRun ? [] : newestTargets(previous, targets);
+  const requiredRollbackTargets = targets.filter(
+    (target) =>
+      target.platform === 'android' ||
+      !PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT ||
+      target.runtimeVersion === '23',
+  );
+  const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
+  const missingRollbackTargets = requiredRollbackTargets.filter(
+    (target) => !previousTargetKeys.has(targetKey(target)),
+  );
+  if (!options.dryRun && missingRollbackTargets.length > 0) {
+    fail(
+      'Production has no rollback anchor for ' +
+        missingRollbackTargets.map(targetKey).join(', ') +
+        '; refusing to publish rollout candidates.',
+    );
+  }
+  const publishedTargets = targets.map((target) => {
+    const message = `ota candidate: ${options.sha.slice(0, 12)} ${options.ref} ${targetKey(target)}`;
+    const candidate = runEas(
+      [
+        'update',
+        '--branch',
+        'beta',
+        '--environment',
+        'production',
+        '--platform',
+        target.platform,
+        '--message',
+        message,
+        '--json',
+        '--non-interactive',
+      ],
+      {
+        dryRun: options.dryRun,
+        env: { EXPO_RUNTIME_OVERRIDE: target.runtimeVersion },
+      },
+    );
+    return options.dryRun
+      ? null
+      : requireTargetUpdate(candidate, `Beta publish ${targetKey(target)}`, target);
+  });
 
   if (options.dryRun) return;
-  // `--platform all` builds every release platform, so the publish must come
-  // back covering exactly those, in one group per platform.
-  const published = requirePublishedGroups(candidate, 'Beta publish', RELEASE_PLATFORMS);
-  const android = published.updates.find((update) => update.platform === 'android');
+  const candidateTargets = publishedTargets.filter(Boolean);
+  const candidateUpdates = candidateTargets.map((target) => target.update);
+  const candidateGroups = [...new Set(candidateTargets.map((target) => target.group))];
+  const candidateGroupIds = platformGroupSummary(candidateTargets, configuredPins);
+  const android = candidateUpdates.find((update) => update.platform === 'android');
   if (!android) fail('Beta publish did not return an Android update.');
-  const previousProduction = newestGroupByPlatform(previous);
+  const previousProduction = platformGroupSummary(previousProductionTargets, configuredPins);
   const existing = existsSync(options.ledger) ? readLedger(options.ledger) : {};
   const ledger = {
     ...existing,
-    schemaVersion: 3,
+    schemaVersion: 4,
     status: 'beta',
     sourceSha: options.sha,
     ...(options.releaseVersion ? { releaseVersion: options.releaseVersion } : {}),
     sourceRef: options.ref,
-    candidateGroupIds: published.groupByPlatform,
-    candidateGroupId: joinGroupIds(published.groupIds),
-    candidateUpdates: published.updates,
+    updateTargets: targets,
+    candidateTargets: candidateTargets.map(({ update: _update, ...target }) => target),
+    candidateGroupIds,
+    candidateGroupId: joinGroupIds(candidateGroups),
+    candidateUpdates,
     androidUpdateId: android.id,
     runtimeVersions: [
-      ...new Set(published.updates.map((update) => update.runtimeVersion).filter(Boolean)),
+      ...new Set(candidateUpdates.map((update) => update.runtimeVersion).filter(Boolean)),
     ],
+    previousProductionTargets,
     previousProductionGroupIds: previousProduction,
-    previousProductionGroupId: joinGroupIds(previousProduction) || null,
+    previousProductionGroupId:
+      joinGroupIds(previousProductionTargets.map((target) => target.group)) || null,
     createdAt: existing.createdAt ?? isoNow(),
     delivery: { ...existing.delivery, state: 'built', builtAt: isoNow() },
     canary: { status: 'pending' },
@@ -379,20 +519,66 @@ function promote(options) {
       ledger.canary?.status === 'blocked' && ledger.canary.reason
         ? ` Promotion is parked: ${ledger.canary.reason}`
         : '';
-    fail(`Refusing production promotion without a passed or explicitly post-promote canary.${parked}`);
+    fail(
+      `Refusing production promotion without a passed or explicitly post-promote canary.${parked}`,
+    );
   }
-  const candidates = candidateGroupMap(ledger);
-  const promoted = republishGroups(republishEntries(candidates), {
-    label: 'Production promotion',
-    describe: (group) => `promote beta ${group} (${ledger.sourceSha.slice(0, 12)})`,
-    dryRun: options.dryRun,
-    expectedPlatforms: Object.keys(candidates),
-  });
+  const configuredPins = readPinnedRuntimeVersion(process.cwd());
+  const targetCandidates = Array.isArray(ledger.candidateTargets) ? ledger.candidateTargets : null;
+  let candidates;
+  let promoted;
+  let productionTargets;
+  if (targetCandidates) {
+    const promotedTargets = targetCandidates.map((target) => {
+      const result = runEas(
+        [
+          'update:republish',
+          '--group',
+          target.group,
+          '--destination-branch',
+          'production',
+          '--platform',
+          target.platform,
+          '--message',
+          `promote beta ${target.group} (${ledger.sourceSha.slice(0, 12)})`,
+          '--json',
+          '--non-interactive',
+        ],
+        { dryRun: options.dryRun },
+      );
+      return options.dryRun
+        ? null
+        : requireTargetUpdate(result, `Production promotion of ${targetKey(target)}`, target);
+    });
+    if (options.dryRun) return;
+    productionTargets = promotedTargets.filter(Boolean);
+    const updates = productionTargets.map((target) => target.update);
+    promoted = {
+      groupByPlatform: platformGroupSummary(productionTargets, configuredPins),
+      groupIds: [...new Set(productionTargets.map((target) => target.group))],
+      updates,
+    };
+    candidates = targetCandidates.map((target) => target.group);
+  } else {
+    candidates = candidateGroupMap(ledger);
+    promoted = republishGroups(republishEntries(candidates), {
+      label: 'Production promotion',
+      describe: (group) => `promote beta ${group} (${ledger.sourceSha.slice(0, 12)})`,
+      dryRun: options.dryRun,
+      expectedPlatforms: Object.keys(candidates),
+    });
+  }
   if (options.dryRun) return;
   ledger.status = 'production';
   ledger.production = {
-    sourceGroupIds: candidates,
+    ...(targetCandidates ? { sourceTargets: targetCandidates } : {}),
+    sourceGroupIds: targetCandidates
+      ? platformGroupSummary(targetCandidates, configuredPins)
+      : candidates,
     sourceGroupId: joinGroupIds(candidates),
+    ...(productionTargets
+      ? { targets: productionTargets.map(({ update: _update, ...target }) => target) }
+      : {}),
     groupIds: promoted.groupByPlatform,
     groupId: joinGroupIds(promoted.groupIds),
     updates: promoted.updates,
@@ -424,11 +610,19 @@ function assertPromotion(options) {
   if (ledger.status !== 'production') {
     fail(`Production promotion did not complete; ledger status is ${ledger.status}.`);
   }
-  const candidates = groupMapFrom(ledger.candidateGroupIds ?? ledger.candidateGroupId);
-  const sources = groupMapFrom(
-    ledger.production?.sourceGroupIds ?? ledger.production?.sourceGroupId,
+  const candidates =
+    ledger.candidateTargets?.map((target) => target.group) ??
+    groupMapFrom(ledger.candidateGroupIds ?? ledger.candidateGroupId);
+  const sources =
+    ledger.production?.sourceTargets?.map((target) => target.group) ??
+    groupMapFrom(ledger.production?.sourceGroupIds ?? ledger.production?.sourceGroupId);
+  const producedTargets = ledger.production?.targets;
+  const produced =
+    producedTargets?.map((target) => target.group) ??
+    groupMapFrom(ledger.production?.groupIds ?? ledger.production?.groupId);
+  const producedByPlatform = groupMapFrom(
+    ledger.production?.groupIds ?? ledger.production?.groupId,
   );
-  const produced = groupMapFrom(ledger.production?.groupIds ?? ledger.production?.groupId);
   if (
     groupIdList(candidates).length === 0 ||
     groupIdList(produced).length === 0 ||
@@ -443,8 +637,18 @@ function assertPromotion(options) {
     if (!platforms.has(platform)) {
       fail('Production promotion proof must contain both Android and iOS updates.');
     }
-    if (!produced[platform]) {
+    if (!producedByPlatform[platform]) {
       fail(`Production promotion proof names no ${platform} production update group.`);
+    }
+  }
+  if (Array.isArray(ledger.updateTargets)) {
+    const expected = ledger.updateTargets.map(targetKey).sort();
+    const actual = (producedTargets ?? []).map(targetKey).sort();
+    if (
+      expected.length !== actual.length ||
+      expected.some((target, index) => target !== actual[index])
+    ) {
+      fail(`Production promotion targets do not match the release target list.`);
     }
   }
 
@@ -463,10 +667,49 @@ function assertPromotion(options) {
   console.log(`production_group_id=${joinGroupIds(produced)}`);
   console.log(`source_group_id=${joinGroupIds(sources)}`);
   console.log(
-    `production_groups=${RELEASE_PLATFORMS.map((platform) => `${platform}=${produced[platform]}`).join(',')}`,
+    `production_groups=${RELEASE_PLATFORMS.map((platform) => `${platform}=${ledger.production.groupIds?.[platform] ?? ''}`).join(',')}`,
   );
+  if (producedTargets)
+    console.log(`production_targets=${producedTargets.map(targetKey).join(',')}`);
   console.log(`source_sha=${ledger.sourceSha}`);
   if (ledger.releaseVersion) console.log(`release_version=${ledger.releaseVersion}`);
+}
+
+function assertProductionList(options) {
+  const ledger = readLedger(options.ledger);
+  if (!Array.isArray(ledger.updateTargets) || !Array.isArray(ledger.production?.targets)) {
+    fail('Production target-list proof requires a target-aware release ledger.');
+  }
+  const listed = runEas(
+    [
+      'update:list',
+      '--branch',
+      'production',
+      '--limit',
+      PRODUCTION_LOOKUP_LIMIT,
+      '--json',
+      '--non-interactive',
+    ],
+    { dryRun: options.dryRun },
+  );
+  if (options.dryRun) return;
+  const observed = newestTargets(listed, ledger.updateTargets);
+  const expected = new Map(
+    ledger.production.targets.map((target) => [targetKey(target), target.group]),
+  );
+  if (
+    observed.length !== expected.size ||
+    observed.some((target) => expected.get(targetKey(target)) !== target.group)
+  ) {
+    const description = [...expected.entries()]
+      .map(([target, group]) => target + '=' + group)
+      .join(', ');
+    fail(
+      'eas update:list does not show the exact production targets: expected ' + description + '.',
+    );
+  }
+  console.log('listed_production_targets=' + observed.map(targetKey).join(','));
+  console.log('listed_production_groups=' + observed.map((target) => target.group).join(','));
 }
 
 function deliveryTarget(options) {
@@ -487,10 +730,11 @@ function deliveryTarget(options) {
 
 function rollback(options) {
   const sourceIds = groupIdList(options.group);
+  let currentTargets = [];
   if (sourceIds.length === 0) fail('rollback requires --group');
-  if (sourceIds.length > RELEASE_PLATFORMS.length) {
+  if (sourceIds.length > releaseUpdateTargets(process.cwd()).length) {
     fail(
-      `rollback --group names ${sourceIds.length} update groups; production carries at most one per platform (${describePlatforms(RELEASE_PLATFORMS)}).`,
+      `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
     );
   }
   if (options.expectedCurrentGroup) {
@@ -507,7 +751,15 @@ function rollback(options) {
       { dryRun: options.dryRun },
     );
     if (!options.dryRun) {
-      const observed = newestGroupByPlatform(current);
+      const expectedCurrentIds = groupIdList(options.expectedCurrentGroup);
+      currentTargets =
+        expectedCurrentIds.length > RELEASE_PLATFORMS.length
+          ? newestTargets(current, releaseUpdateTargets(process.cwd()))
+          : [];
+      const observed =
+        currentTargets.length > 0
+          ? currentTargets.map((target) => target.group)
+          : newestGroupByPlatform(current);
       if (!sameGroupSet(observed, options.expectedCurrentGroup)) {
         writeLedger(options.ledger, {
           schemaVersion: 2,
@@ -536,62 +788,113 @@ function rollback(options) {
     },
   );
   if (options.dryRun) return;
+  const restoredTargetKeys = new Set(rolledBack.updates.map(targetKey));
+  const missingTargets = currentTargets.filter(
+    (target) => !restoredTargetKeys.has(targetKey(target)),
+  );
+  const embeddedRollbackTargets = missingTargets.map((target) => {
+    const result = runEas(
+      [
+        'update:roll-back-to-embedded',
+        '--branch',
+        'production',
+        '--runtime-version',
+        target.runtimeVersion,
+        '--platform',
+        target.platform,
+        '--message',
+        `rollback ${targetKey(target)} to embedded update`,
+        '--json',
+        '--non-interactive',
+      ],
+      { env: { EXPO_RUNTIME_OVERRIDE: target.runtimeVersion } },
+    );
+    return requireTargetUpdate(result, `Embedded rollback of ${targetKey(target)}`, target);
+  });
+  const restoredTargets = [
+    ...rolledBack.updates.map((update) => ({ ...update, update })),
+    ...embeddedRollbackTargets,
+  ];
+  const restoredKeys = new Set(restoredTargets.map(targetKey));
+  const stillMissing = currentTargets.filter((target) => !restoredKeys.has(targetKey(target)));
+  if (stillMissing.length > 0) {
+    fail(
+      `Rollback did not contain ${stillMissing.map(targetKey).join(', ')}; refusing to record success.`,
+    );
+  }
+  const productionUpdates = restoredTargets.map((target) => target.update);
+  const productionGroups = [...new Set(productionUpdates.map((update) => update.group))];
+  const configuredPins = readPinnedRuntimeVersion(process.cwd());
   writeLedger(options.ledger, {
     schemaVersion: 2,
     status: 'rolled-back',
     sourceGroupIds: sourceIds,
     sourceGroupId: joinGroupIds(sourceIds),
-    productionGroupIds: rolledBack.groupByPlatform,
-    productionGroupId: joinGroupIds(rolledBack.groupIds),
-    productionUpdates: rolledBack.updates,
+    productionGroupIds: platformGroupSummary(restoredTargets, configuredPins),
+    productionGroupId: joinGroupIds(productionGroups),
+    productionUpdates,
+    ...(embeddedRollbackTargets.length > 0
+      ? {
+          embeddedRollbackTargets: embeddedRollbackTargets.map(
+            ({ platform, runtimeVersion, group }) => ({ platform, runtimeVersion, group }),
+          ),
+        }
+      : {}),
     rolledBackAt: isoNow(),
   });
 }
 
-const options = parseArgs(process.argv.slice(2));
-try {
-  switch (options.command) {
-    case 'init-delivery':
-      initDelivery(options);
-      break;
-    case 'publish':
-      publish(options);
-      break;
-    case 'mark-canary':
-      markCanary(options);
-      break;
-    case 'promote':
-      promote(options);
-      break;
-    case 'assert-promotion':
-      assertPromotion(options);
-      break;
-    case 'rollback':
-      rollback(options);
-      break;
-    case 'record-failure':
-      recordFailure(options);
-      break;
-    case 'confirm':
-      console.log(JSON.stringify(confirmDelivery(options)));
-      break;
-    case 'list-undelivered':
-      listUndelivered(options);
-      break;
-    case 'classify-failure':
-      console.log(classifyFailure(options.exitCode, options.reason));
-      break;
-    case 'delivery-target':
-      deliveryTarget(options);
-      break;
-    case 'merge-reconciliation':
-      mergeReconciliation(options);
-      break;
-    default:
-      fail(
-        'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|assert-promotion|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target|merge-reconciliation> [options]',
-      );
+export function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
+  try {
+    switch (options.command) {
+      case 'init-delivery':
+        initDelivery(options);
+        break;
+      case 'publish':
+        publish(options);
+        break;
+      case 'mark-canary':
+        markCanary(options);
+        break;
+      case 'promote':
+        promote(options);
+        break;
+      case 'assert-promotion':
+        assertPromotion(options);
+        break;
+      case 'assert-production-list':
+        assertProductionList(options);
+        break;
+      case 'rollback':
+        rollback(options);
+        break;
+      case 'record-failure':
+        recordFailure(options);
+        break;
+      case 'confirm':
+        console.log(JSON.stringify(confirmDelivery(options)));
+        break;
+      case 'list-undelivered':
+        listUndelivered(options);
+        break;
+      case 'classify-failure':
+        console.log(classifyFailure(options.exitCode, options.reason));
+        break;
+      case 'delivery-target':
+        deliveryTarget(options);
+        break;
+      case 'merge-reconciliation':
+        mergeReconciliation(options);
+        break;
+      default:
+        fail(
+          'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|assert-promotion|assert-production-list|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target|merge-reconciliation> [options]',
+        );
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-} catch (error) {
-  fail(error instanceof Error ? error.message : String(error));
 }
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

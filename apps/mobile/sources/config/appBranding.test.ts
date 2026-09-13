@@ -76,6 +76,30 @@ function loadUpdatesChannel(updatesChannel?: string): string {
   );
 }
 
+function loadRuntimeVersions(runtimeOverride?: string): { android: string; ios: string } {
+  const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '--eval',
+      "import configModule from './app.config.js'; const config = configModule.default ?? configModule; process.stdout.write(JSON.stringify({ android: config.expo.android.runtimeVersion, ios: config.expo.ios.runtimeVersion }));",
+    ],
+    {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ...(runtimeOverride ? { EXPO_RUNTIME_OVERRIDE: runtimeOverride } : {}),
+      },
+    },
+  );
+  return JSON.parse(output);
+}
+
 function loadGoogleServicesFile(appEnv?: string): string | undefined {
   const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
   const output = execFileSync(
@@ -266,8 +290,15 @@ describe('Beeline display branding', () => {
     // built with, so a self-computing stamp cuts every installed app off from
     // OTA updates (v0.0.42). apps/mobile/scripts/native-fingerprint.mjs is
     // where the native-compatibility check moved to instead.
-    expect(appConfig).toContain('ios: {\n            runtimeVersion: "24"');
-    expect(appConfig).toContain('android: {\n            runtimeVersion: "23"');
+    expect(appConfig).toContain(
+      'ios: {\n            runtimeVersion: runtimeVersionOverride || "24"',
+    );
+    expect(appConfig).toContain(
+      'android: {\n            runtimeVersion: runtimeVersionOverride || "23"',
+    );
+    expect(loadRuntimeVersions()).toEqual({ android: '23', ios: '24' });
+    expect(loadRuntimeVersions('23')).toEqual({ android: '23', ios: '23' });
+    expect(() => loadRuntimeVersions('not-a-runtime')).toThrow();
   });
 
   it('computes one native fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {

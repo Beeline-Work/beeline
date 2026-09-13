@@ -204,6 +204,10 @@ test('shared protocol and shared UI paths fan out to their actual consumers', ()
     selectReleaseComponents(['apps/mobile/app.config.js']),
     ['mobile-ota', 'mobile-native', 'desktop', 'website'],
   );
+  assert.deepEqual(
+    selectReleaseComponents(['apps/mobile/scripts/ota-release.mjs']),
+    ['mobile-ota'],
+  );
 });
 
 test('routine auto selection catches lagging consumers from each published component sha', () => {

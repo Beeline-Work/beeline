@@ -234,7 +234,11 @@ export function ConversationComposer({
         </TouchableOpacity>
         <TextInput
           ref={inputRef}
-          style={[styles.input, Platform.OS === 'ios' ? undefined : { height, maxHeight }]}
+          style={[
+            styles.input,
+            Platform.OS === 'ios' ? undefined : { height, maxHeight },
+            Platform.OS === 'android' && styles.inputAndroid,
+          ]}
           value={value}
           onChangeText={onChangeText}
           onContentSizeChange={onContentSizeChange}
@@ -383,6 +387,9 @@ const styles = StyleSheet.create((theme) => ({
     textAlignVertical: 'top',
     outlineStyle: 'none',
   } as any,
+  // Keep Android's font bounds intact, then center its one-line layout in the
+  // fixed field so the visible top and bottom space match.
+  inputAndroid: { textAlignVertical: 'center' },
   sendButton: {
     width: 26,
     height: 26,

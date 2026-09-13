@@ -15,6 +15,7 @@ vi.mock('@/buzz/runtime-config', () => ({
 }));
 
 import {
+  MONOLITH_REQUEST_TIMEOUT_MS,
   MonolithRequestTimeoutError,
   MonolithSession,
   MonolithSessionRequiredError,
@@ -99,7 +100,7 @@ describe('monolith phone session', () => {
     expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-2');
   });
 
-  it('aborts a hung phone request at the bounded deadline', async () => {
+  it('aborts a hung phone read only when it opts into the bounded deadline', async () => {
     let hang = false;
     const fetcher = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -116,10 +117,50 @@ describe('monolith phone session', () => {
     hang = true;
     vi.useFakeTimers();
     try {
-      const pending = session.fetch('https://server.example/v1/phone/workspaces');
-      const assertion = expect(pending).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+      const bounded = session.fetch('https://server.example/v1/phone/workspaces', {}, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+      });
+      const assertion = expect(bounded).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
       await vi.advanceTimersByTimeAsync(15_000);
       await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves a request without timeoutMs unbounded, so large uploads are never aborted', async () => {
+    let hang = false;
+    let aborted = false;
+    const fetcher = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (!hang) return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      },
+    );
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('ticket');
+    hang = true;
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      void session
+        .fetch('https://server.example/v1/phone/media', { method: 'POST' })
+        .then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toBe(false);
+      expect(aborted).toBe(false);
     } finally {
       vi.useRealTimers();
     }

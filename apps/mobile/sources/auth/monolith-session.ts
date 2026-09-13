@@ -19,7 +19,7 @@ export interface MonolithTokens {
   identityId: string;
 }
 
-/** Every phone HTTP request carries one bounded deadline; aborts surface, never hang. */
+/** Deadline for room/workspace reads; long uploads stay unbounded by default. */
 export const MONOLITH_REQUEST_TIMEOUT_MS = 15_000;
 
 export class MonolithRequestTimeoutError extends Error {
@@ -133,14 +133,21 @@ export class MonolithSession {
     return this.refresh();
   }
 
-  async fetch(input: string, init: RequestInit = {}): Promise<Response> {
+  async fetch(
+    input: string,
+    init: RequestInit = {},
+    options: { timeoutMs?: number } = {},
+  ): Promise<Response> {
     const perform = async () => {
       const controller = new AbortController();
       let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, MONOLITH_REQUEST_TIMEOUT_MS);
+      const timer =
+        options.timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+            }, options.timeoutMs);
       const forwardExternalAbort = () => controller.abort();
       init.signal?.addEventListener('abort', forwardExternalAbort);
       try {
@@ -156,7 +163,7 @@ export class MonolithSession {
         if (timedOut) throw new MonolithRequestTimeoutError();
         throw error;
       } finally {
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
         init.signal?.removeEventListener('abort', forwardExternalAbort);
       }
     };

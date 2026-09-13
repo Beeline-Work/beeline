@@ -22,6 +22,7 @@ vi.mock('@/auth/monolith-session', () => {
     }
   }
   return {
+    MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
     MonolithRequestTimeoutError,
     monolithSession: {
       fetch: vi.fn(async () => {
@@ -105,5 +106,10 @@ describe('mobile transport cutover switch', () => {
       identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
     });
     await expect(client.room('room-a')).rejects.toMatchObject({ status: 0, code: 'timeout' });
+    expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/rooms/room-a',
+      expect.objectContaining({ method: 'GET' }),
+      { timeoutMs: 15_000 },
+    );
   });
 });

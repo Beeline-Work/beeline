@@ -23,7 +23,11 @@ import {
   type WorkspaceListView,
   type WorkspaceView,
 } from '@beeline/api-contract/phone';
-import { monolithSession, MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import {
+  monolithSession,
+  MonolithRequestTimeoutError,
+  MONOLITH_REQUEST_TIMEOUT_MS,
+} from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 export { RoomViewHttpError };
@@ -100,13 +104,19 @@ class MonolithRoomViewClient {
     return value;
   }
   private async request(path: string, method: 'GET' | 'POST', body?: unknown): Promise<Response> {
+    // The phone API carries room/workspace reads and small writes only; media
+    // uploads go straight through the session and stay unbounded.
     const response = await monolithSession
-      .fetch(`${this.baseUrl}${path}`, {
-        method,
-        ...(body === undefined
-          ? {}
-          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-      })
+      .fetch(
+        `${this.baseUrl}${path}`,
+        {
+          method,
+          ...(body === undefined
+            ? {}
+            : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+        },
+        { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
+      )
       .catch((error: unknown) => {
         if (error instanceof MonolithRequestTimeoutError)
           throw new RoomViewHttpError(0, 'timeout');

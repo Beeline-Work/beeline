@@ -3224,9 +3224,9 @@ export default function BuzzChat() {
   );
 
   const handleDesktopPaste = useCallback(
-    (event: React.ClipboardEvent<HTMLElement>) => {
+    (event: ClipboardEvent) => {
       if (!desktopExperience || sending) return;
-      const files = Array.from(event.clipboardData.files).slice(
+      const files = Array.from(event.clipboardData?.files ?? []).slice(
         0,
         MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length,
       );
@@ -4236,10 +4236,10 @@ export default function BuzzChat() {
                     ? ({
                         onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
                         onDrop: handleDesktopDrop,
-                        onPaste: handleDesktopPaste,
                       } as any)
                     : undefined
                 }
+                onDesktopPaste={desktopExperience ? handleDesktopPaste : undefined}
                 onChangeText={(value) => {
                   inputTextRef.current = value;
                   setInputText(value);

@@ -25,6 +25,13 @@ type Props = {
   attachDisabled?: boolean;
   canSend?: boolean;
   containerProps?: Record<string, unknown>;
+  /**
+   * react-native-web's View only forwards a fixed allowlist of DOM props
+   * (clicks, pointers, keys, focus) to its underlying element, silently
+   * dropping `onPaste` passed through `containerProps` — a real Ctrl+V never
+   * reaches it. This is wired straight onto the container node instead.
+   */
+  onDesktopPaste?(event: ClipboardEvent): void;
   onAttach?(): void;
   onBlur(): void;
   onChangeText(value: string): void;
@@ -68,6 +75,7 @@ export function ConversationComposer({
   attachDisabled = false,
   canSend,
   containerProps,
+  onDesktopPaste,
   onAttach,
   onBlur,
   onChangeText,
@@ -98,6 +106,15 @@ export function ConversationComposer({
   const cancelledHold = React.useRef(false);
   const busy = React.useRef(false);
   const stopAtHold = React.useRef(stopKey);
+  const containerRef = React.useRef<HTMLElement | null>(null);
+  React.useEffect(() => {
+    if (!onDesktopPaste) return;
+    const node = containerRef.current;
+    if (!node) return;
+    const listener = (event: Event) => onDesktopPaste(event as ClipboardEvent);
+    node.addEventListener('paste', listener);
+    return () => node.removeEventListener('paste', listener);
+  }, [onDesktopPaste]);
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
   const clearHold = () => {
@@ -155,7 +172,11 @@ export function ConversationComposer({
     }
   };
   return (
-    <View {...containerProps} style={[styles.composer, focused && styles.composerFocused]}>
+    <View
+      ref={containerRef as React.Ref<View>}
+      {...containerProps}
+      style={[styles.composer, focused && styles.composerFocused]}
+    >
       {(reply || attachments.length > 0) && (
         <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}>
           {reply && (

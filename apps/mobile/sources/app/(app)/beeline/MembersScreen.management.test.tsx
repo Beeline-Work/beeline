@@ -355,9 +355,7 @@ describe('Members workspace management', () => {
     const mark = agentRow.findByType('IdentityMark' as any);
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
-    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe(
-      'Sonnet · by @viewer',
-    );
+    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('Sonnet · by @viewer');
     expect(
       agentRow
         .findAllByType('Text' as any)
@@ -377,6 +375,7 @@ describe('Members workspace management', () => {
     expect(share).toHaveBeenCalledWith({
       message: `https://usebeeline.app/join/inv_${'e'.repeat(64)}`,
     });
+    expect(sheet(renderer).props.visible).toBe(false);
     expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
   });
@@ -386,6 +385,7 @@ describe('Members workspace management', () => {
     expect(sheet(renderer).props.visible).toBe(false);
     await press(renderer, 'members-add-agents');
     expect(sheet(renderer).props.visible).toBe(true);
+    expect(sheet(renderer).props.agentConnectOnly).toBe(true);
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
   });
 

@@ -3543,6 +3543,30 @@ describe('monolith integration', () => {
     expect(cleared.viewer.identity).not.toHaveProperty('face');
   });
 
+  it('reads and updates only the signed-in person push level', async () => {
+    const managed = async () =>
+      (await (await operation('getManagedIdentity', {})).json()) as { pushLevel: string };
+    expect((await managed()).pushLevel).toBe('mine');
+
+    const updated = await operation('updateIdentityPushLevel', { pushLevel: 'direct' });
+    expect(updated.status).toBe(200);
+    expect((await updated.json()) as { pushLevel: string }).toEqual(
+      expect.objectContaining({ pushLevel: 'direct' }),
+    );
+    expect((await managed()).pushLevel).toBe('direct');
+    expect(
+      (
+        await database.query<{ push_level: string }>(
+          `SELECT push_level FROM identities WHERE id=$1`,
+          [HUMAN],
+        )
+      ).rows[0]?.push_level,
+    ).toBe('direct');
+
+    expect((await operation('updateIdentityPushLevel', { pushLevel: 'loud' })).status).toBe(400);
+    expect((await managed()).pushLevel).toBe('direct');
+  });
+
   it('projects every agent message with the current author name, handle, and face', async () => {
     await database.query(
       `UPDATE identities SET name='Lumen',handle='lumen',face_id='owl' WHERE id=$1`,
@@ -6250,13 +6274,19 @@ describe('monolith integration', () => {
       objective: 'Ship the widget end to end',
     });
     // The NAME titles the corner; the objective stays the statement of work.
-    const corner = await database.query<{ name: string; objective: string }>(
-      `SELECT r.name,cf.objective FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
+    const corner = await database.query<{
+      name: string;
+      objective: string;
+      commissioned_by: string;
+    }>(
+      `SELECT r.name,cf.objective,cf.commissioned_by
+       FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
       [cornerId],
     );
     expect(corner.rows[0]).toEqual({
       name: 'Ship the widget',
       objective: 'Ship the widget end to end',
+      commissioned_by: HUMAN,
     });
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(

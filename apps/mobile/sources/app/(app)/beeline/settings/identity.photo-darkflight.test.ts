@@ -144,12 +144,21 @@ vi.mock('@/components/buzz/FacePickerSheet', async () => {
     FacePickerSheet: (props: unknown) => ReactModule.createElement('FacePickerSheet', props),
   };
 });
+vi.mock('@/components/buzz/PushLevelSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    PushLevelSetting: (props: unknown) => ReactModule.createElement('PushLevelSetting', props),
+  };
+});
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
   },
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
+vi.mock('@/push/push-level-storage', () => ({
+  saveStoredPushLevel: vi.fn(async () => undefined),
+}));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
 vi.mock('react-native-unistyles', () => ({

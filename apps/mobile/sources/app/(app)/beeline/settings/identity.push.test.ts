@@ -21,6 +21,13 @@ const permissionInfo = vi.hoisted(() => ({
     canAskAgain: true,
   })),
 }));
+const runtime = vi.hoisted(() => ({ monolithEnabled: false }));
+const phoneOperation = vi.hoisted(() => vi.fn());
+const notificationApi = vi.hoisted(() => ({
+  getPresentedNotificationsAsync: vi.fn(async () => []),
+  dismissNotificationAsync: vi.fn(async () => undefined),
+  setBadgeCountAsync: vi.fn(async () => true),
+}));
 
 vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({}) }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
@@ -38,6 +45,7 @@ vi.mock('expo-updates', () => ({
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
 }));
+vi.mock('expo-notifications', () => notificationApi);
 vi.mock('expo-haptics', () => ({
   notificationAsync: vi.fn(async () => undefined),
   NotificationFeedbackType: { Success: 'SUCCESS', Warning: 'WARNING', Error: 'ERROR' },
@@ -92,6 +100,7 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
     relayUrl: 'https://relay.test',
     pushGatewayUrl: 'https://push.test',
+    monolithEnabled: runtime.monolithEnabled,
   }),
 }));
 vi.mock('@/sync/appConfig', () => ({
@@ -130,7 +139,21 @@ vi.mock('@/sync/transport', () => ({
     ensureClient = vi.fn(async () => client);
   },
 }));
+vi.mock('@/components/buzz/PushLevelSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    PushLevelSetting: (props: unknown) =>
+      ReactModule.createElement('PushLevelSetting', {
+        ...(props as object),
+        testID: 'push-level-setting',
+      }),
+  };
+});
 vi.mock('@/push/buzz-push-registration', () => pushModule);
+vi.mock('@/push/push-level-storage', () => ({
+  saveStoredPushLevel: vi.fn(async () => undefined),
+}));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
 vi.mock('react-native-unistyles', () => ({
@@ -198,13 +221,10 @@ async function renderScreen(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-function toggle(renderer: ReactTestRenderer): { value: boolean } & Record<string, unknown> {
-  return renderer.root.findByProps({ testID: 'push-notifications-toggle' }).props;
-}
-
 describe('identity settings push row honesty', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtime.monolithEnabled = false;
     pushModule.getBuzzPushEnabled.mockResolvedValue(true);
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);
     permissionInfo.getPushPermissionInfo.mockResolvedValue({
@@ -214,7 +234,30 @@ describe('identity settings push row honesty', () => {
     });
   });
 
-  it('shows a truthful off switch and retry action when registration failed', async () => {
+  it('reads the default level and saves a picker change through the phone operation', async () => {
+    phoneOperation.mockImplementation(async (name: string, input: { pushLevel?: string }) => {
+      if (name === 'updateIdentityPushLevel')
+        return {
+          personId: 'a'.repeat(64),
+          name: 'Captain',
+          pushLevel: input.pushLevel,
+        };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const renderer = await renderScreen();
+    await vi.waitFor(() =>
+      expect(renderer.root.findAllByProps({ testID: 'push-level-setting' })).toHaveLength(1),
+    );
+    const picker = renderer.root.findByProps({ testID: 'push-level-setting' });
+    expect(picker.props.value).toBe('mine');
+
+    await act(async () => picker.props.onSave('off'));
+    expect(phoneOperation).toHaveBeenCalledWith('updateIdentityPushLevel', { pushLevel: 'off' });
+    expect(notificationApi.setBadgeCountAsync).toHaveBeenCalledWith(0);
+    expect(renderer.root.findByProps({ testID: 'push-level-setting' }).props.value).toBe('off');
+  });
+
+  it('keeps the level picker and retry action visible when registration failed', async () => {
     // Forced failure: token acquisition timed out on last launch.
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(
       registrationState({ phase: 'token-timed-out' }),
@@ -224,7 +267,7 @@ describe('identity settings push row honesty', () => {
     );
     const renderer = await renderScreen();
 
-    expect(toggle(renderer).value).toBe(false);
+    expect(renderer.root.findByProps({ testID: 'push-level-setting' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'push-retry-registration' })).toBeDefined();
 
     // The user taps RETRY NOW; this time the gateway accepts.
@@ -233,11 +276,10 @@ describe('identity settings push row honesty', () => {
     });
 
     expect(pushModule.registerBuzzPushNotifications).toHaveBeenCalledTimes(1);
-    expect(toggle(renderer).value).toBe(true);
     expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
   });
 
-  it('shows the switch on only when the stored state says registered', async () => {
+  it('shows no retry action when the device is registered', async () => {
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(
       registrationState({
         registered: true,
@@ -248,7 +290,7 @@ describe('identity settings push row honesty', () => {
     );
     const renderer = await renderScreen();
 
-    expect(toggle(renderer).value).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'push-level-setting' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
   });
@@ -271,24 +313,5 @@ describe('identity settings push row honesty', () => {
     // …and unregistered / failed states.
     const failed = await renderScreen();
     expect(failed.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
-  });
-
-  it('toggling on reflects the registration result, not just the request', async () => {
-    // Push starts off. The user flips the switch on, but the gateway rejects.
-    pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);
-    pushModule.getBuzzPushEnabled.mockResolvedValueOnce(false).mockResolvedValue(true);
-    pushModule.setBuzzPushEnabled.mockResolvedValue(
-      registrationState({ phase: 'gateway-rejected' }),
-    );
-    const renderer = await renderScreen();
-    expect(toggle(renderer).value).toBe(false);
-
-    await act(async () => {
-      toggle(renderer).onValueChange(true);
-    });
-
-    expect(pushModule.setBuzzPushEnabled).toHaveBeenCalledWith(expect.anything(), true);
-    expect(toggle(renderer).value).toBe(false);
-    expect(renderer.root.findByProps({ testID: 'push-retry-registration' })).toBeDefined();
   });
 });

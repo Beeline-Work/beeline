@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 const index = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
 const settings = readFileSync(new URL('./identity.tsx', import.meta.url), 'utf8');
+const pushLevelSetting = readFileSync(
+  new URL('../../../../components/buzz/PushLevelSetting.tsx', import.meta.url),
+  'utf8',
+);
 
 describe('single Settings surface', () => {
   it('routes the Settings index directly to the unified screen', () => {
@@ -11,9 +15,10 @@ describe('single Settings surface', () => {
   });
 
   it('keeps only the approved essential rows', () => {
-    for (const label of ['Name', 'Handle', 'Face', 'Push notifications', 'GitHub', 'Version']) {
+    for (const label of ['Name', 'Handle', 'Face', 'GitHub', 'Version']) {
       expect(settings).toContain(`>${label}<`);
     }
+    expect(pushLevelSetting).toContain('title="Push notifications"');
     expect(settings).toContain('Sign out');
     expect(settings).toContain('Delete account');
     expect(settings).not.toMatch(/Backup key|Relay URL|Connected GitHub accounts|My Settings/);

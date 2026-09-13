@@ -111,6 +111,19 @@ describe('release push catch-up at device registration', () => {
     expect(await loop.runOnce()).toBe(0);
   });
 
+  it('does not queue or deliver a release while the person has push off', async () => {
+    await release('v1', 2);
+    await database.query(`UPDATE identities SET push_level='off' WHERE id=$1`, [PERSON]);
+    await register();
+    expect(
+      (
+        await database.query(`SELECT 1 FROM push_release_catchups WHERE identity_id=$1`, [PERSON])
+      ).rowCount,
+    ).toBe(0);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('does not claim a queued notice that became read before dispatch', async () => {
     const latest = await release('v1', 2);
     await register();

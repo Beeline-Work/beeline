@@ -7,18 +7,105 @@ export const DESKTOP_NAV_DEFAULT_WIDTH = 280;
 export const DESKTOP_INSPECTOR_MIN_WIDTH = 320;
 export const DESKTOP_INSPECTOR_MAX_WIDTH = 480;
 export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400;
+/** Smallest useful middle transcript once the permanent Room list is present. */
+export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 440;
+/** The honest point at which all three readable regions fit side by side. */
+export const DESKTOP_WORK_PANE_THRESHOLD =
+  DESKTOP_NAV_MIN_WIDTH + DESKTOP_TRANSCRIPT_MIN_WIDTH + DESKTOP_INSPECTOR_MIN_WIDTH;
+export const DESKTOP_WORK_PANE_HYSTERESIS = 24;
 
 const NAV_WIDTH_KEY = 'beeline.desktop.nav-width.v1';
 const INSPECTOR_WIDTH_KEY = 'beeline.desktop.inspector-width.v1';
-const INSPECTOR_OPEN_KEY = 'beeline.desktop.inspector-open.v1';
+const WORK_PANE_PREFERENCE_PREFIX = 'beeline.desktop.work-pane-preference.v1:';
 const DRAFT_PREFIX = 'beeline.desktop.draft.v1:';
 
-export type DesktopLayoutMode = 'three-pane' | 'inspector-overlay' | 'navigation-view';
+export type DesktopWorkPanePreference = 'present' | 'dismissed';
+export type DesktopWorkPaneWidthMode = 'wide' | 'narrow';
+export type DesktopWorkPaneMode = DesktopWorkPanePreference | 'suppressed';
+export type DesktopWorkPaneWindowClass = 'regular-window' | 'wide-window';
 
-export function desktopLayoutMode(width: number): DesktopLayoutMode {
-  if (width >= 1180) return 'three-pane';
-  if (width >= LAYOUT_BREAKPOINTS.regular) return 'inspector-overlay';
-  return 'navigation-view';
+export type DesktopWorkPaneState = {
+  preference: DesktopWorkPanePreference;
+  widthMode: DesktopWorkPaneWidthMode;
+  selectedCornerId: string | null;
+};
+
+export type DesktopWorkPaneEvent =
+  | { type: 'hydrate'; preference: DesktopWorkPanePreference }
+  | { type: 'resize'; width: number }
+  | { type: 'dismiss' }
+  | { type: 'toggle' }
+  | { type: 'open-overview' }
+  | { type: 'open-corner'; cornerId: string }
+  | { type: 'drop-corner'; cornerId: string }
+  | { type: 'open-corner-in-main' };
+
+export type DesktopWorkPaneTransition = {
+  state: DesktopWorkPaneState;
+  placement?: 'main' | 'work';
+};
+
+export function desktopWorkPaneWindowClass(width: number): DesktopWorkPaneWindowClass {
+  return width >= LAYOUT_BREAKPOINTS.wide ? 'wide-window' : 'regular-window';
+}
+
+export function desktopWorkPaneWidthMode(
+  width: number,
+  previous?: DesktopWorkPaneWidthMode,
+): DesktopWorkPaneWidthMode {
+  if (previous === 'wide')
+    return width < DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS ? 'narrow' : 'wide';
+  if (previous === 'narrow')
+    return width > DESKTOP_WORK_PANE_THRESHOLD + DESKTOP_WORK_PANE_HYSTERESIS ? 'wide' : 'narrow';
+  return width >= DESKTOP_WORK_PANE_THRESHOLD ? 'wide' : 'narrow';
+}
+
+export function initialDesktopWorkPaneState(width: number): DesktopWorkPaneState {
+  return {
+    preference: 'present',
+    widthMode: desktopWorkPaneWidthMode(width),
+    selectedCornerId: null,
+  };
+}
+
+export function desktopWorkPaneMode(state: DesktopWorkPaneState): DesktopWorkPaneMode {
+  return state.widthMode === 'narrow' ? 'suppressed' : state.preference;
+}
+
+export function transitionDesktopWorkPane(
+  state: DesktopWorkPaneState,
+  event: DesktopWorkPaneEvent,
+): DesktopWorkPaneTransition {
+  switch (event.type) {
+    case 'hydrate':
+      return { state: { ...state, preference: event.preference } };
+    case 'resize':
+      return {
+        state: { ...state, widthMode: desktopWorkPaneWidthMode(event.width, state.widthMode) },
+      };
+    case 'dismiss':
+      return { state: { ...state, preference: 'dismissed', selectedCornerId: null } };
+    case 'toggle':
+      return state.preference === 'present'
+        ? { state: { ...state, preference: 'dismissed', selectedCornerId: null } }
+        : { state: { ...state, preference: 'present', selectedCornerId: null } };
+    case 'open-overview':
+      return { state: { ...state, preference: 'present', selectedCornerId: null } };
+    case 'drop-corner':
+      return {
+        state: { ...state, preference: 'present', selectedCornerId: event.cornerId },
+        placement: 'work',
+      };
+    case 'open-corner':
+      return desktopWorkPaneMode(state) === 'present'
+        ? { state: { ...state, selectedCornerId: event.cornerId }, placement: 'work' }
+        : { state, placement: 'main' };
+    case 'open-corner-in-main':
+      return {
+        state: { ...state, preference: 'present', selectedCornerId: null },
+        placement: 'main',
+      };
+  }
 }
 
 export function clampDesktopPaneWidth(kind: 'navigation' | 'inspector', width: number): number {
@@ -49,12 +136,23 @@ export async function saveDesktopPaneWidth(
   await AsyncStorage.setItem(key, String(clampDesktopPaneWidth(kind, width)));
 }
 
-export async function loadDesktopInspectorOpen(): Promise<boolean> {
-  return (await AsyncStorage.getItem(INSPECTOR_OPEN_KEY)) === 'true';
+function desktopWorkPanePreferenceKey(windowClass: DesktopWorkPaneWindowClass): string {
+  return `${WORK_PANE_PREFERENCE_PREFIX}${windowClass}`;
 }
 
-export async function saveDesktopInspectorOpen(open: boolean): Promise<void> {
-  await AsyncStorage.setItem(INSPECTOR_OPEN_KEY, String(open));
+export async function loadDesktopWorkPanePreference(
+  windowClass: DesktopWorkPaneWindowClass,
+): Promise<DesktopWorkPanePreference> {
+  return (await AsyncStorage.getItem(desktopWorkPanePreferenceKey(windowClass))) === 'dismissed'
+    ? 'dismissed'
+    : 'present';
+}
+
+export async function saveDesktopWorkPanePreference(
+  windowClass: DesktopWorkPaneWindowClass,
+  preference: DesktopWorkPanePreference,
+): Promise<void> {
+  await AsyncStorage.setItem(desktopWorkPanePreferenceKey(windowClass), preference);
 }
 
 export function desktopDraftKey(roomId: string): string {
@@ -72,6 +170,35 @@ export async function saveDesktopDraft(roomId: string, text: string): Promise<vo
 }
 
 export type DesktopComposerKeyAction = 'send' | 'newline' | 'none';
+
+export const DESKTOP_WORK_PANE_COMMAND = {
+  id: 'toggle-work-pane',
+  title: 'Toggle work pane',
+  key: 'i',
+  code: 'KeyI',
+} as const;
+
+export function isDesktopWorkPaneCommand(event: {
+  key: string;
+  code?: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  isComposing?: boolean;
+  repeat?: boolean;
+}): boolean {
+  return (
+    !event.isComposing &&
+    !event.repeat &&
+    !event.altKey &&
+    !event.shiftKey &&
+    (event.metaKey || event.ctrlKey) &&
+    (event.code
+      ? event.code === DESKTOP_WORK_PANE_COMMAND.code
+      : event.key.toLowerCase() === DESKTOP_WORK_PANE_COMMAND.key)
+  );
+}
 
 export type DesktopWorkspaceRoute =
   | {

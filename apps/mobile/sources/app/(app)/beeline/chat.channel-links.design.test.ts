@@ -59,14 +59,14 @@ describe('channel reference links — workspace-scoped exact resolution', () => 
     expect(chatSource).not.toContain('persistChannelReferenceIndex');
   });
 
-  it('navigates through the existing roomHref/cornerHref conventions only', () => {
+  it('routes Room links normally and gives corner links to the shared placement decision', () => {
     const handler = blockFrom(
       chatSource,
       'handleOpenChannelReference',
       'handleOpenChannelReference',
     );
     expect(handler).toContain("target.kind === 'corner'");
-    expect(handler).toContain('router.push(cornerHref(target.channelId, target.parentChannelId))');
+    expect(handler).toContain('openDesktopCorner(target.parentChannelId, target.channelId)');
     expect(handler).toContain('router.push(roomHref(target.channelId))');
     // A reference to the transcript you are already reading must not push a
     // duplicate of the same route onto the stack.

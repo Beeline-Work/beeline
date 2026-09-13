@@ -26,6 +26,7 @@ vi.mock('react-native', async () => {
         props.ListFooterComponent,
       ),
     PanResponder: { create: () => ({ panHandlers: {} }) },
+    Platform: { OS: 'web' },
     Pressable: host('Pressable'),
     Text: host('Text'),
     TextInput: host('TextInput'),
@@ -200,11 +201,9 @@ function props(overrides: Record<string, unknown> = {}) {
   return {
     room: room(),
     client: null,
-    overlay: false,
-    maximized: false,
-    onToggleMaximize: vi.fn(),
     selectedCornerId: null,
     onSelectCorner: vi.fn(),
+    onOpenInMain: vi.fn(),
     onClose: vi.fn(),
     onNewCorner: vi.fn(),
     onOpenRoster: vi.fn(),
@@ -358,8 +357,9 @@ describe('DesktopRoomInspector work pane', () => {
     },
   );
 
-  it('opens a corner cockpit and returns to overview without closing the pane', async () => {
-    const onSelectCorner = vi.fn();
+  it('opens a corner cockpit with exactly the open-in-main and close header controls', async () => {
+    const onOpenInMain = vi.fn();
+    const onClose = vi.fn();
     const detail = {
       ...room(),
       room: corners[0].corner,
@@ -373,7 +373,7 @@ describe('DesktopRoomInspector work pane', () => {
     await act(async () => {
       tree = create(
         <DesktopRoomInspector
-          {...props({ client, selectedCornerId: 'working', onSelectCorner })}
+          {...props({ client, selectedCornerId: 'working', onOpenInMain, onClose })}
         />,
       );
     });
@@ -383,63 +383,20 @@ describe('DesktopRoomInspector work pane', () => {
     );
     expect(tree.root.findByProps({ testID: 'desktop-work-corner-transcript' })).toBeTruthy();
     expect(tree.root.findByType('ConversationComposer' as any).props.placeholder).toBeUndefined();
-    act(() => {
-      tree.root.findByProps({ accessibilityLabel: 'Back to work overview' }).props.onPress();
-    });
-    expect(onSelectCorner).toHaveBeenCalledWith(null);
-  });
-
-  it('lets a selected corner cockpit maximize over the main pane instead of the side rail', async () => {
-    const onToggleMaximize = vi.fn();
-    const detail = {
-      ...room(),
-      room: corners[0].corner,
-      parent: room().room,
-      messages: [],
-    } as any;
-    const client = { room: vi.fn(async () => detail) } as any;
-
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = create(
-        <DesktopRoomInspector
-          {...props({
-            client,
-            overlay: true,
-            selectedCornerId: 'working',
-            onToggleMaximize,
-          })}
-        />,
-      );
-    });
-
-    const notMaximized = tree.root.findByProps({ testID: 'desktop-work-cockpit-maximize' });
-    expect(notMaximized.props.accessibilityLabel).toBe('Maximize corner pane');
-    expect(tree.root.findByProps({ testID: 'desktop-inspector-overlay' })).toBeTruthy();
-    act(() => notMaximized.props.onPress());
-    expect(onToggleMaximize).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      tree = create(
-        <DesktopRoomInspector
-          {...props({
-            client,
-            overlay: true,
-            maximized: true,
-            selectedCornerId: 'working',
-            onToggleMaximize,
-          })}
-        />,
-      );
-    });
-
-    // Maximized replaces the confined rail/overlay pane with the full frame:
-    // no more narrow overlay testID, no resizer, and the button now offers
-    // to restore rather than maximize.
-    expect(() => tree.root.findByProps({ testID: 'desktop-inspector-overlay' })).toThrow();
-    expect(tree.root.findByProps({ testID: 'desktop-inspector' })).toBeTruthy();
-    expect(() => tree.root.findByProps({ testID: 'desktop-inspector-resizer' })).toThrow();
-    const maximizedButton = tree.root.findByProps({ testID: 'desktop-work-cockpit-maximize' });
-    expect(maximizedButton.props.accessibilityLabel).toBe('Restore corner pane');
+    const header = tree.root.findByProps({ testID: 'desktop-work-cockpit-header' });
+    const buttons = header.findAllByType('Pressable' as any);
+    expect(buttons.map((button: any) => button.props.accessibilityLabel)).toEqual([
+      'Open in the main pane',
+      'Close work pane',
+    ]);
+    expect(header.findAllByType('span' as any).map((tooltip: any) => tooltip.props.title)).toEqual([
+      'Open in the main pane',
+      'Close work pane',
+    ]);
+    act(() => buttons[0].props.onPress());
+    act(() => buttons[1].props.onPress());
+    expect(onOpenInMain).toHaveBeenCalledWith('working');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(() => tree.root.findByProps({ accessibilityLabel: 'Back to work overview' })).toThrow();
   });
 });

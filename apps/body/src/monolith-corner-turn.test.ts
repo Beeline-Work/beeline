@@ -112,6 +112,8 @@ describe('corner merge instructions', () => {
     expect(CORNER_DELIVERY_NUDGE).toContain('## Demonstrated');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('Yolo is on');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('pr_checks_status');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('checks="unknown"');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
   it('boots a non-opener reviewer with the review instruction and repository gh surface', async () => {

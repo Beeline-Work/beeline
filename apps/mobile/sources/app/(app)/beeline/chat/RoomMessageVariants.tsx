@@ -1477,7 +1477,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: groknight.accent,
     backgroundColor: groknight.bgHighlight,
   },
-  nativeReactionEmoji: { ...theme.buzz.type.body, fontSize: 24, lineHeight: 30 },
+  nativeReactionEmoji: theme.buzz.type.hero,
   reactionChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',

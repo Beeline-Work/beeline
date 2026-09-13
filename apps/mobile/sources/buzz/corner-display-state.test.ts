@@ -23,9 +23,9 @@ function item(state: CornerState, reason?: CornerStateReason) {
 
 describe('server-owned corner display state', () => {
   it.each([
-    ['working', 'work', '◌'],
-    ['waiting', 'quiet', '○'],
-    ['review', 'brass', '●'],
+    ['working', 'quiet', '◌'],
+    ['waiting', 'brass', '○'],
+    ['review', 'quiet', '●'],
     ['archived', 'ghost', '○'],
   ] as const)('renders %s without deriving a replacement state', (state, tone, glyph) => {
     expect(cornerDisplayState(item(state))).toMatchObject({

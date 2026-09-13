@@ -123,6 +123,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   roomStateMark: { width: 7, height: 7 },
   roomStateNeedsYou: { backgroundColor: theme.colors.textLink },
   roomStateWorking: { backgroundColor: theme.colors.textSecondary },
+  cornerStateWaiting: { backgroundColor: theme.buzz.accent },
+  cornerStateQuiet: { backgroundColor: theme.buzz.ledgerQuiet },
+  cornerStateGhost: { backgroundColor: theme.buzz.ledgerGhost },
   presenceDot: { width: 7, height: 7, borderRadius: 4 },
   presenceWorking: { backgroundColor: theme.colors.success },
   presenceIdle: { backgroundColor: theme.colors.textSecondary },
@@ -150,6 +153,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   cornerTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, marginTop: 2 },
+  cornerMetaWaiting: { color: theme.buzz.accent },
+  cornerMetaQuiet: { color: theme.buzz.ledgerQuiet },
+  cornerMetaGhost: { color: theme.buzz.ledgerGhost },
   previewSelf: { color: theme.colors.textSecondary },
   previewAuthor: { color: theme.colors.textLink },
   empty: {
@@ -605,16 +611,16 @@ export const SidebarView = React.memo(function SidebarView() {
                               testID={`desktop-corner-${corner.corner.id}`}
                             >
                               <View style={styles.roomStateSlot}>
-                                {(corner.state === 'working' || corner.state === 'review') && (
-                                  <View
-                                    style={[
-                                      styles.roomStateMark,
-                                      corner.state === 'review'
-                                        ? styles.roomStateNeedsYou
-                                        : styles.roomStateWorking,
-                                    ]}
-                                  />
-                                )}
+                                <View
+                                  style={[
+                                    styles.roomStateMark,
+                                    corner.state === 'waiting'
+                                      ? styles.cornerStateWaiting
+                                      : corner.state === 'archived'
+                                        ? styles.cornerStateGhost
+                                        : styles.cornerStateQuiet,
+                                  ]}
+                                />
                               </View>
                               <View style={styles.roomCopy}>
                                 <Text numberOfLines={1} style={styles.cornerTitle}>
@@ -624,7 +630,17 @@ export const SidebarView = React.memo(function SidebarView() {
                                     corner.corner.id,
                                   )}
                                 </Text>
-                                <Text numberOfLines={1} style={styles.cornerMeta}>
+                                <Text
+                                  numberOfLines={1}
+                                  style={[
+                                    styles.cornerMeta,
+                                    corner.state === 'waiting'
+                                      ? styles.cornerMetaWaiting
+                                      : corner.state === 'archived'
+                                        ? styles.cornerMetaGhost
+                                        : styles.cornerMetaQuiet,
+                                  ]}
+                                >
                                   {corner.state}
                                 </Text>
                               </View>

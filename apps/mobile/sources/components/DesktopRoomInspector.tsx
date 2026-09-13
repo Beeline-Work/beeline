@@ -837,9 +837,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.textSecondary,
     includeFontPadding: false,
   },
-  cornerStatusWorking: { color: theme.buzz.warning },
-  cornerStatusReview: { color: theme.buzz.accent },
-  cornerStatusWaiting: { color: theme.buzz.ledgerQuiet },
+  cornerStatusWorking: { color: theme.buzz.ledgerQuiet },
+  cornerStatusReview: { color: theme.buzz.ledgerQuiet },
+  cornerStatusWaiting: { color: theme.buzz.accent },
   cornerStatusArchived: { color: theme.buzz.ledgerGhost },
   sectionGap: { height: 22 },
   simpleRow: {

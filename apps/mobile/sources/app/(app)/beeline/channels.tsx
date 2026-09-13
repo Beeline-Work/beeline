@@ -1318,10 +1318,10 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       includeFontPadding: false,
     },
-    // One existing token tier per canonical display state.
-    cornerStatusWorking: { color: hull.warning },
-    cornerStatusReview: { color: hull.accent },
-    cornerStatusWaiting: { color: hull.ledgerQuiet },
+    // Brass is reserved for the state that wants the viewer.
+    cornerStatusWorking: { color: hull.ledgerQuiet },
+    cornerStatusReview: { color: hull.ledgerQuiet },
+    cornerStatusWaiting: { color: hull.accent },
     cornerStatusArchived: { color: hull.ledgerGhost },
     // The name lifts out of the secondary tone with it, so the pair reads as
     // one emphasized row rather than a loud chip beside a quiet title.

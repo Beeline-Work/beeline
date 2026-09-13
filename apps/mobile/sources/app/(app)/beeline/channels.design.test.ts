@@ -19,6 +19,8 @@ const desktopInspectorSource = readFileSync(
   new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
   'utf8',
 );
+const cornerHeaderSource = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const cornerListSource = readFileSync(new URL('./corners/[roomId].tsx', import.meta.url), 'utf8');
 const cornerTitleTypeface = readFileSync(
   new URL('../../../assets/fonts/SpaceGrotesk-SemiBold.ttf', import.meta.url),
 );
@@ -288,18 +290,40 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain("lifecycle.lifecycle !== 'done'");
   });
 
-  it('maps the four corner states onto four existing color tiers', () => {
+  it('spends brass only on waiting corner state', () => {
     expect(source).toContain("display.status === 'working'");
     expect(source).toContain("display.status === 'review'");
     expect(source).toContain("display.status === 'archived'");
     expect(source).toContain('display.needsYou && styles.cornerNameNeedsYou');
-    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.warning');
-    expect(styleBlock(source, 'cornerStatusReview')).toContain('color: hull.accent');
-    expect(styleBlock(source, 'cornerStatusWaiting')).toContain('color: hull.ledgerQuiet');
+    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.ledgerQuiet');
+    expect(styleBlock(source, 'cornerStatusReview')).toContain('color: hull.ledgerQuiet');
+    expect(styleBlock(source, 'cornerStatusWaiting')).toContain('color: hull.accent');
     expect(styleBlock(source, 'cornerStatusArchived')).toContain('color: hull.ledgerGhost');
     expect(styleBlock(source, 'cornerNameNeedsYou')).toContain('color: hull.textPrimary');
     expect(styleBlock(source, 'cornerName')).toContain('color: hull.textSecondary');
     expect(source).toContain("display.needsYou ? ', needs you' : ''");
+
+    expect(styleBlock(desktopInspectorSource, 'cornerStatusWorking', '  ')).toContain(
+      'color: theme.buzz.ledgerQuiet',
+    );
+    expect(styleBlock(desktopInspectorSource, 'cornerStatusReview', '  ')).toContain(
+      'color: theme.buzz.ledgerQuiet',
+    );
+    expect(styleBlock(desktopInspectorSource, 'cornerStatusWaiting', '  ')).toContain(
+      'color: theme.buzz.accent',
+    );
+    expect(styleBlock(cornerHeaderSource, 'cornerHeaderWorking')).toContain(
+      'color: groknight.ledgerQuiet',
+    );
+    expect(styleBlock(cornerHeaderSource, 'cornerHeaderReview')).toContain(
+      'color: groknight.ledgerQuiet',
+    );
+    expect(styleBlock(cornerHeaderSource, 'cornerHeaderWaiting')).toContain(
+      'color: groknight.accent',
+    );
+    expect(cornerListSource).toContain(
+      '<StateCircle state={display.visual} tone={display.tone} />',
+    );
   });
 
   it('centers the corner title, every state word, and chevron on one line', () => {

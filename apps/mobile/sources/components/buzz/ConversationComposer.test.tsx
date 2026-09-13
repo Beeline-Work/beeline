@@ -186,6 +186,17 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     });
   });
 
+  it('lets the row own Android vertical padding without changing native measured height', () => {
+    platform.OS = 'android';
+    const f = render('one line');
+    const input = f.renderer.root.findByType('TextInput');
+    expect(input.props.includeFontPadding).toBe(false);
+    expect(input.props.style[1]).toEqual({
+      height: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+      maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
+    });
+  });
+
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
     const f = render(value);
     expect(f.button().findByType('Text').props.children).toBe('↑');

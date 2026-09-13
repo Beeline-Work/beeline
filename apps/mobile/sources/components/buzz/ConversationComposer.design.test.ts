@@ -25,6 +25,11 @@ describe('Option A composer chrome', () => {
     expect(surface).toContain('backgroundColor: theme.buzz.bgRaised');
   });
 
+  it('lets the row, rather than Android font metrics, own the vertical inset', () => {
+    expect(composer).toContain("includeFontPadding={Platform.OS === 'android' ? false : undefined}");
+    expect(composer).toContain("textAlignVertical: 'top'");
+  });
+
   it('keeps reply quotes and staged files inside the one composer hairline', () => {
     expect(composer).toContain('testID={`${testIDPrefix}-composer-adjuncts`}');
     expect(composer).toContain('testID="reply-composer-banner"');

@@ -244,6 +244,9 @@ export function ConversationComposer({
           onSelectionChange={onSelectionChange}
           placeholder="Message"
           placeholderTextColor={theme.buzz.dim}
+          // Android otherwise adds an asymmetric font inset inside the field,
+          // on top of the row's shared vertical padding.
+          includeFontPadding={Platform.OS === 'android' ? false : undefined}
           multiline
           returnKeyType="default"
           scrollEnabled={height >= maxHeight}

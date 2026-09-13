@@ -1,0 +1,320 @@
+import * as React from 'react';
+import { Pressable, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
+
+const RAIL_WIDTH = 76;
+const TILE_SIZE = 48;
+
+export type DesktopWorkspaceRailItem = {
+  readonly id: string;
+  readonly name: string;
+  readonly avatar?: string;
+  readonly roomCount: number;
+  readonly needsAttention: boolean;
+};
+
+type DesktopWorkspaceRailProps = {
+  readonly open: boolean;
+  readonly workspaces: readonly DesktopWorkspaceRailItem[];
+  readonly activeWorkspaceId: string | null;
+  readonly onClose: () => void;
+  readonly onSelect: (workspaceId: string) => void;
+  readonly onAdd: () => void;
+};
+
+export function DesktopWorkspaceRail({
+  open,
+  workspaces,
+  activeWorkspaceId,
+  onClose,
+  onSelect,
+  onAdd,
+}: DesktopWorkspaceRailProps) {
+  const styles = stylesheet;
+  const reducedMotion = useReducedMotion();
+  const railX = useSharedValue(reducedMotion ? 0 : -RAIL_WIDTH);
+  const tileRefs = React.useRef<Array<any>>([]);
+  const [hoveredWorkspaceId, setHoveredWorkspaceId] = React.useState<string | null>(null);
+  const [focusedWorkspaceId, setFocusedWorkspaceId] = React.useState<string | null>(null);
+  const [addFocused, setAddFocused] = React.useState(false);
+  const activeIndex = Math.max(
+    0,
+    workspaces.findIndex((workspace) => workspace.id === activeWorkspaceId),
+  );
+  const focusedIndexRef = React.useRef(activeIndex);
+
+  React.useEffect(() => {
+    if (!open) return;
+    focusedIndexRef.current = activeIndex;
+    railX.value = reducedMotion ? 0 : -RAIL_WIDTH;
+    railX.value = withTiming(0, {
+      duration: reducedMotion ? 0 : 180,
+      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      reduceMotion: ReduceMotion.System,
+    });
+    const frame = requestAnimationFrame(() => tileRefs.current[activeIndex]?.focus?.());
+    return () => cancelAnimationFrame(frame);
+  }, [activeIndex, open, railX, reducedMotion]);
+
+  React.useEffect(() => {
+    if (!open || typeof window === 'undefined') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key === 'Enter') {
+        if (focusedIndexRef.current === workspaces.length) {
+          event.preventDefault();
+          onAdd();
+          return;
+        }
+        const workspace = workspaces[focusedIndexRef.current];
+        if (!workspace) return;
+        event.preventDefault();
+        if (workspace.id === activeWorkspaceId) onClose();
+        else onSelect(workspace.id);
+        return;
+      }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      const startIndex = focusedIndexRef.current;
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      const itemCount = workspaces.length + 1;
+      const nextIndex = (startIndex + delta + itemCount) % itemCount;
+      focusedIndexRef.current = nextIndex;
+      tileRefs.current[nextIndex]?.focus?.();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeWorkspaceId, activeIndex, onAdd, onClose, onSelect, open, workspaces]);
+
+  const animatedRailStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: railX.value }],
+  }));
+
+  if (!open) return null;
+
+  return (
+    <DesktopWorkspacePortal>
+      <View
+        accessibilityLabel="Workspace switcher"
+        accessibilityViewIsModal
+        style={styles.overlay}
+        testID="desktop-workspace-rail-overlay"
+      >
+        <Pressable
+          accessibilityLabel="Close Workspace switcher"
+          accessibilityRole="button"
+          onPress={onClose}
+          style={styles.scrim}
+          testID="desktop-workspace-rail-scrim"
+        />
+        <Animated.View
+          accessibilityLabel="Workspaces"
+          accessibilityRole="menu"
+          style={[styles.rail, animatedRailStyle]}
+          testID="desktop-workspace-rail"
+        >
+          <View style={styles.workspaceList}>
+            {workspaces.map((workspace, index) => {
+              const current = workspace.id === activeWorkspaceId;
+              const labelled = (hoveredWorkspaceId ?? focusedWorkspaceId) === workspace.id;
+              const roomLabel = `${workspace.roomCount} Rooms`;
+              return (
+                <View key={workspace.id} style={styles.tileSlot}>
+                  {(current || workspace.needsAttention) && (
+                    <View
+                      style={[styles.pill, current ? styles.currentPill : styles.attentionPill]}
+                      testID={
+                        current
+                          ? `desktop-workspace-current-${workspace.id}`
+                          : `desktop-workspace-needs-you-${workspace.id}`
+                      }
+                    />
+                  )}
+                  <Pressable
+                    accessibilityLabel={`${workspace.name}, ${roomLabel}${
+                      current ? ', you are here' : workspace.needsAttention ? ', needs you' : ''
+                    }`}
+                    accessibilityRole="menuitem"
+                    accessibilityState={{ selected: current }}
+                    onBlur={() => {
+                      setFocusedWorkspaceId(null);
+                    }}
+                    onFocus={() => {
+                      focusedIndexRef.current = index;
+                      setFocusedWorkspaceId(workspace.id);
+                    }}
+                    onHoverIn={() => setHoveredWorkspaceId(workspace.id)}
+                    onHoverOut={() => setHoveredWorkspaceId(null)}
+                    onPress={() => (current ? onClose() : onSelect(workspace.id))}
+                    ref={(node) => {
+                      tileRefs.current[index] = node;
+                    }}
+                    style={[
+                      styles.tile,
+                      current && styles.currentTile,
+                      focusedWorkspaceId === workspace.id && styles.focusedTile,
+                    ]}
+                    testID={`desktop-workspace-tile-${workspace.id}`}
+                  >
+                    <IdentityMark
+                      avatarUrl={workspace.avatar}
+                      kind="workspace"
+                      name={workspace.name}
+                      seed={workspace.id}
+                      size={32}
+                      testID={`desktop-workspace-mark-${workspace.id}`}
+                    />
+                  </Pressable>
+                  {labelled && (
+                    <View
+                      pointerEvents="none"
+                      style={styles.label}
+                      testID="desktop-workspace-label"
+                    >
+                      <Text numberOfLines={1} style={styles.labelName}>
+                        {workspace.name}
+                      </Text>
+                      <Text style={styles.labelMeta}>
+                        {roomLabel}
+                        {current ? ' · you are here' : ''}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+            <View style={styles.separator} />
+            <Pressable
+              accessibilityLabel="Create or join a Workspace"
+              accessibilityRole="menuitem"
+              onBlur={() => setAddFocused(false)}
+              onFocus={() => {
+                focusedIndexRef.current = workspaces.length;
+                setAddFocused(true);
+              }}
+              onPress={onAdd}
+              ref={(node) => {
+                tileRefs.current[workspaces.length] = node;
+              }}
+              style={[styles.tile, styles.addTile, addFocused && styles.focusedTile]}
+              testID="desktop-workspace-add"
+            >
+              <Text style={styles.addGlyph}>+</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      </View>
+    </DesktopWorkspacePortal>
+  );
+}
+
+const stylesheet = StyleSheet.create((theme) => {
+  const hull = theme.buzz;
+  return {
+    overlay: {
+      position: 'fixed',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      zIndex: 2000,
+    } as any,
+    scrim: {
+      ...StyleSheet.absoluteFillObject,
+      left: RAIL_WIDTH,
+      backgroundColor: 'rgba(20,9,26,.66)',
+    },
+    rail: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      width: RAIL_WIDTH,
+      overflow: 'visible',
+      alignItems: 'center',
+      backgroundColor: hull.bgRaised,
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderRightColor: hull.borderStrong,
+    },
+    workspaceList: { paddingTop: 14, alignItems: 'center', gap: 10, overflow: 'visible' },
+    tileSlot: {
+      position: 'relative',
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      overflow: 'visible',
+    },
+    tile: {
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      minWidth: 44,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      backgroundColor: hull.bgHighlight,
+      outlineStyle: 'none',
+    } as any,
+    currentTile: { borderWidth: 2, borderColor: hull.accent },
+    focusedTile: { borderWidth: 2, borderColor: hull.accent },
+    pill: {
+      position: 'absolute',
+      left: -14,
+      top: '50%',
+      width: 4,
+      borderTopRightRadius: 3,
+      borderBottomRightRadius: 3,
+      backgroundColor: hull.accent,
+      transform: [{ translateY: '-50%' }],
+    } as any,
+    currentPill: { height: 36 },
+    attentionPill: { height: 10 },
+    label: {
+      position: 'absolute',
+      left: 62,
+      top: '50%',
+      minWidth: 120,
+      maxWidth: 260,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.borderStrong,
+      borderRadius: 8,
+      backgroundColor: '#0f0713',
+      transform: [{ translateY: '-50%' }],
+      zIndex: 2,
+    } as any,
+    labelName: {
+      ...hull.type.meta,
+      color: hull.textPrimary,
+    },
+    labelMeta: {
+      ...hull.type.meta,
+      color: hull.textMuted,
+    },
+    separator: { width: 32, height: 1, marginVertical: 4, backgroundColor: hull.borderStrong },
+    addTile: {
+      backgroundColor: 'transparent',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderStyle: 'dashed',
+      borderColor: hull.borderStrong,
+    },
+    addGlyph: {
+      ...hull.type.hero,
+      color: hull.accent,
+    },
+  };
+});

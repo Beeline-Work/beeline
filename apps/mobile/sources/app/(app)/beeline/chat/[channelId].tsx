@@ -41,7 +41,6 @@ import {
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
-  type KnownMessageReference,
   type MessageReactionEmoji,
   type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
@@ -190,7 +189,8 @@ import {
 } from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
-  replyMessageText,
+  activityMessageReplyTarget,
+  prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
 } from '@/buzz/message-reply';
@@ -2141,15 +2141,21 @@ export default function BuzzChat() {
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      const install = (reference: KnownMessageReference) => {
-        setReplyTarget({ ...replyTargetForMessage(message), reference });
+      const target = message.isAgentActivity
+        ? activityMessageReplyTarget(message, visibleMessages, replyTargetForMessage(message))
+        : {
+            ...replyTargetForMessage(message),
+            ...(message.reference ? { reference: message.reference } : {}),
+          };
+      const install = () => {
+        setReplyTarget(target);
         setDismissedMentionKey(null);
         void Haptics.selectionAsync();
         requestAnimationFrame(() => composerRef.current?.focus());
       };
-      if (message.reference?.channelId === decodedId) install(message.reference);
+      if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
     },
-    [decodedId, replyTargetForMessage],
+    [decodedId, replyTargetForMessage, visibleMessages],
   );
 
   const handleReactToMessage = useCallback(
@@ -2251,9 +2257,8 @@ export default function BuzzChat() {
       }
       return;
     }
-    const text = replyTarget
-      ? replyMessageText(rawText, replyTarget.isAgent ? replyTarget.authorHandle : undefined)
-      : rawText;
+    const preparedReply = replyTarget ? prepareMessageReply(rawText, replyTarget) : undefined;
+    const text = preparedReply?.text ?? rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
@@ -2265,6 +2270,7 @@ export default function BuzzChat() {
     );
     const mentionedAgent =
       selectedMentionedAgent ??
+      preparedReply?.agentPubkey ??
       mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
       mentionedAgentPubkey(text, roomAgents);
     // Resolve before attachment upload or cold transport creation so the ack
@@ -2302,10 +2308,10 @@ export default function BuzzChat() {
       );
       // Sign before append. The authoritative event id is the optimistic row
       // identity and the durable outbox key from its first frame onward.
-      preparedEvent = replyTarget
+      preparedEvent = preparedReply?.reference
         ? await sendTransport.composeReplyMessage(
             text,
-            replyTarget.reference,
+            preparedReply.reference,
             mentionedAgent,
             attachments,
             mentionedPubkeys,
@@ -2337,7 +2343,7 @@ export default function BuzzChat() {
         pubkey: userPubkey,
         reference: undefined,
         ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-        ...(replyTarget ? { replyToId: replyTarget.reference.eventId } : {}),
+        ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
         ...(attachments.length ? { attachments } : {}),
       } satisfies ChatDisplayMessage;
       const activeOutbox = outbox.current();

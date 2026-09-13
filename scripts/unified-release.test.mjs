@@ -98,6 +98,23 @@ test('server canary samples and the bounded window fail closed', () => {
   });
   assert.equal(clean.clean, true);
   assert.equal(clean.poolMetricsAvailable, true);
+  const cleanIdlePool = evaluateServerCanarySample({
+    health: {
+      ok: true,
+      database: {
+        pool: { size: 0, inUse: 0, waiting: 0 },
+        oldestActiveQueryAgeMs: null,
+      },
+    },
+    roomRead: { ok: true, status: 200 },
+    version: { version: 'v0.0.9', sourceSha: NEW_SHA },
+    expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
+  });
+  assert.equal(cleanIdlePool.clean, true);
+  assert.equal(cleanIdlePool.poolMetricsAvailable, true);
+  assert.deepEqual(cleanIdlePool.pool, {
+    size: 0, inUse: 0, waiting: 0, oldestActiveQueryAgeMs: null,
+  });
   assert.equal(evaluateServerCanarySample({
     health: {
       ok: true,
@@ -111,7 +128,7 @@ test('server canary samples and the bounded window fail closed', () => {
     expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
   }).clean, false);
   const missingPoolMetrics = evaluateServerCanarySample({
-    health: { ok: true },
+    health: { ok: true, database: { oldestActiveQueryAgeMs: null } },
     roomRead: { ok: true, status: 200 },
     version: { version: 'v0.0.9', sourceSha: NEW_SHA },
     expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
@@ -678,8 +695,19 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'push-gateway', 'server']) {
     assert.match(prepareMigration, new RegExp(`npm run build -w @beeline/${workspace}`));
   }
-  const migrate = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates').run;
+  const migrationStep = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates');
+  const migrate = migrationStep.run;
+  assert.equal(migrationStep.env.SERVER_DB_DIRECT_IP, 'fdaa:67:2f3e:0:1::11');
   assert.match(migrate, /MIGRATION_DATABASE_URL is required/);
+  assert.match(migrate, /flyctl proxy "15432:5432" "\$SERVER_DB_DIRECT_IP" -a beeline-server/);
+  assert.match(migrate, /trap 'kill "\$proxy_pid".*wait "\$proxy_pid"/);
+  assert.match(migrate, /\/dev\/tcp\/127\.0\.0\.1\/15432/);
+  assert.match(migrate, /database proxy did not open within 30s/);
+  assert.match(migrate, /current_database\(\) AS database/);
+  assert.match(migrate, /to_regclass\('public\.messages'\) IS NOT NULL AS has_messages/);
+  assert.match(migrate, /database !== 'fly-db' \|\| hasMessages !== true/);
+  assert.match(migrate, /MIGRATION_DATABASE_URL does not point at the production database/);
+  assert.ok(migrate.indexOf('database !== \'fly-db\'') < migrate.indexOf('npm run migrate -w @beeline/server'));
   assert.match(migrate, /npm run migrate -w @beeline\/server/);
   assert.doesNotMatch(migrate, /npm ci|npm run build/);
   assert.match(serverLeg, /seq 0 20/);
@@ -699,6 +727,25 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(promote, /requires SERVER_CANARY_REVIEW_SECRET or SERVER_CANARY_PHONE_TOKEN/);
   assert.ok(promote.indexOf('/v1/auth/review/exchange') < promote.indexOf('for sample in $(seq 0 20)'));
   assert.equal(promote.match(/v1\/auth\/review\/exchange/g)?.length, 1);
+  assert.match(promote, /wait_for_machine_ready\(\)/);
+  assert.match(promote, /deadline=\$\(\(SECONDS \+ 180\)\)/);
+  assert.match(promote, /server\.usebeeline\.app\/readyz/);
+  assert.match(promote, /did not become ready within 180s/);
+  assert.match(promote, /wait_for_machine_ready "\$canary"/);
+  assert.match(promote, /wait_for_machine_ready "\$second"/);
+  assert.match(
+    promote,
+    /flyctl machine update "\$canary" --app beeline-server --image "\$image_ref" --wait-timeout 300 --yes\nwait_for_machine_ready "\$canary"/,
+  );
+  assert.match(
+    promote,
+    /flyctl machine update "\$second" --app beeline-server --image "\$image_ref" --wait-timeout 300 --yes\nwait_for_machine_ready "\$second"/,
+  );
+  assert.ok(promote.indexOf('wait_for_machine_ready "$canary"') < promote.indexOf('/v1/auth/review/exchange'));
+  assert.match(promote, /v\.version === process\.argv\[2\]/);
+  assert.match(promote, /for exchange_attempt in 1 2 3/);
+  assert.match(promote, /-H "fly-force-instance-id: \$second" -H 'Content-Type: application\/json'/);
+  assert.match(promote, /5\?\?\) ;;/);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);

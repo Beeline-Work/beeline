@@ -43,7 +43,9 @@ import {
   type AgentCommandList,
   type KnownMessageReference,
   type MessageReactionEmoji,
+  type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
+  isChatListView,
 } from '@beeline/buzz-client';
 import {
   createRoomMessageProjector,
@@ -99,6 +101,7 @@ import {
   type DesktopWorkPaneEvent,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
@@ -123,6 +126,7 @@ import {
   fallbackMemberName,
   personIdentityLabel,
 } from '@/buzz/member-display';
+import { directMessageHeaderPresence } from '@/buzz/direct-message-header-presence';
 import {
   createCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
@@ -521,6 +525,7 @@ export default function BuzzChat() {
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
+  const [directMessageListItem, setDirectMessageListItem] = useState<ChatListItem | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
@@ -1309,6 +1314,39 @@ export default function BuzzChat() {
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
+  useEffect(() => {
+    if (!isDirectMessage || !roomClient || !activeCommunityId || !userPubkey) {
+      setDirectMessageListItem(null);
+      return;
+    }
+    let cancelled = false;
+    let painted = false;
+    void (async () => {
+      const address = surfaceAddress(
+        await getEffectiveRelayUrl(),
+        userPubkey,
+        '/workspace/:id/chats',
+        { workspaceId: activeCommunityId },
+      );
+      const apply = (view: { readonly chats: readonly ChatListItem[] }) => {
+        if (cancelled) return;
+        painted = true;
+        setDirectMessageListItem(
+          view.chats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
+        );
+      };
+      const cached = await mobileSurfaceCache.read(address, isChatListView);
+      if (cached) apply(cached);
+      const fresh = await roomClient.chats(activeCommunityId);
+      apply(fresh);
+      void mobileSurfaceCache.write(address, fresh, isChatListView);
+    })().catch(() => {
+      if (!cancelled && !painted) setDirectMessageListItem(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCommunityId, decodedId, isDirectMessage, roomClient, userPubkey]);
   const memberManagement = roomMemberManagementState({
     isDirectMessage,
     participantsHydrated,
@@ -1489,6 +1527,10 @@ export default function BuzzChat() {
     dmPeerPubkey && dmPeerAgent
       ? resolveAgentDisplayIdentity(dmPeerPubkey, dmPeerAgent)
       : undefined;
+  const dmHeaderPresence = directMessageHeaderPresence(
+    directMessageListItem?.room.id === decodedId ? directMessageListItem : null,
+    presenceNow,
+  );
   const dmAnnouncementAuthor = dmPeerPubkey
     ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
     : undefined;
@@ -3717,7 +3759,7 @@ export default function BuzzChat() {
                   </Text>
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
-                <HeaderMetaCaps testID="room-header-meta">{'Direct message'}</HeaderMetaCaps>
+                <HeaderMetaCaps testID="room-header-meta">{dmHeaderPresence}</HeaderMetaCaps>
               ) : null}
             </View>
             {/* The trailing slot holds ONE control. There is no `+` beside it:

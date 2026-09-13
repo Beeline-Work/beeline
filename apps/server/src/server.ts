@@ -50,6 +50,9 @@ export interface GitHubServerHooks {
 
 export interface ServerOptions {
   database: SqlDatabase;
+  /** A one-connection app-role pool kept outside request traffic so health
+   * remains observable while the main pool is saturated. */
+  healthDatabase?: SqlDatabase;
   auth: TokenAuth;
   phone: PhoneService;
   daemon: DaemonService;
@@ -640,6 +643,24 @@ async function route(
   const method = request.method ?? 'GET';
   if (options.authHandler && url.pathname.startsWith('/auth/')) {
     options.authHandler(request, response);
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/health') {
+    const diagnostics = options.healthDatabase ?? options.database;
+    await diagnostics.query('SELECT 1');
+    const pool = options.database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
+    const oldestActiveQueryAgeMs = await diagnostics.oldestActiveQueryAgeMs?.();
+    json(response, 200, {
+      ok: true,
+      database: {
+        pool: {
+          size: pool.total,
+          inUse: pool.total - pool.idle,
+          waiting: pool.waiting,
+        },
+        oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
+      },
+    });
     return;
   }
   if (method === 'GET' && url.pathname === '/healthz') {

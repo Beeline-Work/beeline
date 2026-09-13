@@ -27,11 +27,24 @@ function required(name: string) {
   return value;
 }
 async function main() {
+  const connectionString = required('DATABASE_URL');
+  const migrationDatabase = new PostgresDatabase(
+    process.env.MIGRATION_DATABASE_URL ?? connectionString,
+    1,
+    { mode: 'long-running' },
+  );
+  try {
+    await migrate(migrationDatabase);
+  } finally {
+    await migrationDatabase.close();
+  }
   const database = new PostgresDatabase(
-    required('DATABASE_URL'),
+    connectionString,
     Number(process.env.DATABASE_POOL_MAX ?? '5'),
   );
-  await migrate(database);
+  const enrichmentDatabase = new PostgresDatabase(connectionString, 2, { mode: 'enrichment' });
+  const healthDatabase = new PostgresDatabase(connectionString, 1, { mode: 'diagnostics' });
+  const jobsDatabase = new PostgresDatabase(connectionString, 2, { mode: 'long-running' });
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;
   const live = new LiveHub();
@@ -104,13 +117,13 @@ async function main() {
     process.env.PUSH_DELIVERY_ENABLED === 'true'
       ? await createFirebasePushSender(process.env)
       : undefined;
-  const push = pushSender ? new PushDeliveryLoop(database, pushSender) : undefined;
-  const schedules = new AgentScheduleLoop(database, (roomId) =>
+  const push = pushSender ? new PushDeliveryLoop(jobsDatabase, pushSender) : undefined;
+  const schedules = new AgentScheduleLoop(jobsDatabase, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
   const connectionPresence = new ConnectionPresence(database, live);
   await connectionPresence.start();
-  const mediaExpiry = new MediaExpiryLoop(database);
+  const mediaExpiry = new MediaExpiryLoop(jobsDatabase);
   const sendPushTest = pushSender
     ? async (identityId: string) => {
         const devices = await database.query<{ token: string }>(
@@ -126,7 +139,15 @@ async function main() {
           });
       }
     : undefined;
-  const phone = new PhoneService(database, publicOrigin, github, sendPushTest, live);
+  const phone = new PhoneService(
+    database,
+    publicOrigin,
+    github,
+    sendPushTest,
+    live,
+    false,
+    enrichmentDatabase,
+  );
   const daemon = new DaemonService(
     database,
     live,
@@ -148,13 +169,14 @@ async function main() {
   // job) posts a release-announcement DM to every person once a release is
   // confirmed delivered. Absent secret = the endpoint refuses like any wrong
   // secret, same as the Play review link above.
-  const releaseNotify = new ReleaseNotifier(database, {
+  const releaseNotify = new ReleaseNotifier(jobsDatabase, {
     ...(process.env.BEELINE_RELEASE_NOTIFY_SECRET
       ? { secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET }
       : {}),
   });
   const server = createBeelineServer({
     database,
+    healthDatabase,
     auth,
     phone,
     daemon,
@@ -181,7 +203,7 @@ async function main() {
   let lastReconciliationAt = Number.NEGATIVE_INFINITY;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
-    database,
+    jobsDatabase,
     async () => {
       if (push) await push.runOnce();
       await schedules.runOnce();
@@ -189,7 +211,7 @@ async function main() {
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
         await mediaExpiry.runOnce(now);
-        await runMaintenance(database);
+        await runMaintenance(jobsDatabase);
       }
       const nextDue = await schedules.nextDueAt();
       return nextDue ? nextDue.getTime() - Date.now() : reconciliationMs;
@@ -221,7 +243,12 @@ async function main() {
     await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await mountedAuth.close();
-    await database.close();
+    await Promise.all([
+      database.close(),
+      enrichmentDatabase.close(),
+      healthDatabase.close(),
+      jobsDatabase.close(),
+    ]);
   };
   process.once('SIGINT', () => void stop());
   process.once('SIGTERM', () => void stop());

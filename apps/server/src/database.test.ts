@@ -7,6 +7,11 @@ import {
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
+  APP_POOL_WAIT_TIMEOUT_MS,
+  APP_STATEMENT_TIMEOUT_MS,
+  ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
+  ENRICHMENT_STATEMENT_TIMEOUT_MS,
+  postgresPoolConfig,
   PostgresDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
@@ -17,6 +22,24 @@ function result<Row>(rows: Row[]) {
 }
 
 describe('PostgresDatabase reconnects', () => {
+  it('bounds app and enrichment statements and pool checkout waits', () => {
+    expect(postgresPoolConfig('postgres://app', 7)).toMatchObject({
+      max: 7,
+      statement_timeout: APP_STATEMENT_TIMEOUT_MS,
+      connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
+      application_name: 'beeline_app',
+    });
+    expect(postgresPoolConfig('postgres://app', 2, 'enrichment')).toMatchObject({
+      max: 2,
+      statement_timeout: ENRICHMENT_STATEMENT_TIMEOUT_MS,
+      connectionTimeoutMillis: ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
+      application_name: 'beeline_enrichment',
+    });
+    expect(postgresPoolConfig('postgres://owner', 1, 'long-running')).not.toHaveProperty(
+      'statement_timeout',
+    );
+  });
+
   it('retries a transient pool query with a fresh attempt', async () => {
     const query = vi
       .fn()

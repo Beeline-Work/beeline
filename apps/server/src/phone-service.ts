@@ -108,6 +108,8 @@ const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 
  */
 const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
+export const OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000;
+const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
 
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
@@ -248,7 +250,7 @@ interface TopLevelRoomReadRow {
   room: RoomRow & {
     viewer_role: 'owner' | 'admin' | 'member';
     workspace_role: 'owner' | 'admin' | 'member';
-    read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
+    read_cursor: RoomView['viewer']['readCursor'] | null;
   };
   members: MemberRow[];
   turns: AgentTurnRow[];
@@ -479,6 +481,8 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
 }
 
 export class PhoneService {
+  private readonly lastEnrichmentLogAt = new Map<string, number>();
+
   constructor(
     private readonly database: SqlDatabase,
     private readonly publicOrigin: string,
@@ -486,7 +490,39 @@ export class PhoneService {
     private readonly sendPushTest?: (identityId: string) => Promise<void>,
     private readonly live?: LiveHub,
     private readonly routingTransaction = false,
+    private readonly enrichmentDatabase: SqlDatabase = database,
   ) {}
+
+  private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_resolve, reject) => {
+          deadline = setTimeout(
+            () => reject(new Error(`optional ${name} enrichment timed out`)),
+            OPTIONAL_ENRICHMENT_DEADLINE_MS,
+          );
+          deadline.unref?.();
+        }),
+      ]);
+    } catch (error) {
+      const now = Date.now();
+      if (now - (this.lastEnrichmentLogAt.get(name) ?? 0) >= ENRICHMENT_LOG_INTERVAL_MS) {
+        this.lastEnrichmentLogAt.set(name, now);
+        console.warn(
+          '[room-enrichment-degraded]',
+          JSON.stringify({
+            enrichment: name,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+      return undefined;
+    } finally {
+      if (deadline) clearTimeout(deadline);
+    }
+  }
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
     return this.hasRoomAccess(roomId, identityId);
@@ -825,18 +861,8 @@ export class PhoneService {
         lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
-        peer_presence.body peer_presence_body,peer_presence.updated_at peer_presence_updated_at,
-        GREATEST(
-          (SELECT max(peer_message.created_at) FROM messages peer_message
-           WHERE peer_message.room_id=r.id AND peer_message.author_id=peer.id),
-          (SELECT max(peer_mark.updated_at) FROM room_read_marks peer_mark
-           WHERE peer_mark.room_id=r.id AND peer_mark.identity_id=peer.id)
-        ) peer_activity_at,
-        (lm_other.id IS NOT NULL AND (
-          mark.message_created_at IS NULL OR
-          lm_other.id<>mark.message_id AND
-          (lm_other.created_at,lm_other.id)>(mark.message_created_at,mark.message_id)
-        )) unread,
+        NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
+        NULL::timestamptz peer_activity_at,false unread,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
         (r.direct_participants IS NOT NULL AND EXISTS(
@@ -853,21 +879,75 @@ export class PhoneService {
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') AND author_id IS DISTINCT FROM $2 ORDER BY created_at DESC,id DESC LIMIT 1) lm_other ON true
       LEFT JOIN identities li ON li.id=lm.author_id
-      LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
       LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
         ) p WHERE p<>$2 LIMIT 1)
-      LEFT JOIN LATERAL(
-        SELECT body,updated_at FROM live_outputs
-        WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
-      ) peer_presence ON peer.kind='agent'
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
       [workspaceId, viewerId],
     );
+    const roomIds = rooms.rows.map((room) => room.id);
+    const [presence, cursors] = await Promise.all([
+      this.optionalEnrichment(
+        'chat-presence',
+        this.enrichmentDatabase.query<{
+          room_id: string;
+          peer_presence_body: Record<string, unknown> | null;
+          peer_presence_updated_at: Date | null;
+          peer_activity_at: Date | null;
+        }>(
+          `SELECT room.id room_id,presence.body peer_presence_body,
+             presence.updated_at peer_presence_updated_at,
+             GREATEST(
+               (SELECT max(message.created_at) FROM messages message
+                WHERE message.room_id=room.id AND message.author_id=peer.id),
+               (SELECT max(mark.updated_at) FROM room_read_marks mark
+                WHERE mark.room_id=room.id AND mark.identity_id=peer.id)
+             ) peer_activity_at
+           FROM rooms room
+           JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
+             CASE WHEN jsonb_typeof(room.direct_participants)='array'
+               THEN room.direct_participants ELSE '[]'::jsonb END
+           ) participant WHERE participant<>$2 LIMIT 1)
+           LEFT JOIN LATERAL(
+             SELECT body,updated_at FROM live_outputs
+             WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
+           ) presence ON peer.kind='agent'
+           WHERE room.id=ANY($1::uuid[])`,
+          [roomIds, viewerId],
+        ),
+      ),
+      this.optionalEnrichment(
+        'chat-read-cursor',
+        this.enrichmentDatabase.query<{ room_id: string; unread: boolean }>(
+          `SELECT room.id room_id,(latest.id IS NOT NULL AND (
+             mark.message_created_at IS NULL OR latest.id<>mark.message_id AND
+             (latest.created_at,latest.id)>(mark.message_created_at,mark.message_id)
+           )) unread
+           FROM rooms room
+           LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
+           LEFT JOIN LATERAL(
+             SELECT id,created_at FROM messages
+             WHERE room_id=room.id AND presentation IN ('message','system')
+               AND author_id IS DISTINCT FROM $2
+             ORDER BY created_at DESC,id DESC LIMIT 1
+           ) latest ON true
+           WHERE room.id=ANY($1::uuid[])`,
+          [roomIds, viewerId],
+        ),
+      ),
+    ]);
+    const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
+    const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item.unread]) ?? []);
+    for (const room of rooms.rows) {
+      const item = presenceByRoom.get(room.id);
+      room.peer_presence_body = item?.peer_presence_body ?? null;
+      room.peer_presence_updated_at = item?.peer_presence_updated_at ?? null;
+      room.peer_activity_at = item?.peer_activity_at ?? null;
+      room.unread = cursorByRoom.get(room.id) ?? false;
+    }
     return {
       workspace: {
         id: current.id,
@@ -988,6 +1068,18 @@ export class PhoneService {
     const room =
       topLevelRows?.room ?? (await measured('access', this.roomAccess(roomId, viewerId)));
     if (!room) return null;
+    if (!topLevelRows) {
+      const cursor = await this.optionalEnrichment(
+        'read-cursor',
+        this.enrichmentDatabase.query<{
+          read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
+        }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`, [
+          roomId,
+          viewerId,
+        ]),
+      );
+      room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
+    }
     const familyRoomId = room.parent_id ?? roomId;
     let allMembers: RoomViewMember[];
     let latestAgentTurns: RoomView['latestAgentTurns'];
@@ -1042,22 +1134,13 @@ export class PhoneService {
       : undefined;
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
-    const briefing = room.parent_id
-      ? collapsePermissionCards(
-          (
-            await this.database.query<
-              MessageRow & {
-                author_kind: 'human' | 'agent';
-                author_name: string;
-                author_handle: string | null;
-                author_avatar: string | null;
-                author_face: string | null;
-              }
-            >(
-              `SELECT m.*,
+    const briefingRows: MessageRow[] = room.parent_id
+      ? (
+          await this.database.query<MessageRow>(
+            `SELECT m.*,
                i.kind author_kind,i.name author_name,i.handle author_handle,
                i.avatar author_avatar,i.face_id author_face,
-               ${taggedIdentityIdsSql('m')} tagged_ids
+               '{}'::text[] tagged_ids
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
                AND (
@@ -1070,15 +1153,16 @@ export class PhoneService {
                  )
                )
              ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}`,
-              [room.parent_id, room.created_at],
-            )
-          ).rows
-            .map((row) => projectedMessage(row, this.publicOrigin))
-            .sort(
-              (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
-            ),
-        )
+            [room.parent_id, room.created_at],
+          )
+        ).rows
       : [];
+    await this.enrichMessageTags(briefingRows);
+    const briefing = collapsePermissionCards(
+      briefingRows
+        .map((row) => projectedMessage(row, this.publicOrigin))
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)),
+    );
     const expiredMedia = await measured(
       'media',
       this.expiredMediaIds(messages, toolRows, briefing),
@@ -1097,7 +1181,7 @@ export class PhoneService {
       members,
       latestAgentTurns,
       viewer: {
-        readCursor: room.read_cursor,
+        ...(room.read_cursor ? { readCursor: room.read_cursor } : {}),
         identity: members.find((member) => member.identity.pubkey === viewerId)?.identity ?? {
           pubkey: viewerId,
           kind: 'human',
@@ -1234,11 +1318,11 @@ export class PhoneService {
         RoomRow & {
           viewer_role: 'owner' | 'admin' | 'member';
           workspace_role: 'owner' | 'admin' | 'member';
-          read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
+          read_cursor: RoomView['viewer']['readCursor'] | null;
         }
       >(
         `SELECT room.*,membership.role viewer_role,workspace_member.role workspace_role,
-           ${VIEWER_READ_CURSOR_SQL} read_cursor
+           NULL::jsonb read_cursor
          FROM rooms room
          JOIN memberships membership ON membership.room_id=room.id
            AND membership.identity_id=$2 AND membership.removed_at IS NULL
@@ -1271,7 +1355,7 @@ export class PhoneService {
         `WITH authorized_room AS (
            SELECT room.*,membership.role viewer_role,
              workspace_member.role workspace_role,
-             ${VIEWER_READ_CURSOR_SQL} read_cursor
+             NULL::jsonb read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=room.id
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
@@ -1281,15 +1365,12 @@ export class PhoneService {
            WHERE room.id=$1 AND room.parent_id IS NULL
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
-             membership.role,presence.body presence_body,presence.updated_at presence_updated_at
+             membership.role,NULL::jsonb presence_body,
+             NULL::timestamptz presence_updated_at
            FROM authorized_room room
            JOIN memberships membership ON membership.workspace_id=room.workspace_id
              AND membership.room_id=room.id
            JOIN identities i ON i.id=membership.identity_id
-           LEFT JOIN LATERAL(
-             SELECT body,updated_at FROM live_outputs
-             WHERE agent_id=i.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
-           ) presence ON true
            WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
          ), turn_rows AS (
            SELECT DISTINCT ON(turn.agent_id)
@@ -1309,7 +1390,7 @@ export class PhoneService {
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
-             ${taggedIdentityIdsSql('m')} tagged_ids
+             '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
@@ -1387,6 +1468,53 @@ export class PhoneService {
       )
     ).rows[0];
     if (!row) return undefined;
+    const [cursor, presence, tags] = await Promise.all([
+      this.optionalEnrichment(
+        'read-cursor',
+        this.enrichmentDatabase.query<{
+          read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
+        }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`, [
+          roomId,
+          viewerId,
+        ]),
+      ),
+      this.optionalEnrichment(
+        'presence',
+        this.enrichmentDatabase.query<{
+          id: string;
+          presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date | null;
+        }>(
+          `SELECT member.identity_id id,presence.body presence_body,
+             presence.updated_at presence_updated_at
+           FROM memberships member
+           LEFT JOIN LATERAL(
+             SELECT body,updated_at FROM live_outputs
+             WHERE agent_id=member.identity_id AND kind='presence'
+             ORDER BY updated_at DESC LIMIT 1
+           ) presence ON true
+           WHERE member.room_id=$1 AND member.removed_at IS NULL`,
+          [roomId],
+        ),
+      ),
+      this.optionalEnrichment(
+        'message-tags',
+        this.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
+          `SELECT m.id,${taggedIdentityIdsSql('m')} tagged_ids
+           FROM messages m WHERE m.id=ANY($1::text[])`,
+          [row.transcript.map((message) => message.id)],
+        ),
+      ),
+    ]);
+    row.room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
+    const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
+    for (const member of row.members) {
+      const item = presenceByMember.get(member.id);
+      member.presence_body = item?.presence_body ?? null;
+      member.presence_updated_at = item?.presence_updated_at ?? null;
+    }
+    const tagsByMessage = new Map(tags?.rows.map((item) => [item.id, item.tagged_ids]) ?? []);
+    for (const message of row.transcript) message.tagged_ids = tagsByMessage.get(message.id) ?? [];
     reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
     for (const member of row.members) reviveDates(member, ['presence_updated_at']);
     for (const turn of row.turns) reviveDates(turn, ['started_at', 'created_at']);
@@ -4875,13 +5003,38 @@ export class PhoneService {
       `SELECT i.id,
          i.kind,i.name,i.handle,i.avatar,
          i.face_id,
-         m.role,lo.body presence_body,lo.updated_at presence_updated_at
+         m.role,NULL::jsonb presence_body,NULL::timestamptz presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
-       LEFT JOIN LATERAL(SELECT body,updated_at FROM live_outputs WHERE agent_id=i.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1)lo ON true
        WHERE m.workspace_id=$1 AND ${roomId ? 'm.room_id=$2' : 'm.room_id IS NULL'}
          AND m.removed_at IS NULL AND i.hidden_from_roster=false`,
       roomId ? [workspaceId, roomId] : [workspaceId],
     );
+    const presence = await this.optionalEnrichment(
+      'member-presence',
+      this.enrichmentDatabase.query<{
+        id: string;
+        presence_body: MemberRow['presence_body'];
+        presence_updated_at: Date;
+      }>(
+        `SELECT member.identity_id id,presence.body presence_body,
+           presence.updated_at presence_updated_at
+         FROM memberships member
+         JOIN LATERAL(
+           SELECT body,updated_at FROM live_outputs
+           WHERE agent_id=member.identity_id AND kind='presence'
+           ORDER BY updated_at DESC LIMIT 1
+         ) presence ON true
+         WHERE member.workspace_id=$1 AND ${roomId ? 'member.room_id=$2' : 'member.room_id IS NULL'}
+           AND member.removed_at IS NULL`,
+        roomId ? [workspaceId, roomId] : [workspaceId],
+      ),
+    );
+    const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
+    for (const member of rows.rows) {
+      const item = presenceByMember.get(member.id);
+      member.presence_body = item?.presence_body ?? null;
+      member.presence_updated_at = item?.presence_updated_at ?? null;
+    }
     return this.projectMembers(rows.rows, roomId);
   }
   private projectMembers(rows: readonly MemberRow[], roomId: string | null): RoomViewMember[] {
@@ -4931,12 +5084,12 @@ export class PhoneService {
     before: { createdAt: number; id: string } | undefined,
     limit: number,
   ) {
-    return (
+    const rows = (
       await this.database.query<MessageRow>(
         `SELECT m.*,
            i.kind author_kind,i.name author_name,i.handle author_handle,
            i.avatar author_avatar,i.face_id author_face,
-           ${taggedIdentityIdsSql('m')} tagged_ids
+           '{}'::text[] tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
            AND m.card_type IS DISTINCT FROM 'grant-decision'
@@ -4945,6 +5098,22 @@ export class PhoneService {
         before ? [roomId, before.createdAt, before.id] : [roomId],
       )
     ).rows;
+    await this.enrichMessageTags(rows);
+    return rows;
+  }
+
+  private async enrichMessageTags(rows: MessageRow[]): Promise<void> {
+    if (!rows.length) return;
+    const tags = await this.optionalEnrichment(
+      'message-tags',
+      this.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
+        `SELECT m.id,${taggedIdentityIdsSql('m')} tagged_ids
+         FROM messages m WHERE m.id=ANY($1::text[])`,
+        [rows.map((message) => message.id)],
+      ),
+    );
+    const tagsByMessage = new Map(tags?.rows.map((item) => [item.id, item.tagged_ids]) ?? []);
+    for (const message of rows) message.tagged_ids = tagsByMessage.get(message.id) ?? [];
   }
   private async latestAgentTurns(roomId: string): Promise<RoomView['latestAgentTurns']> {
     // `requested_by` is the command chain's root human requester — the
@@ -5004,7 +5173,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
-         ${taggedIdentityIdsSql('m')} tagged_ids
+         '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
          AND m.card_type IS DISTINCT FROM 'grant-decision'
@@ -5045,6 +5214,7 @@ export class PhoneService {
       cornerActivityRowsPromise,
       latestAgentTurns,
     ]);
+    await this.enrichMessageTags(transcriptRows.rows);
     return this.projectRoomMessages(
       transcriptRows.rows,
       liveRows.rows,

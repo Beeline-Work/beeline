@@ -256,17 +256,11 @@ jobs:
           path: checkpoint-server-promoted.json
           if-no-files-found: error
       - name: Bounded exact server smoke check
-        run: |
-          set -euo pipefail
-          curl -fsS --max-time 20 https://server.usebeeline.app/readyz -o "$RUNNER_TEMP/ready.json"
-          curl -fsS --max-time 20 https://server.usebeeline.app/version -o "$RUNNER_TEMP/version.json"
-          node - "$RUNNER_TEMP/ready.json" "$RUNNER_TEMP/version.json" "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" <<'NODE'
-          const fs = require('node:fs');
-          const [readyPath, versionPath, version, sourceSha] = process.argv.slice(2);
-          const ready = JSON.parse(fs.readFileSync(readyPath));
-          const live = JSON.parse(fs.readFileSync(versionPath));
-          if (ready.ok !== true || live.version !== version || live.sourceSha !== sourceSha) process.exit(1);
-          NODE
+        run: node scripts/server-release-smoke.mjs
+        env:
+          EXPECTED_RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          EXPECTED_RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
       - name: Write server checkpoint
         run: |
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server.json",JSON.stringify({component:"server",version,sourceSha,state:"checked",artifactRef})+"\n")' \

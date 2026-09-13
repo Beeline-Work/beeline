@@ -93,6 +93,89 @@ describe('AttachmentPickerSheet', () => {
     expect(composerSource).toContain('testID={`pending-chat-attachment-remove-${index}`}');
   });
 
+  it('only offers Paste Image when the screen supplies a clipboard handler', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(AttachmentPickerSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          onPickDocument: vi.fn(),
+          onPickPhoto: vi.fn(),
+        }),
+      );
+    });
+    expect(renderer!.root.findAllByType('HullActionSheetRow' as any)).toHaveLength(2);
+
+    const onPickPasted = vi.fn();
+    act(() => {
+      renderer = create(
+        React.createElement(AttachmentPickerSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          onPickDocument: vi.fn(),
+          onPickPhoto: vi.fn(),
+          onPickPasted,
+        }),
+      );
+    });
+    const rows = renderer!.root.findAllByType('HullActionSheetRow' as any);
+    expect(rows).toHaveLength(3);
+    expect(rows[2].props).toMatchObject({
+      label: 'Paste Image',
+      testID: 'attachment-picker-paste',
+    });
+  });
+
+  it('closes before dispatching a clipboard paste, on both the mobile sheet and the desktop dialog', () => {
+    const onClose = vi.fn();
+    const onPickPasted = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        React.createElement(AttachmentPickerSheet, {
+          visible: true,
+          onClose,
+          onPickDocument: vi.fn(),
+          onPickPhoto: vi.fn(),
+          onPickPasted,
+        }),
+      );
+    });
+    act(() => renderer!.root.findByProps({ testID: 'attachment-picker-paste' }).props.onPress());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onPickPasted).toHaveBeenCalledTimes(1);
+
+    desktop.value = true;
+    const onCloseDesktop = vi.fn();
+    const onPickPastedDesktop = vi.fn();
+    act(() => {
+      renderer = create(
+        React.createElement(AttachmentPickerSheet, {
+          visible: true,
+          onClose: onCloseDesktop,
+          onPickDocument: vi.fn(),
+          onPickPhoto: vi.fn(),
+          onPickPasted: onPickPastedDesktop,
+        }),
+      );
+    });
+    act(() =>
+      renderer!.root.findByProps({ testID: 'attachment-picker-paste' }).props.onPress(),
+    );
+    expect(onCloseDesktop).toHaveBeenCalledTimes(1);
+    expect(onPickPastedDesktop).toHaveBeenCalledTimes(1);
+  });
+
+  it('wires clipboard image paste into the composer attachment flow, native only', () => {
+    expect(chatSource).toContain(
+      'onPickPasted={desktopExperience ? undefined : () => void pasteImage()}',
+    );
+    expect(chatSource).toContain('await Clipboard.hasImageAsync()');
+    expect(chatSource).toContain("Clipboard.getImageAsync({ format: 'png' })");
+    expect(chatSource).toContain('pastedImageAttachment(image)');
+  });
+
   it('closes before dispatching Photo or Document and exposes scrim/Cancel dismissal', () => {
     const calls: string[] = [];
     const onClose = vi.fn(() => calls.push('close'));

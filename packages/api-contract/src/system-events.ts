@@ -24,6 +24,8 @@ export type SystemObject = {
   readonly id?: string;
   /** Where the object lives (a pull request, a check run); the phone links it. */
   readonly url?: string;
+  /** The commit whose check state this object reports; groups one live CI batch. */
+  readonly headSha?: string;
 };
 
 export type SystemEvent = {
@@ -175,7 +177,9 @@ export function isSystemEvent(value: unknown): value is SystemEvent {
         typeof object === 'object' &&
         typeof object.text === 'string' &&
         (object.id === undefined || typeof object.id === 'string') &&
-        (object.url === undefined || typeof object.url === 'string'))) &&
+        (object.url === undefined || typeof object.url === 'string') &&
+        (object.headSha === undefined ||
+          (typeof object.headSha === 'string' && /^[0-9a-f]{40}$/i.test(object.headSha))))) &&
     (event.consequence === undefined || typeof event.consequence === 'string') &&
     (event.kind === undefined || isSystemEventKind(event.kind)),
   );

@@ -89,7 +89,6 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   },
 }));
 vi.mock('@/buzz/room-list-row', () => ({
-  directMessagePresence: vi.fn(() => null),
   displayGroupedCornerTitle: vi.fn(() => ''),
   NO_ACTIVITY_PREVIEW: 'No activity',
   roomListSections: vi.fn((items) => (items.length ? [{ kind: 'rooms', data: items }] : [])),

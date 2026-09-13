@@ -71,6 +71,9 @@ export type TranscriptCardProps = {
   footerNoteTestID?: string;
   footerNoteTone?: 'quiet' | 'failed';
   actions?: readonly TranscriptCardAction[];
+  onHeaderPress?(): void;
+  headerExpanded?: boolean;
+  headerTestID?: string;
   testID?: string;
 };
 
@@ -201,6 +204,9 @@ export function TranscriptCard({
   footerNoteTestID,
   footerNoteTone = 'quiet',
   actions = [],
+  onHeaderPress,
+  headerExpanded,
+  headerTestID,
   testID,
 }: TranscriptCardProps) {
   const { theme } = useUnistyles();
@@ -313,7 +319,21 @@ export function TranscriptCard({
       ) : null}
       <Animated.View style={arrivalContentStyle}>
         <View style={[styles.frame, tier === 'ask' && styles.ask]} testID={testID}>
-          <View style={styles.head}>
+          <Pressable
+            accessibilityHint={
+              onHeaderPress
+                ? headerExpanded
+                  ? 'Hides individual rows'
+                  : 'Shows individual rows'
+                : undefined
+            }
+            accessibilityRole={onHeaderPress ? 'button' : undefined}
+            accessibilityState={onHeaderPress ? { expanded: headerExpanded } : undefined}
+            disabled={!onHeaderPress}
+            onPress={onHeaderPress}
+            style={styles.head}
+            testID={headerTestID}
+          >
             {identity ? <View style={styles.identity}>{identity}</View> : null}
             <View style={styles.headCopy}>
               <View style={styles.titleLine}>
@@ -342,7 +362,7 @@ export function TranscriptCard({
                 </SettlingText>
               ) : null}
             </View>
-          </View>
+          </Pressable>
           {body ? (
             <SettlingText
               active={animateArrival}

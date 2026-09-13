@@ -183,14 +183,12 @@ describe('direct-message presence', () => {
     const observedAt = Math.floor(NOW / 1000);
     expect(
       directMessagePresence({ ...peer('agent', 'online', observedAt), agentState: 'working' }, NOW),
-    ).toEqual({ label: 'working', dot: 'working' });
+    ).toEqual({ label: 'working' });
     expect(directMessagePresence(peer('agent', 'online', observedAt), NOW)).toEqual({
       label: 'idle',
-      dot: 'idle',
     });
     expect(directMessagePresence(peer('agent', 'offline', observedAt), NOW)).toEqual({
       label: 'offline',
-      dot: null,
     });
   });
 

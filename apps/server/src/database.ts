@@ -446,6 +446,7 @@ CREATE TABLE IF NOT EXISTS agents (
   agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   owner_id text NOT NULL REFERENCES identities(id),
   access_policy jsonb NOT NULL DEFAULT '{"type":"everyone"}'::jsonb,
+  access_policy_set_at timestamptz,
   soul jsonb,
   selected_model text,
   selected_effort text,
@@ -459,6 +460,7 @@ CREATE TABLE IF NOT EXISTS agents (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS access_policy_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
@@ -467,9 +469,9 @@ ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
 ALTER TABLE agents ADD CONSTRAINT agents_model_unavailable_check
   CHECK (model_unavailable IN ('model','effort','selection'));
 -- An agent nobody but its owner may address is indistinguishable from a dead one,
--- so a newly connected agent now answers everyone (agent-access.ts). Only the
--- DEFAULT moves: every existing row keeps the policy its owner is running with and
--- changes it from the members page.
+-- so a newly connected agent now answers everyone (agent-access.ts). The
+-- backfill below also repairs old defaults while preserving policies explicitly
+-- chosen through the members page.
 ALTER TABLE agents ALTER COLUMN access_policy SET DEFAULT '{"type":"everyone"}'::jsonb;
 -- Consent moved from a mid-conversation ask to one up-front owner choice, so yolo is
 -- now the default for a NEW agent. Unlike the access_policy default change above,
@@ -974,6 +976,7 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillSystemEventKinds(database);
   await seedDefaultWorkspace(database);
   await backfillAgentHandles(database);
+  await backfillAgentAccessPolicyDefault(database);
   await backfillYoloModeDefault(database);
 }
 
@@ -1053,6 +1056,21 @@ export async function backfillAgentHandles(database: SqlDatabase): Promise<numbe
 export async function backfillYoloModeDefault(database: SqlDatabase): Promise<number> {
   const result = await database.query(`UPDATE agents SET yolo_mode = true WHERE yolo_mode = false`);
   console.log(`backfillYoloModeDefault: flipped ${result.rowCount} agent row(s) to yolo_mode=true`);
+  return result.rowCount;
+}
+
+/**
+ * Repairs narrow policies inherited from the old agent default. A policy the
+ * owner deliberately chose has `access_policy_set_at` and is left untouched.
+ */
+export async function backfillAgentAccessPolicyDefault(database: SqlDatabase): Promise<number> {
+  const result = await database.query(
+    `UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
+     WHERE access_policy_set_at IS NULL AND access_policy<>'{"type":"everyone"}'::jsonb`,
+  );
+  console.log(
+    `backfillAgentAccessPolicyDefault: opened ${result.rowCount} legacy agent policy row(s)`,
+  );
   return result.rowCount;
 }
 

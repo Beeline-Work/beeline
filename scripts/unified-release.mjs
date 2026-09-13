@@ -102,7 +102,7 @@ function poolSnapshot(health) {
     oldestActiveQueryAgeMs: health.database.oldestActiveQueryAgeMs,
   };
   if (
-    !Number.isFinite(snapshot.size) || snapshot.size < 1 ||
+    !Number.isInteger(snapshot.size) || snapshot.size < 0 ||
     !Number.isFinite(snapshot.inUse) || snapshot.inUse < 0 || snapshot.inUse > snapshot.size ||
     !Number.isFinite(snapshot.waiting) || snapshot.waiting < 0 ||
     (snapshot.oldestActiveQueryAgeMs !== null &&

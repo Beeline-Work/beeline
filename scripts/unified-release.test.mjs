@@ -98,6 +98,23 @@ test('server canary samples and the bounded window fail closed', () => {
   });
   assert.equal(clean.clean, true);
   assert.equal(clean.poolMetricsAvailable, true);
+  const cleanIdlePool = evaluateServerCanarySample({
+    health: {
+      ok: true,
+      database: {
+        pool: { size: 0, inUse: 0, waiting: 0 },
+        oldestActiveQueryAgeMs: null,
+      },
+    },
+    roomRead: { ok: true, status: 200 },
+    version: { version: 'v0.0.9', sourceSha: NEW_SHA },
+    expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
+  });
+  assert.equal(cleanIdlePool.clean, true);
+  assert.equal(cleanIdlePool.poolMetricsAvailable, true);
+  assert.deepEqual(cleanIdlePool.pool, {
+    size: 0, inUse: 0, waiting: 0, oldestActiveQueryAgeMs: null,
+  });
   assert.equal(evaluateServerCanarySample({
     health: {
       ok: true,
@@ -111,7 +128,7 @@ test('server canary samples and the bounded window fail closed', () => {
     expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
   }).clean, false);
   const missingPoolMetrics = evaluateServerCanarySample({
-    health: { ok: true },
+    health: { ok: true, database: { oldestActiveQueryAgeMs: null } },
     roomRead: { ok: true, status: 200 },
     version: { version: 'v0.0.9', sourceSha: NEW_SHA },
     expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,

@@ -595,7 +595,9 @@ jobs:
 
   mobile_native_android:
     needs: initialize
-    if: inputs.plan_only != true && needs.initialize.outputs.native_android == 'true'
+    if: >-
+      inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      needs.initialize.outputs.native_android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -661,7 +663,9 @@ jobs:
 
   mobile_native_ios:
     needs: initialize
-    if: inputs.plan_only != true && needs.initialize.outputs.native_ios == 'true'
+    if: >-
+      inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      needs.initialize.outputs.native_ios == 'true'
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90
     env:

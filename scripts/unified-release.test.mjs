@@ -823,10 +823,12 @@ test('native workflow keeps Android on EAS cloud and builds iOS locally on the M
   );
   const android = workflow.jobs.mobile_native_android;
   const ios = workflow.jobs.mobile_native_ios;
+  assert.match(android.if, /run_mobile_native == 'true'/);
   assert.match(android.if, /native_android == 'true'/);
   assert.equal(android.needs, 'initialize');
   assert.equal(android['runs-on'], 'ubuntu-latest');
   assert.equal(android['timeout-minutes'], 60);
+  assert.match(ios.if, /run_mobile_native == 'true'/);
   assert.match(ios.if, /native_ios == 'true'/);
   assert.equal(ios.needs, 'initialize');
   assert.deepEqual(ios['runs-on'], ['self-hosted', 'macOS', 'X64', 'ios-builder']);

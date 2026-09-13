@@ -109,13 +109,15 @@ test('the CLI makes an optional unsigned production build conspicuous', () => {
 
 test('the release requires signing before it can publish a macOS installer', () => {
   assert.match(releaseWorkflow, /desktop_installers:[\s\S]*require_macos_signing: true[\s\S]*secrets: inherit/);
-  assert.match(desktopWorkflow, /APPLE_CERTIFICATE:.*secrets\.APPLE_CERTIFICATE/);
-  assert.match(desktopWorkflow, /APPLE_CERTIFICATE_PASSWORD:.*secrets\.APPLE_CERTIFICATE_PASSWORD/);
+  assert.match(desktopWorkflow, /MACOS_APPLE_CERTIFICATE:.*secrets\.APPLE_CERTIFICATE/);
+  assert.match(desktopWorkflow, /MACOS_APPLE_CERTIFICATE_PASSWORD:.*secrets\.APPLE_CERTIFICATE_PASSWORD/);
   assert.match(desktopWorkflow, /MACOS_ASC_KEY_ID:.*secrets\.EXPO_ASC_KEY_ID/);
   assert.match(desktopWorkflow, /MACOS_ASC_ISSUER_ID:.*secrets\.EXPO_ASC_ISSUER_ID/);
   assert.match(desktopWorkflow, /MACOS_ASC_API_KEY_P8:.*secrets\.EXPO_ASC_API_KEY_P8/);
-  assert.match(desktopWorkflow, /APPLE_SIGNING_IDENTITY:[\s\S]*Developer ID Application: Moon Rice Limited \(89KT3SWYAF\)/);
-  assert.match(desktopWorkflow, /APPLE_API_KEY_PATH/);
+  assert.match(desktopWorkflow, /write_env APPLE_CERTIFICATE "\$MACOS_APPLE_CERTIFICATE"/);
+  assert.match(desktopWorkflow, /write_env APPLE_SIGNING_IDENTITY 'Developer ID Application: Moon Rice Limited \(89KT3SWYAF\)'/);
+  assert.match(desktopWorkflow, /write_env APPLE_API_KEY_PATH "\$key_path"/);
+  assert.doesNotMatch(desktopWorkflow, /APPLE_CERTIFICATE:.*steps\.macos_signing\.outputs\.enabled/);
   assert.match(desktopWorkflow, /Unsigned preview assessment \(expected rejection\)/);
   assert.match(desktopWorkflow, /codesign --force --deep --sign - "\$test_app"/);
   assert.match(desktopWorkflow, /xcrun notarytool submit "\$dmg"[\s\S]*--wait --output-format json/);

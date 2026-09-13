@@ -14,8 +14,16 @@ vi.mock('react-native-unistyles', () => ({
     hairlineWidth: 1,
     create: (factory: any) =>
       factory({
-        colors: { groupped: { background: '#100915' }, divider: '#333', textSecondary: '#888' },
-        buzz: { accent: '#b08a4a', type: { machine: {} } },
+        buzz: {
+          accent: '#b08a4a',
+          bgHighlight: '#1e1326',
+          bgRaised: '#190e21',
+          border: '#382d40',
+          radius: 3,
+          space: { sm: 8, xs: 4 },
+          textPrimary: '#f0f0f3',
+          type: { machine: { fontSize: 13 }, sectionHead: { fontSize: 10, lineHeight: 12 } },
+        },
       }),
   },
 }));
@@ -35,7 +43,10 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('DesktopWorkPaneHandle', () => {
-  it('is keyboard focusable, named, and opens the overview on click', () => {
+  const renderedStyle = (style: Array<Record<string, unknown> | false>) =>
+    Object.assign({}, ...style.filter(Boolean));
+
+  it('is a quiet edge-overlay tab with an accessible name', () => {
     const onOpen = vi.fn();
     let tree: ReturnType<typeof create>;
     act(() => {
@@ -47,13 +58,81 @@ describe('DesktopWorkPaneHandle', () => {
     expect(handle.props.accessibilityLabel).toBe('Open work pane');
     expect(handle.props.accessibilityRole).toBe('button');
     expect(handle.props.focusable).toBe(true);
-    const restingStyle = handle.props.style;
-    act(() => handle.props.onFocus());
-    expect(tree.root.findByProps({ testID: 'desktop-work-pane-handle' }).props.style).not.toEqual(
-      restingStyle,
-    );
+    expect(renderedStyle(handle.props.style)).toMatchObject({
+      width: 14,
+      height: 40,
+      backgroundColor: '#190e21',
+      borderTopWidth: 1,
+      borderTopColor: '#382d40',
+      borderLeftWidth: 1,
+      borderLeftColor: '#382d40',
+      borderBottomWidth: 1,
+      borderBottomColor: '#382d40',
+      borderTopLeftRadius: 3,
+      borderBottomLeftRadius: 3,
+    });
+    expect(tree.root.findByType('Text' as any).props.style[0]).toMatchObject({
+      color: '#b08a4a',
+      fontSize: 13,
+    });
+    expect(
+      tree.root.findByProps({ 'data-testid': 'desktop-work-pane-drop-target' }).props.style,
+    ).toMatchObject({ alignSelf: 'stretch', flexDirection: 'column', width: 0, overflow: 'visible' });
     act(() => handle.props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps to the hi surface and brass border on hover and restores on hover out', () => {
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(
+        <DesktopWorkPaneHandle roomId="room-1" onOpen={vi.fn()} onDropCorner={vi.fn()} />,
+      );
+    });
+    let handle = tree.root.findByProps({ testID: 'desktop-work-pane-handle' });
+    act(() => handle.props.onHoverIn());
+    handle = tree.root.findByProps({ testID: 'desktop-work-pane-handle' });
+    expect(tree.root.findByProps({ testID: 'desktop-work-pane-tooltip' }).props.children).toBe(
+      'Open work pane',
+    );
+    expect(renderedStyle(handle.props.style)).toMatchObject({
+      backgroundColor: '#1e1326',
+      borderTopColor: '#b08a4a',
+      borderLeftColor: '#b08a4a',
+      borderBottomColor: '#b08a4a',
+    });
+    act(() => handle.props.onHoverOut());
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-pane-tooltip' })).toHaveLength(0);
+    expect(
+      renderedStyle(
+        tree.root.findByProps({ testID: 'desktop-work-pane-handle' }).props.style,
+      ).backgroundColor,
+    ).toBe('#190e21');
+  });
+
+  it('uses the hover treatment for keyboard focus', () => {
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(
+        <DesktopWorkPaneHandle roomId="room-1" onOpen={vi.fn()} onDropCorner={vi.fn()} />,
+      );
+    });
+    let handle = tree.root.findByProps({ testID: 'desktop-work-pane-handle' });
+    act(() => handle.props.onFocus());
+    handle = tree.root.findByProps({ testID: 'desktop-work-pane-handle' });
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-pane-tooltip' })).toHaveLength(0);
+    expect(renderedStyle(handle.props.style)).toMatchObject({
+      backgroundColor: '#1e1326',
+      borderTopColor: '#b08a4a',
+      borderLeftColor: '#b08a4a',
+      borderBottomColor: '#b08a4a',
+    });
+    act(() => handle.props.onBlur());
+    expect(
+      renderedStyle(
+        tree.root.findByProps({ testID: 'desktop-work-pane-handle' }).props.style,
+      ).backgroundColor,
+    ).toBe('#190e21');
   });
 
   it('widens with drop copy and opens a dragged corner in the work pane', () => {
@@ -74,6 +153,11 @@ describe('DesktopWorkPaneHandle', () => {
     const event = { dataTransfer, preventDefault: vi.fn() };
     const dropTarget = tree.root.findByProps({ 'data-testid': 'desktop-work-pane-drop-target' });
     act(() => dropTarget.props.onDragEnter(event));
+    expect(
+      renderedStyle(
+        tree.root.findByProps({ testID: 'desktop-work-pane-handle' }).props.style,
+      ),
+    ).toMatchObject({ width: 150, backgroundColor: '#190e21' });
     expect(tree.root.findByType('Text' as any).props.children).toBe('DROP TO OPEN IN WORK PANE');
     act(() => dropTarget.props.onDrop(event));
     expect(onDropCorner).toHaveBeenCalledWith('corner-1');

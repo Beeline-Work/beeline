@@ -15,7 +15,7 @@ describe('visibleTranscriptWindow', () => {
     const second = prose('second-2');
     const hiddenCornerReceipt: ChatDisplayMessage = {
       ...prose('hidden-3'),
-      corner: { subchannelId: 'corner-1', status: 'open' },
+      corner: { subchannelId: 'corner-1', state: 'waiting' },
     };
     const hiddenAllowedReceipt: ChatDisplayMessage = {
       ...prose('hidden-4'),
@@ -44,12 +44,11 @@ describe('visibleTranscriptWindow', () => {
     const progress = prose('progress-2');
     const hidden = Array.from({ length: 30 }, (_, index) => ({
       ...prose(`hidden-${index + 10}`),
-      corner: { subchannelId: `corner-${index}`, status: 'open' as const },
+      corner: { subchannelId: `corner-${index}`, state: 'waiting' as const },
     }));
 
-    expect(visibleTranscriptWindow([opening, progress, ...hidden], 30).map((message) => message.id)).toEqual([
-      opening.id,
-      progress.id,
-    ]);
+    expect(
+      visibleTranscriptWindow([opening, progress, ...hidden], 30).map((message) => message.id),
+    ).toEqual([opening.id, progress.id]);
   });
 });

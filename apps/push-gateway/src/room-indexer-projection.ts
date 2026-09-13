@@ -21,7 +21,7 @@ import {
   type RoomViewMember,
   type RoomViewMessage,
 } from '@beeline/buzz-client';
-import { cornerDisplayName } from '@beeline/api-contract/phone';
+import { cornerDisplayName, deriveCornerState } from '@beeline/api-contract/phone';
 import { HISTORY_EVENT_LIMIT } from './room-indexer-sql.js';
 
 export type IndexRow = { readonly section: string; readonly data: unknown };
@@ -532,17 +532,22 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
     return daemonFact ? { ...base, text: '', presentation: 'card', daemonFact } : undefined;
   }
   if (cornerId) {
-    const status = tag(eventTags, 'status');
+    const rawState = tag(eventTags, 'status');
     if (
-      status !== 'open' &&
-      status !== 'working' &&
-      status !== 'waiting' &&
-      status !== 'idle' &&
-      status !== 'concluded' &&
-      status !== 'closed'
+      rawState !== 'open' &&
+      rawState !== 'working' &&
+      rawState !== 'waiting' &&
+      rawState !== 'idle' &&
+      rawState !== 'concluded' &&
+      rawState !== 'closed'
     )
       return undefined;
-    return { ...base, presentation: 'card', corner: { id: cornerId, status } };
+    const { state } = deriveCornerState({
+      archived: false,
+      turnRunning: rawState === 'working',
+      lifecycle: { lifecycle: rawState as CornerLifecycleView['lifecycle'], checks: 'unknown' },
+    });
+    return { ...base, presentation: 'card', corner: { id: cornerId, state } };
   }
 
   if ([...markers].some((candidate) => SYSTEM_MARKERS.has(candidate))) {
@@ -772,7 +777,12 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
   const lifecycle = cornerLifecycle(data);
   const corner = header(data);
   const latestTurnStatus = text(data.latestTurnStatus);
-  const hasLiveWorkingTurn = latestTurnStatus === 'working' && lifecycle.lifecycle !== 'done';
+  const hasLiveWorkingTurn = latestTurnStatus === 'working';
+  const derived = deriveCornerState({
+    archived: data.archived === true,
+    turnRunning: hasLiveWorkingTurn,
+    lifecycle,
+  });
   const agentData = {
     pubkey: data.agentPubkey,
     name: data.agentName,
@@ -783,8 +793,8 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
   return {
     corner,
     lifecycle,
-    status: lifecycle.lifecycle === 'done' ? 'closed' : hasLiveWorkingTurn ? 'working' : 'idle',
-    statusAt: hasLiveWorkingTurn ? integer(data.latestTurnCreatedAt) : corner.updatedAt,
+    ...derived,
+    stateAt: hasLiveWorkingTurn ? integer(data.latestTurnCreatedAt) : corner.updatedAt,
     ...(text(data.agentPubkey) ? { agent: identity(agentData) } : {}),
     ...(latest
       ? {

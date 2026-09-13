@@ -722,9 +722,8 @@ describe('useRoomSurfaceSession', () => {
             // The review card remains mounted during steering. The fresh
             // receipt must temporarily light the Room bar anyway.
             lifecycle: { lifecycle: 'REVIEW' },
-            status: 'working',
-            statusAt: stateAt,
-            reason: 'review',
+            state: 'working',
+            stateAt,
             agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
           },
         ],
@@ -752,9 +751,8 @@ describe('useRoomSurfaceSession', () => {
             name: 'Write corner',
           },
           lifecycle: { lifecycle: 'working' },
-          status: 'working',
-          statusAt: 10,
-          reason: 'working',
+          state: 'working',
+          stateAt: 10,
           agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
         },
       ],

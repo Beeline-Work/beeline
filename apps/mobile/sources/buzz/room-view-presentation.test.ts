@@ -105,15 +105,14 @@ describe('Room view presentation', () => {
             updatedAt: 1,
           },
           lifecycle: { lifecycle: 'WORKING' },
-          status: 'working',
-          statusAt: receiptAt,
+          state: 'working',
+          stateAt: receiptAt,
         },
       ],
     });
 
     expect(corner).toMatchObject({
-      machineState: 'working',
-      status: 'live',
+      state: 'working',
       stateAt: receiptAt,
     });
   });
@@ -133,16 +132,14 @@ describe('Room view presentation', () => {
             updatedAt: 1,
           },
           lifecycle: { lifecycle: 'REVIEW' },
-          status: 'working',
-          statusAt: receiptAt,
-          reason: 'review',
+          state: 'working',
+          stateAt: receiptAt,
         },
       ],
     });
 
     expect(corner).toMatchObject({
-      machineState: 'working',
-      status: 'live',
+      state: 'working',
       stateAt: receiptAt,
     });
   });

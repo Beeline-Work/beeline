@@ -244,9 +244,7 @@ export const SidebarView = React.memo(function SidebarView() {
       .corners(activeRoomId)
       .then((view) => {
         if (!cancelled)
-          setActiveCorners(
-            view.corners.filter((corner) => !['closed', 'concluded'].includes(corner.status)),
-          );
+          setActiveCorners(view.corners.filter((corner) => corner.state !== 'archived'));
       })
       .catch(() => {
         if (!cancelled) setActiveCorners([]);
@@ -570,11 +568,11 @@ export const SidebarView = React.memo(function SidebarView() {
                               testID={`desktop-corner-${corner.corner.id}`}
                             >
                               <View style={styles.roomStateSlot}>
-                                {(corner.status === 'working' || corner.status === 'waiting') && (
+                                {(corner.state === 'working' || corner.state === 'review') && (
                                   <View
                                     style={[
                                       styles.roomStateMark,
-                                      corner.status === 'waiting'
+                                      corner.state === 'review'
                                         ? styles.roomStateNeedsYou
                                         : styles.roomStateWorking,
                                     ]}
@@ -590,8 +588,7 @@ export const SidebarView = React.memo(function SidebarView() {
                                   )}
                                 </Text>
                                 <Text numberOfLines={1} style={styles.cornerMeta}>
-                                  {corner.status}
-                                  {corner.reason ? ` · ${corner.reason}` : ''}
+                                  {corner.state}
                                 </Text>
                               </View>
                             </Pressable>

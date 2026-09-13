@@ -63,15 +63,15 @@ const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 
 function stateLine(corner: CornerListItem): string {
-  return `${corner.status}${corner.reason ? ` · ${corner.reason}` : ''}`;
+  return corner.state;
 }
 
 function age(corner: CornerListItem): string {
-  return compactRelativeTime(corner.statusAt ?? corner.corner.updatedAt, Date.now());
+  return compactRelativeTime(corner.stateAt ?? corner.corner.updatedAt, Date.now());
 }
 
 function terminal(corner: CornerListItem): boolean {
-  return corner.status === 'concluded' || corner.status === 'closed';
+  return corner.state === 'archived';
 }
 
 export function DesktopRoomInspector({
@@ -300,7 +300,7 @@ export function DesktopRoomInspector({
                     style={styles.simpleRow}
                     testID="desktop-work-concluded"
                   >
-                    <Text style={styles.simpleTitle}>Concluded · {concluded.length}</Text>
+                    <Text style={styles.simpleTitle}>archived · {concluded.length}</Text>
                     <Text style={styles.chevron}>›</Text>
                   </Pressable>
                 )}
@@ -443,7 +443,16 @@ function CornerRow({
       <View style={styles.cornerHeadline}>
         <Text style={styles.cornerTitle}>{title}</Text>
         <Text
-          style={[styles.cornerStatus, display.needsYou && styles.cornerStatusNeedsYou]}
+          style={[
+            styles.cornerStatus,
+            display.status === 'working'
+              ? styles.cornerStatusWorking
+              : display.status === 'review'
+                ? styles.cornerStatusReview
+                : display.status === 'archived'
+                  ? styles.cornerStatusArchived
+                  : styles.cornerStatusWaiting,
+          ]}
           testID={`desktop-work-corner-state-${corner.corner.id}`}
         >
           {display.word}
@@ -828,7 +837,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.textSecondary,
     includeFontPadding: false,
   },
-  cornerStatusNeedsYou: { color: theme.colors.textLink },
+  cornerStatusWorking: { color: theme.buzz.warning },
+  cornerStatusReview: { color: theme.buzz.accent },
+  cornerStatusWaiting: { color: theme.buzz.ledgerQuiet },
+  cornerStatusArchived: { color: theme.buzz.ledgerGhost },
   sectionGap: { height: 22 },
   simpleRow: {
     minHeight: 44,

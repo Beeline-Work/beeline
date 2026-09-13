@@ -67,6 +67,11 @@ export type CornerLifecycleView = {
   readonly reason?: string;
 };
 
+/** The server-owned corner state vocabulary. Clients render this field; they
+ * never derive a second state from lifecycle, PR, check, or turn facts. */
+export type CornerState = 'working' | 'waiting' | 'review' | 'archived';
+export type CornerStateReason = 'failed' | 'checks-failed' | 'question';
+
 export const ROOM_VIEW_MESSAGE_LIMIT = 30;
 /** Kept separate from the conversation window for settled corner tool activity. */
 export const ROOM_VIEW_TOOL_ROW_LIMIT = 60;
@@ -197,7 +202,7 @@ export type RoomViewMessage = {
   readonly durableFact?: 'failure' | 'merge' | 'action';
   readonly corner?: {
     readonly id: string;
-    readonly status: 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
+    readonly state: CornerState;
   };
   readonly permission?: {
     readonly permissionId: string;
@@ -582,11 +587,11 @@ export type AgentPairingAbandonView = {
 export type CornerListItem = {
   readonly corner: RoomViewHeader;
   readonly lifecycle: CornerLifecycleView;
-  readonly status: 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
-  /** Timestamp of the fact that produced `status`. A working status uses the
+  readonly state: CornerState;
+  /** Timestamp of the fact that produced `state`. A working state uses the
    * latest child turn receipt rather than the corner metadata timestamp. */
-  readonly statusAt?: number;
-  readonly reason?: 'review' | 'question' | 'failure';
+  readonly stateAt?: number;
+  readonly reason?: CornerStateReason;
   readonly agent?: RoomViewIdentity;
   readonly latestMessage?: {
     readonly id: string;

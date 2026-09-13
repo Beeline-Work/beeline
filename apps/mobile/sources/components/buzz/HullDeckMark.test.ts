@@ -178,14 +178,14 @@ describe('HullDeckMark — three states, three languages', () => {
 
   it('renders the same three circles at the smaller 7px corner scale with no visible label', () => {
     const cases = [
-      { status: null, label: 'idle', key: 'borderColor', value: '#83838d' },
-      { status: 'live', label: 'working', key: 'borderTopColor', value: '#b08a4a' },
-      { status: 'open', label: 'needs-you', key: 'backgroundColor', value: '#b08a4a' },
+      { status: 'waiting', label: 'idle', key: 'borderColor', value: '#83838d' },
+      { status: 'working', label: 'working', key: 'borderTopColor', value: '#b08a4a' },
+      { status: 'review', label: 'needs-you', key: 'backgroundColor', value: '#b08a4a' },
     ] as const;
     for (const item of cases) {
       let renderer!: ReactTestRenderer;
       act(() => {
-        renderer = create(React.createElement(CornerGlyph, { status: item.status }));
+        renderer = create(React.createElement(CornerGlyph, { status: item.status as any }));
       });
       const style = markStyle(renderer, (candidate) => candidate[item.key] === item.value);
       expect(style).toMatchObject({

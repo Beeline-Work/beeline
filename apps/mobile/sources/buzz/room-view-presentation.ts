@@ -19,9 +19,9 @@ import {
 } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { DisplayableAgent } from '@/buzz/agent-display';
-import type { CornerStatus, CornerSummary } from '@/buzz/corners';
+import type { CornerSummary } from '@/buzz/corners';
+import type { CornerState } from '@beeline/api-contract/phone';
 import { cornerName } from '@/buzz/corners';
-import { remoteTerminalState } from '@/buzz/corner-display-state';
 import type { NotificationLifecycleRun } from '@/buzz/system-lines';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
@@ -234,7 +234,7 @@ export type ChatDisplayMessage = {
   isNew?: boolean;
   roomUpdate?: { digest?: string };
   reference?: RoomViewMessage['reference'];
-  corner?: { subchannelId: string; agentPubkey?: string; status: CornerStatus };
+  corner?: { subchannelId: string; agentPubkey?: string; state: CornerState };
   agentTurn?: {
     requestId: string;
     agentPubkey: string;
@@ -350,7 +350,7 @@ export function displayRoomMessage(
       ? {
           corner: {
             subchannelId: message.corner.id,
-            status: message.corner.status as CornerStatus,
+            state: message.corner.state,
           },
         }
       : {}),
@@ -514,49 +514,14 @@ export function mergeDisplayPages(
 
 export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[] {
   return view.corners.map((item) => {
-    // "Finished" is decided in exactly one place product-wide
-    // (`corner-display-state.ts`), so this adapter and the corner rows that
-    // read its output can never disagree about whether a corner is over.
-    const ended = remoteTerminalState(item.lifecycle);
-    const machineState =
-      ended ??
-      (item.status === 'working'
-        ? 'working'
-        : item.status === 'waiting'
-          ? 'waiting'
-          : item.status === 'open'
-            ? 'open'
-            : item.status === 'concluded'
-              ? 'concluded'
-              : item.status === 'closed'
-                ? 'closed'
-                : 'idle');
-    // `status` stays the COMPATIBILITY projection it has always been: a
-    // working corner reads `live` without the freshness lease, because every
-    // consumer re-derives through `currentCornerStatus` at paint time.
-    const status =
-      machineState === 'working'
-        ? 'live'
-        : ended
-          ? ended === 'concluded'
-            ? 'merged'
-            : 'archived'
-          : machineState === 'waiting'
-            ? item.reason === 'failure'
-              ? 'failed'
-              : item.reason === 'question'
-                ? 'needs-attention'
-                : 'open'
-            : null;
     return {
       id: item.corner.id,
       // Every consumer of a corner summary — the Room row's fact line, the
       // corner deck, the header — reads the SHORT title (C89).
       name: cornerName(item.corner.name, item.corner.id),
-      status,
-      machineState,
-      ...(machineState === 'waiting' && item.reason ? { machineReason: item.reason } : {}),
-      stateAt: item.statusAt ?? item.corner.updatedAt,
+      state: item.state,
+      ...(item.reason ? { reason: item.reason } : {}),
+      stateAt: item.stateAt ?? item.corner.updatedAt,
       openerPubkey: item.agent?.pubkey ?? '',
       ...(item.agent ? { agentPubkey: item.agent.pubkey } : {}),
     } as CornerSummary;

@@ -561,14 +561,12 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
 
 export interface DaemonFactCardProps {
   message: ChatDisplayMessage;
-  reviewerHandle?: string;
   onOpenCorner(cornerId: string): void;
   onOpenUrl(url: string): void;
 }
 
 export const DaemonFactCard = React.memo(function DaemonFactCard({
   message,
-  reviewerHandle,
   onOpenCorner,
   onOpenUrl,
 }: DaemonFactCardProps) {
@@ -622,8 +620,8 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
     <RepositoryFactCard
       title={landedCorner ? 'PR 1 merged' : title}
       subline={
-        landedCorner && reviewerHandle
-          ? cardMeta(`reviewer @${reviewerHandle}`)
+        landedCorner
+          ? cardMeta(`corner · by ${agent ? `@${agent}` : 'agent'}`)
           : fact.type === 'corner-open'
             ? cardMeta(`corner · opened by ${agent ? `@${agent}` : 'agent'}`)
             : undefined

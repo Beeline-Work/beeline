@@ -489,7 +489,6 @@ describe('Room message variant components', () => {
             subgoals: [{ step: 'Open the archived transcript', status: 'completed' }],
           },
         })}
-        reviewerHandle="echo"
         onOpenCorner={onOpenCorner}
         onOpenUrl={onOpenUrl}
       />,
@@ -507,8 +506,12 @@ describe('Room message variant components', () => {
     // A legacy card carries no name, so the title is the first three words of
     // its objective; the body still carries the objective whole (C89).
     expect(JSON.stringify(renderer.toJSON())).toContain('PR 1 merged');
-    expect(JSON.stringify(renderer.toJSON())).toContain('reviewer ');
-    expect(JSON.stringify(renderer.toJSON())).toContain('@echo');
+    // The landed card names the corner AUTHOR, not the Room reviewer — the
+    // reviewer is a per-Room setting, so it carries no per-card information.
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain('corner · by ');
+    expect(json).toContain('@beebee');
+    expect(json).not.toContain('@echo');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Awaiting @echo');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Approved by @echo');
     expect(JSON.stringify(renderer.toJSON())).toContain('Ship fact cards');

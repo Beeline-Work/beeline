@@ -6250,19 +6250,31 @@ describe('monolith integration', () => {
     expect((await roomRow()).agentState).toBeUndefined();
   });
 
-  it('delivers no human mention on a corner-complete post', async () => {
+  it('tags and pushes a human question from an agent in a corner', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    await loop.runOnce();
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('corner-question-owner-device-token-1234567890',$1,'android','physical')`,
+      [HUMAN],
+    );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'corner-complete-tag-turn',
+      requestId: 'corner-question-tag-turn',
       name: 'Ship the widget',
       objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    // The server-owned corner-open card has its own push. Advance past it so
+    // the next delivery proves the agent's question itself is a candidate.
+    await loop.runOnce();
+    send.mockClear();
     const reply = await daemonOperation('postRoomMessage', {
       roomId: cornerId,
-      requestId: 'corner-complete-tag-done',
-      text: '@owner all done, merging now.',
+      requestId: 'corner-question-tag-reply',
+      text: '@owner which release should I target?',
     });
     expect(reply.status).toBe(200);
     const stored = await database.query<{ tagged_ids: string[] }>(
@@ -6271,9 +6283,16 @@ describe('monolith integration', () => {
       [cornerId, AGENT],
     );
     expect(stored.rows).toHaveLength(1);
-    // The merge summary card and its push cover corner completion; a human tag
-    // on the settling corner post stays plain text.
-    expect(stored.rows[0]!.tagged_ids).toEqual([]);
+    expect(stored.rows[0]!.tagged_ids).toEqual([HUMAN]);
+    const projected = (await new PhoneService(database, origin).readRoom(cornerId, HUMAN))!;
+    expect(
+      projected.messages.find((message) => message.text.includes('which release'))?.mentionPubkeys,
+    ).toEqual([HUMAN]);
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'corner-question-owner-device-token-1234567890',
+      expect.objectContaining({ channelId: cornerId, cornerId }),
+    );
   });
 
   it('posts one corner-open daemon-fact card and pushes it to human members', async () => {

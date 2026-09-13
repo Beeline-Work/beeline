@@ -266,7 +266,8 @@ describe('Beeline display branding', () => {
     // built with, so a self-computing stamp cuts every installed app off from
     // OTA updates (v0.0.42). apps/mobile/scripts/native-fingerprint.mjs is
     // where the native-compatibility check moved to instead.
-    expect(appConfig).toContain('runtimeVersion: "23"');
+    expect(appConfig).toContain('ios: {\n            runtimeVersion: "24"');
+    expect(appConfig).toContain('android: {\n            runtimeVersion: "23"');
   });
 
   it('computes one native fingerprint for the store, sideload, canary, and OTA artifacts of a commit', () => {

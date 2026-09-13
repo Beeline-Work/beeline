@@ -17,7 +17,7 @@ import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { CornerGlyph, HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelLoader, StateCircle } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -164,9 +164,8 @@ export default function BuzzCorners() {
           contentContainerStyle={surface.corners.length ? undefined : styles.emptyContainer}
           renderItem={({ item }) => {
             const label = displayCornerTitle(surface.room.name, item.corner.name, item.corner.id);
-            // Same resolver as the Room-list dropdown. This screen used to map
-            // `lifecycle.lifecycle` onto a status with its own ternary, so the
-            // two surfaces could disagree about one corner.
+            // Same presentation map as the Room-list dropdown; the state
+            // itself is already canonical on the server projection.
             const display = cornerDisplayState(item);
             return (
               <TouchableOpacity
@@ -192,7 +191,7 @@ export default function BuzzCorners() {
                       : (item.latestMessage?.text ?? 'No activity yet')}
                   </Text>
                 </View>
-                <CornerGlyph status={display.status} />
+                <StateCircle state={display.visual} />
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             );

@@ -68,7 +68,7 @@ describe('desktop layout mode', () => {
     expect(appLayout).toContain("Platform.OS === 'android' || isRunningOnMac() || isDesktop");
     expect(appLayout).not.toContain("isRunningOnMac() || Platform.OS === 'web'");
     expect(rootLayout).toContain('const isDesktop = useIsDesktop();');
-    expect(rootLayout).toContain('isDesktop\n              ? { flex: 1 }');
+    expect(rootLayout).toMatch(/isDesktop\s*\?\s*\{\s*flex:\s*1\s*\}/);
     expect(header).toContain("const isCompact = useLayoutClass() === 'compact';");
     expect(header).not.toMatch(/Platform\.OS === 'web'/);
     expect(bubble).toContain('const isDesktop = useIsDesktop();');

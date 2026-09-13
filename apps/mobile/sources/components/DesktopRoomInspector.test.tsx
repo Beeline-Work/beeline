@@ -135,8 +135,8 @@ const corners = [
       updatedAt: 2,
     },
     lifecycle: { lifecycle: 'active', checks: 'unknown' },
-    status: 'working',
-    statusAt: 2,
+    state: 'working',
+    stateAt: 2,
     agent,
   },
   {
@@ -150,9 +150,8 @@ const corners = [
       updatedAt: 3,
     },
     lifecycle: { lifecycle: 'in-review', checks: 'passing' },
-    status: 'waiting',
-    reason: 'review',
-    statusAt: 3,
+    state: 'review',
+    stateAt: 3,
     agent,
   },
   {
@@ -166,8 +165,8 @@ const corners = [
       updatedAt: 4,
     },
     lifecycle: { lifecycle: 'done', checks: 'passing' },
-    status: 'concluded',
-    statusAt: 4,
+    state: 'archived',
+    stateAt: 4,
     agent,
   },
 ] as any;
@@ -248,8 +247,8 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
     );
-    expect(copy).toContain('REVIEW ›');
-    expect(copy).toContain('Concluded · 1');
+    expect(copy).toContain('review ›');
+    expect(copy).toContain('archived · 1');
     expect(copy).toContain('1 people · 1 agents');
     expect(copy).toContain('@codex');
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);

@@ -27,7 +27,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { groknight, typeRoles } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
-import { cornerVisualState, type CornerStatus, type CornerVisualState } from '@/buzz/corners';
+import { cornerVisualState, type CornerVisualState } from '@/buzz/corners';
+import type { CornerState } from '@beeline/api-contract/phone';
 import { Typography } from '@/constants/Typography';
 
 export const motionTokens = {
@@ -558,7 +559,7 @@ export function CornerGlyph({
   testID,
 }: {
   /** Canonical lifecycle projection; `null` renders on the quiet tier. */
-  status: CornerStatus | null;
+  status: CornerState;
   awaitingReply?: boolean;
   agentOffline?: boolean;
   style?: StyleProp<ViewStyle>;

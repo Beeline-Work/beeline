@@ -93,7 +93,6 @@
     "file:apps/push-gateway/deploy/verify-room-indexer-live.ts",
     "file:scripts/cleanup-legacy-daemon-chat.ts",
     "types:apps/auth/src/store.ts:KeySuccession",
-    "types:apps/mobile/sources/buzz/corners.ts:CornerActivitySignal",
     "types:apps/mobile/sources/buzz/surface-storage.ts:CachedRoomSurface",
     "types:apps/mobile/sources/sync/transport/rig-transport.ts:ChangedFile",
     "types:apps/mobile/sources/sync/transport/rig-transport.ts:MergeActionInput",

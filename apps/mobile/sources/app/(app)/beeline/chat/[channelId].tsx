@@ -116,13 +116,8 @@ import {
   resolveCornerCardAgentPubkey,
   resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
-import {
-  currentCornerStatus,
-  roomListCorners,
-  type CornerStatus,
-  type CornerSummary,
-} from '@/buzz/corners';
-import { cornerHeaderStateLabel, resolveCornerDisplayState } from '@/buzz/corner-display-state';
+import { roomListCorners, type CornerSummary } from '@/buzz/corners';
+import { cornerDisplayState, cornerHeaderStateLabel } from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -634,8 +629,6 @@ export default function BuzzChat() {
     () => (roomSurface ? cornerSummaries(roomSurface) : []),
     [roomSurface?.corners],
   );
-  const cornerLifecycleStatus =
-    cornerLifecycle.find((corner) => corner.id === decodedId)?.status ?? null;
   const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository) return null;
@@ -1502,35 +1495,23 @@ export default function BuzzChat() {
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  const canonicalCorner = isCorner
-    ? cornerLifecycle.find((corner) => corner.id === decodedId)
+  const canonicalCornerItem = isCorner
+    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)
     : undefined;
-  const canonicalCornerLifecycle = isCorner
-    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)?.lifecycle
-    : undefined;
-  const canonicalCornerStatus = canonicalCorner
-    ? currentCornerStatus(canonicalCorner)
-    : cornerLifecycleStatus;
   const sessionState = !isCorner
     ? 'idle'
-    : canonicalCorner?.machineState === 'working' && canonicalCornerStatus === 'live'
+    : canonicalCornerItem?.state === 'working'
       ? 'working'
-      : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
+      : canonicalCornerItem?.state === 'archived'
         ? 'done'
         : 'idle';
-  const cornerHeaderState = canonicalCorner
-    ? cornerHeaderStateLabel(
-        resolveCornerDisplayState({
-          ...(canonicalCorner.machineState ? { machineState: canonicalCorner.machineState } : {}),
-          ...(canonicalCorner.machineReason
-            ? { machineReason: canonicalCorner.machineReason }
-            : {}),
-          ...(canonicalCorner.stateAt === undefined ? {} : { stateAt: canonicalCorner.stateAt }),
-          ...(canonicalCornerLifecycle ? { lifecycle: canonicalCornerLifecycle } : {}),
-          archived: isArchived,
-        }),
-      )
-    : 'IDLE';
+  const cornerHeaderDisplay = cornerDisplayState(
+    canonicalCornerItem ?? {
+      state: isArchived ? 'archived' : 'waiting',
+      lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+    },
+  );
+  const cornerHeaderState = cornerHeaderStateLabel(cornerHeaderDisplay);
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
@@ -1742,7 +1723,12 @@ export default function BuzzChat() {
    * below — see `buzz/room-indicators.ts` for why the two are kept apart by
    * construction rather than by care.
    */
-  const cornerLiveBar = useMemo((): { label: string; live: boolean; cornerId?: string } | null => {
+  const cornerLiveBar = useMemo((): {
+    label: string;
+    live: boolean;
+    state: 'working' | 'waiting' | 'review' | 'archived';
+    cornerId?: string;
+  } | null => {
     const named = (subject: string, verb: string, target?: string) =>
       target ? `${subject} ${verb}: ${target}` : `${subject} ${verb}`;
 
@@ -1776,6 +1762,7 @@ export default function BuzzChat() {
     return {
       label: named(subject, verb, target),
       live,
+      state: pinnedCorner.status,
       cornerId: pinnedCorner.cornerId,
     };
   }, [
@@ -3628,7 +3615,19 @@ export default function BuzzChat() {
               )}
               {isCorner ? (
                 <HeaderMetaRow>
-                  <Text numberOfLines={1} style={styles.cornerHeaderAgent}>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.cornerHeaderAgent,
+                      cornerHeaderDisplay.status === 'working'
+                        ? styles.cornerHeaderWorking
+                        : cornerHeaderDisplay.status === 'review'
+                          ? styles.cornerHeaderReview
+                          : cornerHeaderDisplay.status === 'archived'
+                            ? styles.cornerHeaderArchived
+                            : styles.cornerHeaderWaiting,
+                    ]}
+                  >
                     {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderState}
                   </Text>
                 </HeaderMetaRow>
@@ -3696,7 +3695,7 @@ export default function BuzzChat() {
             )}
             {isArchived && (
               <View style={styles.archivedBadge}>
-                <Text style={styles.archivedBadgeText}>□ ARCHIVED</Text>
+                <Text style={styles.archivedBadgeText}>archived</Text>
               </View>
             )}
           </View>
@@ -3824,6 +3823,7 @@ export default function BuzzChat() {
             <CornerLiveBar
               label={cornerLiveBar.label}
               live={cornerLiveBar.live}
+              state={cornerLiveBar.state}
               // A Room bar always acts. Corrupt/missing lifecycle data is
               // explained by openCorner instead of disappearing in a guard.
               onPress={() => openCorner(cornerLiveBar.cornerId)}
@@ -4658,6 +4658,10 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
+    cornerHeaderWorking: { color: groknight.warning },
+    cornerHeaderReview: { color: groknight.accent },
+    cornerHeaderWaiting: { color: groknight.ledgerQuiet },
+    cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
     roomActionsButton: {
       minWidth: 44,

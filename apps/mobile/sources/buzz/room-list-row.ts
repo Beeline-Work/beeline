@@ -3,16 +3,15 @@ import {
   cornerStatusPresentation,
   cornerSuperState,
   cornerVisualState,
-  currentCornerStatus,
   isCornerStalledOffline,
   roomCornerSignal,
   roomListCorners,
   roomState,
-  type CornerStatus,
   type CornerSummary,
   type CornerSuperState,
   type CornerVisualState,
 } from '@/buzz/corners';
+import type { CornerState } from '@beeline/api-contract/phone';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import {
   isAgentPresenceOnline,
@@ -62,22 +61,21 @@ export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
 // Gold is the exact needs-you state, only when a person can act now.
 // Affordance words per canonical projection stay contextual (reply / retry).
-function needsYouAction(status: CornerStatus | null): string {
-  const key = status === null ? 'needs-attention' : status;
-  return NEEDS_YOU_ACTION[key] ?? 'REPLY';
+function needsYouAction(corner: CornerSummary): string {
+  return corner.reason === 'failed' ? 'RETRY' : 'REPLY';
 }
 const MEANINGFUL_CORNER_SUPERSTATES: ReadonlySet<CornerSuperState> = new Set([
   'needs-human',
   'working',
   'finished',
 ]);
-const LIVE_STATUSES: ReadonlySet<CornerStatus> = new Set(['live']);
-const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
+const LIVE_STATUSES: ReadonlySet<CornerState> = new Set(['working']);
+const FINISHED_STATUSES: ReadonlySet<CornerState> = new Set(['archived']);
 
 /**
  * Whether this corner puts its Room in the pinned needs-you cluster. It is for
- * corners a person can act on RIGHT NOW — a decision/reply ask (`needs-attention`, or a fresh agent
- * question carried as `awaitingReply`), or a failure-stalled card (`failed`).
+ * corners a person can act on RIGHT NOW — a `waiting` question/reply ask or
+ * a `waiting` corner with reason `failed`.
  * A merely idle corner — nothing fresh to answer — is
  * idle state, not attention; its nudge/close affordance still
  * lives inside the corner itself.
@@ -87,9 +85,9 @@ const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
  */
 function needsYouCorner(corner: CornerSummary): boolean {
   return (
-    Boolean(corner.machineState) &&
-    cornerVisualState(currentCornerStatus(corner), {
+    cornerVisualState(corner.state, {
       awaitingReply: corner.awaitingReply,
+      reason: corner.reason,
     }) === 'needs-you'
   );
 }
@@ -99,12 +97,6 @@ function needsYouCorner(corner: CornerSummary): boolean {
  * person gets on opening the corner (reply focus, retry, or nudge/close). The STATE word on every
  * surface is just needs-human; this names what to do about it.
  */
-const NEEDS_YOU_ACTION: Record<string, string> = {
-  'needs-attention': 'REPLY',
-  failed: 'RETRY',
-  stalled: 'NUDGE',
-};
-
 /**
  * One quiet micro-label on a Room row's pill strip. Every kind has its own
  * mono style; only `status` (needs-you) may take the accent — the deck's
@@ -153,7 +145,7 @@ export type RoomRowPresentation = {
   /**
    * The corners the count reports and the dropdown lists — the same set, from
    * the same filter, so the number can never advertise work that expanding
-   * hides. Terminal corners (`merged`, `archived`) are excluded outright:
+   * hides. `archived` corners are excluded outright:
    * finished work is represented NOWHERE in navigation (no count, no
    * expansion, no pinned bar) per the owner's model — its history stays
    * reachable only through the transcript's landed/closed references.
@@ -350,7 +342,7 @@ function unreadBadgeLabel(room: Pick<RoomRowInput, 'roomUnread' | 'unreadNew'>):
  * consumer agrees about live corner work.
  */
 export function isRoomAlive(corners: readonly CornerSummary[] | undefined): boolean {
-  return roomCornerSignal(corners ?? []) === 'live';
+  return roomCornerSignal(corners ?? []) === 'working';
 }
 
 export type RoomRowInput = {
@@ -410,11 +402,7 @@ function newestNeedsYou(corners: readonly CornerSummary[]): CornerSummary | unde
  * unactionable — the STALLED fact an honest deck reports without golding it. */
 function newestStalledOffline(corners: readonly CornerSummary[]): CornerSummary | undefined {
   return corners
-    .filter(
-      (corner) =>
-        Boolean(corner.machineState) &&
-        isCornerStalledOffline({ ...corner, status: currentCornerStatus(corner) }),
-    )
+    .filter((corner) => isCornerStalledOffline(corner))
     .sort(
       (a, b) =>
         cornerTimestamp(b) - cornerTimestamp(a) ||
@@ -426,14 +414,10 @@ function newestStalledOffline(corners: readonly CornerSummary[]): CornerSummary 
 /** Newest corner carrying one of the given canonical projections. */
 function newestByStatus(
   corners: readonly CornerSummary[],
-  statuses: ReadonlySet<CornerStatus>,
+  statuses: ReadonlySet<CornerState>,
 ): CornerSummary | undefined {
   return corners
-    .filter((corner) => {
-      if (!corner.machineState) return false;
-      const status = currentCornerStatus(corner);
-      return status !== null && statuses.has(status);
-    })
+    .filter((corner) => statuses.has(corner.state))
     .sort(
       (a, b) =>
         cornerTimestamp(b) - cornerTimestamp(a) ||
@@ -454,8 +438,8 @@ function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, stri
   // The state circle already carries idle/working/needs-you. The fact line is
   // narrative only, never a second visible status label. Offline remains an
   // explicit preserved fact because it explains why a wait was demoted.
-  const status = currentCornerStatus(corner);
-  if (isCornerStalledOffline({ ...corner, status })) {
+  const status = corner.state;
+  if (isCornerStalledOffline(corner)) {
     return `Agent offline · ${corner.name}`;
   }
   switch (cornerSuperState(status)) {
@@ -464,9 +448,7 @@ function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, stri
     case 'needs-human':
       return corner.name;
     case 'finished':
-      return status === 'merged'
-        ? `${actorName(corner, authorNames, 'Change')} · landed · ${corner.name}`
-        : NO_ACTIVITY_PREVIEW;
+      return NO_ACTIVITY_PREVIEW;
   }
 }
 
@@ -509,11 +491,7 @@ export function roomRowPresentation(
   const meaningfulAt = Math.max(
     messageAt,
     ...all
-      .filter(
-        (corner) =>
-          Boolean(corner.machineState) &&
-          MEANINGFUL_CORNER_SUPERSTATES.has(cornerSuperState(currentCornerStatus(corner))),
-      )
+      .filter((corner) => MEANINGFUL_CORNER_SUPERSTATES.has(cornerSuperState(corner.state)))
       .map(cornerTimestamp),
     room.agentTurnAt ?? 0,
     room.createdAt ?? 0,
@@ -526,7 +504,7 @@ export function roomRowPresentation(
   const previewFact = clean && speaker ? `${speaker} · ${clean}` : clean;
   const pills: RoomRowPill[] = [];
   if (needsYou) {
-    pills.push({ kind: 'status', label: needsYouAction(currentCornerStatus(needsYou)) });
+    pills.push({ kind: 'status', label: needsYouAction(needsYou) });
   }
   if (room.modelLabel) pills.push({ kind: 'model', label: room.modelLabel });
   if (corners.length > 0) {
@@ -550,7 +528,7 @@ export function roomRowPresentation(
     state,
     unread: unreadHere,
     glyph: cornerStatusPresentation(
-      state === 'working' ? 'live' : state === 'needs-you' ? 'needs-attention' : null,
+      state === 'working' ? 'working' : state === 'needs-you' ? 'review' : 'waiting',
     ).glyph,
     live: Boolean(room.agentTurnWorking || working),
     attention: state === 'needs-you',

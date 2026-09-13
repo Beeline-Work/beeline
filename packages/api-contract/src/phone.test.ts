@@ -5,6 +5,7 @@ import {
   isAgentPairingCode,
   isCommunityInviteToken,
   normalizeAgentPairingCode,
+  isCornerListView,
   isRoomView,
   isWorkspaceListView,
   type PhoneOperationMap,
@@ -91,6 +92,42 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['closeChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['reopenChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['listRoomSchedules']['output']>().toHaveProperty('schedules');
+  });
+
+  it('accepts only the server-owned four-state corner contract', () => {
+    const header = {
+      id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+      workspaceId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
+      name: 'Launch',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const base = {
+      room: header,
+      viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
+      watchFilters: [],
+    };
+    for (const state of ['working', 'waiting', 'review', 'archived'] as const) {
+      expect(
+        isCornerListView({
+          ...base,
+          corners: [
+            { corner: header, lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state },
+          ],
+        }),
+      ).toBe(true);
+    }
+    for (const state of ['open', 'idle', 'concluded', 'closed']) {
+      expect(
+        isCornerListView({
+          ...base,
+          corners: [
+            { corner: header, lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state },
+          ],
+        }),
+      ).toBe(false);
+    }
   });
 
   it('owns the canonical invite-token format while accepting pre-contract monolith tokens', () => {

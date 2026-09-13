@@ -250,12 +250,10 @@ function messageCorner(value: unknown): boolean {
     item &&
     typeof item.id === 'string' &&
     UUID.test(item.id) &&
-    (item.status === 'open' ||
-      item.status === 'working' ||
-      item.status === 'waiting' ||
-      item.status === 'idle' ||
-      item.status === 'concluded' ||
-      item.status === 'closed'),
+    (item.state === 'working' ||
+      item.state === 'waiting' ||
+      item.state === 'review' ||
+      item.state === 'archived'),
   );
 }
 
@@ -612,17 +610,15 @@ function corner(value: unknown): value is CornerListItem {
     item &&
     header(item.corner) &&
     cornerLifecycle(item.lifecycle) &&
-    (item.status === 'open' ||
-      item.status === 'working' ||
-      item.status === 'waiting' ||
-      item.status === 'idle' ||
-      item.status === 'concluded' ||
-      item.status === 'closed') &&
-    (item.statusAt === undefined || integer(item.statusAt)) &&
+    (item.state === 'working' ||
+      item.state === 'waiting' ||
+      item.state === 'review' ||
+      item.state === 'archived') &&
+    (item.stateAt === undefined || integer(item.stateAt)) &&
     (item.reason === undefined ||
-      item.reason === 'review' ||
-      item.reason === 'question' ||
-      item.reason === 'failure') &&
+      item.reason === 'failed' ||
+      item.reason === 'checks-failed' ||
+      item.reason === 'question') &&
     (item.agent === undefined || identity(item.agent)) &&
     (item.latestMessage === undefined || latest(item.latestMessage)),
   );

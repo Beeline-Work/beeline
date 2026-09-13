@@ -75,6 +75,8 @@ vi.mock('@/components/buzz/ActivityTimeline', async () => {
 vi.mock('@/components/buzz/HullActionSheet', async () => {
   const ReactModule = await import('react');
   return {
+    HullActionSheetCancel: (props: any) =>
+      ReactModule.createElement('HullActionSheetCancel', props),
     HullActionSheetModal: (props: any) =>
       ReactModule.createElement(
         'HullActionSheetModal',
@@ -83,6 +85,8 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
       ),
   };
 });
+const haptics = vi.hoisted(() => ({ selectionAsync: vi.fn(async () => undefined) }));
+vi.mock('expo-haptics', () => haptics);
 vi.mock('@/components/buzz/WritePermissionOutcome', async () => {
   const ReactModule = await import('react');
   return {
@@ -140,6 +144,7 @@ afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   ledgerEntryRender.mockClear();
   openExternal.openExternalUrl.mockClear();
+  haptics.selectionAsync.mockClear();
   resetProvisionalDrafts();
 });
 
@@ -794,17 +799,114 @@ describe('Room message variant components', () => {
           />,
         );
 
-        const target = renderer.root.findByProps({ testID: `message-touch-target-native-${os}` });
-        act(() => target.props.onLongPress());
+        const swipeable = renderer.root.findByProps({ testID: `swipe-reply-native-${os}` });
+        const action = swipeable.props.renderLeftActions();
+        expect(action.props.testID).toBe(`react-swipe-action-native-${os}`);
+        expect(action.props.accessibilityLabel).toBe('React to message');
+        expect(renderer.root.findAllByType('HullActionSheetModal')).toHaveLength(0);
+
+        act(() => swipeable.props.onSwipeableOpen('left'));
+        expect(haptics.selectionAsync).toHaveBeenCalledTimes(1);
         const picker = renderer.root.findByProps({ modalTestID: `reaction-picker-native-${os}` });
         expect(picker.props.visible).toBe(true);
+        // `reactToMessage` toggles, so the marked emoji is the one press that
+        // takes the reaction back — and the picker says so, in both voices.
         const selected = renderer.root.findByProps({ testID: `reaction-choice-native-${os}-👍` });
         expect(selected.props.accessibilityState).toEqual({ selected: true });
+        expect(selected.props.accessibilityLabel).toBe('Remove 👍 reaction');
+        expect(picker.props.subtitle).toBe('Tap one of yours to take it back.');
+        expect(
+          renderer.root.findByProps({ testID: `reaction-choice-native-${os}-🎉` }).props
+            .accessibilityLabel,
+        ).toBe('React with 🎉');
+
         act(() => selected.props.onPress());
         expect(onReact).toHaveBeenCalledWith(row, '👍');
-        expect(
-          renderer.root.findByProps({ modalTestID: `reaction-picker-native-${os}` }).props.visible,
-        ).toBe(false);
+        expect(renderer.root.findAllByType('HullActionSheetModal')).toHaveLength(0);
+      } finally {
+        (Platform as { OS: string }).OS = previous;
+      }
+    },
+  );
+
+  it('offers no react gesture on a row reactToMessage refuses', () => {
+    const previous = Platform.OS;
+    (Platform as { OS: string }).OS = 'ios';
+    try {
+      // A live draft: its words are provisional, and the server refuses it.
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={message({
+            id: 'draft',
+            text: '',
+            pubkey: 'agent-sol',
+            isAgentAuthor: true,
+            isAgentDraft: true,
+            agentMessageDraft: 'half a thought',
+          })}
+          desktopLayout={false}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onCopy={vi.fn()}
+          onReact={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+      const swipeable = renderer.root.findByProps({ testID: 'swipe-reply-draft' });
+      expect(swipeable.props.renderLeftActions).toBeUndefined();
+      act(() => swipeable.props.onSwipeableOpen('left'));
+      expect(renderer.root.findAllByType('HullActionSheetModal')).toHaveLength(0);
+    } finally {
+      (Platform as { OS: string }).OS = previous;
+    }
+  });
+
+  // C70's rule, restated for the reaction picker: a parent Pressable claiming
+  // long press wins over the selectable Text underneath, so the message row may
+  // never take that press — on ANY platform — to open something of its own.
+  it.each(['ios', 'android', 'web'])(
+    'leaves the %s message row long press to native text selection',
+    (os) => {
+      const previous = Platform.OS;
+      (Platform as { OS: string }).OS = os;
+      try {
+        const onTapOutsideComposer = vi.fn();
+        const onCopy = vi.fn();
+        const renderer = render(
+          <OrdinaryLedgerMessage
+            message={message({ id: `selectable-${os}`, text: 'a settled line' })}
+            desktopLayout={false}
+            participantsHydrated
+            viewerPubkey="viewer"
+            speakerWorking={false}
+            continued={false}
+            participantHandles={[]}
+            channelIndex={{ rooms: [], corners: [] }}
+            deliveryFailed={false}
+            onChannelReference={vi.fn()}
+            onTapOutsideComposer={onTapOutsideComposer}
+            onReply={vi.fn()}
+            onCopy={onCopy}
+            onReact={vi.fn()}
+            onRetry={vi.fn()}
+            onDismiss={vi.fn()}
+          />,
+        );
+        const row = renderer.root.findByProps({ testID: `copy-message-selectable-${os}` });
+        expect(row.props.onLongPress).toBeUndefined();
+        act(() => row.props.onTouchEnd());
+        expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
+        expect(onCopy).not.toHaveBeenCalled();
+        // Nothing on the row opened the picker either.
+        expect(renderer.root.findAllByType('HullActionSheetModal')).toHaveLength(0);
       } finally {
         (Platform as { OS: string }).OS = previous;
       }
@@ -816,6 +918,7 @@ describe('Room message variant components', () => {
     (Platform as { OS: string }).OS = 'ios';
     try {
       const onReply = vi.fn();
+      const onReact = vi.fn();
       const row = message({ id: 'native-dismiss' });
       const renderer = render(
         <OrdinaryLedgerMessage
@@ -831,24 +934,34 @@ describe('Room message variant components', () => {
           onChannelReference={vi.fn()}
           onReply={onReply}
           onCopy={vi.fn()}
-          onReact={vi.fn()}
+          onReact={onReact}
           onRetry={vi.fn()}
           onDismiss={vi.fn()}
         />,
       );
 
+      const swipeable = renderer.root.findByProps({ testID: 'swipe-reply-native-dismiss' });
+      act(() => swipeable.props.onSwipeableOpen('left'));
+
+      // A viewer who has reacted to nothing is offered no take-it-back line.
+      const picker = renderer.root.findByProps({ modalTestID: 'reaction-picker-native-dismiss' });
+      expect(picker.props.subtitle).toBeUndefined();
+      // `HullActionSheetModal` wires this one callback to its scrim press and to
+      // the Modal's `onRequestClose`, which is Android's back button.
+      act(() => picker.props.onClose());
+      expect(renderer.root.findAllByType('HullActionSheetModal')).toHaveLength(0);
+
+      // And Done closes it without reacting to anything either.
+      act(() => swipeable.props.onSwipeableOpen('left'));
       act(() =>
         renderer.root
-          .findByProps({ testID: 'message-touch-target-native-dismiss' })
-          .props.onLongPress(),
+          .findByProps({ testID: 'reaction-picker-close-native-dismiss' })
+          .props.onPress(),
       );
-      const picker = renderer.root.findByProps({ modalTestID: 'reaction-picker-native-dismiss' });
-      act(() => picker.props.onClose());
-      expect(
-        renderer.root.findByProps({ modalTestID: 'reaction-picker-native-dismiss' }).props.visible,
-      ).toBe(false);
+      expect(renderer.root.findAllByType('HullActionSheetModal')).toHaveLength(0);
+      expect(onReact).not.toHaveBeenCalled();
 
-      const swipeable = renderer.root.findByProps({ testID: 'swipe-reply-native-dismiss' });
+      // The reply swipe is untouched, in the direction it always had.
       act(() => swipeable.props.onSwipeableOpen('right'));
       expect(onReply).toHaveBeenCalledWith(row);
     } finally {

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -45,7 +46,7 @@ import {
   type LedgerByline,
 } from '@/components/buzz/Ledger';
 import { MonoButton, NewMessageMaterialize } from '@/components/buzz/MonoHull';
-import { HullActionSheetModal } from '@/components/buzz/HullActionSheet';
+import { HullActionSheetCancel, HullActionSheetModal } from '@/components/buzz/HullActionSheet';
 import {
   TranscriptCard,
   TranscriptCardHandle,
@@ -753,6 +754,7 @@ function SwipeToReply({
   reactedEmojis,
   isDesktop,
   replyOnly = false,
+  canReact = true,
 }: {
   children: React.ReactNode;
   messageId: string;
@@ -764,11 +766,20 @@ function SwipeToReply({
   reactedEmojis: ReadonlySet<MessageReactionEmoji>;
   isDesktop: boolean;
   replyOnly?: boolean;
+  /** A row `reactToMessage` refuses — a live draft — offers no react gesture. */
+  canReact?: boolean;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
   const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
-  const nativeReactionPicker = Platform.OS !== 'web' && !replyOnly;
+  // The phone has no press left to spend on reacting. The row's LONG press
+  // belongs to native text selection — a parent Pressable claiming it wins over
+  // the selectable Text underneath, which is why the compact row observes touch
+  // end instead of becoming that competing responder — and its tap is the
+  // composer's "outside", which puts the keyboard away. So the two message
+  // gestures are the two directions of the one swipe: drag left to reply, drag
+  // right to react.
+  const nativeReactionPicker = Platform.OS !== 'web' && !replyOnly && canReact;
   const message = isDesktop ? (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
@@ -778,17 +789,6 @@ function SwipeToReply({
       onPress={onPress}
       style={isDesktop ? styles.replyDesktopMessage : undefined}
       testID={`copy-message-${messageId}`}
-    >
-      {children}
-    </Pressable>
-  ) : nativeReactionPicker ? (
-    <Pressable
-      accessibilityHint="Long press to react to this message"
-      accessibilityLabel="Message"
-      delayLongPress={350}
-      onLongPress={() => setReactionPickerVisible(true)}
-      onPress={onPress}
-      testID={`message-touch-target-${messageId}`}
     >
       {children}
     </Pressable>
@@ -912,14 +912,36 @@ function SwipeToReply({
         // column never moves and the whole tile, ring included, stays visible.
         containerStyle={styles.replySwipeContainer}
         childrenContainerStyle={styles.replySwipeChildren}
+        dragOffsetFromLeftEdge={18}
         dragOffsetFromRightEdge={18}
         friction={1.35}
         onSwipeableOpen={(direction) => {
-          if (direction !== 'right') return;
+          if (direction === 'right') {
+            swipeableRef.current?.close();
+            onReply();
+            return;
+          }
+          if (!nativeReactionPicker) return;
           swipeableRef.current?.close();
-          onReply();
+          void Haptics.selectionAsync();
+          setReactionPickerVisible(true);
         }}
+        overshootLeft={false}
         overshootRight={false}
+        {...(nativeReactionPicker
+          ? {
+              renderLeftActions: () => (
+                <View
+                  accessibilityLabel="React to message"
+                  style={styles.reactSwipeAction}
+                  testID={`react-swipe-action-${messageId}`}
+                >
+                  <Text style={styles.replySwipeGlyph}>☺</Text>
+                  <Text style={styles.replySwipeLabel}>REACT</Text>
+                </View>
+              ),
+            }
+          : {})}
         renderRightActions={() => (
           <View
             accessibilityLabel="Reply to message"
@@ -934,26 +956,34 @@ function SwipeToReply({
       >
         {message}
       </Swipeable>
-      {nativeReactionPicker ? (
+      {/* Mounted only while it is open. Every row in the transcript owns one of
+          these, and `HullActionSheetModal` is an RN `Modal`, which builds a
+          native host view for each mounted instance whether or not it shows. */}
+      {nativeReactionPicker && reactionPickerVisible ? (
         <HullActionSheetModal
           accessibilityLabel="Dismiss reaction picker"
           modalTestID={`reaction-picker-${messageId}`}
           onClose={() => setReactionPickerVisible(false)}
           scrimTestID={`reaction-picker-dismiss-${messageId}`}
+          // `reactToMessage` toggles, so the emoji already marked as the
+          // viewer's own is the press that takes that reaction back.
+          subtitle={reactedEmojis.size ? 'Tap one of yours to take it back.' : undefined}
           testID={`reaction-picker-sheet-${messageId}`}
           title="React to message"
-          visible={reactionPickerVisible}
+          visible
         >
           <View style={styles.nativeReactionChoices}>
             {MESSAGE_REACTION_EMOJIS.map((emoji) => (
               <Pressable
-                accessibilityLabel={`Toggle ${emoji} reaction`}
+                accessibilityLabel={
+                  reactedEmojis.has(emoji) ? `Remove ${emoji} reaction` : `React with ${emoji}`
+                }
                 accessibilityRole="button"
                 accessibilityState={{ selected: reactedEmojis.has(emoji) }}
                 key={emoji}
                 onPress={() => {
-                  onReact(emoji);
                   setReactionPickerVisible(false);
+                  onReact(emoji);
                 }}
                 style={({ pressed }) => [
                   styles.nativeReactionChoice,
@@ -966,6 +996,11 @@ function SwipeToReply({
               </Pressable>
             ))}
           </View>
+          <HullActionSheetCancel
+            label="Done"
+            onPress={() => setReactionPickerVisible(false)}
+            testID={`reaction-picker-close-${messageId}`}
+          />
         </HullActionSheetModal>
       ) : null}
     </>
@@ -1215,6 +1250,17 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     },
     [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey],
   );
+  // Which of the fixed emojis are the viewer's OWN — the picker marks those,
+  // and pressing one is the press that takes it back.
+  const viewerReactions = useMemo(
+    () =>
+      new Set(
+        (message.reactions ?? [])
+          .filter((reaction) => reaction.reacted)
+          .map((reaction) => reaction.emoji),
+      ),
+    [message.reactions],
+  );
   if (message.isAgentActivity) {
     const excerpt = agentActivityReplyExcerpt(message);
     return (
@@ -1367,13 +1413,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
-      reactedEmojis={
-        new Set(
-          message.reactions
-            ?.filter((reaction) => reaction.reacted)
-            .map((reaction) => reaction.emoji),
-        )
-      }
+      reactedEmojis={viewerReactions}
+      canReact={!message.isAgentDraft}
       isDesktop={desktopLayout}
     >
       {content}
@@ -1526,6 +1567,17 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     borderLeftWidth: 1,
     borderLeftColor: groknight.borderStrong,
+    backgroundColor: groknight.bgHighlight,
+  },
+  // The react action mirrors the reply action across the row: same width, same
+  // tone, its hairline on the edge that faces the message it belongs to.
+  reactSwipeAction: {
+    width: 78,
+    marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: groknight.borderStrong,
     backgroundColor: groknight.bgHighlight,
   },
   replySwipeGlyph: {

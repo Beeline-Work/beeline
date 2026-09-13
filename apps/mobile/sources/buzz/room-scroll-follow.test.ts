@@ -149,6 +149,19 @@ describe('scrollFollowOnLayoutChange', () => {
       }),
     ).toBe('hold');
   });
+
+  it('snaps when fixed corner and turn chrome mounts below the list', () => {
+    expect(
+      scrollFollowOnLayoutChange({
+        previousFootprint: 40,
+        nextFootprint: 40,
+        previousLayoutKey: 'no-corner:no-turn',
+        nextLayoutKey: 'corner:turn',
+        isPinnedToTail: true,
+        isUserDragging: false,
+      }),
+    ).toBe('scroll');
+  });
 });
 
 describe('the chat screen wires the scroll rule', () => {
@@ -169,8 +182,9 @@ describe('the chat screen wires the scroll rule', () => {
   });
 
   it('follows a composer/keyboard footprint drop while pinned to the tail', () => {
-    expect(chatSource).toContain('scrollFollowOnLayoutChange(');
+    expect(chatSource).toContain('useScrollFollowOnLayoutChange({');
     expect(chatSource).toContain('isPinnedToTailRef');
     expect(chatSource).toContain('useKeyboardState(');
+    expect(chatSource).toContain('bottomChromeLayoutKey');
   });
 });

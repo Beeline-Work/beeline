@@ -144,7 +144,7 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { scrollFollowOnArrival, scrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
+import { scrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -1630,30 +1630,6 @@ export default function BuzzChat() {
     }
     scrollToNewestMessage();
   }, [newestMessageId, scrollToNewestMessage]);
-  // C97: a send that collapses the composer (attach removed, field snaps
-  // back to its minimum height) or dismisses the keyboard makes the list
-  // taller with no new row id — the arrival rule above never fires for it,
-  // and maintainVisibleContentPosition's own threshold is too small to
-  // catch a keyboard-sized jump. Follow that layout change directly instead
-  // of widening the threshold (see room-scroll-follow.ts).
-  const keyboardHeight = useKeyboardState((state) => state.height);
-  const composerFootprint = composerHeight + keyboardHeight;
-  const prevComposerFootprintRef = useRef<number | null>(null);
-  useEffect(() => {
-    const previousFootprint = prevComposerFootprintRef.current;
-    prevComposerFootprintRef.current = composerFootprint;
-    if (
-      scrollFollowOnLayoutChange({
-        previousFootprint,
-        nextFootprint: composerFootprint,
-        isPinnedToTail: isPinnedToTailRef.current,
-        isUserDragging: userDraggingRef.current,
-      }) === 'hold'
-    ) {
-      return;
-    }
-    scrollToNewestMessage();
-  }, [composerFootprint, scrollToNewestMessage]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
   // in the cached tail; if the target is already resident outside the initial
   // window, widen the window first and scroll on the next render.
@@ -1891,6 +1867,30 @@ export default function BuzzChat() {
     receivedSteer,
     viewerPubkey,
   ]);
+
+  // C97: the fixed chrome below the inverted list changes independently of
+  // transcript rows. A send collapses the composer/keyboard, while the
+  // server's later claim mounts TurnProgressLine and a corner lease mounts
+  // CornerLiveBar. Native layout can update the pinned ref before an effect
+  // runs, preserving the old offset as an empty gap. Capture the verdict in
+  // render, including the two independently mounted status lines.
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const composerFootprint = composerHeight + keyboardHeight;
+  const bottomChromeLayoutKey = [
+    cornerLiveBar ? 'corner' : 'no-corner',
+    composerAck ? 'turn' : 'no-turn',
+    agentsOffline ? 'offline' : 'online',
+  ].join(':');
+  const composerLayoutFollow = useScrollFollowOnLayoutChange({
+    footprint: composerFootprint,
+    layoutKey: bottomChromeLayoutKey,
+    isPinnedToTail: isPinnedToTailRef.current,
+    isUserDragging: userDraggingRef.current,
+  });
+  useLayoutEffect(() => {
+    if (composerLayoutFollow === 'hold') return;
+    scrollToNewestMessage();
+  }, [bottomChromeLayoutKey, composerFootprint, composerLayoutFollow, scrollToNewestMessage]);
 
   /**
    * Withdraw the question this turn is answering.

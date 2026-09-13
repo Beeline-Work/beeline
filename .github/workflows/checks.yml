@@ -15,12 +15,11 @@
 # isolated mobile app and tsconfig.scripts.json.
 #
 # Every gate here executes something, or names the run it takes its verdict
-# from. PRODUCTION-CORPUS REPLAY, FRAME-BUDGET and STATE-UPGRADE each name one
-# test that PUSH-GATEWAY SUITE or MOBILE SUITE already runs, so they read that
-# job's result instead of installing and building a second time to re-run it;
-# their filters are subsets of the suite's, and a suite that did not run fails
-# them closed. A path filter must cover the graph its tests import, not just
-# the directory they live in.
+# from. FRAME-BUDGET and STATE-UPGRADE each name one test that MOBILE SUITE
+# already runs. PRODUCTION-CORPUS REPLAY has its own cached, production-scale
+# database because plan/timing evidence cannot come from the tiny suite tables.
+# A path filter must cover the graph its tests import, not just the directory
+# they live in.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -139,15 +138,17 @@ jobs:
               - 'tsconfig.base.json'
               - 'turbo.json'
               - '.github/workflows/checks.yml'
-            # PRODUCTION-CORPUS REPLAY takes its verdict from PUSH-GATEWAY
-            # SUITE, so this list must stay a subset of pushGateway's above.
+            # The replay covers both the retained relay projection and every
+            # monolith hot read, so source changes on either side rerun it.
             productionCorpusReplay:
+              - 'apps/server/**'
+              - 'apps/body/**'
+              - 'apps/auth/**'
+              - 'apps/gate/**'
               - 'packages/nostr/**'
               - 'packages/api-contract/**'
               - 'packages/buzz-client/**'
-              - 'apps/push-gateway/src/room-indexer.ts'
-              - 'apps/push-gateway/src/room-indexer*.test.ts'
-              - 'apps/push-gateway/src/fixtures/production-room-events-*.json'
+              - 'apps/push-gateway/**'
               - 'package.json'
               - 'package-lock.json'
               - 'tsconfig.base.json'
@@ -490,32 +491,42 @@ jobs:
           set -euo pipefail
           test -n "$(find "$RUNNER_TEMP/mobile-export/_expo/static/js/android" -name '*.hbc' -o -name '*.js' | head -n 1)"
 
-  # The three checks below name a test that a full suite in this same workflow
-  # already executes. Running it a second time on the same pull request would
-  # buy nothing but a duplicated install-and-build chain, so each takes its
-  # verdict from the run that really happened and says which one. Each filter
-  # above is a subset of that suite's filter, and a 'skipped' suite fails these
-  # closed rather than passing on an execution that never occurred.
+  # The production replay runs independently because it needs a cached scaled
+  # database. The two verdict-only checks below it name tests already executed
+  # by MOBILE SUITE and fail closed if that source suite was skipped.
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
-    needs: [changes, push-gateway-suite]
+    needs: changes
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Take the verdict from the suite that ran it
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Replay sanitized corpus and time production hot reads
         env:
-          SUITE_RESULT: ${{ needs.push-gateway-suite.result }}
+          PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
+          PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          set -euo pipefail
-          echo "PUSH-GATEWAY SUITE: $SUITE_RESULT"
-          if [ "$SUITE_RESULT" != 'success' ]; then
-            echo "::error::PRODUCTION-CORPUS REPLAY derives its verdict from PUSH-GATEWAY SUITE, which reported '$SUITE_RESULT'. It runs apps/push-gateway/src/room-indexer.production-corpus.test.ts. A 'skipped' result means the two path filters in this file have drifted apart — PRODUCTION-CORPUS REPLAY's filter must stay a subset of the suite's."
-            exit 1
-          fi
-          echo 'apps/push-gateway/src/room-indexer.production-corpus.test.ts ran there.'
+          npm test -w @beeline/push-gateway -- --run src/room-indexer.production-corpus.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-corpus-hot-read-plans
+          path: ${{ runner.temp }}/beeline-production-plans
+          if-no-files-found: ignore
 
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)
@@ -528,11 +539,25 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
       - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      # Replay the sanitized production event capture through the server indexer,
-      # then validate and page the paint-ready DTO through the new client contract.
-      - run: npm test -w @beeline/push-gateway -- --run src/room-indexer.production-corpus.test.ts
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Replay sanitized corpus and time production hot reads
+        env:
+          PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
+          PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
+        run: |
+          npm test -w @beeline/push-gateway -- --run src/room-indexer.production-corpus.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-corpus-hot-read-plans-on-demand
+          path: ${{ runner.temp }}/beeline-production-plans
+          if-no-files-found: ignore
 
   frame-budget:
     name: FRAME-BUDGET

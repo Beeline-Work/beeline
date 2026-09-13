@@ -42,8 +42,6 @@ import {
   type GitHubInstallationAccess,
   type AgentCommandList,
   type KnownMessageReference,
-  addRoomPage,
-  type RoomViewMessage,
   type MessageReactionEmoji,
   AGENT_PRESENCE_STALE_MS,
 } from '@beeline/buzz-client';
@@ -73,11 +71,6 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
-import {
-  advanceRoomHistoryCursor,
-  retainRoomHistoryCursor,
-  type RoomHistoryCursorState,
-} from '@/buzz/room-history-pagination';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -194,6 +187,7 @@ import {
 import { mentionKeyboardAction, transcriptKeyboardDismissMode } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
@@ -255,6 +249,7 @@ import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { useIsDesktop } from '@/utils/responsive';
 import {
   LEDGER_MARGINALIA_WIDTH,
+  LedgerHistoryLine,
   LedgerRoomUpdate,
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
@@ -285,8 +280,6 @@ const INITIAL_MESSAGE_WINDOW = 30;
 // reads this many records; reveal that complete bounded page when its parent
 // relation resolves instead of silently starting a reader 30 rows mid-story.
 const INITIAL_CORNER_MESSAGE_WINDOW = 200;
-const OLDER_MESSAGES_PAGE_SIZE = 30;
-
 /**
  * The header's edge controls draw at 44 so the back chevron and the overflow
  * glyph stay optically centred 34 in from their own margins; the extra 4 all
@@ -769,16 +762,21 @@ export default function BuzzChat() {
   // History stays as verbatim server rows in page-lifetime partitions. It is
   // converted to render props only below, never persisted as a derived
   // transcript or folded into the current Room response.
-  const [olderPages, setOlderPages] = useState<readonly (readonly RoomViewMessage[])[]>([]);
-  const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
-  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
-  const loadingOlderMessagesRef = useRef(false);
-  const historyCursorStateRef = useRef<RoomHistoryCursorState | null>(null);
-  historyCursorStateRef.current = retainRoomHistoryCursor(
-    historyCursorStateRef.current,
-    decodedId,
-    roomSurface?.room.id === decodedId ? roomSurface.messages : undefined,
-  );
+  const {
+    olderPages,
+    visibleMessageCount,
+    status: transcriptHistoryStatus,
+    loadOlder: loadOlderHistory,
+    retry: retryOlderHistory,
+    revealThrough: revealTranscriptThrough,
+    reset: resetTranscriptHistory,
+  } = useRoomTranscriptHistory({
+    roomId: decodedId,
+    tailMessages: roomSurface?.room.id === decodedId ? roomSurface.messages : undefined,
+    roomClient,
+    enabled: Boolean(cacheViewerPubkey),
+    initialVisibleCount: isCorner ? INITIAL_CORNER_MESSAGE_WINDOW : INITIAL_MESSAGE_WINDOW,
+  });
   const committedMessageIds = useMemo(
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
@@ -807,10 +805,8 @@ export default function BuzzChat() {
   roomSurfaceBindingsRef.current = {
     resetTranscript: () => {
       roomMessageProjector.reset();
-      historyCursorStateRef.current = null;
-      setOlderPages([]);
+      resetTranscriptHistory();
       clearOptimistic();
-      setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
     },
     restoreOutboxMessages: addMessages,
     dismissOptimisticMessage: removeOptimistic,
@@ -860,13 +856,6 @@ export default function BuzzChat() {
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
   );
-  // `parentChannelId` is often learned after the cold tail lands. At that
-  // point expand to the full already-fetched corner page; older pages remain
-  // bounded and load on scroll as before.
-  useEffect(() => {
-    if (!isCorner) return;
-    setVisibleMessageCount((count) => Math.max(count, INITIAL_CORNER_MESSAGE_WINDOW));
-  }, [isCorner]);
   // The immutable summary stored on the corner Room is the objective for its
   // entire lifecycle; it names the empty transcript. Mutable plans never rewrite it.
   const cornerObjective = useMemo(
@@ -882,43 +871,23 @@ export default function BuzzChat() {
   const cornerObjectiveText = useMemo(() => cornerObjective.join(' '), [cornerObjective]);
 
   const loadOlderTranscriptMessages = useCallback(() => {
-    if (loadingOlderMessagesRef.current) return;
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
-    if (visibleMessageCount < visibleRowCount) {
-      loadingOlderMessagesRef.current = true;
-      setVisibleMessageCount((count) =>
-        Math.min(visibleRowCount, count + OLDER_MESSAGES_PAGE_SIZE),
-      );
-      requestAnimationFrame(() => {
-        loadingOlderMessagesRef.current = false;
-      });
-      return;
-    }
-    const historyCursor = historyCursorStateRef.current;
-    if (!historyCursor?.before || !roomClient || !cacheViewerPubkey) return;
-    const requestedRoomId = decodedId;
-    loadingOlderMessagesRef.current = true;
-    setLoadingOlderMessages(true);
-    void roomClient
-      .history(requestedRoomId, historyCursor.before)
-      .then((page) => {
-        if (historyCursorStateRef.current?.roomId !== requestedRoomId) return;
-        historyCursorStateRef.current = advanceRoomHistoryCursor(requestedRoomId, page);
-        const fresh = page.messages;
-        if (fresh.length === 0) return;
-        setOlderPages(
-          (current) =>
-            addRoomPage({ ...(roomSurface ? { tail: roomSurface } : {}), pages: current }, fresh)
-              .pages,
-        );
-        setVisibleMessageCount((count) => count + fresh.length);
-      })
-      .catch((err) => console.warn('Failed to load older messages:', err))
-      .finally(() => {
-        loadingOlderMessagesRef.current = false;
-        setLoadingOlderMessages(false);
-      });
-  }, [cacheViewerPubkey, decodedId, foldedMessages, roomClient, roomSurface, visibleMessageCount]);
+    loadOlderHistory(visibleRowCount);
+  }, [foldedMessages, loadOlderHistory]);
+  const retryOlderTranscriptMessages = useCallback(() => {
+    retryOlderHistory(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
+  }, [foldedMessages, retryOlderHistory]);
+  const transcriptHistoryLine =
+    transcriptHistoryStatus === 'loading' ? (
+      <LedgerHistoryLine text="Loading earlier messages…" />
+    ) : transcriptHistoryStatus === 'error' ? (
+      <LedgerHistoryLine
+        text="Couldn't load earlier messages · tap to retry"
+        onPress={retryOlderTranscriptMessages}
+      />
+    ) : transcriptHistoryStatus === 'complete' ? (
+      <LedgerHistoryLine text={isCorner ? 'Beginning of corner' : `Beginning of ${ROOM_LABEL}`} />
+    ) : null;
   const availableAgents = useMemo(
     () =>
       (roomSurface?.members ?? [])
@@ -1690,7 +1659,7 @@ export default function BuzzChat() {
     );
     if (residentIndex >= 0) {
       const rowsFromNewest = combinedMessages.length - residentIndex;
-      setVisibleMessageCount((count) => Math.max(count, rowsFromNewest));
+      revealTranscriptThrough(rowsFromNewest);
     }
   }, [
     combinedMessages,
@@ -1698,6 +1667,7 @@ export default function BuzzChat() {
     notificationMessageId,
     notificationResponseId,
     notificationTarget,
+    revealTranscriptThrough,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
@@ -3887,20 +3857,10 @@ export default function BuzzChat() {
                 />
               </View>
             }
-            ListHeaderComponent={
-              desktopTranscript && loadingOlderMessages ? (
-                <View style={styles.olderMessagesLoading} testID="older-messages-loading">
-                  <PixelLoader compact />
-                </View>
-              ) : null
-            }
+            ListHeaderComponent={desktopTranscript ? transcriptHistoryLine : null}
             ListFooterComponent={
               // Inverted native list: the footer is the visual top.
-              !desktopTranscript && loadingOlderMessages ? (
-                <View style={styles.olderMessagesLoading} testID="older-messages-loading">
-                  <PixelLoader compact />
-                </View>
-              ) : null
+              desktopTranscript ? null : transcriptHistoryLine
             }
           />
 
@@ -4983,10 +4943,6 @@ const styles = StyleSheet.create((theme) => {
     // ── Composer ────────────────────────────────────────────────────
     emptyState: {
       flexGrow: 1,
-    },
-    olderMessagesLoading: {
-      paddingVertical: 12,
-      alignItems: 'center',
     },
     inputBar: {
       paddingHorizontal: 16,

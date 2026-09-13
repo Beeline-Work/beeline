@@ -543,6 +543,25 @@ export function LedgerRoomUpdate({
   );
 }
 
+/** Paging state belongs inside the transcript as one quiet line, never a card. */
+export function LedgerHistoryLine({ text, onPress }: { text: string; onPress?: () => void }) {
+  const line = <Text style={styles.historyLineText}>{text}</Text>;
+  return onPress ? (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.historyLine}
+      testID="transcript-history-retry"
+    >
+      {line}
+    </Pressable>
+  ) : (
+    <View style={styles.historyLine} testID="transcript-history-status">
+      {line}
+    </View>
+  );
+}
+
 /**
  * The one renderer for a server-phrased system line (`buzz/system-lines.ts`):
  * `<subject> <verb>[ <object>][ · <consequence>]` in the quiet `meta` role,
@@ -869,6 +888,17 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 9,
     lineHeight: 12,
     textAlign: 'right',
+  },
+  historyLine: {
+    width: '100%',
+    paddingVertical: theme.buzz.space.md,
+    alignItems: 'center',
+  },
+  historyLineText: {
+    ...theme.buzz.type.meta,
+    fontFamily: theme.buzz.proseRegular,
+    color: theme.buzz.ledgerQuiet,
+    textAlign: 'center',
   },
   systemLine: {
     position: 'relative',

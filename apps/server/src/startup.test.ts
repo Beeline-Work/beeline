@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bestEffortStartup, listenAfterBestEffortRecovery } from './startup.js';
+import { listenAfterBestEffortRecovery } from './startup.js';
 
 describe('server startup containment', () => {
   const servers: ReturnType<typeof createServer>[] = [];
@@ -35,13 +35,23 @@ describe('server startup containment', () => {
     );
   });
 
-  it('bounds a hung optional dependency and returns no value', async () => {
+  it('listens after a hung presence recovery reaches its bound', async () => {
+    const server = createServer((_request, response) => response.end('ok'));
+    servers.push(server);
     const report = vi.fn();
-    await expect(
-      bestEffortStartup('Firebase push credentials', () => new Promise(() => {}), 5, report),
-    ).resolves.toBeUndefined();
+
+    await listenAfterBestEffortRecovery(
+      server,
+      () => new Promise(() => {}),
+      0,
+      '127.0.0.1',
+      5,
+      report,
+    );
+
+    expect(server.listening).toBe(true);
     expect(report).toHaveBeenCalledWith(
-      '[startup] Firebase push credentials unavailable; continuing',
+      '[startup] presence recovery unavailable; continuing',
       'timed out after 5ms',
     );
   });

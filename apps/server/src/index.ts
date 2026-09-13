@@ -23,7 +23,7 @@ import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
-import { bestEffortStartup, listenAfterBestEffortRecovery } from './startup.js';
+import { listenAfterBestEffortRecovery } from './startup.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -130,9 +130,7 @@ async function main() {
     : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
-      ? await bestEffortStartup('Firebase push credentials', () =>
-          createFirebasePushSender(process.env),
-        )
+      ? await createFirebasePushSender(process.env)
       : undefined;
   const apnsPushSender = createApnsPushSender(process.env);
   const push = pushSender

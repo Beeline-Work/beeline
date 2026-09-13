@@ -47,11 +47,13 @@ vi.mock('react-native-gesture-handler', async () => {
 
 vi.mock('react-native-unistyles', async () => {
   const { beelineThemes } = await import('@/buzz/groknight');
+  const theme = { buzz: beelineThemes.obsidian };
   return {
     StyleSheet: {
       create: (factory: (theme: { buzz: typeof beelineThemes.obsidian }) => unknown) =>
-        factory({ buzz: beelineThemes.obsidian }),
+        factory(theme),
     },
+    useUnistyles: () => ({ theme }),
   };
 });
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
@@ -349,7 +351,7 @@ describe('Room message variant components', () => {
         node.type === 'Text' && node.children.includes('Duplicate draft settle'),
     );
     expect(rowTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
-    expect(rowTitle.parent?.parent?.props.style).toMatchObject({ flex: 1, minWidth: 0 });
+    expect(rowTitle.parent?.parent?.parent?.props.style).toMatchObject({ flex: 1, minWidth: 0 });
     const cardTitle = renderer.root.find(
       (node: ReactTestInstance) =>
         node.type === 'Text' && node.children.includes('PR 4 merged, 1 failed'),

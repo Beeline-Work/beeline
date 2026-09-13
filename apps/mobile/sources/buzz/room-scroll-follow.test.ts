@@ -11,8 +11,8 @@ const chatSource = readFileSync(
 
 /**
  * The captain's scroll rule (2026-09): a new message or live draft in the
- * open Room/corner always brings the viewport to the newest end — once per
- * arrival — but a user drag in progress is never interrupted.
+ * open Room/corner follows the newest end only while the reader is already
+ * pinned there; a user reading history or dragging is never interrupted.
  */
 describe('scrollFollowOnArrival', () => {
   it('scrolls once for a genuinely new arrival', () => {
@@ -20,6 +20,7 @@ describe('scrollFollowOnArrival', () => {
       scrollFollowOnArrival({
         previousNewestId: 'msg-1',
         nextNewestId: 'msg-2',
+        isPinnedToTail: true,
         isUserDragging: false,
       }),
     ).toBe('scroll');
@@ -30,6 +31,7 @@ describe('scrollFollowOnArrival', () => {
       scrollFollowOnArrival({
         previousNewestId: null,
         nextNewestId: 'msg-1',
+        isPinnedToTail: true,
         isUserDragging: false,
       }),
     ).toBe('hold');
@@ -40,6 +42,7 @@ describe('scrollFollowOnArrival', () => {
       scrollFollowOnArrival({
         previousNewestId: 'draft-1',
         nextNewestId: 'draft-1',
+        isPinnedToTail: true,
         isUserDragging: false,
       }),
     ).toBe('hold');
@@ -47,6 +50,7 @@ describe('scrollFollowOnArrival', () => {
       scrollFollowOnArrival({
         previousNewestId: 'msg-1',
         nextNewestId: null,
+        isPinnedToTail: true,
         isUserDragging: false,
       }),
     ).toBe('hold');
@@ -57,7 +61,19 @@ describe('scrollFollowOnArrival', () => {
       scrollFollowOnArrival({
         previousNewestId: 'msg-1',
         nextNewestId: 'msg-2',
+        isPinnedToTail: true,
         isUserDragging: true,
+      }),
+    ).toBe('hold');
+  });
+
+  it('holds a new arrival while the reader is above the bottom', () => {
+    expect(
+      scrollFollowOnArrival({
+        previousNewestId: 'msg-1',
+        nextNewestId: 'msg-2',
+        isPinnedToTail: false,
+        isUserDragging: false,
       }),
     ).toBe('hold');
   });

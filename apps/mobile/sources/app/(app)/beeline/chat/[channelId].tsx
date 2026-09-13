@@ -1,5 +1,5 @@
 /** Room and corner conversation surface. */
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -209,6 +209,11 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { forwardMessageToRoom } from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
+import {
+  EMPTY_TRANSCRIPT_ARRIVAL_STATE,
+  observeTranscriptArrivals,
+} from '@/buzz/transcript-motion';
+import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -827,6 +832,21 @@ export default function BuzzChat() {
     () => foldSystemLines(foldSettledActivityRuns(anchorRelayReports(combinedMessages))),
     [combinedMessages],
   );
+  const transcriptArrivalStateRef = useRef(EMPTY_TRANSCRIPT_ARRIVAL_STATE);
+  const transcriptCardMotionStore = useMemo(createTranscriptCardMotionStore, [decodedId]);
+  const transcriptArrivalObservation = useMemo(() => {
+    return observeTranscriptArrivals(transcriptArrivalStateRef.current, {
+      surfaceId: decodedId,
+      hydrated: Boolean(roomSurface),
+      ids: foldedMessages.map((message) => message.id),
+    });
+  }, [decodedId, foldedMessages, roomSurface]);
+  useEffect(() => {
+    // Keep the comparison anchored to the last committed transcript. Mutating
+    // this ref during render makes React's development double-render consume a
+    // live arrival before the card ever reaches the screen.
+    transcriptArrivalStateRef.current = transcriptArrivalObservation.state;
+  }, [transcriptArrivalObservation.state]);
   const unprojectedMessages = useMemo(
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
@@ -1572,11 +1592,15 @@ export default function BuzzChat() {
   const desktopTranscript = isDesktop;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
-  // Captain's rule (2026-09): a new message or live draft always brings the
-  // viewport to the newest end — once per arrival, never mid-drag. The
-  // decision is one pure call (`buzz/room-scroll-follow.ts`); the actual tail
-  // scroll runs at most once per arrival, off the render path.
+  // A live message/card change follows only when the reader is already at the
+  // tail. The decision is one pure call (`buzz/room-scroll-follow.ts`); the
+  // actual tail scroll runs at most once per arrival, off the render path.
   const userDraggingRef = useRef(false);
+  const currentScrollOffsetRef = useRef(0);
+  const readerHeldOffsetRef = useRef(0);
+  const preserveReaderOffsetUntilRef = useRef(0);
+  const preservedTailGrowthRef = useRef(0);
+  const nativeContentHeightRef = useRef<number | null>(null);
   // Updated on every onScroll; native's inverted list uses offset 0, while
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
@@ -1589,20 +1613,41 @@ export default function BuzzChat() {
       flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     });
   }, [desktopTranscript]);
-  const newestMessageId = combinedMessages.length
-    ? combinedMessages[combinedMessages.length - 1].id
+  const newestMessage = foldedMessages.at(-1);
+  const newestMessageId = newestMessage
+    ? [
+        newestMessage.id,
+        ...(newestMessage.notificationLifecycleRun?.items.map(
+          (item) => `${item.id}:${item.state}`,
+        ) ?? []),
+      ].join('|')
     : null;
   const prevNewestIdRef = useRef<string | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previousNewestId = prevNewestIdRef.current;
     prevNewestIdRef.current = newestMessageId;
     if (
       scrollFollowOnArrival({
         previousNewestId,
         nextNewestId: newestMessageId,
+        isPinnedToTail: isPinnedToTailRef.current,
         isUserDragging: userDraggingRef.current,
       }) === 'hold'
     ) {
+      if (!desktopTranscript && !isPinnedToTailRef.current) {
+        // An appended fold row grows inside the existing index-0 card, which
+        // Android's maintainVisibleContentPosition cannot anchor by itself.
+        // Hold the reader's last deliberate offset through the 260ms grow.
+        preserveReaderOffsetUntilRef.current = Date.now() + 450;
+        preservedTailGrowthRef.current = 0;
+        setTimeout(() => {
+          if (Date.now() > preserveReaderOffsetUntilRef.current) return;
+          flatListRef.current?.scrollToOffset({
+            offset: readerHeldOffsetRef.current + preservedTailGrowthRef.current,
+            animated: false,
+          });
+        }, 320);
+      }
       return;
     }
     scrollToNewestMessage();
@@ -3460,6 +3505,8 @@ export default function BuzzChat() {
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,
+    arrivingCardIds: transcriptArrivalObservation.arrivingIds,
+    cardMotionStore: transcriptCardMotionStore,
   });
 
   if (!roomSurface) {
@@ -3732,23 +3779,31 @@ export default function BuzzChat() {
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
             ]}
-            maintainVisibleContentPosition={{
-              // Desktop anchors the oldest visible chronological row while an
-              // older page is prepended. Native anchors the second-newest row:
-              // index 0 is replaced during optimistic settlement and streams.
-              minIndexForVisible: desktopTranscript ? 0 : 1,
-              // Native offset 0 is the visual bottom; desktop follows the tail
-              // explicitly with scrollToEnd instead of enabling top autoscroll.
-              ...(desktopTranscript ? {} : { autoscrollToTopThreshold: 50 }),
-            }}
+            maintainVisibleContentPosition={
+              desktopTranscript
+                ? undefined
+                : {
+                    // Native anchors the second-newest row: index 0 is replaced
+                    // during optimistic settlement and streams. Web's adapter
+                    // shifts scrollTop on tail appends when this prop is set,
+                    // moving a desktop reader who is browsing history.
+                    minIndexForVisible: 1,
+                    // Native offset 0 is the visual bottom.
+                    autoscrollToTopThreshold: 50,
+                  }
+            }
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             onScroll={(event) => {
               const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+              currentScrollOffsetRef.current = contentOffset.y;
               isPinnedToTailRef.current = desktopTranscript
                 ? contentOffset.y + layoutMeasurement.height >=
                   contentSize.height - TAIL_PIN_THRESHOLD
                 : contentOffset.y <= TAIL_PIN_THRESHOLD;
+              if (userDraggingRef.current && !isPinnedToTailRef.current) {
+                readerHeldOffsetRef.current = contentOffset.y;
+              }
               if (
                 desktopTranscript &&
                 (!isPinnedToTailRef.current ||
@@ -3764,12 +3819,36 @@ export default function BuzzChat() {
             }}
             onScrollEndDrag={() => {
               userDraggingRef.current = false;
+              if (!isPinnedToTailRef.current) {
+                readerHeldOffsetRef.current = currentScrollOffsetRef.current;
+              }
             }}
             onMomentumScrollBegin={() => {
               userDraggingRef.current = true;
             }}
             onMomentumScrollEnd={() => {
               userDraggingRef.current = false;
+              if (!isPinnedToTailRef.current) {
+                readerHeldOffsetRef.current = currentScrollOffsetRef.current;
+              }
+            }}
+            onContentSizeChange={(_width, height) => {
+              const previousHeight = nativeContentHeightRef.current;
+              nativeContentHeightRef.current = height;
+              if (
+                desktopTranscript ||
+                Date.now() > preserveReaderOffsetUntilRef.current ||
+                previousHeight === null
+              ) {
+                return;
+              }
+              preservedTailGrowthRef.current += height - previousHeight;
+              requestAnimationFrame(() => {
+                flatListRef.current?.scrollToOffset({
+                  offset: readerHeldOffsetRef.current + preservedTailGrowthRef.current,
+                  animated: false,
+                });
+              });
             }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength, index }) => {

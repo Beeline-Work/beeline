@@ -27,8 +27,9 @@ describe('Buzz keyboard avoidance', () => {
     // so anchoring there instead of the row below it fights the reveal of
     // a just-sent message. autoscrollToTopThreshold makes offset 0 (visual
     // bottom, inverted) sticky instead, matching sources/components/ChatList.tsx.
-    expect(chatSource).toContain('minIndexForVisible: desktopTranscript ? 0 : 1');
-    expect(chatSource).toContain('...(desktopTranscript ? {} : { autoscrollToTopThreshold: 50 })');
+    expect(chatSource).toContain('desktopTranscript\n                ? undefined');
+    expect(chatSource).toContain('minIndexForVisible: 1');
+    expect(chatSource).toContain('autoscrollToTopThreshold: 50');
     expect(chatSource).not.toContain('MESSAGE_LIST_PADDING');
     expect(chatSource).toContain('flatListRef.current?.scrollToEnd({ animated: false });');
     expect(chatSource).not.toContain('handleMessageListLayout');

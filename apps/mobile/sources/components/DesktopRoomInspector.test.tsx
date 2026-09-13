@@ -54,6 +54,7 @@ vi.mock('react-native-unistyles', () => ({
     hairlineWidth: 1,
     create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
   },
+  useUnistyles: () => ({ theme }),
 }));
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');

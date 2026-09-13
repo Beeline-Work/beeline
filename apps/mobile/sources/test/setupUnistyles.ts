@@ -1,3 +1,4 @@
+import React from 'react';
 import { vi } from 'vitest';
 import { beelineThemes } from '../buzz/groknight';
 
@@ -15,6 +16,29 @@ vi.mock('react-native-device-info', () => ({
   getDeviceType: () => 'Handset',
 }));
 
+const animationBuilder = {
+  duration: () => animationBuilder,
+  easing: () => animationBuilder,
+  reduceMotion: () => animationBuilder,
+  withInitialValues: () => animationBuilder,
+};
+vi.mock('react-native-reanimated', () => ({
+  default: {
+    Text: (props: Record<string, unknown>) => React.createElement('Text', props),
+    View: (props: Record<string, unknown>) => React.createElement('View', props),
+  },
+  Easing: { cubic: 'cubic', out: (value: unknown) => value },
+  FadeOut: animationBuilder,
+  ReduceMotion: { System: 'system' },
+  interpolateColor: (value: number, _input: number[], output: string[]) =>
+    value >= 1 ? output[output.length - 1] : output[0],
+  useAnimatedStyle: (factory: () => unknown) => factory(),
+  useReducedMotion: () => false,
+  useSharedValue: (value: unknown) => ({ value }),
+  withDelay: (_delay: number, value: unknown) => value,
+  withTiming: (value: unknown) => value,
+}));
+
 const theme = { buzz: beelineThemes.obsidian };
 
 // Production configures Unistyles before rendering. Unit tests run in Node and
@@ -24,9 +48,10 @@ vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
     configure: vi.fn(),
-    create: (definition: unknown) => typeof definition === 'function'
-      ? (definition as (value: typeof theme) => unknown)(theme)
-      : definition,
+    create: (definition: unknown) =>
+      typeof definition === 'function'
+        ? (definition as (value: typeof theme) => unknown)(theme)
+        : definition,
   },
   UnistylesRuntime: {
     setTheme: vi.fn(),

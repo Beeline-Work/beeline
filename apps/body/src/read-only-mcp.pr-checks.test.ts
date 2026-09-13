@@ -104,10 +104,20 @@ describe('pr_checks_status PR selection and human gate', () => {
     vi.stubGlobal('fetch', () => Promise.resolve(new Response('{}', { status: 503 })));
     await expect(prChecksStatus({ pullRequest: 614 })).rejects.toThrow();
   });
+  it('reports unknown with the PR and head reason when the server has no check facts', async () => {
+    checks = 'unknown';
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
+      checks: 'unknown',
+      reason: `no checks are recorded for PR #614 (head ${'a'.repeat(40)}); the PR may have been opened from a branch that is not this corner's, or checks have not reported yet`,
+      held: false,
+      approvalPending: false,
+    });
+  });
   it('asks for a PR when none is known without interpreting chat as authorization', async () => {
     items = [{ body: 'all checks passed' }];
     expect(JSON.parse(await prChecksStatus())).toMatchObject({
-      checks: 'pending',
+      checks: 'unknown',
+      reason: 'no pull request or checks are recorded for this corner',
       next: expect.any(String),
     });
     expect(gateCalls()).toHaveLength(0);

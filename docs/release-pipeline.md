@@ -91,6 +91,14 @@ A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
 or send a duplicate client notification.
 
+The desktop leg signs, notarizes, staples, and strictly verifies the macOS disk
+image whenever the complete credential set is available. Until the Developer
+ID certificate is provisioned, it preserves the existing unsigned release path
+and marks both reports **macOS artifact UNSIGNED: signing secrets absent**.
+Trusted in-repo preview builds exercise the same signed verification path.
+One-time certificate and App Store Connect setup is documented in [macOS
+desktop signing and notarization](./macos-desktop-signing.md).
+
 Normal selective attempts have a 20-minute dispatch-to-result budget. Component
 jobs have shorter explicit timeouts and network smoke checks have second-scale
 limits. The final index records outcome, duration, selected/carried components,

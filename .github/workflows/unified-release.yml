@@ -511,6 +511,7 @@ jobs:
       variant: production
       release_sha: ${{ needs.initialize.outputs.release_sha }}
       release_version: ${{ needs.initialize.outputs.release_version }}
+    secrets: inherit
 
   desktop_checkpoint:
     needs: [initialize, desktop_installers]
@@ -843,6 +844,13 @@ jobs:
           SAMPLE: ${{ steps.reliability.outputs.sample }}
           FAILED: ${{ steps.reliability.outputs.failed }}
           RATE: ${{ steps.reliability.outputs.rate }}
+          RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
+          MACOS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          MACOS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          MACOS_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
           NOTIFICATION_STATE: ${{ (steps.result.outputs.no_op == 'true' && 'not-needed') || steps.notification.outputs.state || (steps.notification.outcome == 'failure' && 'warning') || 'not-attempted' }}
           NOTIFICATION_DETAIL: ${{ (steps.result.outputs.no_op == 'true' && 'no component inputs changed') || steps.notification.outputs.detail || (steps.notification.outcome == 'failure' && 'notification step failed unexpectedly') || 'release result was not successful' }}
         run: |
@@ -853,6 +861,17 @@ jobs:
           console.log(`- Duration: ${release.delivery.durationSeconds}s`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
+          const signingSecrets = [
+            'MACOS_APPLE_CERTIFICATE',
+            'MACOS_APPLE_CERTIFICATE_PASSWORD',
+            'MACOS_APPLE_SIGNING_IDENTITY',
+            'MACOS_ASC_KEY_ID',
+            'MACOS_ASC_ISSUER_ID',
+            'MACOS_ASC_API_KEY_P8',
+          ];
+          if (process.env.RUN_DESKTOP === 'true' && signingSecrets.some((name) => !process.env[name]?.trim())) {
+            console.log('- macOS artifact UNSIGNED: signing secrets absent');
+          }
           if (process.env.NO_OP === 'true') console.log('- No-op: this exact release was already delivered; nothing was republished.');
           console.log(`- Notification: ${process.env.NOTIFICATION_STATE} (${process.env.NOTIFICATION_DETAIL})`);
           if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);

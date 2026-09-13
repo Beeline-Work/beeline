@@ -754,6 +754,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint tracked shell scripts
         run: npm run lint:shell
+      - name: Test the desktop signing credential gate
+        run: node --test scripts/desktop-signing.test.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
       # every pull request (a test can be deleted without touching a workflow);
       # here it is where a workflow author gets the message.

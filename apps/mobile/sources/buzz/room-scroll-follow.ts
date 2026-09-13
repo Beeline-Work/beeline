@@ -45,6 +45,32 @@ export function scrollFollowOnArrival({
   return 'scroll';
 }
 
+/**
+ * Decide during render, before React Native Web lays out the appended row and
+ * can report the formerly pinned viewport as being above the new bottom.
+ */
+export function useScrollFollowOnArrival({
+  newestId,
+  isPinnedToTail,
+  isUserDragging,
+}: {
+  newestId: string | null;
+  isPinnedToTail: boolean;
+  isUserDragging: boolean;
+}): ScrollFollowDecision {
+  const previousNewestIdRef = useRef<string | null>(null);
+  const decision = scrollFollowOnArrival({
+    previousNewestId: previousNewestIdRef.current,
+    nextNewestId: newestId,
+    isPinnedToTail,
+    isUserDragging,
+  });
+  useLayoutEffect(() => {
+    previousNewestIdRef.current = newestId;
+  }, [newestId]);
+  return decision;
+}
+
 export function scrollFollowOnLayoutChange({
   previousFootprint,
   nextFootprint,

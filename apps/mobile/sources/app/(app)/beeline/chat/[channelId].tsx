@@ -82,15 +82,21 @@ import {
 import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
+import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
-  desktopLayoutMode,
+  desktopWorkPaneMode,
+  desktopWorkPaneWindowClass,
+  initialDesktopWorkPaneState,
+  isDesktopWorkPaneCommand,
   loadDesktopDraft,
-  loadDesktopInspectorOpen,
+  loadDesktopWorkPanePreference,
   saveDesktopDraft,
-  saveDesktopInspectorOpen,
+  saveDesktopWorkPanePreference,
+  transitionDesktopWorkPane,
+  type DesktopWorkPaneEvent,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
@@ -247,6 +253,7 @@ import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { useIsDesktop } from '@/utils/responsive';
+import { isDesktopPlatform } from '@/utils/platform';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerHistoryLine,
@@ -336,8 +343,13 @@ export default function BuzzChat() {
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const { width: windowWidth } = useWindowDimensions();
-  const desktopExperience = isDesktop;
-  const desktopMode = desktopLayoutMode(windowWidth);
+  // A desktop browser keeps the permanent Room list even when its window is
+  // narrower than the work-pane threshold. Native phones keep their ordinary
+  // compact navigation because they are not desktop platforms.
+  const desktopExperience = isDesktopPlatform();
+  const workPaneWindowClass = desktopWorkPaneWindowClass(
+    typeof window === 'undefined' ? windowWidth : window.screen?.availWidth || windowWidth,
+  );
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
@@ -430,10 +442,11 @@ export default function BuzzChat() {
   });
   const [inputText, setInputText] = useState('');
   const loadedDraftForRef = useRef<string | null>(null);
-  const inspectorTriggerRef = useRef<React.ElementRef<typeof TouchableOpacity>>(null);
-  const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(false);
-  const [selectedDesktopCornerId, setSelectedDesktopCornerId] = useState<string | null>(null);
-  const [desktopCockpitMaximized, setDesktopCockpitMaximized] = useState(false);
+  const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
+  const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
+  const [desktopWorkPane, setDesktopWorkPane] = useState(initialWorkPaneStateRef.current);
+  const desktopWorkPaneRef = useRef(desktopWorkPane);
+  const workPaneMode = desktopWorkPaneMode(desktopWorkPane);
   const observedCornerCardsRef = useRef<{ roomId: string; ids: Set<string> } | null>(null);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
@@ -554,53 +567,71 @@ export default function BuzzChat() {
     return () => clearTimeout(timer);
   }, [decodedId, desktopExperience, inputText]);
 
-  useEffect(() => {
-    if (!desktopExperience) return;
-    void loadDesktopInspectorOpen().then((open) =>
-      setDesktopInspectorOpen(open || desktopMode === 'three-pane'),
-    );
-  }, [desktopExperience, desktopMode]);
+  const commitDesktopWorkPane = useCallback((event: DesktopWorkPaneEvent) => {
+    const transition = transitionDesktopWorkPane(desktopWorkPaneRef.current, event);
+    desktopWorkPaneRef.current = transition.state;
+    setDesktopWorkPane(transition.state);
+    return transition;
+  }, []);
 
   useEffect(() => {
     if (!desktopExperience) return;
-    return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
-      if (roomId !== decodedId) return;
-      setSelectedDesktopCornerId(cornerId);
-      setDesktopInspectorOpen(true);
-      void saveDesktopInspectorOpen(true);
+    let cancelled = false;
+    void loadDesktopWorkPanePreference(workPaneWindowClass).then((preference) => {
+      if (!cancelled) commitDesktopWorkPane({ type: 'hydrate', preference });
     });
-  }, [decodedId, desktopExperience]);
+    return () => {
+      cancelled = true;
+    };
+  }, [commitDesktopWorkPane, desktopExperience, workPaneWindowClass]);
 
   useEffect(() => {
-    if (!roomSurface || desktopMode !== 'three-pane') return;
-    const ids = new Set(
-      roomSurface.messages.flatMap((message) => (message.corner ? [message.corner.id] : [])),
-    );
+    if (!desktopExperience) return;
+    commitDesktopWorkPane({ type: 'resize', width: windowWidth });
+  }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
+
+  useEffect(() => {
+    if (!roomSurface || workPaneMode !== 'present') return;
+    // The server-owned corner list is the lifecycle authority. Current corner
+    // cards are daemon facts, so watching the retired `message.corner` shape
+    // misses a real newly opened corner even though it is already paintable.
+    const ids = new Set(roomSurface.corners.map((corner) => corner.corner.id));
     const observed = observedCornerCardsRef.current;
     if (!observed || observed.roomId !== roomSurface.room.id) {
       observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
-      setSelectedDesktopCornerId(null);
+      commitDesktopWorkPane({ type: 'open-overview' });
       return;
     }
     const opened = [...ids].find((cornerId) => !observed.ids.has(cornerId));
     observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
     if (!opened) return;
-    setSelectedDesktopCornerId(opened);
-    setDesktopInspectorOpen(true);
-    void saveDesktopInspectorOpen(true);
-  }, [desktopMode, roomSurface]);
-
-  useEffect(() => {
-    if (!desktopInspectorOpen || !selectedDesktopCornerId) setDesktopCockpitMaximized(false);
-  }, [desktopInspectorOpen, selectedDesktopCornerId]);
-
-  const toggleDesktopCockpitMaximized = useCallback(() => {
-    setDesktopCockpitMaximized((maximized) => !maximized);
-  }, []);
+    commitDesktopWorkPane({ type: 'open-corner', cornerId: opened });
+  }, [commitDesktopWorkPane, roomSurface, workPaneMode]);
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
   const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
+  const desktopWorkRoomId = parentChannelId ?? decodedId;
+  const [desktopParentRoom, setDesktopParentRoom] = useState<typeof roomSurface>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!desktopExperience || !parentChannelId || !roomClient) {
+      setDesktopParentRoom(null);
+      return;
+    }
+    void roomClient
+      .room(parentChannelId)
+      .then((parentRoom) => {
+        if (!cancelled) setDesktopParentRoom(parentRoom);
+      })
+      .catch(() => {
+        if (!cancelled) setDesktopParentRoom(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopExperience, parentChannelId, roomClient]);
+  const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
   const channelKind: ChannelKind = roomSurface
     ? roomSurface.parent
       ? 'corner'
@@ -713,16 +744,29 @@ export default function BuzzChat() {
     roomSurface?.parent,
     routeChannelTitle,
   ]);
+  const openDesktopCorner = useCallback(
+    (roomId: string, cornerId: string) => {
+      const transition = commitDesktopWorkPane({ type: 'open-corner', cornerId });
+      if (transition.placement === 'main') router.push(cornerHref(cornerId, roomId));
+    },
+    [commitDesktopWorkPane],
+  );
+  useEffect(() => {
+    if (!desktopExperience) return;
+    return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
+      if (roomId !== desktopWorkRoomId) return;
+      openDesktopCorner(roomId, cornerId);
+    });
+  }, [desktopExperience, desktopWorkRoomId, openDesktopCorner]);
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
   const handleOpenChannelReference = useCallback(
     (target: ChannelReferenceTarget) => {
       if (!target.channelId || target.channelId === decodedId) return;
-      if (target.kind === 'corner')
-        router.push(cornerHref(target.channelId, target.parentChannelId));
+      if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
       else router.push(roomHref(target.channelId));
     },
-    [decodedId],
+    [decodedId, openDesktopCorner],
   );
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
@@ -3051,32 +3095,53 @@ export default function BuzzChat() {
         Modal.alert('Corner unavailable', action.message);
         return;
       }
-      router.push(cornerHref(action.cornerId, decodedId));
+      if (desktopExperience) openDesktopCorner(decodedId, action.cornerId);
+      else router.push(cornerHref(action.cornerId, decodedId));
     },
-    [decodedId],
+    [decodedId, desktopExperience, openDesktopCorner],
   );
 
-  const closeDesktopInspector = useCallback(() => {
-    setDesktopInspectorOpen(false);
-    void saveDesktopInspectorOpen(false);
-    requestAnimationFrame(() => inspectorTriggerRef.current?.focus());
-  }, []);
+  const closeDesktopWorkPane = useCallback(() => {
+    const transition = commitDesktopWorkPane({ type: 'dismiss' });
+    void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+    requestAnimationFrame(() => workPaneHandleRef.current?.focus());
+  }, [commitDesktopWorkPane, workPaneWindowClass]);
 
-  const toggleDesktopInspector = useCallback(() => {
-    setDesktopInspectorOpen((open) => {
-      const next = !open;
-      void saveDesktopInspectorOpen(next);
-      if (!next) requestAnimationFrame(() => inspectorTriggerRef.current?.focus());
-      return next;
-    });
-  }, []);
+  const openDesktopWorkOverview = useCallback(() => {
+    const transition = commitDesktopWorkPane({ type: 'open-overview' });
+    void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+  }, [commitDesktopWorkPane, workPaneWindowClass]);
+
+  const dropCornerInDesktopWorkPane = useCallback(
+    (cornerId: string) => {
+      const transition = commitDesktopWorkPane({ type: 'drop-corner', cornerId });
+      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+    },
+    [commitDesktopWorkPane, workPaneWindowClass],
+  );
+
+  const openDesktopCornerInMain = useCallback(
+    (cornerId: string) => {
+      const transition = commitDesktopWorkPane({ type: 'open-corner-in-main' });
+      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+      router.push(cornerHref(cornerId, desktopWorkRoomId));
+    },
+    [commitDesktopWorkPane, desktopWorkRoomId, workPaneWindowClass],
+  );
+
+  const toggleDesktopWorkPane = useCallback(() => {
+    const transition = commitDesktopWorkPane({ type: 'toggle' });
+    void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+    if (transition.state.preference === 'dismissed')
+      requestAnimationFrame(() => workPaneHandleRef.current?.focus());
+  }, [commitDesktopWorkPane, workPaneWindowClass]);
 
   useEffect(() => {
     if (!desktopExperience || typeof window === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'i') {
+      if (isDesktopWorkPaneCommand(event)) {
         event.preventDefault();
-        toggleDesktopInspector();
+        toggleDesktopWorkPane();
       } else if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
@@ -3084,20 +3149,14 @@ export default function BuzzChat() {
       ) {
         event.preventDefault();
         focusComposer();
-      } else if (event.key === 'Escape' && desktopInspectorOpen) {
+      } else if (event.key === 'Escape' && workPaneMode === 'present') {
         event.preventDefault();
-        closeDesktopInspector();
+        closeDesktopWorkPane();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    closeDesktopInspector,
-    desktopExperience,
-    desktopInspectorOpen,
-    focusComposer,
-    toggleDesktopInspector,
-  ]);
+  }, [closeDesktopWorkPane, desktopExperience, focusComposer, toggleDesktopWorkPane, workPaneMode]);
 
   const handleDesktopDrop = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
@@ -3553,7 +3612,7 @@ export default function BuzzChat() {
     >
       <View style={styles.desktopConversationFrame}>
         <KeyboardAvoidingView
-          style={[styles.container, desktopCockpitMaximized && styles.desktopMainPaneHidden]}
+          style={styles.container}
           behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
@@ -3703,22 +3762,6 @@ export default function BuzzChat() {
                   <Text style={styles.roomActionsGlyph}>•••</Text>
                 </TouchableOpacity>
               )}
-            {desktopExperience && (
-              <TouchableOpacity
-                ref={inspectorTriggerRef}
-                accessibilityLabel={
-                  desktopInspectorOpen ? 'Close Room inspector' : 'Open Room inspector'
-                }
-                accessibilityRole="button"
-                accessibilityState={{ expanded: desktopInspectorOpen }}
-                hitSlop={HEADER_EDGE_HIT_SLOP}
-                onPress={toggleDesktopInspector}
-                style={styles.roomActionsButton}
-                testID="desktop-inspector-toggle"
-              >
-                <Text style={styles.roomActionsGlyph}>ⓘ</Text>
-              </TouchableOpacity>
-            )}
             {isArchived && (
               <View style={styles.archivedBadge}>
                 <Text style={styles.archivedBadgeText}>archived</Text>
@@ -4234,18 +4277,28 @@ export default function BuzzChat() {
             </View>
           )}
         </KeyboardAvoidingView>
-        {desktopExperience && desktopInspectorOpen && (
+        {desktopExperience && workPaneMode === 'present' && desktopWorkRoom && (
           <DesktopRoomInspector
-            room={roomSurface}
+            room={desktopWorkRoom}
             client={roomClient}
-            overlay={desktopMode !== 'three-pane'}
-            maximized={desktopCockpitMaximized}
-            onToggleMaximize={toggleDesktopCockpitMaximized}
-            selectedCornerId={selectedDesktopCornerId}
-            onSelectCorner={setSelectedDesktopCornerId}
-            onClose={closeDesktopInspector}
+            selectedCornerId={desktopWorkPane.selectedCornerId}
+            onSelectCorner={(cornerId) =>
+              commitDesktopWorkPane(
+                cornerId ? { type: 'open-corner', cornerId } : { type: 'open-overview' },
+              )
+            }
+            onOpenInMain={openDesktopCornerInMain}
+            onClose={closeDesktopWorkPane}
             onNewCorner={focusComposer}
             onOpenRoster={() => setRosterVisible(true)}
+          />
+        )}
+        {desktopExperience && workPaneMode === 'dismissed' && (
+          <DesktopWorkPaneHandle
+            ref={workPaneHandleRef}
+            roomId={desktopWorkRoomId}
+            onOpen={openDesktopWorkOverview}
+            onDropCorner={dropCornerInDesktopWorkPane}
           />
         )}
       </View>
@@ -4588,9 +4641,6 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       flexDirection: 'row',
       position: 'relative',
-    },
-    desktopMainPaneHidden: {
-      display: 'none',
     },
     desktopStatusSlot: {
       minHeight: 28,

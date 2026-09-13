@@ -25,10 +25,13 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain("setDesktopDeliveryState('failed')");
   });
 
-  it('mounts the inspector beside the transcript and restores trigger focus on dismissal', () => {
+  it('mounts the work pane beside the transcript and exposes a focused recovery handle', () => {
     expect(room).toContain('<DesktopRoomInspector');
-    expect(room).toContain("desktopMode !== 'three-pane'");
-    expect(room).toContain('inspectorTriggerRef.current?.focus()');
+    expect(room).toContain('<DesktopWorkPaneHandle');
+    expect(room).toContain("workPaneMode === 'present'");
+    expect(room).toContain("workPaneMode === 'dismissed'");
+    expect(room).toContain('workPaneHandleRef.current?.focus()');
+    expect(room).not.toContain('desktop-inspector-toggle');
     expect(inspector).toMatch(/client\.room\(selectedCornerId\)/);
     expect(inspector).toContain('desktop-work-overview-header');
     expect(inspector).toContain('desktop-work-cockpit');
@@ -37,11 +40,9 @@ describe('desktop workbench wiring', () => {
     expect(inspector).not.toContain('BRANCH · PR · CHECKS');
   });
 
-  it('auto-opens a newly announced corner and keeps back inside the work pane', () => {
+  it('auto-opens a newly announced corner while the work pane is present', () => {
     expect(room).toContain('observedCornerCardsRef');
-    expect(room).toContain('setSelectedDesktopCornerId(opened)');
-    expect(inspector).toContain('onBack={() => onSelectCorner(null)}');
-    expect(inspector).toContain('Back to work overview');
+    expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner', cornerId: opened })");
   });
 
   it('renders dispatchable workflows as ordinary overview rows behind confirmation', () => {
@@ -75,18 +76,18 @@ describe('desktop workbench wiring', () => {
     expect(inspector).toContain('<DaemonFactCard');
   });
 
-  it('lets a selected corner cockpit maximize over the main pane, not just the side rail', () => {
-    expect(room).toContain('desktopCockpitMaximized');
-    expect(room).toContain('maximized={desktopCockpitMaximized}');
-    expect(room).toContain('onToggleMaximize={toggleDesktopCockpitMaximized}');
-    expect(room).toContain('styles.desktopMainPaneHidden');
-    expect(inspector).toContain('desktop-work-cockpit-maximize');
-    expect(inspector).toContain('maximized ? styles.maximized : { width }');
+  it('promotes a corner into main while leaving the work pane on its overview', () => {
+    expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner-in-main' })");
+    expect(room).toContain('router.push(cornerHref(cornerId, desktopWorkRoomId))');
+    expect(inspector).toContain('desktop-work-open-in-main');
+    expect(inspector).toContain('label="Open in the main pane"');
+    expect(inspector).toContain("title: label");
+    expect(inspector).not.toMatch(/maximize|maximized/i);
   });
 
   it('keeps the desktop frame and both pane widths persistent', () => {
     expect(navigator).toContain(
-      'usesPersistentDesktopFrame(inDesktopShell || isDesktop, isTablet)',
+      'usesPersistentDesktopFrame(inDesktopShell || desktopPlatform, isTablet)',
     );
     expect(navigator).toContain("loadDesktopPaneWidth('navigation')");
     expect(navigator).toContain("saveDesktopPaneWidth('navigation', width)");

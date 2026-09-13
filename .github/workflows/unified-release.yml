@@ -688,7 +688,8 @@ jobs:
           EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
         run: |
           set -euo pipefail
-          export PATH=/usr/local/opt/node@20/bin:/usr/local/bin:$PATH
+          # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
           for name in EXPO_TOKEN EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
             test -n "${!name}" || { echo "$name is required for an iOS store release" >&2; exit 1; }
           done
@@ -708,7 +709,8 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          export PATH=/usr/local/opt/node@20/bin:/usr/local/bin:$PATH
+          # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
           npm ci
           npx --yes "eas-cli@$EAS_CLI_VERSION" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
@@ -723,7 +725,8 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          export PATH=/usr/local/opt/node@20/bin:/usr/local/bin:$PATH
+          # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
           npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4

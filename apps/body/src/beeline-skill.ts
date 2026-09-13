@@ -182,7 +182,7 @@ Then take exactly one action:
 
 - FAIL: reply \`@author\` with the confirmed findings; do not merge.
 - PASS with pending checks: reply \`approved pending checks <reviewed sha>\` and stop.
-- PASS with unknown checks: report the \`pr_checks_status\` reason to the Room and stop; do not retry.
+- PASS with unknown checks: reply in this corner with the \`pr_checks_status\` reason and stop; do not retry.
 - PASS with the gate open and your yolo on: run \`gh pr merge --squash --match-head-commit <reviewed sha> N\`.
 - PASS with the gate open and your yolo off: reply \`approved <reviewed sha>\` and stop.
 `;

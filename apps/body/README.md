@@ -13,9 +13,10 @@ It keeps only four responsibilities:
 
 Room data and writes go through `DaemonApiClient`. The helper has no relay transport, legacy
 pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
-GitHub event consumer. Its sole action surface is repository corner start/status: `read-only-mcp.ts`
-exposes `open_corner` in top-level Rooms and `pr_checks_status` in corners through the `beeline-agent`
-MCP surface.
+GitHub event consumer. Its action surface is repository corner start/status plus Room-to-corner
+steering: `read-only-mcp.ts` exposes `open_corner` and `steer_corner` in top-level Rooms and
+`pr_checks_status` in corners through the `beeline-agent` MCP surface. Corners do not post reports
+back to their parent Room; their Room-facing output is server-owned cards.
 
 ## Commands
 

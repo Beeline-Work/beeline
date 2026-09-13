@@ -286,26 +286,14 @@ describe('relay tools', () => {
       relay: { fromRoomId: ROOM, toRoomId: CORNER, direction: 'down' },
     });
   });
-  it('reports only from a corner turn', async () => {
+  it('refuses steering from a corner turn', async () => {
     const door = await daemonDoor();
-    const response = await callTool(
-      door.origin,
-      { text: 'Ready for review' },
-      { name: 'report_to_room', cornerId: CORNER },
-    );
-    expect(response.result?.isError).not.toBe(true);
-    expect(door.calls[0]).toMatchObject({
-      roomId: CORNER,
-      relay: { fromRoomId: CORNER, toRoomId: ROOM, direction: 'up' },
-    });
-    const refused = await callTool(door.origin, { text: 'No' }, { name: 'report_to_room' });
-    expect(refused.result?.isError ?? Boolean(refused.error)).toBe(true);
     const steer = await callTool(
       door.origin,
       { text: 'No', cornerId: CORNER },
       { name: 'steer_corner', cornerId: CORNER },
     );
     expect(steer.result?.isError ?? Boolean(steer.error)).toBe(true);
-    expect(door.calls).toHaveLength(1);
+    expect(door.calls).toHaveLength(0);
   });
 });

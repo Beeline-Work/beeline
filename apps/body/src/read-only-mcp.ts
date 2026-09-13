@@ -256,19 +256,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'report_to_room',
-    description:
-      'Report a milestone, blocker, or question from this corner to its parent Room as a hand-off.',
-    inputSchema: {
-      type: 'object',
-      required: ['text'],
-      properties: {
-        text: { type: 'string', minLength: 1, maxLength: 16000 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'create_schedule',
     description:
       'Create a schedule that runs your prompt as a mention to you in this Room, on an interval (everyMinutes, minimum 1) or a 5-field cron. With maxRuns the schedule deletes itself after that many runs.',
@@ -539,7 +526,6 @@ export function agentToolsFor(
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
     if (tool.name === 'steer_corner') return !directMessage && !cornerTurn;
-    if (tool.name === 'report_to_room') return !directMessage && cornerTurn;
     return !directMessage || tool.name !== 'open_corner';
   });
 }
@@ -1098,18 +1084,14 @@ export function cornerCallText(args: JsonObject): { name: string; objective: str
   };
 }
 
-async function relayMessage(direction: 'down' | 'up', args: JsonObject): Promise<string> {
+async function relayMessage(direction: 'down', args: JsonObject): Promise<string> {
   const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-  if (process.env.BEELINE_AGENT_DM === '1' || (direction === 'up' ? !cornerId : Boolean(cornerId)))
-    throw new Error(
-      direction === 'up'
-        ? 'report_to_room requires a corner turn'
-        : 'steer_corner requires a Room turn',
-    );
+  if (process.env.BEELINE_AGENT_DM === '1' || Boolean(cornerId))
+    throw new Error('steer_corner requires a Room turn');
   if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
     throw new Error('relay text must contain 1 to 16000 characters');
   const context = await activeCommandContext();
-  const toRoomId = direction === 'up' ? requiredEnv('BEELINE_DAEMON_ROOM_ID') : args.cornerId;
+  const toRoomId = args.cornerId;
   if (typeof toRoomId !== 'string' || !toRoomId) throw new Error('cornerId is required');
   return JSON.stringify(
     await daemonExecute('postRoomMessage', {
@@ -1856,8 +1838,6 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return openCorner(args);
     case 'steer_corner':
       return relayMessage('down', args);
-    case 'report_to_room':
-      return relayMessage('up', args);
     case 'close_corner':
       return closeCorner();
     case 'pr_checks_status':

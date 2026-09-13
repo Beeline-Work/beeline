@@ -989,7 +989,7 @@ describe('Room/corner relays', () => {
     },
   );
 
-  it('reports under the newest open/complete card for its own corner, not newer unrelated cards', async () => {
+  it('refuses an up relay without posting a card or creating a Room command', async () => {
     const corner = randomUUID();
     await db.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Endpoint work')`,
@@ -1005,42 +1005,19 @@ describe('Room/corner relays', () => {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
         [W, corner, who],
       );
-    const anchorId = id();
-    for (const [cardId, cardCorner, type, age] of [
-      [id(), corner, 'corner-open', 40],
-      [anchorId, corner, 'corner-complete', 30],
-      [id(), C, 'corner-open', 20],
-      [id(), corner, 'checks-failing', 10],
-    ] as const) {
-      await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
-        VALUES($1,$2,$3,'Corner card','card','daemon-fact',$4::jsonb,now()-$5::integer*interval '1 second')`,
-        [
-          cardId,
-          R,
-          B,
-          JSON.stringify({ type, cornerId: cardCorner, name: 'Endpoint work', objective: 'Work' }),
-          age,
-        ],
-      );
-    }
     await send('@goosy milestone', corner);
     const source = (await commands(B, corner))[0]!;
     await claim(source);
-    const posted = await result(source, 'The endpoint is ready', 'g1', {
-      relay: { fromRoomId: corner, toRoomId: R, direction: 'up' },
-    });
-    expect((await commands(B))[0]).toMatchObject({
-      reason: 'relay_report',
-      sourceMessageId: posted.id,
-    });
-    const view = (await phone.readRoom(R, H))!;
-    expect(view.messages.find((m) => m.id === posted.id)).toMatchObject({
-      author: { pubkey: B },
-      presentation: 'card',
-      relay: { direction: 'up', anchorMessageId: anchorId },
-    });
-    await result(source, 'Done');
+    await expect(
+      result(source, 'The endpoint is ready', 'g1', {
+        relay: { fromRoomId: corner, toRoomId: R, direction: 'up' },
+      }),
+    ).rejects.toThrow('relay up is retired');
+    expect(await commands(B)).toEqual([]);
+    expect(
+      (await db.query("SELECT id FROM messages WHERE card_type='relay' AND text='The endpoint is ready'"))
+        .rowCount,
+    ).toBe(0);
   });
 
   it('refuses nonmembers, wrong directions, and stale generations without posting', async () => {

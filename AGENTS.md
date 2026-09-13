@@ -66,7 +66,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Branch conventions
 
-- **Corner agents own the GitHub workflow.** Finish means commit, push, `gh pr create`, print the URL, wait for the server checks-passed fact. With no human hold the agent merges with `gh`; the merge webhook archives and reaps the worktree.
+- **Corner agents own the GitHub workflow.** Finish means commit, push, `gh pr create`, print the URL, wait for the server checks-passed fact. With no human hold the agent merges with `gh`; the merge webhook archives and reaps the worktree. Relay up is retired; a corner's only Room-facing outputs are its cards.
 - `fm/*` branches stack; check `gh pr list --json baseRefName,headRefName` before assuming a file is on `main`; `git branch -a --contains <commit>` finds the source branch.
 - A cherry-pick off `feature/*` can drop a context-only declaration — `npm run typecheck` catches it. Generated `relay-stack/web/dl/` bundles are ignored; never stage them in a cherry-pick (the release-channel contract is in `docs/cli-bundle-channel.md`).
 - **Resolve merges as one batch gate:** enumerate every textual conflict and semantic overlap first, resolve the complete set in one pass, then run one integration matrix plus a single conflict-resolution review before push.

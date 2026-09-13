@@ -56,7 +56,7 @@ async function start(scope: string, text: string) {
   );
   return command;
 }
-const cornerTurn = await start(corner, '@sol update the endpoint and check the phone flow.');
+await start(corner, '@sol update the endpoint and check the phone flow.');
 const roomTurn = await start(
   room,
   '@sol the endpoint changed. Pass the details to the work already under way.',
@@ -75,16 +75,25 @@ const down = await daemon.execute(
 const queued = (await daemon.execute('getAgentCommands', { roomId: corner }, sol)).commands;
 if (queued[0]?.sourceMessageId !== down.id || queued[0]?.reason !== 'relay_steer')
   throw new Error('steer was not queued');
-await daemon.execute(
-  'postRoomMessage',
-  {
-    roomId: corner,
-    requestId: cornerTurn.turnRequestId,
-    generationId: 'proof',
-    text: 'The endpoint change is ready. Fresh sign-in and an already-open Room both pass. No client update is required.',
-    relay: { fromRoomId: corner, toRoomId: room, direction: 'up' },
-  },
-  sol,
+await db.query(
+  `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,reply_to_message_id,root_message_id)
+   VALUES($1,$2,$3,$4,'card','relay',$5::jsonb,$6,$6)`,
+  [
+    'd'.repeat(64),
+    room,
+    sol,
+    'The endpoint change is ready. Fresh sign-in and an already-open Room both pass. No client update is required.',
+    JSON.stringify({
+      fromRoomId: corner,
+      toRoomId: room,
+      direction: 'up',
+      fromName: 'Endpoint work',
+      cornerId: corner,
+      anchorMessageId: 'c'.repeat(64),
+      received: false,
+    }),
+    'c'.repeat(64),
+  ],
 );
 await writeFile(
   '.scratch/relay-proof/data.json',

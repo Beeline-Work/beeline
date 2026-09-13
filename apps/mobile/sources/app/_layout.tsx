@@ -367,7 +367,9 @@ export default function RootLayout() {
       <KeyboardProvider preload={false}>
         <GestureHandlerRootView
           style={
-            isDesktop ? { flex: 1 } : { flex: 1, backgroundColor: theme.colors.groupped.background }
+            isDesktop
+              ? { flex: 1 }
+              : { flex: 1, backgroundColor: theme.colors.groupped.background }
           }
         >
           <UpdateProvider>

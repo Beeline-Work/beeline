@@ -1,12 +1,61 @@
-import React, { useLayoutEffect } from 'react';
+import React, { useLayoutEffect, type MutableRefObject } from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
-import { useScrollFollowOnLayoutChange } from './room-scroll-follow';
+import { useScrollFollowOnArrival, useScrollFollowOnLayoutChange } from './room-scroll-follow';
 
 const NORMAL_TRANSCRIPT_GAP = 12;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+function ArrivalTranscript({
+  newestId,
+  pinnedRef,
+  nativeLayoutMovedOffTail,
+}: {
+  newestId: string;
+  pinnedRef: MutableRefObject<boolean>;
+  nativeLayoutMovedOffTail?: () => void;
+}) {
+  const followDecision = useScrollFollowOnArrival({
+    newestId,
+    isPinnedToTail: pinnedRef.current,
+    isUserDragging: false,
+  });
+
+  useLayoutEffect(() => {
+    nativeLayoutMovedOffTail?.();
+  }, [nativeLayoutMovedOffTail]);
+
+  return React.createElement('Transcript', { followDecision });
+}
+
+describe('desktop transcript arrival', () => {
+  it('follows from the pre-append tail position when web layout moves the viewport first', () => {
+    let renderer: ReactTestRenderer;
+    const pinnedRef = { current: true };
+    act(() => {
+      renderer = create(
+        React.createElement(ArrivalTranscript, { newestId: 'message-1', pinnedRef }),
+      );
+    });
+
+    act(() => {
+      renderer!.update(
+        React.createElement(ArrivalTranscript, {
+          newestId: 'message-2',
+          pinnedRef,
+          nativeLayoutMovedOffTail: () => {
+            pinnedRef.current = false;
+          },
+        }),
+      );
+    });
+
+    expect(pinnedRef.current).toBe(false);
+    expect(renderer!.root.findByType('Transcript').props.followDecision).toBe('scroll');
+  });
+});
 
 function ClosedKeyboardTranscript({
   composerHeight,

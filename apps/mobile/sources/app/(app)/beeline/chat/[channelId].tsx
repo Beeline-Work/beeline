@@ -154,7 +154,7 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { scrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
+import { useScrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -1686,18 +1686,13 @@ export default function BuzzChat() {
         ) ?? []),
       ].join('|')
     : null;
-  const prevNewestIdRef = useRef<string | null>(null);
+  const arrivalFollow = useScrollFollowOnArrival({
+    newestId: newestMessageId,
+    isPinnedToTail: isPinnedToTailRef.current,
+    isUserDragging: userDraggingRef.current,
+  });
   useLayoutEffect(() => {
-    const previousNewestId = prevNewestIdRef.current;
-    prevNewestIdRef.current = newestMessageId;
-    if (
-      scrollFollowOnArrival({
-        previousNewestId,
-        nextNewestId: newestMessageId,
-        isPinnedToTail: isPinnedToTailRef.current,
-        isUserDragging: userDraggingRef.current,
-      }) === 'hold'
-    ) {
+    if (arrivalFollow === 'hold') {
       if (!desktopTranscript && !isPinnedToTailRef.current) {
         // An appended fold row grows inside the existing index-0 card, which
         // Android's maintainVisibleContentPosition cannot anchor by itself.

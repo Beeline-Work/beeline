@@ -7,6 +7,10 @@ const composeSource = readFileSync(
   new URL('../../../components/buzz/RoomDeckComposeMenu.tsx', import.meta.url),
   'utf8',
 );
+const sectionHeaderSource = readFileSync(
+  new URL('../../../components/buzz/RoomListSectionHeader.tsx', import.meta.url),
+  'utf8',
+);
 const roomViewSource = readFileSync(
   new URL('../../../../../../packages/api-contract/src/phone-types.ts', import.meta.url),
   'utf8',
@@ -65,12 +69,18 @@ function capCenterOffset(font: Buffer, fontSize: number): number {
 }
 
 describe('Room list layout contract', () => {
-  it('places DMs beneath Rooms without a second section heading', () => {
+  it('places DMs beneath Rooms under a conditional Messages heading', () => {
     expect(source).toContain('<SectionList');
     expect(source).toContain('sections={chatSections}');
     expect(source).toContain('roomListSections(chatList?.chats ?? [])');
-    expect(source).not.toContain('RoomListSectionHeader');
-    expect(source).not.toContain('section.title');
+    expect(source).toContain(
+      'section.title ? <RoomListSectionHeader title={section.title} /> : null',
+    );
+    expect(sectionHeaderSource).toContain('{title.toUpperCase()}');
+    expect(sectionHeaderSource).toContain('accessibilityRole="header"');
+    expect(styleBlock(sectionHeaderSource, 'sectionHeaderText')).toContain(
+      '...hull.type.sectionHead,',
+    );
     expect(source).not.toContain('<FlatList');
   });
 

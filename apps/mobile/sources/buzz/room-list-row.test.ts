@@ -1,9 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 import type { AttachmentReference, ChatListItem } from '@beeline/buzz-client';
+
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { Text: host('Text'), View: host('View') };
+});
+vi.mock('react-native-unistyles', () => {
+  const value = new Proxy({}, { get: () => value });
+  return {
+    StyleSheet: { create: (factory: (theme: unknown) => unknown) => factory({ buzz: value }) },
+  };
+});
+vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 import type { CornerSummary } from './corners';
 import type { CornerState } from '@beeline/api-contract/phone';
 import { cornerName } from './corners';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import {
   displayCornerTitle,
   displayGroupedCornerTitle,
@@ -91,15 +113,43 @@ describe('Room list sections', () => {
     const newer = chat('newer-dm', 20, true, 40);
     const sections = roomListSections([older, chat('room-a', 50), newer, chat('room-b', 5)]);
 
-    expect(sections.every((section) => !('title' in section))).toBe(true);
+    expect(sections.map((section) => section.title)).toEqual([undefined, 'Messages']);
     expect(sections[0]?.data.map((item) => item.room.id)).toEqual(['room-a', 'room-b']);
     expect(sections[1]?.data.map((item) => item.room.id)).toEqual(['newer-dm', 'older-dm']);
   });
 
-  it('never adds a Messages section label above direct messages', () => {
-    expect(roomListSections([chat('dm', 1, true)])).toEqual([
-      { kind: 'messages', data: [chat('dm', 1, true)] },
-    ]);
+  it('renders the Messages header between the Room and DM rows', () => {
+    const sections = roomListSections([chat('dm', 2, true), chat('room', 1)]);
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(
+        React.createElement(
+          React.Fragment,
+          null,
+          ...sections.flatMap((section) => [
+            ...(section.title
+              ? [
+                  React.createElement(RoomListSectionHeader, {
+                    key: `header-${section.kind}`,
+                    title: section.title,
+                  }),
+                ]
+              : []),
+            ...section.data.map((item) =>
+              React.createElement('RoomRow', { key: item.room.id, roomId: item.room.id }),
+            ),
+          ]),
+        ),
+      );
+    });
+
+    const orderedRows = tree.root.findAll(
+      (node) => node.type === 'Text' || node.type === 'RoomRow',
+    );
+    expect(
+      orderedRows.map((node) => (node.type === 'Text' ? node.props.children : node.props.roomId)),
+    ).toEqual(['room', 'MESSAGES', 'dm']);
   });
 
   it('omits the Messages heading when there are no direct messages', () => {

@@ -52,6 +52,7 @@ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/Co
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import {
@@ -805,6 +806,9 @@ export default function BuzzChannels() {
             refreshNow();
           }}
           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
+          renderSectionHeader={({ section }) =>
+            section.title ? <RoomListSectionHeader title={section.title} /> : null
+          }
           ListEmptyComponent={
             <EmptyRoomActions
               canAddRoom={!viewerIsAgent && canManageWorkspace}

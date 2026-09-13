@@ -1,6 +1,5 @@
 import * as React from 'react';
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import {
   Text,
   TextInput,
@@ -187,18 +186,6 @@ export function ConversationComposer({
               style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]}
               testID={`pending-chat-attachment-${index}`}
             >
-              {attachment.mimeType.startsWith('image/') ? (
-                <Image
-                  accessibilityIgnoresInvertColors
-                  contentFit="cover"
-                  source={{ uri: attachment.uri }}
-                  style={styles.attachmentThumbnail}
-                />
-              ) : (
-                <View style={styles.attachmentFileGlyph}>
-                  <Text style={styles.attachmentFileGlyphText}>▧</Text>
-                </View>
-              )}
               <View style={styles.attachmentCopy}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={styles.attachmentName}>
                   {attachment.name}
@@ -352,22 +339,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     paddingLeft: 16,
   },
-  attachmentThumbnail: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgHighlight,
-  },
-  attachmentFileGlyph: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgHighlight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  attachmentFileGlyphText: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
-  attachmentCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
+  attachmentCopy: { flex: 1, minWidth: 0 },
   attachmentName: {
     ...theme.buzz.type.body,
     fontSize: theme.buzz.transcriptCard.rowTitleSize,

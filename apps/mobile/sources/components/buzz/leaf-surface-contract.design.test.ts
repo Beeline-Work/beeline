@@ -18,6 +18,7 @@ const sources = {
     new URL('../../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
     'utf8',
   ),
+  'TranscriptCard.tsx': readFileSync(new URL('./TranscriptCard.tsx', import.meta.url), 'utf8'),
 };
 const groknightSource = readFileSync(new URL('../../buzz/groknight.ts', import.meta.url), 'utf8');
 
@@ -37,6 +38,8 @@ describe('Beeline leaf-surface prohibited patterns', () => {
     }
     expect(groknightSource.match(/radius:\s*3,/g)).toHaveLength(1);
     expect(groknightSource).not.toMatch(/radius:\s*(?!3,)\d+/);
+    expect(groknightSource).toContain('cornerRadius: 10');
+    expect(sources['TranscriptCard.tsx']).toContain('borderRadius: metric.cornerRadius');
   });
 
   it('uses the named primitives only on their intended leaf surfaces', () => {

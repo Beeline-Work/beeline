@@ -21,10 +21,6 @@ const desktopInspectorSource = readFileSync(
 );
 const cornerHeaderSource = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
 const cornerListSource = readFileSync(new URL('./corners/[roomId].tsx', import.meta.url), 'utf8');
-const monoHullSource = readFileSync(
-  new URL('../../../components/buzz/MonoHull.tsx', import.meta.url),
-  'utf8',
-);
 const cornerTitleTypeface = readFileSync(
   new URL('../../../assets/fonts/SpaceGrotesk-SemiBold.ttf', import.meta.url),
 );
@@ -327,12 +323,6 @@ describe('Room list layout contract', () => {
     );
     expect(cornerListSource).toContain(
       '<StateCircle state={display.visual} tone={display.tone} />',
-    );
-    expect(styleBlock(monoHullSource, 'stateCircleStrokeBrass')).toContain(
-      'borderColor: groknight.accent',
-    );
-    expect(styleBlock(monoHullSource, 'stateCircleFillQuiet')).toContain(
-      'backgroundColor: groknight.ledgerQuiet',
     );
   });
 

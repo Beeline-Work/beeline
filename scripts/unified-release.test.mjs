@@ -10,6 +10,9 @@ import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
   COMPONENT_PATH_RULES,
+  createServerImageLedger,
+  evaluateServerCanarySample,
+  evaluateServerCanaryWindow,
   RELEASE_BUDGET_MINUTES,
   RELEASE_COMPONENTS,
   RELEASE_NOTIFY_TIMEOUT_MS,
@@ -18,11 +21,13 @@ import {
   initializeRelease,
   markComponentStage,
   notifyRelease,
+  planServerCanaryDeployment,
   releasePlanSummary,
   runtimePinChangeFromPublishedInputs,
   retryPlan,
   selectReleaseComponents,
   selectReleaseComponentsFromPublishedInputs,
+  selectServerRollbackImage,
   releaseVersionForSource,
 } from './unified-release.mjs';
 
@@ -55,6 +60,106 @@ function deliveredPrevious() {
     }])),
   };
 }
+
+test('server canary plan migrates, updates one Machine, watches, then updates its peer', () => {
+  const machines = [
+    { id: 'b-machine', config: { image: 'registry.fly.io/beeline-server:old' } },
+    { id: 'a-machine', config: { image: 'registry.fly.io/beeline-server:old' } },
+  ];
+  const plan = planServerCanaryDeployment(machines, 'registry.fly.io/beeline-server:new');
+  assert.deepEqual(plan.steps, [
+    'migrate',
+    'update:a-machine:registry.fly.io/beeline-server:new',
+    'watch:a-machine:300s',
+    'update:b-machine:registry.fly.io/beeline-server:new',
+  ]);
+  assert.deepEqual(plan.rollbackSteps, [
+    'update:a-machine:registry.fly.io/beeline-server:old',
+    'fail-release',
+  ]);
+  assert.throws(() => planServerCanaryDeployment(machines.slice(0, 1), 'registry.fly.io/beeline-server:new'), /exactly two/);
+  assert.throws(() => planServerCanaryDeployment([
+    machines[0], { id: 'c', config: { image: 'registry.fly.io/beeline-server:other' } },
+  ], 'registry.fly.io/beeline-server:new'), /already split/);
+});
+
+test('server canary samples and the bounded window fail closed', () => {
+  const clean = evaluateServerCanarySample({
+    health: {
+      ok: true,
+      database: {
+        pool: { size: 10, inUse: 2, waiting: 0 },
+        oldestActiveQueryAgeMs: 42,
+      },
+    },
+    roomRead: { ok: true, status: 200 },
+    version: { version: 'v0.0.9', sourceSha: NEW_SHA },
+    expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
+  });
+  assert.equal(clean.clean, true);
+  assert.equal(clean.poolMetricsAvailable, true);
+  assert.equal(evaluateServerCanarySample({
+    health: {
+      ok: true,
+      database: {
+        pool: { size: 10, inUse: 10, waiting: 3 },
+        oldestActiveQueryAgeMs: 4_999,
+      },
+    },
+    roomRead: { ok: true, status: 200 },
+    version: { version: 'v0.0.9', sourceSha: NEW_SHA },
+    expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
+  }).clean, false);
+  const missingPoolMetrics = evaluateServerCanarySample({
+    health: { ok: true },
+    roomRead: { ok: true, status: 200 },
+    version: { version: 'v0.0.9', sourceSha: NEW_SHA },
+    expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
+  });
+  assert.equal(missingPoolMetrics.clean, false);
+  assert.equal(missingPoolMetrics.poolMetricsAvailable, false);
+  assert.match(missingPoolMetrics.reasons[0], /omitted database pool diagnostics/);
+  const samples = [0, 300].map((seconds) => ({
+    at: new Date(Date.UTC(2026, 8, 12, 12, 0, seconds)).toISOString(), verdict: clean,
+  }));
+  assert.deepEqual(evaluateServerCanaryWindow(samples), {
+    clean: true, elapsedSeconds: 300, poolMetricsAvailable: true,
+  });
+  assert.equal(evaluateServerCanaryWindow(samples.map((sample, index) => index ? {
+    ...sample, verdict: { clean: false, reasons: ['Room read failed'] },
+  } : sample)).clean, false);
+});
+
+test('server image ledger pins the automatic and manual rollback image', () => {
+  const plan = planServerCanaryDeployment([
+    { id: 'a', imageRef: 'registry.fly.io/beeline-server:old' },
+    { id: 'b', imageRef: 'registry.fly.io/beeline-server:old' },
+  ], 'registry.fly.io/beeline-server:new');
+  const ledger = createServerImageLedger({ version: 'v0.0.9', sourceSha: NEW_SHA, plan });
+  assert.equal(ledger.previousImageRef, 'registry.fly.io/beeline-server:old');
+  assert.equal(selectServerRollbackImage({ ledger }), ledger.previousImageRef);
+  assert.equal(selectServerRollbackImage({
+    explicitImageRef: 'registry.fly.io/beeline-server:named', ledger,
+  }), 'registry.fly.io/beeline-server:named');
+  assert.throws(() => selectServerRollbackImage({ ledger: {} }), /no valid previous/);
+});
+
+test('server deployment dry-run prints both success and rollback ordering', () => {
+  const root = mkdtempSync(join(tmpdir(), 'beeline-canary-plan-'));
+  try {
+    const machines = join(root, 'machines.json');
+    writeFileSync(machines, JSON.stringify([
+      { id: 'a', config: { image: 'registry.fly.io/beeline-server:old' } },
+      { id: 'b', config: { image: 'registry.fly.io/beeline-server:old' } },
+    ]));
+    const output = run('node', [RELEASE_SCRIPT, 'server-deploy-plan', '--machines', machines,
+      '--image', 'registry.fly.io/beeline-server:new', '--simulate-failure', 'true'], root);
+    assert.match(output, /migrate -> update:a:.*:new -> watch:a:300s -> update:b:.*:new/);
+    assert.match(output, /canary failed -> update:a:.*:old -> fail-release/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('component selection follows the explicit path map', () => {
   assert.deepEqual(selectReleaseComponents(['apps/server/src/index.ts']), ['server']);
@@ -480,6 +585,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(inputs.retry_attempt.default, '1');
   assert.equal(inputs.selection.default, 'auto');
   assert.equal(inputs.store_track.default, 'none');
+  assert.equal(inputs.plan_only.default, false);
   for (const input of Object.values(inputs)) assert.match(input.description, /Recovery only/);
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
@@ -490,6 +596,9 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
   assert.match(source, /release-version --previous "\$previous" --sha "\$release_sha"/);
+  assert.match(source, /if \[ "\$PLAN_ONLY" = true \]; then/);
+  assert.match(source, /release_sha=\$\(git rev-parse HEAD\)/);
+  assert.match(source, /release_version=v0\.0\.0/);
   assert.match(source, /release_sha="\$\{REQUESTED_SHA:-\$GITHUB_SHA\}"/);
   assert.match(source, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
   assert.match(source, /unified-release\.mjs component-paths/);
@@ -503,6 +612,10 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native\.result == 'success'/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_website == 'true'/);
+  assert.equal(workflow.jobs.server_deploy_plan.if, 'inputs.plan_only == true');
+  for (const job of ['server', 'helper', 'mobile_ota', 'desktop_installers', 'desktop_checkpoint', 'website', 'mobile_native', 'release_result', 'retry']) {
+    assert.match(String(workflow.jobs[job].if), /inputs\.plan_only != true/);
+  }
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-server/);
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-helper/);
   assert.match(source, /stage_server:[\s\S]*stage_helper:[\s\S]*stage_mobile_ota:/);
@@ -519,6 +632,8 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const release = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   const workflow = parse(release);
   const rollback = readFileSync(new URL('../.github/workflows/mobile-ota-rollback.yml', import.meta.url), 'utf8');
+  const serverRollback = readFileSync(new URL('../.github/workflows/server-rollback.yml', import.meta.url), 'utf8');
+  const serverLeg = readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8');
   const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
   const desktop = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
   assert.match(release, /node scripts\/server-release-smoke\.mjs/);
@@ -546,6 +661,17 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(release, /unified-release-index/);
   assert.match(release, /store_track:/);
   assert.match(rollback, /mobile-ota-rollback-/);
+  assert.match(serverRollback, /server-image-ledger-/);
+  assert.match(serverRollback, /default: true/);
+  assert.match(serverRollback, /flyctl machine update/);
+  assert.match(serverLeg, /MIGRATION_DATABASE_URL/);
+  assert.match(serverLeg, /seq 0 20/);
+  assert.match(serverLeg, /sleep 15/);
+  assert.match(serverLeg, /fly-force-instance-id/);
+  assert.match(serverLeg, /server\.usebeeline\.app\/health(?:\s|\\)/);
+  assert.doesNotMatch(serverLeg, /server\.usebeeline\.app\/healthz/);
+  assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
+  assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);
   for (const gate of ['TYPECHECK', 'BODY SUITE', 'MOBILE SUITE', 'ACTIONLINT']) {
     assert.match(checks, new RegExp(`name: ${gate}$`, 'm'));

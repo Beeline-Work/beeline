@@ -11,6 +11,7 @@ import { createBeelineServer } from './server.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { createMonolithAuth } from './monolith-auth.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 
 const HUMAN = createHash('sha256').update('github:proof-owner').digest('hex');
 const AGENT = 'e'.repeat(64);
@@ -29,6 +30,7 @@ describe('end-to-end agent schedule proof', () => {
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await database.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Bee')`,
       [HUMAN, AGENT],

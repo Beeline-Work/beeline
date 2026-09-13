@@ -17,3 +17,11 @@ The screenshots use the production `ConversationComposer` on the Expo web surfac
 | Reply and attachments · 390×844 | Reply and attachments · 1440×900 |
 | --- | --- |
 | ![Combined phone state](demonstrated-both-390x844.png) | ![Combined desktop state](demonstrated-both-1440x900.png) |
+
+## Composer attachment plates
+
+PR #1168's combined 390×844 capture above reproduces the leading image thumbnail and hatched PDF plate. The captures below use the production `ConversationComposer` on the local Expo web surface with the same staged image and PDF, after removing composer-only plates.
+
+| No plates · 390×844 | No plates · 1440×900 |
+| --- | --- |
+| ![Image and PDF rows without plates on phone](no-plates-both-390x844.png) | ![Image and PDF rows without plates on desktop](no-plates-both-1440x900.png) |

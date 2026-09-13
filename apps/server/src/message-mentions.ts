@@ -137,11 +137,6 @@ export function taggedIdentityIdsSql(message: string): string {
   )`;
 }
 
-/** Whether `message` tags `identityExpr`, by the same reading as `taggedIdentityIdsSql`. */
-export function tagsIdentitySql(message: string, identityExpr: string): string {
-  return `${identityExpr} = ANY(${taggedIdentityIdsSql(message)})`;
-}
-
 /**
  * Whether one already-resolved current Room member is tagged by a message.
  *

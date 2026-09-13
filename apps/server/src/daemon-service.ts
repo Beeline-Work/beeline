@@ -2770,15 +2770,28 @@ export class DaemonService {
          VALUES($1,$2,$3,$4,$5,'{"lifecycle":"working","checks":"unknown"}')`,
         [cornerId, agentId, commissionedBy ?? null, objective, input.requestId],
       );
-      await createAgentCommand(db, {
-        roomId: cornerId,
-        agentId,
-        sourceMessageId: parentCommand.source_message_id,
-        reason: 'corner_objective',
-        parent: parentCommand,
-        retainDepth: true,
-        turnRequestId: input.requestId,
-      });
+      // Membership makes every agent a participant in this shared Room, so
+      // each one needs a durable intake command for its initial objective.
+      // Merely copying membership lets a helper list and access the corner but
+      // leaves its command loop asleep forever.
+      const agents = await db.query<{ identity_id: string }>(
+        `SELECT membership.identity_id
+         FROM memberships membership
+         JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
+         WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+         ORDER BY membership.identity_id`,
+        [cornerId],
+      );
+      for (const member of agents.rows)
+        await createAgentCommand(db, {
+          roomId: cornerId,
+          agentId: member.identity_id,
+          sourceMessageId: parentCommand.source_message_id,
+          reason: 'corner_objective',
+          parent: parentCommand,
+          retainDepth: true,
+          turnRequestId: input.requestId,
+        });
       // One durable open marker in the parent Room; the phone renders this as
       // a daemon-fact card and the push rule fires on it.
       await systemLine(db, {

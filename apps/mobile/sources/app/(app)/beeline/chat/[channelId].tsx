@@ -413,7 +413,6 @@ export default function BuzzChat() {
     adoptTransport: setSessionTransport,
     roomClient,
     roomSurface,
-    firstUnreadMessageId,
     liveOverlays,
     userPubkey,
     heartbeatPresences,
@@ -827,20 +826,10 @@ export default function BuzzChat() {
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
-  const foldedMessages = useMemo(() => {
-    const anchoredMessages = anchorRelayReports(combinedMessages);
-    const boundary = anchoredMessages.findIndex(
-      (message) =>
-        message.id === firstUnreadMessageId ||
-        message.relayReports?.some((report) => report.id === firstUnreadMessageId),
-    );
-    if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchoredMessages));
-    // A folded system/activity run must not swallow the unread boundary.
-    return [
-      ...foldSystemLines(foldSettledActivityRuns(anchoredMessages.slice(0, boundary))),
-      ...foldSystemLines(foldSettledActivityRuns(anchoredMessages.slice(boundary))),
-    ];
-  }, [combinedMessages, firstUnreadMessageId]);
+  const foldedMessages = useMemo(
+    () => foldSystemLines(foldSettledActivityRuns(anchorRelayReports(combinedMessages))),
+    [combinedMessages],
+  );
   const unprojectedMessages = useMemo(
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
@@ -3469,7 +3458,6 @@ export default function BuzzChat() {
   );
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
-    firstUnreadMessageId,
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,

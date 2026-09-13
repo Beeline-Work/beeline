@@ -39,6 +39,7 @@ const chatSource = readFileSync(
   new URL('../../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
+const composerSource = readFileSync(new URL('./ConversationComposer.tsx', import.meta.url), 'utf8');
 
 afterEach(() => {
   desktop.value = false;
@@ -87,9 +88,9 @@ describe('AttachmentPickerSheet', () => {
     expect(chatSource).toContain('allowsMultipleSelection: true');
     expect(chatSource).toContain('selectionLimit: remaining');
     expect(chatSource).toContain('pickedPhotoAttachments(result.assets)');
-    expect(chatSource).toContain('pendingAttachments.map((attachment, index) =>');
+    expect(chatSource).toContain('attachments={pendingAttachments.map((attachment) =>');
     expect(chatSource).toContain('uploadChatAttachments(');
-    expect(chatSource).toContain('testID={`pending-chat-attachment-remove-${index}`}');
+    expect(composerSource).toContain('testID={`pending-chat-attachment-remove-${index}`}');
   });
 
   it('closes before dispatching Photo or Document and exposes scrim/Cancel dismissal', () => {

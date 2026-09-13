@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, SectionList, Text, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, Pressable, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
@@ -51,6 +51,7 @@ import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
+import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import {
@@ -65,8 +66,7 @@ import { useIsDesktop } from '@/utils/responsive';
 
 const AGE_TICK_MS = 60_000;
 const COMPOSE_FAB_CLEARANCE = 80;
-/** The empty deck's one primary: the same 44pt touch height as the FAB. */
-const EMPTY_PRIMARY_HEIGHT = 44;
+const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
 /** Speakeasy index row: 64 tall. Room and DM copy share one leading edge;
  *  the brass `#`/`@` sigil states the row kind without a separate tile. */
 const ROW_HEIGHT = 64;
@@ -80,6 +80,58 @@ const ROW_COPY_GAP = 12;
  *  stem under the name rather than a block floating off to its right. */
 const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
+
+type EmptyRoomActionsProps = {
+  canAddRoom: boolean;
+  canConnectAgent: boolean;
+  onAddRoom: () => void;
+  onConnectAgent: () => void;
+  desktop?: boolean;
+  testID?: string;
+};
+
+/** The first Workspace view: quiet orientation, then two restrained actions. */
+function EmptyRoomActions({
+  canAddRoom,
+  canConnectAgent,
+  desktop = false,
+  onAddRoom,
+  onConnectAgent,
+  testID = 'room-list-empty',
+}: EmptyRoomActionsProps) {
+  return (
+    <View style={[styles.empty, desktop && styles.desktopEmpty]} testID={testID}>
+      <Text style={styles.emptyTitle}>No Rooms yet</Text>
+      <Text style={styles.emptyCopy}>
+        A Room holds one repository and the people and agents working on it.
+      </Text>
+      <View style={styles.emptyActionList}>
+        {canAddRoom && (
+          <Pressable
+            accessibilityLabel="Add a Room"
+            accessibilityRole="button"
+            onPress={onAddRoom}
+            style={({ pressed }) => [styles.emptyButton, pressed && styles.emptyButtonPressed]}
+            testID="empty-add-room"
+          >
+            <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
+          </Pressable>
+        )}
+        {canConnectAgent && (
+          <Pressable
+            accessibilityLabel="Connect an agent"
+            accessibilityRole="button"
+            onPress={onConnectAgent}
+            style={({ pressed }) => [styles.emptyButton, pressed && styles.emptyButtonPressed]}
+            testID="empty-connect-agent"
+          >
+            <Text style={styles.emptySecondaryLabel}>Connect an agent</Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+}
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -124,6 +176,10 @@ export default function BuzzChannels() {
   const [error, setError] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
   const [memberPickerVisible, setMemberPickerVisible] = useState(false);
+  const [agentConnectVisible, setAgentConnectVisible] = useState(false);
+  const [pairCommand, setPairCommand] = useState<string | null>(null);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairingError, setPairingError] = useState<string | null>(null);
   const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [roomName, setRoomName] = useState('');
@@ -561,6 +617,34 @@ export default function BuzzChannels() {
     }
   }, [activeCommunityId, canManageWorkspace, creatingRoom, pendingRepo, roomName, transport]);
 
+  const connectAgent = useCallback(async () => {
+    if (!transport || !activeCommunityId || pairingBusy || viewerIsAgent) return;
+    setAgentConnectVisible(true);
+    setPairCommand(null);
+    setPairingError(null);
+    setPairingBusy(true);
+    try {
+      const pairing = await (
+        await transport.ensureClient()
+      ).createAgentPairingCode(activeCommunityId);
+      setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
+    } catch (reason) {
+      setPairingError(`Could not create agent invite: ${String(reason)}`);
+    } finally {
+      setPairingBusy(false);
+    }
+  }, [activeCommunityId, pairingBusy, transport, viewerIsAgent]);
+
+  const closeAgentConnect = useCallback(() => {
+    setAgentConnectVisible(false);
+    setPairCommand(null);
+    setPairingError(null);
+  }, []);
+
+  const copyPairCommand = useCallback(async (command: string) => {
+    await (await import('expo-clipboard')).setStringAsync(command);
+  }, []);
+
   const compose = useCallback(
     (action: RoomDeckComposeAction) => {
       if (!canManageWorkspace && (action === 'room' || action === 'invite')) return;
@@ -672,16 +756,43 @@ export default function BuzzChannels() {
             void handleManageGitHubInstallation(installation)
           }
         />
+        <MemberPickerSheet
+          agentConnectOnly
+          busy={pairingBusy}
+          canManage={canManageWorkspace}
+          canConnectAgent={!viewerIsAgent}
+          candidates={undefined}
+          error={agentConnectVisible ? pairingError : null}
+          onAdd={() => undefined}
+          onClose={closeAgentConnect}
+          onConnectAgent={() => void connectAgent()}
+          onCopyPairCommand={(command) => void copyPairCommand(command)}
+          onInvitePerson={() => undefined}
+          pairCommand={pairCommand}
+          testID="empty-agent-connect-sheet"
+          visible={agentConnectVisible}
+        />
         {!!error && (
           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>
             <Text style={styles.error}>{error}</Text>
           </TouchableOpacity>
         )}
         {isDesktop ? (
-          <View style={styles.center} testID="desktop-room-selection-empty">
-            <Text style={styles.emptyTitle}>Select a Room</Text>
-            <Text style={styles.emptyCopy}>Choose a Room or direct message from the sidebar.</Text>
-          </View>
+          chatList.chats.length === 0 ? (
+            <EmptyRoomActions
+              canAddRoom={canManageWorkspace}
+              canConnectAgent={!viewerIsAgent}
+              desktop
+              onAddRoom={() => setShowCreateRoom(true)}
+              onConnectAgent={() => void connectAgent()}
+              testID="desktop-room-list-empty"
+            />
+          ) : (
+            <View style={styles.center} testID="desktop-room-selection-empty">
+              <Text style={styles.emptyTitle}>Select a Room</Text>
+              <Text style={styles.emptyCopy}>Choose a Room or direct message from the sidebar.</Text>
+            </View>
+          )
         ) : (
           <SectionList
           testID="room-list"
@@ -695,38 +806,12 @@ export default function BuzzChannels() {
           }}
           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
           ListEmptyComponent={
-            // One quiet block in the upper third of the deck, not a hero in
-            // the void: the FAB already anchors the bottom. Exactly one
-            // obviously tappable primary (a 44pt content-width brass button,
-            // sentence case) and a quiet brass text link beside it — never a
-            // second box, never a tracked-uppercase label (those are section
-            // heads only).
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No Rooms yet</Text>
-              <Text style={styles.emptyCopy}>Start a Room to begin.</Text>
-              {!viewerIsAgent && (
-                <View style={styles.emptyActions}>
-                  {canManageWorkspace && (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      onPress={() => setShowCreateRoom(true)}
-                      style={styles.emptyPrimary}
-                      testID="empty-add-room"
-                    >
-                      <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    accessibilityRole="link"
-                    onPress={() => compose('agent')}
-                    style={styles.emptyLink}
-                    testID="empty-invite-agent"
-                  >
-                    <Text style={styles.emptyLinkLabel}>Invite an agent</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
+            <EmptyRoomActions
+              canAddRoom={!viewerIsAgent && canManageWorkspace}
+              canConnectAgent={!viewerIsAgent}
+              onAddRoom={() => setShowCreateRoom(true)}
+              onConnectAgent={() => void connectAgent()}
+            />
           }
           renderItem={({ item }: { item: ChatListItem }) => {
             // Every row-level fact is derived once in room-list-row.ts: the
@@ -1001,7 +1086,7 @@ const styles = StyleSheet.create((theme) => {
     },
     header: {
       minHeight: 62,
-      paddingHorizontal: 16,
+      paddingHorizontal: hull.space.lg,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -1038,30 +1123,47 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: hull.space.xxl,
       paddingBottom: COMPOSE_FAB_CLEARANCE,
     },
-    empty: { alignItems: 'flex-start', gap: hull.space.sm, paddingHorizontal: hull.space.md },
+    empty: {
+      alignItems: 'flex-start',
+      gap: hull.space.sm,
+      paddingHorizontal: hull.space.lg,
+      width: '100%',
+    },
+    desktopEmpty: { paddingTop: hull.space.xxl },
     emptyTitle: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    emptyCopy: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    emptyActions: {
+    emptyCopy: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.ledgerQuiet,
+      maxWidth: 330,
+    },
+    emptyActionList: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: hull.space.md,
-      marginTop: hull.space.sm,
+      gap: 10,
+      marginTop: hull.space.md,
     },
-    emptyPrimary: {
-      height: EMPTY_PRIMARY_HEIGHT,
-      alignSelf: 'flex-start',
+    emptyButton: {
+      height: 44,
       justifyContent: 'center',
       paddingHorizontal: hull.space.md,
-      backgroundColor: hull.accent,
-      borderRadius: hull.radius,
+      borderWidth: 1,
+      borderColor: hull.borderStrong,
+      borderRadius: 10,
     },
+    emptyButtonPressed: { backgroundColor: hull.bgPressed },
     emptyPrimaryLabel: {
-      ...Typography.default('semiBold'),
-      ...hull.type.bodyStrong,
-      color: hull.textInverted,
+      ...Typography.ledger('medium'),
+      color: hull.accent,
+      fontSize: hull.type.body.fontSize - 1,
+      lineHeight: hull.type.body.lineHeight,
     },
-    emptyLink: { height: EMPTY_PRIMARY_HEIGHT, justifyContent: 'center' },
-    emptyLinkLabel: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
+    emptySecondaryLabel: {
+      ...Typography.ledger(),
+      color: hull.ledgerQuiet,
+      fontSize: hull.type.body.fontSize - 1,
+      lineHeight: hull.type.body.lineHeight,
+    },
     roomCell: {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,

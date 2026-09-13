@@ -25,10 +25,6 @@ vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
-vi.mock('expo-image', async () => {
-  const React = await import('react');
-  return { Image: (props: any) => React.createElement('Image', props, props.children) };
-});
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -118,7 +114,7 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(cancelReply).toHaveBeenCalledOnce();
   });
 
-  it('shows three staged-file rows, their metadata, and a calm overflow count', () => {
+  it('shows staged-file rows without leading plates, plus metadata and a calm overflow count', () => {
     const removeAttachment = vi.fn();
     const f = render('');
     const props = f.renderer.root.findByType(ConversationComposer).props;
@@ -143,17 +139,15 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
       ),
     );
     const adjuncts = f.renderer.root.findByProps({ testID: 'chat-composer-adjuncts' });
-    expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-0' }).length).toBeGreaterThan(
-      0,
-    );
-    expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-1' }).length).toBeGreaterThan(
-      0,
-    );
+    const imageRow = adjuncts.findByProps({ testID: 'pending-chat-attachment-0' });
+    const pdfRow = adjuncts.findByProps({ testID: 'pending-chat-attachment-1' });
+    expect(imageRow.findAllByType('Image')).toHaveLength(0);
+    expect(imageRow.findAllByType('View')).toHaveLength(2);
+    expect(pdfRow.findAllByType('View')).toHaveLength(2);
     expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-2' }).length).toBeGreaterThan(
       0,
     );
     expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-3' })).toHaveLength(0);
-    expect(adjuncts.findAllByType('Image')).toHaveLength(1);
     const text = adjuncts
       .findAllByType('Text')
       .map((node: any) => node.props.children)
@@ -161,6 +155,7 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(text).toContain('photo.jpg');
     expect(text).toContain('2.1 MB');
     expect(text).toContain('IMAGE/JPEG');
+    expect(text).not.toContain('▧');
     expect(
       adjuncts.findByProps({ testID: 'pending-chat-attachments-more' }).findByType('Text').props
         .children,

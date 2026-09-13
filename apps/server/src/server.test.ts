@@ -44,6 +44,26 @@ describe('server readiness', () => {
     expect(query).toHaveBeenCalledWith('SELECT 1');
   });
 
+  it('reports app pool pressure and the oldest active app query', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const oldestActiveQueryAgeMs = vi.fn().mockResolvedValue(12_345);
+    const response = await get('/health', {
+      query,
+      transaction: vi.fn(),
+      poolCounts: () => ({ total: 5, idle: 2, waiting: 3 }),
+      oldestActiveQueryAgeMs,
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      database: {
+        pool: { size: 5, inUse: 3, waiting: 3 },
+        oldestActiveQueryAgeMs: 12_345,
+      },
+    });
+  });
+
   it('returns 503 when the database query fails', async () => {
     const response = await get('/readyz', {
       query: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),

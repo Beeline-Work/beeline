@@ -521,7 +521,8 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const rollback = readFileSync(new URL('../.github/workflows/mobile-ota-rollback.yml', import.meta.url), 'utf8');
   const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
   const desktop = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
-  assert.match(release, /https:\/\/server\.usebeeline\.app\/readyz/);
+  assert.match(release, /node scripts\/server-release-smoke\.mjs/);
+  assert.match(release, /BEELINE_REVIEW_SECRET: \$\{\{ secrets\.BEELINE_REVIEW_SECRET \}\}/);
   assert.match(release, /unified-release\.mjs notify/);
   const notification = workflow.jobs.release_result.steps.find((step) => step.id === 'notification');
   assert.equal(notification['continue-on-error'], true);

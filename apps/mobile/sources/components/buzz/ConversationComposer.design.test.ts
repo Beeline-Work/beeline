@@ -25,8 +25,9 @@ describe('Option A composer chrome', () => {
     expect(surface).toContain('backgroundColor: theme.buzz.bgRaised');
   });
 
-  it('lets the row, rather than Android font metrics, own the vertical inset', () => {
-    expect(composer).toContain("inputAndroid: { includeFontPadding: false }");
+  it('centers Android text within the fixed-height input without trimming font bounds', () => {
+    expect(composer).toContain("inputAndroid: { textAlignVertical: 'center' }");
+    expect(composer).not.toContain('includeFontPadding: false');
     expect(composer).toContain("textAlignVertical: 'top'");
   });
 

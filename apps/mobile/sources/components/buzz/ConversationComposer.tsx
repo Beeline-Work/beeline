@@ -387,9 +387,9 @@ const styles = StyleSheet.create((theme) => ({
     textAlignVertical: 'top',
     outlineStyle: 'none',
   } as any,
-  // Android otherwise adds an asymmetric font inset inside the field,
-  // on top of the row's shared vertical padding.
-  inputAndroid: { includeFontPadding: false },
+  // Keep Android's font bounds intact, then center its one-line layout in the
+  // fixed field so the visible top and bottom space match.
+  inputAndroid: { textAlignVertical: 'center' },
   sendButton: {
     width: 26,
     height: 26,

@@ -33,6 +33,17 @@ import {
 import { desktopComposerKeyAction } from '@/buzz/desktop-workbench-state';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+function fontBoundsHeight(fontFamily: string, fontSize: number) {
+  const ttf = readFileSync(new URL(`../../assets/fonts/${fontFamily}.ttf`, import.meta.url));
+  const tables = new Map<string, number>();
+  for (let i = 0; i < ttf.readUInt16BE(4); i += 1) {
+    const entry = 12 + i * 16;
+    tables.set(ttf.toString('ascii', entry, entry + 4), ttf.readUInt32BE(entry + 8));
+  }
+  const head = tables.get('head')!;
+  const scale = fontSize / ttf.readUInt16BE(head + 18);
+  return (ttf.readInt16BE(head + 42) - ttf.readInt16BE(head + 38)) * scale;
+}
 const renderers: any[] = [];
 function render(value: string, onStop?: () => Promise<boolean>) {
   const onSend = vi.fn();
@@ -187,15 +198,22 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     });
   });
 
-  it('lets the row own Android vertical padding without changing native measured height', () => {
+  it('centers Android text without removing font bounds or changing measured height', () => {
     platform.OS = 'android';
     const f = render('one line');
     const input = f.renderer.root.findByType('TextInput');
-    expect(input.props.style[2]).toEqual({ includeFontPadding: false });
+    const face = input.props.style[0];
+    // Space Grotesk's real glyph bounds exceed the Android 20px line box, so
+    // removing native font padding could crop accents or descenders.
+    expect(fontBoundsHeight(face.fontFamily, face.fontSize)).toBeGreaterThan(face.lineHeight);
+    expect(input.props.style[2]).toEqual({ textAlignVertical: 'center' });
+    expect(input.props.style[2]).not.toHaveProperty('includeFontPadding');
     expect(input.props.style[1]).toEqual({
       height: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
       maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
     });
+    platform.OS = 'ios';
+    expect(render('one line').renderer.root.findByType('TextInput').props.style[2]).toBe(false);
   });
 
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {

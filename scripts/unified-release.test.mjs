@@ -85,7 +85,13 @@ test('server canary plan migrates, updates one Machine, watches, then updates it
 
 test('server canary samples and the bounded window fail closed', () => {
   const clean = evaluateServerCanarySample({
-    health: { ok: true, pool: { total: 10, idle: 8, waiting: 0 } },
+    health: {
+      ok: true,
+      database: {
+        pool: { size: 10, inUse: 2, waiting: 0 },
+        oldestActiveQueryAgeMs: 42,
+      },
+    },
     roomRead: { ok: true, status: 200 },
     version: { version: 'v0.0.9', sourceSha: NEW_SHA },
     expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
@@ -93,11 +99,26 @@ test('server canary samples and the bounded window fail closed', () => {
   assert.equal(clean.clean, true);
   assert.equal(clean.poolMetricsAvailable, true);
   assert.equal(evaluateServerCanarySample({
-    health: { ok: true, pool: { total: 10, idle: 0, waiting: 3 } },
+    health: {
+      ok: true,
+      database: {
+        pool: { size: 10, inUse: 10, waiting: 3 },
+        oldestActiveQueryAgeMs: 4_999,
+      },
+    },
     roomRead: { ok: true, status: 200 },
     version: { version: 'v0.0.9', sourceSha: NEW_SHA },
     expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
   }).clean, false);
+  const missingPoolMetrics = evaluateServerCanarySample({
+    health: { ok: true },
+    roomRead: { ok: true, status: 200 },
+    version: { version: 'v0.0.9', sourceSha: NEW_SHA },
+    expectedVersion: 'v0.0.9', expectedSha: NEW_SHA,
+  });
+  assert.equal(missingPoolMetrics.clean, false);
+  assert.equal(missingPoolMetrics.poolMetricsAvailable, false);
+  assert.match(missingPoolMetrics.reasons[0], /omitted database pool diagnostics/);
   const samples = [0, 300].map((seconds) => ({
     at: new Date(Date.UTC(2026, 8, 12, 12, 0, seconds)).toISOString(), verdict: clean,
   }));
@@ -647,6 +668,8 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(serverLeg, /seq 0 20/);
   assert.match(serverLeg, /sleep 15/);
   assert.match(serverLeg, /fly-force-instance-id/);
+  assert.match(serverLeg, /server\.usebeeline\.app\/health(?:\s|\\)/);
+  assert.doesNotMatch(serverLeg, /server\.usebeeline\.app\/healthz/);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);

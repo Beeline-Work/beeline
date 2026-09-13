@@ -165,7 +165,7 @@ runs:
         for sample in $(seq 0 20); do
           if [ "$sample" -gt 0 ]; then sleep 15; fi
           force_header="fly-force-instance-id: $canary"
-          curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/healthz \
+          curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/health \
             -o "$RUNNER_TEMP/server-release/health.json"
           curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/version \
             -o "$RUNNER_TEMP/server-release/version.json"

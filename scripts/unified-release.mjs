@@ -93,13 +93,22 @@ export function planServerCanaryDeployment(machines, newImageRef) {
 }
 
 function poolSnapshot(health) {
-  const pool = health?.pool ?? health?.databasePool ?? health?.database?.pool;
+  const pool = health?.database?.pool;
   if (!pool || typeof pool !== 'object') return undefined;
-  return {
-    total: Number(pool.total ?? pool.totalCount),
-    idle: Number(pool.idle ?? pool.idleCount),
-    waiting: Number(pool.waiting ?? pool.waitingCount),
+  const snapshot = {
+    size: Number(pool.size),
+    inUse: Number(pool.inUse),
+    waiting: Number(pool.waiting),
+    oldestActiveQueryAgeMs: health.database.oldestActiveQueryAgeMs,
   };
+  if (
+    !Number.isFinite(snapshot.size) || snapshot.size < 1 ||
+    !Number.isFinite(snapshot.inUse) || snapshot.inUse < 0 || snapshot.inUse > snapshot.size ||
+    !Number.isFinite(snapshot.waiting) || snapshot.waiting < 0 ||
+    (snapshot.oldestActiveQueryAgeMs !== null &&
+      (!Number.isFinite(snapshot.oldestActiveQueryAgeMs) || snapshot.oldestActiveQueryAgeMs < 0))
+  ) return undefined;
+  return snapshot;
 }
 
 export function evaluateServerCanarySample({ health, roomRead, version, expectedVersion, expectedSha }) {
@@ -108,7 +117,8 @@ export function evaluateServerCanarySample({ health, roomRead, version, expected
   if (roomRead?.ok !== true) reasons.push(`authenticated Room read returned HTTP ${roomRead?.status ?? 'unknown'}`);
   if (version?.version !== expectedVersion || version?.sourceSha !== expectedSha) reasons.push('canary image identity does not match the release');
   const pool = poolSnapshot(health);
-  if (pool && (!Number.isFinite(pool.waiting) || pool.waiting !== 0)) reasons.push(`database pool has ${pool.waiting} waiter(s)`);
+  if (!pool) reasons.push('health response omitted database pool diagnostics');
+  else if (pool.waiting !== 0) reasons.push(`database pool has ${pool.waiting} waiter(s)`);
   return { clean: reasons.length === 0, reasons, poolMetricsAvailable: Boolean(pool), ...(pool ? { pool } : {}) };
 }
 

@@ -57,13 +57,12 @@ migration behind live traffic.
 The promotion records the two current Machine image refs, builds one tagged
 Fly image, and chooses the lexically first Machine as the canary. It updates
 only that Machine, pinning probes to it with `fly-force-instance-id`. Every 15
-seconds for five minutes it requires `/healthz`, the exact `/version`, and an
+seconds for five minutes it requires `/health`, the exact `/version`, and an
 authenticated read of `SERVER_CANARY_ROOM_ID` using
-`SERVER_CANARY_PHONE_TOKEN`. When `/healthz` includes the self-protection lane's
-pool snapshot, any nonzero waiter count fails the sample; until those fields
-land, the gate records `poolMetricsAvailable=false` while still enforcing
-health, image identity, and the real Room read. Follow-up: make the pool fields
-mandatory after the self-protection change is merged.
+`SERVER_CANARY_PHONE_TOKEN`. The self-protection pool snapshot (`size`, `inUse`,
+`waiting`, and `oldestActiveQueryAgeMs`) is mandatory and validated on every
+sample; missing or malformed metrics and any nonzero waiter count fail the
+canary before the second Machine can update.
 
 Only a clean window permits the second Machine update. Any failed update or
 sample restores the canary to the exact `previousImageRef` and fails the

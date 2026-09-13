@@ -5,13 +5,11 @@ function invalid(message) {
   throw new Error(message);
 }
 
-// One publish yields one update group PER PLATFORM whenever the platforms do
-// not share a runtime version, so every stored group is a platform -> group
-// map. With the hand-pinned runtime in `app.config.js` both platforms share one
-// group and the map simply points both keys at it; a per-platform runtime (as
-// the retired fingerprint policy produced) gives two. Ledgers and delivery
-// indexes written before this shape carry a single group id that covered every
-// platform; read those as that one group standing for every platform.
+// A publish can yield several update groups, including two groups for iOS
+// while a compatibility runtime remains live. Delivery state therefore keeps
+// the complete group set as an array/scalar alongside the ledger's richer
+// target records. Platform maps remain compatibility summaries for canary and
+// older ledgers; they are not the authority for the full rollout group set.
 export const RELEASE_PLATFORMS = ['android', 'ios'];
 
 export function groupIdList(value) {

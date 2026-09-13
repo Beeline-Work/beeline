@@ -60,8 +60,8 @@ describe('native fingerprint gate', () => {
     // already installed carried the literal stamp it was built with, so it
     // could never match the published updates and reported NoUpdatesAvailable.
     // Each platform pin moves by hand only when that platform's native side moves.
-    expect(appConfig).toContain('runtimeVersion: "24"');
-    expect(appConfig).toContain('runtimeVersion: "23"');
+    expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "24"');
+    expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "23"');
     expect(appConfig).not.toContain('policy: "fingerprint"');
     expect(readPinnedRuntimeVersion(mobileRoot)).toEqual({ android: '23', ios: '24' });
     expect(runtimeVersionsFromConfig(baseline)).toEqual({ android: '23', ios: '24' });

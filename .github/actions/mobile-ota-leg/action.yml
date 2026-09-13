@@ -225,10 +225,12 @@ runs:
         node scripts/ota-release.mjs promote --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
         node scripts/ota-release.mjs assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" \
           | tee "$RUNNER_TEMP/mobile-ota-promotion-proof.txt"
+        node scripts/ota-release.mjs assert-production-list --ledger "$RUN_LEDGER" \
+          | tee -a "$RUNNER_TEMP/mobile-ota-promotion-proof.txt"
         printf 'production_promotion\t%s\n' "$(( $(date +%s) - started ))" >> "$TIMINGS_FILE"
         node - "$RUN_LEDGER" >> "$GITHUB_OUTPUT" <<'NODE'
         const ledger = require(process.argv[2]);
-        const groups = ledger.production.groupIds ?? ledger.production.groupId;
+        const groups = ledger.production.groupId ?? ledger.production.groupIds;
         const ids = typeof groups === 'string' ? groups.split(',') : Object.values(groups);
         console.log(`production_group_id=${[...new Set(ids.filter(Boolean))].join(',')}`);
         NODE

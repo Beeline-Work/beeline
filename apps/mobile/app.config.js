@@ -8,6 +8,10 @@ const bundleId = "app.usebeeline.mobile";
 const androidPackage = "app.usebeeline";
 const scheme = "beeline";
 const updatesChannel = process.env.EXPO_UPDATES_CHANNEL || "production";
+const runtimeVersionOverride = process.env.EXPO_RUNTIME_OVERRIDE?.trim();
+if (runtimeVersionOverride && !/^\d+$/.test(runtimeVersionOverride)) {
+    throw new Error('EXPO_RUNTIME_OVERRIDE must be a numeric runtime version');
+}
 const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
 const buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL || 'https://server.usebeeline.app';
 
@@ -63,7 +67,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: "24",
+            runtimeVersion: runtimeVersionOverride || "24",
             icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -91,7 +95,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: "23",
+            runtimeVersion: runtimeVersionOverride || "23",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",

@@ -58,8 +58,12 @@ The promotion records the two current Machine image refs, builds one tagged
 Fly image, and chooses the lexically first Machine as the canary. It updates
 only that Machine, pinning probes to it with `fly-force-instance-id`. Every 15
 seconds for five minutes it requires `/health`, the exact `/version`, and an
-authenticated read of `SERVER_CANARY_ROOM_ID` using
-`SERVER_CANARY_PHONE_TOKEN`. The self-protection pool snapshot (`size`, `inUse`,
+authenticated read of `SERVER_CANARY_ROOM_ID`. Immediately before the watch,
+the action redeems the repository secret `SERVER_CANARY_REVIEW_SECRET` once at
+`/v1/auth/review/exchange`, masks the returned access token, and uses that fresh
+token for every Room read. The repository secret `SERVER_CANARY_PHONE_TOKEN` is
+the legacy fallback only when the review secret is unset; at least one of these
+two secrets must be configured. The self-protection pool snapshot (`size`, `inUse`,
 `waiting`, and `oldestActiveQueryAgeMs`) is mandatory and validated on every
 sample; missing or malformed metrics and any nonzero waiter count fail the
 canary before the second Machine can update.

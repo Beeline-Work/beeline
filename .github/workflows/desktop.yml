@@ -232,7 +232,7 @@ jobs:
           key_path="$RUNNER_TEMP/AuthKey_${MACOS_ASC_KEY_ID}.p8"
           case "$EXPO_ASC_API_KEY_P8" in
             '-----BEGIN'*) printf '%s\n' "$EXPO_ASC_API_KEY_P8" > "$key_path" ;;
-            *) echo "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path" ;;
+            *) printf '%s' "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path" ;;
           esac
           openssl pkey -in "$key_path" -noout >/dev/null || {
             echo '::error::EXPO_ASC_API_KEY_P8 is not a valid App Store Connect private key'; exit 1;

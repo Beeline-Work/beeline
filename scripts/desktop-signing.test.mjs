@@ -139,7 +139,7 @@ test('the release permits missing secrets but makes a configured signed path man
   assert.match(desktopWorkflow, /write_env APPLE_CERTIFICATE "\$MACOS_APPLE_CERTIFICATE"/);
   assert.match(desktopWorkflow, /write_env APPLE_SIGNING_IDENTITY "\$MACOS_APPLE_SIGNING_IDENTITY"/);
   assert.match(desktopWorkflow, /'-----BEGIN'\*\).*printf '%s\\n'/);
-  assert.match(desktopWorkflow, /echo "\$EXPO_ASC_API_KEY_P8" \| base64 -d > "\$key_path"/);
+  assert.match(desktopWorkflow, /printf '%s' "\$EXPO_ASC_API_KEY_P8" \| base64 -d > "\$key_path"/);
   assert.match(desktopWorkflow, /openssl pkey -in "\$key_path" -noout/);
   assert.match(desktopWorkflow, /write_env APPLE_API_KEY_PATH "\$key_path"/);
   assert.doesNotMatch(desktopWorkflow, /APPLE_CERTIFICATE:.*steps\.macos_signing\.outputs\.enabled/);

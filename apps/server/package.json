@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "node --import tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "migrate": "node dist/migrate-cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "import": "node --import tsx src/import-cli.ts",

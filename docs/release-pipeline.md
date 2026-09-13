@@ -43,6 +43,44 @@ protocol and UI changes select every real consumer, while their deploy
 contracts stay independently backward-compatible; no fleet-convergence or
 artificial cross-component gate serializes them.
 
+### Server migration, canary, and rollback
+
+Server boot never runs migrations or backfills. The release job builds the
+server packages and runs `npm run migrate -w @beeline/server` once with the
+owner-scoped `MIGRATION_DATABASE_URL`, before either Fly Machine is changed.
+The migration writes `beeline_schema_state` only after both the server and auth
+schemas and all backfills finish. Normal boot uses `DATABASE_URL` only to read
+that marker and exits with an explicit release-migration error when the schema
+is absent or stale. A Machine restart therefore cannot rerun or queue a
+migration behind live traffic.
+
+The promotion records the two current Machine image refs, builds one tagged
+Fly image, and chooses the lexically first Machine as the canary. It updates
+only that Machine, pinning probes to it with `fly-force-instance-id`. Every 15
+seconds for five minutes it requires `/healthz`, the exact `/version`, and an
+authenticated read of `SERVER_CANARY_ROOM_ID` using
+`SERVER_CANARY_PHONE_TOKEN`. When `/healthz` includes the self-protection lane's
+pool snapshot, any nonzero waiter count fails the sample; until those fields
+land, the gate records `poolMetricsAvailable=false` while still enforcing
+health, image identity, and the real Room read. Follow-up: make the pool fields
+mandatory after the self-protection change is merged.
+
+Only a clean window permits the second Machine update. Any failed update or
+sample restores the canary to the exact `previousImageRef` and fails the
+release. `server-image-ledger-<release>` retains the previous and candidate
+image refs for 90 days. The `Server image rollback recovery` workflow can
+redeploy an explicitly named `registry.fly.io` image, or the latest ledger's
+predecessor; it defaults to `dry_run=true`.
+
+For a production-free workflow proof, dispatch Unified production release with
+`plan_only=true`. It prints both `migrate -> canary -> watch -> second` and
+`canary failed -> previous image -> fail-release` using synthetic Machine refs;
+all release jobs are skipped. The same local proof is covered by:
+
+```sh
+node --test scripts/unified-release.test.mjs
+```
+
 A failed attempt stores its release state. Up to two automatic retries use the
 same version and SHA, skip checked components, reuse successful immutable build
 artifacts, and rerun only unfinished component work. Missing identities,
@@ -74,6 +112,7 @@ Review the planner without deploying by running:
 node --test scripts/unified-release.test.mjs
 ```
 
-Those fixtures cover no-input defaults, per-component published-input drift,
+Those fixtures cover canary ordering and window verdicts, rollback selection,
+the server image ledger, no-input defaults, per-component published-input drift,
 shared-path fanout, carry-forward, same-identity no-op and retry continuation,
 missing artifacts, completion/publication checks, and the workflow time budget.

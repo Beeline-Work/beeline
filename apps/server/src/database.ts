@@ -101,6 +101,44 @@ export interface ClosableDatabase extends SqlDatabase {
 export const MESSAGE_CURSOR_MS_SQL =
   "floor(extract(epoch FROM (created_at AT TIME ZONE 'UTC'))*1000)::bigint";
 
+// Bump only after every server and auth migration required by that image has
+// completed. Machine boot reads this marker; it never mutates the schema.
+export const REQUIRED_SCHEMA_VERSION = 1;
+
+export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
+  await database.query(`
+    CREATE TABLE IF NOT EXISTS beeline_schema_state (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      version integer NOT NULL,
+      migrated_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO beeline_schema_state(singleton, version, migrated_at)
+    VALUES (true, ${REQUIRED_SCHEMA_VERSION}, now())
+    ON CONFLICT (singleton) DO UPDATE
+      SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at
+  `);
+}
+
+export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
+  try {
+    const result = await database.query<{ version: number }>(
+      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
+    );
+    const version = result.rows[0]?.version;
+    if (version !== REQUIRED_SCHEMA_VERSION) {
+      throw new Error(
+        `expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}`,
+      );
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `database schema is not ready for this server image (${detail}); run the release migration step`,
+      { cause: error },
+    );
+  }
+}
+
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   readonly #pause: Pause;

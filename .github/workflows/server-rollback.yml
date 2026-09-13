@@ -1,0 +1,89 @@
+# Manual recovery only: redeploy a named known-good Fly image. With no image
+# input, use the predecessor recorded by the latest successful server release.
+name: Server image rollback recovery (does not release current main)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: Optional registry.fly.io image ref; defaults to latest release ledger predecessor
+        type: string
+        required: false
+      dry_run:
+        description: Resolve and print the rollback without changing any Machine
+        type: boolean
+        default: true
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find latest successful server image ledger
+        if: inputs.image_ref == ''
+        id: ledger_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'unified-release.yml', status: 'success', per_page: 100,
+            });
+            for (const run of runs) {
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner, repo: context.repo.repo, run_id: run.id,
+              });
+              if (artifacts.data.artifacts.some((artifact) =>
+                artifact.name.startsWith('server-image-ledger-') && !artifact.expired)) {
+                core.setOutput('run_id', String(run.id)); return;
+              }
+            }
+            core.setFailed('No non-expired successful server image ledger was found.');
+      - name: Download previous-image ledger
+        if: inputs.image_ref == ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: server-image-ledger-*
+          path: ${{ runner.temp }}/server-ledger
+          merge-multiple: true
+          run-id: ${{ steps.ledger_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Resolve and apply the named rollback image
+        env:
+          EXPLICIT_IMAGE: ${{ inputs.image_ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          ledger="$RUNNER_TEMP/server-ledger/server-image-ledger.json"
+          args=(server-rollback-image)
+          if [ -n "$EXPLICIT_IMAGE" ]; then args+=(--image "$EXPLICIT_IMAGE"); else args+=(--ledger "$ledger"); fi
+          image_ref="$(node scripts/unified-release.mjs "${args[@]}")"
+          flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-machines.json"
+          mapfile -t machines < <(node -e '
+            const rows=require(process.argv[1]);
+            if(rows.length!==2) throw new Error("server rollback requires exactly two Machines, found "+rows.length);
+            rows.map(row=>row.id).sort().forEach(id=>console.log(id));
+          ' "$RUNNER_TEMP/server-machines.json")
+          if [ "$DRY_RUN" = true ]; then
+            printf '[dry-run] update:%s:%s -> update:%s:%s\n' "${machines[0]}" "$image_ref" "${machines[1]}" "$image_ref"
+            state=dry-run
+          else
+            flyctl auth whoami
+            flyctl machine update "${machines[0]}" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+            flyctl machine update "${machines[1]}" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+            state=deployed
+          fi
+          node -e 'const fs=require("node:fs");const [path,imageRef,state]=process.argv.slice(1);fs.writeFileSync(path,JSON.stringify({imageRef,state,at:new Date().toISOString()},null,2)+"\n")' \
+            "$RUNNER_TEMP/server-rollback.json" "$image_ref" "$state"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-rollback-${{ github.run_id }}
+          path: ${{ runner.temp }}/server-rollback.json
+          if-no-files-found: error
+          retention-days: 90

@@ -6,6 +6,8 @@ export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-nat
 export const RELEASE_BUDGET_MINUTES = 20;
 export const RELEASE_NOTIFY_TIMEOUT_MS = 10_000;
 export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/releases/notify';
+export const SERVER_CANARY_WINDOW_SECONDS = 300;
+export const SERVER_CANARY_SAMPLE_SECONDS = 15;
 
 // Release-affecting paths belong in this inspectable table, beside drift tests,
 // rather than in scattered workflow conditionals.
@@ -44,6 +46,7 @@ export const COMPONENT_PATH_RULES = [
   { prefix: '.github/actions/web-app-leg/', components: ['website'] },
   { prefix: 'scripts/verify-web-deployment.', components: ['website'] },
   { exact: '.github/workflows/desktop.yml', components: ['desktop'] },
+  { exact: '.github/workflows/server-rollback.yml', components: ['server'] },
   { exact: '.github/workflows/unified-release.yml', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
   { exact: 'scripts/unified-release.mjs', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
 ];
@@ -60,6 +63,84 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 function now() { return new Date().toISOString(); }
+
+export function planServerCanaryDeployment(machines, newImageRef) {
+  if (!Array.isArray(machines) || machines.length !== 2) {
+    fail(`server canary requires exactly two Machines, found ${machines?.length ?? 0}`);
+  }
+  if (!newImageRef?.startsWith('registry.fly.io/')) fail('server image must be an immutable Fly registry ref');
+  const normalized = machines.map((machine) => ({
+    id: machine.id,
+    imageRef: machine.imageRef ?? machine.config?.image,
+  })).sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  if (normalized.some((machine) => !machine.id || !machine.imageRef)) fail('Machine inventory is missing id or image');
+  const previous = new Set(normalized.map((machine) => machine.imageRef));
+  if (previous.size !== 1) fail('server fleet is already split across images; refuse an ambiguous rollback');
+  const [canary, second] = normalized;
+  return {
+    previousImageRef: canary.imageRef,
+    newImageRef,
+    canaryMachineId: canary.id,
+    secondMachineId: second.id,
+    steps: [
+      'migrate',
+      `update:${canary.id}:${newImageRef}`,
+      `watch:${canary.id}:${SERVER_CANARY_WINDOW_SECONDS}s`,
+      `update:${second.id}:${newImageRef}`,
+    ],
+    rollbackSteps: [`update:${canary.id}:${canary.imageRef}`, 'fail-release'],
+  };
+}
+
+function poolSnapshot(health) {
+  const pool = health?.pool ?? health?.databasePool ?? health?.database?.pool;
+  if (!pool || typeof pool !== 'object') return undefined;
+  return {
+    total: Number(pool.total ?? pool.totalCount),
+    idle: Number(pool.idle ?? pool.idleCount),
+    waiting: Number(pool.waiting ?? pool.waitingCount),
+  };
+}
+
+export function evaluateServerCanarySample({ health, roomRead, version, expectedVersion, expectedSha }) {
+  const reasons = [];
+  if (health?.ok !== true) reasons.push('health endpoint is not ok');
+  if (roomRead?.ok !== true) reasons.push(`authenticated Room read returned HTTP ${roomRead?.status ?? 'unknown'}`);
+  if (version?.version !== expectedVersion || version?.sourceSha !== expectedSha) reasons.push('canary image identity does not match the release');
+  const pool = poolSnapshot(health);
+  if (pool && (!Number.isFinite(pool.waiting) || pool.waiting !== 0)) reasons.push(`database pool has ${pool.waiting} waiter(s)`);
+  return { clean: reasons.length === 0, reasons, poolMetricsAvailable: Boolean(pool), ...(pool ? { pool } : {}) };
+}
+
+export function evaluateServerCanaryWindow(samples, windowSeconds = SERVER_CANARY_WINDOW_SECONDS) {
+  if (!Array.isArray(samples) || samples.length < 2) return { clean: false, reason: 'canary window has too few samples' };
+  const elapsed = (Date.parse(samples.at(-1).at) - Date.parse(samples[0].at)) / 1000;
+  const failed = samples.find((sample) => sample.verdict?.clean !== true);
+  if (failed) return { clean: false, reason: failed.verdict?.reasons?.join('; ') || 'unclean sample' };
+  if (elapsed < windowSeconds) return { clean: false, reason: `canary window covered ${elapsed}s, expected ${windowSeconds}s` };
+  return { clean: true, elapsedSeconds: elapsed, poolMetricsAvailable: samples.every((sample) => sample.verdict.poolMetricsAvailable) };
+}
+
+export function createServerImageLedger({ version, sourceSha, plan, state = 'prepared' }) {
+  validateReleaseIdentity(version, sourceSha);
+  if (!['prepared', 'deployed', 'rolled-back'].includes(state)) fail(`invalid server ledger state: ${state}`);
+  return {
+    schemaVersion: 1,
+    version,
+    sourceSha,
+    previousImageRef: plan.previousImageRef,
+    imageRef: plan.newImageRef,
+    canaryMachineId: plan.canaryMachineId,
+    secondMachineId: plan.secondMachineId,
+    state,
+  };
+}
+
+export function selectServerRollbackImage({ explicitImageRef, ledger } = {}) {
+  const imageRef = explicitImageRef || ledger?.previousImageRef;
+  if (!imageRef?.startsWith('registry.fly.io/')) fail('no valid previous server image ref was supplied or recorded');
+  return imageRef;
+}
 
 export function validateReleaseIdentity(version, sourceSha) {
   if (!VERSION.test(version ?? '')) fail(`invalid release version: ${version ?? '<missing>'}`);
@@ -428,6 +509,43 @@ async function main(argv) {
     else console.log(`Release notification ${result.state}: ${result.detail}`);
     return;
   }
+  if (command === 'server-deploy-plan') {
+    const plan = planServerCanaryDeployment(readJson(args.machines), args.image);
+    if (args.output) writeJson(args.output, plan);
+    console.log('[dry-run] ' + plan.steps.join(' -> '));
+    if (args['simulate-failure'] === 'true') {
+      console.log('[dry-run] canary failed -> ' + plan.rollbackSteps.join(' -> '));
+    }
+    return;
+  }
+  if (command === 'server-canary-sample') {
+    const verdict = evaluateServerCanarySample({
+      health: readJson(args.health),
+      roomRead: { ok: args['room-status'] === '200', status: Number(args['room-status']) },
+      version: readJson(args.version),
+      expectedVersion: args['expected-version'],
+      expectedSha: args['expected-sha'],
+    });
+    if (args.output) writeJson(args.output, verdict);
+    console.log(JSON.stringify(verdict));
+    if (!verdict.clean) process.exitCode = 1;
+    return;
+  }
+  if (command === 'server-ledger') {
+    const plan = readJson(args.plan);
+    writeJson(args.output, createServerImageLedger({
+      ...identityFromOptions(args), plan, state: args['ledger-state'] ?? 'prepared',
+    }));
+    return;
+  }
+  if (command === 'server-rollback-image') {
+    const imageRef = selectServerRollbackImage({
+      explicitImageRef: args.image,
+      ledger: args.ledger ? readJson(args.ledger) : undefined,
+    });
+    process.stdout.write(`${imageRef}\n`);
+    return;
+  }
   const state = readJson(args.state);
   if (command === 'mark-stage') {
     markComponentStage(state, args.component, args.stage, identityFromOptions(args), args.artifact);
@@ -454,7 +572,7 @@ async function main(argv) {
     console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s`);
     return;
   }
-  fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|mark-stage|apply-checkpoints|finalize|notify|report>');
+  fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|server-deploy-plan|server-canary-sample|server-ledger|server-rollback-image|mark-stage|apply-checkpoints|finalize|notify|report>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

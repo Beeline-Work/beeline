@@ -1,4 +1,4 @@
-import { PostgresDatabase, migrate } from './database.js';
+import { assertSchemaCurrent, PostgresDatabase } from './database.js';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -28,20 +28,16 @@ function required(name: string) {
 }
 async function main() {
   const connectionString = required('DATABASE_URL');
-  const migrationDatabase = new PostgresDatabase(
-    process.env.MIGRATION_DATABASE_URL ?? connectionString,
-    1,
-    { mode: 'long-running' },
-  );
-  try {
-    await migrate(migrationDatabase);
-  } finally {
-    await migrationDatabase.close();
-  }
   const database = new PostgresDatabase(
     connectionString,
     Number(process.env.DATABASE_POOL_MAX ?? '5'),
   );
+  try {
+    await assertSchemaCurrent(database);
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
   const enrichmentDatabase = new PostgresDatabase(connectionString, 2, { mode: 'enrichment' });
   const healthDatabase = new PostgresDatabase(connectionString, 1, { mode: 'diagnostics' });
   const jobsDatabase = new PostgresDatabase(connectionString, 2, { mode: 'long-running' });

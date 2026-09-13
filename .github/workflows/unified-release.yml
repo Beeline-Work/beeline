@@ -35,6 +35,11 @@ on:
           - beta
           - production
         required: true
+      plan_only:
+        description: Recovery only - print server canary and rollback ordering without touching production
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   actions: write
@@ -209,11 +214,28 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  server_deploy_plan:
+    needs: initialize
+    if: inputs.plan_only == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Dry-run canary success and rollback paths
+        run: |
+          node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify([{id:"machine-a",config:{image:"registry.fly.io/beeline-server:previous"}},{id:"machine-b",config:{image:"registry.fly.io/beeline-server:previous"}}]))' "$RUNNER_TEMP/server-machines.json"
+          node scripts/unified-release.mjs server-deploy-plan \
+            --machines "$RUNNER_TEMP/server-machines.json" \
+            --image "registry.fly.io/beeline-server:${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}" \
+            --simulate-failure true | tee -a "$GITHUB_STEP_SUMMARY"
+
   server:
     needs: initialize
-    if: needs.initialize.outputs.run_server == 'true'
+    if: inputs.plan_only != true && needs.initialize.outputs.run_server == 'true'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 12
+    timeout-minutes: 18
     concurrency:
       group: deploy-beeline-server
       cancel-in-progress: false
@@ -240,10 +262,22 @@ jobs:
           if-no-files-found: error
       - uses: ./.github/actions/server-leg
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          SERVER_CANARY_PHONE_TOKEN: ${{ secrets.SERVER_CANARY_PHONE_TOKEN }}
+          SERVER_CANARY_ROOM_ID: ${{ vars.SERVER_CANARY_ROOM_ID }}
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+      - name: Preserve server image rollback ledger
+        if: always() && contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-image-ledger-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/server-release/server-image-ledger.json
+          if-no-files-found: warn
+          retention-days: 90
       - name: Checkpoint the server promotion
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         run: |
@@ -273,7 +307,7 @@ jobs:
 
   helper:
     needs: initialize
-    if: needs.initialize.outputs.run_helper == 'true'
+    if: inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true'
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 12
     permissions:
@@ -370,7 +404,7 @@ jobs:
   mobile_ota:
     needs: [initialize, mobile_native]
     if: >-
-      always() && needs.initialize.result == 'success' &&
+      always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
       needs.initialize.outputs.run_mobile_ota == 'true' &&
       (needs.initialize.outputs.runtime_pin_changed != 'true' ||
       needs.initialize.outputs.stage_mobile_native == 'checked' ||
@@ -462,7 +496,7 @@ jobs:
 
   desktop_installers:
     needs: initialize
-    if: needs.initialize.outputs.run_desktop == 'true'
+    if: inputs.plan_only != true && needs.initialize.outputs.run_desktop == 'true'
     uses: ./.github/workflows/desktop.yml
     with:
       variant: production
@@ -471,7 +505,7 @@ jobs:
 
   desktop_checkpoint:
     needs: [initialize, desktop_installers]
-    if: needs.initialize.outputs.run_desktop == 'true' && needs.desktop_installers.result == 'success'
+    if: inputs.plan_only != true && needs.initialize.outputs.run_desktop == 'true' && needs.desktop_installers.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -487,7 +521,7 @@ jobs:
 
   website:
     needs: initialize
-    if: needs.initialize.outputs.run_website == 'true'
+    if: inputs.plan_only != true && needs.initialize.outputs.run_website == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -530,7 +564,7 @@ jobs:
 
   mobile_native:
     needs: initialize
-    if: needs.initialize.outputs.run_mobile_native == 'true'
+    if: inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -637,7 +671,7 @@ jobs:
           if-no-files-found: error
 
   release_result:
-    if: always() && needs.initialize.result == 'success'
+    if: always() && inputs.plan_only != true && needs.initialize.result == 'success'
     needs: [initialize, server, helper, mobile_ota, mobile_native, desktop_installers, desktop_checkpoint, website]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
@@ -825,7 +859,7 @@ jobs:
 
   retry:
     if: >-
-      always() && needs.release_result.result == 'failure' &&
+      always() && inputs.plan_only != true && needs.release_result.result == 'failure' &&
       fromJSON(inputs.retry_attempt || '1') < 3
     needs: [initialize, release_result]
     runs-on: [self-hosted, beeline-prod-host]

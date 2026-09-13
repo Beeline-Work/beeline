@@ -400,7 +400,6 @@ describe('Room message variant components', () => {
             subgoals: [{ step: 'Open the archived transcript', status: 'completed' }],
           },
         })}
-        reviewerHandle="echo"
         onOpenCorner={onOpenCorner}
         onOpenUrl={onOpenUrl}
       />,
@@ -418,12 +417,11 @@ describe('Room message variant components', () => {
     // A legacy card carries no name, so the title is the first three words of
     // its objective; the body still carries the objective whole (C89).
     expect(JSON.stringify(renderer.toJSON())).toContain('PR 1 merged');
-    expect(JSON.stringify(renderer.toJSON())).toContain('reviewer ');
-    expect(JSON.stringify(renderer.toJSON())).toContain('@echo');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Awaiting @echo');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Approved by @echo');
+    expect(JSON.stringify(renderer.toJSON())).toContain('corner author ');
+    expect(JSON.stringify(renderer.toJSON())).toContain('@beebee');
     expect(JSON.stringify(renderer.toJSON())).toContain('Ship fact cards');
-    expect(JSON.stringify(renderer.toJSON())).toContain('View ↗');
+    expect(JSON.stringify(renderer.toJSON())).toContain('View Corner →');
+    expect(JSON.stringify(renderer.toJSON())).toContain('View PR ↗');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
   });
 

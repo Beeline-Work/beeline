@@ -19,6 +19,16 @@ export interface MonolithTokens {
   identityId: string;
 }
 
+/** Every phone HTTP request carries one bounded deadline; aborts surface, never hang. */
+export const MONOLITH_REQUEST_TIMEOUT_MS = 15_000;
+
+export class MonolithRequestTimeoutError extends Error {
+  constructor() {
+    super('The server did not respond in time.');
+    this.name = 'MonolithRequestTimeoutError';
+  }
+}
+
 export class MonolithSessionRequiredError extends Error {
   constructor() {
     super('GitHub sign-in is required');
@@ -124,14 +134,32 @@ export class MonolithSession {
   }
 
   async fetch(input: string, init: RequestInit = {}): Promise<Response> {
-    const perform = async () =>
-      this.fetchImpl(input, {
-        ...init,
-        headers: {
-          ...Object.fromEntries(new Headers(init.headers).entries()),
-          authorization: `Bearer ${await this.authorization()}`,
-        },
-      });
+    const perform = async () => {
+      const controller = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, MONOLITH_REQUEST_TIMEOUT_MS);
+      const forwardExternalAbort = () => controller.abort();
+      init.signal?.addEventListener('abort', forwardExternalAbort);
+      try {
+        return await this.fetchImpl(input, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            ...Object.fromEntries(new Headers(init.headers).entries()),
+            authorization: `Bearer ${await this.authorization()}`,
+          },
+        });
+      } catch (error) {
+        if (timedOut) throw new MonolithRequestTimeoutError();
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        init.signal?.removeEventListener('abort', forwardExternalAbort);
+      }
+    };
     let response = await perform();
     if (response.status !== 401) return response;
     this.access = undefined;

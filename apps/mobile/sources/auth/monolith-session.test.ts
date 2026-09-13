@@ -14,7 +14,11 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
 
-import { MonolithSession, MonolithSessionRequiredError } from './monolith-session';
+import {
+  MonolithRequestTimeoutError,
+  MonolithSession,
+  MonolithSessionRequiredError,
+} from './monolith-session';
 
 const tokens = (generation: number) => ({
   accessToken: `access-${generation}`,
@@ -93,6 +97,32 @@ describe('monolith phone session', () => {
     ]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-2');
+  });
+
+  it('aborts a hung phone request at the bounded deadline', async () => {
+    let hang = false;
+    const fetcher = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (!hang) return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+        });
+      },
+    );
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('ticket');
+    hang = true;
+    vi.useFakeTimers();
+    try {
+      const pending = session.fetch('https://server.example/v1/phone/workspaces');
+      const assertion = expect(pending).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('clears a rejected refresh so launch routes to one sign-in', async () => {

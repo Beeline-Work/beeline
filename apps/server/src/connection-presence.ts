@@ -167,7 +167,7 @@ export class ConnectionPresence {
       `WITH candidates AS MATERIALIZED (
        SELECT member.room_id,m.id message_id,m.created_at,m.author_id,m.author_kind,
          m.text,m.presentation,m.request_id,
-         a.agent_id,a.access_policy,a.owner_id,target.kind agent_kind,target.handle agent_handle,
+         a.agent_id,a.access_policy,a.owner_id,target.handle agent_handle,
          p.body->>'lifecycleId' lifecycle,
          COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt') evidence_token,
          m.system_event->>'kind' system_kind
@@ -191,7 +191,7 @@ export class ConnectionPresence {
          AND ($1::uuid IS NULL OR member.room_id=$1)
          AND p.body->>'status'='online'
        ) SELECT m.* FROM candidates m
-       WHERE ${tagsKnownIdentitySql('m', 'm.agent_id', 'm.agent_kind', 'm.agent_handle')}`,
+       WHERE ${tagsKnownIdentitySql('m', 'm.agent_id', 'm.agent_handle')}`,
       [roomId ?? null],
     );
     for (const delivery of deliveries.rows) {

@@ -147,13 +147,12 @@ export function tagsIdentitySql(message: string, identityExpr: string): string {
  *
  * Delivery queries already know the candidate recipient. Rebuilding the full
  * Room tag array for every message/device pair multiplies regex work by the
- * whole roster. Keep the same ambiguity and corner-reply rules while testing
- * only that known identity.
+ * whole roster. Keep the same ambiguity rule while testing only that known
+ * identity.
  */
 export function tagsKnownIdentitySql(
   message: string,
   identityIdExpr: string,
-  identityKindExpr: string,
   identityHandleExpr: string,
 ): string {
   return `(
@@ -166,12 +165,6 @@ export function tagsKnownIdentitySql(
       WHERE rival_member.room_id=${message}.room_id AND rival_member.removed_at IS NULL
         AND rival_member.identity_id<>${identityIdExpr}
         AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(${identityHandleExpr},'@'))
-    )
-    AND NOT (
-      ${identityKindExpr}='human' AND ${message}.request_id IS NOT NULL
-      AND EXISTS(SELECT 1 FROM identities reply_author
-                 WHERE reply_author.id=${message}.author_id AND reply_author.kind='agent')
-      AND EXISTS(SELECT 1 FROM corner_facts WHERE corner_facts.corner_id=${message}.room_id)
     )
   )`;
 }

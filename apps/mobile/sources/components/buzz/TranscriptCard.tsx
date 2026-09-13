@@ -227,24 +227,10 @@ export function TranscriptCard({
       reduceMotion: ReduceMotion.System,
     });
   }, [animateArrival, arrivalOpacity, arrivalProgress]);
-  const arrivalStyle = useAnimatedStyle(() => {
-    const glowColor = interpolateColor(
-      arrivalProgress.value,
-      [0, 1],
-      ['rgba(176,138,74,0.30)', transparentBrass],
-    );
-    return {
-      opacity: arrivalOpacity.value,
-      borderColor: interpolateColor(
-        arrivalProgress.value,
-        [0, 1],
-        ['rgba(176,138,74,0.95)', transparentBrass],
-      ),
-      shadowOpacity: 0.3 * (1 - arrivalProgress.value),
-      shadowRadius: 28 * (1 - arrivalProgress.value),
-      boxShadow: `0 0 28px 2px ${glowColor}`,
-    };
-  });
+  const arrivalContentStyle = useAnimatedStyle(() => ({ opacity: arrivalOpacity.value }));
+  const arrivalHaloStyle = useAnimatedStyle(() => ({
+    opacity: 1 - arrivalProgress.value,
+  }));
 
   const steady = transcriptSteadyColors({
     textPrimary: theme.buzz.textPrimary,
@@ -311,104 +297,122 @@ export function TranscriptCard({
 
   const hasFooter = footerNote !== undefined || actions.length > 0;
   return (
-    <Animated.View style={[styles.frameShell, arrivalStyle]}>
-      <View style={[styles.frame, tier === 'ask' && styles.ask]} testID={testID}>
-        <View style={styles.head}>
-          {identity ? <View style={styles.identity}>{identity}</View> : null}
-          <View style={styles.headCopy}>
-            <View style={styles.titleLine}>
-              <SettlingText
-                key={currentSnapshot.title ?? 'title'}
-                active={animateArrival || liveMotion.title}
-                durationMs={animateArrival ? TRANSCRIPT_SETTLE_MS : liveMotion.durationMs}
-                ellipsizeMode="tail"
-                numberOfLines={1}
-                steadyColor={steady.title}
-                style={styles.title}
-              >
-                {title}
-              </SettlingText>
-              {stamp ? <Text style={styles.stamp}>{stamp}</Text> : null}
-            </View>
-            {subline ? (
-              <SettlingText
-                active={animateArrival}
-                durationMs={TRANSCRIPT_SETTLE_MS}
-                steadyColor={steady.quiet}
-                style={styles.subline}
-                testID={sublineTestID}
-              >
-                {subline}
-              </SettlingText>
-            ) : null}
-          </View>
-        </View>
-        {body ? (
-          <SettlingText
-            active={animateArrival}
-            durationMs={TRANSCRIPT_SETTLE_MS}
-            steadyColor={quietBody ? steady.quiet : steady.body}
-            style={[styles.body, quietBody && styles.bodyQuiet]}
-          >
-            {body}
-          </SettlingText>
-        ) : null}
-        {code !== undefined ? (
-          <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>
-            {codePath ? <Text style={styles.codePath}>{codePath}</Text> : null}
-            <Text selectable style={styles.codeText}>
-              {code}
-            </Text>
-          </View>
-        ) : null}
-        {rows.length ? (
-          <View style={styles.rows}>
-            {rows.map((row) => (
-              <TranscriptCardRowView
-                key={row.id}
-                row={row}
-                animateCardArrival={animateArrival}
-                animateEntry={liveMotion.appendedRowIds.has(row.id)}
-                animateState={liveMotion.changedRowIds.has(row.id)}
-                settleDurationMs={liveMotion.durationMs}
-                steady={steady}
-              />
-            ))}
-          </View>
-        ) : null}
-        {hasFooter ? (
-          <View style={styles.footer}>
-            {footerNote !== undefined ? (
-              <Text
-                testID={footerNoteTestID}
-                style={[styles.footerNote, footerNoteTone === 'failed' && styles.footerNoteFailed]}
-              >
-                {footerNote}
-              </Text>
-            ) : (
-              <View style={styles.footerSpacer} />
-            )}
-            <View style={styles.actions}>
-              {actions.map((action) => (
-                <Pressable
-                  key={`${action.label}-${action.testID ?? ''}`}
-                  accessibilityRole={action.accessibilityRole ?? 'button'}
-                  accessibilityLabel={action.label}
-                  disabled={action.disabled}
-                  hitSlop={12}
-                  onPress={action.onPress}
-                  testID={action.testID}
+    <View style={styles.frameShell}>
+      {animateArrival ? (
+        <Animated.View
+          collapsable={false}
+          pointerEvents="none"
+          style={[styles.haloLayer, arrivalHaloStyle]}
+          testID="transcript-card-arrival-halo"
+        >
+          <View style={styles.haloFar} />
+          <View style={styles.haloMid} />
+          <View style={styles.haloNear} />
+          <View style={styles.haloRing} />
+        </Animated.View>
+      ) : null}
+      <Animated.View style={arrivalContentStyle}>
+        <View style={[styles.frame, tier === 'ask' && styles.ask]} testID={testID}>
+          <View style={styles.head}>
+            {identity ? <View style={styles.identity}>{identity}</View> : null}
+            <View style={styles.headCopy}>
+              <View style={styles.titleLine}>
+                <SettlingText
+                  key={currentSnapshot.title ?? 'title'}
+                  active={animateArrival || liveMotion.title}
+                  durationMs={animateArrival ? TRANSCRIPT_SETTLE_MS : liveMotion.durationMs}
+                  ellipsizeMode="tail"
+                  numberOfLines={1}
+                  steadyColor={steady.title}
+                  style={styles.title}
                 >
-                  <Text style={[styles.action, action.primary && styles.actionPrimary]}>
-                    {action.loading ? '…' : action.label}
-                  </Text>
-                </Pressable>
+                  {title}
+                </SettlingText>
+                {stamp ? <Text style={styles.stamp}>{stamp}</Text> : null}
+              </View>
+              {subline ? (
+                <SettlingText
+                  active={animateArrival}
+                  durationMs={TRANSCRIPT_SETTLE_MS}
+                  steadyColor={steady.quiet}
+                  style={styles.subline}
+                  testID={sublineTestID}
+                >
+                  {subline}
+                </SettlingText>
+              ) : null}
+            </View>
+          </View>
+          {body ? (
+            <SettlingText
+              active={animateArrival}
+              durationMs={TRANSCRIPT_SETTLE_MS}
+              steadyColor={quietBody ? steady.quiet : steady.body}
+              style={[styles.body, quietBody && styles.bodyQuiet]}
+            >
+              {body}
+            </SettlingText>
+          ) : null}
+          {code !== undefined ? (
+            <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>
+              {codePath ? <Text style={styles.codePath}>{codePath}</Text> : null}
+              <Text selectable style={styles.codeText}>
+                {code}
+              </Text>
+            </View>
+          ) : null}
+          {rows.length ? (
+            <View style={styles.rows}>
+              {rows.map((row) => (
+                <TranscriptCardRowView
+                  key={row.id}
+                  row={row}
+                  animateCardArrival={animateArrival}
+                  animateEntry={liveMotion.appendedRowIds.has(row.id)}
+                  animateState={liveMotion.changedRowIds.has(row.id)}
+                  settleDurationMs={liveMotion.durationMs}
+                  steady={steady}
+                />
               ))}
             </View>
-          </View>
-        ) : null}
-      </View>
-    </Animated.View>
+          ) : null}
+          {hasFooter ? (
+            <View style={styles.footer}>
+              {footerNote !== undefined ? (
+                <Text
+                  testID={footerNoteTestID}
+                  style={[
+                    styles.footerNote,
+                    footerNoteTone === 'failed' && styles.footerNoteFailed,
+                  ]}
+                >
+                  {footerNote}
+                </Text>
+              ) : (
+                <View style={styles.footerSpacer} />
+              )}
+              <View style={styles.actions}>
+                {actions.map((action) => (
+                  <Pressable
+                    key={`${action.label}-${action.testID ?? ''}`}
+                    accessibilityRole={action.accessibilityRole ?? 'button'}
+                    accessibilityLabel={action.label}
+                    disabled={action.disabled}
+                    hitSlop={12}
+                    onPress={action.onPress}
+                    testID={action.testID}
+                  >
+                    <Text style={[styles.action, action.primary && styles.actionPrimary]}>
+                      {action.loading ? '…' : action.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -531,13 +535,61 @@ const styles = StyleSheet.create((theme) => {
   return {
     frameShell: {
       minWidth: 0,
-      marginTop: metric.marginTop,
-      marginBottom: metric.marginBottom,
-      borderWidth: 1,
-      borderColor: 'transparent',
+      marginTop: metric.marginTop - 20,
+      marginRight: -20,
+      marginBottom: metric.marginBottom - 20,
+      marginLeft: -20,
+      padding: 20,
+      position: 'relative',
       borderRadius: metric.cornerRadius,
-      shadowColor: card.accent,
-      shadowOffset: { width: 0, height: 0 },
+      overflow: 'visible',
+    },
+    haloLayer: {
+      position: 'absolute',
+      top: 20,
+      right: 20,
+      bottom: 20,
+      left: 20,
+      overflow: 'visible',
+    },
+    haloRing: {
+      ...StyleSheet.absoluteFillObject,
+      borderWidth: 1,
+      borderColor: 'rgba(176,138,74,0.95)',
+      borderRadius: metric.cornerRadius,
+    },
+    haloNear: {
+      position: 'absolute',
+      top: -5,
+      right: -5,
+      bottom: -5,
+      left: -5,
+      borderWidth: 4,
+      borderColor: 'rgba(176,138,74,0.30)',
+      backgroundColor: 'rgba(176,138,74,0.10)',
+      borderRadius: metric.cornerRadius + 5,
+    },
+    haloMid: {
+      position: 'absolute',
+      top: -12,
+      right: -12,
+      bottom: -12,
+      left: -12,
+      borderWidth: 7,
+      borderColor: 'rgba(176,138,74,0.16)',
+      backgroundColor: 'rgba(176,138,74,0.06)',
+      borderRadius: metric.cornerRadius + 12,
+    },
+    haloFar: {
+      position: 'absolute',
+      top: -20,
+      right: -20,
+      bottom: -20,
+      left: -20,
+      borderWidth: 8,
+      borderColor: 'rgba(176,138,74,0.08)',
+      backgroundColor: 'rgba(176,138,74,0.03)',
+      borderRadius: metric.cornerRadius + 20,
     },
     frame: {
       minWidth: 0,

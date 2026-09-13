@@ -7,8 +7,11 @@ recipes: migrated server schema, seeded `local:captain`, Hoots, and Sol
 identities, authenticated phone API reads, and database-backed GitHub event
 cards. No fixture renderer was used.
 
-Each three-frame strip is ordered left to right: first rendered frame, about
-600 ms, and settled at about 1800 ms.
+Each four-frame strip is ordered left to right: the first fully painted frame
+(`0 ms`), then `300 ms`, `900 ms`, and `1800 ms`. Android frames were extracted
+at those offsets from one uninterrupted `adb screenrecord`; desktop frames
+freeze the real rendered DOM at the corresponding sampling instant before the
+Chrome screenshot is taken.
 
 ## Demonstrated
 
@@ -18,7 +21,8 @@ Each three-frame strip is ordered left to right: first rendered frame, about
 - [`android-card-strip.png`](./android-card-strip.png),
   [`android-row-strip.png`](./android-row-strip.png), and
   [`android-label-strip.png`](./android-label-strip.png) isolate those three
-  Android transitions.
+  Android transitions. The card strip's first panel shows the physical nested
+  brass halo and brass title; both are gone in its fourth panel.
 - [`desktop-card-strip.png`](./desktop-card-strip.png),
   [`desktop-row-strip.png`](./desktop-row-strip.png), and
   [`desktop-label-strip.png`](./desktop-label-strip.png) show the same sequence

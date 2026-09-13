@@ -61,6 +61,24 @@ export const hairlineDivider: ViewStyle = {
 
 const easeOutQuint = Easing.out(Easing.poly(5));
 
+// Built once and cached so `entering` keeps one stable reference across
+// re-renders: a new builder instance here would read as a new animation to
+// Reanimated and restart the entrance mid-flight whenever a sibling
+// re-render touches this row (presence tick, roster update). Built lazily,
+// on first use, rather than at module scope, so importing this file never
+// requires a full FadeInDown mock from callers that don't render this
+// component.
+let newMessageEntering: ReturnType<typeof buildNewMessageEntering> | undefined;
+function buildNewMessageEntering() {
+  return FadeInDown.duration(140)
+    .easing(easeOutQuint)
+    .reduceMotion(ReduceMotion.System)
+    .withInitialValues({ opacity: 0, transform: [{ translateY: 3 }] });
+}
+function getNewMessageEntering() {
+  return (newMessageEntering ??= buildNewMessageEntering());
+}
+
 type HullSurfaceProps = Omit<ViewProps, 'children' | 'style'> & {
   children?: React.ReactNode;
   strength?: 'quiet' | 'raised' | 'code';
@@ -761,16 +779,7 @@ export function NewMessageMaterialize({
     if (animate && messageId !== undefined) markMessageRevealed(messageId);
   }, [animate, messageId]);
   if (!animate) return <View>{children}</View>;
-  return (
-    <Animated.View
-      entering={FadeInDown.duration(140)
-        .easing(easeOutQuint)
-        .reduceMotion(ReduceMotion.System)
-        .withInitialValues({ opacity: 0, transform: [{ translateY: 3 }] })}
-    >
-      {children}
-    </Animated.View>
-  );
+  return <Animated.View entering={getNewMessageEntering()}>{children}</Animated.View>;
 }
 
 function RevealStrip({ index, progress }: { index: number; progress: SharedValue<number> }) {

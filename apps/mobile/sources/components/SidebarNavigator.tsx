@@ -29,6 +29,7 @@ import { isDesktopPlatform } from '@/utils/platform';
 import {
   clampDesktopPaneWidth,
   DESKTOP_NAV_DEFAULT_WIDTH,
+  DESKTOP_NAV_MIN_WIDTH,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
@@ -80,17 +81,37 @@ export const SidebarNavigator = React.memo(() => {
     if (!desktopPlatform) return;
     void loadDesktopPaneWidth('navigation').then(setStoredDrawerWidth);
   }, [desktopPlatform]);
+  // Reserve room for the content pane, but only when the window is wide enough
+  // that doing so still leaves the nav pane at least its own minimum width.
+  // Otherwise `Math.min` against a ceiling below that minimum always loses to
+  // clampDesktopPaneWidth's floor, pinning the rendered width to the floor no
+  // matter what the user drags to — the resize handle stops moving anything.
+  const maxWidthForContent = windowWidth - 440;
   const fullDrawerWidth = isDesktopLayout
-    ? clampDesktopPaneWidth('navigation', Math.min(storedDrawerWidth, windowWidth - 440))
+    ? clampDesktopPaneWidth(
+        'navigation',
+        maxWidthForContent > DESKTOP_NAV_MIN_WIDTH
+          ? Math.min(storedDrawerWidth, maxWidthForContent)
+          : storedDrawerWidth,
+      )
     : DESKTOP_NAV_DEFAULT_WIDTH;
   const drawerWidth = showSidebar ? fullDrawerWidth : 0;
+  // fullDrawerWidth changes on every move (it derives from storedDrawerWidth,
+  // which onPanResponderMove updates), so it can't be a dependency here: on
+  // web, rebuilding the PanResponder mid-gesture makes react-native-web
+  // re-register the node's responder config, which resets the gesture's
+  // touch-move accounting and breaks cumulative `dx` tracking. Read the
+  // latest width through a ref instead, so the responder instance — and the
+  // gesture it's tracking — stays stable for the whole drag.
+  const fullDrawerWidthRef = React.useRef(fullDrawerWidth);
+  fullDrawerWidthRef.current = fullDrawerWidth;
   const resizePan = React.useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => desktopPlatform && showSidebar,
         onMoveShouldSetPanResponder: (_, gesture) => desktopPlatform && Math.abs(gesture.dx) > 2,
         onPanResponderGrant: () => {
-          dragStartWidth.current = fullDrawerWidth;
+          dragStartWidth.current = fullDrawerWidthRef.current;
         },
         onPanResponderMove: (_, gesture) =>
           setStoredDrawerWidth(
@@ -102,7 +123,7 @@ export const SidebarNavigator = React.memo(() => {
           void saveDesktopPaneWidth('navigation', width);
         },
       }),
-    [desktopPlatform, fullDrawerWidth, showSidebar],
+    [desktopPlatform, showSidebar],
   );
 
   const drawerNavigationOptions = React.useMemo(() => {

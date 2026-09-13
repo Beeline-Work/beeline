@@ -90,6 +90,7 @@ import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
   desktopLayoutMode,
@@ -3602,24 +3603,17 @@ export default function BuzzChat() {
                   // A corner's name is its objective verbatim; let it wrap once
                   // rather than truncate to a slug fragment.
                   numberOfLines={isCorner ? 2 : 1}
+                  onPress={
+                    !isCorner && !isDirectMessage ? () => setRoomActionsVisible(true) : undefined
+                  }
                   title={displayHeaderTitle}
                 />
               )}
-              {!isCorner && roomRepository && (
-                <TouchableOpacity
-                  accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
-                    canManageWorkspace ? 'View or change it' : 'View it'
-                  }`}
-                  accessibilityRole="button"
-                  hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
-                  onPress={() => setRoomActionsVisible(true)}
-                  style={styles.repoChip}
-                  testID="room-repo-chip"
-                >
-                  <HeaderMetaCaps testID="room-repo-chip-text">
-                    {roomRepoChipLabel(roomRepository)}
-                  </HeaderMetaCaps>
-                </TouchableOpacity>
+              {!isCorner && (
+                <RoomRepositorySubtitle
+                  onOpenUrl={handleOpenGitHubEvent}
+                  repositoryName={roomRepoChipLabel(roomRepository)}
+                />
               )}
               {isCorner ? (
                 <HeaderMetaRow>
@@ -4671,7 +4665,6 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
     },
     cornerChannelNameSkeleton: { width: 108 },
-    repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
     // The one thing on the corner's meta row with unbounded length, so it is
     // the one that gives: an unshrinkable name pushed the member count off
     // the right edge.

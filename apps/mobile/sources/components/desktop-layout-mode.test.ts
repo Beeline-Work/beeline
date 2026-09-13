@@ -23,6 +23,9 @@ describe('desktop layout mode', () => {
     );
     expect(channels).toContain('isDesktop ? (');
     expect(channels).toContain('testID="desktop-room-selection-empty"');
+    expect(channels).toContain('testID="desktop-room-list-empty"');
+    expect(channels).toContain('chatList.chats.length === 0 ? (');
+    expect(channels).toContain('<EmptyRoomActions');
     expect(channels).toContain('!isDesktop && activeCommunityId');
     expect(channels).toContain('!isDesktop && !viewerIsAgent');
   });

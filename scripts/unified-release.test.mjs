@@ -871,7 +871,10 @@ test('native workflow keeps Android on EAS cloud and builds iOS locally on the M
     assert.match(isolateKeychain.run, /security default-keychain -d user > "\$RUNNER_TEMP\/user-default-keychain\.txt"/);
     assert.match(isolateKeychain.run, /security list-keychains -d user -s ~\/Library\/Keychains\/login\.keychain-db/);
     assert.ok(ios.steps.indexOf(isolateKeychain) < ios.steps.indexOf(iosBuild));
-    assert.match(iosCredentials.run, /export PATH=\/usr\/local\/opt\/node@20\/bin:\/usr\/local\/bin:\$PATH/);
+    for (const step of [iosCredentials, iosBuild, iosSubmit]) {
+      assert.match(step.run, /# Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export\./);
+      assert.match(step.run, /export PATH=\/usr\/local\/opt\/node@20\/bin:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin:\/usr\/local\/bin/);
+    }
     assert.match(iosCredentials.run, /EXPO_APPLE_TEAM_ID=89KT3SWYAF/);
     assert.match(iosCredentials.run, /EXPO_NO_CAPABILITY_SYNC=1/);
     assert.match(iosCredentials.run, /EAS_SKIP_AUTO_FINGERPRINT=1/);

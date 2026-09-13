@@ -300,7 +300,7 @@ export function DesktopRoomInspector({
                     style={styles.simpleRow}
                     testID="desktop-work-concluded"
                   >
-                    <Text style={styles.simpleTitle}>Concluded · {concluded.length}</Text>
+                    <Text style={styles.simpleTitle}>archived · {concluded.length}</Text>
                     <Text style={styles.chevron}>›</Text>
                   </Pressable>
                 )}
@@ -443,7 +443,16 @@ function CornerRow({
       <View style={styles.cornerHeadline}>
         <Text style={styles.cornerTitle}>{title}</Text>
         <Text
-          style={[styles.cornerStatus, display.needsYou && styles.cornerStatusNeedsYou]}
+          style={[
+            styles.cornerStatus,
+            display.status === 'working'
+              ? styles.cornerStatusWorking
+              : display.status === 'review'
+                ? styles.cornerStatusReview
+                : display.status === 'archived'
+                  ? styles.cornerStatusArchived
+                  : styles.cornerStatusWaiting,
+          ]}
           testID={`desktop-work-corner-state-${corner.corner.id}`}
         >
           {display.word}
@@ -828,7 +837,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.textSecondary,
     includeFontPadding: false,
   },
-  cornerStatusNeedsYou: { color: theme.colors.textLink },
+  cornerStatusWorking: { color: theme.buzz.warning },
+  cornerStatusReview: { color: theme.buzz.accent },
+  cornerStatusWaiting: { color: theme.buzz.ledgerQuiet },
+  cornerStatusArchived: { color: theme.buzz.ledgerGhost },
   sectionGap: { height: 22 },
   simpleRow: {
     minHeight: 44,

@@ -1,9 +1,5 @@
-import {
-  isCornerTerminal,
-  currentCornerStatus,
-  type CornerStatus,
-  type CornerSummary,
-} from './corners';
+import { type CornerSummary } from './corners';
+import { resolveCornerDisplayState, type CornerDisplayStatus } from './corner-display-state';
 import { resolveAgentDisplayIdentity } from './agent-display';
 import { pickTurnVerb, type TurnVerb } from './turn-clock';
 import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-client';
@@ -20,7 +16,7 @@ import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-c
  *
  *   **A corner is open.** A non-terminal child edit channel exists. Its
  *   canonical parameterized-replaceable state decides whether the pin is
- *   working, waiting, in review, preparing, or quietly idle. Parent-Room
+ *   working, waiting, or in review. Parent-Room
  *   kind:9 control history is never lifecycle authority.
  *
  * `selectPinnedCorner` takes canonical corner state and nothing else; the turn
@@ -28,8 +24,7 @@ import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-c
  */
 export type PinnedCorner = {
   cornerId: string;
-  /** Pinned-only projections for canonical OPEN and quiet-but-unfinished. */
-  status: CornerStatus | 'preparing' | 'idle';
+  status: CornerDisplayStatus;
 };
 
 export type PinnedCornerInput = {
@@ -270,24 +265,18 @@ export function selectComposerAckPresentation(
  * over one still being actively worked.
  */
 const PIN_RELEVANCE: Record<string, number> = {
-  open: 0,
-  live: 1,
-  preparing: 1,
-  'needs-attention': 2,
-  stalled: 2,
-  failed: 3,
-  merged: 3,
+  review: 0,
+  working: 1,
+  waiting: 2,
   archived: 3,
-  idle: 4,
 };
 
 /**
  * The one corner the pinned line may name, or `null` for none.
  *
  * The line's presence means "this corner is open and worth returning to" —
- * working, waiting, review-ready, preparing, and quiet idle all qualify. Only
- * a terminal status (`merged`/`archived`) is "no line". When several corners
- * qualify at once, an actionable one wins; idle remains the fallback.
+ * working, waiting, and review all qualify. Archived means "no line". When
+ * several corners qualify at once, review wins and waiting remains fallback.
  */
 export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | null {
   const status = new Map<string, PinnedCorner['status']>();
@@ -298,9 +287,16 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
     // not lifecycle authority. In particular, a parent kind:9 corner-open
     // control message can remain in history forever and must never pin itself.
     if (!corner.machineState) continue;
-    const canonical = currentCornerStatus(corner, input.now);
-    if (corner.machineState === 'open') status.set(corner.id, 'preparing');
-    else status.set(corner.id, canonical ?? 'idle');
+    const display = resolveCornerDisplayState(
+      {
+        machineState: corner.machineState,
+        ...(corner.machineReason ? { machineReason: corner.machineReason } : {}),
+        ...(corner.stateAt === undefined ? {} : { stateAt: corner.stateAt }),
+        ...(corner.awaitingReply === undefined ? {} : { awaitingReply: corner.awaitingReply }),
+      },
+      input.now,
+    );
+    status.set(corner.id, display.status);
     seenAt.set(
       corner.id,
       Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0),
@@ -308,7 +304,7 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   }
 
   const candidates = [...status.entries()]
-    .filter(([, value]) => value === 'preparing' || value === 'idle' || !isCornerTerminal(value))
+    .filter(([, value]) => value !== 'archived')
     .sort(
       ([leftId, left], [rightId, right]) =>
         PIN_RELEVANCE[left] - PIN_RELEVANCE[right] ||
@@ -320,27 +316,20 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
 }
 
 /**
- * Gold, and the breath that goes with it, mean one thing product-wide: an
- * agent is alive and working *in that corner*. `needs-attention` and `open`
- * are pinned too (see `selectPinnedCorner`) but are not running work, so they
- * render on the quiet tier with no pulse — this is the one test that decides
- * which of a pinned corner's non-terminal statuses earns the gold treatment.
+ * Motion means one thing product-wide: an agent is working in that corner.
+ * Waiting and review are pinned too, but do not pulse.
  */
 export function isPinnedCornerLive(status: PinnedCorner['status']): boolean {
-  return status === 'live';
+  return status === 'working';
 }
 
-/** A pinned corner has an approvable change waiting — the pinned line should
- * say so rather than a generic "active"/"idle". */
+/** A pinned corner has an approvable change waiting. */
 export function isPinnedCornerReadyForReview(status: PinnedCorner['status']): boolean {
-  return status === 'open';
+  return status === 'review';
 }
 
 export function pinnedCornerVerb(status: PinnedCorner['status']): string {
-  if (status === 'preparing') return 'preparing';
-  if (status === 'idle') return 'idle';
-  if (isPinnedCornerReadyForReview(status)) return 'ready for review';
-  return isPinnedCornerLive(status) ? 'active' : 'needs attention';
+  return status;
 }
 
 /** Human-facing branch label for a full Git target ref. */

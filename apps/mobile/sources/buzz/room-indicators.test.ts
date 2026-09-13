@@ -37,10 +37,10 @@ const corner = (
 });
 
 describe('selectPinnedCorner', () => {
-  it('pins canonical open as a quiet preparing phase before working', () => {
+  it('pins canonical open as waiting before work starts', () => {
     expect(selectPinnedCorner({ lifecycle: [corner('opening', 'open', null)], now: NOW })).toEqual({
       cornerId: 'opening',
-      status: 'preparing',
+      status: 'waiting',
     });
   });
 
@@ -75,13 +75,13 @@ describe('selectPinnedCorner', () => {
   it('expires stale working gold to a quiet idle pin without losing navigation', () => {
     expect(
       selectPinnedCorner({ lifecycle: [corner('fresh', 'working', 'live')], now: NOW }),
-    ).toEqual({ cornerId: 'fresh', status: 'live' });
+    ).toEqual({ cornerId: 'fresh', status: 'working' });
     expect(
       selectPinnedCorner({
         lifecycle: [corner('expired-receipt', 'working', 'live', 1)],
         now: NOW,
       }),
-    ).toEqual({ cornerId: 'expired-receipt', status: 'idle' });
+    ).toEqual({ cornerId: 'expired-receipt', status: 'waiting' });
   });
 
   it.each([
@@ -102,13 +102,13 @@ describe('selectPinnedCorner', () => {
         ],
         now: NOW,
       }),
-    ).toEqual({ cornerId: 'review', status: 'open' });
+    ).toEqual({ cornerId: 'review', status: 'review' });
   });
 
   it('keeps a quiet unfinished corner pinned while no turn is running', () => {
     expect(
       selectPinnedCorner({ lifecycle: [corner('idle-corner', 'idle', null)], now: NOW }),
-    ).toEqual({ cornerId: 'idle-corner', status: 'idle' });
+    ).toEqual({ cornerId: 'idle-corner', status: 'waiting' });
   });
 
   it('prefers review-ready over working, then recency within a tier', () => {
@@ -120,7 +120,7 @@ describe('selectPinnedCorner', () => {
         ],
         now: NOW,
       }),
-    ).toEqual({ cornerId: 'review', status: 'open' });
+    ).toEqual({ cornerId: 'review', status: 'review' });
     expect(
       selectPinnedCorner({
         lifecycle: [
@@ -129,28 +129,31 @@ describe('selectPinnedCorner', () => {
         ],
         now: NOW,
       }),
-    ).toEqual({ cornerId: 'newer', status: 'live' });
+    ).toEqual({ cornerId: 'newer', status: 'working' });
   });
 });
 
 describe('pinned-corner presentation', () => {
   it('spends gold only on canonical working', () => {
-    expect(isPinnedCornerLive('live')).toBe(true);
-    expect(isPinnedCornerLive('needs-attention')).toBe(false);
-    expect(isPinnedCornerLive('open')).toBe(false);
-    expect(isPinnedCornerLive('preparing')).toBe(false);
+    expect(isPinnedCornerLive('working')).toBe(true);
+    expect(isPinnedCornerLive('waiting')).toBe(false);
+    expect(isPinnedCornerLive('review')).toBe(false);
+    expect(isPinnedCornerLive('archived')).toBe(false);
   });
 
-  it('labels only review-ready as ready for review', () => {
-    expect(isPinnedCornerReadyForReview('open')).toBe(true);
-    expect(isPinnedCornerReadyForReview('live')).toBe(false);
-    expect(isPinnedCornerReadyForReview('preparing')).toBe(false);
+  it('recognizes only the canonical review display state', () => {
+    expect(isPinnedCornerReadyForReview('review')).toBe(true);
+    expect(isPinnedCornerReadyForReview('working')).toBe(false);
+    expect(isPinnedCornerReadyForReview('waiting')).toBe(false);
   });
 
-  it('names the opening lifecycle before it becomes active', () => {
-    expect(pinnedCornerVerb('preparing')).toBe('preparing');
-    expect(pinnedCornerVerb('live')).toBe('active');
-    expect(pinnedCornerVerb('idle')).toBe('idle');
+  it('uses only the four lowercase labels', () => {
+    expect(['working', 'waiting', 'review', 'archived'].map(pinnedCornerVerb)).toEqual([
+      'working',
+      'waiting',
+      'review',
+      'archived',
+    ]);
   });
 
   it('shows a human branch name instead of a raw Git ref', () => {

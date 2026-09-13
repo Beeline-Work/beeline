@@ -17,7 +17,7 @@ import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { CornerGlyph, HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelLoader, StateCircle } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -192,7 +192,7 @@ export default function BuzzCorners() {
                       : (item.latestMessage?.text ?? 'No activity yet')}
                   </Text>
                 </View>
-                <CornerGlyph status={display.status} />
+                <StateCircle state={display.visual} />
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             );

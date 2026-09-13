@@ -1,12 +1,8 @@
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { cornerStatusLine } from '@/buzz/corner-status-line';
 import {
-  cornerGlyphForStatus,
-  cornerVisualState,
   currentCornerStatus,
-  isCornerTerminal,
   type CornerMachineState,
-  type CornerStatus,
   type CornerVisualState,
 } from '@/buzz/corners';
 
@@ -30,12 +26,8 @@ import {
  *  - CHECKS — `lifecycle.checks`/`lifecycle.checksSummary`, GitHub's verdict
  *    on the PR head.
  *
- * Precedence is not a tie-break; it is an authority rule. When the daemon has
- * an opinion it wins outright, because it is the only source that knows an
- * agent is mid-turn or has asked a question. PR and checks facts are then
- * narration — they fill `detail`, never `status`. They resolve the status only
- * where the daemon is genuinely silent, which is a different thing from
- * disagreeing with it.
+ * Display precedence is terminal, running turn, review, then waiting. This is
+ * presentation only: the daemon and GitHub retain their full vocabularies.
  */
 export type CornerDisplayFacts = {
   /** Canonical daemon state; absent means the daemon has never reported. */
@@ -53,8 +45,8 @@ export type CornerDisplayFacts = {
 
 export type CornerDisplayState = {
   /** The one canonical lifecycle word every surface sorts and filters on. */
-  readonly status: CornerStatus | null;
-  /** The three-word presentation vocabulary: idle, working, needs-you. */
+  readonly status: CornerDisplayStatus;
+  /** Compatibility mark vocabulary used by the existing state glyph. */
   readonly visual: CornerVisualState;
   /**
    * A person can act on this corner right now. The single condition a surface
@@ -65,9 +57,7 @@ export type CornerDisplayState = {
   /** Shared state-circle glyph (`◌` working, `●` needs-you, `○` idle). */
   readonly glyph: string;
   /**
-   * The one short word a row prints beside the name. For a needs-you corner
-   * it is the AFFORDANCE — what opening it lets you do — because the state
-   * itself is already carried by the glyph and the accent.
+   * The one lowercase state word a row prints beside the name.
    */
   readonly word: string;
   /**
@@ -79,55 +69,17 @@ export type CornerDisplayState = {
   readonly prUrl?: string;
   /** This corner's life is over: it landed or it was closed. */
   readonly terminal: boolean;
+  /** Header-only explanation for the two retained quiet failure facts. */
+  readonly headerSuffix?: 'failed' | 'checks failed';
+  /** Existing design token family used by state labels and marks. */
+  readonly tone: 'work' | 'brass' | 'quiet' | 'ghost';
 };
+
+export type CornerDisplayStatus = 'working' | 'waiting' | 'review' | 'archived';
 
 /** Compact sentence fragment for the corner header's opener + state line. */
 export function cornerHeaderStateLabel(state: CornerDisplayState): string {
-  switch (state.status) {
-    case 'live':
-      return 'WORKING';
-    case 'open':
-      return 'WAITING FOR REVIEW';
-    case 'needs-attention':
-      return 'WAITING FOR REPLY';
-    case 'failed':
-      return 'NEEDS RETRY';
-    case 'merged':
-      return 'MERGED';
-    case 'archived':
-      return 'CLOSED';
-    case null:
-      return state.needsYou ? 'WAITING FOR REPLY' : 'IDLE';
-  }
-}
-
-/**
- * The affordance word per canonical projection. `open` is a review ask, which
- * the Room row's older table folded into REPLY; naming it separately is the
- * point of having one resolver.
- */
-const DISPLAY_WORD: Readonly<Record<CornerStatus, string>> = {
-  live: 'WORKING',
-  open: 'REVIEW',
-  'needs-attention': 'REPLY',
-  failed: 'RETRY',
-  merged: 'MERGED',
-  archived: 'CLOSED',
-};
-
-/**
- * Whether the daemon has said anything durable about this corner. `working`
- * and `waiting` are opinions even when the working lease has gone stale — a
- * stale lease demotes the corner to idle, it does not hand authority to
- * GitHub. Only `open`, `idle`, and silence leave room for remote facts.
- */
-function daemonSpoke(machineState: CornerMachineState | undefined): boolean {
-  return (
-    machineState === 'working' ||
-    machineState === 'waiting' ||
-    machineState === 'concluded' ||
-    machineState === 'closed'
-  );
+  return state.headerSuffix ? `${state.status} · ${state.headerSuffix}` : state.status;
 }
 
 /**
@@ -154,30 +106,6 @@ export function remoteTerminalState(
   return undefined;
 }
 
-/**
- * What PR and checks facts alone say a corner is. Only consulted where the
- * daemon is silent, so this can never overturn a live turn or a pending
- * question — it reports the corner GitHub still remembers after the agent that
- * opened it stopped reporting.
- *
- * A failing check or a conflicted PR resolves to `failed` rather than `open`
- * because both are things only a person can clear, and a corner nobody will
- * touch is worse than one that says so.
- */
-function remoteCornerStatus(
-  lifecycle: CornerLifecycleView | undefined,
-  archived: boolean,
-): CornerStatus | null {
-  if (archived) return 'archived';
-  if (!lifecycle) return null;
-  const ended = remoteTerminalState(lifecycle);
-  if (ended) return ended === 'concluded' ? 'merged' : 'archived';
-  if (!lifecycle.pr) return null;
-  const checks = lifecycle.checksSummary?.status ?? lifecycle.checks;
-  if (checks === 'failing' || lifecycle.pr.mergeability === 'dirty') return 'failed';
-  return lifecycle.lifecycle === 'in-review' ? 'open' : null;
-}
-
 /** The one collapse. Every corner row on every surface reads this answer. */
 export function resolveCornerDisplayState(
   facts: CornerDisplayFacts,
@@ -192,23 +120,51 @@ export function resolveCornerDisplayState(
     },
     now,
   );
-  const archived = facts.archived === true || facts.machineState === 'closed';
-  const status =
-    daemon ??
-    (daemonSpoke(facts.machineState) ? null : remoteCornerStatus(facts.lifecycle, archived));
-  const visual = cornerVisualState(status, { awaitingReply: facts.awaitingReply });
-  const detail = cornerStatusLine(facts.lifecycle, status === 'archived' || archived);
+  const archived =
+    facts.archived === true ||
+    facts.machineState === 'concluded' ||
+    facts.machineState === 'closed' ||
+    remoteTerminalState(facts.lifecycle) !== undefined;
+  const hasReview = facts.machineReason === 'review' || facts.lifecycle?.pr !== undefined;
+  const status: CornerDisplayStatus = archived
+    ? 'archived'
+    : daemon === 'live'
+      ? 'working'
+      : hasReview
+        ? 'review'
+        : 'waiting';
+  const visual: CornerVisualState =
+    status === 'working' ? 'working' : status === 'review' ? 'needs-you' : 'idle';
+  const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
+  const headerSuffix =
+    status === 'review' && checks === 'failing'
+      ? 'checks failed'
+      : status === 'waiting' && facts.machineReason === 'failure'
+        ? 'failed'
+        : undefined;
+  const detail = cornerStatusLine(facts.lifecycle, archived);
   return {
     status,
     visual,
-    needsYou: visual === 'needs-you',
-    glyph: cornerGlyphForStatus(status, { awaitingReply: facts.awaitingReply }),
-    // A corner with no canonical status that is nonetheless awaiting a reply
-    // reads as the reply it is waiting for, not as the idle it no longer is.
-    word: status ? DISPLAY_WORD[status] : visual === 'needs-you' ? 'REPLY' : 'IDLE',
+    needsYou:
+      status === 'review' ||
+      facts.awaitingReply === true ||
+      facts.machineReason === 'question' ||
+      facts.machineReason === 'failure',
+    glyph: status === 'working' ? '◌' : status === 'review' ? '●' : '○',
+    word: status,
     ...(detail ? { detail } : {}),
     ...(facts.lifecycle?.pr?.url ? { prUrl: facts.lifecycle.pr.url } : {}),
-    terminal: isCornerTerminal(status),
+    terminal: status === 'archived',
+    ...(headerSuffix ? { headerSuffix } : {}),
+    tone:
+      status === 'working'
+        ? 'work'
+        : status === 'review'
+          ? 'brass'
+          : status === 'archived'
+            ? 'ghost'
+            : 'quiet',
   };
 }
 

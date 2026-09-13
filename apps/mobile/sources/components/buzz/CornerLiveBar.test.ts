@@ -80,23 +80,23 @@ function labelOf(renderer: ReactTestRenderer) {
 describe('the corner-open indicator', () => {
   it('is one line naming who is working and what on', () => {
     const renderer = render(
-      React.createElement(CornerLiveBar, { label: 'beebee active: feat/ux-fix-now', live: true }),
+      React.createElement(CornerLiveBar, { label: 'beebee working: feat/ux-fix-now', live: true }),
     );
     // One status line — never a band, a bar that fills, or a row of dashes.
-    expect(labelOf(renderer).props.children).toBe('beebee active: feat/ux-fix-now');
+    expect(labelOf(renderer).props.children).toBe('beebee working: feat/ux-fix-now');
   });
 
   it('spends the reserved gold accent, and only that', () => {
     const live = render(
-      React.createElement(CornerLiveBar, { label: 'beebee active: feat/x', live: true }),
+      React.createElement(CornerLiveBar, { label: 'beebee working: feat/x', live: true }),
     );
-    expect(labelOf(live).props.style.flat().at(-1).color).toBe(groknight.accent);
+    expect(labelOf(live).props.style.flat().at(-1).color).toBe(groknight.warning);
 
     // Gold is never the only signal, and it never attaches to a state that is
     // not live: an open-but-idle corner drops to the quiet tier and the copy
     // itself says which is which.
     const idle = render(
-      React.createElement(CornerLiveBar, { label: 'beebee idle: feat/x', live: false }),
+      React.createElement(CornerLiveBar, { label: 'beebee waiting: feat/x', live: false }),
     );
     expect(labelOf(idle).props.style.flat().at(-1).color).toBe(groknight.ledgerQuiet);
   });
@@ -105,16 +105,16 @@ describe('the corner-open indicator', () => {
     // A calm heartbeat on the shared live clock, mounted only when something
     // is genuinely live — a quiet Room pays for no clock at all.
     expect(pulses(render(
-      React.createElement(CornerLiveBar, { label: 'beebee active: feat/x', live: true }),
+      React.createElement(CornerLiveBar, { label: 'beebee working: feat/x', live: true }),
     ))).toHaveLength(1);
     expect(pulses(render(
-      React.createElement(CornerLiveBar, { label: 'beebee idle: feat/x', live: false }),
+      React.createElement(CornerLiveBar, { label: 'beebee waiting: feat/x', live: false }),
     ))).toHaveLength(0);
   });
 
   it('is a status light, not a plate: no border, no fill, no radius', () => {
     const renderer = render(
-      React.createElement(CornerLiveBar, { label: 'beebee idle: feat/x', live: false }),
+      React.createElement(CornerLiveBar, { label: 'beebee waiting: feat/x', live: false }),
     );
     const bar = renderer.root.findAllByType('View')[0];
     expect(bar.props.style).not.toHaveProperty('borderWidth');
@@ -125,17 +125,17 @@ describe('the corner-open indicator', () => {
   it('enters the corner on tap, and is inert when there is nowhere to go', () => {
     const onPress = vi.fn();
     const tappable = render(
-      React.createElement(CornerLiveBar, { label: 'beebee active: feat/x', live: true, onPress }),
+      React.createElement(CornerLiveBar, { label: 'beebee working: feat/x', live: true, onPress }),
     );
     const pressable = tappable.root.findAllByType('Pressable')[0];
-    expect(pressable.props.accessibilityLabel).toBe('beebee active: feat/x. Open the corner');
+    expect(pressable.props.accessibilityLabel).toBe('beebee working: feat/x. Open the corner');
     act(() => pressable.props.onPress());
     expect(onPress).toHaveBeenCalledTimes(1);
 
     // A Corner's own bar has no destination — you are already there — so it
     // renders as a plain status line rather than a dead button.
     const inert = render(
-      React.createElement(CornerLiveBar, { label: 'beebee active: feat/x', live: true }),
+      React.createElement(CornerLiveBar, { label: 'beebee working: feat/x', live: true }),
     );
     expect(inert.root.findAllByType('Pressable')).toHaveLength(0);
   });
@@ -143,7 +143,7 @@ describe('the corner-open indicator', () => {
   it('exposes the canonical working-state identifier only while live', () => {
     const live = render(
       React.createElement(CornerLiveBar, {
-        label: 'beebee active: feat/x',
+        label: 'beebee working: feat/x',
         live: true,
         onPress: () => undefined,
       }),
@@ -152,7 +152,7 @@ describe('the corner-open indicator', () => {
 
     const idle = render(
       React.createElement(CornerLiveBar, {
-        label: 'beebee idle: feat/x',
+        label: 'beebee waiting: feat/x',
         live: false,
         onPress: () => undefined,
       }),

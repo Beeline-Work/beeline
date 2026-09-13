@@ -288,19 +288,17 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain("lifecycle.lifecycle !== 'done'");
   });
 
-  it('spends brass on a needs-you corner and backs it with copy', () => {
-    // Brass on the index means the row is talking to you, and it is never the
-    // only signal (DESIGN.md, colour exception 1): the word itself changes to
-    // the affordance where every other row reads WORKING or IDLE.
-    expect(source).toContain('display.needsYou && styles.cornerStatusNeedsYou');
+  it('maps the four corner states onto four existing color tiers', () => {
+    expect(source).toContain("display.status === 'working'");
+    expect(source).toContain("display.status === 'review'");
+    expect(source).toContain("display.status === 'archived'");
     expect(source).toContain('display.needsYou && styles.cornerNameNeedsYou');
-    expect(styleBlock(source, 'cornerStatusNeedsYou')).toContain('color: hull.accent');
+    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.warning');
+    expect(styleBlock(source, 'cornerStatusReview')).toContain('color: hull.accent');
+    expect(styleBlock(source, 'cornerStatusWaiting')).toContain('color: hull.ledgerQuiet');
+    expect(styleBlock(source, 'cornerStatusArchived')).toContain('color: hull.ledgerGhost');
     expect(styleBlock(source, 'cornerNameNeedsYou')).toContain('color: hull.textPrimary');
-    // Quiet rows keep the muted tones, so the accent stays rare inside the
-    // dropdown rather than becoming its default.
-    expect(styleBlock(source, 'cornerStatus')).toContain('color: hull.textMuted');
     expect(styleBlock(source, 'cornerName')).toContain('color: hull.textSecondary');
-    // Needs-you is announced, never left to colour.
     expect(source).toContain("display.needsYou ? ', needs you' : ''");
   });
 

@@ -1026,7 +1026,13 @@ export default function BuzzChannels() {
                             <Text
                               style={[
                                 styles.cornerStatus,
-                                display.needsYou && styles.cornerStatusNeedsYou,
+                                display.status === 'working'
+                                  ? styles.cornerStatusWorking
+                                  : display.status === 'review'
+                                    ? styles.cornerStatusReview
+                                    : display.status === 'archived'
+                                      ? styles.cornerStatusArchived
+                                      : styles.cornerStatusWaiting,
                               ]}
                               testID={`room-corner-status-${corner.corner.id}`}
                             >
@@ -1313,11 +1319,11 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       includeFontPadding: false,
     },
-    // Brass on the index means the row is talking to you, and a corner waiting
-    // on a person is the one thing in this dropdown that is. It is never the
-    // only signal: the word itself changes to the affordance (REVIEW, REPLY,
-    // RETRY) where every other row reads WORKING or IDLE.
-    cornerStatusNeedsYou: { color: hull.accent },
+    // One existing token tier per canonical display state.
+    cornerStatusWorking: { color: hull.warning },
+    cornerStatusReview: { color: hull.accent },
+    cornerStatusWaiting: { color: hull.ledgerQuiet },
+    cornerStatusArchived: { color: hull.ledgerGhost },
     // The name lifts out of the secondary tone with it, so the pair reads as
     // one emphasized row rather than a loud chip beside a quiet title.
     cornerNameNeedsYou: { color: hull.textPrimary },

@@ -95,6 +95,7 @@ The desktop leg signs, notarizes, staples, and strictly verifies the macOS disk
 image whenever the complete credential set is available. Until the Developer
 ID certificate is provisioned, it preserves the existing unsigned release path
 and marks both reports **macOS artifact UNSIGNED: signing secrets absent**.
+Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 

@@ -847,6 +847,7 @@ jobs:
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
           MACOS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           MACOS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           MACOS_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
           MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
@@ -863,6 +864,7 @@ jobs:
           const signingSecrets = [
             'MACOS_APPLE_CERTIFICATE',
             'MACOS_APPLE_CERTIFICATE_PASSWORD',
+            'MACOS_APPLE_SIGNING_IDENTITY',
             'MACOS_ASC_KEY_ID',
             'MACOS_ASC_ISSUER_ID',
             'MACOS_ASC_API_KEY_P8',

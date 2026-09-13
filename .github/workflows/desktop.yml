@@ -21,9 +21,10 @@
 # an artifact from a PR should never claim to be the release app.
 #
 # Production macOS builds are signed, notarized, stapled, and strictly verified
-# when the complete repository credential set is available. Until it is, they
-# build fully unsigned with a loud release notice. Preview/dev builds stay
-# intentionally unsigned.
+# when the complete repository credential set is available. Trusted in-repo
+# previews exercise the same signed path without claiming the production app
+# identity. Missing-secret previews/production builds are loudly unsigned;
+# dev builds are intentionally unsigned.
 name: Desktop
 
 on:
@@ -70,6 +71,9 @@ on:
         required: false
       APPLE_CERTIFICATE_PASSWORD:
         description: Password used when exporting the Developer ID Application .p12
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        description: Exact Developer ID Application identity
         required: false
       EXPO_ASC_KEY_ID:
         description: App Store Connect API key id, shared with the native release
@@ -208,6 +212,7 @@ jobs:
         env:
           MACOS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           MACOS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           MACOS_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
           MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
@@ -218,6 +223,7 @@ jobs:
         env:
           MACOS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           MACOS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
           MACOS_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
           MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
@@ -232,7 +238,7 @@ jobs:
           }
           write_env APPLE_CERTIFICATE "$MACOS_APPLE_CERTIFICATE"
           write_env APPLE_CERTIFICATE_PASSWORD "$MACOS_APPLE_CERTIFICATE_PASSWORD"
-          write_env APPLE_SIGNING_IDENTITY 'Developer ID Application: Moon Rice Limited (89KT3SWYAF)'
+          write_env APPLE_SIGNING_IDENTITY "$MACOS_APPLE_SIGNING_IDENTITY"
           write_env APPLE_API_KEY "$MACOS_ASC_KEY_ID"
           write_env APPLE_API_ISSUER "$MACOS_ASC_ISSUER_ID"
           write_env APPLE_API_KEY_PATH "$key_path"

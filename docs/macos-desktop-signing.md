@@ -5,13 +5,14 @@ downloadable `Beeline-universal.dmg` is signed with the Moon Rice Limited
 Developer ID, notarized, stapled, and checked with `codesign`, `spctl`, and
 `stapler` before it can reach the GitHub release and the `/dl` download surface.
 
-Preview and dev builds are intentionally unsigned. Until the complete signing
-credential set exists, production builds also run fully unsigned exactly as
-they did before signing support was added. No partial credential set reaches
-Tauri. Both the macOS job summary and unified release report say **macOS
-artifact UNSIGNED: signing secrets absent**. Once every credential is present,
-signing, notarization, stapling, and strict verification are mandatory; any
-failure fails the release.
+Trusted in-repo preview builds exercise the signed path when all credentials
+are present, while retaining their separate preview identity. Dev builds are
+intentionally unsigned. Fork previews and production builds with missing
+credentials run fully unsigned; no partial credential set reaches Tauri. Both
+the macOS job summary and unified release report say **macOS artifact UNSIGNED:
+signing secrets absent**. Once every credential is present, signing,
+notarization, stapling, and strict verification are mandatory; any failure
+fails the build.
 
 ## One-time Apple setup
 
@@ -31,7 +32,8 @@ The Apple Developer Program Account Holder must:
 
 4. Store the `.p12` export password as the repository secret
    `APPLE_CERTIFICATE_PASSWORD`.
-5. Confirm the certificate identity is exactly:
+5. Store the certificate identity as `APPLE_SIGNING_IDENTITY`. It must be
+   exactly:
 
    ```text
    Developer ID Application: Moon Rice Limited (89KT3SWYAF)

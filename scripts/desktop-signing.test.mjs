@@ -48,13 +48,20 @@ test('allows a loud unsigned production build when the complete secret set is ab
   );
 });
 
-test('preview builds stay unsigned even when repository secrets are available', () => {
+test('trusted preview builds exercise the signed path when repository secrets are available', () => {
   assert.deepEqual(
     desktopSigningDecision({
       platform: 'macOS',
       variant: 'preview',
       env: completeCredentials,
     }),
+    { enabled: true, missing: [], reason: 'credentials-present' },
+  );
+});
+
+test('dev builds stay unsigned even when repository secrets are available', () => {
+  assert.deepEqual(
+    desktopSigningDecision({ platform: 'macOS', variant: 'dev', env: completeCredentials }),
     { enabled: false, missing: [], reason: 'unsigned-variant' },
   );
 });
@@ -125,11 +132,12 @@ test('the release permits missing secrets but makes a configured signed path man
   assert.match(desktopWorkflow, /scripts\/desktop-signing\.mjs/);
   assert.match(desktopWorkflow, /MACOS_APPLE_CERTIFICATE:.*secrets\.APPLE_CERTIFICATE/);
   assert.match(desktopWorkflow, /MACOS_APPLE_CERTIFICATE_PASSWORD:.*secrets\.APPLE_CERTIFICATE_PASSWORD/);
+  assert.match(desktopWorkflow, /MACOS_APPLE_SIGNING_IDENTITY:.*secrets\.APPLE_SIGNING_IDENTITY/);
   assert.match(desktopWorkflow, /MACOS_ASC_KEY_ID:.*secrets\.EXPO_ASC_KEY_ID/);
   assert.match(desktopWorkflow, /MACOS_ASC_ISSUER_ID:.*secrets\.EXPO_ASC_ISSUER_ID/);
   assert.match(desktopWorkflow, /MACOS_ASC_API_KEY_P8:.*secrets\.EXPO_ASC_API_KEY_P8/);
   assert.match(desktopWorkflow, /write_env APPLE_CERTIFICATE "\$MACOS_APPLE_CERTIFICATE"/);
-  assert.match(desktopWorkflow, /write_env APPLE_SIGNING_IDENTITY 'Developer ID Application: Moon Rice Limited \(89KT3SWYAF\)'/);
+  assert.match(desktopWorkflow, /write_env APPLE_SIGNING_IDENTITY "\$MACOS_APPLE_SIGNING_IDENTITY"/);
   assert.match(desktopWorkflow, /write_env APPLE_API_KEY_PATH "\$key_path"/);
   assert.doesNotMatch(desktopWorkflow, /APPLE_CERTIFICATE:.*steps\.macos_signing\.outputs\.enabled/);
   assert.match(desktopWorkflow, /Unsigned preview assessment \(expected rejection\)/);

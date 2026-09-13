@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 export const MACOS_SIGNING_CREDENTIALS = Object.freeze([
   'MACOS_APPLE_CERTIFICATE',
   'MACOS_APPLE_CERTIFICATE_PASSWORD',
+  'MACOS_APPLE_SIGNING_IDENTITY',
   'MACOS_ASC_KEY_ID',
   'MACOS_ASC_ISSUER_ID',
   'MACOS_ASC_API_KEY_P8',
@@ -17,7 +18,7 @@ export function desktopSigningDecision({ platform, variant, env }) {
   if (platform !== 'macOS') {
     return { enabled: false, missing: [], reason: 'not-macos' };
   }
-  if (variant !== 'production') {
+  if (variant === 'dev') {
     return { enabled: false, missing: [], reason: 'unsigned-variant' };
   }
 

@@ -824,9 +824,11 @@ test('native workflow keeps Android on EAS cloud and builds iOS locally on the M
   const android = workflow.jobs.mobile_native_android;
   const ios = workflow.jobs.mobile_native_ios;
   assert.match(android.if, /native_android == 'true'/);
+  assert.equal(android.needs, 'initialize');
   assert.equal(android['runs-on'], 'ubuntu-latest');
   assert.equal(android['timeout-minutes'], 60);
   assert.match(ios.if, /native_ios == 'true'/);
+  assert.equal(ios.needs, 'initialize');
   assert.deepEqual(ios['runs-on'], ['self-hosted', 'macOS', 'X64', 'ios-builder']);
   assert.equal(ios['timeout-minutes'], 90);
   assert.equal(ios.steps.some((step) => step.uses === 'actions/setup-node@v4'), false);
@@ -875,6 +877,25 @@ test('native workflow keeps Android on EAS cloud and builds iOS locally on the M
     assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
     assert.match(iosBuild.run, /id:`local-\$\{sha256\}`/);
     assert.match(iosSubmit.run, /submit --platform ios --profile production --path "\$RUNNER_TEMP\/beeline-ios\.ipa" --non-interactive --wait/);
+    const androidEvidence = androidSteps.find((step) => step.name === 'Preserve Android build evidence');
+    const iosEvidence = ios.steps.find((step) => step.name === 'Preserve iOS build evidence');
+    assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');
+    assert.equal(androidEvidence.with.path, '${{ runner.temp }}/android-build.json');
+    assert.equal(iosEvidence.with.name, 'mobile-native-ios-build-${{ needs.initialize.outputs.release_id }}');
+    assert.equal(iosEvidence.with.path, '${{ runner.temp }}/ios-build.json');
+
+    const releaseSteps = workflow.jobs.release_result.steps;
+    const collectEvidence = releaseSteps.find((step) => step.name === 'Collect successful native build evidence');
+    const preserveEvidence = releaseSteps.find((step) => step.name === 'Preserve native build evidence');
+    const checkpoint = releaseSteps.find((step) => step.name === 'Write native checkpoint');
+    for (const step of [collectEvidence, preserveEvidence, checkpoint]) {
+      assert.match(step.if, /native_android != 'true'.*mobile_native_android\.result == 'success'/s);
+      assert.match(step.if, /native_ios != 'true'.*mobile_native_ios\.result == 'success'/s);
+    }
+    assert.equal(collectEvidence.with.pattern, 'mobile-native-*-build-${{ needs.initialize.outputs.release_id }}');
+    assert.equal(preserveEvidence.with.name, 'mobile-native-${{ needs.initialize.outputs.release_id }}');
+    assert.match(checkpoint.run, /checkpoint-mobile-native\.json/);
+    assert.match(checkpoint.run, /component:"mobile-native"/);
     assert.equal(cleanup.if, 'always()');
     assert.match(cleanup.run, /rm -f .*AuthKey_.*beeline-ios\.ipa/);
     assert.equal(restoreKeychains.if, 'always()');

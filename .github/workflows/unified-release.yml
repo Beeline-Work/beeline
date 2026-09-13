@@ -651,40 +651,17 @@ jobs:
           curl -fsSL "$archive" -o "$RUNNER_TEMP/beeline.aab"
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=draft bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
-      - name: Preserve Android evidence for the selected iOS build
-        if: needs.initialize.outputs.native_ios == 'true'
+      - name: Preserve Android build evidence
         uses: actions/upload-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/android-build.json
           if-no-files-found: error
           retention-days: 1
-      - name: Preserve native build evidence
-        if: needs.initialize.outputs.native_ios != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-native-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/android-build.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Write native checkpoint
-        if: needs.initialize.outputs.native_ios != 'true'
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-native.json",JSON.stringify({component:"mobile-native",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-native-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: needs.initialize.outputs.native_ios != 'true'
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-native
-          path: checkpoint-mobile-native.json
-          if-no-files-found: error
 
   mobile_native_ios:
-    needs: [initialize, mobile_native_android]
-    if: >-
-      always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
-      needs.initialize.outputs.native_ios == 'true' &&
-      (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success')
+    needs: initialize
+    if: inputs.plan_only != true && needs.initialize.outputs.native_ios == 'true'
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90
     env:
@@ -744,31 +721,13 @@ jobs:
           set -euo pipefail
           export PATH=/usr/local/opt/node@20/bin:/usr/local/bin:$PATH
           npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
-      - name: Restore selected Android build evidence
-        if: needs.initialize.outputs.native_android == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}
-      - name: Preserve native build evidence
+      - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-native-${{ needs.initialize.outputs.release_id }}
-          path: |
-            ${{ runner.temp }}/android-build.json
-            ${{ runner.temp }}/ios-build.json
+          name: mobile-native-ios-build-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/ios-build.json
           if-no-files-found: error
-          retention-days: 90
-      - name: Write native checkpoint
-        run: |
-          export PATH=/usr/local/opt/node@20/bin:/usr/local/bin:$PATH
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-native.json",JSON.stringify({component:"mobile-native",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-native-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-native
-          path: checkpoint-mobile-native.json
-          if-no-files-found: error
+          retention-days: 1
       - name: Remove iOS credentials and build output
         if: always()
         run: |
@@ -803,6 +762,36 @@ jobs:
           pattern: release-checkpoint-${{ needs.initialize.outputs.release_id }}-*
           path: ${{ runner.temp }}/checkpoints
           merge-multiple: true
+      - name: Collect successful native build evidence
+        if: >-
+          needs.initialize.outputs.run_mobile_native == 'true' &&
+          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
+          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mobile-native-*-build-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/native-evidence
+          merge-multiple: true
+      - name: Preserve native build evidence
+        if: >-
+          needs.initialize.outputs.run_mobile_native == 'true' &&
+          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
+          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-native-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/native-evidence
+          if-no-files-found: error
+          retention-days: 90
+      - name: Write native checkpoint
+        if: >-
+          needs.initialize.outputs.run_mobile_native == 'true' &&
+          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
+          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
+        run: |
+          mkdir -p "$RUNNER_TEMP/checkpoints"
+          node -e 'const fs=require("node:fs");const [path,version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync(path,JSON.stringify({component:"mobile-native",version,sourceSha,state:"checked",artifactRef})+"\n")' \
+            "$RUNNER_TEMP/checkpoints/checkpoint-mobile-native.json" "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-native-${{ needs.initialize.outputs.release_id }}"
       - name: Merge checkpoints and classify the final attempt
         id: result
         env:

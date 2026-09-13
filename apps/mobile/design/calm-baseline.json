@@ -1,6 +1,6 @@
 {
   "app/(app)/beeline/channels.tsx": 10,
-  "app/(app)/beeline/chat/RoomMessageVariants.tsx": 24,
+  "app/(app)/beeline/chat/RoomMessageVariants.tsx": 10,
   "app/(app)/beeline/chat/[channelId].tsx": 56,
   "app/(app)/beeline/community.tsx": 9,
   "app/(app)/beeline/corners/[roomId].tsx": 12,
@@ -30,7 +30,6 @@
   "components/buzz/Ledger.tsx": 7,
   "components/buzz/MonoHull.tsx": 4,
   "components/buzz/MonoMarkdown.tsx": 2,
-  "components/buzz/OwnerGrantNeededCard.tsx": 3,
   "components/buzz/RepoPicker.tsx": 12,
   "components/buzz/RoomContextPreamble.tsx": 3,
   "components/buzz/SlashVerbPicker.tsx": 6,

@@ -15,6 +15,7 @@ vi.mock('react-native', async () => {
     );
   return {
     Share: { share: (...args: unknown[]) => shareSpy(...args) },
+    Pressable: host('Pressable'),
     StyleSheet: { create: (styles: unknown) => styles },
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
@@ -22,19 +23,15 @@ vi.mock('react-native', async () => {
   };
 });
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: unknown) => styles },
-  useUnistyles: () => ({
-    theme: {
-      buzz: {
-        accent: '#b08a4a',
-        textPrimary: '#fff',
-        textSecondary: '#ccc',
-        dim: '#666',
-      },
+vi.mock('react-native-unistyles', async () => {
+  const { beelineThemes } = await import('@/buzz/groknight');
+  return {
+    StyleSheet: {
+      create: (factory: (theme: { buzz: typeof beelineThemes.obsidian }) => unknown) =>
+        factory({ buzz: beelineThemes.obsidian }),
     },
-  }),
-}));
+  };
+});
 
 import {
   OWNER_GRANT_COPY,
@@ -85,11 +82,17 @@ function texts(renderer: ReactTestRenderer): string[] {
       else walk(child as never);
     }
   };
-  renderer.root.findAll(() => true).forEach((node) => {
-    if (node.props.testID === undefined && typeof node.type === 'string' && node.type === 'Text') {
-      walk(node);
-    }
-  });
+  renderer.root
+    .findAll(() => true)
+    .forEach((node) => {
+      if (
+        node.props.testID === undefined &&
+        typeof node.type === 'string' &&
+        node.type === 'Text'
+      ) {
+        walk(node);
+      }
+    });
   // Fallback: collect every string in tree order.
   if (out.length === 0) {
     const collect = (node: any): void => {

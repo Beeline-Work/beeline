@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { foldSystemLines } from './system-lines';
+import { foldSystemLines, formatNotificationHeadlines } from './system-lines';
 
 function github(
   id: string,
@@ -54,6 +54,50 @@ function corner(
     },
   };
 }
+
+describe('notification headline grammar', () => {
+  const row = (
+    id: string,
+    state: Parameters<typeof formatNotificationHeadlines>[0][number]['state'],
+    kindLine: string,
+  ) => ({ id, state, kindLine, title: id });
+
+  it('formats a single kind in lifecycle order and omits zeros', () => {
+    expect(
+      formatNotificationHeadlines([
+        row('opened', 'PR opened', 'PR #2'),
+        row('merged-1', 'Merged', 'PR #1'),
+        row('merged-2', 'Merged', 'PR #3'),
+      ]),
+    ).toEqual(['PR 2 merged, 1 opened']);
+  });
+
+  it('orders mixed kinds as PR, Issue, Star, Workflow', () => {
+    expect(
+      formatNotificationHeadlines([
+        row('workflow-failed', 'Failed', 'run #4 · smoke check'),
+        row('star-1', 'Starred', 'star'),
+        row('issue-closed', 'Closed', 'issue'),
+        row('pr-opened', 'PR opened', 'PR #7'),
+        row('workflow-ran', 'Ran', 'workflow'),
+        row('workflow-succeeded', 'Succeeded', 'run #3'),
+        row('star-2', 'Starred', 'star'),
+        row('issue-opened', 'Opened', 'issue'),
+      ]),
+    ).toEqual([
+      'PR 1 opened',
+      'Issue 1 opened, 1 closed',
+      'Star 2',
+      'Workflow 1 ran, 1 succeeded, 1 failed',
+    ]);
+  });
+
+  it('uses the same fold grammar for one row', () => {
+    expect(formatNotificationHeadlines([row('merged', 'Merged', 'corner · PR #1156')])).toEqual([
+      'PR 1 merged',
+    ]);
+  });
+});
 
 function check(id: string, result: 'passed' | 'failed', prNumber: number): ChatDisplayMessage {
   return {
@@ -113,7 +157,7 @@ describe('notification lifecycle folding', () => {
       github('6', 'opened', '77'),
     ]);
     const run = folded[0]!.notificationLifecycleRun!;
-    expect(run.headline).toBe('1 PR opened · 1 merged');
+    expect(run.headline).toBe('PR 1 merged, 1 opened');
     expect(run.items).toHaveLength(2);
     expect(run.items[0]).toMatchObject({ state: 'PR opened', kindLine: 'PR #77' });
     expect(run.items[1]).toMatchObject({
@@ -142,7 +186,7 @@ describe('notification lifecycle folding', () => {
       'Merged',
     ]);
     expect(run.items[0]).toMatchObject({ danger: true });
-    expect(run.headline).toBe('1 checks failed · 1 opened · 1 closed · 1 merged');
+    expect(run.headline).toBe('PR 1 merged, 1 closed, 1 failed\nIssue 1 opened');
   });
 
   it.each(['human', 'agent'] as const)('%s prose ends a notification run', (kind) => {

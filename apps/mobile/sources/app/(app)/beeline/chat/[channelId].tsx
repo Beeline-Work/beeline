@@ -3279,6 +3279,7 @@ export default function BuzzChat() {
             viewerPubkey={cacheViewerPubkey}
             viewerRole={viewerChannelRole}
             actionId={permissionActionId}
+            targetBranch={roomRepository?.targetBranch}
             onDecision={handleWritePermission}
             onOpenCorner={openCorner}
           />
@@ -3307,6 +3308,11 @@ export default function BuzzChat() {
         return (
           <TargetBranchProposalCard
             message={item}
+            agent={
+              item.targetBranchProposal.agentPubkey
+                ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
+                : undefined
+            }
             currentTargetBranch={roomRepository?.targetBranch}
             canManageWorkspace={canManageWorkspace}
             viewerIsAgent={viewerIsAgent}

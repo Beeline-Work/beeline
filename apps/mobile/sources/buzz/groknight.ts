@@ -16,6 +16,30 @@ const shared = {
   // photo gate stays off. Workspace pictures are the explicit exception and
   // are gated separately in photo-overrides.ts.
   photoIdentityMarksEnabled: false,
+  transcriptCard: {
+    cornerRadius: 10,
+    marginTop: 8,
+    marginBottom: 12,
+    headTop: 14,
+    side: 16,
+    identitySize: 26,
+    bodySize: 15,
+    bodyLineHeight: 23,
+    rowStateWidth: 92,
+    rowVertical: 10,
+    codeTop: 10,
+    codeVertical: 10,
+    codeHorizontal: 12,
+    codeRadius: 8,
+    codePathSize: 12,
+    rowTitleSize: 15,
+    rowKindSize: 12,
+    footerTop: 12,
+    footerVertical: 12,
+    footerMinHeight: 44,
+    actionGap: 22,
+    actionSize: 15,
+  },
 } as const;
 
 /**
@@ -44,12 +68,32 @@ export type TypeRole = {
 
 export const typeRoles = {
   /** A screen's one big line, including index row names. */
-  hero: { fontFamily: sans.medium, fontSize: 22, lineHeight: calmLineHeight(22), letterSpacing: -0.3 },
+  hero: {
+    fontFamily: sans.medium,
+    fontSize: 22,
+    lineHeight: calmLineHeight(22),
+    letterSpacing: -0.3,
+  },
   /** Body text and row titles. */
-  body: { fontFamily: sans.regular, fontSize: 16, lineHeight: calmLineHeight(16), letterSpacing: 0 },
-  bodyStrong: { fontFamily: sans.semiBold, fontSize: 16, lineHeight: calmLineHeight(16), letterSpacing: 0 },
+  body: {
+    fontFamily: sans.regular,
+    fontSize: 16,
+    lineHeight: calmLineHeight(16),
+    letterSpacing: 0,
+  },
+  bodyStrong: {
+    fontFamily: sans.semiBold,
+    fontSize: 16,
+    lineHeight: calmLineHeight(16),
+    letterSpacing: 0,
+  },
   /** Everything secondary: previews, captions, stamps, counts. Sans, never mono. */
-  meta: { fontFamily: sans.regular, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 0 },
+  meta: {
+    fontFamily: sans.regular,
+    fontSize: 13,
+    lineHeight: calmLineHeight(13),
+    letterSpacing: 0,
+  },
   /** Section heads ONLY — the one tracked-uppercase style. */
   sectionHead: {
     fontFamily: sans.medium,

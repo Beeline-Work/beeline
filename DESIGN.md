@@ -4,8 +4,8 @@ The phone is a single slab of obsidian. Beeline's output is logged across it.
 
 That is the whole idea; everything below is what it costs to hold it. The
 interface recedes to almost nothing, so the agent's output _is_ the screen. No
-cards, no bubbles, no per-message frames, no rules between turns — on any
-surface. One shape family, one voice, one accent used twice on purpose.
+bubbles or ordinary per-message frames. Structured system records and asks use
+the one `TranscriptCard` anatomy; everything else stays on the slab.
 
 It should read like a focused technical conversation, not like a chat app. The
 governing readability rule is **content near-white, chrome dim — never the
@@ -24,10 +24,9 @@ are the only luminance steps above the slab; every elevation stop keeps its
 pre-canvas offset from the base, so contrast relationships are unchanged.
 
 A lifted surface (`HullSurface`, with its faint scratch texture) is reserved for
-something that genuinely floats _over_ the slab and does not repeat: a modal
-sheet, the merge-approval panel, the write-permission card. Persistent chrome
-never qualifies — if two adjacent regions of a screen are both permanent, they
-are one slab.
+something that genuinely floats _over_ the slab and does not repeat, such as a
+modal sheet or merge-approval panel. Transcript asks use `TranscriptCard`'s
+raised fill without the HullSurface texture; transcript records have no fill.
 
 Source of truth: `apps/mobile/sources/buzz/groknight.ts`. It exports one
 semantic token shape and one set: Obsidian Refined. There is no theme picker;
@@ -40,8 +39,9 @@ remains the one domain-color exception.
 
 ## Shape
 
-One corner radius, `groknight.radius = 3`, everywhere a box appears. No other
-radius value ships. No _box_ renders as a circle or a soft pill.
+The general box radius is `groknight.radius = 3`. The transcript card family is
+the explicit exception: a 10px radius on a 1px `border` frame, matching the
+composer.
 
 The identity tiles are the one place a box holds a drawing: a person or an
 agent is one of Speakeasy's twelve creatures on a square plate at the house
@@ -54,11 +54,10 @@ A box (border + fill + radius) appears only around:
 - a small number of genuinely distinct, non-repeating regions of a screen
   (the merge-approval panel, a safety/policy notice).
 
-A box never appears around a unit of content — a message, a list row, an
-attachment, a fenced code block, an avatar. Those are separated by whitespace,
-tone, and a leading glyph. **Per-message cards are retired.** They were the last
-chat-app convention left in the product and they are gone from Rooms and Corners
-alike.
+A box never appears around an ordinary message, attachment, or avatar. The
+structured system-card catalog uses `TranscriptCard`: record tier for facts and
+settled asks, ask tier only while a response is needed. Its head, body, rows,
+code block, and footer share one spacing and type system on phone and desktop.
 
 A rule is not a box: one edge, no fill, no radius. It divides an _index_ — the
 Room list, the member list — and nothing else. **Turns separate by one hairline

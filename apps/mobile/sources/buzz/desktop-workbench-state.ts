@@ -73,6 +73,34 @@ export async function saveDesktopDraft(roomId: string, text: string): Promise<vo
 
 export type DesktopComposerKeyAction = 'send' | 'newline' | 'none';
 
+export type DesktopWorkspaceRoute =
+  | {
+      pathname: '/beeline/chat/[channelId]';
+      params: { channelId: string; communityId: string };
+    }
+  | {
+      pathname: '/beeline/channels';
+      params: { communityId: string };
+    };
+
+/** Keep a desktop Workspace switch URL-addressable, including when it has no Rooms. */
+export function desktopWorkspaceRoute(
+  workspaceId: string,
+  roomIds: readonly string[],
+  lastViewedRoomId: string | null,
+): DesktopWorkspaceRoute {
+  const roomId =
+    (lastViewedRoomId && roomIds.includes(lastViewedRoomId) ? lastViewedRoomId : null) ??
+    roomIds[0] ??
+    null;
+  return roomId
+    ? {
+        pathname: '/beeline/chat/[channelId]',
+        params: { channelId: roomId, communityId: workspaceId },
+      }
+    : { pathname: '/beeline/channels', params: { communityId: workspaceId } };
+}
+
 export function desktopComposerKeyAction(
   platform: string,
   key: string,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import {
+  assertSchemaCurrent,
   backfillAgentHandles,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
@@ -12,6 +13,7 @@ import {
   ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
   ENRICHMENT_STATEMENT_TIMEOUT_MS,
   postgresPoolConfig,
+  markSchemaCurrent,
   PostgresDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
@@ -20,6 +22,20 @@ import { PgliteDatabase } from './test-support.js';
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
 }
+
+describe('release-owned schema readiness', () => {
+  it('fails boot clearly until the release migration writes its final marker', async () => {
+    const database = new PgliteDatabase();
+    await expect(assertSchemaCurrent(database)).rejects.toThrow(
+      /database schema is not ready.*release migration step/,
+    );
+    await migrate(database);
+    await expect(assertSchemaCurrent(database)).rejects.toThrow(/release migration step/);
+    await markSchemaCurrent(database);
+    await expect(assertSchemaCurrent(database)).resolves.toBeUndefined();
+    database.close();
+  });
+});
 
 describe('PostgresDatabase reconnects', () => {
   it('bounds app and enrichment statements and pool checkout waits', () => {

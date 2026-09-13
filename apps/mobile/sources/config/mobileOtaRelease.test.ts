@@ -2140,9 +2140,16 @@ esac
       /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
     );
     expect(daemonWorkflow).toContain('Record asynchronous fleet uptake without blocking the release');
-    expect(serverWorkflow).toContain('Deploy the exact release SHA to the monolith');
+    expect(unifiedWorkflow).toContain('- uses: ./.github/actions/server-leg');
+    expect(serverWorkflow).toContain(
+      'Build the exact Fly image and capture the two-Machine rollback plan',
+    );
     expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
     expect(serverWorkflow).toContain('--build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA"');
+    expect(serverWorkflow).toContain(
+      'Canary one Machine, observe for five minutes, then update its peer',
+    );
+    expect(serverWorkflow).toContain('trap rollback_canary ERR');
     expect(unifiedWorkflow).toContain('Bounded exact server smoke check');
     expect(unifiedWorkflow).toContain('run: node scripts/server-release-smoke.mjs');
     expect(serverReleaseSmoke).toContain('SERVER_BOOT_BUDGET_MS = 8 * 60_000');

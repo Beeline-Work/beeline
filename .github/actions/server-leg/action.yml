@@ -1,7 +1,7 @@
 # Server leg of the unified release (was .github/workflows/deploy-host.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
-# phase=build records the SHA-pinned monolith artifact, phase=promote deploys
-# the exact release SHA to the Fly monolith. The caller checks out the
+# phase=build records the SHA-pinned monolith artifact, phase=promote migrates
+# once and canaries the exact release SHA across the two Fly Machines. The caller checks out the
 # release SHA before invoking it and owns runner, timeout, and concurrency.
 name: Server release leg
 description: Build the exact server artifact or deploy the monolith to Fly.io
@@ -85,20 +85,104 @@ runs:
       if: inputs.phase == 'promote'
       shell: bash
       run: flyctl auth whoami
-    - name: Deploy the exact release SHA to the monolith
+    - name: Build the exact Fly image and capture the two-Machine rollback plan
       if: inputs.phase == 'promote'
       shell: bash
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-        # Keep the config at the repository root so Fly preserves this root build context.
+        mkdir -p "$RUNNER_TEMP/server-release"
+        flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/machines-before.json"
+        image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
+        image_ref="registry.fly.io/beeline-server:$image_label"
         flyctl deploy . \
           --config fly.beeline-server.toml \
           --dockerfile apps/server/Dockerfile \
           --app beeline-server \
           --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
           --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
-          --yes
+          --image-label "$image_label" --build-only --push --yes
+        node scripts/unified-release.mjs server-deploy-plan \
+          --machines "$RUNNER_TEMP/server-release/machines-before.json" \
+          --image "$image_ref" --output "$RUNNER_TEMP/server-release/server-deploy-plan.json"
+        node scripts/unified-release.mjs server-ledger \
+          --plan "$RUNNER_TEMP/server-release/server-deploy-plan.json" \
+          --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
+          --output "$RUNNER_TEMP/server-release/server-image-ledger.json"
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+
+    - name: Run schema migrations and backfills once before Machine updates
+      if: inputs.phase == 'promote'
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "${MIGRATION_DATABASE_URL:-}" || { echo 'MIGRATION_DATABASE_URL is required' >&2; exit 1; }
+        npm ci --ignore-scripts
+        npm run build -w @beeline/nostr
+        npm run build -w @beeline/api-contract
+        npm run build -w @beeline/buzz-client
+        npm run build -w @beeline/gate
+        npm run build -w @beeline/body
+        npm run build -w @beeline/auth
+        npm run build -w @beeline/push-gateway
+        npm run build -w @beeline/server
+        npm run migrate -w @beeline/server
+
+    - name: Canary one Machine, observe for five minutes, then update its peer
+      if: inputs.phase == 'promote'
+      shell: bash
+      run: |
+        set -euo pipefail
+        plan="$RUNNER_TEMP/server-release/server-deploy-plan.json"
+        ledger="$RUNNER_TEMP/server-release/server-image-ledger.json"
+        read_plan() { node -e 'const p=require(process.argv[1]);process.stdout.write(String(p[process.argv[2]]))' "$plan" "$1"; }
+        canary="$(read_plan canaryMachineId)"
+        second="$(read_plan secondMachineId)"
+        image_ref="$(read_plan newImageRef)"
+        previous_ref="$(read_plan previousImageRef)"
+        canary_updated=0
+        second_update_attempted=0
+        fleet_updated=0
+        rollback_canary() {
+          status=$?
+          if [ "$canary_updated" = 1 ] && [ "$fleet_updated" = 0 ]; then
+            echo "Server promotion failed; restoring attempted Machines to $previous_ref" >&2
+            flyctl machine update "$canary" --app beeline-server --image "$previous_ref" --wait-timeout 300 --yes
+            if [ "$second_update_attempted" = 1 ]; then
+              flyctl machine update "$second" --app beeline-server --image "$previous_ref" --wait-timeout 300 --yes
+            fi
+            node scripts/unified-release.mjs server-ledger --plan "$plan" \
+              --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state rolled-back --output "$ledger"
+          fi
+          exit "$status"
+        }
+        trap rollback_canary ERR
+
+        canary_updated=1
+        flyctl machine update "$canary" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+        for sample in $(seq 0 20); do
+          if [ "$sample" -gt 0 ]; then sleep 15; fi
+          force_header="fly-force-instance-id: $canary"
+          curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/health \
+            -o "$RUNNER_TEMP/server-release/health.json"
+          curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/version \
+            -o "$RUNNER_TEMP/server-release/version.json"
+          room_status="$(curl -sS --max-time 12 -o "$RUNNER_TEMP/server-release/room.json" -w '%{http_code}' \
+            -H "$force_header" -H "Authorization: Bearer $SERVER_CANARY_PHONE_TOKEN" \
+            "https://server.usebeeline.app/v1/phone/rooms/$SERVER_CANARY_ROOM_ID")"
+          node scripts/unified-release.mjs server-canary-sample \
+            --health "$RUNNER_TEMP/server-release/health.json" \
+            --version "$RUNNER_TEMP/server-release/version.json" --room-status "$room_status" \
+            --expected-version "$RELEASE_VERSION" --expected-sha "$RELEASE_SHA"
+        done
+        second_update_attempted=1
+        flyctl machine update "$second" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+        fleet_updated=1
+        trap - ERR
+        node scripts/unified-release.mjs server-ledger --plan "$plan" \
+          --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state deployed --output "$ledger"
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}

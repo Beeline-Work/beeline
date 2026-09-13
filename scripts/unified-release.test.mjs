@@ -575,6 +575,9 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
   assert.match(source, /release-version --previous "\$previous" --sha "\$release_sha"/);
+  assert.match(source, /if \[ "\$PLAN_ONLY" = true \]; then/);
+  assert.match(source, /release_sha=\$\(git rev-parse HEAD\)/);
+  assert.match(source, /release_version=v0\.0\.0/);
   assert.match(source, /release_sha="\$\{REQUESTED_SHA:-\$GITHUB_SHA\}"/);
   assert.match(source, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
   assert.match(source, /unified-release\.mjs component-paths/);

@@ -1,4 +1,5 @@
-import { assertSchemaCurrent, PostgresDatabase } from './database.js';
+import { assertSchemaCurrent, markSchemaCurrent, migrate, PostgresDatabase } from './database.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -26,6 +27,21 @@ function required(name: string) {
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
+
+async function runReleaseMigration(): Promise<void> {
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  try {
+    await migrate(database);
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    // This is deliberately last: boot may proceed only after both schema owners
+    // and every data backfill completed successfully.
+    await markSchemaCurrent(database);
+    console.log('[migration] server and auth schemas are current');
+  } finally {
+    await database.close();
+  }
+}
+
 async function main() {
   const connectionString = required('DATABASE_URL');
   const database = new PostgresDatabase(
@@ -249,7 +265,9 @@ async function main() {
   process.once('SIGINT', () => void stop());
   process.once('SIGTERM', () => void stop());
 }
-main().catch((error) => {
-  console.error('[server] startup failed:', error instanceof Error ? error.message : String(error));
+
+const migrationMode = process.argv[2] === '--migrate';
+(migrationMode ? runReleaseMigration() : main()).catch((error) => {
+  console.error(migrationMode ? '[migration] failed:' : '[server] startup failed:', error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

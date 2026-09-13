@@ -143,6 +143,7 @@ jobs:
       - name: Assign identity and produce the inspectable release plan
         id: plan
         env:
+          PLAN_ONLY: ${{ inputs.plan_only }}
           REQUESTED_SHA: ${{ inputs.release_sha || '' }}
           REQUESTED_VERSION: ${{ inputs.release_version || '' }}
           SELECTION: ${{ inputs.selection || 'auto' }}
@@ -150,20 +151,28 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main
-          release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
-          test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
-          git merge-base --is-ancestor "$release_sha" origin/main || {
-            echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
-          }
           previous="$RUNNER_TEMP/previous/release-attempt.json"
           [ -f "$previous" ] || previous="$RUNNER_TEMP/previous/unified-release.json"
           retry="$RUNNER_TEMP/retry/release-attempt.json"
-          if [ -n "$REQUESTED_VERSION" ]; then
-            release_version="$REQUESTED_VERSION"
-          elif [ -f "$previous" ]; then
-            release_version=$(node scripts/unified-release.mjs release-version --previous "$previous" --sha "$release_sha")
+          if [ "$PLAN_ONLY" = true ]; then
+            # workflow_dispatch checks out the selected branch/ref. A dry run is
+            # deliberately allowed to plan an unmerged commit and gets an
+            # unmistakably synthetic release identity.
+            release_sha=$(git rev-parse HEAD)
+            release_version=v0.0.0
           else
-            release_version=v0.0.1
+            release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+            test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
+            git merge-base --is-ancestor "$release_sha" origin/main || {
+              echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
+            }
+            if [ -n "$REQUESTED_VERSION" ]; then
+              release_version="$REQUESTED_VERSION"
+            elif [ -f "$previous" ]; then
+              release_version=$(node scripts/unified-release.mjs release-version --previous "$previous" --sha "$release_sha")
+            else
+              release_version=v0.0.1
+            fi
           fi
           release_id="${release_version}-${release_sha}"
           if [ -f "$previous" ]; then

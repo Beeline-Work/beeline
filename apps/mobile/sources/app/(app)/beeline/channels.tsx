@@ -1198,15 +1198,15 @@ const styles = StyleSheet.create((theme) => {
       gap: 8,
     },
     cornerName: {
-      ...hull.type.meta,
-      fontFamily: hull.type.bodyStrong.fontFamily,
+      ...theme.buzz.type.meta,
+      fontFamily: theme.buzz.type.bodyStrong.fontFamily,
       flex: 1,
       minWidth: 0,
       color: hull.textSecondary,
       includeFontPadding: false,
     },
     cornerStatus: {
-      ...hull.type.sectionHead,
+      ...theme.buzz.type.sectionHead,
       color: hull.textMuted,
       includeFontPadding: false,
     },
@@ -1219,7 +1219,7 @@ const styles = StyleSheet.create((theme) => {
     // one emphasized row rather than a loud chip beside a quiet title.
     cornerNameNeedsYou: { color: hull.textPrimary },
     cornerChevron: {
-      ...hull.type.bodyStrong,
+      ...theme.buzz.type.bodyStrong,
       color: hull.steel,
       includeFontPadding: false,
     },

@@ -18,13 +18,10 @@ import type { CornerState } from '@beeline/api-contract/phone';
  * it enters the corner. Nothing else in the Room reports corner status — the
  * inline stamps are gone.
  *
- * While the work is live the whole line is gold and breathes on the shared
- * live clock: a calm heartbeat, not a sweep, not a progress bar, and never a
- * dashed rule. It is the reserved accent doing exactly the job `DESIGN.md`
- * assigns it — an agent is alive — and the accent is never the only signal:
- * the copy says `working`, and the motion says "still going" a third time.
- * A corner that is open but idle drops to the quiet tier and stops moving, so
- * the difference between "running" and "waiting" is legible without reading.
+ * While the work is live the line breathes on the shared clock: a calm
+ * heartbeat, not a sweep, not a progress bar, and never a dashed rule.
+ * Brass is reserved for `waiting`, the state that wants the viewer; working
+ * and review stay quiet, and archived recedes to the ghost tier.
  * Reduced motion and a backgrounded app both settle it, via `HullLivePulse`.
  */
 export function CornerLiveBar({
@@ -118,9 +115,9 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 18,
     letterSpacing: 0.4,
   },
-  labelWorking: { color: groknight.warning },
-  labelReview: { color: groknight.accent },
-  labelWaiting: { color: groknight.ledgerQuiet },
+  labelWorking: { color: groknight.ledgerQuiet },
+  labelReview: { color: groknight.ledgerQuiet },
+  labelWaiting: { color: groknight.accent },
   labelArchived: { color: groknight.ledgerGhost },
   enter: {
     ...Typography.mono(),
@@ -129,6 +126,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 11,
     lineHeight: 18,
   },
-  enterLive: { color: groknight.accent },
+  enterLive: { color: groknight.ledgerQuiet },
   });
 });

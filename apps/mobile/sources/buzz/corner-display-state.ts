@@ -16,7 +16,7 @@ export type CornerDisplayState = {
   readonly prUrl?: string;
   readonly terminal: boolean;
   readonly headerSuffix?: 'failed' | 'checks failed';
-  readonly tone: 'work' | 'brass' | 'quiet' | 'ghost';
+  readonly tone: 'brass' | 'quiet' | 'ghost';
 };
 
 export type CornerDisplayItem = {
@@ -48,14 +48,7 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
     ...(item.lifecycle.pr?.url ? { prUrl: item.lifecycle.pr.url } : {}),
     terminal: state === 'archived',
     ...(headerSuffix ? { headerSuffix } : {}),
-    tone:
-      state === 'working'
-        ? 'work'
-        : state === 'review'
-          ? 'brass'
-          : state === 'archived'
-            ? 'ghost'
-            : 'quiet',
+    tone: state === 'waiting' ? 'brass' : state === 'archived' ? 'ghost' : 'quiet',
   };
 }
 

@@ -11,6 +11,12 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('setSurface(null)');
   });
 
+  it('follows the Workspace encoded by browser history and deep links', () => {
+    expect(source).toContain('useGlobalSearchParams');
+    expect(source).toContain('workspaceIdRef.current = routeWorkspaceId;');
+    expect(source).toContain('saveActiveCommunityId(identityPubkey, routeWorkspaceId)');
+  });
+
   it('renders nested corners with the grouped title formatter', () => {
     expect(source).toContain('displayGroupedCornerTitle(');
     expect(source).not.toContain('{corner.corner.name}\n                                </Text>');

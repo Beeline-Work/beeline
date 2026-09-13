@@ -40,8 +40,7 @@ describe('desktop layout mode', () => {
     expect(sidebar).toContain("section.kind === 'rooms' && <RoomListSectionHeader");
     expect(sidebar).toContain('<RoomListSectionHeader');
     expect(sidebar).not.toContain("'Direct messages'");
-    expect(channels).not.toContain('<RoomListSectionHeader');
-    expect(channels).not.toContain('renderSectionHeader=');
+    expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
   });
 
   it('aligns the desktop Workspace identity with the conversation header', () => {

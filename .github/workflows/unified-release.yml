@@ -511,6 +511,8 @@ jobs:
       variant: production
       release_sha: ${{ needs.initialize.outputs.release_sha }}
       release_version: ${{ needs.initialize.outputs.release_version }}
+      require_macos_signing: true
+    secrets: inherit
 
   desktop_checkpoint:
     needs: [initialize, desktop_installers]

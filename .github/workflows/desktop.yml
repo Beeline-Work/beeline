@@ -20,8 +20,9 @@
 # logging kept, dev is the local-identity build. Pull requests build preview —
 # an artifact from a PR should never claim to be the release app.
 #
-# Nothing here is signed or notarized: macOS users will see Gatekeeper's
-# unidentified-developer prompt.
+# Production macOS builds are signed and notarized when the repository
+# credentials are available. The unified release requires them, so every
+# published .dmg is notarized and stapled. Preview/dev builds stay unsigned.
 name: Desktop
 
 on:
@@ -62,6 +63,27 @@ on:
         description: Immutable release version
         required: false
         type: string
+      require_macos_signing:
+        description: Fail before a production macOS build unless every signing credential is available
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      APPLE_CERTIFICATE:
+        description: Base64-encoded Developer ID Application .p12
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        description: Password used when exporting the Developer ID Application .p12
+        required: false
+      EXPO_ASC_KEY_ID:
+        description: App Store Connect API key id, shared with the native release
+        required: false
+      EXPO_ASC_ISSUER_ID:
+        description: App Store Connect API issuer id, shared with the native release
+        required: false
+      EXPO_ASC_API_KEY_P8:
+        description: Base64-encoded App Store Connect API private key, shared with the native release
+        required: false
 
 permissions:
   contents: read
@@ -103,7 +125,7 @@ jobs:
     name: DESKTOP BUILD (${{ matrix.label }})
     needs: icons
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ inputs.variant == 'production' && 15 || 60 }}
+    timeout-minutes: 60
     strategy:
       # One platform's toolchain failing should not hide whether the other two
       # produce a bundle.
@@ -129,6 +151,7 @@ jobs:
       # Pull requests carry no input and remain preview builds. The unified
       # release calls this workflow explicitly with production.
       VARIANT: ${{ inputs.variant || 'preview' }}
+      REQUIRE_MACOS_SIGNING: ${{ inputs.require_macos_signing || false }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,6 +204,31 @@ jobs:
         working-directory: apps/mobile
         run: npm ci
 
+      # The gate evaluates the complete credential set before Tauri sees any
+      # of it. A partially configured job therefore builds fully unsigned (for
+      # an optional/manual build) or fails before build (for a release).
+      - name: Select the macOS signing mode
+        id: macos_signing
+        env:
+          MACOS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          MACOS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: node scripts/desktop-signing.mjs
+
+      - name: Materialize the App Store Connect API key
+        if: steps.macos_signing.outputs.enabled == 'true'
+        env:
+          MACOS_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+          MACOS_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${MACOS_ASC_KEY_ID}.p8"
+          printf '%s' "$MACOS_ASC_API_KEY_P8" | openssl base64 -d -A > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       # `tauri build` runs the config's beforeBuildCommand (the Expo web
       # export) and then bundles it for this platform's installers.
       - name: Build the desktop bundle
@@ -189,6 +237,12 @@ jobs:
           # app.config.js stamps the build with the commit it came from; the
           # checkout's git metadata would otherwise name a merge commit.
           EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
+          APPLE_CERTIFICATE: ${{ steps.macos_signing.outputs.enabled == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ steps.macos_signing.outputs.enabled == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: >-
+            ${{ steps.macos_signing.outputs.enabled == 'true' && 'Developer ID Application: Moon Rice Limited (89KT3SWYAF)' || '' }}
+          APPLE_API_KEY: ${{ steps.macos_signing.outputs.enabled == 'true' && secrets.EXPO_ASC_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ steps.macos_signing.outputs.enabled == 'true' && secrets.EXPO_ASC_ISSUER_ID || '' }}
         run: |
           set -euo pipefail
           config=()
@@ -198,7 +252,82 @@ jobs:
             preview) config=(--config src-tauri/tauri.preview.conf.json) ;;
             *) echo "::error::unknown variant '$VARIANT'"; exit 1 ;;
           esac
-          npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"}
+          npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
+            2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
+
+      # Pull requests cannot use release secrets. Exercise the exact codesign
+      # verification path against an ad-hoc-signed copy without changing the
+      # unsigned preview artifact that testers download.
+      - name: Exercise codesign verification on an ad-hoc test copy
+        if: runner.os == 'macOS' && steps.macos_signing.outputs.enabled != 'true'
+        run: |
+          set -euo pipefail
+          bundle="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          app=$(find "$bundle" -type d -name '*.app' -print -quit)
+          test -n "$app" || { echo '::error::macOS build produced no .app'; exit 1; }
+          set +e
+          unsigned_assessment=$(spctl --assess --type execute --verbose "$app" 2>&1)
+          unsigned_status=$?
+          set -e
+          printf 'Unsigned preview assessment (expected rejection):\n%s\n' "$unsigned_assessment"
+          test "$unsigned_status" -ne 0 || {
+            echo '::error::unsigned preview unexpectedly passed Gatekeeper assessment'; exit 1;
+          }
+          test_app="$RUNNER_TEMP/codesign-test/$(basename "$app")"
+          mkdir -p "$(dirname "$test_app")"
+          ditto "$app" "$test_app"
+          codesign --force --deep --sign - "$test_app"
+          codesign --verify --deep --strict --verbose=2 "$test_app"
+          echo '::notice::ad-hoc codesign verification passed; this does not represent Developer ID or notarization'
+
+      # Tauri signs, submits, and staples the inner .app. Submit and staple the
+      # outer disk image too: that .dmg is the file users actually download and
+      # the artifact `stapler validate` must accept.
+      - name: Notarize and staple the macOS disk image
+        if: steps.macos_signing.outputs.enabled == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.EXPO_ASC_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          bundle="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          dmg=$(find "$bundle" -type f -name '*.dmg' -print -quit)
+          test -n "$dmg" || { echo '::error::signed macOS build produced no .dmg'; exit 1; }
+
+          result=$(xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait --output-format json)
+          printf '%s\n' "$result"
+          printf '%s\n' "$result" > "$RUNNER_TEMP/dmg-notarization.json"
+          status=$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).status ?? "")' "$RUNNER_TEMP/dmg-notarization.json")
+          log_id=$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).id ?? "")' "$RUNNER_TEMP/dmg-notarization.json")
+          test "$status" = Accepted || { echo "::error::DMG notarization ended with status '$status'"; exit 1; }
+          test -n "$log_id" || { echo '::error::DMG notarization returned no log id'; exit 1; }
+          echo "Notarization log id: $log_id"
+          xcrun stapler staple -v "$dmg"
+
+      - name: Verify the signed and notarized macOS download
+        if: steps.macos_signing.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          bundle="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          app=$(find "$bundle" -type d -name '*.app' -print -quit)
+          dmg=$(find "$bundle" -type f -name '*.dmg' -print -quit)
+          test -n "$app" && test -n "$dmg"
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          set +e
+          assessment=$(spctl --assess --type execute --verbose "$app" 2>&1)
+          assessment_status=$?
+          set -e
+          printf '%s\n' "$assessment"
+          test "$assessment_status" -eq 0 || exit "$assessment_status"
+          printf '%s\n' "$assessment" | grep -qi accepted || {
+            echo '::error::spctl did not report accepted'; exit 1;
+          }
+          xcrun stapler validate "$dmg"
 
       - name: Prove the bundled macOS app icon
         if: runner.os == 'macOS'

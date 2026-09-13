@@ -91,6 +91,11 @@ A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
 or send a duplicate client notification.
 
+The desktop leg requires a signed, notarized, and stapled macOS disk image
+before a unified release can publish it. One-time certificate and App Store
+Connect setup is documented in [macOS desktop signing and
+notarization](./macos-desktop-signing.md).
+
 Normal selective attempts have a 20-minute dispatch-to-result budget. Component
 jobs have shorter explicit timeouts and network smoke checks have second-scale
 limits. The final index records outcome, duration, selected/carried components,

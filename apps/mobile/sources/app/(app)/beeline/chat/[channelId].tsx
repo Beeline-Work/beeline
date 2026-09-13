@@ -1527,7 +1527,10 @@ export default function BuzzChat() {
     dmPeerPubkey && dmPeerAgent
       ? resolveAgentDisplayIdentity(dmPeerPubkey, dmPeerAgent)
       : undefined;
-  const dmHeaderPresence = directMessageHeaderPresence(directMessageListItem, presenceNow);
+  const dmHeaderPresence = directMessageHeaderPresence(
+    directMessageListItem?.room.id === decodedId ? directMessageListItem : null,
+    presenceNow,
+  );
   const dmAnnouncementAuthor = dmPeerPubkey
     ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
     : undefined;

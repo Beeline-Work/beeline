@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  clearLegacyPresentedNotificationsOnce,
   dismissPresentedNotificationsForChannel,
+  presentedNotificationIdentifierTag,
+  presentedNotificationMatchesChannel,
   reconcilePresentedNotificationBadge,
   type PresentedNotification,
 } from './presented-notifications';
@@ -13,6 +16,107 @@ function notification(identifier: string, data: Record<string, unknown>): Presen
 const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
 
 describe('presented notification dismissal', () => {
+  const roomA = '11111111-1111-4111-8111-111111111111';
+  const roomB = '22222222-2222-4222-8222-222222222222';
+
+  it('parses only Expo foreign-notification tags', () => {
+    expect(
+      presentedNotificationIdentifierTag(
+        `expo-notifications://foreign_notifications?id=0&tag=${roomA}`,
+      ),
+    ).toBe(roomA);
+    expect(presentedNotificationIdentifierTag('ordinary-expo-identifier')).toBeNull();
+    expect(
+      presentedNotificationIdentifierTag(
+        'expo-notifications://foreign_notifications?tag=%E0%A4%A&id=0',
+      ),
+    ).toBeNull();
+  });
+
+  it('matches Android foreign rows by the open Room or a corner parent', () => {
+    const tagged = notification(`expo-notifications://foreign_notifications?tag=${roomA}&id=0`, {
+      'android.title': 'Beeline',
+    });
+    expect(presentedNotificationMatchesChannel(tagged, roomA)).toBe(true);
+    expect(presentedNotificationMatchesChannel(tagged, roomB)).toBe(false);
+    expect(presentedNotificationMatchesChannel(tagged, 'corner-a', roomA)).toBe(true);
+  });
+
+  it('keeps data-based matching for Expo-presented rows', () => {
+    const presented = notification('expo-row', {
+      type: 'channel-activity',
+      target: 'corner',
+      channelId: 'corner-a',
+      roomId: roomA,
+      cornerId: 'corner-a',
+    });
+    expect(presentedNotificationMatchesChannel(presented, roomA)).toBe(true);
+    expect(presentedNotificationMatchesChannel(presented, 'corner-a')).toBe(true);
+    expect(presentedNotificationMatchesChannel(presented, roomB)).toBe(false);
+  });
+
+  it('dismisses only unattributable legacy rows once', async () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: vi.fn(async (key: string) => values.get(key) ?? null),
+      setItem: vi.fn(async (key: string, value: string) => {
+        values.set(key, value);
+      }),
+    };
+    const dismissNotificationAsync = vi.fn(async () => undefined);
+    const api = {
+      getPresentedNotificationsAsync: vi.fn(async () => [
+        notification(`expo-notifications://foreign_notifications?tag=${roomA}&id=0`, {
+          'android.title': 'Beeline',
+        }),
+        notification('expo-notifications://foreign_notifications?tag=legacy-message-tag&id=0', {
+          'android.title': 'Beeline',
+        }),
+        notification('expo-presented', {
+          type: 'message',
+          channelId: roomB,
+          roomId: roomB,
+        }),
+      ]),
+      dismissNotificationAsync,
+      setBadgeCountAsync: vi.fn(async () => true),
+    };
+
+    await clearLegacyPresentedNotificationsOnce(api, 'android', storage);
+    await clearLegacyPresentedNotificationsOnce(api, 'android', storage);
+
+    expect(dismissNotificationAsync.mock.calls).toEqual([
+      ['expo-notifications://foreign_notifications?tag=legacy-message-tag&id=0'],
+    ]);
+    expect(api.getPresentedNotificationsAsync).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).toHaveBeenCalledTimes(1);
+  });
+
+  it('dismisses a tagged foreign row for the open Room but keeps another Room', async () => {
+    const dismissNotificationAsync = vi.fn(async () => undefined);
+    await dismissPresentedNotificationsForChannel(
+      roomA,
+      {
+        getPresentedNotificationsAsync: async () => [
+          notification(`expo-notifications://foreign_notifications?tag=${roomA}&id=0`, {
+            'android.title': 'Beeline',
+          }),
+          notification(`expo-notifications://foreign_notifications?tag=${roomB}&id=0`, {
+            'android.title': 'Beeline',
+          }),
+        ],
+        dismissNotificationAsync,
+        setBadgeCountAsync: vi.fn(async () => true),
+      },
+      'android',
+    );
+
+    expect(dismissNotificationAsync).toHaveBeenCalledOnce();
+    expect(dismissNotificationAsync).toHaveBeenCalledWith(
+      `expo-notifications://foreign_notifications?tag=${roomA}&id=0`,
+    );
+  });
+
   it('dismisses every notification for the exact Room or DM that opened', async () => {
     const dismissNotificationAsync = vi.fn(() => Promise.resolve());
     const setBadgeCountAsync = vi.fn(() => Promise.resolve(true));
@@ -116,6 +220,7 @@ describe('presented notification dismissal', () => {
   });
 
   it('runs badge reconciliation at launch and on app foreground', () => {
+    expect(appLayoutSource).toContain('clearLegacyPresentedNotificationsOnce(');
     expect(appLayoutSource).toContain('reconcileBadge();');
     expect(appLayoutSource).toContain("AppState.addEventListener('change', reconcileBadge)");
   });

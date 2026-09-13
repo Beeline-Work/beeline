@@ -391,11 +391,14 @@ export default function BuzzChat() {
       pushOpenBuzzChannelId(decodedId || null);
       const dismiss = () => {
         if (AppState.currentState !== 'active') return;
-        void dismissPresentedNotificationsForChannel(decodedId, Notifications, Platform.OS).catch(
-          (error) => {
-            console.log('Failed to dismiss notifications for opened conversation:', error);
-          },
-        );
+        void dismissPresentedNotificationsForChannel(
+          decodedId,
+          Notifications,
+          Platform.OS,
+          routeParentChannelId,
+        ).catch((error) => {
+          console.log('Failed to dismiss notifications for opened conversation:', error);
+        });
       };
       dismiss();
       const appState = AppState.addEventListener('change', dismiss);
@@ -405,7 +408,7 @@ export default function BuzzChat() {
         appState.remove();
         received.remove();
       };
-    }, [decodedId]),
+    }, [decodedId, routeParentChannelId]),
   );
 
   const {

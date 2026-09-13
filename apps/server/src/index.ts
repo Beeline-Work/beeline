@@ -23,6 +23,7 @@ import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
+import { bestEffortStartup, listenAfterBestEffortRecovery } from './startup.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -129,7 +130,9 @@ async function main() {
     : undefined;
   const pushSender =
     process.env.PUSH_DELIVERY_ENABLED === 'true'
-      ? await createFirebasePushSender(process.env)
+      ? await bestEffortStartup('Firebase push credentials', () =>
+          createFirebasePushSender(process.env),
+        )
       : undefined;
   const apnsPushSender = createApnsPushSender(process.env);
   const push = pushSender
@@ -139,7 +142,6 @@ async function main() {
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
   const connectionPresence = new ConnectionPresence(database, live);
-  await connectionPresence.start();
   const mediaExpiry = new MediaExpiryLoop(jobsDatabase);
   const sendPushTest = pushSender
     ? createPushTestSender(database, pushSender, apnsPushSender)
@@ -210,7 +212,7 @@ async function main() {
   const leader = new BackgroundLeader(
     jobsDatabase,
     async () => {
-      if (push) await push.runOnce();
+      if (push) await push.runIfDue();
       await schedules.runOnce();
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
@@ -219,7 +221,11 @@ async function main() {
         await runMaintenance(jobsDatabase);
       }
       const nextDue = await schedules.nextDueAt();
-      return nextDue ? nextDue.getTime() - Date.now() : reconciliationMs;
+      return Math.min(
+        reconciliationMs,
+        ...(nextDue ? [Math.max(0, nextDue.getTime() - Date.now())] : []),
+        ...(push ? [push.millisecondsUntilNextRun()] : []),
+      );
     },
     reconciliationMs,
   );
@@ -233,13 +239,7 @@ async function main() {
   void leader.run();
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
+  await listenAfterBestEffortRecovery(server, () => connectionPresence.start(), port, host);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     leader.stop();

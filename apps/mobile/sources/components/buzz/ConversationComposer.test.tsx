@@ -172,8 +172,9 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(input.props.value).toBe(value);
     expect(input.props.multiline).toBe(true);
     expect(input.props.numberOfLines).toBeUndefined();
-    expect(input.props.style).toHaveLength(2);
+    expect(input.props.style).toHaveLength(3);
     expect(input.props.style[1]).toBeUndefined();
+    expect(input.props.style[2]).toBe(false);
   });
 
   it('keeps measured multiline sizing on web', () => {
@@ -190,7 +191,7 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     platform.OS = 'android';
     const f = render('one line');
     const input = f.renderer.root.findByType('TextInput');
-    expect(input.props.includeFontPadding).toBe(false);
+    expect(input.props.style[2]).toEqual({ includeFontPadding: false });
     expect(input.props.style[1]).toEqual({
       height: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
       maxHeight: COMPOSER_MAX_INPUT_HEIGHT,

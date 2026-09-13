@@ -234,7 +234,11 @@ export function ConversationComposer({
         </TouchableOpacity>
         <TextInput
           ref={inputRef}
-          style={[styles.input, Platform.OS === 'ios' ? undefined : { height, maxHeight }]}
+          style={[
+            styles.input,
+            Platform.OS === 'ios' ? undefined : { height, maxHeight },
+            Platform.OS === 'android' && styles.inputAndroid,
+          ]}
           value={value}
           onChangeText={onChangeText}
           onContentSizeChange={onContentSizeChange}
@@ -244,9 +248,6 @@ export function ConversationComposer({
           onSelectionChange={onSelectionChange}
           placeholder="Message"
           placeholderTextColor={theme.buzz.dim}
-          // Android otherwise adds an asymmetric font inset inside the field,
-          // on top of the row's shared vertical padding.
-          includeFontPadding={Platform.OS === 'android' ? false : undefined}
           multiline
           returnKeyType="default"
           scrollEnabled={height >= maxHeight}
@@ -386,6 +387,9 @@ const styles = StyleSheet.create((theme) => ({
     textAlignVertical: 'top',
     outlineStyle: 'none',
   } as any,
+  // Android otherwise adds an asymmetric font inset inside the field,
+  // on top of the row's shared vertical padding.
+  inputAndroid: { includeFontPadding: false },
   sendButton: {
     width: 26,
     height: 26,

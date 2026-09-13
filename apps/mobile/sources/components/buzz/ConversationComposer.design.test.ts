@@ -26,7 +26,7 @@ describe('Option A composer chrome', () => {
   });
 
   it('lets the row, rather than Android font metrics, own the vertical inset', () => {
-    expect(composer).toContain("includeFontPadding={Platform.OS === 'android' ? false : undefined}");
+    expect(composer).toContain("inputAndroid: { includeFontPadding: false }");
     expect(composer).toContain("textAlignVertical: 'top'");
   });
 

@@ -20,7 +20,7 @@ describe('desktop layout mode', () => {
     const rail = source('components/buzz/DesktopWorkspaceRail.tsx');
     expect(rail).toContain("backgroundColor: 'rgba(20,9,26,.66)'");
     expect(rail).toContain('<DesktopWorkspacePortal>');
-    expect(source('components/buzz/DesktopWorkspacePortal.web.tsx')).toContain('createPortal(');
+    expect(source('components/buzz/DesktopWorkspacePortal.tsx')).toContain('createPortal(');
     expect(rail).toContain('accessibilityRole="menuitem"');
     expect(rail).not.toContain('ADD WORKSPACE');
     expect(channels).toContain('isDesktop ? (');

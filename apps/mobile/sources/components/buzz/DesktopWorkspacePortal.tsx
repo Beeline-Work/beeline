@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
+import { Platform } from 'react-native';
+import { createPortal } from 'react-dom';
 
-/** The Workspace rail is intentionally absent from native phone bundles. */
-export function DesktopWorkspacePortal({ children: _children }: { children: ReactNode }) {
-  return null;
+/** Lift desktop chrome above Expo's Drawer without changing its layout. */
+export function DesktopWorkspacePortal({ children }: { children: ReactNode }) {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
 }

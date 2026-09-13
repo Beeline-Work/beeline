@@ -300,12 +300,14 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain("lifecycle.lifecycle !== 'done'");
   });
 
-  it('spends brass only on waiting corner state', () => {
+  it('pulses bright working ink and spends still brass only on waiting corner state', () => {
     expect(source).toContain("display.status === 'working'");
     expect(source).toContain("display.status === 'review'");
     expect(source).toContain("display.status === 'archived'");
     expect(source).toContain('display.needsYou && styles.cornerNameNeedsYou');
-    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.ledgerQuiet');
+    expect(source).toContain('<CornerWorkingPulse state={display.status}>');
+    expect(source).toContain('</CornerWorkingPulse>');
+    expect(styleBlock(source, 'cornerStatusWorking')).toContain('color: hull.ledgerBright');
     expect(styleBlock(source, 'cornerStatusReview')).toContain('color: hull.ledgerQuiet');
     expect(styleBlock(source, 'cornerStatusWaiting')).toContain('color: hull.accent');
     expect(styleBlock(source, 'cornerStatusArchived')).toContain('color: hull.ledgerGhost');

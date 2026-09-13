@@ -24,10 +24,12 @@ export const MEMBER_PICKER_TITLE = 'Add people or agents';
 type MemberPickerSheetProps = {
   visible: boolean;
   onClose: () => void;
+  /** Workspace Members-page sheet that exposes only the minted agent connect command. */
+  agentConnectOnly?: boolean;
   /**
    * Workspace people and agents not yet in the Room in scope. `null` while
    * that read is in flight; `undefined` when no Room is in scope (the
-   * Workspace Members page), where only the two Workspace-level ways in apply.
+   * Workspace Members page).
    */
   candidates: readonly MemberPickerCandidate[] | null | undefined;
   /** Narrow the checkbox list to one kind (the /invite and /add-agent verbs). */
@@ -47,7 +49,7 @@ type MemberPickerSheetProps = {
   onAdd: (pubkeys: string[]) => void;
   onInvitePerson: () => void;
   onConnectAgent: () => void;
-  /** The minted `npx usebeeline connect <code>` line once "Connect a new agent…" ran (Members page only). */
+  /** The minted `npx usebeeline connect <code>` line for the agent connect flow. */
   pairCommand?: string | null;
   onCopyPairCommand?: (command: string) => void;
   testID?: string;
@@ -57,13 +59,14 @@ type MemberPickerSheetProps = {
  * The ONE picker for bringing people and agents in. From a Room it lists the
  * Workspace members not yet in that Room as checkbox rows and adds the
  * checked ones (captain report C74: the path Room → existing Workspace agent
- * → member of THIS Room). From the Members page it carries only the two
- * Workspace-level ways in — an invite link for a person, the pairing command
- * for a new agent — which a Room picker ends with as well (C59).
+ * → member of THIS Room). A Room picker ends with the two Workspace-level ways
+ * in (C59). The Members page uses the agent-only mode for the pairing command;
+ * its PEOPLE action shares an invite directly.
  */
 export function MemberPickerSheet({
   visible,
   onClose,
+  agentConnectOnly = false,
   candidates,
   kind = null,
   workspacePeerCount = 0,
@@ -110,91 +113,96 @@ export function MemberPickerSheet({
       <HullActionSheet
         style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 10) }]}
         testID={testID}
-        title={MEMBER_PICKER_TITLE}
+        title={agentConnectOnly ? undefined : MEMBER_PICKER_TITLE}
       >
         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {roomInScope && candidates === null && (
+          {!agentConnectOnly && roomInScope && candidates === null && (
             <View style={styles.loading} testID="member-picker-loading">
               <PixelLoader />
             </View>
           )}
-          {visibleCandidates.map((candidate) => {
-            const isChecked = checked.has(candidate.pubkey);
-            return (
-              <Pressable
-                accessibilityLabel={`${candidate.name}, ${candidate.kind}`}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: isChecked, disabled: busy }}
-                disabled={busy}
-                key={candidate.pubkey}
-                onPress={() => toggle(candidate.pubkey)}
-                style={styles.row}
-                testID={`member-picker-candidate-${candidate.pubkey}`}
-              >
-                {candidate.kind === 'agent' ? (
-                  <IdentityMark
-                    kind="agent"
-                    seed={candidate.pubkey}
-                    avatarUrl={candidate.avatarUrl}
-                    face={candidate.face}
-                    name={candidate.name}
-                    size={38}
+          {!agentConnectOnly &&
+            visibleCandidates.map((candidate) => {
+              const isChecked = checked.has(candidate.pubkey);
+              return (
+                <Pressable
+                  accessibilityLabel={`${candidate.name}, ${candidate.kind}`}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: isChecked, disabled: busy }}
+                  disabled={busy}
+                  key={candidate.pubkey}
+                  onPress={() => toggle(candidate.pubkey)}
+                  style={styles.row}
+                  testID={`member-picker-candidate-${candidate.pubkey}`}
+                >
+                  {candidate.kind === 'agent' ? (
+                    <IdentityMark
+                      kind="agent"
+                      seed={candidate.pubkey}
+                      avatarUrl={candidate.avatarUrl}
+                      face={candidate.face}
+                      name={candidate.name}
+                      size={38}
+                    />
+                  ) : (
+                    <IdentityMark
+                      kind="human"
+                      seed={candidate.pubkey}
+                      avatarUrl={candidate.avatarUrl}
+                      face={candidate.face}
+                      name={candidate.name}
+                      size={38}
+                    />
+                  )}
+                  <View style={styles.copy}>
+                    <Text numberOfLines={1} style={styles.name}>
+                      {candidate.name}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.meta}>
+                      @{candidate.handle}
+                    </Text>
+                  </View>
+                  <View
+                    style={[styles.check, isChecked && styles.checkOn]}
+                    testID={`member-picker-check-${candidate.pubkey}`}
                   />
-                ) : (
-                  <IdentityMark
-                    kind="human"
-                    seed={candidate.pubkey}
-                    avatarUrl={candidate.avatarUrl}
-                    face={candidate.face}
-                    name={candidate.name}
-                    size={38}
-                  />
-                )}
-                <View style={styles.copy}>
-                  <Text numberOfLines={1} style={styles.name}>
-                    {candidate.name}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.meta}>
-                    @{candidate.handle}
-                  </Text>
-                </View>
-                <View
-                  style={[styles.check, isChecked && styles.checkOn]}
-                  testID={`member-picker-check-${candidate.pubkey}`}
-                />
-              </Pressable>
-            );
-          })}
-          <RoomMemberPickerActions
-            addableCount={visibleCandidates.length}
-            busy={busy}
-            canManage={canManage}
-            canConnectAgent={canConnectAgent}
-            kind={kind}
-            workspacePeerCount={workspacePeerCount}
-            onAddAgent={onConnectAgent}
-            onInvitePerson={onInvitePerson}
-            showEmpty={roomInScope && candidates !== null}
-          />
-          {pairCommand && (
+                </Pressable>
+              );
+            })}
+          {!agentConnectOnly && (
+            <RoomMemberPickerActions
+              addableCount={visibleCandidates.length}
+              busy={busy}
+              canManage={canManage}
+              canConnectAgent={canConnectAgent}
+              kind={kind}
+              workspacePeerCount={workspacePeerCount}
+              onAddAgent={onConnectAgent}
+              onInvitePerson={onInvitePerson}
+              showEmpty={roomInScope && candidates !== null}
+            />
+          )}
+          {(agentConnectOnly || pairCommand) && (
             <View style={styles.pairing} testID="invite-agent-flow">
               <Text style={styles.meta}>
-                Run this where the new agent will live. It joins every Room you're in.
+                Run this where the agent will live. It joins every Room you're in.
               </Text>
-              <TouchableOpacity
-                accessibilityLabel="Copy connect command"
-                onPress={() => onCopyPairCommand?.(pairCommand)}
-                style={styles.commandRow}
-              >
-                <Text selectable style={styles.command} testID="pair-agent-command">
-                  {pairCommand}
-                </Text>
-                <Text style={styles.copyLabel}>Copy</Text>
-              </TouchableOpacity>
+              {pairCommand && (
+                <TouchableOpacity
+                  accessibilityLabel="Copy connect command"
+                  onPress={() => onCopyPairCommand?.(pairCommand)}
+                  style={styles.commandRow}
+                >
+                  <Text selectable style={styles.command} testID="pair-agent-command">
+                    {pairCommand}
+                  </Text>
+                  <Text style={styles.copyLabel}>Copy</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
         </ScrollView>
-        {chosen.length > 0 && (
+        {!agentConnectOnly && chosen.length > 0 && (
           <View style={styles.footer}>
             <BrassButton
               label={`Add ${chosen.length}`}

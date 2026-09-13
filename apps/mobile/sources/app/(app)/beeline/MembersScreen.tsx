@@ -408,7 +408,7 @@ export default function BuzzMembers() {
 
   /**
    * Connecting a NEW agent: the app-minted code is the complete authorization
-   * for the public connect wizard, shown inside the one picker sheet.
+   * for the public connect wizard, shown inside the agent-only sheet.
    */
   const connectAgent = async () => {
     if (!surface || !workspaceId) return;
@@ -1193,6 +1193,7 @@ export default function BuzzMembers() {
           )}
         </KeyboardAwareScrollView>
         <MemberPickerSheet
+          agentConnectOnly
           busy={working === 'invite-person' || working === 'pair-agent'}
           canManage={canManage}
           canConnectAgent

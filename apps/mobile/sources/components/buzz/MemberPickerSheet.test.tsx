@@ -63,7 +63,11 @@ vi.mock('./IdentityMark', async () => {
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
 
-import { MemberPickerSheet, type MemberPickerCandidate } from './MemberPickerSheet';
+import {
+  MEMBER_PICKER_TITLE,
+  MemberPickerSheet,
+  type MemberPickerCandidate,
+} from './MemberPickerSheet';
 
 beforeAll(() => {
   (
@@ -221,6 +225,34 @@ describe('MemberPickerSheet', () => {
     expect(
       renderer.root.findAllByProps({ testID: 'pair-agent-command' }).at(-1)!.props.children,
     ).toBe('npx usebeeline connect 1234ABCD-5678EF90');
+  });
+
+  it('renders only the instruction and command for the Members-page agent sheet', () => {
+    const command = 'npx usebeeline connect 1234ABCD-5678EF90';
+    const renderer = render(
+      <MemberPickerSheet
+        {...baseProps()}
+        agentConnectOnly
+        candidates={undefined}
+        pairCommand={command}
+      />,
+    );
+
+    expect(has(renderer, 'room-member-picker-invite-person')).toBe(false);
+    expect(has(renderer, 'room-member-picker-add-agent')).toBe(false);
+    expect(has(renderer, 'room-member-picker-actions')).toBe(false);
+    expect(has(renderer, 'pair-agent-command')).toBe(true);
+    const text = renderer.root
+      .findAllByType('Text' as any)
+      .flatMap((node: any) => node.props.children)
+      .flat(Infinity)
+      .join(' ');
+    expect(text).toContain("Run this where the agent will live. It joins every Room you're in.");
+    expect(text).toContain(command);
+    expect(text).toContain('Copy');
+    expect(text).not.toContain(MEMBER_PICKER_TITLE);
+    expect(text).not.toContain('Invite a person');
+    expect(text).not.toContain('Connect a new agent');
   });
 
   it('shows the host error inline and tells a non-manager who to ask', () => {

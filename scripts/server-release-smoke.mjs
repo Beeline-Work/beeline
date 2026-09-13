@@ -74,14 +74,17 @@ export async function runServerReleaseSmoke({
       headers: { authorization: `Bearer ${session.accessToken}` },
     });
   const workspaces = await json(await authenticated('/v1/phone/workspaces'), 'Workspace read');
-  const workspaceId = workspaces.workspaces?.[0]?.id;
-  if (typeof workspaceId !== 'string') throw new Error('review identity has no Workspace');
-  const chats = await json(
-    await authenticated(`/v1/phone/workspaces/${workspaceId}/chats`),
-    'Room list read',
-  );
-  const roomId = chats.chats?.find((chat) => typeof chat?.room?.id === 'string')?.room.id;
-  if (typeof roomId !== 'string') throw new Error('review identity has no Room');
+  if (!workspaces.workspaces?.length) throw new Error('review identity has no Workspace');
+  let roomId;
+  for (const workspace of workspaces.workspaces) {
+    const chats = await json(
+      await authenticated(`/v1/phone/workspaces/${workspace.id}/chats`),
+      'Room list read',
+    );
+    roomId = chats.chats?.find((chat) => typeof chat?.room?.id === 'string')?.room.id;
+    if (typeof roomId === 'string') break;
+  }
+  if (typeof roomId !== 'string') throw new Error('review identity has no Room in any Workspace');
 
   const startedAt = now();
   const room = await json(

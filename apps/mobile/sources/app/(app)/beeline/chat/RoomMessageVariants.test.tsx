@@ -344,6 +344,17 @@ describe('Room message variant components', () => {
           node.type === 'Pressable' && /^transcript-card-row-/.test(node.props.testID ?? ''),
       ),
     ).toHaveLength(3);
+    const rowTitle = renderer.root.find(
+      (node: ReactTestInstance) =>
+        node.type === 'Text' && node.children.includes('Duplicate draft settle'),
+    );
+    expect(rowTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
+    expect(rowTitle.parent?.parent?.props.style).toMatchObject({ flex: 1, minWidth: 0 });
+    const cardTitle = renderer.root.find(
+      (node: ReactTestInstance) =>
+        node.type === 'Text' && node.children.includes('PR 4 merged, 1 failed'),
+    );
+    expect(cardTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
     act(() => renderer.root.findByProps({ testID: 'transcript-card-row-corner' }).props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
     const disclosure = renderer.root.findByProps({ testID: 'notification-run-expand-message' });

@@ -71,7 +71,9 @@ export function TranscriptCard({
         {identity ? <View style={styles.identity}>{identity}</View> : null}
         <View style={styles.headCopy}>
           <View style={styles.titleLine}>
-            <Text style={styles.title}>{title}</Text>
+            <Text ellipsizeMode="tail" numberOfLines={1} style={styles.title}>
+              {title}
+            </Text>
             {stamp ? <Text style={styles.stamp}>{stamp}</Text> : null}
           </View>
           {subline ? (
@@ -105,7 +107,7 @@ export function TranscriptCard({
                   {row.state}
                 </Text>
                 <View style={styles.rowCopy}>
-                  <Text numberOfLines={1} style={styles.rowTitle}>
+                  <Text ellipsizeMode="tail" numberOfLines={1} style={styles.rowTitle}>
                     {row.title}
                   </Text>
                   <Text numberOfLines={1} style={styles.rowKind}>
@@ -202,7 +204,12 @@ const styles = StyleSheet.create((theme) => {
     },
     identity: { width: metric.identitySize },
     headCopy: { flex: 1, minWidth: 0 },
-    titleLine: { flexDirection: 'row', alignItems: 'baseline', gap: card.space.sm },
+    titleLine: {
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: card.space.sm,
+    },
     title: { ...card.type.bodyStrong, color: card.textPrimary, flex: 1, minWidth: 0 },
     handle: { ...card.type.body, fontFamily: card.proseMedium, color: card.accent },
     handleMeta: { ...card.type.meta, fontFamily: card.proseMedium, color: card.accent },
@@ -251,7 +258,12 @@ const styles = StyleSheet.create((theme) => {
     rowStateWaiting: { color: card.accent },
     rowStateFailed: { color: card.diffRemoved },
     rowCopy: { flex: 1, minWidth: 0 },
-    rowTitle: { ...card.type.body, fontSize: metric.rowTitleSize, color: card.textPrimary },
+    rowTitle: {
+      ...card.type.body,
+      minWidth: 0,
+      fontSize: metric.rowTitleSize,
+      color: card.textPrimary,
+    },
     rowKind: { ...card.type.machine, fontSize: metric.rowKindSize, color: card.ledgerGhost },
     footer: {
       minHeight: metric.footerMinHeight,

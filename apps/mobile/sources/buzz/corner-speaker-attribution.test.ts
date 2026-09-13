@@ -103,7 +103,7 @@ describe('corner transcript speaker attribution (same treatment as rooms)', () =
   it('mechanism rows belong to nobody: cards end runs instead of speaking', () => {
     const { keys, continued } = projectCornerTranscript([
       cornerMessage({ id: 'agent-1', pubkey: AGENT, isAgentAuthor: true }),
-      cornerMessage({ id: 'card', pubkey: AGENT, corner: { status: 'open' } }),
+      cornerMessage({ id: 'card', pubkey: AGENT, corner: { state: 'waiting' } }),
       cornerMessage({ id: 'notice', isSystemNotice: true }),
       cornerMessage({ id: 'permission', writePermission: { status: 'allowed' } }),
       cornerMessage({ id: 'proposal', targetBranchProposal: {} }),

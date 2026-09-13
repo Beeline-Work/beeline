@@ -310,9 +310,9 @@ describe('corner item projection', () => {
 
     expect(
       cornerItem({ ...data, latestTurnStatus: 'working', latestTurnCreatedAt: 37 }),
-    ).toMatchObject({ status: 'working', statusAt: 37 });
-    expect(cornerItem({ ...data, latestTurnStatus: 'complete' }).status).not.toBe('working');
-    expect(cornerItem({ ...data, latestTurnStatus: 'failed' }).status).not.toBe('working');
+    ).toMatchObject({ state: 'working', stateAt: 37 });
+    expect(cornerItem({ ...data, latestTurnStatus: 'complete' }).state).not.toBe('working');
+    expect(cornerItem({ ...data, latestTurnStatus: 'failed' }).state).not.toBe('working');
   });
 
   it('keeps an open PR non-actionable while a fresh steering receipt lights working', () => {
@@ -346,12 +346,12 @@ describe('corner item projection', () => {
       cornerItem({ ...data, latestTurnStatus: 'working', latestTurnCreatedAt: 41 }),
     ).toMatchObject({
       lifecycle: { lifecycle: 'in-review' },
-      status: 'working',
-      statusAt: 41,
+      state: 'working',
+      stateAt: 41,
     });
     expect(cornerItem({ ...data, latestTurnStatus: 'complete' })).toMatchObject({
       lifecycle: { lifecycle: 'in-review' },
-      status: 'idle',
+      state: 'review',
     });
   });
 });

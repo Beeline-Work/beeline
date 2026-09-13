@@ -6,21 +6,23 @@ function source(relativePath: string): string {
 }
 
 describe('desktop layout mode', () => {
-  it('swaps one Room list with the mobile workspace picker in the same column', () => {
+  it('opens the desktop Workspace rail over the persistent Room list', () => {
     const sidebar = source('components/SidebarView.tsx');
     const channels = source('app/(app)/beeline/channels.tsx');
 
     expect(sidebar).toContain('<CommunitySwitcherTrigger');
-    expect(sidebar).toContain('<CommunityRail');
-    expect(sidebar).toContain('communities={workspaces.map(workspaceRailItem)}');
-    expect(sidebar).toContain('presentation="column"');
-    expect(sidebar).toContain("event.key === 'Escape'");
-    expect(sidebar).toContain("document.addEventListener('mousedown', onPointerDown)");
-    expect(sidebar).toContain('attention={otherWorkspaceNeedsAttention}');
-    expect(sidebar).toContain('pickerTitle={WORKSPACES_LABEL}');
-    expect(source('components/buzz/CommunityRail.tsx')).toContain(
-      'testID={`workspace-tile-plate-${community.communityId}`}',
-    );
+    expect(sidebar).toContain('<DesktopWorkspaceRail');
+    expect(sidebar).toContain('roomCount: workspaceRoomCounts.get(workspace.id) ?? 0');
+    expect(sidebar).toContain('needsAttention: attentionWorkspaceIds.has(workspace.id)');
+    expect(sidebar).toContain("event.key.toLowerCase() === 's'");
+    expect(sidebar).toContain('event.metaKey || event.ctrlKey');
+    expect(sidebar).toContain('desktopWorkspaceRoute(');
+    const rail = source('components/buzz/DesktopWorkspaceRail.tsx');
+    expect(rail).toContain("backgroundColor: 'rgba(20,9,26,.66)'");
+    expect(rail).toContain('<DesktopWorkspacePortal>');
+    expect(source('components/buzz/DesktopWorkspacePortal.web.tsx')).toContain('createPortal(');
+    expect(rail).toContain('accessibilityRole="menuitem"');
+    expect(rail).not.toContain('ADD WORKSPACE');
     expect(channels).toContain('isDesktop ? (');
     expect(channels).toContain('testID="desktop-room-selection-empty"');
     expect(channels).toContain('testID="desktop-room-list-empty"');

@@ -72,6 +72,17 @@ vi.mock('@/components/buzz/ActivityTimeline', async () => {
   const ReactModule = await import('react');
   return { ActivityTimeline: (props: any) => ReactModule.createElement('ActivityTimeline', props) };
 });
+vi.mock('@/components/buzz/HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement(
+        'HullActionSheetModal',
+        props,
+        props.visible ? props.children : null,
+      ),
+  };
+});
 vi.mock('@/components/buzz/WritePermissionOutcome', async () => {
   const ReactModule = await import('react');
   return {
@@ -750,6 +761,99 @@ describe('Room message variant components', () => {
     expect(chip.props.accessibilityState).toEqual({ selected: true });
     act(() => chip.props.onPress());
     expect(onReact).toHaveBeenCalledWith(row, '👍');
+  });
+
+  it.each(['ios', 'android'])(
+    'opens the native reaction picker on %s and selects a reaction',
+    (os) => {
+      const previous = Platform.OS;
+      (Platform as { OS: string }).OS = os;
+      try {
+        const onReact = vi.fn();
+        const row = message({
+          id: `native-${os}`,
+          reactions: [{ emoji: '👍', count: 1, reacted: true }],
+        });
+        const renderer = render(
+          <OrdinaryLedgerMessage
+            message={row}
+            desktopLayout={false}
+            participantsHydrated
+            viewerPubkey="viewer"
+            speakerWorking={false}
+            continued={false}
+            participantHandles={[]}
+            channelIndex={{ rooms: [], corners: [] }}
+            deliveryFailed={false}
+            onChannelReference={vi.fn()}
+            onReply={vi.fn()}
+            onCopy={vi.fn()}
+            onReact={onReact}
+            onRetry={vi.fn()}
+            onDismiss={vi.fn()}
+          />,
+        );
+
+        const target = renderer.root.findByProps({ testID: `message-touch-target-native-${os}` });
+        act(() => target.props.onLongPress());
+        const picker = renderer.root.findByProps({ modalTestID: `reaction-picker-native-${os}` });
+        expect(picker.props.visible).toBe(true);
+        const selected = renderer.root.findByProps({ testID: `reaction-choice-native-${os}-👍` });
+        expect(selected.props.accessibilityState).toEqual({ selected: true });
+        act(() => selected.props.onPress());
+        expect(onReact).toHaveBeenCalledWith(row, '👍');
+        expect(
+          renderer.root.findByProps({ modalTestID: `reaction-picker-native-${os}` }).props.visible,
+        ).toBe(false);
+      } finally {
+        (Platform as { OS: string }).OS = previous;
+      }
+    },
+  );
+
+  it('dismisses the native reaction picker and keeps swipe-to-reply active', () => {
+    const previous = Platform.OS;
+    (Platform as { OS: string }).OS = 'ios';
+    try {
+      const onReply = vi.fn();
+      const row = message({ id: 'native-dismiss' });
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={row}
+          desktopLayout={false}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={onReply}
+          onCopy={vi.fn()}
+          onReact={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+
+      act(() =>
+        renderer.root
+          .findByProps({ testID: 'message-touch-target-native-dismiss' })
+          .props.onLongPress(),
+      );
+      const picker = renderer.root.findByProps({ modalTestID: 'reaction-picker-native-dismiss' });
+      act(() => picker.props.onClose());
+      expect(
+        renderer.root.findByProps({ modalTestID: 'reaction-picker-native-dismiss' }).props.visible,
+      ).toBe(false);
+
+      const swipeable = renderer.root.findByProps({ testID: 'swipe-reply-native-dismiss' });
+      act(() => swipeable.props.onSwipeableOpen('right'));
+      expect(onReply).toHaveBeenCalledWith(row);
+    } finally {
+      (Platform as { OS: string }).OS = previous;
+    }
   });
 
   it('uses the phone swipe interaction on compact web', () => {

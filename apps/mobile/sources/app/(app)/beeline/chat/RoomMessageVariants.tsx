@@ -45,6 +45,7 @@ import {
   type LedgerByline,
 } from '@/components/buzz/Ledger';
 import { MonoButton, NewMessageMaterialize } from '@/components/buzz/MonoHull';
+import { HullActionSheetModal } from '@/components/buzz/HullActionSheet';
 import {
   TranscriptCard,
   TranscriptCardHandle,
@@ -749,6 +750,7 @@ function SwipeToReply({
   onReply,
   onReact,
   onForward,
+  reactedEmojis,
   isDesktop,
   replyOnly = false,
 }: {
@@ -759,12 +761,14 @@ function SwipeToReply({
   onReply(): void;
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
+  reactedEmojis: ReadonlySet<MessageReactionEmoji>;
   isDesktop: boolean;
   replyOnly?: boolean;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
   const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
+  const nativeReactionPicker = Platform.OS !== 'web' && !replyOnly;
   const message = isDesktop ? (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
@@ -774,6 +778,17 @@ function SwipeToReply({
       onPress={onPress}
       style={isDesktop ? styles.replyDesktopMessage : undefined}
       testID={`copy-message-${messageId}`}
+    >
+      {children}
+    </Pressable>
+  ) : nativeReactionPicker ? (
+    <Pressable
+      accessibilityHint="Long press to react to this message"
+      accessibilityLabel="Message"
+      delayLongPress={350}
+      onLongPress={() => setReactionPickerVisible(true)}
+      onPress={onPress}
+      testID={`message-touch-target-${messageId}`}
     >
       {children}
     </Pressable>
@@ -887,37 +902,73 @@ function SwipeToReply({
     );
   }
   return (
-    <Swipeable
-      ref={swipeableRef}
-      // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
-      // edge, where the byline tile sits — and a live agent's gold ring paints
-      // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
-      // gutter and the children padded back by the same amount, so the copy
-      // column never moves and the whole tile, ring included, stays visible.
-      containerStyle={styles.replySwipeContainer}
-      childrenContainerStyle={styles.replySwipeChildren}
-      dragOffsetFromRightEdge={18}
-      friction={1.35}
-      onSwipeableOpen={(direction) => {
-        if (direction !== 'right') return;
-        swipeableRef.current?.close();
-        onReply();
-      }}
-      overshootRight={false}
-      renderRightActions={() => (
-        <View
-          accessibilityLabel="Reply to message"
-          style={styles.replySwipeAction}
-          testID={`reply-swipe-action-${messageId}`}
+    <>
+      <Swipeable
+        ref={swipeableRef}
+        // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
+        // edge, where the byline tile sits — and a live agent's gold ring paints
+        // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
+        // gutter and the children padded back by the same amount, so the copy
+        // column never moves and the whole tile, ring included, stays visible.
+        containerStyle={styles.replySwipeContainer}
+        childrenContainerStyle={styles.replySwipeChildren}
+        dragOffsetFromRightEdge={18}
+        friction={1.35}
+        onSwipeableOpen={(direction) => {
+          if (direction !== 'right') return;
+          swipeableRef.current?.close();
+          onReply();
+        }}
+        overshootRight={false}
+        renderRightActions={() => (
+          <View
+            accessibilityLabel="Reply to message"
+            style={styles.replySwipeAction}
+            testID={`reply-swipe-action-${messageId}`}
+          >
+            <Text style={styles.replySwipeGlyph}>↩</Text>
+            <Text style={styles.replySwipeLabel}>REPLY</Text>
+          </View>
+        )}
+        testID={`swipe-reply-${messageId}`}
+      >
+        {message}
+      </Swipeable>
+      {nativeReactionPicker ? (
+        <HullActionSheetModal
+          accessibilityLabel="Dismiss reaction picker"
+          modalTestID={`reaction-picker-${messageId}`}
+          onClose={() => setReactionPickerVisible(false)}
+          scrimTestID={`reaction-picker-dismiss-${messageId}`}
+          testID={`reaction-picker-sheet-${messageId}`}
+          title="React to message"
+          visible={reactionPickerVisible}
         >
-          <Text style={styles.replySwipeGlyph}>↩</Text>
-          <Text style={styles.replySwipeLabel}>REPLY</Text>
-        </View>
-      )}
-      testID={`swipe-reply-${messageId}`}
-    >
-      {message}
-    </Swipeable>
+          <View style={styles.nativeReactionChoices}>
+            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+              <Pressable
+                accessibilityLabel={`Toggle ${emoji} reaction`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: reactedEmojis.has(emoji) }}
+                key={emoji}
+                onPress={() => {
+                  onReact(emoji);
+                  setReactionPickerVisible(false);
+                }}
+                style={({ pressed }) => [
+                  styles.nativeReactionChoice,
+                  reactedEmojis.has(emoji) && styles.nativeReactionChoiceSelected,
+                  pressed && styles.replyDesktopPressed,
+                ]}
+                testID={`reaction-choice-${messageId}-${emoji}`}
+              >
+                <Text style={styles.nativeReactionEmoji}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </HullActionSheetModal>
+      ) : null}
+    </>
   );
 }
 
@@ -1175,6 +1226,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           onReply={() => onReply(message)}
           onReact={() => undefined}
           onForward={() => undefined}
+          reactedEmojis={new Set()}
           isDesktop={desktopLayout}
           replyOnly
         >
@@ -1315,6 +1367,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
+      reactedEmojis={
+        new Set(
+          message.reactions
+            ?.filter((reaction) => reaction.reacted)
+            .map((reaction) => reaction.emoji),
+        )
+      }
       isDesktop={desktopLayout}
     >
       {content}
@@ -1399,6 +1458,26 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  nativeReactionChoices: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  nativeReactionChoice: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: groknight.radius,
+  },
+  nativeReactionChoiceSelected: {
+    borderColor: groknight.accent,
+    backgroundColor: groknight.bgHighlight,
+  },
+  nativeReactionEmoji: { ...theme.buzz.type.body, fontSize: 24, lineHeight: 30 },
   reactionChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -1555,11 +1555,14 @@ esac
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('measures the selective release from dispatch and enforces twenty minutes', () => {
+  it('measures the selective release from dispatch and enforces the 20-minute default budget', () => {
     expect(unifiedWorkflow).toContain('getWorkflowRun');
     expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
     expect(unifiedWorkflow).toContain('elapsed=$((now - TRIGGER_EPOCH))');
-    expect(unifiedWorkflow).toContain('if [ "$elapsed" -ge 1200 ]');
+    // The 20-minute fix-to-phone budget stays the default; only a native
+    // store-binary leg extends it (60 minutes).
+    expect(unifiedWorkflow).toContain('budget_seconds=1200');
+    expect(unifiedWorkflow).toContain('if [ "$elapsed" -ge "$budget_seconds" ]');
     expect(unifiedWorkflow).toContain('failure_class=budget');
     expect(workflow).toContain('assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"');
     expect(unifiedWorkflow).toContain('unified-release.mjs finalize');

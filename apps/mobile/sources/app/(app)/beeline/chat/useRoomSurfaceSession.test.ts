@@ -32,6 +32,7 @@ const controls = vi.hoisted(() => ({
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
   roomResponse: null as RoomView | null,
+  roomError: null as unknown,
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -131,8 +132,12 @@ vi.mock('@/sync/transport/room-view-client', async () => {
     await vi.importActual<typeof import('@beeline/buzz-client')>('@beeline/buzz-client');
   return {
     RoomViewHttpError,
+    isRoomViewTimeoutError: (error: unknown) =>
+      error instanceof RoomViewHttpError &&
+      (error.code === 'timeout' || error.code === 'surface_request_timed_out'),
     RoomViewClient: class {
       async room() {
+        if (controls.roomError) return Promise.reject(controls.roomError);
         if (controls.roomResponse) return controls.roomResponse;
         return new Promise<RoomView>(() => undefined);
       }
@@ -308,6 +313,7 @@ beforeEach(() => {
   controls.replayEvents.length = 0;
   controls.identityPromise = null;
   controls.roomResponse = null;
+  controls.roomError = null;
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
   vi.clearAllMocks();
@@ -1225,6 +1231,44 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
     expect(firstScheduler.disposed).toBe(true);
     expect(controls.schedulers).toHaveLength(2);
+    await act(async () => renderer.unmount());
+  });
+
+  it('fails a first-load timeout into the retry screen, and RETRY repaints', async () => {
+    // The 18:47Z captain report: a hung connection left the Room on LOADING
+    // forever. The bounded request now rejects, and an unpainted Room shows
+    // the retryable error screen instead of an endless loader.
+    controls.roomError = new RoomViewHttpError(0, 'timeout');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => controls.schedulers[0]!.error(controls.roomError));
+    expect(current.roomSurface).toBeNull();
+    expect(current.hydrationFailed).toBe(true);
+    expect(current.hydrationError).toBe(
+      'The server did not respond. Check your connection and retry.',
+    );
+
+    // RETRY re-runs the read; a responding server paints the Room normally.
+    controls.roomError = null;
+    controls.roomResponse = roomView('room-a');
+    await act(async () => current.retryHydration());
+    await flushEffects();
+    expect(controls.schedulers).toHaveLength(2);
+    await act(async () => {
+      controls.schedulers[1]!.apply(await controls.schedulers[1]!.fetch());
+    });
+    expect(current.roomSurface?.room.id).toBe('room-a');
+    expect(current.hydrationFailed).toBe(false);
     await act(async () => renderer.unmount());
   });
 

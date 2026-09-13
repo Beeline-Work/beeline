@@ -4823,7 +4823,10 @@ describe('monolith integration', () => {
           text: '@GitHub passed a check Beeline CI check suite',
           systemEvent: expect.objectContaining({
             verb: 'passed a check',
-            object: expect.objectContaining({ text: 'Beeline CI check suite' }),
+            object: expect.objectContaining({
+              text: 'Beeline CI check suite',
+              headSha: '1'.repeat(40),
+            }),
           }),
         }),
       ]),

@@ -46,6 +46,7 @@ export type SystemLineMessage = {
 export type NotificationLifecycleState =
   | 'Opened'
   | 'PR opened'
+  | 'Checks running'
   | 'Checks failed'
   | 'Checks passed'
   | 'Merged'
@@ -64,22 +65,25 @@ export type NotificationLifecycleRun = {
     state: NotificationLifecycleState;
     kindLine: string;
     danger?: boolean;
+    kind?: 'corner' | 'pull-request' | 'issue' | 'check';
     url?: string;
     cornerId?: string;
   }[];
 };
 
-type HeadlineSubject = 'PR' | 'Issue' | 'Star' | 'Workflow';
+type HeadlineSubject = 'PR' | 'Check' | 'Issue' | 'Star' | 'Workflow';
 
-const HEADLINE_ORDER: readonly HeadlineSubject[] = ['PR', 'Issue', 'Star', 'Workflow'];
+const HEADLINE_ORDER: readonly HeadlineSubject[] = ['PR', 'Check', 'Issue', 'Star', 'Workflow'];
 const HEADLINE_STATES: Readonly<Record<HeadlineSubject, readonly NotificationLifecycleState[]>> = {
-  PR: ['Merged', 'PR opened', 'Opened', 'Closed', 'Checks passed', 'Checks failed'],
+  PR: ['PR opened', 'Opened', 'Closed', 'Merged', 'Checks passed', 'Checks failed'],
+  Check: ['Checks passed', 'Checks failed', 'Checks running'],
   Issue: ['Opened', 'Closed'],
   Star: ['Starred'],
   Workflow: ['Ran', 'Succeeded', 'Failed'],
 };
 
 function headlineSubject(item: NotificationLifecycleRun['items'][number]): HeadlineSubject {
+  if (item.kind === 'check') return 'Check';
   if (/^(workflow|run #)/i.test(item.kindLine)) return 'Workflow';
   if (/^issue/i.test(item.kindLine)) return 'Issue';
   if (/^star/i.test(item.kindLine)) return 'Star';
@@ -103,8 +107,12 @@ export function formatNotificationHeadlines(
           : state === 'Checks failed'
             ? 'failed'
             : state === 'Checks passed'
-              ? 'succeeded'
-              : state.toLowerCase();
+              ? subject === 'Check'
+                ? 'passed'
+                : 'succeeded'
+              : state === 'Checks running'
+                ? 'running'
+                : state.toLowerCase();
       return [`${count} ${word}`];
     });
     return counts.length ? [`${subject} ${counts.join(', ')}`] : [];
@@ -168,23 +176,54 @@ export function anchorRelayReports<T extends SystemLineMessage>(messages: readon
 }
 
 /**
- * Fold adjacent notification cards or same-verb system lines into the first
- * row of each run. `messages` is in transcript order (oldest first); the
- * folded row keeps the first row's id (a stable list/reveal key) and takes the
- * newest row's stamp. Ordinary messages and every non-notification card end a
- * notification run before the existing same-verb system-line fold resumes.
+ * Fold notification cards or same-verb system lines into the first row of
+ * each run. Check notifications keep one accumulator per PR head, even across
+ * intervening rows; every other notification run stays adjacency-bound.
+ * `messages` is in transcript order (oldest first); the folded row keeps the
+ * first row's id (a stable list/reveal key) and takes the newest row's stamp.
  */
 export function foldSystemLines<T extends SystemLineMessage>(messages: readonly T[]): T[] {
   const folded: T[] = [];
   let run: { index: number; key: string; subjects: SystemSubject[]; ids: string[] } | null = null;
   let notificationRun:
     { index: number; anchor: T; events: NotificationLifecycleEvent[] } | undefined;
+  const checkRuns = new Map<
+    string,
+    { index: number; anchor: T; events: NotificationLifecycleEvent[] }
+  >();
   for (const message of anchorRelayReports(messages)) {
     const notification = message.relayReports?.length
       ? undefined
       : notificationLifecycleEvent(message);
     if (notification) {
       run = null;
+      if (notification.kind === 'check' && notification.headSha) {
+        notificationRun = undefined;
+        const headKey = notification.headSha.toLowerCase();
+        const checkRun = checkRuns.get(headKey);
+        if (!checkRun) {
+          const next = {
+            index: folded.length,
+            anchor: message,
+            events: [notification],
+          };
+          checkRuns.set(headKey, next);
+          folded.push({
+            ...message,
+            foldedIds: [notification.id],
+            notificationLifecycleRun: summarizeNotificationRun(next.events),
+          });
+        } else {
+          checkRun.events.push(notification);
+          folded[checkRun.index] = {
+            ...checkRun.anchor,
+            timestamp: message.timestamp,
+            foldedIds: checkRun.events.map((event) => event.id),
+            notificationLifecycleRun: summarizeNotificationRun(checkRun.events),
+          };
+        }
+        continue;
+      }
       if (!notificationRun) {
         notificationRun = { index: folded.length, anchor: message, events: [notification] };
         folded.push(message);
@@ -237,6 +276,7 @@ type NotificationLifecycleEvent = {
   cornerId?: string;
   prNumber?: number;
   kind: 'corner' | 'pull-request' | 'issue' | 'check';
+  headSha?: string;
   url?: string;
   refs: string[];
 };
@@ -302,7 +342,7 @@ function notificationLifecycleEvent(
   }
 
   const event = message.isSystemNotice ? message.systemEvent : undefined;
-  if (event?.subject.kind !== 'github' || !/(passed|failed) a check/i.test(event.verb)) {
+  if (event?.subject.kind !== 'github' || !/(started|passed|failed) a check/i.test(event.verb)) {
     return undefined;
   }
   const url = event.object?.url;
@@ -312,11 +352,23 @@ function notificationLifecycleEvent(
     timestamp: message.timestamp,
     title: event.object?.text ?? message.text,
     titleRank: 0,
-    state: /failed/i.test(event.verb) ? 'Checks failed' : 'Checks passed',
+    state: /failed/i.test(event.verb)
+      ? 'Checks failed'
+      : /started/i.test(event.verb)
+        ? 'Checks running'
+        : 'Checks passed',
     ...(prNumber ? { prNumber } : {}),
     kind: 'check',
+    ...(event.object?.headSha ? { headSha: event.object.headSha } : {}),
     ...(url ? { url } : {}),
-    refs: repositoryRefs(url, prNumber, undefined),
+    // A PR can have many checks. Its number or shared target URL cannot be a
+    // subject join, or every check collapses into one row. The check name is
+    // the lifecycle identity that joins its started and completed notices.
+    refs: [
+      `check:${event.object?.headSha?.toLowerCase() ?? prNumber ?? 'none'}:${(
+        event.object?.text ?? message.text
+      ).toLowerCase()}`,
+    ],
   };
 }
 
@@ -404,13 +456,16 @@ function summarizeNotificationRun(
         id: subject.events[0]!.id,
         title: titled.title,
         state: stateEvent.state!,
+        kind: stateEvent.kind,
         kindLine: corner
           ? `corner${prNumber ? ` · PR #${prNumber}` : ''}`
-          : issue
-            ? 'issue'
-            : prNumber
-              ? `PR #${prNumber}`
-              : 'check',
+          : stateEvent.kind === 'check'
+            ? 'check'
+            : issue
+              ? 'issue'
+              : prNumber
+                ? `PR #${prNumber}`
+                : 'check',
         ...(stateEvent.state === 'Checks failed' ? { danger: true } : {}),
         ...(corner?.cornerId ? { cornerId: corner.cornerId } : {}),
         ...(!corner?.cornerId && linked?.url ? { url: linked.url } : {}),
@@ -419,7 +474,7 @@ function summarizeNotificationRun(
     })
     .sort((left, right) => right.latestOrder - left.latestOrder);
 
-  const headline = formatNotificationHeadlines(rows).join('\n');
+  const headline = formatNotificationHeadlines(rows).join(' · ');
   const actors = [
     ...new Set(events.flatMap((event) => (event.actor ? [normalizeActor(event.actor)] : []))),
   ];

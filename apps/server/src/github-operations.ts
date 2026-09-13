@@ -1040,7 +1040,11 @@ export class GitHubOperations {
                 : check.status === 'failed'
                   ? { kind: 'check-failed' as const }
                   : {}),
-              object: { text: check.name, ...(check.url ? { url: check.url } : {}) },
+              object: {
+                text: check.name,
+                ...(check.url ? { url: check.url } : {}),
+                ...(check.headSha ? { headSha: check.headSha } : {}),
+              },
               ...(check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
                 ? { consequence: check.conclusion }
                 : {}),

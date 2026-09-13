@@ -20,9 +20,10 @@
 # logging kept, dev is the local-identity build. Pull requests build preview —
 # an artifact from a PR should never claim to be the release app.
 #
-# Production macOS builds are signed and notarized when the repository
-# credentials are available. The unified release requires them, so every
-# published .dmg is notarized and stapled. Preview/dev builds stay unsigned.
+# Production macOS builds are signed, notarized, stapled, and strictly verified
+# when the complete repository credential set is available. Until it is, they
+# build fully unsigned with a loud release notice. Preview/dev builds stay
+# intentionally unsigned.
 name: Desktop
 
 on:
@@ -63,11 +64,6 @@ on:
         description: Immutable release version
         required: false
         type: string
-      require_macos_signing:
-        description: Fail before a production macOS build unless every signing credential is available
-        required: false
-        default: false
-        type: boolean
     secrets:
       APPLE_CERTIFICATE:
         description: Base64-encoded Developer ID Application .p12
@@ -151,7 +147,6 @@ jobs:
       # Pull requests carry no input and remain preview builds. The unified
       # release calls this workflow explicitly with production.
       VARIANT: ${{ inputs.variant || 'preview' }}
-      REQUIRE_MACOS_SIGNING: ${{ inputs.require_macos_signing || false }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -205,8 +200,9 @@ jobs:
         run: npm ci
 
       # The gate evaluates the complete credential set before Tauri sees any
-      # of it. A partially configured job therefore builds fully unsigned (for
-      # an optional/manual build) or fails before build (for a release).
+      # of it. A missing or partially configured set therefore builds fully
+      # unsigned and emits an unmistakable notice; a complete set makes every
+      # signing, notarization, and verification step mandatory.
       - name: Select the macOS signing mode
         id: macos_signing
         env:

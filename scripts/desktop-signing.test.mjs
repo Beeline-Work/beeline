@@ -6,7 +6,11 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { MACOS_SIGNING_CREDENTIALS, desktopSigningDecision } from './desktop-signing.mjs';
+import {
+  MACOS_SIGNING_CREDENTIALS,
+  UNSIGNED_MACOS_NOTICE,
+  desktopSigningDecision,
+} from './desktop-signing.mjs';
 
 const completeCredentials = Object.fromEntries(MACOS_SIGNING_CREDENTIALS.map((name) => [name, 'present']));
 const desktopWorkflow = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
@@ -19,29 +23,28 @@ test('enables signing only for a macOS production build with every credential', 
     desktopSigningDecision({
       platform: 'macOS',
       variant: 'production',
-      required: true,
       env: completeCredentials,
     }),
     { enabled: true, missing: [], reason: 'credentials-present' },
   );
 });
 
-test('fails closed before a release build when any signing credential is missing', () => {
+test('selects a wholly unsigned production build when any signing credential is missing', () => {
   const env = { ...completeCredentials, MACOS_APPLE_CERTIFICATE: '' };
   assert.deepEqual(
-    desktopSigningDecision({ platform: 'macOS', variant: 'production', required: true, env }),
+    desktopSigningDecision({ platform: 'macOS', variant: 'production', env }),
     {
       enabled: false,
       missing: ['MACOS_APPLE_CERTIFICATE'],
-      reason: 'required-credentials-missing',
+      reason: 'credentials-missing',
     },
   );
 });
 
-test('allows a loud unsigned production build outside the release pipeline', () => {
+test('allows a loud unsigned production build when the complete secret set is absent', () => {
   assert.equal(
-    desktopSigningDecision({ platform: 'macOS', variant: 'production', required: false, env: {} }).reason,
-    'optional-credentials-missing',
+    desktopSigningDecision({ platform: 'macOS', variant: 'production', env: {} }).reason,
+    'credentials-missing',
   );
 });
 
@@ -50,7 +53,6 @@ test('preview builds stay unsigned even when repository secrets are available', 
     desktopSigningDecision({
       platform: 'macOS',
       variant: 'preview',
-      required: false,
       env: completeCredentials,
     }),
     { enabled: false, missing: [], reason: 'unsigned-variant' },
@@ -62,14 +64,38 @@ test('non-macOS runners never receive signing credentials', () => {
     desktopSigningDecision({
       platform: 'Linux',
       variant: 'production',
-      required: true,
       env: completeCredentials,
     }),
     { enabled: false, missing: [], reason: 'not-macos' },
   );
 });
 
-test('the CLI fails a required release loudly and records a disabled output', () => {
+test('the CLI permits an unsigned release and records the exact notice in its job summary', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'desktop-signing-test-'));
+  const output = join(directory, 'github-output');
+  const summary = join(directory, 'github-summary');
+  try {
+    const result = spawnSync(process.execPath, [gateScript], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RUNNER_OS: 'macOS',
+        VARIANT: 'production',
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        ...Object.fromEntries(MACOS_SIGNING_CREDENTIALS.map((name) => [name, ''])),
+      },
+    });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, new RegExp(`::warning::${UNSIGNED_MACOS_NOTICE}`));
+    assert.equal(readFileSync(output, 'utf8'), 'enabled=false\n');
+    assert.match(readFileSync(summary, 'utf8'), new RegExp(`^### ${UNSIGNED_MACOS_NOTICE}`, 'm'));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the CLI makes the signed path mandatory when every secret is present', () => {
   const directory = mkdtempSync(join(tmpdir(), 'desktop-signing-test-'));
   const output = join(directory, 'github-output');
   try {
@@ -79,36 +105,24 @@ test('the CLI fails a required release loudly and records a disabled output', ()
         ...process.env,
         RUNNER_OS: 'macOS',
         VARIANT: 'production',
-        REQUIRE_MACOS_SIGNING: 'true',
         GITHUB_OUTPUT: output,
+        ...completeCredentials,
       },
     });
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /::error::a released macOS artifact must be signed and notarized/);
-    assert.equal(readFileSync(output, 'utf8'), 'enabled=false\n');
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /macOS production signing and notarization are enabled/);
+    assert.doesNotMatch(result.stdout, new RegExp(UNSIGNED_MACOS_NOTICE));
+    assert.equal(readFileSync(output, 'utf8'), 'enabled=true\n');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test('the CLI makes an optional unsigned production build conspicuous', () => {
-  const result = spawnSync(process.execPath, [gateScript], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      RUNNER_OS: 'macOS',
-      VARIANT: 'production',
-      REQUIRE_MACOS_SIGNING: 'false',
-      GITHUB_OUTPUT: '',
-    },
-  });
-  assert.equal(result.status, 0);
-  assert.match(result.stdout, /^enabled=false/m);
-  assert.match(result.stdout, /::warning::macOS production signing skipped because credentials are unavailable/);
-});
-
-test('the release requires signing before it can publish a macOS installer', () => {
-  assert.match(releaseWorkflow, /desktop_installers:[\s\S]*require_macos_signing: true[\s\S]*secrets: inherit/);
+test('the release permits missing secrets but makes a configured signed path mandatory', () => {
+  assert.match(releaseWorkflow, /desktop_installers:[\s\S]*variant: production[\s\S]*secrets: inherit/);
+  assert.doesNotMatch(releaseWorkflow, /require_macos_signing/);
+  assert.match(releaseWorkflow, /macOS artifact UNSIGNED: signing secrets absent/);
+  assert.match(desktopWorkflow, /scripts\/desktop-signing\.mjs/);
   assert.match(desktopWorkflow, /MACOS_APPLE_CERTIFICATE:.*secrets\.APPLE_CERTIFICATE/);
   assert.match(desktopWorkflow, /MACOS_APPLE_CERTIFICATE_PASSWORD:.*secrets\.APPLE_CERTIFICATE_PASSWORD/);
   assert.match(desktopWorkflow, /MACOS_ASC_KEY_ID:.*secrets\.EXPO_ASC_KEY_ID/);

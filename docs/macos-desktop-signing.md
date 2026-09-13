@@ -1,16 +1,17 @@
 # macOS desktop signing and notarization
 
-The unified production release refuses to build the macOS desktop artifact
-unless all signing credentials are present. Its downloadable
-`Beeline-universal.dmg` is signed with the Moon Rice Limited Developer ID,
-notarized, stapled, and checked with `codesign`, `spctl`, and `stapler` before it
-can reach the GitHub release and the `/dl` download surface.
+When all signing credentials are present, the unified production release's
+downloadable `Beeline-universal.dmg` is signed with the Moon Rice Limited
+Developer ID, notarized, stapled, and checked with `codesign`, `spctl`, and
+`stapler` before it can reach the GitHub release and the `/dl` download surface.
 
-Preview and dev builds are intentionally unsigned. A manually dispatched
-production build may also run unsigned when credentials are absent, but the
-workflow prints a warning and passes no partial credential set to Tauri. The
-unified release sets `require_macos_signing: true`, so it always fails before
-the macOS build rather than publishing an unsigned production download.
+Preview and dev builds are intentionally unsigned. Until the complete signing
+credential set exists, production builds also run fully unsigned exactly as
+they did before signing support was added. No partial credential set reaches
+Tauri. Both the macOS job summary and unified release report say **macOS
+artifact UNSIGNED: signing secrets absent**. Once every credential is present,
+signing, notarization, stapling, and strict verification are mandatory; any
+failure fails the release.
 
 ## One-time Apple setup
 

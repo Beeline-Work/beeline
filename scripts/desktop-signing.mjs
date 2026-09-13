@@ -11,7 +11,9 @@ export const MACOS_SIGNING_CREDENTIALS = Object.freeze([
   'MACOS_ASC_API_KEY_P8',
 ]);
 
-export function desktopSigningDecision({ platform, variant, required, env }) {
+export const UNSIGNED_MACOS_NOTICE = 'macOS artifact UNSIGNED: signing secrets absent';
+
+export function desktopSigningDecision({ platform, variant, env }) {
   if (platform !== 'macOS') {
     return { enabled: false, missing: [], reason: 'not-macos' };
   }
@@ -24,7 +26,7 @@ export function desktopSigningDecision({ platform, variant, required, env }) {
     return {
       enabled: false,
       missing,
-      reason: required ? 'required-credentials-missing' : 'optional-credentials-missing',
+      reason: 'credentials-missing',
     };
   }
 
@@ -43,7 +45,6 @@ function main() {
   const decision = desktopSigningDecision({
     platform: process.env.RUNNER_OS,
     variant: process.env.VARIANT,
-    required: process.env.REQUIRE_MACOS_SIGNING === 'true',
     env: process.env,
   });
 
@@ -56,17 +57,14 @@ function main() {
     case 'unsigned-variant':
       console.log(`::notice::${process.env.VARIANT} macOS builds are intentionally unsigned`);
       break;
-    case 'optional-credentials-missing':
-      console.log(
-        `::warning::macOS production signing skipped because credentials are unavailable: ${decision.missing.join(', ')}`,
-      );
+    case 'credentials-missing': {
+      const detail = `Missing: ${decision.missing.join(', ')}`;
+      console.log(`::warning::${UNSIGNED_MACOS_NOTICE} (${detail})`);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### ${UNSIGNED_MACOS_NOTICE}\n\n${detail}\n`);
+      }
       break;
-    case 'required-credentials-missing':
-      console.error(
-        `::error::a released macOS artifact must be signed and notarized; missing: ${decision.missing.join(', ')}`,
-      );
-      process.exitCode = 1;
-      break;
+    }
     case 'credentials-present':
       console.log('::notice::macOS production signing and notarization are enabled');
       break;

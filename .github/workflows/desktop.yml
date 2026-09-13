@@ -229,7 +229,27 @@ jobs:
           MACOS_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
         run: |
           set -euo pipefail
+          certificate_path="$RUNNER_TEMP/certificate.p12"
+          keychain_path="$RUNNER_TEMP/build.keychain"
+          keychain_password=$(openssl rand -base64 32)
           key_path="$RUNNER_TEMP/AuthKey_${MACOS_ASC_KEY_ID}.p8"
+          printf '%s' "$MACOS_APPLE_CERTIFICATE" | base64 -d > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$MACOS_APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" login.keychain
+          security find-identity -v -p codesigning "$keychain_path" | grep -F "$MACOS_APPLE_SIGNING_IDENTITY"
+          rm -f "$certificate_path"
           case "$EXPO_ASC_API_KEY_P8" in
             '-----BEGIN'*) printf '%s\n' "$EXPO_ASC_API_KEY_P8" > "$key_path" ;;
             *) printf '%s' "$EXPO_ASC_API_KEY_P8" | base64 -d > "$key_path" ;;
@@ -242,9 +262,8 @@ jobs:
             delimiter="BEELINE_$(openssl rand -hex 16)"
             printf '%s<<%s\n%s\n%s\n' "$1" "$delimiter" "$2" "$delimiter" >> "$GITHUB_ENV"
           }
-          write_env APPLE_CERTIFICATE "$MACOS_APPLE_CERTIFICATE"
-          write_env APPLE_CERTIFICATE_PASSWORD "$MACOS_APPLE_CERTIFICATE_PASSWORD"
           write_env APPLE_SIGNING_IDENTITY "$MACOS_APPLE_SIGNING_IDENTITY"
+          write_env APPLE_KEYCHAIN "$keychain_path"
           write_env APPLE_API_KEY "$MACOS_ASC_KEY_ID"
           write_env APPLE_API_ISSUER "$MACOS_ASC_ISSUER_ID"
           write_env APPLE_API_KEY_PATH "$key_path"
@@ -252,6 +271,7 @@ jobs:
       # `tauri build` runs the config's beforeBuildCommand (the Expo web
       # export) and then bundles it for this platform's installers.
       - name: Build the desktop bundle
+        timeout-minutes: 25
         working-directory: apps/mobile
         env:
           # app.config.js stamps the build with the commit it came from; the

@@ -136,8 +136,16 @@ test('the release permits missing secrets but makes a configured signed path man
   assert.match(desktopWorkflow, /MACOS_ASC_KEY_ID:.*secrets\.EXPO_ASC_KEY_ID/);
   assert.match(desktopWorkflow, /MACOS_ASC_ISSUER_ID:.*secrets\.EXPO_ASC_ISSUER_ID/);
   assert.match(desktopWorkflow, /MACOS_ASC_API_KEY_P8:.*secrets\.EXPO_ASC_API_KEY_P8/);
-  assert.match(desktopWorkflow, /write_env APPLE_CERTIFICATE "\$MACOS_APPLE_CERTIFICATE"/);
+  assert.match(desktopWorkflow, /security create-keychain -p "\$keychain_password" "\$keychain_path"/);
+  assert.match(desktopWorkflow, /security set-keychain-settings -lut 21600 "\$keychain_path"/);
+  assert.match(desktopWorkflow, /security unlock-keychain -p "\$keychain_password" "\$keychain_path"/);
+  assert.match(desktopWorkflow, /security import "\$certificate_path"[\s\S]*-T \/usr\/bin\/codesign[\s\S]*-T \/usr\/bin\/security/);
+  assert.match(desktopWorkflow, /security set-key-partition-list[\s\S]*apple-tool:,apple:,codesign:/);
+  assert.match(desktopWorkflow, /security list-keychains -d user -s "\$keychain_path" login\.keychain/);
   assert.match(desktopWorkflow, /write_env APPLE_SIGNING_IDENTITY "\$MACOS_APPLE_SIGNING_IDENTITY"/);
+  assert.match(desktopWorkflow, /write_env APPLE_KEYCHAIN "\$keychain_path"/);
+  assert.doesNotMatch(desktopWorkflow, /write_env APPLE_CERTIFICATE /);
+  assert.doesNotMatch(desktopWorkflow, /write_env APPLE_CERTIFICATE_PASSWORD /);
   assert.match(desktopWorkflow, /'-----BEGIN'\*\).*printf '%s\\n'/);
   assert.match(desktopWorkflow, /printf '%s' "\$EXPO_ASC_API_KEY_P8" \| base64 -d > "\$key_path"/);
   assert.match(desktopWorkflow, /openssl pkey -in "\$key_path" -noout/);
@@ -150,6 +158,7 @@ test('the release permits missing secrets but makes a configured signed path man
   assert.match(desktopWorkflow, /spctl --assess --type execute --verbose "\$app"/);
   assert.match(desktopWorkflow, /xcrun stapler validate "\$dmg"/);
   assert.match(desktopWorkflow, /Notarization log id: \$log_id/);
+  assert.match(desktopWorkflow, /name: Build the desktop bundle\n\s+timeout-minutes: 25/);
   assert.equal(
     desktopWorkflow.match(/if: steps\.macos_signing\.outputs\.enabled == 'true'/g)?.length,
     3,

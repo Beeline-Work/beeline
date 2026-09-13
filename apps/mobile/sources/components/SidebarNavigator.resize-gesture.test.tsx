@@ -12,12 +12,14 @@
 // fails the way a live drag would.
 import * as React from 'react';
 import { act } from 'react';
+// @ts-expect-error react-dom/client has no declarations in this workspace.
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let windowWidth = 1280;
 
 vi.mock('react-native', async () => {
+  // @ts-expect-error react-native-web has no declarations in this workspace.
   const rnw = await import('react-native-web');
   return {
     useWindowDimensions: () => ({ width: windowWidth, height: 840 }),
@@ -127,10 +129,18 @@ function drawerLeft(): number {
   return parseFloat(resizerNode().style.left);
 }
 
+// jsdom stamps events off the wall clock, so two events dispatched in the
+// same synchronous act() call can land in the same millisecond.
+// PanResponder's touch history drops a move whose timestamp doesn't advance,
+// silently losing that frame's delta — so each event gets its own
+// strictly-increasing timeStamp instead of relying on the real clock.
+let nextTimeStamp = 0;
+
 function fireMouse(type: string, clientX: number, target: EventTarget) {
   const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY: 0 });
   Object.defineProperty(event, 'pageX', { value: clientX });
   Object.defineProperty(event, 'pageY', { value: 0 });
+  Object.defineProperty(event, 'timeStamp', { value: (nextTimeStamp += 10) });
   act(() => {
     target.dispatchEvent(event);
   });

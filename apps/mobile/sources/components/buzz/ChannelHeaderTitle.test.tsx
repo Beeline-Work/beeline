@@ -8,10 +8,11 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Text: host('Text'), View: host('View') };
+  return { Text: host('Text'), TouchableOpacity: host('TouchableOpacity'), View: host('View') };
 });
 
 import { ChannelHeaderTitle } from './ChannelHeaderTitle';
+import { RoomRepositorySubtitle } from './RoomRepositorySubtitle';
 
 const hull = beelineThemes.obsidian;
 const originalConsoleError = console.error;
@@ -69,5 +70,32 @@ describe('ChannelHeaderTitle', () => {
   it('shows the placeholder Room with no sigil', () => {
     const tree = render(<ChannelHeaderTitle kind="room" title="Room" />);
     expect(tree.root.findAllByProps({ testID: 'chat-title-sigil' })).toHaveLength(0);
+  });
+
+  it('opens the repository subtitle without changing the Room name settings target', () => {
+    const onOpenSettings = vi.fn();
+    const onOpenUrl = vi.fn();
+    const tree = render(
+      <>
+        <ChannelHeaderTitle kind="room" onPress={onOpenSettings} title="#beeline" />
+        <RoomRepositorySubtitle onOpenUrl={onOpenUrl} repositoryName="Beeline-Work/beeline" />
+      </>,
+    );
+
+    act(() => tree.root.findByProps({ testID: 'room-repo-chip' }).props.onPress());
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/Beeline-Work/beeline');
+    expect(onOpenSettings).not.toHaveBeenCalled();
+    expect(tree.root.findByProps({ testID: 'room-repo-chip' }).props.accessibilityLabel).toBe(
+      'Open GitHub repository Beeline-Work/beeline',
+    );
+
+    act(() => tree.root.findByProps({ testID: 'chat-title' }).props.onPress());
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    expect(onOpenUrl).toHaveBeenCalledOnce();
+  });
+
+  it('has no repository press target for a chat-only Room', () => {
+    const tree = render(<RoomRepositorySubtitle onOpenUrl={vi.fn()} repositoryName={null} />);
+    expect(tree.root.findAllByProps({ testID: 'room-repo-chip' })).toHaveLength(0);
   });
 });

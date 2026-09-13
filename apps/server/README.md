@@ -31,6 +31,8 @@ DATABASE_URL='postgresql://USER@localhost/beeline_server_local?host=%2Fvar%2Frun
 
 GitHub account/install/repository operations are enabled when `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG` are all present. `GITHUB_WEBHOOK_SECRET` enables signed webhook intake. Push sending is opt-in with `PUSH_DELIVERY_ENABLED=true`; without it, devices remain registered but no delivery claims are created. Production Fly deployments should set `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the complete Firebase service-account JSON secret. `GOOGLE_CLOUD_PROJECT` optionally overrides the project ID from that JSON. Other environments may use Application Default Credentials, including a file selected by `GOOGLE_APPLICATION_CREDENTIALS`. Startup verifies that the selected credential can mint an access token and fails with a configuration error if it cannot. Never commit the service-account JSON.
 
+Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to the base64-encoded Apple `.p8` key and `APNS_KEY_ID` to its key ID. `APNS_TEAM_ID` defaults to `89KT3SWYAF`, `APNS_BUNDLE_ID` defaults to `app.usebeeline.mobile`, and `APNS_ENVIRONMENT` accepts `production` (the default) or `sandbox`. If `APNS_KEY_P8_BASE64` is absent, iOS delivery remains disabled while Android Firebase delivery continues. Never commit the APNs key.
+
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
 The browser client is hosted separately at `https://web.usebeeline.app`. Set

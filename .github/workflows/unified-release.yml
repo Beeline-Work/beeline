@@ -792,6 +792,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/checkpoints"
           node -e 'const fs=require("node:fs");const [path,version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync(path,JSON.stringify({component:"mobile-native",version,sourceSha,state:"checked",artifactRef})+"\n")' \
             "$RUNNER_TEMP/checkpoints/checkpoint-mobile-native.json" "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-native-${{ needs.initialize.outputs.release_id }}"
+      - name: Publish native checkpoint
+        if: >-
+          needs.initialize.outputs.run_mobile_native == 'true' &&
+          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
+          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-native
+          path: ${{ runner.temp }}/checkpoints/checkpoint-mobile-native.json
+          if-no-files-found: error
       - name: Merge checkpoints and classify the final attempt
         id: result
         env:

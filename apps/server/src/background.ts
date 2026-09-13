@@ -32,7 +32,29 @@ export interface PushSender {
   ): Promise<void>;
 }
 
-function isUnregisteredPushToken(error: unknown): boolean {
+export function createPushTestSender(
+  database: SqlDatabase,
+  sender: PushSender,
+  iosSender?: PushSender,
+): (identityId: string) => Promise<void> {
+  return async (identityId) => {
+    const devices = await database.query<{ token: string; platform: 'android' | 'ios' }>(
+      `SELECT token,platform FROM push_devices
+       WHERE identity_id=$1 AND (platform='android' OR ($2::boolean AND platform='ios'))`,
+      [identityId, Boolean(iosSender)],
+    );
+    for (const device of devices.rows) {
+      const deviceSender = device.platform === 'ios' ? iosSender! : sender;
+      await deviceSender.send(device.token, {
+        messageId: 'test',
+        type: 'test',
+        text: 'Beeline notifications are ready.',
+      });
+    }
+  };
+}
+
+export function isUnregisteredPushToken(error: unknown): boolean {
   const code =
     error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code
@@ -40,6 +62,13 @@ function isUnregisteredPushToken(error: unknown): boolean {
   return (
     code === 'messaging/registration-token-not-registered' ||
     code === 'messaging/invalid-registration-token' ||
+    code === 'apns/unregistered-device-token' ||
+    Boolean(
+      error &&
+      typeof error === 'object' &&
+      'classification' in error &&
+      error.classification === 'unregistered',
+    ) ||
     (error instanceof Error && /\bNotRegistered\b/.test(error.message))
   );
 }
@@ -48,6 +77,7 @@ export class PushDeliveryLoop {
   constructor(
     private readonly database: SqlDatabase,
     private readonly sender: PushSender,
+    private readonly iosSender?: PushSender,
   ) {}
 
   async runOnce(): Promise<number> {
@@ -69,6 +99,7 @@ export class PushDeliveryLoop {
       token: string;
       identity_id: string;
       is_release_catchup: boolean;
+      platform: 'android' | 'ios';
     }>(`
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
@@ -206,21 +237,17 @@ export class PushDeliveryLoop {
           candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
           candidate.corner_id,candidate.target,
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
-          candidate.is_release_catchup,candidate.created_at
+          candidate.is_release_catchup,candidate.created_at,device.platform
         FROM candidates candidate
-        -- The only sender wired here is Firebase, which reads the token as an
-        -- FCM registration token. Handing it an APNs device token fails as
-        -- invalid-registration-token, and the failure path below then deletes
-        -- the row — so an unfiltered loop silently unregisters every iOS device
-        -- it sees. Deliver only to devices this sender can actually reach.
-        JOIN push_devices device ON device.token=candidate.token AND device.platform='android'
+        JOIN push_devices device ON device.token=candidate.token
+          AND ${this.iosSender ? "device.platform IN ('android','ios')" : "device.platform='android'"}
         LEFT JOIN push_delivery_claims claim
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
         WHERE claim.message_id IS NULL
         ORDER BY candidate.message_id,candidate.token,candidate.is_release_catchup DESC
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
-        notification_type,text,token,identity_id,is_release_catchup
+        notification_type,text,token,identity_id,is_release_catchup,platform
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -291,7 +318,8 @@ export class PushDeliveryLoop {
                 type: 'message' as const,
                 text: candidate.text,
               };
-        await this.sender.send(candidate.token, message);
+        const sender = candidate.platform === 'ios' ? this.iosSender! : this.sender;
+        await sender.send(candidate.token, message);
         await this.database.query(
           `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
           [candidate.message_id, candidate.token],

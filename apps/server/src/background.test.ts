@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   BackgroundLeader,
+  createPushTestSender,
   MediaExpiryLoop,
   PushDeliveryLoop,
   runMaintenance,
@@ -11,6 +12,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PgliteDatabase } from './test-support.js';
 import { MEDIA_SWEEP_INTERVAL_MS, MEDIA_TTL_HOURS, mediaTtlHours } from './media-ttl.js';
+import { ApnsPushError } from './apns-push.js';
 
 describe('background advisory-lock ownership', () => {
   it('releases and reconnects after its dedicated connection health check fails', async () => {
@@ -293,6 +295,149 @@ describe('background advisory-lock ownership', () => {
       expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [apns])).rowCount).toBe(
         1,
       );
+    } finally {
+      await db.close();
+    }
+  });
+  it('routes Android devices to Firebase and iOS devices to APNs', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        android = 'android-device-token-12345678901234567890',
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ($1,$3,'android','physical'),($2,$3,'ios','physical')`,
+        [android, ios, human],
+      );
+      const firebaseSend = vi.fn().mockResolvedValue(undefined);
+      const apnsSend = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send: firebaseSend }, { send: apnsSend });
+      expect(await loop.runOnce()).toBe(0);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
+        ['1'.repeat(64), room, agent],
+      );
+
+      expect(await loop.runOnce()).toBe(2);
+      expect(firebaseSend).toHaveBeenCalledOnce();
+      expect(firebaseSend).toHaveBeenCalledWith(android, expect.objectContaining({ roomId: room }));
+      expect(apnsSend).toHaveBeenCalledOnce();
+      expect(apnsSend).toHaveBeenCalledWith(ios, expect.objectContaining({ roomId: room }));
+    } finally {
+      await db.close();
+    }
+  });
+  it('routes test pushes by device platform and excludes iOS without APNs configuration', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        android = 'android-device-token-12345678901234567890',
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner')`,
+        [human],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ($1,$3,'android','physical'),($2,$3,'ios','physical')`,
+        [android, ios, human],
+      );
+      const firebaseSend = vi.fn().mockResolvedValue(undefined);
+      const apnsSend = vi.fn().mockResolvedValue(undefined);
+
+      await createPushTestSender(db, { send: firebaseSend }, { send: apnsSend })(human);
+      expect(firebaseSend).toHaveBeenCalledWith(android, expect.objectContaining({ type: 'test' }));
+      expect(apnsSend).toHaveBeenCalledWith(ios, expect.objectContaining({ type: 'test' }));
+
+      firebaseSend.mockClear();
+      apnsSend.mockClear();
+      await createPushTestSender(db, { send: firebaseSend })(human);
+      expect(firebaseSend).toHaveBeenCalledOnce();
+      expect(firebaseSend).toHaveBeenCalledWith(android, expect.objectContaining({ type: 'test' }));
+      expect(apnsSend).not.toHaveBeenCalled();
+    } finally {
+      await db.close();
+    }
+  });
+  it('deletes an APNs-unregistered device but retains a transiently failing one', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        ios = 'c0ffee'.repeat(10) + 'abcd',
+        transientIos = 'decade'.repeat(10) + '1234';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ($1,$3,'ios','physical'),($2,$3,'ios','physical')`,
+        [ios, transientIos, human],
+      );
+      const loop = new PushDeliveryLoop(
+        db,
+        { send: vi.fn().mockResolvedValue(undefined) },
+        {
+          send: vi.fn(async (token) => {
+            if (token === ios)
+              throw new ApnsPushError(
+                'APNs request failed (410 Unregistered)',
+                410,
+                'Unregistered',
+                'unregistered',
+              );
+            throw new ApnsPushError(
+              'APNs request failed (500 InternalServerError)',
+              500,
+              'InternalServerError',
+              'retryable',
+            );
+          }),
+        },
+      );
+      await loop.runOnce();
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
+        ['1'.repeat(64), room, agent],
+      );
+
+      expect(await loop.runOnce()).toBe(0);
+      expect((await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [ios])).rowCount).toBe(0);
+      expect(
+        (await db.query(`SELECT 1 FROM push_devices WHERE token=$1`, [transientIos])).rowCount,
+      ).toBe(1);
     } finally {
       await db.close();
     }

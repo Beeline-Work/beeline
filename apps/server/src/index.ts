@@ -6,6 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import {
   BackgroundLeader,
+  createPushTestSender,
   MediaExpiryLoop,
   PushDeliveryLoop,
   runMaintenance,
@@ -13,6 +14,7 @@ import {
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
+import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
@@ -129,7 +131,10 @@ async function main() {
     process.env.PUSH_DELIVERY_ENABLED === 'true'
       ? await createFirebasePushSender(process.env)
       : undefined;
-  const push = pushSender ? new PushDeliveryLoop(jobsDatabase, pushSender) : undefined;
+  const apnsPushSender = createApnsPushSender(process.env);
+  const push = pushSender
+    ? new PushDeliveryLoop(jobsDatabase, pushSender, apnsPushSender)
+    : undefined;
   const schedules = new AgentScheduleLoop(jobsDatabase, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
@@ -137,19 +142,7 @@ async function main() {
   await connectionPresence.start();
   const mediaExpiry = new MediaExpiryLoop(jobsDatabase);
   const sendPushTest = pushSender
-    ? async (identityId: string) => {
-        const devices = await database.query<{ token: string }>(
-          // Same sender, same constraint as the delivery loop: FCM only.
-          `SELECT token FROM push_devices WHERE identity_id=$1 AND platform='android'`,
-          [identityId],
-        );
-        for (const device of devices.rows)
-          await pushSender.send(device.token, {
-            messageId: 'test',
-            type: 'test',
-            text: 'Beeline notifications are ready.',
-          });
-      }
+    ? createPushTestSender(database, pushSender, apnsPushSender)
     : undefined;
   const phone = new PhoneService(
     database,
@@ -268,6 +261,9 @@ async function main() {
 
 const migrationMode = process.argv[2] === '--migrate';
 (migrationMode ? runReleaseMigration() : main()).catch((error) => {
-  console.error(migrationMode ? '[migration] failed:' : '[server] startup failed:', error instanceof Error ? error.message : String(error));
+  console.error(
+    migrationMode ? '[migration] failed:' : '[server] startup failed:',
+    error instanceof Error ? error.message : String(error),
+  );
   process.exitCode = 1;
 });

@@ -10,7 +10,7 @@ import {
 import { getMessaging, type Message } from 'firebase-admin/messaging';
 import type { PushSender } from './background.js';
 
-type PushDeliveryMessage = Parameters<PushSender['send']>[1];
+export type PushDeliveryMessage = Parameters<PushSender['send']>[1];
 
 interface FirebaseCredentialEnvironment {
   GOOGLE_APPLICATION_CREDENTIALS_JSON?: string;
@@ -66,7 +66,7 @@ export async function requirePushDeliveryCredentials(credential: Credential): Pr
 }
 
 /** Serialize every monolith push into the routing contract consumed by the phone. */
-export function firebasePushMessage(token: string, message: PushDeliveryMessage): Message {
+export function pushMessageData(message: PushDeliveryMessage): Record<string, string> {
   let data: Record<string, string>;
   if (message.type === 'test') data = { type: 'test' };
   else if (message.type === 'workspace-join' && !message.roomId)
@@ -89,6 +89,11 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
       ...(message.type === 'message' ? { messageId: message.messageId } : {}),
     };
   }
+  return data;
+}
+
+export function firebasePushMessage(token: string, message: PushDeliveryMessage): Message {
+  const data = pushMessageData(message);
   return {
     token,
     notification: { title: 'Beeline', body: message.text.slice(0, 200) },

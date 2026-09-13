@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
-import { tagsIdentitySql } from './message-mentions.js';
+import { tagsKnownIdentitySql } from './message-mentions.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
+export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
 
 interface PresenceMetadata {
   releaseVersion?: string;
@@ -37,6 +38,9 @@ export class ConnectionPresence {
     { roomId: string | undefined; pending: boolean; worker: Promise<void> }
   >();
   readonly #authenticatedAt = new Map<string, number>();
+  readonly #observePending = new Set<string | undefined>();
+  readonly #observeDebounces = new Map<string, ReturnType<typeof setTimeout>>();
+  #observeWorker: Promise<void> | undefined;
   readonly #release: () => void;
   readonly #releaseResync: () => void;
   #stopped = false;
@@ -46,13 +50,13 @@ export class ConnectionPresence {
     private readonly live: LiveHub,
     private readonly pickupWindowMs = DELIVERY_PICKUP_WINDOW_MS,
   ) {
-    this.#releaseResync = live.subscribeResync(() => void this.observe().catch(this.report));
+    this.#releaseResync = live.subscribeResync(() => this.scheduleObserve());
     this.#release = live.subscribeAll((event) => {
       if (
         event.type === 'invalidate' &&
         ['phone-write', 'message', 'postgres:messages'].includes(event.reason)
       ) {
-        void this.observe(event.roomId).catch(this.report);
+        this.scheduleObserve(event.roomId);
       }
     });
   }
@@ -106,7 +110,10 @@ export class ConnectionPresence {
     this.#release();
     this.#releaseResync();
     for (const timer of this.#timers.values()) clearTimeout(timer);
+    for (const timer of this.#observeDebounces.values()) clearTimeout(timer);
     this.#timers.clear();
+    this.#observeDebounces.clear();
+    this.#observePending.clear();
     this.#authenticatedAt.clear();
     this.#evidence.clear();
   }
@@ -119,30 +126,72 @@ export class ConnectionPresence {
 
   async observe(roomId?: string): Promise<void> {
     if (this.#stopped) return;
+    this.#observePending.add(roomId);
+    if (this.#observeWorker) return this.#observeWorker;
+    const worker = (async () => {
+      while (!this.#stopped && this.#observePending.size) {
+        let nextRoomId: string | undefined;
+        if (this.#observePending.has(undefined)) {
+          // A full resync includes every pending Room-specific observation.
+          this.#observePending.clear();
+        } else {
+          nextRoomId = this.#observePending.values().next().value;
+          this.#observePending.delete(nextRoomId);
+        }
+        await this.observeOnce(nextRoomId);
+      }
+    })().finally(() => {
+      if (this.#observeWorker === worker) this.#observeWorker = undefined;
+    });
+    this.#observeWorker = worker;
+    return worker;
+  }
+
+  private scheduleObserve(roomId?: string): void {
+    if (this.#stopped) return;
+    const key = roomId ?? '*';
+    if (this.#observeDebounces.has(key)) return;
+    const timer = setTimeout(() => {
+      this.#observeDebounces.delete(key);
+      void this.observe(roomId).catch(this.report);
+    }, PRESENCE_OBSERVE_DEBOUNCE_MS);
+    timer.unref?.();
+    this.#observeDebounces.set(key, timer);
+  }
+
+  private async observeOnce(roomId?: string): Promise<void> {
     // Resolve tags only after evidence/receipt bounds discard history. Inlining
     // the roster subquery into the broad join can occupy every pool connection
     // for minutes, starving phone authentication and even the next migration.
     const deliveries = await this.database.query<Delivery>(
       `WITH candidates AS MATERIALIZED (
-       SELECT m.room_id,m.id message_id,m.created_at,m.author_id,author.kind author_kind,
+       SELECT member.room_id,m.id message_id,m.created_at,m.author_id,m.author_kind,
          m.text,m.presentation,m.request_id,
-         a.agent_id,a.access_policy,a.owner_id,p.body->>'lifecycleId' lifecycle,
+         a.agent_id,a.access_policy,a.owner_id,target.handle agent_handle,
+         p.body->>'lifecycleId' lifecycle,
          COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt') evidence_token,
          m.system_event->>'kind' system_kind
-       FROM messages m
-       JOIN identities author ON author.id=m.author_id
-       JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
+       FROM memberships member
        JOIN agents a ON a.agent_id=member.identity_id
-       JOIN rooms r ON r.id=m.room_id AND r.archived_at IS NULL
+       JOIN identities target ON target.id=a.agent_id
+       JOIN rooms r ON r.id=member.room_id AND r.archived_at IS NULL
        JOIN LATERAL(SELECT body,updated_at FROM live_outputs
          WHERE agent_id=a.agent_id AND kind='presence' ORDER BY updated_at DESC LIMIT 1) p ON true
-       WHERE ($1::uuid IS NULL OR m.room_id=$1)
-         AND m.author_id<>a.agent_id
-         AND p.body->>'status'='online' AND m.created_at>=p.updated_at
-         AND NOT EXISTS(SELECT 1 FROM agent_turns t WHERE t.agent_id=a.agent_id AND t.room_id=m.room_id
-           AND (t.request_id=m.id OR t.created_at>=m.created_at))
+       JOIN LATERAL(
+         SELECT message.*,author.kind author_kind
+         FROM messages message JOIN identities author ON author.id=message.author_id
+         WHERE message.room_id=member.room_id AND message.created_at>=p.updated_at
+           AND message.author_id<>a.agent_id
+           AND NOT EXISTS(SELECT 1 FROM agent_turns t
+             WHERE t.agent_id=a.agent_id AND t.room_id=message.room_id
+               AND (t.request_id=message.id OR t.created_at>=message.created_at))
+         OFFSET 0
+       ) m ON true
+       WHERE member.removed_at IS NULL AND member.room_id IS NOT NULL
+         AND ($1::uuid IS NULL OR member.room_id=$1)
+         AND p.body->>'status'='online'
        ) SELECT m.* FROM candidates m
-       WHERE ${tagsIdentitySql('m', 'm.agent_id')}`,
+       WHERE ${tagsKnownIdentitySql('m', 'm.agent_id', 'm.agent_handle')}`,
       [roomId ?? null],
     );
     for (const delivery of deliveries.rows) {

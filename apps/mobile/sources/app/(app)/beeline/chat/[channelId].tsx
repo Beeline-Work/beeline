@@ -1817,9 +1817,9 @@ export default function BuzzChat() {
 
     // selectPinnedCorner names any open corner — working, waiting on a
     // human, or review-ready — and excludes only a terminal one. The line's
-    // mere presence means "open," not "live"; gold and the breathing pulse
-    // are reserved for a fresh canonical WORKING lease. Presence is displayed
-    // separately and cannot rewrite this lifecycle.
+    // mere presence means "open," not "live"; the bright-ink breathing pulse
+    // is reserved for a fresh canonical WORKING lease, while brass means
+    // waiting. Presence is displayed separately and cannot rewrite this lifecycle.
     if (!pinnedCorner) return null;
     const agentPubkey = resolveCornerCardAgentPubkey(
       pinnedCornerCard?.corner?.agentPubkey,
@@ -3951,8 +3951,9 @@ export default function BuzzChat() {
           />
 
           {/* The Room's only active-corner affordance: one pinned line naming
-            who is working and what on, gold and breathing while the work is
-            live. Never a scroll element — see CornerLiveBar. */}
+            who is working and what on, bright ink breathing while the work is
+            live and still brass while waiting. Never a scroll element — see
+            CornerLiveBar. */}
           {!isCorner && !isArchived && cornerLiveBar && (
             <CornerLiveBar
               label={cornerLiveBar.label}

@@ -1,7 +1,9 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const motion = vi.hoisted(() => ({ reducedMotion: false }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -26,6 +28,10 @@ vi.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success' },
 }));
 
+vi.mock('@/buzz/room-indicators', () => ({
+  isPinnedCornerLive: (status: string) => status === 'working',
+}));
+
 vi.mock('react-native-reanimated', async () => {
   const ReactModule = await import('react');
   return {
@@ -33,7 +39,7 @@ vi.mock('react-native-reanimated', async () => {
     Easing: { linear: 'linear', out: (fn: unknown) => fn, poly: (n: number) => n },
     ReduceMotion: { System: 'system' },
     useAnimatedStyle: (factory: () => unknown) => factory(),
-    useReducedMotion: () => false,
+    useReducedMotion: () => motion.reducedMotion,
     useSharedValue: (value: number) => ({ value }),
     withRepeat: (value: unknown) => value,
     withTiming: (value: number) => value,
@@ -43,7 +49,7 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { groknight } from '@/buzz/groknight';
-import { CornerLiveBar } from './CornerLiveBar';
+import { CornerLiveBar, CornerWorkingPulse } from './CornerLiveBar';
 
 const originalConsoleError = console.error;
 
@@ -59,6 +65,9 @@ beforeAll(() => {
 });
 
 afterAll(() => vi.restoreAllMocks());
+beforeEach(() => {
+  motion.reducedMotion = false;
+});
 
 function render(element: React.ReactElement): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
@@ -86,7 +95,7 @@ describe('the corner-open indicator', () => {
     expect(labelOf(renderer).props.children).toBe('beebee working: feat/ux-fix-now');
   });
 
-  it('spends the reserved gold accent only on waiting', () => {
+  it('uses bright ink for working and spends brass only on waiting', () => {
     const live = render(
       React.createElement(CornerLiveBar, {
         label: 'beebee working: feat/x',
@@ -94,9 +103,9 @@ describe('the corner-open indicator', () => {
         onPress: () => undefined,
       }),
     );
-    expect(labelOf(live).props.style.flat().at(-1).color).toBe(groknight.ledgerQuiet);
+    expect(labelOf(live).props.style.flat().at(-1).color).toBe(groknight.ledgerBright);
     expect(live.root.findAllByType('Text')[1]?.props.style.flat().at(-1).color).toBe(
-      groknight.ledgerQuiet,
+      groknight.ledgerBright,
     );
 
     // Gold is never the only signal: the waiting copy names the state that
@@ -116,6 +125,30 @@ describe('the corner-open indicator', () => {
     expect(pulses(render(
       React.createElement(CornerLiveBar, { label: 'beebee waiting: feat/x', live: false }),
     ))).toHaveLength(0);
+  });
+
+  it('gives every surface the same canonical working-only pulse', () => {
+    const label = React.createElement('Text', null, 'WORKING');
+    expect(pulses(render(
+      React.createElement(CornerWorkingPulse, { state: 'working' }, label),
+    ))).toHaveLength(1);
+    for (const state of ['waiting', 'review', 'archived'] as const) {
+      expect(pulses(render(
+        React.createElement(CornerWorkingPulse, { state }, label),
+      ))).toHaveLength(0);
+    }
+  });
+
+  it('settles the working breath under reduced motion', () => {
+    motion.reducedMotion = true;
+    const pulse = pulses(render(
+      React.createElement(CornerLiveBar, {
+        label: 'beebee working: feat/x',
+        live: true,
+        state: 'working',
+      }),
+    ))[0];
+    expect(pulse?.props.style.flat().at(-1)).toEqual({ opacity: 1 });
   });
 
   it('is a status light, not a plate: no border, no fill, no radius', () => {

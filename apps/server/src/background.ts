@@ -1,7 +1,7 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
-import { tagsIdentitySql } from './message-mentions.js';
+import { tagsKnownIdentitySql } from './message-mentions.js';
 import {
   claimReleaseCatchup,
   RELEASE_CATCHUP_CANDIDATES_SQL,
@@ -9,6 +9,7 @@ import {
 } from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
+export const PUSH_DELIVERY_MIN_INTERVAL_MS = 5_000;
 
 export interface PushSender {
   send(
@@ -74,13 +75,34 @@ export function isUnregisteredPushToken(error: unknown): boolean {
 }
 
 export class PushDeliveryLoop {
+  #lastCompletedAt = Number.NEGATIVE_INFINITY;
+
   constructor(
     private readonly database: SqlDatabase,
     private readonly sender: PushSender,
     private readonly iosSender?: PushSender,
+    private readonly minimumIntervalMs = PUSH_DELIVERY_MIN_INTERVAL_MS,
+    private readonly now: () => number = Date.now,
   ) {}
 
   async runOnce(): Promise<number> {
+    return this.runUnthrottled();
+  }
+
+  async runIfDue(): Promise<number> {
+    if (this.millisecondsUntilNextRun() > 0) return 0;
+    try {
+      return await this.runUnthrottled();
+    } finally {
+      this.#lastCompletedAt = this.now();
+    }
+  }
+
+  millisecondsUntilNextRun(): number {
+    return Math.max(0, this.#lastCompletedAt + this.minimumIntervalMs - this.now());
+  }
+
+  private async runUnthrottled(): Promise<number> {
     // A newly enabled worker must start from its own durable boundary rather than
     // claiming the Room backlog that existed before delivery was enabled.
     await this.database.query(
@@ -104,12 +126,22 @@ export class PushDeliveryLoop {
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
       WITH recent_messages AS MATERIALIZED (
-        SELECT m.*,d.token push_token,d.identity_id push_identity_id
+        SELECT m.*,d.token push_token,d.identity_id push_identity_id,member.role push_role
         FROM messages m
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
-        JOIN push_devices d ON m.created_at>=d.registered_at
+        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
+          AND member.identity_id<>m.author_id
+        JOIN push_devices d ON d.identity_id=member.identity_id AND m.created_at>=d.registered_at
         WHERE m.created_at>=floor.started_at
           AND m.created_at>=now()-interval '1 hour'
+          AND m.presentation IS DISTINCT FROM 'activity'
+          AND m.card_type IS DISTINCT FROM 'agent-yolo'
+          AND m.card_type IS DISTINCT FROM 'turn-failed'
+          AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
+          AND (
+            btrim(m.text)<>''
+            OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
+          )
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=m.id AND claim.device_token=d.token
@@ -133,16 +165,14 @@ export class PushDeliveryLoop {
             WHEN m.presentation IN ('system','card') THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
-          m.push_token token,member.identity_id,false is_release_catchup,m.created_at
+          m.push_token token,m.push_identity_id identity_id,false is_release_catchup,m.created_at
         FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
-        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
-          AND member.identity_id<>m.author_id AND member.identity_id=m.push_identity_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=m.push_identity_id
           AND workspace_member.removed_at IS NULL
         JOIN identities author ON author.id=m.author_id
-        JOIN identities recipient ON recipient.id=member.identity_id AND recipient.kind='human'
+        JOIN identities recipient ON recipient.id=m.push_identity_id AND recipient.kind='human'
         LEFT JOIN corner_facts event_corner ON event_corner.corner_id::text=CASE
           WHEN m.card_type='daemon-fact'
             AND m.card->>'type' IN ('corner-open','corner-complete')
@@ -150,11 +180,7 @@ export class PushDeliveryLoop {
           WHEN room.parent_id IS NOT NULL THEN room.id::text
           ELSE NULL
         END
-        WHERE m.presentation IS DISTINCT FROM 'activity'
-          AND m.card_type IS DISTINCT FROM 'agent-yolo'
-          AND m.card_type IS DISTINCT FROM 'turn-failed'
-          AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
-          AND (
+        WHERE (
             room.direct_participants IS NULL
             OR m.card_type IS NULL
             OR NOT (room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text))
@@ -164,24 +190,24 @@ export class PushDeliveryLoop {
             recipient.push_level<>'off'
             AND (
               -- Direct attention is eligible at every level except off.
-              ${tagsIdentitySql('m', 'member.identity_id')}
+              ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle')}
               OR room.direct_participants IS NOT NULL
               OR EXISTS (
                 SELECT 1 FROM messages addressed
                 WHERE addressed.id IN (m.reply_to_message_id,m.request_id)
-                  AND addressed.author_id=member.identity_id
+                  AND addressed.author_id=m.push_identity_id
               )
               OR (
                 m.card_type='permission'
                 AND COALESCE(m.card->>'status','pending')='pending'
                 AND (
-                  m.card->'requester'->>'pubkey'=member.identity_id
-                  OR member.role IN ('owner','admin')
+                  m.card->'requester'->>'pubkey'=m.push_identity_id
+                  OR m.push_role IN ('owner','admin')
                 )
               )
               -- A grant request names its owner in the card, not in its sentence.
-              OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=member.identity_id)
-              OR (m.card_type='target-branch' AND member.role IN ('owner','admin'))
+              OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=m.push_identity_id)
+              OR (m.card_type='target-branch' AND m.push_role IN ('owner','admin'))
               OR (
                 -- Corner lifecycle widens to all corners for all, and only the
                 -- recorded commissioner's corners for the default mine level.
@@ -201,15 +227,11 @@ export class PushDeliveryLoop {
                   recipient.push_level='all'
                   OR (
                     recipient.push_level='mine'
-                    AND event_corner.commissioned_by=member.identity_id
+                    AND event_corner.commissioned_by=m.push_identity_id
                   )
                 )
               )
             )
-          )
-          AND (
-            btrim(m.text)<>''
-            OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,

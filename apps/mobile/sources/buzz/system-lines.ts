@@ -68,6 +68,8 @@ export type NotificationLifecycleRun = {
     kind?: 'corner' | 'pull-request' | 'issue' | 'check';
     url?: string;
     cornerId?: string;
+    actor?: string;
+    objective?: string;
   }[];
 };
 
@@ -273,6 +275,7 @@ type NotificationLifecycleEvent = {
   titleRank: number;
   state?: NotificationLifecycleState;
   actor?: string;
+  objective?: string;
   cornerId?: string;
   prNumber?: number;
   kind: 'corner' | 'pull-request' | 'issue' | 'check';
@@ -304,6 +307,7 @@ function notificationLifecycleEvent(
       ...(message.authorIdentity
         ? { actor: message.authorIdentity.handle ?? message.authorIdentity.name }
         : {}),
+      objective: fact.objective,
       cornerId: fact.cornerId,
       ...(prNumber ? { prNumber } : {}),
       kind: 'corner',
@@ -452,6 +456,8 @@ function summarizeNotificationRun(
         .sort(byRunOrder)
         .at(-1)?.prNumber;
       const issue = subject.events.some((event) => event.kind === 'issue');
+      const firstActor = subject.events.find((event) => event.actor)?.actor;
+      const firstObjective = subject.events.find((event) => event.objective)?.objective;
       return {
         id: subject.events[0]!.id,
         title: titled.title,
@@ -469,6 +475,8 @@ function summarizeNotificationRun(
         ...(stateEvent.state === 'Checks failed' ? { danger: true } : {}),
         ...(corner?.cornerId ? { cornerId: corner.cornerId } : {}),
         ...(!corner?.cornerId && linked?.url ? { url: linked.url } : {}),
+        ...(firstActor ? { actor: firstActor } : {}),
+        ...(firstObjective ? { objective: firstObjective } : {}),
         latestOrder: Math.max(...subject.events.map((event) => events.indexOf(event))),
       };
     })

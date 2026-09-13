@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, Text, View } from 'react-native';
+import { Animated, Image, Platform, Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   MESSAGE_REACTION_EMOJIS,
   type AttachmentReference,
@@ -24,10 +24,19 @@ import {
 } from '@/buzz/draft-settle';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { ledgerStamp } from '@/buzz/relative-time';
-import { formatNotificationHeadlines } from '@/buzz/system-lines';
+import {
+  type NotificationLifecycleRun,
+  type NotificationLifecycleState,
+  formatNotificationHeadlines,
+} from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
+import {
+  TRANSCRIPT_BRASS,
+  TRANSCRIPT_SETTLE_MS,
+  transcriptSteadyColors,
+} from '@/buzz/transcript-motion';
 import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -438,88 +447,321 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
   );
 });
 
-/** One raised card for one uninterrupted run of repository notifications. */
+/** Normalize a notification lifecycle state to a display word for a cell state column. */
+function cellDisplayState(state: NotificationLifecycleState): string {
+  switch (state) {
+    case 'Opened':
+    case 'PR opened':
+      return 'opened';
+    case 'Checks running':
+      return 'running';
+    case 'Checks failed':
+      return 'failed';
+    case 'Checks passed':
+      return 'passed';
+    case 'Merged':
+      return 'merged';
+    case 'Closed':
+      return 'closed';
+    case 'Succeeded':
+      return 'passed';
+    case 'Failed':
+      return 'failed';
+    default:
+      return state.toLowerCase();
+  }
+}
+
+/** Normalize state to a header summary word (unique per normalized form, never repeated).
+ *
+ * Check-kind items get their own vocabulary: `Checks passed` → `passed`, never `succeeded`,
+ * matching `formatNotificationHeadlines`. The header sees one word per state, never two. */
+function headerSummaryState(state: NotificationLifecycleState, isCheck: boolean): string {
+  switch (state) {
+    case 'Checks passed':
+      return isCheck ? 'passed' : 'succeeded';
+    case 'Opened':
+    case 'PR opened':
+      return 'opened';
+    case 'Checks failed':
+    case 'Failed':
+      return 'failed';
+    case 'Merged':
+      return 'merged';
+    case 'Closed':
+      return 'closed';
+    case 'Checks running':
+    case 'Ran':
+      return 'running';
+    case 'Succeeded':
+      return 'succeeded';
+    default:
+      return state.toLowerCase();
+  }
+}
+
+/** Cell tone for animations: waiting (brass) for open/running, settled for done, failed for failed. */
+function cellTone(state: NotificationLifecycleState): 'waiting' | 'settled' | 'failed' {
+  switch (state) {
+    case 'Opened':
+    case 'PR opened':
+    case 'Checks running':
+    case 'Ran':
+      return 'waiting';
+    case 'Checks failed':
+    case 'Failed':
+      return 'failed';
+    default:
+      return 'settled';
+  }
+}
+
+/** One raised card for one uninterrupted run of repository notifications.
+ *
+ * Accordion model (one cell per PR): the most recently updated PR is presented
+ * with full controls (state column, title, kind line, objective, author, per-cell
+ * footer). Other items are contracted (state column, title, kind line with author).
+ * Tapping a contracted cell presents it and contracts the previous one.
+ */
 export const NotificationLifecycleCard = React.memo(function NotificationLifecycleCard({
   message,
   onOpenCorner,
   onOpenUrl,
 }: NotificationLifecycleCardProps) {
   const run = message.notificationLifecycleRun!;
-  const [expanded, setExpanded] = useState(false);
-  const isCheckBatch = run.items.every((item) => item.kind === 'check');
-  const isPullRequestBatch = run.items.every(
-    (item) => item.kind !== 'check' && /^(corner|PR)/i.test(item.kindLine),
+  const { theme } = useUnistyles();
+  const steady = useMemo(
+    () =>
+      transcriptSteadyColors({
+        textPrimary: theme.buzz.textPrimary,
+        textSecondary: theme.buzz.textSecondary,
+        quiet: theme.buzz.ledgerQuiet,
+        ghost: theme.buzz.ledgerGhost,
+        waiting: theme.buzz.accent,
+        failed: theme.buzz.diffRemoved,
+      }),
+    [theme],
   );
-  const isFoldedBatch = isCheckBatch || isPullRequestBatch;
-  const mergedTitle = isPullRequestBatch
-    ? run.items.find((item) => item.state === 'Merged')?.title
-    : undefined;
-  const visibleItems = expanded
-    ? run.items
-    : isCheckBatch
-      ? run.items.filter((item) => item.state === 'Checks failed')
-      : isPullRequestBatch
-        ? []
-        : run.items.slice(0, 3);
-  const hiddenCount = run.items.length - 3;
-  const rows: TranscriptCardRow[] = visibleItems.map((item) => ({
-    id: item.id,
-    state:
-      item.state === 'PR opened'
-        ? 'opened'
-        : item.state === 'Checks running'
-          ? 'running'
-          : item.state === 'Checks failed'
-            ? 'failed'
-            : item.state === 'Checks passed'
-              ? 'passed'
-              : item.state.toLowerCase(),
-    title: item.title,
-    kindLine: item.kindLine,
-    tone:
-      item.danger || item.state === 'Failed'
-        ? 'failed'
-        : item.state === 'Opened' || item.state === 'PR opened'
-          ? 'waiting'
-          : 'settled',
-    ...(item.cornerId
-      ? { onPress: () => onOpenCorner(item.cornerId!) }
-      : item.url
-        ? { onPress: () => onOpenUrl(item.url!) }
-        : {}),
-  }));
-  const headline = formatNotificationHeadlines(run.items).join(' · ') || run.headline;
-  return (
-    <RepositoryFactCard
-      title={!expanded && mergedTitle ? `${headline} · ${mergedTitle}` : headline}
-      subline={isFoldedBatch && !expanded ? undefined : cardMeta(run.subline)}
-      stamp={ledgerStamp(message.timestamp)}
-      rows={rows}
-      onHeaderPress={isFoldedBatch ? () => setExpanded((value) => !value) : undefined}
-      headerExpanded={isFoldedBatch ? expanded : undefined}
-      actions={
-        isFoldedBatch && expanded
-          ? [
-              {
-                label: 'Less',
-                primary: true,
-                onPress: () => setExpanded(false),
-                testID: `notification-run-expand-${message.id}`,
-              },
-            ]
-          : !isFoldedBatch && run.items.length > 3
-            ? [
-                {
-                  label: expanded ? 'Less' : `${hiddenCount} more`,
-                  primary: true,
-                  onPress: () => setExpanded((value) => !value),
-                  testID: `notification-run-expand-${message.id}`,
-                },
-              ]
-          : []
+
+  // Items are already deduplicated by summarizeNotificationRun — one cell per PR.
+  const items = useMemo(() => run.items, [run.items]);
+
+  // Presented cell state: the most recently updated item is the face (index 0).
+  const [presentedId, setPresentedId] = useState<string | undefined>(() =>
+    items.length > 0 ? items[0]!.id : undefined,
+  );
+  const presentedItem = useMemo(
+    () => items.find((item) => item.id === presentedId) ?? items[0]!,
+    [items, presentedId],
+  );
+  const otherItems = useMemo(
+    () => items.filter((item) => item.id !== presentedItem.id),
+    [items, presentedItem.id],
+  );
+  const [expanded, setExpanded] = useState(false);
+  const hiddenCount = otherItems.length;
+  const hasExpandStrip = items.length > 1;
+
+  // Header: kind + per-state summary over UNIQUE PRs, each state counted once.
+  const headline = useMemo(() => {
+    const isCheck = items[0]?.kind === 'check';
+    const stateCounts = new Map<string, number>();
+    for (const item of items) {
+      const word = headerSummaryState(item.state, isCheck);
+      stateCounts.set(word, (stateCounts.get(word) ?? 0) + 1);
+    }
+    const parts = Array.from(stateCounts.entries()).sort().map(
+      ([state, count]) => `${count} ${state}`,
+    );
+    const kind = isCheck ? 'Check' : 'PR';
+    return `${kind} · ${parts.join(', ')}`;
+  }, [items]);
+
+  // Animation: track cell state changes for brass settle.
+  const stateVersionRef = useRef<Map<string, NotificationLifecycleState>>(new Map());
+  const [animatedCells, setAnimatedCells] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const next = new Set<string>();
+    for (const item of items) {
+      const prev = stateVersionRef.current.get(item.id);
+      if (prev !== undefined && prev !== item.state) {
+        next.add(item.id);
       }
-      testID={`notification-run-${message.id}`}
-    />
+      stateVersionRef.current.set(item.id, item.state);
+    }
+    if (next.size > 0) {
+      setAnimatedCells(next);
+      const timer = setTimeout(() => setAnimatedCells(new Set()), TRANSCRIPT_SETTLE_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [items]);
+
+  // Present a contracted cell (accordion contract the previously presented one).
+  const handlePresent = useCallback(
+    (itemId: string) => {
+      setPresentedId(itemId);
+      setAnimatedCells(new Set([itemId]));
+      const timer = setTimeout(() => setAnimatedCells(new Set()), TRANSCRIPT_SETTLE_MS);
+      return () => clearTimeout(timer);
+    },
+    [],
+  );
+
+  const presentedState = cellDisplayState(presentedItem.state);
+  const presentedTone = cellTone(presentedItem.state);
+  const presentedIsAnimated = animatedCells.has(presentedItem.id);
+  const animState = useMemo(
+    () => ({
+      stateColor: steady.rowState[presentedTone],
+      waitingColor: theme.buzz.accent,
+    }),
+    [presentedTone, steady, theme],
+  );
+
+  const presentedStateRef = useRef(new Animated.Value(presentedIsAnimated ? 0 : 1));
+  useEffect(() => {
+    if (presentedIsAnimated) {
+      presentedStateRef.current.setValue(0);
+      Animated.timing(presentedStateRef.current, {
+        toValue: 1,
+        duration: TRANSCRIPT_SETTLE_MS,
+        easing: undefined, // linear is default
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [presentedIsAnimated]);
+  const presentedStateAnimStyle = presentedIsAnimated
+    ? {
+        color: presentedStateRef.current.interpolate({
+          inputRange: [0, 1],
+          outputRange: [TRANSCRIPT_BRASS, animState.stateColor],
+        }),
+      }
+    : { color: animState.stateColor };
+
+  return (
+    <View style={styles.ncFrameShell} testID={`notification-run-${message.id}`}>
+      <View style={styles.ncFrame}>
+        {/* Header */}
+        <View style={styles.ncHead}>
+          <View style={styles.ncHeadCopy}>
+            <View style={styles.ncTitleLine}>
+              <Text style={styles.ncTitle} numberOfLines={1} ellipsizeMode="tail">
+                {headline}
+              </Text>
+              <Text style={styles.ncStamp}>{ledgerStamp(message.timestamp)}</Text>
+            </View>
+            {run.subline ? (
+              <Text style={styles.ncSubline}>{cardMeta(run.subline)}</Text>
+            ) : null}
+          </View>
+        </View>
+
+        {/* Presented cell: full controls */}
+        <View style={styles.ncCell} testID={`notification-run-cell-${presentedItem.id}`}>
+          <View style={styles.ncCellBody}>
+            <View style={styles.ncStateSlot}>
+              <Animated.Text style={[styles.ncState, presentedStateAnimStyle]}>
+                {presentedState}
+              </Animated.Text>
+            </View>
+            <View style={styles.ncCellCopy}>
+              <Animated.Text
+                style={[styles.ncCellTitle, presentedIsAnimated ? { color: animState.waitingColor } : undefined]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {presentedItem.title}
+              </Animated.Text>
+              <Text style={styles.ncKindLine}>{presentedItem.kindLine}</Text>
+              {presentedItem.objective ? (
+                <Text style={styles.ncObjective}>{presentedItem.objective}</Text>
+              ) : null}
+              {presentedItem.actor ? (
+                <Text style={styles.ncAuthor}>
+                  by <Text style={styles.ncAuthorHighlight}>@{presentedItem.actor.replace(/^@/, '')}</Text>
+                </Text>
+              ) : null}
+            </View>
+          </View>
+          <View style={styles.ncCellFooter}>
+            <View style={styles.ncFooterSpacer} />
+            {presentedItem.cornerId ? (
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => onOpenCorner(presentedItem.cornerId!)}
+                testID={`notification-run-cell-corner-${presentedItem.id}`}
+              >
+                <Text style={styles.ncAction}>Corner →</Text>
+              </Pressable>
+            ) : null}
+            {presentedItem.url ? (
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => onOpenUrl(presentedItem.url!)}
+                testID={`notification-run-cell-url-${presentedItem.id}`}
+              >
+                <Text style={[styles.ncAction, styles.ncActionPrimary]}>View ↗</Text>
+              </Pressable>
+            ) : !presentedItem.cornerId && presentedItem.cornerId ? null : null}
+          </View>
+        </View>
+
+        {/* Contracted cells */}
+        {(expanded ? otherItems : []).map((item) => {
+          const itemState = cellDisplayState(item.state);
+          const itemTone = cellTone(item.state);
+          const itemAnim = animatedCells.has(item.id);
+          const itemStateColor = steady.rowState[itemTone];
+          const kindWithAuthor = item.actor
+            ? `${item.kindLine} · @${item.actor.replace(/^@/, '')}`
+            : item.kindLine;
+          return (
+            <Pressable
+              key={item.id}
+              accessibilityRole="button"
+              accessibilityLabel={`${itemState}: ${item.title}`}
+              onPress={() => handlePresent(item.id)}
+              style={styles.ncCellContracted}
+              testID={`notification-run-contracted-${item.id}`}
+            >
+              <View style={styles.ncCellBody}>
+                <View style={styles.ncStateSlot}>
+                  <Text style={[styles.ncStateContracted, { color: itemStateColor }]}>
+                    {itemState}
+                  </Text>
+                </View>
+                <View style={styles.ncCellCopy}>
+                  <Text
+                    style={styles.ncCellTitleContracted}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {item.title}
+                  </Text>
+                  <Text style={styles.ncKindLine}>{kindWithAuthor}</Text>
+                </View>
+              </View>
+            </Pressable>
+          );
+        })}
+
+        {/* Expand strip: one row under the cells */}
+        {hasExpandStrip ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            onPress={() => setExpanded((value) => !value)}
+            style={styles.ncMoreStrip}
+            testID={`notification-run-expand-${message.id}`}
+          >
+            <Text style={styles.ncMoreText}>
+              {expanded ? 'less ▴' : `${hiddenCount} more ▾`}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
   );
 });
 
@@ -1495,5 +1737,148 @@ const styles = StyleSheet.create((theme) => ({
     color: groknight.steel,
     fontSize: 14,
     textAlign: 'center',
+  },
+
+  // Notification lifecycle card accordion — one cell per PR/check
+  ncFrameShell: {
+    minWidth: 0,
+    marginTop: theme.buzz.transcriptCard.marginTop - 20,
+    marginRight: -20,
+    marginBottom: theme.buzz.transcriptCard.marginBottom - 20,
+    marginLeft: -20,
+    padding: 20,
+  },
+  ncFrame: {
+    minWidth: 0,
+    borderWidth: 1,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.transcriptCard.cornerRadius,
+    overflow: 'hidden',
+  },
+  ncHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingTop: theme.buzz.transcriptCard.headTop,
+    paddingHorizontal: theme.buzz.transcriptCard.side,
+  },
+  ncHeadCopy: { flex: 1, minWidth: 0 },
+  ncTitleLine: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: theme.buzz.space.sm,
+  },
+  ncTitle: {
+    ...theme.buzz.type.bodyStrong,
+    color: theme.buzz.textPrimary,
+    flex: 1,
+    minWidth: 0,
+  },
+  ncStamp: {
+    ...theme.buzz.type.machine,
+    color: theme.buzz.ledgerQuiet,
+    fontVariant: ['tabular-nums'],
+  },
+  ncSubline: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
+  ncCell: {
+    borderTopWidth: 1,
+    borderTopColor: theme.buzz.border,
+  },
+  ncCellBody: {
+    minWidth: 0,
+    flexDirection: 'row',
+    paddingVertical: theme.buzz.transcriptCard.rowVertical,
+    paddingHorizontal: theme.buzz.transcriptCard.side,
+    gap: 10,
+  },
+  ncStateSlot: { width: theme.buzz.transcriptCard.rowStateWidth },
+  ncState: {
+    ...theme.buzz.type.sectionHead,
+    fontFamily: theme.buzz.monoRegular,
+    color: theme.buzz.ledgerQuiet,
+  },
+  ncStateContracted: {
+    ...theme.buzz.type.sectionHead,
+    fontFamily: theme.buzz.monoRegular,
+    color: theme.buzz.ledgerQuiet,
+    fontSize: 11,
+  },
+  ncCellCopy: { flex: 1, minWidth: 0 },
+  ncCellTitle: {
+    ...theme.buzz.type.body,
+    color: theme.buzz.textPrimary,
+    fontSize: 17,
+    fontWeight: '500',
+    minWidth: 0,
+    marginBottom: 2,
+  },
+  ncCellTitleContracted: {
+    ...theme.buzz.type.body,
+    color: theme.buzz.textPrimary,
+    fontSize: 15,
+    fontWeight: '500',
+    minWidth: 0,
+  },
+  ncKindLine: {
+    ...theme.buzz.type.machine,
+    fontSize: 13,
+    color: theme.buzz.ledgerGhost,
+    marginTop: 2,
+  },
+  ncObjective: {
+    ...theme.buzz.type.body,
+    color: theme.buzz.textSecondary,
+    fontSize: 14,
+    marginTop: 8,
+  },
+  ncAuthor: {
+    ...theme.buzz.type.machine,
+    color: theme.buzz.ledgerQuiet,
+    fontSize: 12,
+    marginTop: 8,
+  },
+  ncAuthorHighlight: {
+    color: theme.buzz.accent,
+    fontStyle: 'normal',
+  },
+  ncCellFooter: {
+    minHeight: theme.buzz.transcriptCard.footerMinHeight,
+    paddingVertical: theme.buzz.transcriptCard.footerVertical,
+    paddingHorizontal: theme.buzz.transcriptCard.side,
+    borderTopWidth: 1,
+    borderTopColor: theme.buzz.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 22,
+    justifyContent: 'flex-end',
+  },
+  ncFooterSpacer: { flex: 1 },
+  ncAction: {
+    ...theme.buzz.type.body,
+    fontSize: theme.buzz.transcriptCard.actionSize,
+    color: theme.buzz.ledgerQuiet,
+  },
+  ncActionPrimary: {
+    fontFamily: theme.buzz.proseMedium,
+    color: theme.buzz.accent,
+  },
+  ncCellContracted: {
+    borderTopWidth: 1,
+    borderTopColor: theme.buzz.border,
+  },
+  ncMoreStrip: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: theme.buzz.transcriptCard.side,
+    borderTopWidth: 1,
+    borderTopColor: theme.buzz.border,
+  },
+  ncMoreText: {
+    ...theme.buzz.type.machine,
+    color: theme.buzz.ledgerQuiet,
+    fontSize: 12,
+    letterSpacing: 0.06,
   },
 }));

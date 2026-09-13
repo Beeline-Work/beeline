@@ -23,10 +23,23 @@ import {
   type WorkspaceListView,
   type WorkspaceView,
 } from '@beeline/api-contract/phone';
-import { monolithSession } from '@/auth/monolith-session';
+import {
+  monolithSession,
+  MonolithRequestTimeoutError,
+  MONOLITH_REQUEST_TIMEOUT_MS,
+} from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 export { RoomViewHttpError };
+
+/** A bounded deadline fired before the server answered the phone's read. */
+export function isRoomViewTimeoutError(error: unknown): boolean {
+  if (error instanceof MonolithRequestTimeoutError) return true;
+  if (error instanceof RoomViewHttpError) {
+    return error.code === 'timeout' || error.code === 'surface_request_timed_out';
+  }
+  return false;
+}
 
 type Guard<T> = (value: unknown) => value is T;
 
@@ -91,12 +104,24 @@ class MonolithRoomViewClient {
     return value;
   }
   private async request(path: string, method: 'GET' | 'POST', body?: unknown): Promise<Response> {
-    const response = await monolithSession.fetch(`${this.baseUrl}${path}`, {
-      method,
-      ...(body === undefined
-        ? {}
-        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-    });
+    // The phone API carries room/workspace reads and small writes only; media
+    // uploads go straight through the session and stay unbounded.
+    const response = await monolithSession
+      .fetch(
+        `${this.baseUrl}${path}`,
+        {
+          method,
+          ...(body === undefined
+            ? {}
+            : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+        },
+        { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
+      )
+      .catch((error: unknown) => {
+        if (error instanceof MonolithRequestTimeoutError)
+          throw new RoomViewHttpError(0, 'timeout');
+        throw error;
+      });
     if (!response.ok) {
       let code = 'request_failed';
       try {

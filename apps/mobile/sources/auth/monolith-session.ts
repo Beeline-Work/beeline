@@ -19,6 +19,16 @@ export interface MonolithTokens {
   identityId: string;
 }
 
+/** Deadline for room/workspace reads; long uploads stay unbounded by default. */
+export const MONOLITH_REQUEST_TIMEOUT_MS = 15_000;
+
+export class MonolithRequestTimeoutError extends Error {
+  constructor() {
+    super('The server did not respond in time.');
+    this.name = 'MonolithRequestTimeoutError';
+  }
+}
+
 export class MonolithSessionRequiredError extends Error {
   constructor() {
     super('GitHub sign-in is required');
@@ -123,15 +133,40 @@ export class MonolithSession {
     return this.refresh();
   }
 
-  async fetch(input: string, init: RequestInit = {}): Promise<Response> {
-    const perform = async () =>
-      this.fetchImpl(input, {
-        ...init,
-        headers: {
-          ...Object.fromEntries(new Headers(init.headers).entries()),
-          authorization: `Bearer ${await this.authorization()}`,
-        },
-      });
+  async fetch(
+    input: string,
+    init: RequestInit = {},
+    options: { timeoutMs?: number } = {},
+  ): Promise<Response> {
+    const perform = async () => {
+      const controller = new AbortController();
+      let timedOut = false;
+      const timer =
+        options.timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+            }, options.timeoutMs);
+      const forwardExternalAbort = () => controller.abort();
+      init.signal?.addEventListener('abort', forwardExternalAbort);
+      try {
+        return await this.fetchImpl(input, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            ...Object.fromEntries(new Headers(init.headers).entries()),
+            authorization: `Bearer ${await this.authorization()}`,
+          },
+        });
+      } catch (error) {
+        if (timedOut) throw new MonolithRequestTimeoutError();
+        throw error;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        init.signal?.removeEventListener('abort', forwardExternalAbort);
+      }
+    };
     let response = await perform();
     if (response.status !== 401) return response;
     this.access = undefined;

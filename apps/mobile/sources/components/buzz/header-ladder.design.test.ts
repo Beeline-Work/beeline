@@ -15,6 +15,10 @@ const chatSource = readFileSync(
   'utf8',
 );
 const ladderSource = readFileSync(path.join(__dirname, './HeaderLadder.tsx'), 'utf8');
+const repositorySubtitleSource = readFileSync(
+  path.join(__dirname, './RoomRepositorySubtitle.tsx'),
+  'utf8',
+);
 
 describe('Chat header — one language for Room and Corner', () => {
   it('routes both surfaces’ header metadata through the shared micro-caps token', () => {
@@ -61,9 +65,10 @@ describe('Chat header — one language for Room and Corner', () => {
   });
 
   it('keeps the repository subtitle in the shared meta token', () => {
-    const repoChip = chatSource.match(/repoChip:\s*\{[^}]*\}/);
-    expect(repoChip, 'missing repo chip alignment style').toBeTruthy();
-    expect(repoChip![0]).toContain("alignSelf: 'flex-start'");
+    const subtitle = repositorySubtitleSource.match(/subtitle:\s*\{[^}]*\}/);
+    expect(subtitle, 'missing repository subtitle alignment style').toBeTruthy();
+    expect(subtitle![0]).toContain("alignSelf: 'flex-start'");
+    expect(repositorySubtitleSource).toContain('<HeaderMetaCaps');
 
     const caps = ladderSource.match(/metaCaps:\s*\{[\s\S]*?\n\s*\},/);
     expect(caps, 'missing shared metadata font token').toBeTruthy();

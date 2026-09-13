@@ -33,21 +33,30 @@ describe('Room deck bootstrap', () => {
     expect(emptyState).not.toContain('LOADING ROOMS');
   });
 
-  it('puts add-Room and invite-Agent actions directly on the empty Room deck', () => {
+  it('puts start-Room and connect-Agent buttons directly on the empty Room deck', () => {
     const emptyDeck = source.slice(
-      source.indexOf('ListEmptyComponent='),
-      source.indexOf('renderItem='),
+      source.indexOf('function EmptyRoomActions'),
+      source.indexOf('function firstParam'),
     );
     expect(emptyDeck).toContain('testID="empty-add-room"');
-    expect(emptyDeck).toContain('setShowCreateRoom(true)');
-    expect(emptyDeck).toContain('testID="empty-invite-agent"');
-    expect(emptyDeck).toContain("compose('agent')");
-    // Sentence-case labels; the tracked-uppercase MonoButton pair is gone.
+    expect(emptyDeck).toContain('onPress={onAddRoom}');
+    expect(emptyDeck).toContain('testID="empty-connect-agent"');
+    expect(emptyDeck).toContain('onPress={onConnectAgent}');
     expect(emptyDeck).toContain('Start a Room</Text>');
-    expect(emptyDeck).toContain('Invite an agent</Text>');
+    expect(emptyDeck).toContain('Connect an agent</Text>');
     expect(emptyDeck).not.toContain('label="ADD ROOM"');
-    expect(emptyDeck).not.toContain('label="INVITE AGENT"');
+    expect(emptyDeck).not.toContain('label="CONNECT AGENT"');
     expect(emptyDeck).not.toContain('<MonoButton');
+  });
+
+  it('wires the buttons to the existing Room dialog and shared agent-connect sheet', () => {
+    expect(source).toContain('onAddRoom={() => setShowCreateRoom(true)}');
+    expect(source).toContain('onConnectAgent={() => void connectAgent()}');
+    expect(source).toMatch(/\(\s*await transport\.ensureClient\(\)\s*\)\.createAgentPairingCode\(/);
+    expect(source).toContain('<MemberPickerSheet');
+    expect(source).toContain('agentConnectOnly');
+    expect(source).toContain('testID="empty-agent-connect-sheet"');
+    expect(source).toContain('onCopyPairCommand={(command) => void copyPairCommand(command)}');
   });
 
   it('refetches an acknowledged Room write without leaving the refreshed deck', () => {

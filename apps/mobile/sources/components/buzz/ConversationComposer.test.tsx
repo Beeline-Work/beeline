@@ -3,28 +3,47 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+
+// Synchronous react-native mock. An async factory causes vitest's Rollup to
+// parse the real react-native flow-typed source before the mock is applied.
 const platform = vi.hoisted(() => ({ OS: 'web' }));
-vi.mock('react-native', async () => {
-  const React = await import('react');
-  const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
+vi.mock('react-native', () => {
+  function host(name: string) {
+    return (props: any) => React.createElement(name, props, props.children);
+  }
   return {
     Text: host('Text'),
     View: host('View'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
+    Linking: { openSettings: vi.fn() },
     Platform: {
       get OS() {
         return platform.OS;
       },
       select: (choices: any) => choices.default,
     },
-  };
+    StyleSheet: { create: (styles: any) => styles },
+  } as any;
 });
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
+// react-native-svg imports from react-native deeply. An ESM import of the
+// real module triggers vitest to parse react-native's Flow-typed source.
+vi.mock('react-native-svg', () => {
+  function host(name: string) {
+    return (props: any) => React.createElement(name, props, props.children);
+  }
+  const Svg = host('RNSVG');
+  return {
+    default: Svg,
+    Svg,
+    Line: host('RNSVGLine'),
+  };
+});
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -203,9 +222,10 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(input.props.value).toBe(value);
     expect(input.props.multiline).toBe(true);
     expect(input.props.numberOfLines).toBeUndefined();
-    expect(input.props.style).toHaveLength(3);
+    expect(input.props.style).toHaveLength(4);
     expect(input.props.style[1]).toBeUndefined();
     expect(input.props.style[2]).toBe(false);
+    expect(input.props.style[3]).toBeUndefined();
   });
 
   it('keeps measured multiline sizing on web', () => {

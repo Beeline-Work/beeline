@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Pressable,
   View,
+  Linking,
   Platform,
   type NativeSyntheticEvent,
   type GestureResponderEvent,
@@ -15,6 +16,8 @@ import {
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
+import { MicGlyph } from './MicGlyph';
+import { useSpeechInput } from '@/buzz/speech-input';
 
 type Props = {
   value: string;
@@ -40,6 +43,12 @@ type Props = {
   onKeyPress(event: NativeSyntheticEvent<TextInputKeyPressEventData>): void;
   onSelectionChange?(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>): void;
   onSend(): void;
+  /**
+   * Speech recognition is always available when the hook can use the native
+   * platform recogniser. Pass `false` to disable it (e.g. when the parent
+   * environment already tested availability).
+   */
+  speechEnabled?: boolean;
   /** Only supplied for a server-authorized, current working turn. */
   onStop?(): Promise<boolean>;
   stopKey?: string;
@@ -84,6 +93,7 @@ export function ConversationComposer({
   onKeyPress,
   onSelectionChange,
   onSend,
+  speechEnabled = true,
   onStop,
   stopKey,
   stopping = false,
@@ -97,7 +107,6 @@ export function ConversationComposer({
   onRemoveAttachment,
 }: Props) {
   const { theme } = useUnistyles();
-  const sendDisabled = disabled || !(canSend ?? Boolean(value.trim()));
   const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
   const [armed, setArmed] = React.useState(false);
   const [acting, setActing] = React.useState(false);
@@ -107,6 +116,27 @@ export function ConversationComposer({
   const busy = React.useRef(false);
   const stopAtHold = React.useRef(stopKey);
   const containerRef = React.useRef<HTMLElement | null>(null);
+
+  // Speech recognition — internal hook, scoped to the composer.
+  const speech = useSpeechInput((transcript) => {
+    const separator = value && transcript ? ' ' : '';
+    onChangeText(value + separator + transcript);
+  });
+  const isListening = speech.state === 'listening';
+  const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
+  const sendDisabled = disabled || !(canSend ?? Boolean(value.trim())) || isListening;
+
+  // When listening, show the status line with optional partial text.
+  const statusLine: string =
+    speech.state === 'permission-denied'
+      ? 'microphone off in settings \u00b7 tap to open settings'
+      : speech.state === 'nothing-recognised'
+        ? "didn't catch that \u00b7 tap mic to try again"
+        : speech.state === 'listening'
+          ? '\u25cf listening \u00b7 tap mic to stop'
+          : '';
+  const statusIsError = speech.state === 'permission-denied' || speech.state === 'nothing-recognised';
+
   React.useEffect(() => {
     if (!onDesktopPaste) return;
     const node = containerRef.current;
@@ -253,28 +283,95 @@ export function ConversationComposer({
         >
           <Text style={styles.attachButtonText}>＋</Text>
         </TouchableOpacity>
-        <TextInput
-          ref={inputRef}
-          style={[
-            styles.input,
-            Platform.OS === 'ios' ? undefined : { height, maxHeight },
-            Platform.OS === 'android' && styles.inputAndroid,
-          ]}
-          value={value}
-          onChangeText={onChangeText}
-          onContentSizeChange={onContentSizeChange}
-          onFocus={onFocus}
-          onBlur={onBlur}
-          onKeyPress={onKeyPress}
-          onSelectionChange={onSelectionChange}
-          placeholder="Message"
-          placeholderTextColor={theme.buzz.dim}
-          multiline
-          returnKeyType="default"
-          scrollEnabled={height >= maxHeight}
-          submitBehavior="newline"
-          testID={`${testIDPrefix}-input`}
-        />
+        <View style={styles.inputWrapper}>
+          <TextInput
+            ref={inputRef}
+            style={[
+              styles.input,
+              Platform.OS === 'ios' ? undefined : { height, maxHeight },
+              Platform.OS === 'android' && styles.inputAndroid,
+              isListening && speech.partialText ? styles.inputTransparent : undefined,
+            ]}
+            value={value}
+            onChangeText={onChangeText}
+            onContentSizeChange={onContentSizeChange}
+            onFocus={onFocus}
+            onBlur={onBlur}
+            onKeyPress={onKeyPress}
+            onSelectionChange={onSelectionChange}
+            placeholder={isListening ? 'Listening' : 'Message'}
+            placeholderTextColor={theme.buzz.dim}
+            multiline
+            returnKeyType="default"
+            scrollEnabled={height >= maxHeight}
+            submitBehavior="newline"
+            testID={`${testIDPrefix}-input`}
+          />
+          {isListening && speech.partialText ? (
+            <View style={styles.interimOverlay} pointerEvents="none">
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.input,
+                  styles.interimText,
+                  Platform.OS === 'ios'
+                    ? undefined
+                    : { height: undefined, maxHeight: undefined },
+                  Platform.OS === 'android' && styles.interimTextAndroid,
+                ]}
+              >
+                <Text style={{ color: theme.buzz.textSecondary }}>
+                  {value}
+                  {value ? ' ' : ''}
+                </Text>
+                <Text style={{ color: theme.buzz.textMuted }}>
+                  {speech.partialText}
+                </Text>
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        {speechAvailable ? (
+          <TouchableOpacity
+            accessibilityLabel={
+              isListening
+                ? 'Stop listening'
+                : speech.state === 'permission-denied'
+                  ? 'Open microphone settings'
+                  : 'Start speech input'
+            }
+            accessibilityRole="button"
+            hitSlop={9}
+            onPress={() => {
+              if (speech.state === 'permission-denied') {
+                void Linking.openSettings();
+                return;
+              }
+              if (isListening) {
+                speech.stop();
+              } else {
+                speech.start();
+              }
+            }}
+            style={[
+              styles.micButton,
+              isListening && styles.micButtonListening,
+              speech.state === 'permission-denied' && styles.micButtonDimmed,
+            ]}
+            testID={`${testIDPrefix}-mic`}
+          >
+            <MicGlyph
+              animating={isListening}
+              color={
+                isListening
+                  ? theme.buzz.accent
+                  : speech.state === 'permission-denied'
+                    ? theme.buzz.textMuted
+                    : theme.buzz.textPrimary
+              }
+            />
+          </TouchableOpacity>
+        ) : null}
         <Pressable
           accessibilityLabel={armed ? 'Release to stop this turn' : 'Send message'}
           accessibilityHint={
@@ -316,11 +413,100 @@ export function ConversationComposer({
           )}
         </Pressable>
       </View>
+      {statusLine ? (
+        <TouchableOpacity
+          accessibilityRole="button"
+          activeOpacity={speech.state === 'permission-denied' ? 0.7 : 1}
+          disabled={speech.state !== 'permission-denied'}
+          onPress={
+            speech.state === 'permission-denied' ? () => void Linking.openSettings() : undefined
+          }
+          style={styles.statusLine}
+          testID={`${testIDPrefix}-speech-status`}
+        >
+          <Text
+            style={[
+              styles.statusText,
+              statusIsError && styles.statusTextError,
+              speech.state === 'listening' && styles.statusTextListening,
+            ]}
+          >
+            {statusLine}
+            {speech.state === 'listening' && speech.partialText ? (
+              <Text style={styles.statusPartial}> \u201c{speech.partialText}\u201d</Text>
+            ) : null}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // Speech recognition styles
+  micButton: {
+    width: 26,
+    height: 26,
+    marginLeft: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micButtonListening: {
+    borderWidth: 1,
+    borderColor: theme.buzz.accent,
+    borderRadius: 13,
+    shadowColor: theme.buzz.accent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  micButtonDimmed: {
+    opacity: 0.4,
+  },
+  inputWrapper: {
+    flex: 1,
+    position: 'relative',
+    minWidth: 0,
+  },
+  inputTransparent: {
+    color: 'transparent',
+  } as any,
+  interimOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    pointerEvents: 'none',
+  },
+  interimText: {
+    color: theme.buzz.textSecondary,
+    ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
+  },
+  interimTextAndroid: { textAlignVertical: 'center' },
+  statusLine: {
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
+  statusText: {
+    ...theme.buzz.type.machine as any,
+    color: theme.buzz.ledgerQuiet,
+    textTransform: 'uppercase',
+  },
+  statusTextError: {
+    color: theme.buzz.dialogDanger,
+  },
+  statusTextListening: {
+    color: theme.buzz.accent,
+  },
+  statusPartial: {
+    color: theme.buzz.ledgerQuiet,
+    textTransform: 'none',
+  },
+  // End speech recognition styles
   composer: {
     minHeight: 44,
     borderRadius: 10,
@@ -388,7 +574,7 @@ const styles = StyleSheet.create((theme) => ({
   attachButton: {
     width: 26,
     height: 26,
-    marginRight: 8,
+    marginRight: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },

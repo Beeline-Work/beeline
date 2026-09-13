@@ -5184,7 +5184,12 @@ describe('monolith integration', () => {
     const phoneCorners = await request(`/v1/phone/rooms/${ROOM}/corners`);
     expect(await phoneCorners.json()).toEqual(
       expect.objectContaining({
-        corners: [expect.objectContaining({ agent: expect.objectContaining({ pubkey: AGENT }) })],
+        corners: [
+          expect.objectContaining({
+            state: 'working',
+            agent: expect.objectContaining({ pubkey: AGENT }),
+          }),
+        ],
       }),
     );
   });

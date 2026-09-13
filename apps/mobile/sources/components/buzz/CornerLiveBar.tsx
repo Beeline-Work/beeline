@@ -3,10 +3,11 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from './MonoHull';
+import type { CornerState } from '@beeline/api-contract/phone';
 
 /**
  * The Room's one active-corner affordance: a single line pinned directly above
- * the composer, naming who is working and what on — `beebee active:
+ * the composer, naming who is working and what on — `beebee working:
  * feat/ux-fix-now` — with `view →` in the same right gutter every other piece
  * of marginalia hangs in.
  *
@@ -21,7 +22,7 @@ import { HullLivePulse } from './MonoHull';
  * live clock: a calm heartbeat, not a sweep, not a progress bar, and never a
  * dashed rule. It is the reserved accent doing exactly the job `DESIGN.md`
  * assigns it — an agent is alive — and the accent is never the only signal:
- * the copy says `active`, and the motion says "still going" a third time.
+ * the copy says `working`, and the motion says "still going" a third time.
  * A corner that is open but idle drops to the quiet tier and stops moving, so
  * the difference between "running" and "waiting" is legible without reading.
  * Reduced motion and a backgrounded app both settle it, via `HullLivePulse`.
@@ -29,17 +30,26 @@ import { HullLivePulse } from './MonoHull';
 export function CornerLiveBar({
   label,
   live,
+  state,
   onPress,
   testID,
 }: {
   label: string;
   live: boolean;
+  state?: CornerState;
   onPress?: () => void;
   testID?: string;
 }) {
+  const displayState = state ?? (live ? 'working' : 'waiting');
   const row = (
     <View style={styles.row}>
-      <Text numberOfLines={1} style={[styles.label, live ? styles.labelLive : styles.labelIdle]}>
+      <Text numberOfLines={1} style={[
+        styles.label,
+        displayState === 'working' ? styles.labelWorking
+          : displayState === 'review' ? styles.labelReview
+            : displayState === 'archived' ? styles.labelArchived
+              : styles.labelWaiting,
+      ]}>
         {label}
       </Text>
       {onPress ? (
@@ -108,8 +118,10 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 18,
     letterSpacing: 0.4,
   },
-  labelLive: { color: groknight.accent },
-  labelIdle: { color: groknight.ledgerQuiet },
+  labelWorking: { color: groknight.warning },
+  labelReview: { color: groknight.accent },
+  labelWaiting: { color: groknight.ledgerQuiet },
+  labelArchived: { color: groknight.ledgerGhost },
   enter: {
     ...Typography.mono(),
     flexShrink: 0,

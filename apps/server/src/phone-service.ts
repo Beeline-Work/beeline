@@ -71,6 +71,7 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
+import { deriveCornerState } from './corner-state.js';
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -1449,19 +1450,17 @@ export class PhoneService {
         lifecycle: corner.archived_at ? 'done' : 'unknown',
         checks: 'unknown',
       };
-      const hasLiveWorkingTurn =
-        corner.latest_turn_status === 'working' && lifecycle.lifecycle !== 'done';
-      const status =
-        corner.archived_at || lifecycle.lifecycle === 'done'
-          ? 'closed'
-          : hasLiveWorkingTurn
-            ? 'working'
-            : 'idle';
+      const hasLiveWorkingTurn = corner.latest_turn_status === 'working';
+      const derived = deriveCornerState({
+        archived: Boolean(corner.archived_at),
+        turnRunning: hasLiveWorkingTurn,
+        lifecycle,
+      });
       return {
         corner: roomHeader(corner, this.publicOrigin),
         lifecycle,
-        status,
-        statusAt:
+        ...derived,
+        stateAt:
           hasLiveWorkingTurn && corner.latest_turn_created_at
             ? unix(corner.latest_turn_created_at)
             : unix(corner.updated_at),

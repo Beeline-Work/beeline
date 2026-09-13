@@ -96,13 +96,22 @@ export const SidebarNavigator = React.memo(() => {
       )
     : DESKTOP_NAV_DEFAULT_WIDTH;
   const drawerWidth = showSidebar ? fullDrawerWidth : 0;
+  // fullDrawerWidth changes on every move (it derives from storedDrawerWidth,
+  // which onPanResponderMove updates), so it can't be a dependency here: on
+  // web, rebuilding the PanResponder mid-gesture makes react-native-web
+  // re-register the node's responder config, which resets the gesture's
+  // touch-move accounting and breaks cumulative `dx` tracking. Read the
+  // latest width through a ref instead, so the responder instance — and the
+  // gesture it's tracking — stays stable for the whole drag.
+  const fullDrawerWidthRef = React.useRef(fullDrawerWidth);
+  fullDrawerWidthRef.current = fullDrawerWidth;
   const resizePan = React.useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => desktopPlatform && showSidebar,
         onMoveShouldSetPanResponder: (_, gesture) => desktopPlatform && Math.abs(gesture.dx) > 2,
         onPanResponderGrant: () => {
-          dragStartWidth.current = fullDrawerWidth;
+          dragStartWidth.current = fullDrawerWidthRef.current;
         },
         onPanResponderMove: (_, gesture) =>
           setStoredDrawerWidth(
@@ -114,7 +123,7 @@ export const SidebarNavigator = React.memo(() => {
           void saveDesktopPaneWidth('navigation', width);
         },
       }),
-    [desktopPlatform, fullDrawerWidth, showSidebar],
+    [desktopPlatform, showSidebar],
   );
 
   const drawerNavigationOptions = React.useMemo(() => {

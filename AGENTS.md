@@ -150,6 +150,8 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Android push notifications
 
+- **The server routes native push by registered platform.** `apps/server/src/background.ts` sends Android tokens through Firebase and, only when `APNS_KEY_P8_BASE64` is configured, iOS tokens through the direct HTTP/2 provider in `apps/server/src/apns-push.ts`; both share `pushMessageData` from `firebase-push.ts`, including test pushes. Coverage: `apns-push.test.ts`, `background.test.ts`.
+
 - **Registration follows sign-in, not just mount.** `monolith-session.ts` announces accepted sign-ins/identity changes; `push-registration-lifecycle.ts` reloads the current identity and serializes startup/sign-in/foreground attempts. `release-push-catchup.ts` queues the latest unread `@system` release announcement on registration; only that candidate bypasses the registration floor, with read marks rechecked at dispatch and existing delivery claims deduplicating. Coverage: `push-registration-lifecycle.test.ts`, `monolith-session.test.ts`, `release-push-catchup.test.ts`.
 
 - **A tapped push outranks the app's own startup redirect.** `sources/push/notification-response.ts` is the one tap-routing rule (route a response once, default action only, then navigate); it waits on `sources/navigation/initial-landing.ts`, which `(app)/index.tsx` settles the moment it picks the landing route — a push routed before that decision lands is replaced by it and the Room is lost. Coverage: `notification-response.test.ts`, `initial-landing.test.ts`.

@@ -114,7 +114,9 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(4);
+    // The retired inspector info toggle no longer occupies this header. Work
+    // pane recovery lives on its own right-edge handle.
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(3);
   });
 
   it('lets the corner’s agent name give before the facts beside it do', () => {

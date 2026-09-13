@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomView, RoomViewMessage } from '@beeline/buzz-client';
+import { buildTurnActivity } from './activity-timeline';
 import {
   conversationIdentityByPubkey,
   cornerSummaries,
@@ -377,6 +378,30 @@ describe('Room view presentation', () => {
     ]);
 
     expect(folded.map((message) => message.id)).toEqual(['tool-1', 'prose', 'tool-2']);
+  });
+
+  it('merges adjacent tool notes when only thinking and summary rows separate them', () => {
+    const agent = 'b'.repeat(64);
+    const activity = (
+      id: string,
+      items: NonNullable<ChatDisplayMessage['activity']>,
+    ): ChatDisplayMessage => ({
+      id,
+      text: '',
+      timestamp: Number(id.replace(/\D/g, '')),
+      pubkey: agent,
+      isUser: false,
+      isAgentActivity: true,
+      activity: items,
+    });
+    const folded = foldSettledActivityRuns([
+      activity('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),
+      activity('thought-2', [{ kind: 'thinking', title: 'Thinking', text: 'Checking.' }]),
+      activity('note-3', [{ kind: 'summary', title: 'Summary', rollup: { searched: 2 } }]),
+    ]);
+
+    expect(folded).toHaveLength(1);
+    expect(buildTurnActivity(folded[0]!.activity ?? []).noteCount).toBe(3);
   });
 
   it('folds a settled run of per-call tool rows from one agent into one group (C55)', () => {

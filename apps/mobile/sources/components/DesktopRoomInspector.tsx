@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, PanResponder, Pressable, Text, View } from 'react-native';
+import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerListItem, RoomView } from '@beeline/buzz-client';
 import type { RoomWorkflowListResult, RoomWorkflowView } from '@beeline/api-contract/phone';
@@ -51,11 +51,9 @@ import {
 type Props = {
   room: RoomView;
   client: RoomViewClient | null;
-  overlay: boolean;
-  maximized: boolean;
-  onToggleMaximize(): void;
   selectedCornerId: string | null;
   onSelectCorner(cornerId: string | null): void;
+  onOpenInMain(cornerId: string): void;
   onClose(): void;
   onNewCorner(): void;
   onOpenRoster(): void;
@@ -76,14 +74,39 @@ function terminal(corner: CornerListItem): boolean {
   return corner.state === 'archived';
 }
 
+function HeaderIconControl({
+  label,
+  glyph,
+  onPress,
+  testID,
+}: {
+  label: string;
+  glyph: string;
+  onPress(): void;
+  testID: string;
+}) {
+  const control = (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.headerButton}
+      testID={testID}
+    >
+      <Text style={styles.headerGlyph}>{glyph}</Text>
+    </Pressable>
+  );
+  return Platform.OS === 'web'
+    ? React.createElement('span', { title: label, style: { display: 'flex' } }, control)
+    : control;
+}
+
 export function DesktopRoomInspector({
   room,
   client,
-  overlay,
-  maximized,
-  onToggleMaximize,
   selectedCornerId,
   onSelectCorner,
+  onOpenInMain,
   onClose,
   onNewCorner,
   onOpenRoster,
@@ -173,8 +196,8 @@ export function DesktopRoomInspector({
   const resizePan = React.useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !overlay,
-        onMoveShouldSetPanResponder: (_, gesture) => !overlay && Math.abs(gesture.dx) > 2,
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 2,
         onPanResponderGrant: () => {
           dragStart.current = width;
         },
@@ -186,7 +209,7 @@ export function DesktopRoomInspector({
           void saveDesktopPaneWidth('inspector', next);
         },
       }),
-    [overlay, width],
+    [width],
   );
 
   const active = room.corners.filter((corner) => !terminal(corner));
@@ -241,29 +264,15 @@ export function DesktopRoomInspector({
   );
 
   return (
-    <View
-      style={[
-        styles.inspector,
-        maximized ? styles.maximized : { width },
-        overlay && !maximized && styles.overlay,
-      ]}
-      testID={overlay && !maximized ? 'desktop-inspector-overlay' : 'desktop-inspector'}
-    >
-      {!overlay && !maximized && (
-        <View
-          {...resizePan.panHandlers}
-          style={styles.resizer}
-          testID="desktop-inspector-resizer"
-        />
-      )}
+    <View style={[styles.inspector, { width }]} testID="desktop-inspector">
+      <View {...resizePan.panHandlers} style={styles.resizer} testID="desktop-inspector-resizer" />
       {selectedCornerId ? (
         <CornerCockpit
           detail={detail}
           loading={loading}
           summary={summary}
-          maximized={maximized}
-          onToggleMaximize={onToggleMaximize}
-          onBack={() => onSelectCorner(null)}
+          onOpenInMain={() => onOpenInMain(selectedCornerId)}
+          onClose={onClose}
           onOpenCorner={onSelectCorner}
           onRefresh={refreshCorner}
         />
@@ -277,14 +286,12 @@ export function DesktopRoomInspector({
               </Text>
               <Text style={styles.headerMeta}>work</Text>
             </View>
-            <Pressable
-              accessibilityLabel="Close work pane"
+            <HeaderIconControl
+              label="Close work pane"
+              glyph="×"
               onPress={onClose}
-              style={styles.headerButton}
               testID="desktop-inspector-close"
-            >
-              <Text style={styles.headerGlyph}>×</Text>
-            </Pressable>
+            />
           </View>
           <FlatList
             data={[...active, ...(showConcluded ? concluded : [])]}
@@ -523,18 +530,16 @@ function CornerCockpit({
   detail,
   loading,
   summary,
-  maximized,
-  onToggleMaximize,
-  onBack,
+  onOpenInMain,
+  onClose,
   onOpenCorner,
   onRefresh,
 }: {
   detail: RoomView | null;
   loading: boolean;
   summary?: CornerListItem;
-  maximized: boolean;
-  onToggleMaximize(): void;
-  onBack(): void;
+  onOpenInMain(): void;
+  onClose(): void;
   onOpenCorner(cornerId: string): void;
   onRefresh(): Promise<void>;
 }) {
@@ -687,13 +692,6 @@ function CornerCockpit({
   return (
     <View style={styles.cockpit} testID="desktop-work-cockpit">
       <View style={styles.header} testID="desktop-work-cockpit-header">
-        <Pressable
-          accessibilityLabel="Back to work overview"
-          onPress={onBack}
-          style={styles.headerButton}
-        >
-          <Text style={styles.headerGlyph}>‹</Text>
-        </Pressable>
         {summary?.agent ? (
           <IdentityMark
             kind={summary.agent.kind === 'agent' ? 'agent' : 'human'}
@@ -714,16 +712,18 @@ function CornerCockpit({
               : 'loading'}
           </Text>
         </View>
-        <Pressable
-          accessibilityLabel={maximized ? 'Restore corner pane' : 'Maximize corner pane'}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: maximized }}
-          onPress={onToggleMaximize}
-          style={styles.headerButton}
-          testID="desktop-work-cockpit-maximize"
-        >
-          <Text style={styles.headerGlyph}>{maximized ? '⤡' : '⤢'}</Text>
-        </Pressable>
+        <HeaderIconControl
+          label="Open in the main pane"
+          glyph="⤢"
+          onPress={onOpenInMain}
+          testID="desktop-work-open-in-main"
+        />
+        <HeaderIconControl
+          label="Close work pane"
+          glyph="×"
+          onPress={onClose}
+          testID="desktop-work-cockpit-close"
+        />
       </View>
       <Text style={styles.pinnedObjective} testID="desktop-work-objective">
         {objective}
@@ -804,15 +804,6 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftColor: theme.colors.divider,
     position: 'relative',
   },
-  overlay: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    bottom: 0,
-    zIndex: 100,
-    boxShadow: '-12px 0 28px rgba(0,0,0,0.28)',
-  } as any,
-  maximized: { flex: 1, borderLeftWidth: 0 },
   resizer: { position: 'absolute', left: -4, top: 0, bottom: 0, width: 8, zIndex: 4 },
   header: {
     minHeight: 58,

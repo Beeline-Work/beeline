@@ -214,6 +214,13 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain('No activity yet');
   });
 
+  it('keeps DM presence out of list rows', () => {
+    expect(source).not.toContain('directMessagePresence');
+    expect(source).not.toContain('presenceCaption');
+    expect(source).not.toContain('presenceDot');
+    expect(source).not.toContain('room-presence-');
+  });
+
   it('leads every row with one 7×7 brass state mark and nothing else; the gutter keeps only the timestamp', () => {
     // `unread` is server-owned and cross-device; a corner waiting on a human
     // lights the same mark. The leading slot exists on every row — DM and

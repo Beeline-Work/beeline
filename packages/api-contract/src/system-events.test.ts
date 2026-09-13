@@ -62,6 +62,15 @@ describe('the one system-line grammar', () => {
       false,
     );
     expect(isSystemEvent(null)).toBe(false);
+    const check = {
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'started a check',
+      object: { text: 'Mobile', headSha: 'a'.repeat(40) },
+    };
+    expect(isSystemEvent(check)).toBe(true);
+    expect(
+      isSystemEvent({ ...check, object: { ...check.object, headSha: 'not-a-commit' } }),
+    ).toBe(false);
   });
 });
 

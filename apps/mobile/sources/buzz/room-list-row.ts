@@ -254,11 +254,9 @@ export function roomRowPreview(
 
 export type DirectMessagePresence = {
   readonly label: string;
-  /** Agents with a preview use the existing small state-dot idiom. */
-  readonly dot: 'working' | 'idle' | null;
 };
 
-/** One counterparty-presence grammar for the phone deck and desktop sidebar. */
+/** One counterparty-presence grammar for every DM surface. */
 export function directMessagePresence(
   item: Pick<ChatListItem, 'directMessage' | 'agentState'>,
   nowMs: number,
@@ -277,14 +275,12 @@ export function directMessagePresence(
           nowMs,
         )
       : false;
-    if (!online) return { label: 'offline', dot: null };
-    return item.agentState === 'working'
-      ? { label: 'working', dot: 'working' }
-      : { label: 'idle', dot: 'idle' };
+    if (!online) return { label: 'offline' };
+    return item.agentState === 'working' ? { label: 'working' } : { label: 'idle' };
   }
-  if (presence?.status === 'online') return { label: 'online', dot: null };
+  if (presence?.status === 'online') return { label: 'online' };
   if (!presence?.observedAt) return null;
-  return { label: personLastSeen(presence.observedAt, nowMs), dot: null };
+  return { label: personLastSeen(presence.observedAt, nowMs) };
 }
 
 /** Today is relative, yesterday is spoken, and older activity gets a calendar stamp. */

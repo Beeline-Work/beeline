@@ -404,6 +404,8 @@ type RepositoryFactCardProps = {
   body?: React.ReactNode;
   rows?: readonly TranscriptCardRow[];
   actions?: readonly TranscriptCardAction[];
+  onHeaderPress?(): void;
+  headerExpanded?: boolean;
   testID: string;
 };
 
@@ -415,6 +417,8 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
   body,
   rows,
   actions,
+  onHeaderPress,
+  headerExpanded,
   testID,
 }: RepositoryFactCardProps) {
   return (
@@ -426,6 +430,9 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
       body={body}
       rows={rows}
       actions={actions}
+      onHeaderPress={onHeaderPress}
+      headerExpanded={headerExpanded}
+      headerTestID={onHeaderPress ? `${testID}-disclosure` : undefined}
       testID={testID}
     />
   );
@@ -439,18 +446,34 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
 }: NotificationLifecycleCardProps) {
   const run = message.notificationLifecycleRun!;
   const [expanded, setExpanded] = useState(false);
-  const visibleItems = expanded ? run.items : run.items.slice(0, 3);
+  const isCheckBatch = run.items.every((item) => item.kind === 'check');
+  const isPullRequestBatch = run.items.every(
+    (item) => item.kind !== 'check' && /^(corner|PR)/i.test(item.kindLine),
+  );
+  const isFoldedBatch = isCheckBatch || isPullRequestBatch;
+  const mergedTitle = isPullRequestBatch
+    ? run.items.find((item) => item.state === 'Merged')?.title
+    : undefined;
+  const visibleItems = expanded
+    ? run.items
+    : isCheckBatch
+      ? run.items.filter((item) => item.state === 'Checks failed')
+      : isPullRequestBatch
+        ? []
+        : run.items.slice(0, 3);
   const hiddenCount = run.items.length - 3;
   const rows: TranscriptCardRow[] = visibleItems.map((item) => ({
     id: item.id,
     state:
       item.state === 'PR opened'
         ? 'opened'
-        : item.state === 'Checks failed'
-          ? 'failed'
-          : item.state === 'Checks passed'
-            ? 'succeeded'
-            : item.state.toLowerCase(),
+        : item.state === 'Checks running'
+          ? 'running'
+          : item.state === 'Checks failed'
+            ? 'failed'
+            : item.state === 'Checks passed'
+              ? 'passed'
+              : item.state.toLowerCase(),
     title: item.title,
     kindLine: item.kindLine,
     tone:
@@ -465,22 +488,34 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
         ? { onPress: () => onOpenUrl(item.url!) }
         : {}),
   }));
+  const headline = formatNotificationHeadlines(run.items).join(' · ') || run.headline;
   return (
     <RepositoryFactCard
-      title={formatNotificationHeadlines(run.items).join('\n') || run.headline}
-      subline={cardMeta(run.subline)}
+      title={!expanded && mergedTitle ? `${headline} · ${mergedTitle}` : headline}
+      subline={isFoldedBatch && !expanded ? undefined : cardMeta(run.subline)}
       stamp={ledgerStamp(message.timestamp)}
       rows={rows}
+      onHeaderPress={isFoldedBatch ? () => setExpanded((value) => !value) : undefined}
+      headerExpanded={isFoldedBatch ? expanded : undefined}
       actions={
-        run.items.length > 3
+        isFoldedBatch && expanded
           ? [
               {
-                label: expanded ? 'Less' : `${hiddenCount} more`,
+                label: 'Less',
                 primary: true,
-                onPress: () => setExpanded((value) => !value),
+                onPress: () => setExpanded(false),
                 testID: `notification-run-expand-${message.id}`,
               },
             ]
+          : !isFoldedBatch && run.items.length > 3
+            ? [
+                {
+                  label: expanded ? 'Less' : `${hiddenCount} more`,
+                  primary: true,
+                  onPress: () => setExpanded((value) => !value),
+                  testID: `notification-run-expand-${message.id}`,
+                },
+              ]
           : []
       }
       testID={`notification-run-${message.id}`}

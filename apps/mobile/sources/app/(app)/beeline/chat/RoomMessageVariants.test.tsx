@@ -307,7 +307,7 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('renders a notification run as one raised card, capped at three rows until expanded', () => {
+  it('folds a PR batch, names its most recent merge inline, and expands all rows', () => {
     const onOpenCorner = vi.fn();
     const onOpenUrl = vi.fn();
     const renderer = render(
@@ -341,37 +341,126 @@ describe('Room message variant components', () => {
     );
     expect(renderer.root.findByProps({ testID: 'notification-run-message' })).toBeDefined();
     expect(
-      renderer.root.findAll(
-        (node: ReactTestInstance) =>
-          node.type === 'Pressable' && /^transcript-card-row-/.test(node.props.testID ?? ''),
+      renderer.root.findAll((node: ReactTestInstance) =>
+        /^transcript-card-row-/.test(node.props.testID ?? ''),
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(0);
+    const cardTitle = renderer.root.find(
+      (node: ReactTestInstance) =>
+        node.type === 'Text' &&
+        node.children.includes('PR 4 merged, 1 failed · Duplicate draft settle'),
+    );
+    expect(cardTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
+    const disclosure = renderer.root.findByProps({
+      testID: 'notification-run-message-disclosure',
+    });
+    expect(disclosure.props.accessibilityState).toEqual({ expanded: false });
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('2 more');
+    act(() => disclosure.props.onPress());
     const rowTitle = renderer.root.find(
       (node: ReactTestInstance) =>
         node.type === 'Text' && node.children.includes('Duplicate draft settle'),
     );
     expect(rowTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
     expect(rowTitle.parent?.parent?.parent?.props.style).toMatchObject({ flex: 1, minWidth: 0 });
-    const cardTitle = renderer.root.find(
-      (node: ReactTestInstance) =>
-        node.type === 'Text' && node.children.includes('PR 4 merged, 1 failed'),
-    );
-    expect(cardTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
-    act(() => renderer.root.findByProps({ testID: 'transcript-card-row-corner' }).props.onPress());
-    expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
-    const disclosure = renderer.root.findByProps({ testID: 'notification-run-expand-message' });
-    expect(JSON.stringify(renderer.toJSON())).toContain('2 more');
-    act(() => disclosure.props.onPress());
     expect(
       renderer.root.findAll(
         (node: ReactTestInstance) =>
           node.type === 'Pressable' && /^transcript-card-row-/.test(node.props.testID ?? ''),
       ),
     ).toHaveLength(5);
+    act(() => renderer.root.findByProps({ testID: 'transcript-card-row-corner' }).props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
     act(() => renderer.root.findByProps({ testID: 'transcript-card-row-pr-3' }).props.onPress());
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pr/1133');
     expect(JSON.stringify(renderer.toJSON())).toContain('failed');
     expect(JSON.stringify(renderer.toJSON())).toContain('Less');
+  });
+
+  it('renders an all-green check batch as one folded line and expands its check rows', () => {
+    const renderer = render(
+      <NotificationLifecycleCard
+        message={message({
+          notificationLifecycleRun: {
+            headline: 'Check 2 passed',
+            subline: '11:07 – 11:07',
+            items: [
+              {
+                id: 'build',
+                title: 'Build',
+                state: 'Checks passed',
+                kindLine: 'check',
+                kind: 'check',
+              },
+              {
+                id: 'lint',
+                title: 'Lint',
+                state: 'Checks passed',
+                kindLine: 'check',
+                kind: 'check',
+              },
+            ],
+          },
+        })}
+        onOpenCorner={() => undefined}
+        onOpenUrl={() => undefined}
+      />,
+    );
+    const json = () => JSON.stringify(renderer.toJSON());
+    expect(json()).toContain('Check 2 passed');
+    expect(json()).not.toContain('Build');
+    expect(json()).not.toContain('Lint');
+    expect(json()).not.toContain('11:07 – 11:07');
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-message-disclosure' }).props.onPress(),
+    );
+    expect(json()).toContain('Build');
+    expect(json()).toContain('Lint');
+    expect(json()).toContain('passed');
+  });
+
+  it('shows failed check names inline while passed checks stay folded', () => {
+    const renderer = render(
+      <NotificationLifecycleCard
+        message={message({
+          notificationLifecycleRun: {
+            headline: 'Check 2 passed, 1 failed',
+            subline: '11:07 – 11:08',
+            items: [
+              {
+                id: 'build',
+                title: 'Build',
+                state: 'Checks passed',
+                kindLine: 'check',
+                kind: 'check',
+              },
+              {
+                id: 'lint',
+                title: 'Lint',
+                state: 'Checks failed',
+                kindLine: 'check',
+                kind: 'check',
+                danger: true,
+              },
+              {
+                id: 'test',
+                title: 'Test',
+                state: 'Checks passed',
+                kindLine: 'check',
+                kind: 'check',
+              },
+            ],
+          },
+        })}
+        onOpenCorner={() => undefined}
+        onOpenUrl={() => undefined}
+      />,
+    );
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain('Check 2 passed, 1 failed');
+    expect(json).toContain('Lint');
+    expect(json).not.toContain('Build');
+    expect(json).not.toContain('Test');
   });
 
   it('renders a landed corner as a summary card with its full objective and tappable PR', () => {

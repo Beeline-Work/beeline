@@ -42,7 +42,6 @@ import {
   roomRowNeedsAttention,
   roomRowPreview,
   roomListSections,
-  directMessagePresence,
   NO_ACTIVITY_PREVIEW,
 } from '@/buzz/room-list-row';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
@@ -827,7 +826,6 @@ export default function BuzzChannels() {
             // the same square. The screen renders answers, never re-derives.
             const heading = roomRowName(item);
             const preview = roomRowPreview(item, chatList.viewer.pubkey);
-            const presence = directMessagePresence(item, ageNow);
             const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
             const attention = roomRowNeedsAttention(item);
             const title = `${heading.sigil}${heading.name}`;
@@ -862,30 +860,15 @@ export default function BuzzChannels() {
                         </Text>
                         {heading.name}
                       </Text>
-                      {hasPreview && presence?.dot && (
-                        <View
-                          style={[
-                            styles.presenceDot,
-                            presence.dot === 'working'
-                              ? styles.presenceWorking
-                              : styles.presenceIdle,
-                          ]}
-                          testID={`room-presence-${item.room.id}`}
-                        />
-                      )}
-                      {hasPreview && presence && item.directMessage?.peer.kind === 'human' && (
-                        <Text style={styles.presenceCaption}>{presence.label}</Text>
-                      )}
                     </View>
                     <Text numberOfLines={1} style={styles.preview} testID={`room-preview-${item.room.id}`}>
-                      {!hasPreview && presence ? presence.label : null}
                       {hasPreview && preview.attribution === 'self' && (
                         <Text style={styles.previewSelf}>you: </Text>
                       )}
                       {hasPreview && preview.attribution === 'other' && (
                         <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
                       )}
-                      {hasPreview ? preview.text : presence ? null : preview.text}
+                      {preview.text}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -1226,14 +1209,6 @@ const styles = StyleSheet.create((theme) => {
     },
     // The sigil is the name's first glyph in brass: `@` for a DM, `#` for a Room.
     sigil: { ...Typography.default('semiBold'), color: hull.accent },
-    presenceDot: { width: 7, height: 7, borderRadius: 4 },
-    presenceWorking: { backgroundColor: theme.colors.success },
-    presenceIdle: { backgroundColor: hull.textMuted },
-    presenceCaption: {
-      ...theme.buzz.type.sectionHead,
-      color: hull.textMuted,
-      textTransform: 'uppercase',
-    },
     preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },
     previewSelf: { ...Typography.default(), color: hull.textMuted },
     previewAuthor: { ...Typography.default(), color: hull.accent },

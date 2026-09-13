@@ -129,8 +129,7 @@ function ToolCallLine({ row }: { row: ToolCallRow }) {
   );
 }
 
-function activitySummary(rows: readonly ToolCallRow[], active: boolean): string {
-  const count = rows.length;
+function activitySummary(rows: readonly ToolCallRow[], active: boolean, count: number): string {
   const failures = rows.filter((row) => row.outcome === 'failure').length;
   const head = `${count} TOOL ${count === 1 ? 'CALL' : 'CALLS'}`;
   if (failures) return `${head} · ${failures} FAILED`;
@@ -156,6 +155,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
     const steps = turn.steps.filter((step: TurnActivityAction) => step.kind === 'tool');
     return steps.map((step, index) => toolCallRow(step, active && index === steps.length - 1));
   }, [turn, active]);
+  const toolCallCount = turn.actions.length + turn.noteCount;
   const [expanded, setExpanded] = useState(false);
   // The provisional face and tone, plus this lane's own spacing. One object,
   // memoised, so the markdown renderer's identity check still bails out.
@@ -191,14 +191,14 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
             accessibilityHint={
               expanded ? 'Hides individual tool calls' : 'Shows individual tool calls'
             }
-            accessibilityLabel={activitySummary(rows, active)}
+            accessibilityLabel={activitySummary(rows, active, toolCallCount)}
             accessibilityRole="button"
             accessibilityState={{ busy: active, expanded }}
             onPress={() => setExpanded((value) => !value)}
             style={styles.summaryDisclosure}
             testID="corner-tool-summary"
           >
-            <Text style={styles.summaryLabel}>{activitySummary(rows, active)}</Text>
+            <Text style={styles.summaryLabel}>{activitySummary(rows, active, toolCallCount)}</Text>
             <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
               {expanded ? '⌃' : '⌄'}
             </Text>

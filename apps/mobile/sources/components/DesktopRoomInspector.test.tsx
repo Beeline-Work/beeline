@@ -201,6 +201,8 @@ function props(overrides: Record<string, unknown> = {}) {
     room: room(),
     client: null,
     overlay: false,
+    maximized: false,
+    onToggleMaximize: vi.fn(),
     selectedCornerId: null,
     onSelectCorner: vi.fn(),
     onClose: vi.fn(),
@@ -385,5 +387,59 @@ describe('DesktopRoomInspector work pane', () => {
       tree.root.findByProps({ accessibilityLabel: 'Back to work overview' }).props.onPress();
     });
     expect(onSelectCorner).toHaveBeenCalledWith(null);
+  });
+
+  it('lets a selected corner cockpit maximize over the main pane instead of the side rail', async () => {
+    const onToggleMaximize = vi.fn();
+    const detail = {
+      ...room(),
+      room: corners[0].corner,
+      parent: room().room,
+      messages: [],
+    } as any;
+    const client = { room: vi.fn(async () => detail) } as any;
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({
+            client,
+            overlay: true,
+            selectedCornerId: 'working',
+            onToggleMaximize,
+          })}
+        />,
+      );
+    });
+
+    const notMaximized = tree.root.findByProps({ testID: 'desktop-work-cockpit-maximize' });
+    expect(notMaximized.props.accessibilityLabel).toBe('Maximize corner pane');
+    expect(tree.root.findByProps({ testID: 'desktop-inspector-overlay' })).toBeTruthy();
+    act(() => notMaximized.props.onPress());
+    expect(onToggleMaximize).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({
+            client,
+            overlay: true,
+            maximized: true,
+            selectedCornerId: 'working',
+            onToggleMaximize,
+          })}
+        />,
+      );
+    });
+
+    // Maximized replaces the confined rail/overlay pane with the full frame:
+    // no more narrow overlay testID, no resizer, and the button now offers
+    // to restore rather than maximize.
+    expect(() => tree.root.findByProps({ testID: 'desktop-inspector-overlay' })).toThrow();
+    expect(tree.root.findByProps({ testID: 'desktop-inspector' })).toBeTruthy();
+    expect(() => tree.root.findByProps({ testID: 'desktop-inspector-resizer' })).toThrow();
+    const maximizedButton = tree.root.findByProps({ testID: 'desktop-work-cockpit-maximize' });
+    expect(maximizedButton.props.accessibilityLabel).toBe('Restore corner pane');
   });
 });

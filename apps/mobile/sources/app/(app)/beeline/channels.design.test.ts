@@ -72,50 +72,58 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain('<FlatList');
   });
 
-  it('keeps the empty deck one quiet block with exactly one brass primary', () => {
-    // Captain report C67: two full-width 100pt buttons under centred copy
-    // shouted. The empty state sits in the upper third (the FAB anchors the
-    // bottom), speaks in calm roles, and offers one 44pt content-width brass
-    // button plus a quiet brass text link — never a second box.
-    expect(source).toContain('const EMPTY_PRIMARY_HEIGHT = 44');
+  it('renders the empty deck as one aligned pair of quiet framed buttons', () => {
     expect(styleBlock(source, 'emptyList')).toContain("justifyContent: 'flex-start'");
     expect(styleBlock(source, 'emptyList')).toContain('paddingTop: hull.space.xxl');
     expect(styleBlock(source, 'empty')).toContain("alignItems: 'flex-start'");
+    expect(styleBlock(source, 'empty')).toContain('paddingHorizontal: hull.space.lg');
+    expect(styleBlock(source, 'header')).toContain('paddingHorizontal: hull.space.lg');
     expect(styleBlock(source, 'empty')).not.toMatch(/\bpadding: \d/);
     expect(styleBlock(source, 'emptyTitle')).toContain('...hull.type.body,');
     expect(styleBlock(source, 'emptyTitle')).toContain('color: hull.textPrimary');
     expect(styleBlock(source, 'emptyCopy')).toContain('...hull.type.meta,');
-    expect(styleBlock(source, 'emptyCopy')).toContain('color: hull.textMuted');
-    expect(styleBlock(source, 'emptyActions')).toContain('gap: hull.space.md');
-    expect(styleBlock(source, 'emptyActions')).not.toContain("width: '100%'");
-    expect(styleBlock(source, 'emptyPrimary')).toContain('height: EMPTY_PRIMARY_HEIGHT');
-    expect(styleBlock(source, 'emptyPrimary')).toContain("alignSelf: 'flex-start'");
-    expect(styleBlock(source, 'emptyPrimary')).toContain('backgroundColor: hull.accent');
-    expect(styleBlock(source, 'emptyPrimaryLabel')).toContain('...hull.type.bodyStrong,');
-    expect(styleBlock(source, 'emptyPrimaryLabel')).toContain('color: hull.textInverted');
-    expect(styleBlock(source, 'emptyLink')).not.toMatch(/border|backgroundColor/);
-    expect(styleBlock(source, 'emptyLinkLabel')).toContain('...hull.type.meta,');
-    expect(styleBlock(source, 'emptyLinkLabel')).toContain('color: hull.accent');
-    // No raw sizes and no tracked uppercase anywhere in the empty block.
+    expect(styleBlock(source, 'emptyCopy')).toContain('color: hull.ledgerQuiet');
+    expect(styleBlock(source, 'emptyCopy')).toContain('maxWidth: 330');
+    expect(styleBlock(source, 'emptyActionList')).toContain("flexDirection: 'row'");
+    expect(styleBlock(source, 'emptyActionList')).toContain('gap: 10');
+    expect(styleBlock(source, 'emptyActionList')).toContain('marginTop: hull.space.md');
+    expect(styleBlock(source, 'emptyButton')).toContain('height: 44');
+    expect(styleBlock(source, 'emptyButton')).toContain('paddingHorizontal: hull.space.md');
+    expect(styleBlock(source, 'emptyButton')).toContain('borderWidth: 1');
+    expect(styleBlock(source, 'emptyButton')).toContain('borderColor: hull.borderStrong');
+    expect(styleBlock(source, 'emptyButton')).toContain('borderRadius: 10');
+    expect(styleBlock(source, 'emptyButton')).not.toContain('backgroundColor');
+    expect(styleBlock(source, 'emptyButtonPressed')).toContain('backgroundColor: hull.bgPressed');
+    expect(styleBlock(source, 'emptyPrimaryLabel')).toContain("Typography.ledger('medium')");
+    expect(styleBlock(source, 'emptyPrimaryLabel')).toContain('color: hull.accent');
+    expect(styleBlock(source, 'emptySecondaryLabel')).toContain('...Typography.ledger()');
+    expect(styleBlock(source, 'emptySecondaryLabel')).toContain('color: hull.ledgerQuiet');
     for (const name of [
       'empty',
       'emptyTitle',
       'emptyCopy',
-      'emptyActions',
-      'emptyPrimary',
+      'emptyActionList',
+      'emptyButton',
+      'emptyButtonPressed',
       'emptyPrimaryLabel',
-      'emptyLink',
-      'emptyLinkLabel',
+      'emptySecondaryLabel',
     ]) {
-      expect(styleBlock(source, name), name).not.toMatch(/fontSize|letterSpacing|textTransform/);
+      expect(styleBlock(source, name), name).not.toMatch(
+        /fontSize:\s*\d|letterSpacing|textTransform/,
+      );
     }
     const emptyDeck = source.slice(
-      source.indexOf('ListEmptyComponent='),
-      source.indexOf('renderItem='),
+      source.indexOf('function EmptyRoomActions'),
+      source.indexOf('function firstParam'),
+    );
+    expect(emptyDeck).toContain('>No Rooms yet</Text>');
+    expect(emptyDeck).toContain(
+      'A Room holds one repository and the people and agents working on it.',
     );
     expect(emptyDeck).toContain('>Start a Room</Text>');
-    expect(emptyDeck).toContain('>Invite an agent</Text>');
-    expect(emptyDeck).toContain('accessibilityRole="link"');
+    expect(emptyDeck).toContain('>Connect an agent</Text>');
+    expect(emptyDeck.match(/accessibilityRole="button"/g)).toHaveLength(2);
+    expect(emptyDeck.match(/styles\.emptyButtonPressed/g)).toHaveLength(2);
     expect(emptyDeck).not.toContain('<MonoButton');
     expect(emptyDeck).not.toMatch(/[A-Z]{2,} [A-Z]{2,}/);
   });
@@ -303,7 +311,10 @@ describe('Room list layout contract', () => {
       '<TouchableOpacity',
       source.indexOf('testID={`room-corner-${corner.corner.id}`}'),
     );
-    const phoneRow = source.slice(phoneRowStart, source.indexOf('</TouchableOpacity>', phoneRowStart));
+    const phoneRow = source.slice(
+      phoneRowStart,
+      source.indexOf('</TouchableOpacity>', phoneRowStart),
+    );
     expect(phoneRow).not.toContain('cornerEndcap');
     expect(phoneRow.match(/<Text\b/g)).toHaveLength(3);
     expect(styleBlock(source, 'cornerRow')).toContain("alignItems: 'center'");

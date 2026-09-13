@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { runServerReleaseSmoke } from './server-release-smoke.mjs';
 
-test('waits through a slow boot and then proves an authenticated Room read', async (t) => {
+test('waits through a slow boot and uses a Room from the first Workspace that has one', async (t) => {
   let healthAttempts = 0;
   const server = createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
@@ -28,7 +28,8 @@ test('waits through a slow boot and then proves an authenticated Room read', asy
     else if (request.url === '/v1/auth/review/exchange')
       response.end('{"accessToken":"phone_test"}');
     else if (request.url === '/v1/phone/workspaces')
-      response.end('{"workspaces":[{"id":"workspace"}]}');
+      response.end('{"workspaces":[{"id":"empty"},{"id":"workspace"}]}');
+    else if (request.url === '/v1/phone/workspaces/empty/chats') response.end('{"chats":[]}');
     else if (request.url === '/v1/phone/workspaces/workspace/chats')
       response.end('{"chats":[{"room":{"id":"room"}}]}');
     else if (request.url === '/v1/phone/rooms/room')
@@ -51,4 +52,44 @@ test('waits through a slow boot and then proves an authenticated Room read', asy
   assert.equal(healthAttempts, 4);
   assert.equal(result.roomId, 'room');
   assert.ok(result.roomReadMs < 2_000);
+});
+
+test('fails when no Workspace has a Room', async (t) => {
+  const server = createServer((request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/health')
+      response.end(
+        JSON.stringify({
+          ok: true,
+          database: {
+            pool: { size: 5, inUse: 1, waiting: 0 },
+            oldestActiveQueryAgeMs: null,
+          },
+        }),
+      );
+    else if (request.url === '/version') response.end('{"version":"v1.2.3","sourceSha":"abc"}');
+    else if (request.url === '/v1/auth/review/exchange')
+      response.end('{"accessToken":"phone_test"}');
+    else if (request.url === '/v1/phone/workspaces')
+      response.end('{"workspaces":[{"id":"first"},{"id":"second"}]}');
+    else if (request.url === '/v1/phone/workspaces/first/chats') response.end('{"chats":[]}');
+    else if (request.url === '/v1/phone/workspaces/second/chats')
+      response.end('{"chats":[{"room":{"id":null}}]}');
+    else response.writeHead(404).end('{}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+
+  await assert.rejects(
+    runServerReleaseSmoke({
+      origin: `http://127.0.0.1:${port}`,
+      expectedVersion: 'v1.2.3',
+      expectedSha: 'abc',
+      reviewSecret: 'review-secret',
+      bootBudgetMs: 2_000,
+      pollIntervalMs: 5,
+    }),
+    /review identity has no Room in any Workspace/,
+  );
 });

@@ -8,6 +8,10 @@ import { describe, expect, it } from 'vitest';
  * `no-foreground-blocking.test.ts` uses for the hydration contract.
  */
 const chatSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const subtitleSource = readFileSync(
+  new URL('../../../../components/buzz/RoomRepositorySubtitle.tsx', import.meta.url),
+  'utf8',
+);
 
 function blockFrom(source: string, marker: string, label: string): string {
   const start = source.indexOf(marker);
@@ -26,21 +30,26 @@ function blockFrom(source: string, marker: string, label: string): string {
 
 describe('Room→repo header chip', () => {
   it('renders only for a Room with a bound repo, never a corner', () => {
-    const chipIndex = chatSource.indexOf('testID="room-repo-chip"');
-    expect(chipIndex).toBeGreaterThanOrEqual(0);
-    const guardStart = chatSource.lastIndexOf('{!isCorner && roomRepository &&', chipIndex);
-    expect(
-      guardStart,
-      'repo chip must be gated on !isCorner && roomRepository',
-    ).toBeGreaterThanOrEqual(0);
-    expect(guardStart).toBeLessThan(chipIndex);
+    const subtitleIndex = chatSource.indexOf('<RoomRepositorySubtitle');
+    expect(subtitleIndex).toBeGreaterThanOrEqual(0);
+    const guardStart = chatSource.lastIndexOf('{!isCorner && (', subtitleIndex);
+    expect(guardStart, 'repo subtitle must be gated on !isCorner').toBeGreaterThanOrEqual(0);
+    expect(guardStart).toBeLessThan(subtitleIndex);
+    expect(subtitleSource).toContain('if (!name) return null;');
   });
 
   it('shows the bare repo slug — no "REPO" label prefix', () => {
     // Owner trim (2026-08-23): the URL/slug already says what it is.
-    const chip = blockFrom(chatSource, 'testID="room-repo-chip"', 'room repo chip');
-    expect(chip).toContain('roomRepoChipLabel(roomRepository)');
-    expect(chip).not.toMatch(/\bREPO\b/);
+    expect(chatSource).toContain('repositoryName={roomRepoChipLabel(roomRepository)}');
+    expect(subtitleSource).toContain('{name}</HeaderMetaCaps>');
+    expect(subtitleSource).not.toMatch(/>REPO</);
+  });
+
+  it('routes the repository subtitle through the transcript URL opener, not Room settings', () => {
+    expect(chatSource).toContain('onOpenUrl={handleOpenGitHubEvent}');
+    expect(chatSource).toContain('repositoryName={roomRepoChipLabel(roomRepository)}');
+    const subtitle = blockFrom(chatSource, '<RoomRepositorySubtitle', 'Room repository subtitle');
+    expect(subtitle).not.toContain('setRoomActionsVisible(true)');
   });
 
   it('uses the server-indexed tri-state rather than treating every loaded surface as none', () => {

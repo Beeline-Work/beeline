@@ -244,17 +244,18 @@ export async function joinRooms(
         workspaceId: input.workspaceId,
         excludeRecipientIds: [input.identityId],
         ...line,
+        kind: undefined,
         cardType: 'workspace-member-joined',
       });
     }
     // A Workspace arrival is also a Room arrival when the public-Room
-    // projection adds it. Keep that ledger fact in the Room without turning a
-    // Workspace-scoped join into a subscribed Room event.
+    // projection adds it. The shared Room line owns the subscribed event;
+    // the Workspace-level announcement above is an unkinded ledger fact, so
+    // one arrival cannot wake the same Room subscriber twice.
     for (const roomId of roomIds)
       await systemLine(transaction, {
         roomId,
         ...line,
-        ...(input.workspaceJoined ? { kind: undefined } : {}),
       });
 
     const notificationId = `workspace-join:${randomUUID()}`;

@@ -90,6 +90,7 @@ import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
   desktopLayoutMode,
@@ -2017,12 +2018,14 @@ export default function BuzzChat() {
       const agentDisplay = isAgent
         ? resolveAgentDisplayIdentity(message.pubkey ?? 'unknown-agent', knownAgent)
         : undefined;
-      const canonicalAgentHandle = isAgent
-        ? (message.authorIdentity?.handle ?? knownAgent?.handle)
-        : undefined;
-      const personName = message.pubkey
-        ? personProfileByPubkey.get(message.pubkey)?.name
-        : undefined;
+      const personProfile = message.pubkey ? personProfileByPubkey.get(message.pubkey) : undefined;
+      const canonicalAuthorHandle =
+        message.authorIdentity?.handle ??
+        (isAgent
+          ? knownAgent?.handle
+          : (personProfile?.handle ??
+            (message.pubkey ? fallbackMemberHandle(message.pubkey) : undefined)));
+      const personName = personProfile?.name;
       const attachmentPreview = message.attachments?.[0]?.name;
       return {
         // A reconciled draft/final bubble's display `id` is a synthetic
@@ -2035,7 +2038,7 @@ export default function BuzzChat() {
             agentDisplay?.name ??
             personName ??
             fallbackMemberName(message.pubkey ?? '')),
-        ...(canonicalAgentHandle ? { authorHandle: canonicalAgentHandle } : {}),
+        ...(canonicalAuthorHandle ? { authorHandle: canonicalAuthorHandle } : {}),
         ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
         isAgent,
         preview: message.text.trim() || attachmentPreview || 'Attachment',
@@ -3282,6 +3285,7 @@ export default function BuzzChat() {
             viewerPubkey={cacheViewerPubkey}
             viewerRole={viewerChannelRole}
             actionId={permissionActionId}
+            targetBranch={roomRepository?.targetBranch}
             onDecision={handleWritePermission}
             onOpenCorner={openCorner}
           />
@@ -3310,6 +3314,11 @@ export default function BuzzChat() {
         return (
           <TargetBranchProposalCard
             message={item}
+            agent={
+              item.targetBranchProposal.agentPubkey
+                ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
+                : undefined
+            }
             currentTargetBranch={roomRepository?.targetBranch}
             canManageWorkspace={canManageWorkspace}
             viewerIsAgent={viewerIsAgent}
@@ -3605,24 +3614,17 @@ export default function BuzzChat() {
                   // A corner's name is its objective verbatim; let it wrap once
                   // rather than truncate to a slug fragment.
                   numberOfLines={isCorner ? 2 : 1}
+                  onPress={
+                    !isCorner && !isDirectMessage ? () => setRoomActionsVisible(true) : undefined
+                  }
                   title={displayHeaderTitle}
                 />
               )}
-              {!isCorner && roomRepository && (
-                <TouchableOpacity
-                  accessibilityLabel={`Repo ${roomRepoChipLabel(roomRepository)}. ${
-                    canManageWorkspace ? 'View or change it' : 'View it'
-                  }`}
-                  accessibilityRole="button"
-                  hitSlop={{ top: 6, bottom: 3, left: 12, right: 12 }}
-                  onPress={() => setRoomActionsVisible(true)}
-                  style={styles.repoChip}
-                  testID="room-repo-chip"
-                >
-                  <HeaderMetaCaps testID="room-repo-chip-text">
-                    {roomRepoChipLabel(roomRepository)}
-                  </HeaderMetaCaps>
-                </TouchableOpacity>
+              {!isCorner && (
+                <RoomRepositorySubtitle
+                  onOpenUrl={handleOpenGitHubEvent}
+                  repositoryName={roomRepoChipLabel(roomRepository)}
+                />
               )}
               {isCorner ? (
                 <HeaderMetaRow>
@@ -3999,57 +4001,6 @@ export default function BuzzChat() {
                   </TouchableOpacity>
                 </View>
               )}
-              {replyTarget && (
-                <View style={styles.replyComposerBanner} testID="reply-composer-banner">
-                  <View style={styles.replyComposerCopy}>
-                    <Text numberOfLines={1} style={styles.replyComposerLabel}>
-                      ↩ REPLYING TO {replyTarget.authorName.toUpperCase()}
-                    </Text>
-                    <Text numberOfLines={2} style={styles.replyComposerPreview}>
-                      {replyTarget.preview}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    accessibilityLabel="Cancel reply"
-                    accessibilityRole="button"
-                    onPress={() => setReplyTarget(null)}
-                    style={styles.replyComposerCancel}
-                    testID="reply-composer-cancel"
-                  >
-                    <Text style={styles.replyComposerCancelText}>×</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-              {pendingAttachments.map((attachment, index) => (
-                <View
-                  key={`${attachment.uri}:${index}`}
-                  style={styles.pendingAttachment}
-                  testID={`pending-chat-attachment-${index}`}
-                >
-                  <View style={styles.pendingAttachmentCopy}>
-                    <Text numberOfLines={1} style={styles.pendingAttachmentName}>
-                      {attachment.name}
-                    </Text>
-                    <Text style={styles.pendingAttachmentMeta}>
-                      {sending ? 'UPLOADING' : formatAttachmentSize(attachment.size)}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    accessibilityLabel={`Remove ${attachment.name}`}
-                    accessibilityRole="button"
-                    disabled={sending}
-                    onPress={() =>
-                      setPendingAttachments((current) =>
-                        current.filter((_, attachmentIndex) => attachmentIndex !== index),
-                      )
-                    }
-                    style={styles.pendingAttachmentRemove}
-                    testID={`pending-chat-attachment-remove-${index}`}
-                  >
-                    <Text style={styles.pendingAttachmentRemoveText}>×</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
               {/* Keep this in the composer stack, directly above the field. A
                 growing multiline field then takes room from the transcript,
                 never from the only live progress signal. */}
@@ -4112,6 +4063,27 @@ export default function BuzzChat() {
                 stopKey={composerAck?.turnKey}
                 stopping={stoppingThisTurn}
                 inputRef={composerRef}
+                reply={
+                  replyTarget
+                    ? {
+                        handle: replyTarget.authorHandle ?? replyTarget.authorName,
+                        preview: replyTarget.preview,
+                      }
+                    : undefined
+                }
+                onCancelReply={() => setReplyTarget(null)}
+                attachments={pendingAttachments.map((attachment) => ({
+                  uri: attachment.uri,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeLabel: formatAttachmentSize(attachment.size),
+                }))}
+                attachmentsUploading={sending}
+                onRemoveAttachment={(index) =>
+                  setPendingAttachments((current) =>
+                    current.filter((_, attachmentIndex) => attachmentIndex !== index),
+                  )
+                }
                 value={inputText}
                 height={composerHeight}
                 maxHeight={COMPOSER_MAX_HEIGHT}
@@ -4674,7 +4646,6 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
     },
     cornerChannelNameSkeleton: { width: 108 },
-    repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
     // The one thing on the corner's meta row with unbounded length, so it is
     // the one that gives: an unshrinkable name pushed the member count off
     // the right edge.
@@ -5151,44 +5122,6 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 12,
       letterSpacing: 0.4,
     },
-    replyComposerBanner: {
-      minWidth: 0,
-      minHeight: 48,
-      marginBottom: 6,
-      paddingLeft: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderLeftWidth: 3,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    replyComposerCopy: { flex: 1, minWidth: 0, paddingVertical: 7 },
-    replyComposerLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 9,
-      lineHeight: 13,
-      letterSpacing: 0.35,
-    },
-    replyComposerPreview: {
-      ...Typography.default(),
-      marginTop: 2,
-      color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    replyComposerCancel: {
-      width: 44,
-      minHeight: 46,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    replyComposerCancelText: {
-      ...Typography.default(),
-      color: groknight.textSecondary,
-      fontSize: 20,
-    },
     repoPromptBanner: {
       minWidth: 0,
       marginBottom: 6,
@@ -5221,41 +5154,6 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.mono(),
       color: groknight.textSecondary,
       fontSize: 11,
-    },
-    pendingAttachment: {
-      minWidth: 0,
-      minHeight: 44,
-      marginBottom: 6,
-      paddingLeft: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    pendingAttachmentCopy: { flex: 1, minWidth: 0 },
-    pendingAttachmentName: {
-      ...Typography.default('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    pendingAttachmentMeta: {
-      ...Typography.mono(),
-      color: groknight.textMuted,
-      fontSize: 8,
-      lineHeight: 11,
-    },
-    pendingAttachmentRemove: {
-      width: 44,
-      height: 44,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    pendingAttachmentRemoveText: {
-      ...Typography.default(),
-      color: groknight.textSecondary,
-      fontSize: 20,
     },
     archivedInputBar: {
       paddingHorizontal: 16,

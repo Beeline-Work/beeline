@@ -230,7 +230,13 @@ jobs:
         run: |
           set -euo pipefail
           key_path="$RUNNER_TEMP/AuthKey_${MACOS_ASC_KEY_ID}.p8"
-          printf '%s' "$MACOS_ASC_API_KEY_P8" | openssl base64 -d -A > "$key_path"
+          # Match the native release's decoder. Unlike `openssl base64 -A`,
+          # this accepts the wrapped base64 representation already stored in
+          # EXPO_ASC_API_KEY_P8.
+          printf '%s\n' "$MACOS_ASC_API_KEY_P8" | base64 -d > "$key_path"
+          grep -q '^-----BEGIN PRIVATE KEY-----$' "$key_path" || {
+            echo '::error::EXPO_ASC_API_KEY_P8 did not decode to an App Store Connect private key'; exit 1;
+          }
           chmod 600 "$key_path"
           write_env() {
             delimiter="BEELINE_$(openssl rand -hex 16)"

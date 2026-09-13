@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>TranscriptCard implementation proof</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #14091a;
+        --raised: #190e21;
+        --highlight: #1e1326;
+        --pressed: #271c31;
+        --border: #291e33;
+        --strong: #3b3048;
+        --turn: #1b1024;
+        --primary: #f0f0f3;
+        --secondary: #c9c9d1;
+        --quiet: #83838d;
+        --ghost: #6c6c76;
+        --brass: #b08a4a;
+        --red: #f85149;
+        --sans: 'Space Grotesk', system-ui, sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--primary);
+        font: 16px/1.45 var(--sans);
+      }
+      .app {
+        min-height: 100vh;
+        display: flex;
+      }
+      .rail {
+        display: none;
+        width: 280px;
+        border-right: 1px solid var(--border);
+        padding: 28px 20px;
+      }
+      .rail b {
+        font-size: 22px;
+      }
+      .rail i {
+        color: var(--brass);
+        font-style: normal;
+      }
+      .room {
+        margin-top: 30px;
+        padding: 12px 14px;
+        background: var(--highlight);
+      }
+      .room small {
+        color: var(--quiet);
+      }
+      main {
+        width: 100%;
+        min-width: 0;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      header b {
+        font-size: 22px;
+      }
+      header b i {
+        color: var(--brass);
+        font-style: normal;
+      }
+      header small {
+        display: block;
+        color: var(--quiet);
+        font-size: 13px;
+      }
+      header .dots {
+        margin-left: auto;
+        color: var(--secondary);
+      }
+      .transcript {
+        max-width: 760px;
+        margin: auto;
+        padding: 6px 16px 92px;
+      }
+      .turn {
+        border-top: 1px solid var(--turn);
+        padding: 16px 0 6px;
+      }
+      .turn:first-child {
+        border: 0;
+      }
+      .by {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .tile {
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        border-radius: 3px;
+        background: var(--strong);
+      }
+      .tile.agent {
+        background: #8a6a3a;
+        color: var(--bg);
+      }
+      .stamp {
+        margin-left: auto;
+        font: 13px var(--mono);
+        color: var(--quiet);
+        font-variant-numeric: tabular-nums;
+      }
+      .mention {
+        color: var(--brass);
+      }
+      .system {
+        display: flex;
+        gap: 10px;
+        padding: 10px 0;
+        color: var(--quiet);
+        font-size: 13px;
+      }
+      .system .stamp {
+        font-size: 12px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        margin: 8px 0 12px;
+        overflow: hidden;
+      }
+      .card.ask {
+        background: var(--raised);
+        border-color: var(--strong);
+      }
+      .head {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 14px 16px 0;
+      }
+      .headcopy {
+        flex: 1;
+        min-width: 0;
+      }
+      .titleline {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      h2 {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+        color: var(--primary);
+        font-size: 16px;
+        line-height: 1.35;
+        font-weight: 600;
+      }
+      h2 .mention {
+        font-weight: 500;
+      }
+      .sub {
+        margin-top: 2px;
+        color: var(--quiet);
+        font-size: 13px;
+      }
+      .body {
+        padding: 8px 16px 0;
+        color: var(--secondary);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .body.quiet {
+        color: var(--quiet);
+      }
+      .rows {
+        margin-top: 10px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        padding: 10px 16px;
+        border-top: 1px solid var(--border);
+      }
+      .state {
+        font: 500 10px/1.6 var(--mono);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--quiet);
+      }
+      .state.waiting {
+        color: var(--brass);
+      }
+      .state.failed {
+        color: var(--red);
+      }
+      .rowtitle {
+        color: var(--primary);
+        font-size: 15px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .kind {
+        color: var(--ghost);
+        font: 12px/1.5 var(--mono);
+      }
+      .code {
+        margin: 10px 16px 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--highlight);
+        color: var(--secondary);
+        font: 13px/1.5 var(--mono);
+      }
+      .ask .code {
+        background: var(--pressed);
+      }
+      .path {
+        display: block;
+        color: var(--quiet);
+        font-size: 12px;
+      }
+      .footer {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 22px;
+        margin-top: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+        font-size: 15px;
+      }
+      .note {
+        margin-right: auto;
+        color: var(--quiet);
+        font: 500 10px/1.6 var(--mono);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      .action {
+        color: var(--quiet);
+      }
+      .action.primary {
+        color: var(--brass);
+        font-weight: 500;
+      }
+      .composer {
+        position: fixed;
+        z-index: 2;
+        left: 12px;
+        right: 12px;
+        bottom: 14px;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+        color: var(--quiet);
+      }
+      .composer .send {
+        margin-left: auto;
+      }
+      @media (min-width: 900px) {
+        .rail {
+          display: block;
+        }
+        main {
+          width: calc(100% - 280px);
+        }
+        .transcript {
+          padding-top: 24px;
+        }
+        .composer {
+          left: calc(280px + (100vw - 280px - 760px) / 2 + 12px);
+          right: calc((100vw - 280px - 760px) / 2 + 12px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail">
+        <b><i>⌁</i> Beeline</b>
+        <div class="room">#beeline<br /><small>card-system proof</small></div>
+      </aside>
+      <main>
+        <header>
+          <span>‹</span>
+          <div>
+            <b><i>#</i>beeline</b><small>Beeline-Work/beeline</small>
+          </div>
+          <span class="dots">•••</span>
+        </header>
+        <section class="transcript">
+          <div class="turn">
+            <div class="by">
+              <span class="tile">◔</span><span>MoonScannerAI</span><span class="stamp">18:10</span>
+            </div>
+            <span class="mention">@hoots</span> yes go open the corner
+          </div>
+          <article class="card">
+            <div class="head">
+              <div class="headcopy">
+                <div class="titleline">
+                  <h2>iOS Push Notifications</h2>
+                  <span class="stamp">18:10</span>
+                </div>
+                <div class="sub">corner · opened by <span class="mention">@hoots</span></div>
+              </div>
+            </div>
+            <div class="body">
+              Build APNs-based push registration for iOS mirroring the existing Android FCM flow.
+            </div>
+            <div class="footer"><span class="action primary">Open →</span></div>
+          </article>
+          <article class="card">
+            <div class="head">
+              <div class="headcopy">
+                <h2>PR 1 merged</h2>
+                <div class="sub">by <span class="mention">@sol</span> · 18:11 – 18:43</div>
+              </div>
+            </div>
+            <div class="rows">
+              <div class="row">
+                <span class="state">merged</span>
+                <div>
+                  <div class="rowtitle">iOS Composer Fix</div>
+                  <div class="kind">corner · PR #1156</div>
+                </div>
+              </div>
+            </div>
+            <div class="footer">
+              <span class="action">Corner →</span><span class="action primary">View ↗</span>
+            </div>
+          </article>
+          <article class="card">
+            <div class="head">
+              <div class="headcopy">
+                <h2>PR 7 merged, 2 opened</h2>
+                <div class="sub">
+                  by <span class="mention">@lunchboxfortwo</span>,
+                  <span class="mention">@hoots</span> · 19:04 – 20:02
+                </div>
+              </div>
+            </div>
+            <div class="rows">
+              <div class="row">
+                <span class="state">merged</span>
+                <div>
+                  <div class="rowtitle">fix(body): guard corner push branches</div>
+                  <div class="kind">PR #1160</div>
+                </div>
+              </div>
+              <div class="row">
+                <span class="state">merged</span>
+                <div>
+                  <div class="rowtitle">fix(mobile): shorten grouped corner labels</div>
+                  <div class="kind">PR #1158</div>
+                </div>
+              </div>
+              <div class="row">
+                <span class="state waiting">opened</span>
+                <div>
+                  <div class="rowtitle">fix(mobile): simplify the add-agent sheet</div>
+                  <div class="kind">PR #1162</div>
+                </div>
+              </div>
+            </div>
+            <div class="footer"><span class="action primary">6 more</span></div>
+          </article>
+          <article class="card">
+            <div class="head">
+              <div class="headcopy">
+                <h2>Workflow 3 ran, 2 succeeded, 1 failed</h2>
+                <div class="sub">Unified production release · 21:21 – 21:36</div>
+              </div>
+            </div>
+            <div class="rows">
+              <div class="row">
+                <span class="state failed">failed</span>
+                <div>
+                  <div class="rowtitle">Unified production release</div>
+                  <div class="kind">run #4127 · smoke check</div>
+                </div>
+              </div>
+              <div class="row">
+                <span class="state">succeeded</span>
+                <div>
+                  <div class="rowtitle">Unified production release</div>
+                  <div class="kind">run #4128 · v0.0.97</div>
+                </div>
+              </div>
+            </div>
+            <div class="footer"><span class="action primary">1 more</span></div>
+          </article>
+          <div class="system">
+            <span><span class="mention">@giselle703</span> joined</span
+            ><span class="stamp">19:22</span>
+          </div>
+          <article class="card ask">
+            <div class="head">
+              <span class="tile agent">◈</span>
+              <div class="headcopy">
+                <div class="titleline">
+                  <h2><span class="mention">@hoots</span> asks to open an edit corner</h2>
+                  <span class="stamp">19:40</span>
+                </div>
+                <div class="sub">Add the reviewer row to the Room sheet</div>
+              </div>
+            </div>
+            <div class="code">Beeline-Work/beeline · main</div>
+            <div class="body quiet">
+              Opening a corner gives the agent a branch, not merge authority. A person still
+              approves the merge.
+            </div>
+            <div class="footer">
+              <span class="note">owner confirmation</span><span class="action">Deny</span
+              ><span class="action primary">Allow</span>
+            </div>
+          </article>
+          <article class="card ask">
+            <div class="head">
+              <span class="tile agent">◈</span>
+              <div class="headcopy">
+                <div class="titleline">
+                  <h2><span class="mention">@sol</span> asks you</h2>
+                  <span class="stamp">19:41</span>
+                </div>
+                <div class="sub">run a script · fix the stale release smoke check</div>
+              </div>
+            </div>
+            <div class="code">
+              <span class="path">scripts/smoke.sh</span>curl -sf $URL/health || exit 1
+            </div>
+            <div class="footer">
+              <span class="action">No</span><span class="action">Once</span
+              ><span class="action primary">Always</span>
+            </div>
+          </article>
+          <article class="card">
+            <div class="head">
+              <div class="headcopy">
+                <div class="titleline">
+                  <h2><span class="mention">@hoots</span> asked to change the target branch</h2>
+                  <span class="stamp">19:44</span>
+                </div>
+              </div>
+            </div>
+            <div class="code">main → release/0.0.98</div>
+            <div class="footer"><span class="note">confirmed by @lunchboxfortwo</span></div>
+          </article>
+        </section>
+        <div class="composer"><span>+</span><span>Message</span><span class="send">↑</span></div>
+      </main>
+    </div>
+  </body>
+</html>

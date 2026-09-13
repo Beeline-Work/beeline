@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Platform, Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -14,7 +14,7 @@ import type { MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
-import { grantAskLine, grantOutcomeLine } from '@/buzz/agent-grant-copy';
+import { grantAskLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
@@ -24,6 +24,7 @@ import {
 } from '@/buzz/draft-settle';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { ledgerStamp } from '@/buzz/relative-time';
+import { formatNotificationHeadlines } from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
@@ -43,11 +44,28 @@ import {
   LedgerSteer,
   type LedgerByline,
 } from '@/components/buzz/Ledger';
-import { HullSurface, MonoButton, NewMessageMaterialize } from '@/components/buzz/MonoHull';
-import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
+import { MonoButton, NewMessageMaterialize } from '@/components/buzz/MonoHull';
+import {
+  TranscriptCard,
+  TranscriptCardHandle,
+  type TranscriptCardAction,
+  type TranscriptCardRow,
+} from '@/components/buzz/TranscriptCard';
 import { forwardedMessageParts } from '@/buzz/message-forward';
 
 type WriteDecision = 'allow' | 'deny';
+
+function cardMeta(text: string): React.ReactNode {
+  return text.split(/(@[a-z0-9_-]+)/gi).map((part, index) =>
+    part.startsWith('@') ? (
+      <TranscriptCardHandle key={`${part}-${index}`} meta>
+        {part}
+      </TranscriptCardHandle>
+    ) : (
+      part
+    ),
+  );
+}
 
 export interface WritePermissionCardProps {
   message: ChatDisplayMessage;
@@ -56,6 +74,7 @@ export interface WritePermissionCardProps {
   viewerPubkey: string;
   viewerRole: 'owner' | 'admin' | 'member' | null;
   actionId: string | null;
+  targetBranch?: string;
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
   onOpenCorner(cornerId: string): void;
 }
@@ -67,6 +86,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   viewerPubkey,
   viewerRole,
   actionId,
+  targetBranch,
   onDecision,
   onOpenCorner,
 }: WritePermissionCardProps) {
@@ -80,89 +100,94 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
     (viewerPubkey === permission.requesterPubkey ||
       viewerRole === 'admin' ||
       viewerRole === 'owner');
+  const footerNote = pending
+    ? !permission.repository
+      ? 'missing target'
+      : squireSpending && viewerRole !== 'owner'
+        ? 'owner confirmation'
+        : !canDecide
+          ? 'requester or room admin'
+          : 'owner confirmation'
+    : permission.status === 'allowed'
+      ? 'allowed once'
+      : permission.status === 'denied'
+        ? 'denied'
+        : permission.status === 'failed'
+          ? 'corner could not open'
+          : 'request expired';
+  const actions: TranscriptCardAction[] =
+    pending && canDecide && permission.repository && (!squireSpending || viewerRole === 'owner')
+      ? [
+          {
+            label: 'Deny',
+            disabled: busy,
+            onPress: () => onDecision(message, 'deny'),
+            testID: 'write-permission-deny',
+          },
+          {
+            label: 'Allow',
+            primary: true,
+            disabled: busy,
+            loading: busy,
+            onPress: () => onDecision(message, 'allow'),
+            testID: 'write-permission-allow',
+          },
+        ]
+      : !pending && permission.status === 'allowed' && permission.subchannelId
+        ? [
+            {
+              label: 'Open →',
+              primary: true,
+              accessibilityRole: 'link',
+              onPress: () => onOpenCorner(permission.subchannelId!),
+              testID: 'write-permission-open-corner',
+            },
+          ]
+        : [];
   return (
-    <HullSurface
-      strength="raised"
-      style={styles.permissionCard}
+    <TranscriptCard
+      tier={pending ? 'ask' : 'record'}
       testID={`write-permission-${permission.status}`}
-    >
-      <View style={styles.permissionHeading}>
+      identity={
         <IdentityMark
           kind="agent"
           seed={display.avatarSeed ?? permission.agentPubkey}
           avatarUrl={display.avatarUrl}
           face={display.face}
           name={display.name}
-          size={30}
+          size={26}
         />
-        <View style={styles.permissionCopy}>
-          <Text style={styles.permissionTitle}>
-            {squireSpending
-              ? `${display.name} requests owner confirmation`
-              : permission.repository
-                ? `${display.name} requests a new edit corner`
-                : `${display.name} needs to change repository files`}
-          </Text>
-          <Text style={styles.permissionIntent} numberOfLines={2}>
-            {describeWriteRequest(permission.tool)}
-          </Text>
-        </View>
-      </View>
-      {permission.repository && !squireSpending ? (
-        <Text style={styles.permissionRepository} testID="write-permission-repository">
-          EDIT CORNER ON {permission.repository}
-        </Text>
-      ) : null}
-      <Text style={styles.permissionBoundary}>
-        {squireSpending
+      }
+      title={
+        <>
+          <TranscriptCardHandle>@{display.name.replace(/^@/, '')}</TranscriptCardHandle>{' '}
+          {squireSpending ? 'asks for spending approval' : 'asks to open an edit corner'}
+        </>
+      }
+      subline={describeWriteRequest(permission.tool)}
+      stamp={ledgerStamp(message.timestamp)}
+      code={
+        permission.repository
+          ? `${permission.repository}${targetBranch ? ` · ${targetBranch}` : ''}`
+          : undefined
+      }
+      body={
+        squireSpending
           ? 'Trusty Squire stays in its vault-backed process. Only the Room owner can confirm this spending or checkout-capable action.'
           : permission.repository
-            ? `The write is refused here. Allowing grants isolated edit access to exactly ${permission.repository}; merge authority stays human-only.`
-            : 'This write request is missing its repository target and cannot be allowed.'}
-      </Text>
-      {permission.status === 'failed' ? (
-        <Text style={styles.permissionFailure}>
-          The requested edit could not start. This Room remains read-only.
-        </Text>
-      ) : null}
-      {pending &&
-      canDecide &&
-      permission.repository &&
-      (!squireSpending || viewerRole === 'owner') ? (
-        <View style={styles.permissionActions}>
-          <MonoButton
-            label="Deny"
-            variant="secondary"
-            disabled={busy}
-            onPress={() => onDecision(message, 'deny')}
-            style={styles.permissionButton}
-          />
-          <MonoButton
-            label={squireSpending ? 'Confirm Squire action' : 'Open edit corner'}
-            loading={busy}
-            onPress={() => onDecision(message, 'allow')}
-            style={styles.permissionButton}
-          />
-        </View>
-      ) : pending && !viewerIsAgent && squireSpending ? (
-        <Text style={styles.permissionStatus}>ROOM OWNER CONFIRMATION REQUIRED</Text>
-      ) : pending && !viewerIsAgent && permission.repository && !canDecide ? (
-        <Text style={styles.permissionStatus} testID="corner-approval-audience-wait">
-          REQUESTER OR ROOM ADMIN APPROVAL REQUIRED
-        </Text>
-      ) : pending && !viewerIsAgent ? (
-        <Text style={styles.permissionStatus}>MISSING TARGET · CANNOT APPROVE</Text>
-      ) : (
-        <WritePermissionOutcome
-          status={permission.status}
-          subchannelId={permission.subchannelId}
-          awaitingPerson={viewerIsAgent && pending}
-          onOpen={
-            permission.subchannelId ? () => onOpenCorner(permission.subchannelId!) : undefined
-          }
-        />
-      )}
-    </HullSurface>
+            ? 'Opening a corner gives the agent a branch, not merge authority. A person still approves the merge.'
+            : 'This write request is missing its repository target and cannot be allowed.'
+      }
+      quietBody
+      footerNote={footerNote}
+      footerNoteTestID={
+        pending && permission.repository && !canDecide ? 'corner-approval-audience-wait' : undefined
+      }
+      footerNoteTone={
+        permission.status === 'failed' || (pending && !permission.repository) ? 'failed' : 'quiet'
+      }
+      actions={actions}
+    />
   );
 });
 
@@ -208,95 +233,89 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
     (viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
   const anyPending = request.grants.some((grant) => grant.status === 'pending');
   return (
-    <HullSurface
-      strength="raised"
-      style={styles.permissionCard}
-      testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}
-    >
-      <View style={styles.permissionHeading}>
-        <IdentityMark
-          kind="agent"
-          seed={display.avatarSeed ?? request.agent.pubkey}
-          avatarUrl={display.avatarUrl}
-          face={display.face}
-          name={agentName}
-          size={30}
-        />
-        <View style={styles.permissionCopy}>
-          <Text style={styles.permissionTitle} testID="grant-request-title">
-            {agentName} asks {request.owner.name}
-          </Text>
-          {request.requester.pubkey !== request.owner.pubkey ? (
-            <Text style={styles.permissionIntent} numberOfLines={1}>
-              at {request.requester.name}’s request
-            </Text>
-          ) : null}
-        </View>
-      </View>
+    <View testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}>
       {request.grants.map((grant) => {
         const busy = actionId === grant.grantId;
-        const outcome = grantOutcomeLine(grant);
+        const pendingGrant = grant.status === 'pending';
+        const actions: TranscriptCardAction[] =
+          pendingGrant && canDecide
+            ? [
+                {
+                  label: 'No',
+                  disabled: actionId !== null,
+                  onPress: () => onDecision(grant.grantId, 'deny'),
+                  testID: `grant-${grant.grantId}-deny`,
+                },
+                {
+                  label: 'Once',
+                  disabled: actionId !== null,
+                  onPress: () => onDecision(grant.grantId, 'once'),
+                  testID: `grant-${grant.grantId}-once`,
+                },
+                {
+                  label: 'Always',
+                  primary: true,
+                  disabled: actionId !== null,
+                  loading: busy,
+                  onPress: () => onDecision(grant.grantId, 'always'),
+                  testID: `grant-${grant.grantId}-always`,
+                },
+              ]
+            : [];
         return (
-          <View key={grant.grantId} style={styles.grantLine} testID={`grant-${grant.grantId}`}>
-            <Text style={styles.grantAsk} testID={`grant-${grant.grantId}-ask`}>
-              {grantAskLine(grant)}
-            </Text>
-            <Text style={styles.permissionIntent}>{grant.reason}</Text>
-            {grant.script ? (
-              <View style={styles.grantScript} testID={`grant-${grant.grantId}-script`}>
-                <Text style={styles.grantScriptPath}>{grant.script.path}</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <Text style={styles.grantScriptBody}>{grant.script.contents}</Text>
-                </ScrollView>
-              </View>
-            ) : null}
-            {grant.status === 'pending' && canDecide ? (
-              <View style={styles.permissionActions}>
-                <MonoButton
-                  label="ALWAYS"
-                  loading={busy}
-                  disabled={actionId !== null}
-                  onPress={() => onDecision(grant.grantId, 'always')}
-                  style={styles.permissionButton}
-                  testID={`grant-${grant.grantId}-always`}
-                />
-                <MonoButton
-                  label="ONCE"
-                  variant="secondary"
-                  disabled={actionId !== null}
-                  onPress={() => onDecision(grant.grantId, 'once')}
-                  style={styles.permissionButton}
-                  testID={`grant-${grant.grantId}-once`}
-                />
-                <MonoButton
-                  label="NO"
-                  variant="secondary"
-                  disabled={actionId !== null}
-                  onPress={() => onDecision(grant.grantId, 'deny')}
-                  style={styles.permissionButton}
-                  testID={`grant-${grant.grantId}-deny`}
-                />
-              </View>
-            ) : grant.status === 'pending' ? (
-              <Text style={styles.permissionStatus} testID={`grant-${grant.grantId}-waiting`}>
-                WAITING FOR {request.owner.name.toUpperCase()}
-              </Text>
-            ) : (
-              <WritePermissionOutcome
-                status={grant.status === 'denied' ? 'denied' : 'allowed'}
-                label={outcome ?? undefined}
-                testID={`grant-${grant.grantId}-outcome`}
+          <TranscriptCard
+            key={grant.grantId}
+            tier={pendingGrant ? 'ask' : 'record'}
+            testID={`grant-${grant.grantId}`}
+            identity={
+              <IdentityMark
+                kind="agent"
+                seed={display.avatarSeed ?? request.agent.pubkey}
+                avatarUrl={display.avatarUrl}
+                face={display.face}
+                name={agentName}
+                size={26}
               />
-            )}
-          </View>
+            }
+            title={
+              <Text testID="grant-request-title">
+                <TranscriptCardHandle>@{agentName.replace(/^@/, '')}</TranscriptCardHandle> asks you
+              </Text>
+            }
+            subline={`${grantAskLine(grant)} · ${grant.reason}`}
+            sublineTestID={`grant-${grant.grantId}-ask`}
+            stamp={ledgerStamp(message.timestamp)}
+            code={grant.script?.contents}
+            codeTestID={grant.script ? `grant-${grant.grantId}-script` : undefined}
+            codePath={grant.script?.path}
+            footerNote={
+              pendingGrant
+                ? canDecide
+                  ? undefined
+                  : `waiting for @${request.owner.name.replace(/^@/, '')}`
+                : grant.status === 'once'
+                  ? 'allowed once'
+                  : grant.status === 'approved'
+                    ? 'always allowed'
+                    : grant.status === 'denied'
+                      ? 'denied'
+                      : 'revoked'
+            }
+            footerNoteTone={
+              grant.status === 'denied' || grant.status === 'revoked' ? 'failed' : 'quiet'
+            }
+            footerNoteTestID={!pendingGrant ? `grant-${grant.grantId}-outcome` : undefined}
+            actions={actions}
+          />
         );
       })}
-    </HullSurface>
+    </View>
   );
 });
 
 export interface TargetBranchProposalCardProps {
   message: ChatDisplayMessage;
+  agent?: AgentPresentation;
   currentTargetBranch?: string;
   canManageWorkspace: boolean;
   viewerIsAgent: boolean;
@@ -307,6 +326,7 @@ export interface TargetBranchProposalCardProps {
 
 export const TargetBranchProposalCard = React.memo(function TargetBranchProposalCard({
   message,
+  agent,
   currentTargetBranch,
   canManageWorkspace,
   viewerIsAgent,
@@ -318,42 +338,51 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
   const applied = currentTargetBranch === proposal.to;
   const busy = actionId === proposal.proposalId;
   const canConfirm = !viewerIsAgent && canManageWorkspace;
+  const askingAgent = proposal.agentPubkey
+    ? resolveAgentDisplayIdentity(proposal.agentPubkey, agent).name.replace(/^@/, '')
+    : undefined;
   return (
-    <HullSurface strength="raised" style={styles.targetCard} testID="target-branch-proposal">
-      <Text style={styles.targetTitle}>Change this {ROOM_LABEL}’s target branch</Text>
-      <Text style={styles.targetChange} testID="target-branch-change">
-        {proposal.from} → {proposal.to}
-      </Text>
-      <Text style={styles.targetBoundary}>
-        {`Confirming republishes this ${ROOM_LABEL}'s repository binding under your key. ` +
-          `${CORNER_LABEL}s already open automatically rebase onto ${proposal.to}; any conflict appears in their activity ledger for the agent to resolve.`}
-      </Text>
-      {applied ? (
-        <Text style={styles.targetStatus} testID="target-branch-applied">
-          ✓ TARGET BRANCH IS NOW {proposal.to.toUpperCase()}
-        </Text>
-      ) : canConfirm ? (
-        <View style={styles.targetActions}>
-          <MonoButton
-            label={`Confirm ${proposal.to}`}
-            loading={busy}
-            disabled={busy}
-            onPress={() => onConfirm(message)}
-            style={styles.targetButton}
-            testID="target-branch-confirm"
-          />
-        </View>
-      ) : (
-        <Text style={styles.targetStatus} testID="target-branch-denied">
-          {'ONLY A WORKSPACE MANAGER CAN CONFIRM THIS'}
-        </Text>
-      )}
-      {notice ? (
-        <Text style={styles.targetStatus} testID="target-branch-notice">
-          {notice}
-        </Text>
-      ) : null}
-    </HullSurface>
+    <TranscriptCard
+      tier={applied ? 'record' : 'ask'}
+      testID="target-branch-proposal"
+      title={
+        askingAgent ? (
+          <>
+            <TranscriptCardHandle>@{askingAgent}</TranscriptCardHandle>{' '}
+            {applied ? 'asked to change the target branch' : 'asks to change the target branch'}
+          </>
+        ) : applied ? (
+          'Target branch changed'
+        ) : (
+          'Change the target branch'
+        )
+      }
+      stamp={ledgerStamp(message.timestamp)}
+      code={`${proposal.from} → ${proposal.to}`}
+      body={
+        `Confirming republishes this ${ROOM_LABEL}'s repository binding under your key. ` +
+        `${CORNER_LABEL}s already open automatically rebase onto ${proposal.to}.`
+      }
+      quietBody
+      footerNote={
+        applied ? 'confirmed' : canConfirm ? (notice ?? undefined) : 'workspace manager only'
+      }
+      footerNoteTone={!applied && !canConfirm ? 'failed' : 'quiet'}
+      actions={
+        !applied && canConfirm
+          ? [
+              {
+                label: 'Confirm',
+                primary: true,
+                loading: busy,
+                disabled: busy,
+                onPress: () => onConfirm(message),
+                testID: 'target-branch-confirm',
+              },
+            ]
+          : []
+      }
+    />
   );
 });
 
@@ -369,52 +398,36 @@ export interface NotificationLifecycleCardProps {
 }
 
 type RepositoryFactCardProps = {
-  title: string;
-  body?: string;
-  actionLabel: string;
-  onPress(): void;
+  title: React.ReactNode;
+  subline?: React.ReactNode;
+  stamp?: string;
+  body?: React.ReactNode;
+  rows?: readonly TranscriptCardRow[];
+  actions?: readonly TranscriptCardAction[];
   testID: string;
-  secondaryActionLabel?: string;
-  onSecondaryPress?(): void;
 };
 
 /** Shared visual shell for verified GitHub events and daemon lifecycle facts. */
 const RepositoryFactCard = React.memo(function RepositoryFactCard({
   title,
+  subline,
+  stamp,
   body,
-  actionLabel,
-  onPress,
+  rows,
+  actions,
   testID,
-  secondaryActionLabel,
-  onSecondaryPress,
 }: RepositoryFactCardProps) {
   return (
-    <View style={styles.githubPressable} testID={testID}>
-      <HullSurface strength="raised" style={styles.githubCard}>
-        <Text style={styles.githubTitle}>{title}</Text>
-        {body ? <Text style={styles.githubBody}>{body}</Text> : null}
-        <View style={styles.githubActions}>
-          <Pressable
-            accessibilityRole="link"
-            accessibilityLabel={actionLabel}
-            onPress={onPress}
-            testID={`${testID}-primary-action`}
-          >
-            <Text style={styles.githubLink}>{actionLabel}</Text>
-          </Pressable>
-          {secondaryActionLabel && onSecondaryPress ? (
-            <Pressable
-              accessibilityRole="link"
-              accessibilityLabel={secondaryActionLabel}
-              onPress={onSecondaryPress}
-              testID={`${testID}-secondary-action`}
-            >
-              <Text style={styles.githubLink}>{secondaryActionLabel}</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </HullSurface>
-    </View>
+    <TranscriptCard
+      tier="record"
+      title={title}
+      subline={subline}
+      stamp={stamp}
+      body={body}
+      rows={rows}
+      actions={actions}
+      testID={testID}
+    />
   );
 });
 
@@ -427,63 +440,51 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   const run = message.notificationLifecycleRun!;
   const [expanded, setExpanded] = useState(false);
   const visibleItems = expanded ? run.items : run.items.slice(0, 3);
+  const hiddenCount = run.items.length - 3;
+  const rows: TranscriptCardRow[] = visibleItems.map((item) => ({
+    id: item.id,
+    state:
+      item.state === 'PR opened'
+        ? 'opened'
+        : item.state === 'Checks failed'
+          ? 'failed'
+          : item.state === 'Checks passed'
+            ? 'succeeded'
+            : item.state.toLowerCase(),
+    title: item.title,
+    kindLine: item.kindLine,
+    tone:
+      item.danger || item.state === 'Failed'
+        ? 'failed'
+        : item.state === 'Opened' || item.state === 'PR opened'
+          ? 'waiting'
+          : 'settled',
+    ...(item.cornerId
+      ? { onPress: () => onOpenCorner(item.cornerId!) }
+      : item.url
+        ? { onPress: () => onOpenUrl(item.url!) }
+        : {}),
+  }));
   return (
-    <View style={styles.githubPressable} testID={`notification-run-${message.id}`}>
-      <HullSurface strength="raised" style={styles.githubCard}>
-        <Text style={styles.githubTitle}>{run.headline}</Text>
-        <Text style={styles.notificationRunSubline}>{run.subline}</Text>
-        <View style={styles.notificationRunItems}>
-          {visibleItems.map((item) => {
-            const onPress = item.cornerId
-              ? () => onOpenCorner(item.cornerId!)
-              : item.url
-                ? () => onOpenUrl(item.url!)
-                : undefined;
-            return (
-              <Pressable
-                key={item.id}
-                accessibilityRole={onPress ? 'link' : undefined}
-                accessibilityLabel={`${item.state}: ${item.title}. ${item.kindLine}`}
-                disabled={!onPress}
-                onPress={onPress}
-                style={styles.notificationRunItem}
-                testID={`notification-run-item-${item.id}`}
-              >
-                <Text
-                  style={
-                    item.danger ? styles.notificationRunStateDanger : styles.notificationRunState
-                  }
-                >
-                  {item.danger ? `${item.state} ×` : item.state}
-                </Text>
-                <View style={styles.notificationRunCopy}>
-                  <Text numberOfLines={1} style={styles.notificationRunTitle}>
-                    {item.title}
-                  </Text>
-                  <Text style={styles.notificationRunKind}>{item.kindLine}</Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-        {run.items.length > 3 ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              expanded
-                ? 'Show fewer notifications'
-                : `Show ${run.items.length - 3} more notifications`
-            }
-            onPress={() => setExpanded((value) => !value)}
-            testID={`notification-run-expand-${message.id}`}
-          >
-            <Text style={styles.notificationRunMore}>
-              {expanded ? 'show less' : `and ${run.items.length - 3} more`}
-            </Text>
-          </Pressable>
-        ) : null}
-      </HullSurface>
-    </View>
+    <RepositoryFactCard
+      title={formatNotificationHeadlines(run.items).join('\n') || run.headline}
+      subline={cardMeta(run.subline)}
+      stamp={ledgerStamp(message.timestamp)}
+      rows={rows}
+      actions={
+        run.items.length > 3
+          ? [
+              {
+                label: expanded ? 'Less' : `${hiddenCount} more`,
+                primary: true,
+                onPress: () => setExpanded((value) => !value),
+                testID: `notification-run-expand-${message.id}`,
+              },
+            ]
+          : []
+      }
+      testID={`notification-run-${message.id}`}
+    />
   );
 });
 
@@ -492,21 +493,32 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   onOpenUrl,
 }: GitHubEventCardProps) {
   const event = message.githubEvent!;
-  const title =
-    event.type === 'pull-request'
-      ? event.action === 'opened'
-        ? `${event.actor} created a new PR: ${event.title}`
-        : event.action === 'merged'
-          ? `${event.actor} merged a PR: ${event.title}`
-          : `${event.actor} closed a PR: ${event.title}`
-      : event.action === 'opened'
-        ? `${event.actor} created a new issue: ${event.title}`
-        : `${event.actor} closed an issue: ${event.title}`;
+  const subject = event.type === 'pull-request' ? 'PR' : 'Issue';
+  const state = event.action === 'merged' ? 'merged' : event.action;
   return (
     <RepositoryFactCard
-      title={title}
-      actionLabel="VIEW ON GITHUB ↗"
-      onPress={() => onOpenUrl(event.url)}
+      title={`${subject} 1 ${state}`}
+      subline={event.actor ? cardMeta(`by @${event.actor.replace(/^@/, '')}`) : undefined}
+      stamp={ledgerStamp(message.timestamp)}
+      rows={[
+        {
+          id: message.id,
+          state,
+          title: event.title,
+          kindLine: subject,
+          tone: state === 'opened' ? 'waiting' : 'settled',
+          onPress: () => onOpenUrl(event.url),
+        },
+      ]}
+      actions={[
+        {
+          label: 'View ↗',
+          primary: true,
+          accessibilityRole: 'link',
+          onPress: () => onOpenUrl(event.url),
+          testID: `github-event-card-${event.type}-${event.action}-primary-action`,
+        },
+      ]}
       testID={`github-event-card-${event.type}-${event.action}`}
     />
   );
@@ -535,38 +547,72 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   // before the name existed falls back to the same three-word derivation
   // every other corner surface uses (C89).
   const title = cornerName(fact.name ?? fact.objective, fact.cornerId);
-  const body =
-    fact.type === 'corner-complete'
-      ? landedCorner
-        ? `${reviewerHandle ? `Reviewer: @${reviewerHandle}\n` : ''}${fact.objective}`
-        : 'ABANDONED · Remote branch deleted'
-      : fact.type === 'checks-failing'
-        ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
-        : fact.type === 'corner-open'
-          ? // Opened by, not owned by: every member agent can be addressed in
-            // the corner and carry its branch on.
-            `${agent ? `OPENED BY ${agent}\n` : ''}${fact.objective}`
-          : 'WORKTREE CLEANED';
+  const prNumber = fact.pullRequest?.number;
+  const state = landedCorner
+    ? 'merged'
+    : fact.type === 'checks-failing'
+      ? 'failed'
+      : fact.type === 'corner-complete'
+        ? 'closed'
+        : fact.type === 'worktree-cleaned'
+          ? 'closed'
+          : undefined;
+  const actions: TranscriptCardAction[] =
+    fact.type === 'corner-complete' && fact.pullRequest
+      ? [
+          {
+            label: 'Corner →',
+            accessibilityRole: 'link',
+            onPress: () => onOpenCorner(fact.cornerId),
+            testID: 'corner-summary-card-secondary-action',
+          },
+          {
+            label: 'View ↗',
+            primary: true,
+            accessibilityRole: 'link',
+            onPress: () => onOpenUrl(fact.pullRequest!.url),
+            testID: 'corner-summary-card-primary-action',
+          },
+        ]
+      : [
+          {
+            label: 'Open →',
+            primary: true,
+            accessibilityRole: 'link',
+            onPress: () => onOpenCorner(fact.cornerId),
+            testID: `daemon-fact-card-${fact.type}-primary-action`,
+          },
+        ];
   return (
     <RepositoryFactCard
-      title={landedCorner ? `Merged ${title}${agent ? ` by @${agent}` : ''}` : title}
-      body={body}
-      actionLabel={
-        fact.type === 'corner-complete' && fact.pullRequest
-          ? `VIEW PR: ${fact.pullRequest.title ?? 'PULL REQUEST'} ↗`
-          : 'OPEN CORNER →'
+      title={landedCorner ? 'PR 1 merged' : title}
+      subline={
+        landedCorner && reviewerHandle
+          ? cardMeta(`reviewer @${reviewerHandle}`)
+          : fact.type === 'corner-open'
+            ? cardMeta(`corner · opened by ${agent ? `@${agent}` : 'agent'}`)
+            : undefined
       }
-      onPress={() =>
-        fact.type === 'corner-complete' && fact.pullRequest
-          ? onOpenUrl(fact.pullRequest.url)
-          : onOpenCorner(fact.cornerId)
+      stamp={ledgerStamp(message.timestamp)}
+      body={fact.type === 'corner-open' ? fact.objective : undefined}
+      rows={
+        state
+          ? [
+              {
+                id: message.id,
+                state,
+                title,
+                kindLine: landedCorner
+                  ? `corner${prNumber ? ` · PR #${prNumber}` : ''}`
+                  : prNumber
+                    ? `PR #${prNumber}`
+                    : 'corner',
+                tone: state === 'failed' ? 'failed' : 'settled',
+              },
+            ]
+          : undefined
       }
-      {...(fact.type === 'corner-complete' && fact.pullRequest
-        ? {
-            secondaryActionLabel: 'OPEN ARCHIVED CORNER →',
-            onSecondaryPress: () => onOpenCorner(fact.cornerId),
-          }
-        : {})}
+      actions={actions}
       testID={landedCorner ? 'corner-summary-card' : `daemon-fact-card-${fact.type}`}
     />
   );
@@ -1227,190 +1273,6 @@ const styles = StyleSheet.create((theme) => ({
   relayText: { ...groknight.type.body, color: groknight.textSecondary },
   relayToggle: { ...groknight.type.sectionHead, color: groknight.accent },
   relayMeasure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
-  permissionCard: {
-    minWidth: 0,
-    marginBottom: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    gap: 10,
-  },
-  permissionHeading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  permissionCopy: { flex: 1, minWidth: 0 },
-  permissionTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  permissionIntent: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 2,
-  },
-  permissionRepository: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 16,
-    letterSpacing: 0.35,
-  },
-  permissionBoundary: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  permissionFailure: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 15,
-  },
-  permissionActions: { flexDirection: 'row', gap: 8 },
-  permissionButton: { flex: 1, minWidth: 0 },
-  grantLine: { gap: 6 },
-  // C94: an interpreter grant is approved on its BODY, not on its command line,
-  // so the card inscribes the script itself in the machine role.
-  grantScript: {
-    gap: 4,
-    paddingVertical: 8,
-    paddingLeft: 10,
-    borderLeftWidth: 1,
-    borderLeftColor: groknight.borderStrong,
-  },
-  grantScriptPath: {
-    ...Typography.mono('regular'),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 15,
-  },
-  grantScriptBody: {
-    ...Typography.mono('regular'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  grantAsk: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  permissionStatus: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 9,
-    lineHeight: 14,
-    letterSpacing: 0.5,
-  },
-  targetCard: {
-    minWidth: 0,
-    marginBottom: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    gap: 8,
-  },
-  targetTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  targetChange: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
-    letterSpacing: 0.35,
-  },
-  targetBoundary: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  targetActions: { flexDirection: 'row', gap: 8 },
-  targetButton: { flex: 1, minWidth: 0 },
-  targetStatus: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 9,
-    lineHeight: 14,
-    letterSpacing: 0.5,
-  },
-  githubPressable: { marginBottom: 8 },
-  githubCard: {
-    minWidth: 0,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    gap: 6,
-  },
-  githubTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  githubBody: {
-    ...Typography.default('regular'),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  githubLink: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.45,
-  },
-  githubActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
-  notificationRunSubline: {
-    ...groknight.type.meta,
-    color: groknight.textSecondary,
-  },
-  notificationRunItems: { gap: 8, marginTop: 2 },
-  notificationRunItem: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 10,
-    minWidth: 0,
-  },
-  notificationRunState: {
-    ...groknight.type.sectionHead,
-    color: groknight.textSecondary,
-    width: 102,
-  },
-  notificationRunStateDanger: {
-    ...groknight.type.sectionHead,
-    color: groknight.danger,
-    width: 102,
-  },
-  notificationRunCopy: { flex: 1, minWidth: 0 },
-  notificationRunTitle: {
-    ...groknight.type.meta,
-    fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    textDecorationLine: 'underline',
-    textDecorationColor: groknight.borderStrong,
-  },
-  notificationRunKind: {
-    ...groknight.type.meta,
-    color: groknight.ledgerQuiet,
-  },
-  notificationRunMore: {
-    ...groknight.type.sectionHead,
-    color: groknight.accent,
-    marginTop: 2,
-  },
   activityGroup: { width: '100%', minWidth: 0, marginBottom: 20 },
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {

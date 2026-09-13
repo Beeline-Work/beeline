@@ -20,8 +20,8 @@ describe('corner-open approval card design contract', () => {
     expect(variants).not.toContain(
       "if (permission.status === 'allowed' && permission.subchannelId) return null",
     );
-    expect(variants).toContain('permission.subchannelId ? () => onOpenCorner');
     expect(variants).toContain('onOpenCorner(permission.subchannelId!)');
+    expect(variants).toContain("testID: 'write-permission-open-corner'");
   });
 
   it('inscribes one PR status line in corners and offers no merge or objective panel', () => {

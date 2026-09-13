@@ -21,4 +21,16 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('displayGroupedCornerTitle(');
     expect(source).not.toContain('{corner.corner.name}\n                                </Text>');
   });
+
+  it('spends brass only on waiting nested corner state', () => {
+    expect(source).toContain("corner.state === 'waiting'");
+    expect(source).toContain('styles.cornerStateWaiting');
+    expect(source).toContain('styles.cornerMetaWaiting');
+    expect(source).toContain('cornerStateWaiting: { backgroundColor: theme.buzz.accent }');
+    expect(source).toContain('cornerStateQuiet: { backgroundColor: theme.buzz.ledgerQuiet }');
+    expect(source).toContain('cornerStateGhost: { backgroundColor: theme.buzz.ledgerGhost }');
+    expect(source).toContain('cornerMetaWaiting: { color: theme.buzz.accent }');
+    expect(source).toContain('cornerMetaQuiet: { color: theme.buzz.ledgerQuiet }');
+    expect(source).toContain('cornerMetaGhost: { color: theme.buzz.ledgerGhost }');
+  });
 });

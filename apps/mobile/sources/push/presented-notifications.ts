@@ -1,4 +1,5 @@
 import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
+import type { PushLevel } from '@beeline/api-contract/phone';
 
 export type PresentedNotification = {
   request: {
@@ -79,7 +80,12 @@ export async function clearLegacyPresentedNotificationsOnce(
 export async function reconcilePresentedNotificationBadge(
   api: PresentedNotificationApi,
   platform: string,
+  pushLevel: PushLevel = 'mine',
 ): Promise<void> {
+  if (pushLevel === 'off') {
+    await api.setBadgeCountAsync(0);
+    return;
+  }
   if (platform !== 'ios') return;
   const presented = await api.getPresentedNotificationsAsync();
   await api.setBadgeCountAsync(presented.length);

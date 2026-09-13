@@ -119,15 +119,6 @@ runs:
       run: |
         set -euo pipefail
         test -n "${MIGRATION_DATABASE_URL:-}" || { echo 'MIGRATION_DATABASE_URL is required' >&2; exit 1; }
-        npm ci --ignore-scripts
-        npm run build -w @beeline/nostr
-        npm run build -w @beeline/api-contract
-        npm run build -w @beeline/buzz-client
-        npm run build -w @beeline/gate
-        npm run build -w @beeline/body
-        npm run build -w @beeline/auth
-        npm run build -w @beeline/push-gateway
-        npm run build -w @beeline/server
         npm run migrate -w @beeline/server
 
     - name: Canary one Machine, observe for five minutes, then update its peer
@@ -162,6 +153,50 @@ runs:
 
         canary_updated=1
         flyctl machine update "$canary" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+
+        if [ -n "${SERVER_CANARY_REVIEW_SECRET:-}" ]; then
+          echo "::add-mask::$SERVER_CANARY_REVIEW_SECRET"
+          exchange_request="$RUNNER_TEMP/server-release/canary-token-request.json"
+          exchange_response="$RUNNER_TEMP/server-release/canary-token-response.json"
+          node - "$exchange_request" <<'NODE'
+        const fs = require('node:fs');
+        fs.writeFileSync(process.argv[2], JSON.stringify({ secret: process.env.SERVER_CANARY_REVIEW_SECRET }));
+        NODE
+          exchange_status="$(curl -sS --max-time 12 -o "$exchange_response" -w '%{http_code}' \
+            -H 'Content-Type: application/json' --data-binary "@$exchange_request" \
+            https://server.usebeeline.app/v1/auth/review/exchange)"
+          rm -f "$exchange_request"
+          if [ "$exchange_status" != 200 ]; then
+            echo "Canary access-token exchange failed with HTTP $exchange_status" >&2
+            exit 1
+          fi
+          mapfile -t canary_tokens < <(node - "$exchange_response" <<'NODE'
+        const response = require(process.argv[2]);
+        if (typeof response.accessToken !== 'string' || response.accessToken.length === 0 ||
+            typeof response.refreshToken !== 'string' || response.refreshToken.length === 0) {
+          throw new Error('Canary access-token exchange returned incomplete tokens');
+        }
+        process.stdout.write(`${response.accessToken}\n${response.refreshToken}\n`);
+        NODE
+          )
+          canary_access_token="${canary_tokens[0]:-}"
+          canary_refresh_token="${canary_tokens[1]:-}"
+          test -n "$canary_access_token" -a -n "$canary_refresh_token" || {
+            echo "Canary access-token exchange returned incomplete tokens" >&2
+            exit 1
+          }
+          echo "::add-mask::$canary_access_token"
+          echo "::add-mask::$canary_refresh_token"
+          rm -f "$exchange_response"
+        elif [ -n "${SERVER_CANARY_PHONE_TOKEN:-}" ]; then
+          canary_access_token="$SERVER_CANARY_PHONE_TOKEN"
+          echo "::add-mask::$canary_access_token"
+          echo "SERVER_CANARY_REVIEW_SECRET is unset; using the legacy canary phone token" >&2
+        else
+          echo "Canary authentication requires SERVER_CANARY_REVIEW_SECRET or SERVER_CANARY_PHONE_TOKEN" >&2
+          exit 1
+        fi
+
         for sample in $(seq 0 20); do
           if [ "$sample" -gt 0 ]; then sleep 15; fi
           force_header="fly-force-instance-id: $canary"
@@ -170,7 +205,7 @@ runs:
           curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/version \
             -o "$RUNNER_TEMP/server-release/version.json"
           room_status="$(curl -sS --max-time 12 -o "$RUNNER_TEMP/server-release/room.json" -w '%{http_code}' \
-            -H "$force_header" -H "Authorization: Bearer $SERVER_CANARY_PHONE_TOKEN" \
+            -H "$force_header" -H "Authorization: Bearer $canary_access_token" \
             "https://server.usebeeline.app/v1/phone/rooms/$SERVER_CANARY_ROOM_ID")"
           node scripts/unified-release.mjs server-canary-sample \
             --health "$RUNNER_TEMP/server-release/health.json" \

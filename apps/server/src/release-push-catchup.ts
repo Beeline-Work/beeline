@@ -15,6 +15,7 @@ export async function queueLatestReleasePush(
   await database.query(
     `WITH latest AS (
        SELECT m.id,m.room_id,m.created_at FROM messages m
+       JOIN identities recipient ON recipient.id=$1 AND recipient.push_level<>'off'
        JOIN rooms r ON r.id=m.room_id
        JOIN memberships member ON member.room_id=r.id AND member.identity_id=$1
          AND member.removed_at IS NULL
@@ -52,6 +53,7 @@ export async function claimReleaseCatchup(
        SELECT 1
        FROM push_release_catchups catchup
        JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
+       JOIN identities recipient ON recipient.id=d.identity_id AND recipient.push_level<>'off'
        JOIN messages m ON m.id=catchup.message_id
        JOIN rooms r ON r.id=m.room_id
        JOIN memberships member ON member.room_id=r.id AND member.identity_id=d.identity_id
@@ -85,6 +87,7 @@ export async function retireTerminalReleaseCatchups(database: SqlDatabase) {
        OR NOT EXISTS (
          SELECT 1
          FROM push_devices d
+         JOIN identities recipient ON recipient.id=d.identity_id AND recipient.push_level<>'off'
          JOIN messages m ON m.id=catchup.message_id
          JOIN rooms r ON r.id=m.room_id
          JOIN memberships member ON member.room_id=r.id AND member.identity_id=d.identity_id
@@ -111,6 +114,7 @@ export const RELEASE_CATCHUP_CANDIDATES_SQL = `
     d.token,catchup.identity_id,true is_release_catchup,m.created_at
   FROM push_release_catchups catchup
   JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
+  JOIN identities recipient ON recipient.id=d.identity_id AND recipient.push_level<>'off'
   JOIN messages m ON m.id=catchup.message_id
   JOIN rooms r ON r.id=m.room_id
   JOIN identities author ON author.id=m.author_id

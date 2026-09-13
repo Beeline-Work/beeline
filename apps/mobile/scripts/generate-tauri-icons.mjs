@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Regenerates apps/mobile/src-tauri/icons from the one source of app identity,
-// sources/assets/images/icon.png. `tauri icon` would do the same job, but it
-// needs the Rust toolchain installed just to reshape a PNG; this uses nothing
-// but node's zlib so the desktop icons can be refreshed from any checkout.
+// sources/assets/images/icon.png. Linux and Windows keep that square treatment;
+// macOS gets its own Big Sur-style transparent canvas before the .icns is
+// encoded. `tauri icon` would do the same reshaping, but it needs the Rust
+// toolchain installed; this uses nothing but node's zlib so the desktop icons
+// can be refreshed from any checkout.
 //
 // Outputs the six files tauri.conf.json's bundle.icon names: three PNGs for
 // Linux, an .ico for Windows and an .icns for macOS, plus the 1024px master.
@@ -19,6 +21,14 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCE = join(here, '..', 'sources', 'assets', 'images', 'icon.png');
 const ICONS = join(here, '..', 'src-tauri', 'icons');
+const EVIDENCE = join(here, '..', 'evidence', 'macos-app-icon');
+
+const MAC_CANVAS_SIZE = 1024;
+const MAC_PLATE_INSET = 100;
+const MAC_PLATE_SIZE = 824;
+const MAC_CORNER_RADIUS = 185;
+const MAC_MARK_WIDTH = 528;
+const MARK_THRESHOLD = 8;
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n;
@@ -57,7 +67,9 @@ function decodePng(file) {
     }
     if (!header) throw new Error('PNG has no IHDR');
     if (header.depth !== 8 || header.interlace !== 0 || ![2, 6].includes(header.colorType)) {
-        throw new Error(`unsupported PNG: depth ${header.depth}, colorType ${header.colorType}, interlace ${header.interlace}`);
+        throw new Error(
+            `unsupported PNG: depth ${header.depth}, colorType ${header.colorType}, interlace ${header.interlace}`,
+        );
     }
 
     const channels = header.colorType === 6 ? 4 : 3;
@@ -133,6 +145,91 @@ function resize(image, size) {
         }
     }
     return { width: size, height: size, pixels: out };
+}
+
+function markBounds(image) {
+    const ground = image.pixels.subarray(0, 3);
+    let left = image.width;
+    let top = image.height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < image.height; y += 1) {
+        for (let x = 0; x < image.width; x += 1) {
+            const at = (y * image.width + x) * 4;
+            const differs = [0, 1, 2].some(
+                (channel) =>
+                    Math.abs(image.pixels[at + channel] - ground[channel]) >= MARK_THRESHOLD,
+            );
+            if (!differs) continue;
+            left = Math.min(left, x);
+            top = Math.min(top, y);
+            right = Math.max(right, x);
+            bottom = Math.max(bottom, y);
+        }
+    }
+    if (right < left || bottom < top) throw new Error('source icon has no visible mark');
+    return { left, top, right, bottom, width: right - left + 1, height: bottom - top + 1 };
+}
+
+function sampleBilinear(image, x, y, channel) {
+    const x0 = Math.max(0, Math.min(image.width - 1, Math.floor(x)));
+    const y0 = Math.max(0, Math.min(image.height - 1, Math.floor(y)));
+    const x1 = Math.min(image.width - 1, x0 + 1);
+    const y1 = Math.min(image.height - 1, y0 + 1);
+    const tx = x - x0;
+    const ty = y - y0;
+    const pixel = (px, py) => image.pixels[(py * image.width + px) * 4 + channel];
+    const top = pixel(x0, y0) * (1 - tx) + pixel(x1, y0) * tx;
+    const bottom = pixel(x0, y1) * (1 - tx) + pixel(x1, y1) * tx;
+    return Math.round(top * (1 - ty) + bottom * ty);
+}
+
+function insideRoundedPlate(x, y) {
+    const nearX = Math.max(
+        MAC_PLATE_INSET + MAC_CORNER_RADIUS,
+        Math.min(x, MAC_PLATE_INSET + MAC_PLATE_SIZE - MAC_CORNER_RADIUS),
+    );
+    const nearY = Math.max(
+        MAC_PLATE_INSET + MAC_CORNER_RADIUS,
+        Math.min(y, MAC_PLATE_INSET + MAC_PLATE_SIZE - MAC_CORNER_RADIUS),
+    );
+    return (x - nearX) ** 2 + (y - nearY) ** 2 <= MAC_CORNER_RADIUS ** 2;
+}
+
+// Apple's icon grid leaves 100px around the 824px plate. Four-by-four coverage
+// sampling keeps the 185px rounded edge clean in the 1024px master; the normal
+// box filter then carries that antialiasing into every smaller .icns payload.
+function macSource(source) {
+    if (source.width !== MAC_CANVAS_SIZE || source.height !== MAC_CANVAS_SIZE) {
+        throw new Error(`macOS source must be ${MAC_CANVAS_SIZE}x${MAC_CANVAS_SIZE}`);
+    }
+    const bounds = markBounds(source);
+    const scale = MAC_MARK_WIDTH / bounds.width;
+    const markCenterX = (bounds.left + bounds.right) / 2;
+    const markCenterY = (bounds.top + bounds.bottom) / 2;
+    const canvasCenter = MAC_CANVAS_SIZE / 2;
+    const pixels = Buffer.alloc(MAC_CANVAS_SIZE * MAC_CANVAS_SIZE * 4);
+
+    for (let y = MAC_PLATE_INSET; y < MAC_PLATE_INSET + MAC_PLATE_SIZE; y += 1) {
+        for (let x = MAC_PLATE_INSET; x < MAC_PLATE_INSET + MAC_PLATE_SIZE; x += 1) {
+            let covered = 0;
+            for (let sy = 0; sy < 4; sy += 1) {
+                for (let sx = 0; sx < 4; sx += 1) {
+                    if (insideRoundedPlate(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4)) covered += 1;
+                }
+            }
+            if (covered === 0) continue;
+
+            const sourceX = (x + 0.5 - canvasCenter) / scale + markCenterX - 0.5;
+            const sourceY = (y + 0.5 - canvasCenter) / scale + markCenterY - 0.5;
+            const to = (y * MAC_CANVAS_SIZE + x) * 4;
+            for (let channel = 0; channel < 3; channel += 1) {
+                pixels[to + channel] = sampleBilinear(source, sourceX, sourceY, channel);
+            }
+            pixels[to + 3] = Math.round((covered / 16) * 255);
+        }
+    }
+    return { width: MAC_CANVAS_SIZE, height: MAC_CANVAS_SIZE, pixels };
 }
 
 function encodePng(image) {
@@ -243,6 +340,7 @@ function encodeIcns(pngFor) {
 }
 
 const source = decodePng(readFileSync(SOURCE));
+const mac = macSource(source);
 const scaled = new Map();
 const at = (size) => {
     if (!scaled.has(size)) scaled.set(size, size === source.width ? source : resize(source, size));
@@ -253,21 +351,40 @@ const pngAt = (size) => {
     if (!pngCache.has(size)) pngCache.set(size, encodePng(at(size)));
     return pngCache.get(size);
 };
+const macScaled = new Map();
+const macPngCache = new Map();
+const macAt = (size) => {
+    if (!macScaled.has(size)) macScaled.set(size, size === mac.width ? mac : resize(mac, size));
+    return macScaled.get(size);
+};
+const macPngAt = (size) => {
+    if (!macPngCache.has(size)) macPngCache.set(size, encodePng(macAt(size)));
+    return macPngCache.get(size);
+};
 
 const outputs = new Map([
     ['32x32.png', pngAt(32)],
     ['128x128.png', pngAt(128)],
     ['128x128@2x.png', pngAt(256)],
     ['icon.png', pngAt(1024)],
-    ['icon.ico', encodeIco([
-        { size: 16, data: encodeDib(at(16)) },
-        { size: 32, data: encodeDib(at(32)) },
-        { size: 48, data: encodeDib(at(48)) },
-        { size: 64, data: pngAt(64) },
-        { size: 128, data: pngAt(128) },
-        { size: 256, data: pngAt(256) },
-    ])],
-    ['icon.icns', encodeIcns(pngAt)],
+    [
+        'icon.ico',
+        encodeIco([
+            { size: 16, data: encodeDib(at(16)) },
+            { size: 32, data: encodeDib(at(32)) },
+            { size: 48, data: encodeDib(at(48)) },
+            { size: 64, data: pngAt(64) },
+            { size: 128, data: pngAt(128) },
+            { size: 256, data: pngAt(256) },
+        ]),
+    ],
+    ['icon.icns', encodeIcns(macPngAt)],
+]);
+
+const evidence = new Map([
+    ['reproduced-square-128.png', pngAt(128)],
+    ['demonstrated-rounded-1024.png', macPngAt(1024)],
+    ['demonstrated-rounded-128.png', macPngAt(128)],
 ]);
 
 const check = process.argv.includes('--check');
@@ -287,14 +404,33 @@ for (const [name, data] of outputs) {
         writeFileSync(path, data);
     }
 }
+for (const [name, data] of evidence) {
+    const path = join(EVIDENCE, name);
+    if (check) {
+        let existing;
+        try {
+            existing = readFileSync(path);
+        } catch {
+            stale.push(`evidence/${name} (missing)`);
+            continue;
+        }
+        if (!existing.equals(data)) stale.push(`evidence/${name}`);
+    } else {
+        writeFileSync(path, data);
+    }
+}
 
 if (check) {
     if (stale.length > 0) {
-        console.error(`Desktop icons no longer match ${SOURCE.replace(/.*apps\//, 'apps/')}:\n  ${stale.join('\n  ')}`);
+        console.error(
+            `Desktop icons no longer match ${SOURCE.replace(/.*apps\//, 'apps/')}:\n  ${stale.join('\n  ')}`,
+        );
         console.error('Run: node scripts/generate-tauri-icons.mjs');
         process.exit(1);
     }
-    console.log(`Desktop icons: ${outputs.size} file(s) match the source icon.`);
+    console.log(
+        `Desktop icons: ${outputs.size} bundle file(s) and ${evidence.size} evidence file(s) match the source icon.`,
+    );
 } else {
     console.log(`Desktop icons written to src-tauri/icons: ${[...outputs.keys()].join(', ')}`);
 }

@@ -54,6 +54,15 @@ describe('HullDeckMark — one visual language per deck state', () => {
     expect(circle).not.toContain('accent');
   });
 
+  it('maps canonical corner tones without changing circle geometry', () => {
+    expect(styleBlock(source, 'stateCircleStrokeBrass')).toContain(
+      'borderColor: groknight.accent',
+    );
+    expect(styleBlock(source, 'stateCircleFillQuiet')).toContain(
+      'backgroundColor: groknight.ledgerQuiet',
+    );
+  });
+
   it('restores the compact pre-#419 room scale and keeps corners smaller', () => {
     expect(source).toContain('<StateCircle state={state} scale="room" />');
     expect(source).toContain('export const stateCircleDiameter = { room: 9, corner: 7 } as const;');

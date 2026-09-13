@@ -8,6 +8,7 @@ import {
   isCornerListView,
   isRoomView,
   isWorkspaceListView,
+  isPushLevel,
   type PhoneOperationMap,
 } from './phone.js';
 
@@ -92,6 +93,11 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['closeChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['reopenChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['listRoomSchedules']['output']>().toHaveProperty('schedules');
+    expectTypeOf<PhoneOperationMap['updateIdentityPushLevel']['input']>().toHaveProperty(
+      'pushLevel',
+    );
+    expectTypeOf<PhoneOperationMap['getManagedIdentity']['output']>().toHaveProperty('pushLevel');
+    expect(isPushLevel('mine')).toBe(true);
   });
 
   it('accepts only the server-owned four-state corner contract', () => {

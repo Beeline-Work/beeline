@@ -162,6 +162,17 @@ function pushServiceLabel(platform: SupportedPushPlatform): string {
   return platform === 'ios' ? 'APNs' : 'FCM';
 }
 
+function isIosPushCapabilityUnavailable(error: unknown): boolean {
+  if (Platform.OS !== 'ios') return false;
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes('aps-environment') ||
+    message.includes('missing push notification entitlement') ||
+    message.includes('no valid push notification entitlement') ||
+    message.includes('not registered for remote notifications')
+  );
+}
+
 async function grantedNotificationPermission(requestWhenPossible: boolean): Promise<boolean> {
   const current = await Notifications.getPermissionsAsync();
   console.log(
@@ -210,7 +221,7 @@ export async function registerBuzzPushNotifications(
         // Permission gaps are not counted against the backoff: they are cheap
         // to re-check and must not delay a retry once the user grants access.
         failedAttempts:
-          attempt.phase === 'permission-denied'
+          attempt.phase === 'permission-denied' || attempt.phase === 'unsupported-platform'
             ? (previous?.failedAttempts ?? 0)
             : (previous?.failedAttempts ?? 0) + 1,
         updatedAt: Date.now(),
@@ -245,6 +256,9 @@ async function attemptRegistration(
         `${service} token acquisition`,
       );
     } catch (error) {
+      if (isIosPushCapabilityUnavailable(error)) {
+        return { registered: false, retryable: false, phase: 'unsupported-platform' };
+      }
       const failure =
         error instanceof RegistrationTimeoutError || errorMessage(error).includes('timed out')
           ? { phase: 'token-timed-out' as const, retryable: true as const }

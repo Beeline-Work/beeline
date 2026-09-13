@@ -58,8 +58,12 @@ The promotion records the two current Machine image refs, builds one tagged
 Fly image, and chooses the lexically first Machine as the canary. It updates
 only that Machine, pinning probes to it with `fly-force-instance-id`. Every 15
 seconds for five minutes it requires `/health`, the exact `/version`, and an
-authenticated read of `SERVER_CANARY_ROOM_ID` using
-`SERVER_CANARY_PHONE_TOKEN`. The self-protection pool snapshot (`size`, `inUse`,
+authenticated read of `SERVER_CANARY_ROOM_ID`. Immediately before the watch,
+the action redeems the repository secret `SERVER_CANARY_REVIEW_SECRET` once at
+`/v1/auth/review/exchange`, masks the returned access token, and uses that fresh
+token for every Room read. The repository secret `SERVER_CANARY_PHONE_TOKEN` is
+the legacy fallback only when the review secret is unset; at least one of these
+two secrets must be configured. The self-protection pool snapshot (`size`, `inUse`,
 `waiting`, and `oldestActiveQueryAgeMs`) is mandatory and validated on every
 sample; missing or malformed metrics and any nonzero waiter count fail the
 canary before the second Machine can update.
@@ -90,6 +94,14 @@ installed-helper convergence never gates delivery.
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
 or send a duplicate client notification.
+
+The desktop leg signs, notarizes, staples, and strictly verifies the macOS disk
+image whenever the complete credential set is available. Until the Developer
+ID certificate is provisioned, it preserves the existing unsigned release path
+and marks both reports **macOS artifact UNSIGNED: signing secrets absent**.
+Trusted in-repo preview builds exercise the same signed verification path.
+One-time certificate and App Store Connect setup is documented in [macOS
+desktop signing and notarization](./macos-desktop-signing.md).
 
 Normal selective attempts have a 20-minute dispatch-to-result budget. Component
 jobs have shorter explicit timeouts and network smoke checks have second-scale

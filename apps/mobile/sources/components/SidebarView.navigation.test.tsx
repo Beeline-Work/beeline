@@ -11,11 +11,10 @@ const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId },
     chats:
-      workspaceId === 'workspace-a'
-        ? [{ room: { id: 'room-a', workspaceId, name: 'Alpha' } }]
-        : [],
+      workspaceId === 'workspace-a' ? [{ room: { id: 'room-a', workspaceId, name: 'Alpha' } }] : [],
   })),
 );
+const windowListeners = new Map<string, (event: any) => void>();
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -104,15 +103,21 @@ vi.mock('@/buzz/desktop-work-pane', () => ({ selectDesktopWorkCorner: vi.fn() })
 vi.mock('@/components/buzz/RoomListSectionHeader', async () => {
   const ReactModule = await import('react');
   return {
-    RoomListSectionHeader: (props: any) => ReactModule.createElement('RoomListSectionHeader', props),
+    RoomListSectionHeader: (props: any) =>
+      ReactModule.createElement('RoomListSectionHeader', props),
   };
 });
 vi.mock('@/components/buzz/CommunityRail', async () => {
   const ReactModule = await import('react');
   return {
-    CommunityRail: (props: any) => ReactModule.createElement('CommunityRail', props),
     CommunitySwitcherTrigger: (props: any) =>
       ReactModule.createElement('CommunitySwitcherTrigger', props),
+  };
+});
+vi.mock('@/components/buzz/DesktopWorkspaceRail', async () => {
+  const ReactModule = await import('react');
+  return {
+    DesktopWorkspaceRail: (props: any) => ReactModule.createElement('DesktopWorkspaceRail', props),
   };
 });
 
@@ -126,26 +131,53 @@ async function settle() {
 }
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT = true;
+  (globalThis as any).window = {
+    addEventListener: (name: string, listener: (event: any) => void) =>
+      windowListeners.set(name, listener),
+    removeEventListener: (name: string) => windowListeners.delete(name),
+  };
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown) => {
     if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
       return;
   });
 });
 
-afterAll(() => vi.restoreAllMocks());
+afterAll(() => {
+  vi.restoreAllMocks();
+  delete (globalThis as any).window;
+});
 
 describe('desktop Workspace navigation', () => {
   let tree: ReactTestRenderer;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    windowListeners.clear();
     route.communityId = undefined;
     await act(async () => {
       tree = create(<SidebarView />);
     });
     await settle();
+  });
+
+  it('opens from Command-or-Control Shift S', () => {
+    const preventDefault = vi.fn();
+    act(() =>
+      windowListeners.get('keydown')?.({
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: true,
+        key: 's',
+        target: null,
+        preventDefault,
+      }),
+    );
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
   });
 
   it('switches header, list, URL, and closes the switcher for an empty Workspace', async () => {
@@ -154,10 +186,10 @@ describe('desktop Workspace navigation', () => {
     );
 
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
-    expect(tree.root.findAllByType('CommunityRail')).toHaveLength(1);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
 
     await act(async () => {
-      tree.root.findByType('CommunityRail').props.onSelect('workspace-empty');
+      tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-empty');
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -165,18 +197,39 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
       'Empty Workspace',
     );
-    expect(tree.root.findAllByType('CommunityRail')).toHaveLength(0);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
     expect(
       tree.root
         .findAllByType('Text')
         .some((node: { props: { children?: unknown } }) => node.props.children === 'No rooms yet.'),
-    )
-      .toBe(true);
+    ).toBe(true);
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/channels',
       params: { communityId: 'workspace-empty' },
     });
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
+  });
+
+  it('opens and closes the overlay rail without replacing the Room list', () => {
+    const rail = tree.root.findByType('DesktopWorkspaceRail');
+    expect(rail.props.open).toBe(false);
+    expect(tree.root.findByProps({ testID: 'desktop-room-search' })).toBeDefined();
+
+    act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
+    expect(tree.root.findByProps({ testID: 'desktop-room-search' })).toBeDefined();
+
+    act(() => tree.root.findByType('DesktopWorkspaceRail').props.onClose());
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
+  });
+
+  it('closes without routing when the current Workspace is picked', () => {
+    act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
+    act(() => tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-a'));
+
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(saveActiveCommunityId).not.toHaveBeenCalled();
   });
 
   it('uses a deep-linked Workspace URL as the persistent desktop sidebar authority', async () => {
@@ -193,8 +246,7 @@ describe('desktop Workspace navigation', () => {
       tree.root
         .findAllByType('Text')
         .some((node: { props: { children?: unknown } }) => node.props.children === 'No rooms yet.'),
-    )
-      .toBe(true);
+    ).toBe(true);
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
   });
 });

@@ -1,13 +1,5 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import {
-  Platform,
-  ScrollView,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getRandomBytes } from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
@@ -30,6 +22,7 @@ import {
   type Identity,
   type ManagedIdentity,
 } from '@beeline/buzz-client';
+import type { PushLevel } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   getEffectiveRelayUrl,
@@ -59,6 +52,7 @@ import { buzzPushPhaseDetail, pushSwitchValue } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
+import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
@@ -73,6 +67,8 @@ import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-ses
 import { markSignInInFlight, waitForAuthCallback } from '@/auth/onboarding-state';
 import { t } from '@/text';
 import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
+import { saveStoredPushLevel } from '@/push/push-level-storage';
+import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
 import {
   createManualUpdateState,
@@ -109,6 +105,7 @@ export default function BuzzIdentitySettings() {
   const [pushRegistration, setPushRegistration] = useState<BuzzPushRegistrationState | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
+  const [pushLevel, setPushLevel] = useState<PushLevel>('mine');
   const [linkedAccount, setLinkedAccount] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
@@ -247,6 +244,8 @@ export default function BuzzIdentitySettings() {
             const hosted = await monolithPhoneOperation('getManagedIdentity', {});
             if (!cancelled) {
               setFace(hosted.face ?? null);
+              setPushLevel(hosted.pushLevel);
+              await saveStoredPushLevel(identity.publicKey, hosted.pushLevel);
               setManagedIdentity(
                 hosted.handle
                   ? {
@@ -446,26 +445,6 @@ export default function BuzzIdentitySettings() {
     [],
   );
 
-  const togglePush = useCallback(
-    async (enabled: boolean) => {
-      if (!profileIdentity || pushWorking) return;
-      setPushWorking(true);
-      setError(null);
-      try {
-        // The switch reflects the REGISTRATION result, not merely the value
-        // the user requested — a failed token acquisition or POST leaves it
-        // visibly off with the failure named below.
-        const result = await setBuzzPushEnabled(profileIdentity, enabled);
-        await applyPushResult(profileIdentity, result, pushRegistration);
-      } catch (caught) {
-        setError(`Could not update notifications: ${String(caught)}`);
-      } finally {
-        setPushWorking(false);
-      }
-    },
-    [applyPushResult, profileIdentity, pushRegistration, pushWorking],
-  );
-
   const retryPushRegistration = useCallback(async () => {
     if (!profileIdentity || pushWorking) return;
     setPushWorking(true);
@@ -479,6 +458,35 @@ export default function BuzzIdentitySettings() {
       setPushWorking(false);
     }
   }, [applyPushResult, profileIdentity, pushRegistration, pushWorking]);
+  const pushOn = pushSwitchValue(pushEnabled, pushRegistration);
+
+  const changePushLevel = useCallback(
+    async (next: PushLevel) => {
+      if (!profileIdentity || pushWorking) return;
+      setPushWorking(true);
+      setError(null);
+      try {
+        const updated = await monolithPhoneOperation('updateIdentityPushLevel', {
+          pushLevel: next,
+        });
+        setPushLevel(updated.pushLevel);
+        await saveStoredPushLevel(profileIdentity.publicKey, updated.pushLevel);
+        if (updated.pushLevel === 'off') {
+          const notifications = await import('expo-notifications');
+          await reconcilePresentedNotificationBadge(notifications, Platform.OS, 'off');
+        } else if (!pushOn) {
+          const result = await setBuzzPushEnabled(profileIdentity, true);
+          await applyPushResult(profileIdentity, result, pushRegistration);
+        }
+      } catch (caught) {
+        setError(`Could not update notifications: ${String(caught)}`);
+        throw caught;
+      } finally {
+        setPushWorking(false);
+      }
+    },
+    [applyPushResult, profileIdentity, pushOn, pushRegistration, pushWorking],
+  );
 
   const pushRegistrationFailed =
     pushEnabled === true &&
@@ -496,7 +504,6 @@ export default function BuzzIdentitySettings() {
   const managedHandle = managedIdentity?.handle ?? profileHandle;
   const managedHandleLabel = managedHandle ? `@${managedHandle}` : '';
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
-  const pushOn = pushSwitchValue(pushEnabled, pushRegistration);
   const githubCanLink = linkedAccount === 'not-linked' && Platform.OS !== 'web';
 
   const commitName = () => {
@@ -590,18 +597,11 @@ export default function BuzzIdentitySettings() {
         {pushSupported ? (
           <View style={styles.section} testID="notifications-section">
             <Text style={styles.sectionLabel}>Notifications</Text>
-            <View style={styles.row} testID="notifications-setting">
-              <Text style={styles.rowTitle}>Push notifications</Text>
-              <Switch
-                accessibilityLabel="Push notifications"
-                disabled={pushEnabled === null || pushWorking}
-                onValueChange={(enabled) => void togglePush(enabled)}
-                testID="push-notifications-toggle"
-                thumbColor={theme.buzz.textPrimary}
-                trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.chrome }}
-                value={pushOn}
-              />
-            </View>
+            <PushLevelSetting
+              disabled={pushEnabled === null || pushWorking}
+              onSave={changePushLevel}
+              value={pushLevel}
+            />
             {pushRegistrationFailed ? (
               <TouchableOpacity
                 disabled={pushWorking}
@@ -645,9 +645,7 @@ export default function BuzzIdentitySettings() {
             <View style={styles.rowCopy}>
               <Text style={styles.rowTitle}>Version</Text>
               <Text numberOfLines={1} style={styles.rowMeta}>
-                {[releaseValue, manualUpdateMessage(manualUpdate)]
-                  .filter(Boolean)
-                  .join(' · ')}
+                {[releaseValue, manualUpdateMessage(manualUpdate)].filter(Boolean).join(' · ')}
               </Text>
             </View>
             {manualUpdateBusy ? (

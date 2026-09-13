@@ -634,6 +634,7 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const rollback = readFileSync(new URL('../.github/workflows/mobile-ota-rollback.yml', import.meta.url), 'utf8');
   const serverRollback = readFileSync(new URL('../.github/workflows/server-rollback.yml', import.meta.url), 'utf8');
   const serverLeg = readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8');
+  const serverLegAction = parse(serverLeg);
   const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
   const desktop = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
   assert.match(release, /node scripts\/server-release-smoke\.mjs/);
@@ -665,11 +666,39 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(serverRollback, /default: true/);
   assert.match(serverRollback, /flyctl machine update/);
   assert.match(serverLeg, /MIGRATION_DATABASE_URL/);
+  const setupNodeIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === 'actions/setup-node@v4');
+  const prepareMigrationIndex = workflow.jobs.server.steps.findIndex((step) => step.name === 'Prepare the server migration CLI once');
+  const promoteIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === './.github/actions/server-leg' && step.with?.phase === 'promote');
+  assert.ok(setupNodeIndex > 0 && setupNodeIndex < prepareMigrationIndex && prepareMigrationIndex < promoteIndex);
+  assert.equal(workflow.jobs.server.steps[setupNodeIndex].with['node-version-file'], '.nvmrc');
+  assert.equal(workflow.jobs.server.steps[setupNodeIndex].with.cache, 'npm');
+  const prepareMigration = workflow.jobs.server.steps[prepareMigrationIndex].run;
+  assert.match(prepareMigration, /^npm ci$/m);
+  assert.doesNotMatch(prepareMigration, /--ignore-scripts|@beeline\/gate/);
+  for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'push-gateway', 'server']) {
+    assert.match(prepareMigration, new RegExp(`npm run build -w @beeline/${workspace}`));
+  }
+  const migrate = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates').run;
+  assert.match(migrate, /MIGRATION_DATABASE_URL is required/);
+  assert.match(migrate, /npm run migrate -w @beeline\/server/);
+  assert.doesNotMatch(migrate, /npm ci|npm run build/);
   assert.match(serverLeg, /seq 0 20/);
   assert.match(serverLeg, /sleep 15/);
   assert.match(serverLeg, /fly-force-instance-id/);
   assert.match(serverLeg, /server\.usebeeline\.app\/health(?:\s|\\)/);
   assert.doesNotMatch(serverLeg, /server\.usebeeline\.app\/healthz/);
+  const promote = serverLegAction.runs.steps.find((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer').run;
+  assert.match(release, /SERVER_CANARY_REVIEW_SECRET: \$\{\{ secrets\.SERVER_CANARY_REVIEW_SECRET \}\}/);
+  assert.match(release, /SERVER_CANARY_ROOM_ID: \$\{\{ secrets\.SERVER_CANARY_ROOM_ID \}\}/);
+  assert.match(promote, /v1\/auth\/review\/exchange/);
+  assert.match(promote, /JSON\.stringify\(\{ secret: process\.env\.SERVER_CANARY_REVIEW_SECRET \}\)/);
+  assert.match(promote, /::add-mask::\$canary_access_token/);
+  assert.match(promote, /::add-mask::\$canary_refresh_token/);
+  assert.match(promote, /Authorization: Bearer \$canary_access_token/);
+  assert.match(promote, /SERVER_CANARY_REVIEW_SECRET is unset; using the legacy canary phone token/);
+  assert.match(promote, /requires SERVER_CANARY_REVIEW_SECRET or SERVER_CANARY_PHONE_TOKEN/);
+  assert.ok(promote.indexOf('/v1/auth/review/exchange') < promote.indexOf('for sample in $(seq 0 20)'));
+  assert.equal(promote.match(/v1\/auth\/review\/exchange/g)?.length, 1);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);

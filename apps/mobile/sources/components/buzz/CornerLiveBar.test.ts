@@ -86,19 +86,25 @@ describe('the corner-open indicator', () => {
     expect(labelOf(renderer).props.children).toBe('beebee working: feat/ux-fix-now');
   });
 
-  it('spends the reserved gold accent, and only that', () => {
+  it('spends the reserved gold accent only on waiting', () => {
     const live = render(
-      React.createElement(CornerLiveBar, { label: 'beebee working: feat/x', live: true }),
+      React.createElement(CornerLiveBar, {
+        label: 'beebee working: feat/x',
+        live: true,
+        onPress: () => undefined,
+      }),
     );
-    expect(labelOf(live).props.style.flat().at(-1).color).toBe(groknight.warning);
+    expect(labelOf(live).props.style.flat().at(-1).color).toBe(groknight.ledgerQuiet);
+    expect(live.root.findAllByType('Text')[1]?.props.style.flat().at(-1).color).toBe(
+      groknight.ledgerQuiet,
+    );
 
-    // Gold is never the only signal, and it never attaches to a state that is
-    // not live: an open-but-idle corner drops to the quiet tier and the copy
-    // itself says which is which.
+    // Gold is never the only signal: the waiting copy names the state that
+    // wants the viewer while live work remains quiet.
     const idle = render(
       React.createElement(CornerLiveBar, { label: 'beebee waiting: feat/x', live: false }),
     );
-    expect(labelOf(idle).props.style.flat().at(-1).color).toBe(groknight.ledgerQuiet);
+    expect(labelOf(idle).props.style.flat().at(-1).color).toBe(groknight.accent);
   });
 
   it('breathes while the work is live and holds still when it is not', () => {

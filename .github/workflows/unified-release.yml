@@ -601,15 +601,16 @@ jobs:
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
       needs.initialize.outputs.native_android == 'true'
-    # Local EAS build on the self-hosted Linux runner (Android SDK + JDK 17 live
+    # Local EAS build on a self-hosted Linux runner (Android SDK + JDK 17 live
     # there): Expo's cloud build needs credits the free plan ran out of. The
     # keystore still comes from Expo's credential store via EXPO_TOKEN.
-    runs-on: [self-hosted, beeline-prod-host]
+    # `beeline-android` is a POOL label: the production host and the Chad box both
+    # carry it, so the job lands on whichever is online and free, and falls back
+    # to the production host on its own when Chad is offline.
+    runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
     env:
       EAS_CLI_VERSION: 22.2.0
-      ANDROID_HOME: /home/lunchbox/android-sdk
-      ANDROID_SDK_ROOT: /home/lunchbox/android-sdk
     steps:
       - uses: actions/checkout@v4
         with:
@@ -631,7 +632,14 @@ jobs:
           EAS_SKIP_AUTO_FINGERPRINT: '1'
         run: |
           set -euo pipefail
-          test -d "$ANDROID_HOME/platform-tools" || { echo "Android SDK missing at $ANDROID_HOME" >&2; exit 1; }
+          # Each pooled runner keeps its SDK in a different place; take the runner's
+          # own ANDROID_HOME when it is set, else the first known layout that exists.
+          for candidate in "${ANDROID_HOME:-}" /home/lunchbox/android-sdk "$HOME/Android/Sdk" /opt/android-sdk; do
+            if [ -n "$candidate" ] && [ -d "$candidate/platform-tools" ]; then export ANDROID_HOME="$candidate"; break; fi
+          done
+          test -d "${ANDROID_HOME:-}/platform-tools" || { echo "Android SDK missing on runner $(hostname)" >&2; exit 1; }
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "Android SDK: $ANDROID_HOME on $(hostname)"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           npm ci
           # --package + env -u: same reasons as the iOS leg (a bare spec matching a

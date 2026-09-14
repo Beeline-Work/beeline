@@ -1036,7 +1036,13 @@ jobs:
               gh release delete-asset "$RELEASE_VERSION" 'Beeline-latest.json' --yes || true
             fi
           }
-          trap rollback_manifest ERR
+          manifest_committed=false
+          rollback_on_exit() {
+            status=$?
+            if [ "$manifest_committed" != true ]; then rollback_manifest; fi
+            return "$status"
+          }
+          trap rollback_on_exit EXIT
           # The manifest is the commit point: every URL and signature it names
           # is already present before clients can discover this version.
           gh release upload "$RELEASE_VERSION" "$manifest" --clobber
@@ -1050,7 +1056,8 @@ jobs:
             sleep 5
           done
           [ "$verified" = true ] || { echo 'desktop updater manifest did not converge' >&2; exit 1; }
-          trap - ERR
+          manifest_committed=true
+          trap - EXIT
       - name: Notify clients without changing the authoritative release outcome
         id: notification
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'

@@ -66,6 +66,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     const pathnameRef = useRef(pathname);
     const checkingRef = useRef(false);
     const applyingRef = useRef(false);
+    const desktopInstallCompleteRef = useRef(false);
+    const desktopAutoApplyAttemptedRef = useRef(false);
     const pendingUpdateRef = useRef<PendingOtaUpdate | null>(null);
     const pendingDesktopUpdateRef = useRef<PendingDesktopUpdate | null>(null);
     const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -80,7 +82,10 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
             if (applyingRef.current) return true;
             applyingRef.current = true;
             try {
-                await desktopUpdate.downloadAndInstall();
+                if (!desktopInstallCompleteRef.current) {
+                    await desktopUpdate.downloadAndInstall();
+                    desktopInstallCompleteRef.current = true;
+                }
                 // The Windows NSIS installer exits and restarts the process itself.
                 // macOS and Linux return after installation and need this call.
                 const { relaunch } = await import('@tauri-apps/plugin-process');
@@ -110,7 +115,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const reloadApp = useCallback(async () => {
-        await applyUpdate();
+        const applied = await applyUpdate();
+        if (!applied && pendingDesktopUpdateRef.current) setPromptVisible(true);
     }, [applyUpdate]);
 
     const checkForUpdates = useCallback(async () => {
@@ -129,6 +135,10 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
                 const { check } = await import('@tauri-apps/plugin-updater');
                 const update = await check();
                 if (!update) return;
+                if (pendingDesktopUpdateRef.current?.version !== update.version) {
+                    desktopInstallCompleteRef.current = false;
+                    desktopAutoApplyAttemptedRef.current = false;
+                }
                 pendingDesktopUpdateRef.current = update;
                 setUpdateAvailable(true);
                 // The path effect below is the single owner of automatic
@@ -172,9 +182,13 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }, [applyUpdate]);
 
     useEffect(() => {
-        if (!updateAvailable || !pendingDesktopUpdateRef.current || isUpdateBusyPath(pathname)) return;
+        if (!updateAvailable || !pendingDesktopUpdateRef.current || isUpdateBusyPath(pathname)
+            || desktopAutoApplyAttemptedRef.current) return;
+        desktopAutoApplyAttemptedRef.current = true;
         setPromptVisible(false);
-        void applyUpdate();
+        void applyUpdate().then((applied) => {
+            if (!applied) setPromptVisible(true);
+        });
     }, [applyUpdate, pathname, updateAvailable]);
 
     useEffect(() => {

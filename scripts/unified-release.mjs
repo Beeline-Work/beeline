@@ -61,7 +61,9 @@ const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
 const SHA = /^[0-9a-f]{7,64}$/;
 const FINAL_STATES = new Set(['checked', 'carried']);
 const RUNTIME_PIN_PATH = 'apps/mobile/native-fingerprint.json';
-export const DESKTOP_VERSION_BASELINE = '0.2.20';
+export const DESKTOP_VERSION_BASELINE = normalizeDesktopVersion(JSON.parse(readFileSync(
+  new URL('../apps/mobile/src-tauri/desktop-version.json', import.meta.url), 'utf8',
+)).version);
 
 function fail(message) { throw new Error(message); }
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }

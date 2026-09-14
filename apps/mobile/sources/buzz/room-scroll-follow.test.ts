@@ -187,4 +187,29 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('useKeyboardState(');
     expect(chatSource).toContain('bottomChromeLayoutKey');
   });
+
+  /**
+   * A reply started from a message the reader scrolled up to read (a
+   * multi-page message, say) otherwise keeps that same scroll offset while
+   * the keyboard and reply banner shrink the viewport — which reads as the
+   * transcript jumping to center the replied-to message instead of staying
+   * on the end of the log the reply reference already gives context for.
+   * `beginReply` must land back on the tail through the same
+   * `scrollToNewestMessage` the arrival/layout-change rules use, not a
+   * fresh `scrollToIndex` on the replied message (that stays reserved for
+   * jumping to a tapped reply reference).
+   */
+  it('scrolls to the end of the log when a reply is started, not to the replied message', () => {
+    const beginReply = chatSource.slice(
+      chatSource.indexOf('const beginReply = useCallback'),
+      chatSource.indexOf('const handleReactToMessage = useCallback'),
+    );
+    const install = beginReply.slice(
+      beginReply.indexOf('const install = () => {'),
+      beginReply.indexOf('};', beginReply.indexOf('const install = () => {')),
+    );
+    expect(install).toContain('scrollToNewestMessage();');
+    expect(install).not.toContain('scrollToIndex');
+    expect(beginReply).toContain('[decodedId, replyTargetForMessage, scrollToNewestMessage, visibleMessages]');
+  });
 });

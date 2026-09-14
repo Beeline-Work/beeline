@@ -8,6 +8,7 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import type { CornerRestoreResult } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
+import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
@@ -336,6 +337,8 @@ export class RoomRuntimeCoordinator {
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;
   private readonly grantRunnerServer: GrantRunnerServer;
+  /** Connection usage capture, batched per agent turn. */
+  private readonly connectorUsage: ConnectorUsageRecorder;
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -358,6 +361,7 @@ export class RoomRuntimeCoordinator {
       agentId: this.agent.publicKey,
     });
     this.grantRunnerServer = new GrantRunnerServer(this.grantRunner);
+    this.connectorUsage = new ConnectorUsageRecorder();
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
@@ -715,6 +719,7 @@ export class RoomRuntimeCoordinator {
         cornerId: corner.cornerId,
         grantRunner: this.grantRunner,
         ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
+        connectorUsage: this.connectorUsage,
         parentRoomId: corner.parentRoomId,
         workspaceId: this.runtime.communityId,
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),

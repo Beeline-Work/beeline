@@ -91,6 +91,10 @@ vi.mock('@/buzz/chat-attachment', () => ({
 
 const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
 vi.mock('@/utils/open-external-url', () => openExternal);
+vi.mock('@/components/buzz/ArtifactCard', async () => {
+  const ReactModule = await import('react');
+  return { ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props) };
+});
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };

@@ -7,6 +7,14 @@ export interface AttachmentReference {
   /** Server fact: the bytes are past the media TTL and gone. Name, type and
    *  size survive on the message, so a client renders "expired", not a spinner. */
   expired?: boolean;
+  /** One artifact kind keyed by mime, stamped by the server projection
+   *  (packages/api-contract/src/artifacts.ts): agent-posted pages rendered
+   *  in-app (mobile card = the preview, script off). Absent on plain media. */
+  kind?: 'artifact';
+  /** Artifact display title (the agent's `post_artifact` title). */
+  title?: string;
+  /** The uploading agent, named by its canonical handle (no sigil). */
+  author?: string;
   /** Isolated, cookie-less rendering URL for active/browser-rendered files. */
   previewUrl?: string;
   name: string;
@@ -63,11 +71,17 @@ export function normalizeAttachmentReference(
   const sha256 = value.sha256?.toLowerCase();
   const width = cleanSize(value.width ?? 0);
   const height = cleanSize(value.height ?? 0);
+  const kind = value.kind === 'artifact' ? value.kind : undefined;
+  const title = value.title ? cleanName(value.title) : undefined;
+  const author = value.author ? cleanName(value.author) : undefined;
   return {
     url,
     name,
     mimeType,
     size,
+    ...(kind ? { kind } : {}),
+    ...(kind && title ? { title } : {}),
+    ...(kind && author ? { author } : {}),
     ...(previewUrl ? { previewUrl } : {}),
     ...(sha256 && /^[0-9a-f]{64}$/.test(sha256) ? { sha256 } : {}),
     ...(thumbnailUrl ? { thumbnailUrl } : {}),
@@ -85,6 +99,9 @@ export function buildAttachmentTag(reference: AttachmentReference): string[] {
     `url ${attachment.url}`,
     `m ${attachment.mimeType}`,
     `size ${attachment.size}`,
+    ...(attachment.kind ? [`kind ${attachment.kind}`] : []),
+    ...(attachment.title ? [`title ${attachment.title}`] : []),
+    ...(attachment.kind && attachment.author ? [`author ${attachment.author}`] : []),
     ...(attachment.previewUrl ? [`preview ${attachment.previewUrl}`] : []),
     ...(attachment.sha256 ? [`x ${attachment.sha256}`] : []),
     ...(attachment.thumbnailUrl ? [`thumb ${attachment.thumbnailUrl}`] : []),
@@ -141,6 +158,11 @@ export function parseAttachmentTags(tags: readonly string[][]): AttachmentRefere
       name: names.get(fields.get('url') ?? '') ?? '',
       mimeType: fields.get('m') ?? '',
       size: Number(fields.get('size')),
+      ...(fields.get('kind') === 'artifact' ? { kind: 'artifact' as const } : {}),
+      ...(fields.get('title') ? { title: fields.get('title') } : {}),
+      ...(fields.get('kind') === 'artifact' && fields.get('author')
+        ? { author: fields.get('author') }
+        : {}),
       ...(fields.get('x') ? { sha256: fields.get('x') } : {}),
       ...(fields.get('preview') ? { previewUrl: fields.get('preview') } : {}),
       ...(fields.get('thumb') ? { thumbnailUrl: fields.get('thumb') } : {}),

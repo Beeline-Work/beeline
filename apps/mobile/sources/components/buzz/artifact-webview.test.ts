@@ -1,0 +1,38 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { artifactWebViewProps, type ArtifactSource } from './artifact-webview';
+
+const guard = { allow: vi.fn(() => true) };
+
+function props(source: ArtifactSource['source'], scrollEnabled?: boolean) {
+  return artifactWebViewProps({ source, guard, ...(scrollEnabled !== undefined ? { scrollEnabled } : {}) });
+}
+
+describe('the one sandbox prop table', () => {
+  it('renders script off, no origins, no windows, no file access', () => {
+    const table = props({ html: '<p>mock</p>' });
+    expect(table.javaScriptEnabled).toBe(false);
+    expect(table.originWhitelist).toEqual([]);
+    expect(table.setSupportMultipleWindows).toBe(false);
+    expect(table.allowFileAccess).toBe(false);
+    expect(table.scrollEnabled).toBe(false);
+  });
+
+  it('carries no onMessage bridge at all — the key is absent, not undefined', () => {
+    expect(Object.hasOwn(props({ html: '<p>x</p>' }), 'onMessage')).toBe(false);
+    expect(Object.hasOwn(props({ uri: 'file:///cache/a.pdf' }), 'onMessage')).toBe(false);
+  });
+
+  it('passes the source verbatim: wrapped HTML for pages, a file URI for iOS PDFs', () => {
+    expect(props({ html: '<p>x</p>' }).source).toEqual({ html: '<p>x</p>' });
+    expect(props({ uri: 'file:///cache/a.pdf' }).source).toEqual({ uri: 'file:///cache/a.pdf' });
+    expect(props({ html: '<p>x</p>' }, true).scrollEnabled).toBe(true);
+  });
+
+  it('routes every navigation request through the one-shot guard', () => {
+    const table = props({ html: '<p>x</p>' });
+    const request = { url: 'about:blank' };
+    (table.onShouldStartLoadWithRequest as (r: { url: string }) => boolean)(request);
+    expect(guard.allow).toHaveBeenCalledWith('about:blank');
+  });
+});

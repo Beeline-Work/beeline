@@ -294,5 +294,23 @@ describe('the Settings version row reads label left, value right', () => {
     expect(value).toBeDefined();
     expect(value!.ancestors).toHaveLength(1);
     expect(flatStyle(value!.node).textAlign).toBe('right');
+
+    // The notice takes a line under the label; it never pushes the row's
+    // action off the axis onto a line of its own.
+    const row = rowElement(renderer, 'ota-update-info');
+    expect(kids(row).filter((child) => typeof child !== 'string')).toHaveLength(3);
+    expect(flatStyle(row).flexWrap).toBeUndefined();
+  });
+
+  it('gives the value the width its string needs, not half the row', async () => {
+    const renderer = await renderScreen();
+    const value = textsUnder(rowElement(renderer, 'ota-update-info')).find(
+      (text) => spell(text.node) === RELEASE_VALUE,
+    )!;
+    // `flex: 1` would hand the value half the row and ellipsize the build
+    // string; it takes the width the string needs and shrinks only past that.
+    const style = flatStyle(value.node);
+    expect(style.flex).toBeUndefined();
+    expect(style.flexShrink).toBe(1);
   });
 });

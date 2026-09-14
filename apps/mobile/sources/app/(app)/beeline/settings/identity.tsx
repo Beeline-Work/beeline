@@ -640,22 +640,16 @@ export default function BuzzIdentitySettings() {
             accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
             disabled={!Updates.isEnabled || manualUpdateBusy}
             onPress={() => void checkForUpdate()}
-            style={[
-              styles.row,
-              styles.updateRow,
-              (!Updates.isEnabled || manualUpdateBusy) && styles.disabled,
-            ]}
+            style={[styles.row, (!Updates.isEnabled || manualUpdateBusy) && styles.disabled]}
             testID="ota-update-info"
           >
-            <Text style={styles.rowTitle}>Version</Text>
-            <Text numberOfLines={1} style={styles.monoValue}>
+            <View style={styles.rowCopy}>
+              <Text style={styles.rowTitle}>Version</Text>
+              {updateNotice ? <Text style={styles.rowMeta}>{updateNotice}</Text> : null}
+            </View>
+            <Text numberOfLines={1} style={styles.versionValue}>
               {releaseValue}
             </Text>
-            {updateNotice ? (
-              <View style={styles.noticeLine}>
-                <Text style={styles.rowMeta}>{updateNotice}</Text>
-              </View>
-            ) : null}
             {manualUpdateBusy ? (
               <View testID="ota-update-progress">
                 <PixelLoader compact />
@@ -752,13 +746,21 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    // The version row is the one row that can grow a second line: an update
-    // notice wraps under the label/value axis instead of crowding it, so this
-    // row alone opts into wrapping and the notice claims a full line.
-    updateRow: { flexWrap: 'wrap' },
-    noticeLine: { flexBasis: '100%' },
+    rowCopy: { flex: 1, minWidth: 0 },
     rowTitle: { ...Typography.default(), ...hull.type.body, flex: 1, color: hull.textPrimary },
     rowMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    // The version and its build string, on the Handle row's trailing axis. It
+    // takes the width the string needs and shrinks only when the row runs out,
+    // rather than splitting the row in half with the label: at `flex: 1` the
+    // build string loses its second half to the ellipsis on a 390pt phone.
+    versionValue: {
+      ...Typography.mono(),
+      ...hull.type.body,
+      flexShrink: 1,
+      minWidth: 0,
+      color: hull.textSecondary,
+      textAlign: 'right',
+    },
     monoValue: {
       ...Typography.mono(),
       ...hull.type.body,

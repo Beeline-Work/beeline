@@ -116,6 +116,12 @@ export type DaemonOperationMap = {
       pullRequest: string;
       headSha: string;
       approvalPending: boolean;
+      /** The parent Room's currently-configured reviewer, as `@handle`, or null when none is configured. */
+      reviewer: string | null;
+      /** True when `reviewer` is also this corner's opener/author — self-review is not required. */
+      reviewerIsAuthor: boolean;
+      /** States which actor's approve_merge clears the gate, and the human fallback path. */
+      rule: string;
     }
   >;
   approveCornerMerge: Operation<

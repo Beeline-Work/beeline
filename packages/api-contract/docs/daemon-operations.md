@@ -59,9 +59,13 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 `getPrChecksStatus({ cornerId, pullRequest? })` is authorized by current corner membership.
 `pullRequest` is a positive PR number in the parent Room repository or its full GitHub URL;
 omitting it selects the corner's own PR. It returns `checks` (`passed`, `failed`, or `pending`),
-`pullRequest` (URL), `headSha`, and `approvalPending`. The server resolves the current head,
-shares head-bound check facts across corners, and reconciles missing/invalidated snapshots
-with GitHub check runs and combined commit status. A single webhook check is not a complete
-snapshot. Human holds remain in the helper's requesting-corner conversation scan.
+`pullRequest` (URL), `headSha`, `approvalPending`, `reviewer` (the parent Room's currently
+configured reviewer as `@handle`, or null), `reviewerIsAuthor` (true when that reviewer is also
+this corner's opener), and `rule` (states which actor's `approve_merge` clears the gate). The
+server resolves the current head, shares head-bound check facts across corners, and reconciles
+missing/invalidated snapshots with GitHub check runs and combined commit status. A single webhook
+check is not a complete snapshot. When the configured reviewer opened the corner it is reviewing,
+`approvalPending` is false — self-review is not required, and no other agent's approval can ever
+satisfy that gate. Human holds remain in the helper's requesting-corner conversation scan.
 
 Deploy the server before helpers that call this operation.

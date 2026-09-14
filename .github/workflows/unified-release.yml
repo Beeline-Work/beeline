@@ -660,6 +660,11 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           TRACK: ${{ inputs.store_track }}
+          # scripts/play-api.sh refuses to run without the Play package name (release
+          # run 34800657127 failed here after the first local Android build; the line
+          # was then lost in #1241's conflict resolution and run 34873052609 failed the
+          # same way). Same value as androidPackage in apps/mobile/app.config.js.
+          PACKAGE_NAME: app.usebeeline
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
@@ -758,7 +763,20 @@ jobs:
           # variable inherited the nested npx resolves eas-cli instead and fails with
           # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
-          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
+          # Upload with Apple's own altool, not `eas submit`: EAS Submit is Expo's cloud
+          # queue, and on this account its wait grew from 7 min to 54 min and then past
+          # the job's 90-minute timeout (run 34863479172: build done in 19 min, then
+          # "in queue" for 71 min). altool talks to App Store Connect directly with the
+          # same API key; it finds the .p8 under ./private_keys of its working directory.
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          cp "$EXPO_ASC_API_KEY_PATH" "$RUNNER_TEMP/private_keys/AuthKey_${EXPO_ASC_KEY_ID}.p8"
+          (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$RUNNER_TEMP/beeline-ios.ipa" \
+            --apiKey "$EXPO_ASC_KEY_ID" --apiIssuer "$EXPO_ASC_ISSUER_ID" --output-format json) | tee "$RUNNER_TEMP/ios-upload.json"
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            if (!r["success-message"]) { console.error("altool upload did not report success:", JSON.stringify(r)); process.exit(1); }
+            console.log(r["success-message"]);
+          ' "$RUNNER_TEMP/ios-upload.json"
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:
@@ -772,8 +790,8 @@ jobs:
         # DerivedData: a cancelled attempt leaves both behind, and five of them filled
         # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
-          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa"
-          rm -rf "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
+          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-upload.json"
+          rm -rf "$RUNNER_TEMP/private_keys" "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
           df -h / | tail -1
       - name: Restore the runner user keychains
         if: always()

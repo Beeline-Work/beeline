@@ -21,7 +21,11 @@ import type {
   FinalizeUploadInput,
   FinalizeUploadResult,
 } from '@beeline/api-contract/daemon';
-import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
+import {
+  ARTIFACT_MAXIMUM_BYTES,
+  ARTIFACT_MIME_TYPES,
+  type ArtifactMimeType,
+} from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
@@ -29,7 +33,7 @@ import type { ObjectStorage } from './object-storage.js';
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Upload shape (a) — the mime types an artifact may carry. */
-export function isArtifactMimeType(mime: string): boolean {
+export function isArtifactMimeType(mime: string): mime is ArtifactMimeType {
   return (ARTIFACT_MIME_TYPES as readonly string[]).includes(mime);
 }
 

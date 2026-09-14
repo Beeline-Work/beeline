@@ -43,6 +43,8 @@ import {
   CORNER_OBJECTIVE_MAX_WORDS,
   cornerTextRefusal,
   normalizeCornerText,
+  ARTIFACT_MIME_TYPES,
+  isArtifactMime,
 } from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_KINDS,
@@ -69,6 +71,7 @@ import {
   type CornerLifecycleView,
 } from '@beeline/api-contract/phone';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
+import { validateArtifact } from './artifact-validation.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -394,6 +397,37 @@ const AGENT_TOOLS: ToolDefinition[] = [
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
           description: `One paragraph of at most ${CORNER_OBJECTIVE_MAX_WORDS} words stating the complete, fixed objective.`,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'post_artifact',
+    description:
+      'Post one artifact into this Room or corner: a self-contained HTML or SVG mock page, a PDF, or Markdown, carried as an attachment under your title. HTML and SVG must be fully self-contained - all CSS in an inline <style>, images only as data: URLs; every script, <link>, <iframe>, <object>, <embed>, <form>, inline event handler and http(s) reference is refused, because the viewer runs with script off. Capped at 2 MB. Pass html for markup text or bytes for base64-encoded content, never both. Use it when a design decision needs eyes: build the page, post it, then ask for feedback here in the Room.',
+    inputSchema: {
+      type: 'object',
+      required: ['title', 'mime'],
+      properties: {
+        title: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 200,
+          description: 'The artifact title, e.g. "Room list mock". Titles the card everywhere.',
+        },
+        mime: {
+          type: 'string',
+          enum: [...ARTIFACT_MIME_TYPES],
+          description: 'The artifact mime type; it selects the validator and the viewer.',
+        },
+        html: {
+          type: 'string',
+          description: 'The document as text. Use for text/html and image/svg+xml (and small text/markdown).',
+        },
+        bytes: {
+          type: 'string',
+          description: 'The artifact content base64-encoded. Required for application/pdf.',
         },
       },
       additionalProperties: false,
@@ -1429,6 +1463,61 @@ export async function attachFile(
   return `Attached ${name} (${details.size} bytes); it will be delivered with your final reply.`;
 }
 
+export interface PostArtifactDeps {
+  roomId: string;
+  upload: (bytes: Buffer, mime: string, title: string) => Promise<JsonObject>;
+  queue: (attachment: JsonObject) => Promise<void>;
+}
+
+export function postArtifactDepsFromEnv(): PostArtifactDeps {
+  return {
+    roomId: agentScheduleRoomId(),
+    upload: (bytes, mime, title) => daemonUploadArtifact(bytes, mime, title),
+    queue: async (attachment) => {
+      await daemonExecute('postAgentAttachment', { roomId: agentScheduleRoomId(), attachment });
+    },
+  };
+}
+
+/** post_artifact: validate, upload through the artifacts pass-through, then
+ *  queue the attachment on this turn's final reply. The server refuses the
+ *  attachment outside an active turn (postAgentAttachment is turn-authority
+ *  bound), so there is no separate surface-side turn check here. */
+export async function postArtifact(
+  args: JsonObject,
+  deps: PostArtifactDeps = postArtifactDepsFromEnv(),
+): Promise<string> {
+  const title = stringArg(args, 'title')?.trim();
+  if (!title) throw new Error('title must be a non-empty string');
+  if (title.length > 200) throw new Error('title must be at most 200 characters');
+  const mime = stringArg(args, 'mime');
+  if (!isArtifactMime(mime)) {
+    throw new Error(`mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);
+  }
+  const html = args.html;
+  const encoded = args.bytes;
+  if ((html === undefined) === (encoded === undefined)) {
+    throw new Error('pass exactly one of html (the document as text) or bytes (base64)');
+  }
+  let bytes: Buffer;
+  if (html !== undefined) {
+    if (typeof html !== 'string') throw new Error('html must be a string');
+    bytes = Buffer.from(html, 'utf8');
+  } else {
+    if (typeof encoded !== 'string') throw new Error('bytes must be a base64 string');
+    bytes = Buffer.from(encoded, 'base64');
+  }
+  validateArtifact(mime, bytes, title);
+  const uploaded = await deps.upload(bytes, mime, title);
+  const url = typeof uploaded.url === 'string' && uploaded.url ? uploaded.url : undefined;
+  if (!url) throw new Error('the artifact upload returned no url');
+  await deps.queue({ url, name: title, mimeType: mime, size: bytes.length });
+  return (
+    `Posted artifact "${title}" (${bytes.length} bytes, ${mime}); it is delivered with your ` +
+    'final reply. Ask for feedback here in the Room.'
+  );
+}
+
 function agentScheduleRoomId(): string {
   return process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID');
 }
@@ -1859,6 +1948,36 @@ async function daemonUploadMedia(
   return (await response.json()) as JsonObject;
 }
 
+/** The small-object pass-through: the server validates and streams the
+ *  bytes to storage in one step and answers with the stored artifact url. */
+async function daemonUploadArtifact(
+  bytes: Buffer,
+  mime: string,
+  title: string,
+): Promise<JsonObject> {
+  const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
+  const response = await fetch(new URL('/v1/daemon/artifacts', `${baseUrl}/`), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
+      'content-type': mime,
+      'x-file-name': title,
+    },
+    body: bytes,
+  });
+  if (!response.ok) {
+    let code = 'request_failed';
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === 'string') code = body.error;
+    } catch {
+      // Never reflect a server body into the model-facing tool error.
+    }
+    throw new Error(`artifact upload failed (${response.status}: ${code})`);
+  }
+  return (await response.json()) as JsonObject;
+}
+
 async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
     case 'open_corner':
@@ -1875,6 +1994,8 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return writeScratchFile(args);
     case 'attach_file':
       return attachFile(args);
+    case 'post_artifact':
+      return postArtifact(args);
     case 'create_schedule':
       return createSchedule(args);
     case 'subscribe_events':

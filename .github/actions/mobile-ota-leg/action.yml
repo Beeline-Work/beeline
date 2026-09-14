@@ -24,6 +24,10 @@ inputs:
   expo_token:
     description: EXPO_TOKEN secret (composite actions cannot read secrets themselves)
     required: true
+  embedded_anchor_platforms:
+    description: comma list of platforms whose store binary was built in this release (their current runtime pin may use the embedded update as its rollback anchor)
+    required: false
+    default: ''
   owner_pubkey:
     description: MOBILE_OTA_OWNER_PUBKEY secret; empty skips the receipt check
     required: false
@@ -149,6 +153,7 @@ runs:
         RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+        OTA_EMBEDDED_ANCHOR_PLATFORMS: ${{ inputs.embedded_anchor_platforms }}
       run: |
         set -euo pipefail
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi

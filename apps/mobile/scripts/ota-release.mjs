@@ -417,8 +417,30 @@ function publish(options) {
       target.runtimeVersion === '23',
   );
   const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
+  // A runtime's FIRST production release has no earlier update to roll back to,
+  // but the store binary built for it in this same release carries an embedded
+  // bundle, and `rollback` already falls back to update:roll-back-to-embedded
+  // for such targets. The release leg names those platforms in
+  // OTA_EMBEDDED_ANCHOR_PLATFORMS (only when its native build succeeded), so the
+  // embedded update counts as the anchor for the current pin of that platform.
+  const embeddedAnchorPlatforms = new Set(
+    (process.env.OTA_EMBEDDED_ANCHOR_PLATFORMS ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  const pins = readPinnedRuntimeVersion(process.cwd());
+  const embeddedAnchorTargets = requiredRollbackTargets.filter(
+    (target) =>
+      !previousTargetKeys.has(targetKey(target)) &&
+      embeddedAnchorPlatforms.has(target.platform) &&
+      target.runtimeVersion === pins[target.platform],
+  );
+  for (const target of embeddedAnchorTargets)
+    console.log(`${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`);
+  const embeddedAnchorKeys = new Set(embeddedAnchorTargets.map(targetKey));
   const missingRollbackTargets = requiredRollbackTargets.filter(
-    (target) => !previousTargetKeys.has(targetKey(target)),
+    (target) => !previousTargetKeys.has(targetKey(target)) && !embeddedAnchorKeys.has(targetKey(target)),
   );
   if (!options.dryRun && missingRollbackTargets.length > 0) {
     fail(

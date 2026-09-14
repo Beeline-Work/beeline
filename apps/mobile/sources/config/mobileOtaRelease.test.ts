@@ -500,6 +500,17 @@ esac
     expect(incomplete.stderr).toContain('no rollback anchor for ios@23');
     expect(existsSync(ledger)).toBe(false);
 
+    // A platform whose store binary shipped in this release may use that
+    // binary's embedded update as the anchor for its CURRENT pin only; ios@23
+    // (the compatibility runtime) is not the current pin, so it still refuses.
+    const stillMissing = runRelease(
+      ['publish', '--sha', '1234567890abcdef', '--ref', 'main', '--ledger', ledger],
+      { EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: 'android,ios' },
+    );
+    expect(stillMissing.status).toBe(1);
+    expect(stillMissing.stderr).toContain('no rollback anchor for ios@23');
+    expect(stillMissing.stdout).not.toContain('no rollback anchor for android@');
+
     writeFileSync(
       fakeEas,
       `#!/bin/sh

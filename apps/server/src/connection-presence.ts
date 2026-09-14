@@ -191,7 +191,7 @@ export class ConnectionPresence {
          AND ($1::uuid IS NULL OR member.room_id=$1)
          AND p.body->>'status'='online'
        ) SELECT m.* FROM candidates m
-       WHERE ${tagsKnownIdentitySql('m', 'm.agent_id', 'm.agent_handle')}`,
+       WHERE ${tagsKnownIdentitySql('m', 'm.agent_id', 'm.agent_handle', "'agent'")}`,
       [roomId ?? null],
     );
     for (const delivery of deliveries.rows) {

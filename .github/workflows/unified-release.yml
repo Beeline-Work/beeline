@@ -777,7 +777,10 @@ jobs:
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
 
   release_result:
-    if: always() && inputs.plan_only != true && needs.initialize.result == 'success'
+    # !cancelled(), not always(): a run superseded by cancel-in-progress must not
+    # classify itself as a failed attempt, and (below) must never redispatch its
+    # pinned identity — that redispatch cancelled the fresh cut that replaced it.
+    if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
     needs: [initialize, server, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
@@ -1033,7 +1036,7 @@ jobs:
 
   retry:
     if: >-
-      always() && inputs.plan_only != true && needs.release_result.result == 'failure' &&
+      !cancelled() && inputs.plan_only != true && needs.release_result.result == 'failure' &&
       fromJSON(inputs.retry_attempt || '1') < 3
     needs: [initialize, release_result]
     runs-on: [self-hosted, beeline-prod-host]

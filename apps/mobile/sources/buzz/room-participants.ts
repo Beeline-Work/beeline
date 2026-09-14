@@ -156,12 +156,52 @@ function mentionCodePointAt(text: string, offset: number): string | undefined {
 }
 
 /**
+ * `@channel` is the one reserved broadcast token: never a resolvable
+ * identity, so it never earns a picker selection or a p-tag pubkey. Handles
+ * reaching this check are already NFKC/lowercase-normalized (composer text
+ * and server-derived handles alike), so a plain equality is case-insensitive.
+ */
+export const CHANNEL_MENTION_HANDLE = 'channel';
+/** Sentinel roster pubkey for the synthetic `@channel` autocomplete row — never a real identity. */
+export const CHANNEL_MENTION_PUBKEY = '@channel';
+
+export function isChannelMentionHandle(handle: string): boolean {
+  return normalizeMentionSearch(handle) === CHANNEL_MENTION_HANDLE;
+}
+
+/** Every literal, live mention token in composer/tokenizer order (lowercased handles). */
+function typedComposerMentionTokens(text: string): string[] {
+  const normalized = text.normalize('NFKC').toLocaleLowerCase();
+  const handles: string[] = [];
+  for (const match of normalized.matchAll(COMPOSER_MENTION_PATTERN)) {
+    const offset = match.index ?? 0;
+    const before = mentionCodePointBefore(normalized, offset);
+    if (before && MENTION_HANDLE_CHARACTER.test(before)) continue;
+    const punctuation = normalized.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
+    const afterPunctuation = punctuation
+      ? mentionCodePointAt(normalized, offset + match[0].length + punctuation.length)
+      : undefined;
+    if (afterPunctuation && MENTION_HANDLE_CHARACTER.test(afterPunctuation)) continue;
+    handles.push(match[1] ?? '');
+  }
+  return handles;
+}
+
+/** Whether the composer/sent text addresses the whole Room via a live `@channel` token. */
+export function hasChannelMentionToken(text: string): boolean {
+  return typedComposerMentionTokens(text).some(isChannelMentionHandle);
+}
+
+/**
  * Resolve every live mention in composer order.
  *
  * A picker selection is already an exact handle→pubkey binding and survives
  * an asynchronous roster refresh. A manually completed handle is live only
  * when it maps to exactly one current Room participant; ambiguous and unknown
  * tokens remain ordinary prose and must not produce either a p-tag or gold UI.
+ * `@channel` never resolves to a pubkey here — it is a broadcast, not an
+ * addressable identity — even when a stray selection or roster entry shares
+ * its literal handle.
  */
 export function resolveComposerMentions(
   text: string,
@@ -180,22 +220,12 @@ export function resolveComposerMentions(
     participantsByHandle.set(handle, pubkeys);
   }
 
-  const normalized = text.normalize('NFKC').toLocaleLowerCase();
   const pubkeys: string[] = [];
   const handles: string[] = [];
   const seenPubkeys = new Set<string>();
   const seenHandles = new Set<string>();
-  for (const match of normalized.matchAll(COMPOSER_MENTION_PATTERN)) {
-    const offset = match.index ?? 0;
-    const before = mentionCodePointBefore(normalized, offset);
-    if (before && MENTION_HANDLE_CHARACTER.test(before)) continue;
-    const punctuation = normalized.slice(offset + match[0].length).match(/^[.-]+/u)?.[0];
-    const afterPunctuation = punctuation
-      ? mentionCodePointAt(normalized, offset + match[0].length + punctuation.length)
-      : undefined;
-    if (afterPunctuation && MENTION_HANDLE_CHARACTER.test(afterPunctuation)) continue;
-
-    const handle = match[1] ?? '';
+  for (const handle of typedComposerMentionTokens(text)) {
+    if (isChannelMentionHandle(handle)) continue;
     const selectedPubkey = selectedByHandle.get(handle);
     const rosterPubkeys = participantsByHandle.get(handle);
     const pubkey =

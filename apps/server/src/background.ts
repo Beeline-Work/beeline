@@ -1,6 +1,8 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
+import type { ObjectStorage } from './object-storage.js';
+import type { ObjectService } from './object-service.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import {
   claimReleaseCatchup,
@@ -190,7 +192,7 @@ export class PushDeliveryLoop {
             recipient.push_level<>'off'
             AND (
               -- Direct attention is eligible at every level except off.
-              ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle')}
+              ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
               OR room.direct_participants IS NOT NULL
               OR EXISTS (
                 SELECT 1 FROM messages addressed
@@ -387,6 +389,12 @@ export class MediaExpiryLoop {
     private readonly database: SqlDatabase,
     private readonly ttlHours = mediaTtlHours(),
     private readonly intervalMs = MEDIA_SWEEP_INTERVAL_MS,
+    private readonly objects?: {
+      storage: ObjectStorage;
+      /** Read-side facts (`readMediaObject`/`mediaLink`) need storage too; the
+       *  sweep only uses `deleteObject`, batched and idempotent. */
+      service: ObjectService;
+    },
   ) {}
 
   /** Rows deleted by this call; 0 when the sweep was throttled or found nothing. */
@@ -401,7 +409,44 @@ export class MediaExpiryLoop {
        ON CONFLICT(id) DO NOTHING RETURNING id`,
       [String(this.ttlHours)],
     );
+    await this.sweepObjects();
     return expired.rows.length;
+  }
+
+  /**
+   * The object half of the sweep. Storage is deleted first, then the row and
+   * the tombstone land together, so a crashed sweep at worst leaves a row
+   * whose object is already gone — the next pass re-deletes (a 404 is
+   * success) and finishes the row. Pending orphans older than an hour are
+   * reaped the same way; a tombstone is only written for objects that were
+   * once readable.
+   */
+  private async sweepObjects(): Promise<void> {
+    if (!this.objects) return;
+    const candidates = await this.database.query<{ id: string; key: string; state: string }>(
+      `SELECT id::text id,key,state FROM objects
+       WHERE expires_at < now()
+          OR (state='pending' AND created_at < now() - interval '1 hour')
+       LIMIT 100`,
+    );
+    for (const object of candidates.rows) {
+      try {
+        await this.objects.storage.deleteObject(object.key);
+      } catch (error) {
+        console.warn(
+          '[media-ttl] object delete failed, will retry next sweep',
+          object.id,
+          error instanceof Error ? error.message : error,
+        );
+        continue;
+      }
+      if (object.state === 'ready')
+        await this.database.query(
+          `INSERT INTO object_expirations(id) VALUES ($1) ON CONFLICT(id) DO NOTHING`,
+          [object.id],
+        );
+      await this.database.query(`DELETE FROM objects WHERE id=$1`, [object.id]);
+    }
   }
 }
 

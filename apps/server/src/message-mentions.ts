@@ -3,6 +3,27 @@ import type { SqlDatabase } from './database.js';
 const MENTION_TOKEN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;
 const TOKEN_CHARACTER = /[\p{L}\p{M}\p{N}_.-]/u;
 
+/**
+ * `@channel` is not a handle: it is the one reserved broadcast token, read
+ * through the SAME tokenizer path as an ordinary `@handle` (case-insensitive,
+ * quoted lines excluded) but never resolved against a specific identity.
+ * Written at write time (and re-read live, like every other tag) it expands
+ * to every CURRENT human member of the effective Room — the parent Room for
+ * a corner — excluding the author; agents are never in that set, so
+ * `@channel` never routes to or wakes an agent.
+ */
+const CHANNEL_MENTION_HANDLE = 'channel';
+
+export function isChannelMentionToken(handle: string): boolean {
+  return handle.trim().toLowerCase() === CHANNEL_MENTION_HANDLE;
+}
+
+/** Whether the text addresses the whole Room via a live `@channel` token. */
+export function hasChannelMention(text: string): boolean {
+  for (const handle of typedMentionHandles(text)) if (isChannelMentionToken(handle)) return true;
+  return false;
+}
+
 function codePointBefore(text: string, offset: number): string | undefined {
   if (offset <= 0) return undefined;
   const prefix = text.slice(0, offset);
@@ -71,10 +92,45 @@ export async function resolveCurrentMemberMentions(
     candidates.push({ id: member.id, kind: member.kind, handle });
     byHandle.set(handle, candidates);
   }
-  return [...typedHandles].flatMap((handle) => {
+  const resolved = [...typedHandles].flatMap((handle) => {
     const candidates = byHandle.get(handle);
     return candidates?.length === 1 ? candidates : [];
   });
+  if (![...typedHandles].some(isChannelMentionToken)) return resolved;
+  const seen = new Set(resolved.map((member) => member.id));
+  for (const member of await resolveChannelMentionMembers(database, roomId, authorId)) {
+    if (seen.has(member.id)) continue;
+    seen.add(member.id);
+    resolved.push(member);
+  }
+  return resolved;
+}
+
+/**
+ * Every current human member of `roomId`'s EFFECTIVE Room (its parent, for a
+ * corner) excluding the author — the `@channel` expansion set. Read fresh
+ * against live membership, same as every other mention; never an agent.
+ */
+async function resolveChannelMentionMembers(
+  database: SqlDatabase,
+  roomId: string,
+  authorId?: string,
+): Promise<ResolvedMessageMention[]> {
+  const members = await database.query<{ id: string; handle: string }>(
+    `SELECT identity.id,identity.handle
+     FROM rooms room
+     JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
+       AND membership.removed_at IS NULL
+     JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='human'
+       AND identity.handle IS NOT NULL AND btrim(identity.handle)<>''
+     WHERE room.id=$1 AND ($2::text IS NULL OR identity.id<>$2)`,
+    [roomId, authorId ?? null],
+  );
+  return members.rows.map((row) => ({
+    id: row.id,
+    kind: 'human' as const,
+    handle: row.handle.trim().replace(/^@/, ''),
+  }));
 }
 
 /**
@@ -93,6 +149,30 @@ function handleWrittenIn(textExpr: string, handleExpr: string): string {
   return `${textExpr} ~ ('(^|[^[:alnum:]_.-])@' ||
     regexp_replace(btrim(ltrim(${handleExpr},'@')),'([.-])','\\&','g') ||
     '[.-]*($|[^[:alnum:]_.-])')`;
+}
+
+/** `handleWrittenIn`, pinned to the reserved `@channel` token, case-insensitive. */
+function channelMentionWrittenSql(textExpr: string): string {
+  return `${textExpr} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`;
+}
+
+/**
+ * Every current human member of a message's EFFECTIVE Room (its parent, for a
+ * corner) reachable through its `@channel` token — the SQL twin of
+ * `resolveChannelMentionMembers`. `message` is the SQL alias of the row being
+ * read.
+ */
+function channelTaggedMembersSql(message: string): string {
+  return `SELECT channel_member.identity_id
+    FROM rooms channel_room
+    JOIN memberships channel_member ON channel_member.room_id=COALESCE(channel_room.parent_id,channel_room.id)
+      AND channel_member.removed_at IS NULL
+    JOIN identities channel_identity ON channel_identity.id=channel_member.identity_id
+      AND channel_identity.kind='human'
+    WHERE channel_room.id=${message}.room_id
+      AND ${message}.presentation NOT IN ('system','card')
+      AND channel_member.identity_id<>${message}.author_id
+      AND ${channelMentionWrittenSql(`${message}.text`)}`;
 }
 
 /**
@@ -134,6 +214,8 @@ export function taggedIdentityIdsSql(message: string): string {
           AND rival_member.identity_id<>tagged_member.identity_id
           AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(tagged.handle,'@'))
       )
+    UNION
+    ${channelTaggedMembersSql(message)}
   )`;
 }
 
@@ -144,22 +226,44 @@ export function taggedIdentityIdsSql(message: string): string {
  * Room tag array for every message/device pair multiplies regex work by the
  * whole roster. Keep the same ambiguity rule while testing only that known
  * identity.
+ *
+ * `identityKindExpr` gates the `@channel` branch: only a `'human'` identity
+ * can be reached by the broadcast token, so an agent recipient (pass the
+ * literal `'agent'`) never matches it and is never woken by `@channel`.
  */
 export function tagsKnownIdentitySql(
   message: string,
   identityIdExpr: string,
   identityHandleExpr: string,
+  identityKindExpr: string,
 ): string {
   return `(
     ${message}.presentation NOT IN ('system','card')
-    AND ${identityHandleExpr} IS NOT NULL AND btrim(${identityHandleExpr})<>''
-    AND ${handleWrittenIn(`${message}.text`, identityHandleExpr)}
-    AND NOT EXISTS (
-      SELECT 1 FROM memberships rival_member
-      JOIN identities rival ON rival.id=rival_member.identity_id
-      WHERE rival_member.room_id=${message}.room_id AND rival_member.removed_at IS NULL
-        AND rival_member.identity_id<>${identityIdExpr}
-        AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(${identityHandleExpr},'@'))
+    AND (
+      (
+        ${identityHandleExpr} IS NOT NULL AND btrim(${identityHandleExpr})<>''
+        AND ${handleWrittenIn(`${message}.text`, identityHandleExpr)}
+        AND NOT EXISTS (
+          SELECT 1 FROM memberships rival_member
+          JOIN identities rival ON rival.id=rival_member.identity_id
+          WHERE rival_member.room_id=${message}.room_id AND rival_member.removed_at IS NULL
+            AND rival_member.identity_id<>${identityIdExpr}
+            AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(${identityHandleExpr},'@'))
+        )
+      )
+      OR (
+        ${identityKindExpr}='human'
+        AND ${identityIdExpr}<>${message}.author_id
+        AND ${channelMentionWrittenSql(`${message}.text`)}
+        AND EXISTS (
+          SELECT 1 FROM rooms channel_room
+          JOIN memberships channel_member
+            ON channel_member.room_id=COALESCE(channel_room.parent_id,channel_room.id)
+           AND channel_member.identity_id=${identityIdExpr}
+           AND channel_member.removed_at IS NULL
+          WHERE channel_room.id=${message}.room_id
+        )
+      )
     )
   )`;
 }

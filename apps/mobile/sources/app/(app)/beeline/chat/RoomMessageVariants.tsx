@@ -13,6 +13,7 @@ import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/chann
 import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
+import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { grantAskLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
@@ -1386,13 +1387,15 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     () => new Set(message.mentionPubkeys ?? []),
     [message.mentionPubkeys],
   );
-  const mentionHandles = useMemo(
-    () =>
-      participantHandles
-        .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
-        .map((participant) => participant.handle),
-    [participantHandles, taggedMentionPubkeys],
-  );
+  const mentionHandles = useMemo(() => {
+    const handles = participantHandles
+      .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
+      .map((participant) => participant.handle);
+    // `@channel` is sent as one literal token, never expanded into names, so
+    // it is highlighted by its own reserved handle rather than a roster hit.
+    if (hasChannelMentionToken(message.text)) handles.push(CHANNEL_MENTION_HANDLE);
+    return handles;
+  }, [participantHandles, taggedMentionPubkeys, message.text]);
   const handleMention = useCallback(
     (handle: string) => {
       const participant = participantHandles.find(

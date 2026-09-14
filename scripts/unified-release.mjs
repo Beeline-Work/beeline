@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { runtimeVersionsFromConfig } from '../apps/mobile/scripts/native-fingerprint.mjs';
+import { nextDesktopVersion, normalizeDesktopVersion } from './desktop-update.mjs';
 
 export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
 export const RELEASE_BUDGET_MINUTES = 20;
@@ -49,6 +50,7 @@ export const COMPONENT_PATH_RULES = [
   { prefix: '.github/actions/pages-leg/', components: ['helper', 'website'] },
   { prefix: '.github/actions/web-app-leg/', components: ['website'] },
   { prefix: 'scripts/verify-web-deployment.', components: ['website'] },
+  { prefix: 'scripts/desktop-update.', components: ['desktop'] },
   { exact: '.github/workflows/desktop.yml', components: ['desktop'] },
   { exact: '.github/workflows/server-rollback.yml', components: ['server'] },
   { exact: '.github/workflows/unified-release.yml', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
@@ -59,6 +61,9 @@ const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
 const SHA = /^[0-9a-f]{7,64}$/;
 const FINAL_STATES = new Set(['checked', 'carried']);
 const RUNTIME_PIN_PATH = 'apps/mobile/native-fingerprint.json';
+export const DESKTOP_VERSION_BASELINE = normalizeDesktopVersion(JSON.parse(readFileSync(
+  new URL('../apps/mobile/src-tauri/desktop-version.json', import.meta.url), 'utf8',
+)).version);
 
 function fail(message) { throw new Error(message); }
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
@@ -279,6 +284,7 @@ function previousComponent(previous, component) {
     return {
       state: 'carried', selected: false, version: previous.version, sourceSha: previous.sourceSha,
       artifactRef: `legacy-${component}-${previous.version}-${previous.sourceSha}`,
+      ...(component === 'desktop' ? { desktopVersion: DESKTOP_VERSION_BASELINE } : {}),
     };
   }
   const version = entry.version ?? previous.version;
@@ -287,7 +293,14 @@ function previousComponent(previous, component) {
   return {
     state: 'carried', selected: false, version, sourceSha,
     artifactRef: entry.artifactRef ?? artifactReference(component, { version, sourceSha }),
+    ...(component === 'desktop' ? {
+      desktopVersion: normalizeDesktopVersion(entry.desktopVersion ?? DESKTOP_VERSION_BASELINE),
+    } : {}),
   };
+}
+
+function desktopVersionForRelease(previous) {
+  return nextDesktopVersion(previous?.components?.desktop?.desktopVersion ?? DESKTOP_VERSION_BASELINE);
 }
 
 export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, retry, startedAt = now() }) {
@@ -317,6 +330,7 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
       state.components[component] = {
         state: 'pending', selected: true, version, sourceSha,
         artifactRef: artifactReference(component, { version, sourceSha }),
+        ...(component === 'desktop' ? { desktopVersion: desktopVersionForRelease(previous) } : {}),
       };
     }
     state.state = 'planned';
@@ -335,7 +349,11 @@ export function initializeRelease({ version, sourceSha, previous, selectedCompon
   const components = {};
   for (const component of RELEASE_COMPONENTS) {
     components[component] = selected.has(component)
-      ? { state: 'pending', selected: true, version, sourceSha, artifactRef: artifactReference(component, { version, sourceSha }) }
+      ? {
+          state: 'pending', selected: true, version, sourceSha,
+          artifactRef: artifactReference(component, { version, sourceSha }),
+          ...(component === 'desktop' ? { desktopVersion: desktopVersionForRelease(previous) } : {}),
+        }
       : previousComponent(previous, component);
   }
   return {

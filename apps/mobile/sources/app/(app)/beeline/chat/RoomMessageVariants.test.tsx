@@ -182,7 +182,10 @@ describe('Room message variant components', () => {
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
-    expect(conversationSource).toContain(': mentionKindLabel(participant)');
+    expect(conversationSource).toContain('agentModel={');
+    expect(conversationSource).toContain(
+      'workspaceAgentModelByPubkey.get(item.authorIdentity.pubkey)',
+    );
     expect(conversationSource).toContain(
       'inputSelection.start === inputSelection.end\n        ? activeMentionAtCursor',
     );
@@ -1368,6 +1371,7 @@ describe('Room message variant components', () => {
       <OrdinaryLedgerMessage
         message={consecutive}
         agent={{ pubkey: 'agent-lumen', displayName: 'Lumen' }}
+        agentModel="  openrouter/deepseek-deepseek-v.4.1-flash  "
         continued
         participantsHydrated
         viewerPubkey="viewer"
@@ -1385,7 +1389,7 @@ describe('Room message variant components', () => {
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Lumen',
-      role: 'agent',
+      role: 'openrouter/deepseek-deepseek-v.4.1-flash',
       mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
   });

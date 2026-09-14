@@ -76,10 +76,10 @@ api PUT "$API/edits/$EDIT_ID/tracks/$TO_TRACK" \
     -H 'Content-Type: application/json' \
     -d "$TO_TRACK_BODY" >/dev/null
 
-echo "▸ Validating edit"
-api POST "$API/edits/$EDIT_ID:validate" -H "Content-Length: 0" >/dev/null
-echo "  ok"
-
+# No separate :validate call: Play rejects validate with "Changes cannot be sent
+# for review automatically" for this app even though the commit below carries
+# changesNotSentForReview=true (validate has no such parameter), and commit
+# validates the edit itself before applying it.
 echo "▸ Committing edit"
 api POST "$API/edits/$EDIT_ID:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
 echo "  $FROM_TRACK → $TO_TRACK promotion committed."

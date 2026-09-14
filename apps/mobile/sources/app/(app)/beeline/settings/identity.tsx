@@ -128,6 +128,7 @@ export default function BuzzIdentitySettings() {
   const releaseValue = `${release.releaseVersion ?? 'development'}${
     release.releaseSha ? ` · ${release.releaseSha.slice(0, 12)}` : ''
   }`;
+  const updateNotice = manualUpdateMessage(manualUpdate);
   useEffect(() => {
     if (githubReconnect === 'success') setGitHubNotice('GitHub reconnected.');
     else if (githubReconnect === 'mismatch')
@@ -639,13 +640,22 @@ export default function BuzzIdentitySettings() {
             accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
             disabled={!Updates.isEnabled || manualUpdateBusy}
             onPress={() => void checkForUpdate()}
-            style={[styles.row, (!Updates.isEnabled || manualUpdateBusy) && styles.disabled]}
+            style={[
+              styles.row,
+              styles.updateRow,
+              (!Updates.isEnabled || manualUpdateBusy) && styles.disabled,
+            ]}
             testID="ota-update-info"
           >
             <Text style={styles.rowTitle}>Version</Text>
-            <Text numberOfLines={1} style={styles.rowMeta}>
-              {[releaseValue, manualUpdateMessage(manualUpdate)].filter(Boolean).join(' · ')}
+            <Text numberOfLines={1} style={styles.monoValue}>
+              {releaseValue}
             </Text>
+            {updateNotice ? (
+              <View style={styles.noticeLine}>
+                <Text style={styles.rowMeta}>{updateNotice}</Text>
+              </View>
+            ) : null}
             {manualUpdateBusy ? (
               <View testID="ota-update-progress">
                 <PixelLoader compact />
@@ -742,15 +752,13 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    // The version row is the one row that can grow a second line: an update
+    // notice wraps under the label/value axis instead of crowding it, so this
+    // row alone opts into wrapping and the notice claims a full line.
+    updateRow: { flexWrap: 'wrap' },
+    noticeLine: { flexBasis: '100%' },
     rowTitle: { ...Typography.default(), ...hull.type.body, flex: 1, color: hull.textPrimary },
-    rowMeta: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      flexShrink: 1,
-      minWidth: 0,
-      color: hull.textMuted,
-      textAlign: 'right',
-    },
+    rowMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     monoValue: {
       ...Typography.mono(),
       ...hull.type.body,

@@ -40,6 +40,8 @@ on:
       - 'packages/buzz-client/package.json'
       - 'scripts/clean-dist.mjs'
       - 'scripts/clean-dist.test.mjs'
+      - 'scripts/desktop-update.mjs'
+      - 'scripts/desktop-update.test.mjs'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
     inputs:
@@ -51,6 +53,10 @@ on:
           - dev
           - preview
           - production
+      desktop_version:
+        description: Independent monotonic desktop updater version (required for production)
+        required: false
+        type: string
   workflow_call:
     inputs:
       variant:
@@ -63,6 +69,10 @@ on:
         type: string
       release_version:
         description: Immutable release version
+        required: false
+        type: string
+      desktop_version:
+        description: Independent monotonic desktop updater version
         required: false
         type: string
     secrets:
@@ -83,6 +93,15 @@ on:
         required: false
       EXPO_ASC_API_KEY_P8:
         description: Base64-encoded App Store Connect API private key, shared with the native release
+        required: false
+      TAURI_UPDATER_PUBLIC_KEY:
+        description: Minisign public key embedded in production desktop apps
+        required: false
+      TAURI_UPDATER_PRIVATE_KEY:
+        description: Vaulted Minisign private key used only while producing updater artifacts
+        required: false
+      TAURI_UPDATER_PRIVATE_KEY_PASSWORD:
+        description: Password for the vaulted updater private key
         required: false
 
 permissions:
@@ -118,8 +137,8 @@ jobs:
       - name: Check the desktop icons match the app icon
         working-directory: apps/mobile
         run: npm run tauri:icons:check
-      - name: Check desktop dependency builds use portable cleanup
-        run: node --test scripts/clean-dist.test.mjs
+      - name: Check desktop release helpers
+        run: node --test scripts/clean-dist.test.mjs scripts/desktop-update.test.mjs
 
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
@@ -275,6 +294,23 @@ jobs:
       - name: Clear stale bundle output from the restored cache
         run: rm -rf "apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
 
+      - name: Prepare the signed production updater configuration
+        if: inputs.variant == 'production'
+        env:
+          DESKTOP_VERSION: ${{ inputs.desktop_version }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DESKTOP_VERSION" || { echo '::error::production desktop build has no desktop_version'; exit 1; }
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo '::error::TAURI_UPDATER_PRIVATE_KEY is not available from the release vault'; exit 1; }
+          updater_config="$RUNNER_TEMP/tauri-production-updater.json"
+          node scripts/desktop-update.mjs config \
+            --version "$DESKTOP_VERSION" \
+            --endpoint 'https://github.com/Beeline-Work/beeline/releases/latest/download/Beeline-latest.json' \
+            --output "$updater_config"
+          echo "TAURI_UPDATER_CONFIG=$updater_config" >> "$GITHUB_ENV"
+
       # `tauri build` runs the config's beforeBuildCommand (the Expo web
       # export) and then bundles it for this platform's installers.
       - name: Build the desktop bundle
@@ -284,11 +320,14 @@ jobs:
           # app.config.js stamps the build with the commit it came from; the
           # checkout's git metadata would otherwise name a merge commit.
           EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
+          EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES: ${{ inputs.variant == 'production' && '1' || '0' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           config=()
           case "$VARIANT" in
-            production) ;;
+            production) config=(--config "$TAURI_UPDATER_CONFIG") ;;
             dev) config=(--config src-tauri/tauri.dev.conf.json) ;;
             preview) config=(--config src-tauri/tauri.preview.conf.json) ;;
             *) echo "::error::unknown variant '$VARIANT'"; exit 1 ;;
@@ -454,13 +493,19 @@ jobs:
             cp "$source" "$release/$2"
           }
           case "${{ matrix.label }}" in
-            macos-universal) one '*.dmg' 'Beeline-universal.dmg' ;;
+            macos-universal)
+              one '*.dmg' 'Beeline-universal.dmg'
+              one '*.app.tar.gz' 'Beeline-universal.app.tar.gz'
+              one '*.app.tar.gz.sig' 'Beeline-universal.app.tar.gz.sig'
+              ;;
             windows-x86_64)
               one '*.exe' 'Beeline-x86_64-setup.exe'
+              one '*.exe.sig' 'Beeline-x86_64-setup.exe.sig'
               one '*.msi' 'Beeline-x86_64.msi'
               ;;
             linux-x86_64)
               one '*.AppImage' 'Beeline-x86_64.AppImage'
+              one '*.AppImage.sig' 'Beeline-x86_64.AppImage.sig'
               one '*.deb' 'Beeline-x86_64.deb'
               one '*.rpm' 'Beeline-x86_64.rpm'
               ;;

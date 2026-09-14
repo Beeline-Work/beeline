@@ -10,6 +10,8 @@
     "core:webview:allow-set-webview-zoom",
     "deep-link:default",
     "opener:default",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "http:default",
       "allow": [

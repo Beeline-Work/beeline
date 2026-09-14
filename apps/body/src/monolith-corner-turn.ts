@@ -1037,7 +1037,19 @@ export class MonolithCornerTurnLoop {
               const pendingToolActivities = new Map<string, DaemonActivity[]>();
               let lastNarratedToolCall: string | undefined;
               let activityAttempt = 0;
-              const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
+              const publishToolCalls = (
+                calls: readonly ToolCallEntry[],
+                settledOnly: boolean,
+                /**
+                 * A live (mid-turn) publish must never finalize the ONE row
+                 * `flushToolCalls` may still rewrite: the most recently
+                 * narrated call's row is skipped here whenever it could still
+                 * turn out to hold the same text as the turn's eventual
+                 * durable reply (see the dedupe at the top of `flushToolCalls`).
+                 * Every earlier, already-superseded call streams immediately.
+                 */
+                exceptKey?: string,
+              ) => {
                 calls.forEach((call, index) => {
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
@@ -1046,7 +1058,13 @@ export class MonolithCornerTurnLoop {
                     pendingToolNarrations.set(key, narration);
                     if (narration) lastNarratedToolCall = key;
                   }
-                  if (settledOnly || publishedToolCalls.has(key) || !toolCallSettled(call)) return;
+                  if (
+                    settledOnly ||
+                    publishedToolCalls.has(key) ||
+                    !toolCallSettled(call) ||
+                    key === exceptKey
+                  )
+                    return;
                   publishedToolCalls.add(key);
                   const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail
@@ -1155,7 +1173,15 @@ export class MonolithCornerTurnLoop {
                   undefined,
                   (calls) => {
                     trace.toolCalls(calls);
+                    // Observe (snapshot the narration that preceded each newly
+                    // seen call) THEN publish: a human watching a corner sees a
+                    // tool's row the moment it settles, not batched at the
+                    // turn's end behind a still-running sibling call. The
+                    // current tail (`lastNarratedToolCall`) is held back:
+                    // `flushToolCalls` may still need to drop its narration if
+                    // it turns out to duplicate the turn's final reply.
                     publishToolCalls(calls, true);
+                    publishToolCalls(calls, false, lastNarratedToolCall);
                   },
                 );
               };

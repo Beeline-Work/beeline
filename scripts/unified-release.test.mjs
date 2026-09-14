@@ -826,7 +826,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   assert.match(android.if, /run_mobile_native == 'true'/);
   assert.match(android.if, /native_android == 'true'/);
   assert.equal(android.needs, 'initialize');
-  assert.deepEqual(android['runs-on'], ['self-hosted', 'beeline-prod-host']);
+  assert.deepEqual(android['runs-on'], ['self-hosted', 'beeline-android']);
   assert.equal(android['timeout-minutes'], 60);
   assert.match(ios.if, /run_mobile_native == 'true'/);
   assert.match(ios.if, /native_ios == 'true'/);
@@ -845,7 +845,8 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     // The Android leg builds on the self-hosted Linux runner (PR #1229): one
     // pinned eas-cli, --package + env -u for the same reasons as the iOS leg,
     // and a local build that writes the aab straight into RUNNER_TEMP.
-    assert.match(androidBuild.run, /test -d "\$ANDROID_HOME\/platform-tools"/);
+    assert.match(androidBuild.run, /for candidate in "\$\{ANDROID_HOME:-\}" \/home\/lunchbox\/android-sdk "\$HOME\/Android\/Sdk"/);
+    assert.match(androidBuild.run, /test -d "\$\{ANDROID_HOME:-\}\/platform-tools"/);
     assert.match(
       androidBuild.run,
       /npx --yes --package="eas-cli@\$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform android --profile production-ci --non-interactive --output "\$RUNNER_TEMP\/beeline\.aab"/,

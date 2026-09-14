@@ -81,7 +81,7 @@ api PUT "$API/edits/$EDIT_ID/tracks/$TO_TRACK" \
 # changesNotSentForReview=true (validate has no such parameter), and commit
 # validates the edit itself before applying it.
 echo "▸ Committing edit"
-api POST "$API/edits/$EDIT_ID:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
+commit_edit "$EDIT_ID"
 echo "  $FROM_TRACK → $TO_TRACK promotion committed."
 echo ""
 case "$RELEASE_STATUS" in

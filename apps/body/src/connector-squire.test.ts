@@ -30,6 +30,13 @@ function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) =>
   return { client, calls };
 }
 
+/** A probe that finds every prerequisite: the hermetic default for install tests. */
+const allPrerequisitesFound = async (binary: string) => ({
+  binary,
+  found: true,
+  path: `/usr/bin/${binary}`,
+});
+
 const okRunner = () => async () => ({ code: 0, stdout: '', stderr: '' });
 
 describe('parseConnectOutput', () => {
@@ -86,6 +93,7 @@ describe('installSquire', () => {
     });
     const result = await installSquire({
       workspaceId: 'ws-1',
+      probeBinary: allPrerequisitesFound,
       run: async () => ({
         code: 0,
         stdout: 'noVNC sign-in: https://tunnel.example/vnc.html#p=secret\n',
@@ -116,6 +124,7 @@ describe('installSquire', () => {
     let argv: string[] = [];
     await installSquire({
       workspaceId: 'ws-1',
+      probeBinary: allPrerequisitesFound,
       run: async (_command, args) => {
         argv = [...args];
         return {
@@ -150,6 +159,7 @@ describe('installSquire', () => {
   it('fails with a clear reason when the connect command fails', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
+      probeBinary: allPrerequisitesFound,
       run: async () => ({ code: 1, stdout: '', stderr: 'npm 404' }),
     });
     expect(result.status).toBe('error');
@@ -161,6 +171,7 @@ describe('installSquire', () => {
   it('fails the sign-in step when connect prints no URL', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
+      probeBinary: allPrerequisitesFound,
       run: async () => ({ code: 0, stdout: '', stderr: '' }),
     });
     expect(result.status).toBe('error');
@@ -177,6 +188,7 @@ describe('installSquire', () => {
     };
     const result = await installSquire({
       workspaceId: 'ws-1',
+      probeBinary: allPrerequisitesFound,
       run: async () => ({ code: 0, stdout: 'https://tunnel.example/vnc.html#p=x', stderr: '' }),
       mcp: failing,
     });

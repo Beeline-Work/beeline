@@ -2,3 +2,4 @@ self-hosted-runner:
   labels:
     - beeline-prod-host
     - ios-builder
+    - beeline-android

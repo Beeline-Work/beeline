@@ -1236,6 +1236,8 @@ export function RelayHandOff({ message }: { message: ChatDisplayMessage }) {
 export interface OrdinaryLedgerMessageProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
+  /** Selected model for the agent byline. Effort is deliberately not accepted. */
+  agentModel?: string;
   participantsHydrated: boolean;
   personName?: string;
   viewerPubkey: string;
@@ -1323,6 +1325,7 @@ export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   message,
   agent,
+  agentModel,
   participantsHydrated,
   personName,
   viewerPubkey,
@@ -1394,7 +1397,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
-          role: isAgent ? 'agent' : undefined,
+          role: isAgent ? agentModel?.trim() || 'agent' : undefined,
           stamp: ledgerStamp(message.timestamp),
           isViewer: isSelfSteer,
           ...(announcementFeed
@@ -1488,6 +1491,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <ActivityTimeline
             active={message.isAgentLiveTurn === true}
             handle={!continued && isAgent ? voiceName : undefined}
+            role={agentModel?.trim() || 'agent'}
             mark={
               !continued && isAgent
                 ? {

@@ -109,8 +109,6 @@ import {
   filterMentionCandidates,
   formatRoomParticipantTotal,
   isChannelMentionHandle,
-  mentionCandidatesWithModels,
-  mentionKindLabel,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
@@ -1139,10 +1137,9 @@ export default function BuzzChat() {
   // The picker's candidates are the WORKSPACE roster minus this Room's
   // members. The old picker filtered this Room's own member list, so its
   // "add" section was always empty and the only visible path led to the
-  // pairing command (captain report C74). The composer also reads it while
-  // focused so mention rows can show the same model metadata as roster rows.
-  // The first read shows a loader; later sheet refreshes keep the last roster
-  // visible until the fresh response lands.
+  // pairing command (captain report C74). The transcript reads the Workspace
+  // roster once on entry so every agent byline can name its model. Later sheet
+  // refreshes keep the last roster visible until the fresh response lands.
   useEffect(() => {
     workspaceRosterScopeRef.current = null;
     setWorkspaceRoster(null);
@@ -1154,7 +1151,6 @@ export default function BuzzChat() {
       !shouldReadWorkspaceRoster({
         activeWorkspaceId: activeCommunityId,
         cachedWorkspaceId: workspaceRosterScopeRef.current,
-        composerFocused,
         rosterSurfaceVisible,
       })
     )
@@ -1175,7 +1171,7 @@ export default function BuzzChat() {
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, composerFocused, participantPickerVisible, roomClient, rosterVisible]);
+  }, [activeCommunityId, participantPickerVisible, roomClient, rosterVisible]);
   const participantPickerCandidates = useMemo<MemberPickerCandidate[] | null>(() => {
     if (!workspaceRoster) return null;
     return [...workspaceRoster.members, ...workspaceRoster.agents]
@@ -1237,6 +1233,18 @@ export default function BuzzChat() {
       }),
     );
   }, [roomParticipants, workspaceRoster]);
+  const workspaceAgentModelByPubkey = useMemo(
+    () =>
+      new Map(
+        (workspaceRoster?.workspace.id === activeCommunityId ? workspaceRoster.agents : []).flatMap(
+          (agent) => {
+            const model = agent.model?.trim();
+            return model ? [[agent.identity.pubkey, model] as const] : [];
+          },
+        ),
+      ),
+    [activeCommunityId, workspaceRoster],
+  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1314,14 +1322,8 @@ export default function BuzzChat() {
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [
-      CHANNEL_MENTION_OPTION,
-      ...mentionCandidatesWithModels(
-        roomParticipants,
-        workspaceRoster?.workspace.id === activeCommunityId ? workspaceRoster.agents : [],
-      ),
-    ],
-    [activeCommunityId, roomParticipants, workspaceRoster],
+    () => [CHANNEL_MENTION_OPTION, ...roomParticipants],
+    [roomParticipants],
   );
   const mentionSuggestions = useMemo(
     () =>
@@ -3636,6 +3638,13 @@ export default function BuzzChat() {
       return (
         <OrdinaryLedgerMessage
           message={item}
+          agentModel={
+            item.authorIdentity?.kind === 'agent'
+              ? workspaceAgentModelByPubkey.get(item.authorIdentity.pubkey)
+              : item.pubkey
+                ? workspaceAgentModelByPubkey.get(item.pubkey)
+                : undefined
+          }
           desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
@@ -3691,6 +3700,7 @@ export default function BuzzChat() {
       cacheViewerPubkey,
       roomRepository,
       roomParticipants,
+      workspaceAgentModelByPubkey,
       targetBranchActionId,
       targetBranchNotice,
       viewerChannelRole,
@@ -4203,10 +4213,12 @@ export default function BuzzChat() {
                             @{participant.handle}
                           </Text>
                         </View>
-                        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.mentionKind}>
+                        <Text style={styles.mentionKind}>
                           {participant.pubkey === CHANNEL_MENTION_PUBKEY
                             ? 'ROOM'
-                            : mentionKindLabel(participant)}
+                            : participant.kind === 'agent'
+                              ? 'AGENT'
+                              : 'PERSON'}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -5422,9 +5434,6 @@ const styles = StyleSheet.create((theme) => {
     },
     mentionKind: {
       ...Typography.mono('semiBold'),
-      maxWidth: '44%',
-      flexShrink: 1,
-      textAlign: 'right',
       color: groknight.faint,
       fontSize: 8,
       letterSpacing: 0.5,

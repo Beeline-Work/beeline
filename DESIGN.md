@@ -87,8 +87,9 @@ Plex Mono.
 
 **A turn is announced by its byline, and the byline says who is talking.**
 Each run opens with the speaker's 26px face tile, then the name in the
-speaker's own signature hue — sentence case, medium weight, at body size — a
-quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned to
+speaker's own signature hue — sentence case, medium weight, at body size — the
+agent's selected model in quiet mono (falling back to `agent` when unavailable),
+and the mono HH:MM stamp pinned to
 the right. **The three written parts sit on one baseline.** They are set at two
 sizes in two faces, so centring them against each other floats the 10px mono
 half a line above the name's feet; the tile is a picture rather than a word, so
@@ -114,7 +115,8 @@ The two surfaces differ here, and only here, because they genuinely differ:
   own agent messages keep their full author identity even while roster data is
   loading; a row must never fall back to a bare signer key or ordinary-grey prose.
 - **A Room holds several voices, so each human run opens with its full byline;
-  every agent message does** — name, quiet `agent` role tag, face tile, stamp.
+  every agent message does** — name, quiet model label, face tile, stamp. Model
+  labels truncate at the tail; effort never appears in the byline.
 
 **Prose turns carry their stamp inside the byline.** A folded machine run keeps
 its fixed-width 24h stamp in the same row as its labels, pinned to the right edge

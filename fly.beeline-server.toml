@@ -27,6 +27,18 @@ primary_region = "iad"
     soft_limit = 100
     hard_limit = 150
 
+  # Without a check the Fly proxy routes to a Machine the moment it is
+  # "started", before the server listens; during a rolling update phones
+  # then hang on requests to the restarting peer (2026-09-13 18:47Z corner
+  # "LOADING ROOM"). /readyz answers only once the HTTP server is up and
+  # the database pool is reachable.
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/readyz"
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1

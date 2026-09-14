@@ -14,14 +14,24 @@ vi.mock('@/buzz/runtime-config', () => ({
     monolithUrl: 'https://server.example',
   }),
 }));
-vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: {
-    fetch: vi.fn(async () => {
-      controls.monolithCalls += 1;
-      return new Response(JSON.stringify(fixture), { status: 200 });
-    }),
-  },
-}));
+vi.mock('@/auth/monolith-session', () => {
+  class MonolithRequestTimeoutError extends Error {
+    constructor() {
+      super('The server did not respond in time.');
+      this.name = 'MonolithRequestTimeoutError';
+    }
+  }
+  return {
+    MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
+    MonolithRequestTimeoutError,
+    monolithSession: {
+      fetch: vi.fn(async () => {
+        controls.monolithCalls += 1;
+        return new Response(JSON.stringify(fixture), { status: 200 });
+      }),
+    },
+  };
+});
 vi.mock('@beeline/buzz-client', async (original) => {
   const actual = await original<typeof import('@beeline/buzz-client')>();
   return {
@@ -84,4 +94,22 @@ describe('mobile transport cutover switch', () => {
       expect(controls.legacyCalls).toBe(enabled ? 0 : 1);
     },
   );
+
+  it('maps a timed-out phone read to a distinct timeout error, never a silent retry', async () => {
+    controls.enabled = true;
+    const { monolithSession, MonolithRequestTimeoutError } = await import(
+      '@/auth/monolith-session'
+    );
+    vi.mocked(monolithSession.fetch).mockRejectedValueOnce(new MonolithRequestTimeoutError());
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+    });
+    await expect(client.room('room-a')).rejects.toMatchObject({ status: 0, code: 'timeout' });
+    expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/rooms/room-a',
+      expect.objectContaining({ method: 'GET' }),
+      { timeoutMs: 15_000 },
+    );
+  });
 });

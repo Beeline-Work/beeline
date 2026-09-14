@@ -11,7 +11,11 @@ import {
   type LiveOverlay,
   type RoomView,
 } from '@beeline/buzz-client';
-import { RoomViewClient, RoomViewHttpError } from '@/sync/transport/room-view-client';
+import {
+  isRoomViewTimeoutError,
+  RoomViewClient,
+  RoomViewHttpError,
+} from '@/sync/transport/room-view-client';
 
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import {
@@ -721,9 +725,11 @@ export function useRoomSurfaceSession({
             if (terminal || !hasPainted) {
               setHydrationFailed(true);
               setHydrationError(
-                error instanceof RoomViewHttpError && error.code === 'invalid_surface_response'
-                  ? 'The server returned an invalid Room response.'
-                  : `Could not load this conversation. ${String(error)}`,
+                isRoomViewTimeoutError(error)
+                  ? 'The server did not respond. Check your connection and retry.'
+                  : error instanceof RoomViewHttpError && error.code === 'invalid_surface_response'
+                    ? 'The server returned an invalid Room response.'
+                    : `Could not load this conversation. ${String(error)}`,
               );
             } else {
               setHydrationError(`Offline — showing the last saved response. ${String(error)}`);

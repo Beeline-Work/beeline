@@ -710,9 +710,17 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          # Use --package with a bare `eas` command (never `npx eas-cli@version ...`): a bare
+          # package spec that matches the eas-cli also installed globally on this runner makes
+          # npm exec resolve that global install and prepend its bin dir (/usr/local/bin) to
+          # PATH, reintroducing Homebrew rsync ahead of /usr/bin for the Xcode export above.
+          # `env -u npm_config_package`: npm exports --package as npm_config_package into the
+          # child environment, and eas itself runs `npx -y eas-cli-local-build-plugin@<v>`; with that
+          # variable inherited the nested npx resolves eas-cli instead and fails with
+          # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
           npm ci
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
+          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
           sha256=$(shasum -a 256 "$RUNNER_TEMP/beeline-ios.ipa" | awk '{print $1}')
           node - "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/beeline-ios.ipa" "$sha256" <<'NODE'
@@ -726,8 +734,16 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
+          # Use --package with a bare `eas` command (never `npx eas-cli@version ...`): a bare
+          # package spec that matches the eas-cli also installed globally on this runner makes
+          # npm exec resolve that global install and prepend its bin dir (/usr/local/bin) to
+          # PATH, reintroducing Homebrew rsync ahead of /usr/bin for the Xcode export above.
+          # `env -u npm_config_package`: npm exports --package as npm_config_package into the
+          # child environment, and eas itself runs `npx -y eas-cli-local-build-plugin@<v>`; with that
+          # variable inherited the nested npx resolves eas-cli instead and fails with
+          # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
-          npx --yes "eas-cli@$EAS_CLI_VERSION" submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
+          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:
@@ -836,7 +852,16 @@ jobs:
           no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
           now=$(date +%s)
           elapsed=$((now - TRIGGER_EPOCH))
-          if [ "$elapsed" -ge 1200 ]; then
+          # The 20-minute budget is the fix-to-phone promise (server + OTA). A store
+          # binary built in this attempt (local iOS archive+export ~30 min on the Mac
+          # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
+          # every component yet was classified "budget" and never published its
+          # release record. When a native build ran, allow 60 minutes instead.
+          budget_seconds=1200
+          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ]; then
+            budget_seconds=3600
+          fi
+          if [ "$elapsed" -ge "$budget_seconds" ]; then
             failure_class=budget
           elif [ -n "$incomplete" ]; then
             failure_class="component:$incomplete"

@@ -16,6 +16,7 @@ import {
   cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
   cornerReviewerInstruction,
+  cornerSelfReviewerInstruction,
   cornerToolActivity,
   MonolithCornerTurnLoop,
 } from './monolith-corner-turn.js';
@@ -74,6 +75,28 @@ describe('corner merge instructions', () => {
     expect(instruction).not.toContain('unknown checks');
     expect(cornerReviewerInstruction({ ...reviewer, openedByAgent: true })).toBeUndefined();
     expect(cornerReviewerInstruction({ ...reviewer, agentHandle: 'bee' })).toBeUndefined();
+  });
+
+  it('gives the self-reviewer line only when the reviewer opens its own corner', () => {
+    const selfReviewer = { reviewerHandle: 'echo', agentHandle: 'echo', openedByAgent: true };
+    const instruction = cornerSelfReviewerInstruction(selfReviewer)!;
+    expect(instruction).toContain("You are this Room's reviewer");
+    expect(instruction).toContain('do not request one');
+    expect(instruction).toContain('do not tag any agent for review');
+    expect(instruction).toContain('merge yourself');
+    // A non-reviewer opener (someone else is the configured reviewer): nothing.
+    expect(
+      cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' }),
+    ).toBeUndefined();
+    // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
+    // that case instead, so this stays undefined.
+    expect(
+      cornerSelfReviewerInstruction({ ...selfReviewer, openedByAgent: false }),
+    ).toBeUndefined();
+    // No reviewer configured at all: nothing either.
+    expect(
+      cornerSelfReviewerInstruction({ ...selfReviewer, reviewerHandle: undefined }),
+    ).toBeUndefined();
   });
 
   it('nudges delivery for dirty work without disposing of it', async () => {
@@ -1934,6 +1957,29 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining('Never restate server check or merge notes'),
+      }),
+    );
+    // Item 2: no schedule may poll the merge gate, and a schedule-triggered
+    // turn stays as silent as a checks turn unless it is actionable.
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'Never create a schedule to poll pr_checks_status or the merge gate',
+        ),
+      }),
+    );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'tagging any agent other than the configured reviewer cannot clear the gate',
+        ),
+      }),
+    );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+        ),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(

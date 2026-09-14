@@ -955,6 +955,97 @@ describe('corner close-request polling cadence', () => {
     };
   }
 
+  it('publishes a settled tool call before a still-running sibling call completes', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    const activityTitleAt = (): string[] =>
+      writes
+        .filter((write) => write.name === 'postAgentActivity')
+        .flatMap((write) =>
+          (write.input.activity as Array<{ title?: string }>).map((activity) => activity.title),
+        );
+    let titlesWhileSlowCallStillRunning: string[] = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        // Tool call A: issued and completes immediately.
+        const fast = {
+          kind: 'execute' as const,
+          title: 'Run fast check',
+          rawInput: { command: 'echo fast' },
+          status: 'in_progress' as const,
+        };
+        toolActivity?.([fast]);
+        const settledFast = { ...fast, status: 'completed' as const };
+        toolActivity?.([settledFast]);
+        // Let the corner turn's async activity-publish chain settle before the
+        // long-running sibling call (B) even starts, so a production 6-minute
+        // second tool call cannot be what makes A's row appear.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        titlesWhileSlowCallStillRunning = activityTitleAt();
+        // Tool call B: still running (never settled until here).
+        const slow = {
+          kind: 'execute' as const,
+          title: 'Run slow test suite',
+          rawInput: { command: 'vitest run' },
+          status: 'in_progress' as const,
+        };
+        toolActivity?.([slow]);
+        const settledSlow = { ...slow, status: 'completed' as const };
+        toolActivity?.([settledSlow]);
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Done.',
+          toolCalls: [settledFast, settledSlow],
+        };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    // The failing-test behavior this reproduces: A's activity row was batched
+    // with B's and posted only after the whole turn (and B) finished, so
+    // `titlesWhileSlowCallStillRunning` came back empty here.
+    expect(titlesWhileSlowCallStillRunning).toContain('Run fast check');
+    expect(titlesWhileSlowCallStillRunning).not.toContain('Run slow test suite');
+    expect(activityTitleAt()).toEqual(
+      expect.arrayContaining(['Run fast check', 'Run slow test suite']),
+    );
+  });
+
   it('keeps a tool-only narration in the final reply once', async () => {
     let closeReads = 0;
     const writes: Array<{ name: string; input: Record<string, unknown> }> = [];

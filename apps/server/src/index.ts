@@ -11,11 +11,14 @@ import {
   PushDeliveryLoop,
   runMaintenance,
 } from './background.js';
+import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
+import { objectStorageFromEnv } from './object-storage.js';
+import { ObjectService } from './object-service.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
@@ -140,7 +143,22 @@ async function main() {
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
   const connectionPresence = new ConnectionPresence(database, live);
-  const mediaExpiry = new MediaExpiryLoop(jobsDatabase);
+  const mediaExpiryMediaMaximumBytes = Number(
+    process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES),
+  );
+  const objectStorage = objectStorageFromEnv();
+  const objectService = new ObjectService(
+    database,
+    objectStorage,
+    publicOrigin,
+    mediaExpiryMediaMaximumBytes,
+  );
+  const mediaExpiry = objectStorage
+    ? new MediaExpiryLoop(jobsDatabase, mediaTtlHours(), MEDIA_SWEEP_INTERVAL_MS, {
+        storage: objectStorage,
+        service: objectService,
+      })
+    : new MediaExpiryLoop(jobsDatabase);
   const sendPushTest = pushSender
     ? createPushTestSender(database, pushSender, apnsPushSender)
     : undefined;
@@ -190,7 +208,8 @@ async function main() {
     review,
     releaseNotify,
     livePaintDiagnostics: process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
-    mediaMaximumBytes: Number(process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES)),
+    mediaMaximumBytes: mediaExpiryMediaMaximumBytes,
+    objectService,
     authHandler: mountedAuth.handle,
     webAppOrigins,
     github: {

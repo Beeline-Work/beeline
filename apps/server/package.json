@@ -18,6 +18,7 @@
     "@beeline/api-contract": "*",
     "@beeline/auth": "*",
     "@beeline/push-gateway": "*",
+    "aws4fetch": "^1.0.20",
     "cron-parser": "^5.10.0",
     "firebase-admin": "^13.4.0",
     "pg": "^8.23.0",

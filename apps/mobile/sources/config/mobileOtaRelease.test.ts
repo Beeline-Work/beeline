@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
+  PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT,
   PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
   releaseUpdateTargets,
 } from '../../scripts/ota-release.mjs';
@@ -63,12 +64,14 @@ function runRelease(args: string[], env: Record<string, string> = {}) {
 describe('mobile OTA release governor', () => {
   it('makes the temporary iOS runtime-23 target a committed removable flag', () => {
     expect(PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT).toBe(true);
+    expect(PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT).toBe(true);
     expect(releaseUpdateTargets(mobileRoot)).toEqual([
+      { platform: 'android', runtimeVersion: '23' },
       { platform: 'android', runtimeVersion: '24' },
       { platform: 'ios', runtimeVersion: '23' },
       { platform: 'ios', runtimeVersion: '25' },
     ]);
-    expect(releaseUpdateTargets(mobileRoot, false)).toEqual([
+    expect(releaseUpdateTargets(mobileRoot, false, false)).toEqual([
       { platform: 'android', runtimeVersion: '24' },
       { platform: 'ios', runtimeVersion: '25' },
     ]);
@@ -109,14 +112,17 @@ describe('mobile OTA release governor', () => {
     const targetPublishes = publish.stdout
       .split('\n')
       .filter((line) => line.includes('eas-cli@22.2.0 update --branch beta'));
-    expect(targetPublishes).toHaveLength(3);
-    expect(targetPublishes[0]).toContain('EXPO_RUNTIME_OVERRIDE=24');
+    expect(targetPublishes).toHaveLength(4);
+    expect(targetPublishes[0]).toContain('EXPO_RUNTIME_OVERRIDE=23');
     expect(targetPublishes[0]).toContain('--platform android');
-    expect(targetPublishes[1]).toContain('EXPO_RUNTIME_OVERRIDE=23');
-    expect(targetPublishes[1]).toContain('--platform ios');
-    expect(targetPublishes[2]).toContain('EXPO_RUNTIME_OVERRIDE=25');
+    expect(targetPublishes[1]).toContain('EXPO_RUNTIME_OVERRIDE=24');
+    expect(targetPublishes[1]).toContain('--platform android');
+    expect(targetPublishes[2]).toContain('EXPO_RUNTIME_OVERRIDE=23');
     expect(targetPublishes[2]).toContain('--platform ios');
+    expect(targetPublishes[3]).toContain('EXPO_RUNTIME_OVERRIDE=25');
+    expect(targetPublishes[3]).toContain('--platform ios');
     expect(releaseSource).toContain('PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true');
+    expect(releaseSource).toContain('PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true');
     expect(workflow).not.toContain('EXPO_RUNTIME_OVERRIDE');
 
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-dry-run-'));

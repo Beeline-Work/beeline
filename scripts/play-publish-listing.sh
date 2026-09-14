@@ -17,7 +17,7 @@
 # Optional:
 #   PLAY_DRY_RUN=1   — print the API calls instead of making them (see play-api.sh)
 #
-# Everything lands in ONE Play Console edit that is validated and committed at
+# Everything lands in ONE Play Console edit that is committed at
 # the end; nothing partial survives a failure. Track releases are a separate
 # dimension and are untouched.
 
@@ -106,10 +106,10 @@ while IFS= read -r shot; do
   upload_image phoneScreenshots "$shot"
 done < <(printf '%s\n' "${shots[@]}" | sort)
 
-echo "▸ Validating edit"
-api POST "$API/edits/$EDIT_ID:validate" -H "Content-Length: 0" >/dev/null
-echo "  ok"
-
+# No separate :validate call: Play rejects validate with "Changes cannot be sent
+# for review automatically" for this app even though the commit below carries
+# changesNotSentForReview=true (validate has no such parameter), and commit
+# validates the edit itself before applying it.
 echo "▸ Committing edit"
 api POST "$API/edits/$EDIT_ID:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
 echo "  Listing updates are live in Play Console."

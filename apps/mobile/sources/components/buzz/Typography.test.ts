@@ -79,6 +79,10 @@ const monoStyles = new Set([
   'managedHandleLabel',
   'managedHandleValue',
   'monoValue',
+  // The Settings version row's value: release version + build SHA, a machine
+  // identifier like Handle's monoValue, sized to its string rather than half
+  // the row.
+  'versionValue',
   'textButtonLabel',
   'segmentText',
   'compactActionText',

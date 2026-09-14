@@ -642,12 +642,10 @@ export default function BuzzIdentitySettings() {
             style={[styles.row, (!Updates.isEnabled || manualUpdateBusy) && styles.disabled]}
             testID="ota-update-info"
           >
-            <View style={styles.rowCopy}>
-              <Text style={styles.rowTitle}>Version</Text>
-              <Text numberOfLines={1} style={styles.rowMeta}>
-                {[releaseValue, manualUpdateMessage(manualUpdate)].filter(Boolean).join(' · ')}
-              </Text>
-            </View>
+            <Text style={styles.rowTitle}>Version</Text>
+            <Text numberOfLines={1} style={styles.rowMeta}>
+              {[releaseValue, manualUpdateMessage(manualUpdate)].filter(Boolean).join(' · ')}
+            </Text>
             {manualUpdateBusy ? (
               <View testID="ota-update-progress">
                 <PixelLoader compact />
@@ -744,9 +742,15 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    rowCopy: { flex: 1, minWidth: 0 },
     rowTitle: { ...Typography.default(), ...hull.type.body, flex: 1, color: hull.textPrimary },
-    rowMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    rowMeta: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      flexShrink: 1,
+      minWidth: 0,
+      color: hull.textMuted,
+      textAlign: 'right',
+    },
     monoValue: {
       ...Typography.mono(),
       ...hull.type.body,

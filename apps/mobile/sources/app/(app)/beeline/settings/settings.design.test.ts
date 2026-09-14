@@ -47,6 +47,16 @@ describe('Settings reads as the Members page', () => {
     expect(settings).not.toContain('<SettingsRow');
   });
 
+  it('keeps the complete version value on the trailing row axis', () => {
+    expect(settings).toContain(
+      `<Text style={styles.rowTitle}>Version</Text>\n            <Text numberOfLines={1} style={styles.rowMeta}>`,
+    );
+    expect(settings).toContain(
+      `[releaseValue, manualUpdateMessage(manualUpdate)].filter(Boolean).join(' · ')`,
+    );
+    expect(declarations(styleBlock(settings, 'rowMeta')).join(' ')).toContain("textAlign: 'right'");
+  });
+
   it('keeps danger last and uses a danger tone', () => {
     expect(settings.indexOf('testID="delete-account-setting"')).toBeGreaterThan(
       settings.indexOf('testID="sign-out-setting"'),

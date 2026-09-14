@@ -1024,6 +1024,17 @@ export class DaemonService {
    * opener alone is what made the motivating incident silent: a helper that
    * never learns a corner exists never polls it, so a mention that resolved
    * perfectly produced no turn and no error.
+   *
+   * The opener is read with the same fallback `getAgentConfiguration` uses to
+   * decide `reviewerHandle` — `COALESCE(owner_agent_id, created_by)` — because
+   * the two answers meet in the reviewer's session. A corner whose
+   * `owner_agent_id` predates the backfill would otherwise be reported as
+   * opened by whoever happens to be polling, and a reviewer told by one query
+   * that it holds the post is told by the other that it wrote the code: the
+   * turn boots without `BEELINE_CORNER_REVIEWER`, `approve_merge` is filtered
+   * off its surface, and its PASS can only ever be prose while the gate stays
+   * at `approvalPending=true`. Reconciliation resurrects exactly the old heads
+   * where that record is thinnest, so the two derivations must agree.
    */
   private async corners(roomId: string, agentId: string) {
     await this.access(roomId, agentId);
@@ -1035,7 +1046,9 @@ export class DaemonService {
       name: string;
       objective: string;
     }>(
-      `SELECT r.id,r.parent_id,r.name,f.objective,f.owner_agent_id created_by,r.archived_at IS NOT NULL archived
+      `SELECT r.id,r.parent_id,r.name,f.objective,
+              COALESCE(f.owner_agent_id,r.created_by) created_by,
+              r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
        WHERE r.parent_id=$1`,

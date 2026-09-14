@@ -7,9 +7,14 @@
  * reviewer agent learns it has work the only way a daemon ever does — by
  * polling `getAgentCommands`. Nothing in the proof reaches past those routes.
  *
- * Two scenarios, both of which used to end in silence:
+ * Four scenarios. The first two used to end in silence; the last two check
+ * that the turn the reviewer is woken into can actually record a verdict,
+ * because a reviewer whose PASS is only prose leaves the gate stuck at
+ * `approvalPending=true` just as surely as no reviewer at all:
  *   1. The reviewer replaced its own event subscriptions, then a check passed.
  *   2. The head was already green when the Room's reviewer was configured.
+ *   3. The reconciled turn carries `approve_merge`.
+ *   4. It still does when the corner's owner was never recorded.
  *
  * Local invocation:
  *   npm run prove:reviewer-dispatch
@@ -24,6 +29,8 @@ import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { GitHubOperations } from '../apps/server/src/github-operations.js';
+import { cornerReviewerInstruction } from '../apps/body/src/monolith-corner-turn.js';
+import { agentToolsFor } from '../apps/body/src/read-only-mcp.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64);
@@ -208,6 +215,50 @@ async function main(): Promise<void> {
     commands.length
       ? commands.map((command) => `${command.reason}: ${command.source.body}`).join('; ')
       : 'NOTHING — the reviewer was never woken';
+  /**
+   * The tools the woken reviewer's turn would actually carry.
+   *
+   * Waking a reviewer that cannot record anything is not a review: its PASS
+   * would exist only as chat prose while the gate stays at
+   * `approvalPending=true`. So this asks the four daemon operations the body
+   * asks at session activation, composes them exactly as `activate()` does,
+   * and reports the surface the real tool filter produces from that env.
+   */
+  const reviewerToolSurface = async (cornerId: string) => {
+    const [configuration, roster, corners, restore] = await Promise.all([
+      daemonOperation('getAgentConfiguration', { agentId: REVIEWER, roomId: cornerId }),
+      daemonOperation('getWorkspaceRoster', { agentId: REVIEWER, workspaceId: WORKSPACE }),
+      daemonOperation('listRoomCorners', { roomId: ROOM }),
+      daemonOperation('getCornerRestoreState', { cornerId }),
+    ]);
+    const members = (roster.members ?? []) as Array<{ identityId: string; handle?: string }>;
+    const corner = ((corners.corners ?? []) as Array<{ cornerId: string; createdBy?: string }>).find(
+      (entry) => entry.cornerId === cornerId,
+    );
+    const openedBy = corner?.createdBy;
+    const lifecycle = (restore as { lifecycle?: { pr?: { number: number; headSha: string } } })
+      .lifecycle;
+    const instruction = cornerReviewerInstruction({
+      reviewerHandle: configuration.reviewerHandle as string | undefined,
+      agentHandle: members.find((member) => member.identityId === REVIEWER)?.handle,
+      authorHandle: members.find((member) => member.identityId === openedBy)?.handle,
+      openedByAgent: !openedBy || openedBy === REVIEWER,
+      ...(lifecycle?.pr ? { pullRequestNumber: lifecycle.pr.number, headSha: lifecycle.pr.headSha } : {}),
+    });
+    // What room-session.ts writes into the MCP server's env for this turn.
+    const env = new Map<string, string>([
+      ['BEELINE_MCP_SURFACE', 'agent'],
+      ['BEELINE_DAEMON_CORNER_ID', cornerId],
+      ...(instruction ? ([['BEELINE_CORNER_REVIEWER', '1']] as Array<[string, string]>) : []),
+    ]);
+    const tools = agentToolsFor(
+      env.get('BEELINE_MCP_SURFACE') === 'agent',
+      env.get('BEELINE_AGENT_DM') === '1',
+      Boolean(env.get('BEELINE_DAEMON_CORNER_ID')),
+      env.get('BEELINE_CORNER_REVIEWER') === '1',
+    ).map((tool) => tool.name);
+    return { env, tools, reviewerHandle: configuration.reviewerHandle as string | undefined };
+  };
 
   const failures: string[] = [];
 
@@ -234,6 +285,43 @@ async function main(): Promise<void> {
   const alreadyGreen = await reviewerCommands(ALREADY_GREEN_CORNER);
   console.log(`   reviewer polled the already-green corner and got ${describe(alreadyGreen)}`);
   if (!alreadyGreen.length) failures.push('no review command for the already-green unreviewed head');
+
+  console.log('# 3. the reconciled turn can actually record a verdict');
+  const surface = await reviewerToolSurface(ALREADY_GREEN_CORNER);
+  console.log(
+    `   reconciled turn env: reviewerHandle=${surface.reviewerHandle ?? 'none'} ` +
+      `BEELINE_DAEMON_CORNER_ID=${surface.env.get('BEELINE_DAEMON_CORNER_ID') ? 'set' : 'unset'} ` +
+      `BEELINE_CORNER_REVIEWER=${surface.env.get('BEELINE_CORNER_REVIEWER') ?? 'unset'}`,
+  );
+  console.log(
+    `   approve_merge on that turn's tool surface: ${
+      surface.tools.includes('approve_merge') ? 'PRESENT' : 'ABSENT — the PASS could only be prose'
+    }`,
+  );
+  if (!surface.tools.includes('approve_merge'))
+    failures.push('the reconciled reviewer turn carries no approve_merge tool');
+
+  // Reconciliation resurrects the oldest green heads, which are the ones whose
+  // `owner_agent_id` predates the corner-owner backfill. That is the record the
+  // corner listing used to substitute the polling agent for.
+  console.log('# 4. same, for a green head whose corner owner was never recorded');
+  await database.query(`UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [
+    ALREADY_GREEN_CORNER,
+  ]);
+  const unowned = await reviewerToolSurface(ALREADY_GREEN_CORNER);
+  console.log(
+    `   reconciled turn env: reviewerHandle=${unowned.reviewerHandle ?? 'none'} ` +
+      `BEELINE_CORNER_REVIEWER=${unowned.env.get('BEELINE_CORNER_REVIEWER') ?? 'unset'}`,
+  );
+  console.log(
+    `   approve_merge on that turn's tool surface: ${
+      unowned.tools.includes('approve_merge') ? 'PRESENT' : 'ABSENT — the PASS could only be prose'
+    }`,
+  );
+  if (!unowned.tools.includes('approve_merge'))
+    failures.push(
+      'the reconciled reviewer turn carries no approve_merge tool when the corner owner is unrecorded',
+    );
 
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await database.close();

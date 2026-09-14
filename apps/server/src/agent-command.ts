@@ -438,19 +438,24 @@ export async function routeSystemCommand(
     const fact = (
       await db.query<{
         owner_agent_id: string;
-        reviewer_configured: boolean;
+        reviewer_agent_id: string | null;
         state: string;
         command_check_state: string | null;
       }>(
         `SELECT fact.owner_agent_id,
-                EXISTS(
-                  SELECT 1 FROM memberships reviewer_membership
+                (
+                  SELECT reviewer_membership.identity_id
+                  FROM memberships reviewer_membership
+                  JOIN memberships corner_membership
+                    ON corner_membership.room_id=corner.id
+                   AND corner_membership.identity_id=reviewer_membership.identity_id
+                   AND corner_membership.removed_at IS NULL
                   JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
                     AND reviewer.kind='agent'
                   WHERE reviewer_membership.room_id=parent.id
                     AND reviewer_membership.identity_id=parent.reviewer_agent_id
                     AND reviewer_membership.removed_at IS NULL
-                ) reviewer_configured,
+                ) reviewer_agent_id,
                 fact.lifecycle->>'checks' state,fact.command_check_state
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
@@ -467,7 +472,7 @@ export async function routeSystemCommand(
         fact.state === fact.command_check_state
       )
         return;
-      if (input.kind === 'check-failed' || !fact.reviewer_configured) {
+      if (input.kind === 'check-failed' || !fact.reviewer_agent_id) {
         const fallbackCarrier =
           (
             await db.query<{ agent_id: string }>(
@@ -482,13 +487,12 @@ export async function routeSystemCommand(
           reason: 'corner_check',
         });
       } else {
-        for (const agentId of new Set(input.targets))
-          await createAgentCommand(db, {
-            roomId: input.roomId,
-            agentId,
-            sourceMessageId: input.sourceMessageId,
-            reason: 'subscribed_event',
-          });
+        await createAgentCommand(db, {
+          roomId: input.roomId,
+          agentId: fact.reviewer_agent_id,
+          sourceMessageId: input.sourceMessageId,
+          reason: 'subscribed_event',
+        });
       }
       await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
         input.roomId,
@@ -552,4 +556,92 @@ export async function routeSystemCommand(
         : {}),
     });
   }
+}
+
+/**
+ * Restore the two durable projections of a configured reviewer.
+ *
+ * Room configuration is the dispatch authority. The subscription remains a
+ * visible description of what wakes the reviewer, but losing or overwriting
+ * that projection must not lose a review. Existing green heads are dispatched
+ * from their latest check fact when no exact-head verdict has been recorded.
+ */
+export async function reconcileConfiguredCornerReviewers(
+  db: SqlDatabase,
+  parentRoomId?: string,
+): Promise<{ subscriptions: number; commands: number }> {
+  const subscriptions = await db.query(
+    `UPDATE memberships reviewer_membership
+     SET event_subscriptions=reviewer_membership.event_subscriptions||'["check-passed"]'::jsonb
+     FROM rooms surface
+     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
+     WHERE reviewer_membership.room_id=surface.id
+       AND reviewer_membership.identity_id=parent.reviewer_agent_id
+       AND reviewer_membership.removed_at IS NULL
+       AND NOT reviewer_membership.event_subscriptions @> '["check-passed"]'::jsonb
+       AND ($1::uuid IS NULL OR parent.id=$1)`,
+    [parentRoomId ?? null],
+  );
+  const candidates = await db.query<{
+    corner_id: string;
+    reviewer_agent_id: string;
+    source_message_id: string;
+  }>(
+    `SELECT corner.id corner_id,parent.reviewer_agent_id,source.id source_message_id
+     FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN corner_facts fact ON fact.corner_id=corner.id
+     JOIN memberships parent_reviewer ON parent_reviewer.room_id=parent.id
+       AND parent_reviewer.identity_id=parent.reviewer_agent_id
+       AND parent_reviewer.removed_at IS NULL
+     JOIN memberships corner_reviewer ON corner_reviewer.room_id=corner.id
+       AND corner_reviewer.identity_id=parent.reviewer_agent_id
+       AND corner_reviewer.removed_at IS NULL
+     JOIN identities reviewer ON reviewer.id=parent.reviewer_agent_id AND reviewer.kind='agent'
+     JOIN LATERAL (
+       SELECT message.id
+       FROM messages message
+       WHERE message.room_id=corner.id
+         AND message.system_event->>'kind'='check-passed'
+         AND (message.system_event->'object'->>'headSha' IS NULL
+              OR message.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
+       ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+     ) source ON true
+     WHERE corner.archived_at IS NULL
+       AND fact.lifecycle->>'checks'='passing'
+       AND fact.lifecycle->'pr'->>'number' IS NOT NULL
+       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND ($1::uuid IS NULL OR parent.id=$1)
+       AND NOT EXISTS (
+         SELECT 1 FROM corner_merge_approvals approval
+         WHERE approval.corner_id=corner.id
+           AND approval.approved_by=parent.reviewer_agent_id
+           AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
+           AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM agent_commands command
+         WHERE command.room_id=corner.id
+           AND command.agent_id=parent.reviewer_agent_id
+           AND command.source_message_id=source.id
+           AND command.action='input'
+       )`,
+    [parentRoomId ?? null],
+  );
+  let commands = 0;
+  for (const candidate of candidates.rows) {
+    const command = await createAgentCommand(db, {
+      roomId: candidate.corner_id,
+      agentId: candidate.reviewer_agent_id,
+      sourceMessageId: candidate.source_message_id,
+      reason: 'subscribed_event',
+    });
+    if (command) {
+      commands += 1;
+      await db.query(`UPDATE corner_facts SET command_check_state='passing' WHERE corner_id=$1`, [
+        candidate.corner_id,
+      ]);
+    }
+  }
+  return { subscriptions: subscriptions.rowCount, commands };
 }

@@ -99,3 +99,16 @@ describe('Room composer keyboard dismissal', () => {
     expect(variants).toContain('onPress={onPress}');
   });
 });
+
+describe('Room composer keyboard inset', () => {
+  it('lets the full-screen avoiding view meet the keyboard without a fixed header offset', () => {
+    expect(source).not.toContain('keyboardVerticalOffset=');
+  });
+
+  it('keeps the safe-area inset only while the software keyboard is closed', () => {
+    expect(source).toContain(
+      'const composerBottomInset = composerBottomPadding(insets.bottom, keyboardHeight);',
+    );
+    expect(source).toContain('{ paddingBottom: composerBottomInset }');
+  });
+});

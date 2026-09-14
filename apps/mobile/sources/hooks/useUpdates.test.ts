@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const route = vi.hoisted(() => ({ pathname: '/beeline/onboarding' }));
+const desktopShell = vi.hoisted(() => ({ enabled: false }));
 const appState = vi.hoisted(() => ({
   listeners: new Set<(state: string) => void>(),
 }));
@@ -16,6 +17,8 @@ const tracking = vi.hoisted(() => ({
   available: vi.fn(),
   applied: vi.fn(),
 }));
+const desktopUpdater = vi.hoisted(() => ({ check: vi.fn() }));
+const desktopProcess = vi.hoisted(() => ({ relaunch: vi.fn() }));
 
 vi.mock('expo-router', () => ({ usePathname: () => route.pathname }));
 vi.mock('expo-updates', () => ({
@@ -23,6 +26,9 @@ vi.mock('expo-updates', () => ({
   fetchUpdateAsync: updates.fetchUpdateAsync,
   reloadAsync: updates.reloadAsync,
 }));
+vi.mock('@/utils/isTauri', () => ({ isTauri: () => desktopShell.enabled }));
+vi.mock('@tauri-apps/plugin-updater', () => ({ check: desktopUpdater.check }));
+vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: desktopProcess.relaunch }));
 vi.mock('@/track', () => ({
   trackOtaUpdateAvailable: tracking.available,
   trackOtaUpdateApplied: tracking.applied,
@@ -99,12 +105,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   appState.listeners.clear();
   route.pathname = '/beeline/onboarding';
+  desktopShell.enabled = false;
   updates.checkForUpdateAsync.mockResolvedValue({
     isAvailable: false,
     reason: 'noUpdateAvailableOnServer',
   });
   updates.fetchUpdateAsync.mockResolvedValue({ isNew: false });
   updates.reloadAsync.mockResolvedValue(undefined);
+  desktopUpdater.check.mockResolvedValue(null);
+  desktopProcess.relaunch.mockResolvedValue(undefined);
+  delete process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES;
 });
 
 async function renderUpdateRoot(child?: React.ReactNode): Promise<ReactTestRenderer> {
@@ -123,6 +133,16 @@ async function renderUpdateRoot(child?: React.ReactNode): Promise<ReactTestRende
 
 async function unmount(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => renderer.unmount());
+}
+
+async function flushDynamicImports(): Promise<void> {
+  await act(async () => {
+    // Updater and process are separate lazy imports with installation between
+    // them. Drain both module turns before asserting the restart boundary.
+    for (let turn = 0; turn < 3; turn += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  });
 }
 
 function availableUpdate() {
@@ -215,6 +235,76 @@ describe('root OTA update coordinator', () => {
     });
 
     expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(2);
+    await unmount(renderer);
+  });
+
+  it('downloads a signed desktop update and relaunches immediately on an idle route', async () => {
+    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    desktopShell.enabled = true;
+    process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
+    desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
+
+    const renderer = await renderUpdateRoot();
+    await flushDynamicImports();
+    await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
+
+    expect(desktopUpdater.check).toHaveBeenCalledTimes(1);
+    expect(updates.checkForUpdateAsync).not.toHaveBeenCalled();
+    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+    await unmount(renderer);
+  });
+
+  it('waits through active desktop work and restarts when navigation becomes idle', async () => {
+    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    desktopShell.enabled = true;
+    process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
+    route.pathname = '/beeline/chat/room-1';
+    desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
+    const child = React.createElement(UpdateReadyPrompt);
+    const renderer = await renderUpdateRoot(child);
+    await flushDynamicImports();
+    expect(downloadAndInstall).not.toHaveBeenCalled();
+
+    route.pathname = '/beeline/channels';
+    await act(async () => renderer.update(React.createElement(UpdateProvider, null, child)));
+    await flushDynamicImports();
+    await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
+
+    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+    await unmount(renderer);
+  });
+
+  it('restores the prompt after an automatic desktop install fails and retries only on demand', async () => {
+    const downloadAndInstall = vi.fn()
+      .mockRejectedValueOnce(new Error('install failed'))
+      .mockResolvedValueOnce(undefined);
+    desktopShell.enabled = true;
+    process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
+    desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
+    const child = React.createElement(UpdateReadyPrompt);
+    const renderer = await renderUpdateRoot(child);
+
+    await flushDynamicImports();
+    await act(async () => {
+      await vi.waitFor(
+        () => expect(downloadAndInstall).toHaveBeenCalledTimes(1),
+        { timeout: 10_000 },
+      );
+    });
+    expect(renderer.root.findAllByProps({ testID: 'ota-update-ready-prompt' })).not.toHaveLength(0);
+
+    route.pathname = '/beeline/channels/settings';
+    await act(async () => renderer.update(React.createElement(UpdateProvider, null, child)));
+    await flushDynamicImports();
+    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'ota-update-restart' }).props.onPress();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
+    });
+    expect(downloadAndInstall).toHaveBeenCalledTimes(2);
     await unmount(renderer);
   });
 });

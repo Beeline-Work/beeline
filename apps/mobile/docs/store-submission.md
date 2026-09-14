@@ -153,7 +153,7 @@ short-lived Play access token from the service account, then runs
 and full description, icon, feature graphic and phone screenshots, each image
 type cleared then re-uploaded in filename order, then committed).
 The internal-track release is published as *completed* (rolled out to internal testers with no press in Play
-Console.
+Console).
 
 **`store_ios`** (TestFlight): version check, decodes the `.p8` secret to a
 runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it **before** the build

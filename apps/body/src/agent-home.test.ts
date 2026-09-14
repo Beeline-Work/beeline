@@ -434,7 +434,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
-    expect(reviewSkill).toContain('pass that same pull request to `approve_merge`');
+    expect(reviewSkill).toContain('and the reviewed pull request');
     expect(reviewSkill).toContain('@author approved <reviewed sha>, merge');
     expect(reviewSkill).toContain('Never merge the pull request yourself');
     expect(reviewSkill).not.toContain('approved pending checks');

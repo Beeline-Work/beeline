@@ -145,6 +145,17 @@ describe('approve_merge', () => {
     });
   });
 
+  it('carries the reviewed PR for a mention-woken reviewer without this worktree’s patch id', async () => {
+    await expect(approveMerge({ headSha: 'A'.repeat(40), pullRequest: 614 })).resolves.toContain(
+      '"approved"',
+    );
+    expect(calls).toContainEqual({
+      name: 'approveCornerMerge',
+      input: { cornerId: 'corner', headSha: 'a'.repeat(40), pullRequest: 614 },
+    });
+    expect(computePatchId).not.toHaveBeenCalled();
+  });
+
   it('refuses a shortened revision before calling the server', async () => {
     await expect(approveMerge({ headSha: 'abc123' })).rejects.toThrow(
       'headSha must be a full 40-character SHA',

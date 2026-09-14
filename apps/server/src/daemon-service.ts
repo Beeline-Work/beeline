@@ -1108,6 +1108,13 @@ export class DaemonService {
       )
     ).rows[0];
     if (!target) throw new Error('corner reviewer approval denied');
+    // A check turn hands the reviewer the head to review, and it is the head
+    // this corner's lifecycle already records. A reviewer woken by a mention
+    // has no such instruction and may be sitting in a corner that carries no
+    // pull request of its own, so it names the pull request it reviewed and
+    // the server resolves that PR's live head — the same head the gate reads.
+    // The gate matches an approval by parent Room and PR number, so a verdict
+    // recorded from any corner of the Room still opens the author's gate.
     let pullRequestNumber = target.pull_request_number;
     let headSha = target.head_sha;
     if (input.pullRequest !== undefined) {

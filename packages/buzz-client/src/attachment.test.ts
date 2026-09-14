@@ -62,4 +62,31 @@ describe('link-first attachment metadata', () => {
     );
     expect(parseAttachmentTags(tags)).toEqual([html]);
   });
+
+  it('round-trips artifact facts (kind, title, author) and drops them from plain media', () => {
+    const artifact: AttachmentReference = {
+      url: 'https://usebeeline.app/v1/media/9f0f6a50-1111-4222-8333-444455556666',
+      name: 'mock.html',
+      mimeType: 'text/html',
+      size: 2048,
+      kind: 'artifact',
+      title: 'Login mock',
+      author: 'hoots',
+    };
+    const tags = buildAttachmentTags([artifact]);
+    expect(tags).toContainEqual(
+      expect.arrayContaining([
+        'kind artifact',
+        'title Login mock',
+        'author hoots',
+      ]),
+    );
+    expect(parseAttachmentTags(tags)).toEqual([artifact]);
+
+    // A media attachment with a stray kind value normalizes to plain media.
+    const plain = buildAttachmentTags([
+      { ...artifact, kind: 'media' as never, title: undefined, author: undefined },
+    ]);
+    expect(JSON.stringify(plain)).not.toContain('kind');
+  });
 });

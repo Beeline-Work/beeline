@@ -1,0 +1,287 @@
+import {
+  type ConnectionDetailView,
+  type ConnectorInstallState,
+  type WorkbenchHelper,
+  type WorkbenchView,
+} from './workbench';
+
+/**
+ * The Workbench data source. Until PR 2's server endpoints land, the only
+ * implementation is the mock below; the screens and tests import
+ * `getWorkbenchSource()`, so the swap to signed RoomView endpoints is one
+ * module change. Shapes follow the scout report's §5 PR 2/PR 3 contracts.
+ */
+export interface WorkbenchSource {
+  readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView>;
+  listHelpers(input: { workspaceId: string }): Promise<readonly WorkbenchHelper[]>;
+  /** Pair an online helper: returns the install request the flow polls. */
+  pairConnector(input: {
+    workspaceId: string;
+    connectorId: string;
+    helperId: string;
+    viewerId: string;
+  }): Promise<{ requestId: string }>;
+  readInstallState(input: { requestId: string }): Promise<ConnectorInstallState | null>;
+  readConnectionDetail(input: {
+    workspaceId: string;
+    ref: string;
+    viewerId: string;
+  }): Promise<ConnectionDetailView | null>;
+  revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{ revoked: number }>;
+  disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void>;
+}
+
+type MockViewer = {
+  id: string;
+  name: string;
+  connections: ConnectionDetailView[];
+};
+
+const MEMBER_A = 'human-dani';
+const MEMBER_B = 'human-terra';
+
+const VERCEL_CONNECTION: ConnectionDetailView = {
+  connection: {
+    ref: 'cred_vercel',
+    name: 'Vercel',
+    kind: 'token',
+    hosts: ['api.vercel.com'],
+    state: 'active',
+    ownerId: MEMBER_A,
+    grantCount: 2,
+  },
+  createdBy: { handle: '@hoots', cause: 'sign-up', at: '13 Sep' },
+  grants: [
+    { agent: 'hoots', kinds: ['deploy', 'list'] },
+    { agent: 'terra', kinds: ['list'] },
+  ],
+  spendCap: 'none',
+  ledger: [
+    { at: '14:26', actor: '@hoots', action: 'deploy', status: '200', bytes: '1.2 kB' },
+    { at: '14:19', actor: '@hoots', action: 'deploy', status: '200', bytes: '0.9 kB' },
+    { at: '13:41', actor: '@terra', action: 'list projects', status: '200' },
+    { at: '13:40', actor: '', action: 'grant minted for @terra' },
+    { at: '12:02', actor: '', action: 'credential stored by @hoots (sign-up)' },
+  ],
+};
+
+const GOOGLE_CONNECTION: ConnectionDetailView = {
+  connection: {
+    ref: 'cred_google',
+    name: 'Google',
+    kind: 'session',
+    hosts: [],
+    state: 'active',
+    ownerId: MEMBER_A,
+    grantCount: 1,
+  },
+  createdBy: { handle: '@hoots', cause: 'sign-in', at: '12 Sep' },
+  grants: [{ agent: 'hoots', kinds: ['mail', 'calendar'] }],
+  spendCap: 'none',
+  ledger: [
+    { at: '09:12', actor: '@hoots', action: 'send mail', status: '200', bytes: '0.4 kB' },
+    { at: '08:58', actor: '', action: 'credential stored by @hoots (sign-in)' },
+  ],
+};
+
+const MOCK_VIEWERS: readonly MockViewer[] = [
+  { id: MEMBER_A, name: 'dani', connections: [VERCEL_CONNECTION, GOOGLE_CONNECTION] },
+  { id: MEMBER_B, name: 'terra', connections: [] },
+];
+
+const MOCK_HELPERS: readonly WorkbenchHelper[] = [
+  { id: 'helper-squire-box', name: 'squire-box', platform: 'linux', agentCount: 3, online: true },
+  { id: 'helper-macbook', name: "Dani's MacBook", platform: 'macos', agentCount: 1, online: true },
+  { id: 'helper-office-mini', name: 'office-mini', platform: 'macos', agentCount: 0, online: false },
+];
+
+const INSTALL_STEP_LABELS = [
+  (helperName: string) => `helper ${helperName} reached`,
+  () => 'trusty-squire 1.4.2 installed',
+  (workspaceName: string) => `paired to workspace ${workspaceName}`,
+  () => 'waiting for sign-in',
+  () => 'connections sync',
+] as const;
+
+/**
+ * The mock install script: one step is revealed per poll, exactly the way the
+ * helper's status reports arrive. `failAtStep` injects a failed step with a
+ * helper reason, both for the failure UI and its render tests.
+ */
+class MockWorkbenchSource implements WorkbenchSource {
+  private readonly installs = new Map<string, MockInstall>();
+  private failedConnectors = new Set<string>();
+  private signInMethod: 'streamed' | 'oauth' | undefined;
+
+  async readWorkbench(input: {
+    workspaceId: string;
+    viewerId: string;
+  }): Promise<WorkbenchView> {
+    const viewer = this.viewer(input.viewerId);
+    const connected = this.installs.size > 0 || this.failedConnectors.size > 0;
+    return {
+      connectors: [
+        {
+          id: 'trusty-squire',
+          name: 'Trusty Squire',
+          description: 'vault · sign-ups · payments for your agents',
+          available: true,
+          ...(connected
+            ? {
+                status: this.failedConnectors.has('trusty-squire')
+                  ? ('error' as const)
+                  : ('connected' as const),
+                helperName: 'squire-box',
+                agentCount: 3,
+                signedInAs: viewer ? `${viewer.name}@…` : undefined,
+              }
+            : {}),
+        },
+        {
+          id: 'wallet',
+          name: 'Wallet',
+          description: 'crypto wallet for agents',
+          available: false,
+        },
+        {
+          id: 'tailscale',
+          name: 'Tailscale',
+          description: 'private network for your helpers',
+          available: false,
+        },
+      ],
+      connections: viewer ? viewer.connections.map((detail) => detail.connection) : [],
+    };
+  }
+
+  async listHelpers(): Promise<readonly WorkbenchHelper[]> {
+    return MOCK_HELPERS;
+  }
+
+  async pairConnector(input: {
+    workspaceId: string;
+    connectorId: string;
+    helperId: string;
+    viewerId: string;
+  }): Promise<{ requestId: string }> {
+    if (!MOCK_HELPERS.some((helper) => helper.id === input.helperId && helper.online)) {
+      throw new Error('Helper is offline');
+    }
+    const requestId = `install-${input.helperId}-${this.installs.size + 1}`;
+    this.installs.set(
+      requestId,
+      {
+        requestId,
+        helperId: input.helperId,
+        revealed: 0,
+        failAtStep: this.failedConnectors.has(input.connectorId) ? 2 : undefined,
+      },
+    );
+    return { requestId };
+  }
+
+  async readInstallState(input: { requestId: string }): Promise<ConnectorInstallState | null> {
+    const install = this.installs.get(input.requestId);
+    if (!install) return null;
+    install.revealed = Math.min(install.revealed + 1, INSTALL_STEP_LABELS.length);
+    const helper = MOCK_HELPERS.find((candidate) => candidate.id === install.helperId);
+    const steps = INSTALL_STEP_LABELS.map((label, index) => {
+      const failShown =
+        install.failAtStep !== undefined && install.revealed >= install.failAtStep;
+      if (failShown && index === install.failAtStep) {
+        return {
+          label: label(helper?.name ?? 'the helper'),
+          status: 'failed' as const,
+          reason: 'the helper could not reach the package registry',
+        };
+      }
+      if (failShown && index > (install.failAtStep as number)) {
+        return { label: label(helper?.name ?? 'the helper'), status: 'pending' as const };
+      }
+      return {
+        label: label(helper?.name ?? 'the helper'),
+        status:
+          index < install.revealed - 1
+            ? ('done' as const)
+            : index === install.revealed - 1
+              ? ('active' as const)
+              : ('pending' as const),
+      };
+    });
+    const reachedSignIn =
+      install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length - 1;
+    const complete = install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length;
+    return {
+      requestId: install.requestId,
+      helperName: helper?.name ?? 'the helper',
+      steps,
+      signIn: reachedSignIn
+        ? {
+            method: this.signInMethod ?? 'streamed',
+            // The streamed noVNC page the helper reports; the app opens it verbatim.
+            url: `https://login.example-squire.test/vnc.html#helper=${install.helperId}`,
+          }
+        : null,
+      connected: complete,
+    };
+  }
+
+  async readConnectionDetail(input: {
+    workspaceId: string;
+    ref: string;
+    viewerId: string;
+  }): Promise<ConnectionDetailView | null> {
+    const viewer = this.viewer(input.viewerId);
+    const detail = viewer?.connections.find((candidate) => candidate.connection.ref === input.ref);
+    return detail ?? null;
+  }
+
+  async revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{ revoked: number }> {
+    const detail = MOCK_VIEWERS.flatMap((candidate) => candidate.connections).find(
+      (candidate) => candidate.connection.ref === input.ref,
+    );
+    if (!detail) return { revoked: 0 };
+    const revoked = detail.grants.length;
+    detail.grants = [];
+    detail.connection = { ...detail.connection, grantCount: 0 };
+    return { revoked };
+  }
+
+  async disconnectConnector(): Promise<void> {
+    this.installs.clear();
+  }
+
+  /** Test hook: make the next pairing of this connector fail at a step. */
+  failNextPair(connectorId: string): void {
+    this.failedConnectors.add(connectorId);
+  }
+
+  /** Test hook: what sign-in method installs report (default streamed). */
+  setSignInMethod(method: 'streamed' | 'oauth' | undefined): void {
+    this.signInMethod = method;
+  }
+
+  private viewer(id: string): MockViewer | undefined {
+    return MOCK_VIEWERS.find((candidate) => candidate.id === id);
+  }
+}
+
+type MockInstall = {
+  requestId: string;
+  helperId: string;
+  revealed: number;
+  failAtStep?: number;
+};
+
+let source: WorkbenchSource = new MockWorkbenchSource();
+
+/** The one source the Workbench screens read. PR 2 replaces the mock here. */
+export function getWorkbenchSource(): WorkbenchSource {
+  return source;
+}
+
+/** Test seam: install a source (or restore the mock with no argument). */
+export function setWorkbenchSource(next?: WorkbenchSource): void {
+  source = next ?? new MockWorkbenchSource();
+}
+

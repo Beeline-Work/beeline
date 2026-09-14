@@ -78,7 +78,7 @@ api PUT "$API/edits/$edit_id/tracks/$TRACK" \
 echo "  track release configured"
 
 echo "4/4 Committing edit..."
-api POST "$API/edits/$edit_id:commit?changesNotSentForReview=true" -H "Content-Length: 0" > /dev/null
+commit_edit "$edit_id"
 echo "  edit committed — versionCode $version_code is on the $TRACK track as $RELEASE_STATUS"
 echo ""
 echo "Play Console: $(play_console_url)"

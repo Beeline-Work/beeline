@@ -109,12 +109,14 @@ import {
   filterMentionCandidates,
   formatRoomParticipantTotal,
   isChannelMentionHandle,
+  mentionCandidatesWithModels,
   mentionKindLabel,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
   sectionRoomParticipants,
   selectedMentionAgentPubkey,
+  shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -508,10 +510,11 @@ export default function BuzzChat() {
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
   const [addingMembers, setAddingMembers] = useState(false);
-  /** The Workspace roster behind the member picker; null while its read is in flight. */
+  /** The Workspace roster behind member and mention pickers; null until the first scoped read. */
   const [workspaceRoster, setWorkspaceRoster] = useState<Awaited<
     ReturnType<NonNullable<typeof roomClient>['workspace']>
   > | null>(null);
+  const workspaceRosterScopeRef = useRef<string | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
@@ -1039,10 +1042,6 @@ export default function BuzzChat() {
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
   );
-  const workspaceAgentByPubkey = useMemo(
-    () => new Map((workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent])),
-    [workspaceRoster],
-  );
   const personProfileByPubkey = useMemo(
     () => new Map(personProfiles.map((profile) => [profile.pubkey, profile])),
     [personProfiles],
@@ -1075,14 +1074,12 @@ export default function BuzzChat() {
     }
     for (const agent of availableAgents) {
       const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
-      const model = workspaceAgentByPubkey.get(agent.pubkey)?.model;
       options.set(agent.pubkey, {
         pubkey: agent.pubkey,
         name: display.name,
         handle: display.handle,
         kind: 'agent',
         agent,
-        ...(model ? { model } : {}),
       });
     }
     // The snapshot membership selector is the Room roster authority. Workspace
@@ -1112,7 +1109,6 @@ export default function BuzzChat() {
     roomMembers,
     selectedMembers,
     userPubkey,
-    workspaceAgentByPubkey,
   ]);
   const roomParticipants = useMemo(
     () =>
@@ -1137,23 +1133,36 @@ export default function BuzzChat() {
   // "add" section was always empty and the only visible path led to the
   // pairing command (captain report C74). The composer also reads it while
   // focused so mention rows can show the same model metadata as roster rows.
-  // Sheets show a loader until it lands and any failure inline.
+  // The first read shows a loader; later sheet refreshes keep the last roster
+  // visible until the fresh response lands.
   useEffect(() => {
+    workspaceRosterScopeRef.current = null;
+    setWorkspaceRoster(null);
+  }, [activeCommunityId]);
+  useEffect(() => {
+    const rosterSurfaceVisible = participantPickerVisible || rosterVisible;
+    if (!roomClient || !activeCommunityId) return;
     if (
-      (!participantPickerVisible && !rosterVisible && !composerFocused) ||
-      !roomClient ||
-      !activeCommunityId
+      !shouldReadWorkspaceRoster({
+        activeWorkspaceId: activeCommunityId,
+        cachedWorkspaceId: workspaceRosterScopeRef.current,
+        composerFocused,
+        rosterSurfaceVisible,
+      })
     )
       return;
     let cancelled = false;
-    setWorkspaceRoster(null);
     roomClient
       .workspace(activeCommunityId)
       .then((view) => {
-        if (!cancelled) setWorkspaceRoster(view);
+        if (!cancelled) {
+          workspaceRosterScopeRef.current = activeCommunityId;
+          setWorkspaceRoster(view);
+        }
       })
       .catch((err) => {
-        if (!cancelled) setMembershipError(`Could not read the Workspace roster: ${String(err)}`);
+        if (!cancelled && rosterSurfaceVisible)
+          setMembershipError(`Could not read the Workspace roster: ${String(err)}`);
       });
     return () => {
       cancelled = true;
@@ -1297,8 +1306,14 @@ export default function BuzzChat() {
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [CHANNEL_MENTION_OPTION, ...roomParticipants],
-    [roomParticipants],
+    () => [
+      CHANNEL_MENTION_OPTION,
+      ...mentionCandidatesWithModels(
+        roomParticipants,
+        workspaceRoster?.workspace.id === activeCommunityId ? workspaceRoster.agents : [],
+      ),
+    ],
+    [activeCommunityId, roomParticipants, workspaceRoster],
   );
   const mentionSuggestions = useMemo(
     () =>
@@ -4174,7 +4189,7 @@ export default function BuzzChat() {
                             @{participant.handle}
                           </Text>
                         </View>
-                        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.mentionKind}>
+                        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.mentionKind}>
                           {participant.pubkey === CHANNEL_MENTION_PUBKEY
                             ? 'ROOM'
                             : mentionKindLabel(participant)}

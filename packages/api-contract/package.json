@@ -38,6 +38,11 @@
       "types": "./dist/system-identity.d.ts",
       "import": "./dist/system-identity.js",
       "default": "./dist/system-identity.js"
+    },
+    "./workbench": {
+      "types": "./dist/workbench.d.ts",
+      "import": "./dist/workbench.js",
+      "default": "./dist/workbench.js"
     }
   },
   "scripts": {

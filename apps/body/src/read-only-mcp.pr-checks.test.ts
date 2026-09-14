@@ -1,16 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { approveMerge, prChecksStatus } from './read-only-mcp.js';
 
-vi.mock('./patch-identity.js', () => ({ computePatchId: vi.fn(async () => 'stub-patch-id') }));
-import { computePatchId } from './patch-identity.js';
-
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
 let checks: string, approvalPending: boolean;
 let calls: { name: string; input: Record<string, unknown> }[];
 beforeEach(() => {
-  vi.mocked(computePatchId).mockClear();
-  vi.mocked(computePatchId).mockResolvedValue('stub-patch-id');
   for (const [key, value] of Object.entries({
     BEELINE_DAEMON_CORNER_ID: 'corner',
     BEELINE_DAEMON_WORKSPACE_ID: 'workspace',
@@ -36,9 +31,7 @@ beforeEach(() => {
             ? { members: [{ kind: 'human', identityId: 'human' }] }
             : name === 'getRoomAuthority'
               ? { archived: false }
-              : name === 'getRoomTargetBranch'
-                ? { targetBranch: 'main' }
-                : name === 'getPrChecksStatus'
+              : name === 'getPrChecksStatus'
                 ? { checks, pullRequest: url, headSha: 'a'.repeat(40), approvalPending }
                 : name === 'approveCornerMerge'
                   ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
@@ -61,10 +54,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
         pullRequest: url,
       });
       expect(gateCalls()).toEqual([
-        {
-          name: 'getPrChecksStatus',
-          input: { cornerId: 'corner', pullRequest, patchId: 'stub-patch-id' },
-        },
+        { name: 'getPrChecksStatus', input: { cornerId: 'corner', pullRequest } },
       ]);
     },
   );
@@ -141,7 +131,7 @@ describe('approve_merge', () => {
     await expect(approveMerge({ headSha: 'A'.repeat(40) })).resolves.toContain('"approved"');
     expect(calls).toContainEqual({
       name: 'approveCornerMerge',
-      input: { cornerId: 'corner', headSha: 'a'.repeat(40), patchId: 'stub-patch-id' },
+      input: { cornerId: 'corner', headSha: 'a'.repeat(40) },
     });
   });
 
@@ -150,44 +140,5 @@ describe('approve_merge', () => {
       'headSha must be a full 40-character SHA',
     );
     expect(calls).toEqual([]);
-  });
-});
-
-describe('patch identity wiring', () => {
-  it('omits patchId rather than failing when computePatchId cannot resolve one', async () => {
-    vi.mocked(computePatchId).mockResolvedValueOnce(undefined);
-    await prChecksStatus({ pullRequest: 614 });
-    expect(gateCalls()[0]!.input).not.toHaveProperty('patchId');
-  });
-
-  it('omits patchId when this corner has no target branch on record', async () => {
-    vi.stubGlobal('fetch', async (input: URL, init: RequestInit) => {
-      const name = new URL(input).pathname.split('/').pop()!;
-      calls.push({ name, input: JSON.parse(String(init.body)) });
-      if (name === 'getCornerRestoreState') return Response.json(restore);
-      if (name === 'getRoomConversation') return Response.json({ items });
-      if (name === 'getWorkspaceRoster')
-        return Response.json({ members: [{ kind: 'human', identityId: 'human' }] });
-      if (name === 'getRoomAuthority') return Response.json({ archived: false });
-      if (name === 'getRoomTargetBranch') return Response.json({});
-      if (name === 'getPrChecksStatus')
-        return Response.json({ checks, pullRequest: url, headSha: 'a'.repeat(40), approvalPending });
-      return Response.json({});
-    });
-    await prChecksStatus({ pullRequest: 614 });
-    expect(gateCalls()[0]!.input).not.toHaveProperty('patchId');
-    expect(computePatchId).not.toHaveBeenCalled();
-  });
-
-  it('carries the reviewer verdict for a caught-up head via approvalPending alone', async () => {
-    // The server is the sole authority on whether a patch-id match still counts as
-    // approved (see apps/server/src/pr-checks-status.test.ts); this only proves the
-    // body computes and forwards a patch id on both the review and the gate call.
-    await approveMerge({ headSha: 'A'.repeat(40) });
-    await prChecksStatus({ pullRequest: 614 });
-    expect(calls.find((call) => call.name === 'approveCornerMerge')?.input.patchId).toBe(
-      'stub-patch-id',
-    );
-    expect(gateCalls()[0]!.input.patchId).toBe('stub-patch-id');
   });
 });

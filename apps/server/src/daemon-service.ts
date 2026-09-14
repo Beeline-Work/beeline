@@ -66,6 +66,12 @@ import {
   type SystemPhrase,
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import { isMetadataStale, receiveConnectionUsage } from './workbench.js';
+import type {
+  ConnectorAssignment,
+  ConnectorStatus,
+  ConnectorStep,
+} from '@beeline/api-contract/workbench';
 import {
   AGENT_REACHABLE_HORIZON_MS,
   parseAgentAccessPolicy,
@@ -564,6 +570,32 @@ export class DaemonService {
           input as Input<'postAgentModelCatalog'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getConnectorAssignments':
+        return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
+      case 'installConnector':
+        return (await this.connectorInstall(
+          input as Input<'installConnector'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'getConnectorStatus':
+        return (await this.connectorStatusView(authenticatedAgentId)) as Output<Name>;
+      case 'getConnectorVaultList':
+        return (await this.connectorVaultList(authenticatedAgentId)) as Output<Name>;
+      case 'getConnectionDetail':
+        return (await this.connectionDetail(
+          input as Input<'getConnectionDetail'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'revokeConnectionGrants':
+        return (await this.connectionGrantRevoke(
+          input as Input<'revokeConnectionGrants'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postConnectionUsage':
+        return (await this.connectionUsage(
+          input as Input<'postConnectionUsage'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'postCornerLifecycle':
         return (await this.cornerLifecycle(
           input as Input<'postCornerLifecycle'>,
@@ -616,8 +648,294 @@ export class DaemonService {
     }
   }
 
-  private async bootstrap(agentId: string) {
-    const workspaces = await this.database.query<{ workspace_id: string }>(
+  // --- Workbench: connector helper operations --------------------------------
+
+  /**
+   * The helper's work queue for connectors it serves. Install/uninstall are
+   * derived from the connector's own status (idempotent across polls); sync
+   * and revoke-grants are edge-triggered tokens the read clears.
+   */
+  private async connectorAssignments(agentId: string): Promise<Output<'getConnectorAssignments'>> {
+    const connectors = (
+      await this.database.query<{
+        id: string;
+        connector_type: string;
+        status: string;
+        pending_ops: string[];
+      }>(
+        `SELECT id,connector_type,status,pending_ops FROM workspace_connectors
+         WHERE helper_agent_id=$1 AND status IN ('installing','connected','error','disconnected')
+         ORDER BY created_at`,
+        [agentId],
+      )
+    ).rows;
+    const assignments: ConnectorAssignment[] = [];
+    for (const row of connectors) {
+      if (row.status === 'installing')
+        assignments.push({ kind: 'install', connectorId: row.id, connectorType: row.connector_type as never });
+      if (row.status === 'disconnected')
+        assignments.push({ kind: 'uninstall', connectorId: row.id, connectorType: row.connector_type as never });
+      for (const op of row.pending_ops ?? []) {
+        if (op === 'sync')
+          assignments.push({ kind: 'sync', connectorId: row.id, connectorType: row.connector_type as never });
+        else if (op.startsWith('revoke-grants:'))
+          assignments.push({
+            kind: 'revoke-grants',
+            connectorId: row.id,
+            connectorType: row.connector_type as never,
+            reference: op.slice('revoke-grants:'.length),
+          });
+      }
+    }
+    const pendingIds = connectors
+      .filter((row) => (row.pending_ops ?? []).length > 0)
+      .map((row) => row.id);
+    if (pendingIds.length)
+      await this.database.query(
+        `UPDATE workspace_connectors SET pending_ops='[]'::jsonb WHERE id = ANY($1::uuid[])`,
+        [pendingIds],
+      );
+    return { assignments };
+  }
+
+  /** The helper reports it completed (or accepted) an install. */
+  private async connectorInstall(
+    input: Input<'installConnector'>,
+    agentId: string,
+  ): Promise<Output<'installConnector'>> {
+    const row = (
+      await this.database.query<{ id: string }>(
+        `SELECT id FROM workspace_connectors WHERE id=$1::uuid AND helper_agent_id=$2`,
+        [input.connectorId, agentId],
+      )
+    ).rows[0];
+    if (!row) throw new Error('connector not found for this helper');
+    await this.database.query(
+      `UPDATE workspace_connectors
+       SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
+           connected_at=COALESCE(connected_at, now()), updated_at=now()
+       WHERE id=$1::uuid`,
+      [row.id],
+    );
+    return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /** The helper polls its connector's state; stale metadata stages a sync. */
+  private async connectorStatusView(agentId: string): Promise<Output<'getConnectorStatus'>> {
+    const rows = (
+      await this.database.query<{
+        id: string;
+        status: string;
+        status_steps: ConnectorStep[] | null;
+        status_error: string | null;
+      }>(
+        `SELECT id,status,status_steps,status_error FROM workspace_connectors
+         WHERE helper_agent_id=$1
+         ORDER BY created_at`,
+        [agentId],
+      )
+    ).rows;
+    // Reap unpaired rows the uninstall assignment has had time to reach: the
+    // helper's status poll after the drain is the uninstall ack path.
+    for (const row of rows) {
+      if (row.status !== 'disconnected') continue;
+      const empty = await this.database.query(
+        `SELECT 1 FROM workspace_connections WHERE connector_id=$1::uuid LIMIT 1`,
+        [row.id],
+      );
+      if (!empty.rowCount)
+        await this.database.query(`DELETE FROM workspace_connectors WHERE id=$1::uuid`, [row.id]);
+    }
+    const live = (
+      await this.database.query<{
+        id: string;
+        status: string;
+        status_steps: ConnectorStep[] | null;
+        status_error: string | null;
+      }>(
+        `SELECT id,status,status_steps,status_error FROM workspace_connectors
+         WHERE helper_agent_id=$1 AND status IN ('installing','connected','error')
+         ORDER BY created_at LIMIT 1`,
+        [agentId],
+      )
+    ).rows[0];
+    if (!live)
+      return { connectorId: '', status: 'disconnected', steps: [] };
+    return {
+      connectorId: live.id,
+      status: live.status as ConnectorStatus['status'],
+      steps: live.status_steps ?? [],
+      ...(live.status_error ? { errorMessage: live.status_error } : {}),
+    };
+  }
+
+  /** The cached vault metadata for the helper's connections; stale rows stage a sync. */
+  private async connectorVaultList(agentId: string): Promise<Output<'getConnectorVaultList'>> {
+    const rows = (
+      await this.database.query<{
+        id: string;
+        connector_id: string;
+        reference: string;
+        service: string | null;
+        label: string | null;
+        hosts: string[];
+        state: string;
+        connection_metadata: { fieldNames?: string[]; vaultCreatedAt?: number } | null;
+        last_synced_at: Date | null;
+      }>(
+        `SELECT c.id,c.connector_id,c.reference,c.service,c.label,c.hosts,c.state,
+                c.connection_metadata,c.last_synced_at
+         FROM workspace_connections c
+         JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE k.helper_agent_id=$1
+         ORDER BY c.created_at`,
+        [agentId],
+      )
+    ).rows;
+    const staleConnectorIds = new Set<string>();
+    const connections = rows.map((row) => {
+      if (isMetadataStale(row.last_synced_at)) staleConnectorIds.add(row.connector_id);
+      return {
+        reference: row.reference,
+        service: row.service,
+        label: row.label ?? row.reference,
+        fieldNames: row.connection_metadata?.fieldNames ?? [],
+        allowedHosts: row.hosts ?? [],
+        createdAt: row.connection_metadata?.vaultCreatedAt ?? Math.floor(Date.now() / 1000),
+        stale: isMetadataStale(row.last_synced_at),
+        state: row.state === 'error' ? ('error' as const) : ('active' as const),
+      };
+    });
+    for (const connectorId of staleConnectorIds)
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
+         WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
+        [connectorId],
+      );
+    return { connections };
+  }
+
+  /** Cached detail for one connection the helper serves. */
+  private async connectionDetail(
+    input: Input<'getConnectionDetail'>,
+    agentId: string,
+  ): Promise<Output<'getConnectionDetail'>> {
+    const row = (
+      await this.database.query<{
+        id: string;
+        connector_id: string;
+        reference: string;
+        service: string | null;
+        label: string | null;
+        hosts: string[];
+        state: string;
+        grants: Array<Record<string, unknown>> | null;
+        connection_metadata: { fieldNames?: string[]; vaultCreatedAt?: number } | null;
+        last_synced_at: Date | null;
+      }>(
+        `SELECT c.id,c.connector_id,c.reference,c.service,c.label,c.hosts,c.state,
+                c.grants,c.connection_metadata,c.last_synced_at
+         FROM workspace_connections c
+         JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE k.helper_agent_id=$1 AND c.reference=$2`,
+        [agentId, input.ref],
+      )
+    ).rows[0];
+    if (!row) throw new Error(`unknown connection reference ${input.ref}`);
+    if (isMetadataStale(row.last_synced_at))
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
+         WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
+        [row.connector_id],
+      );
+    const ledger = (
+      await this.database.query<{
+        id: string;
+        operation: string;
+        status_code: number | null;
+        bytes: string;
+        grant_info: string | null;
+        created_at: Date;
+      }>(
+        `SELECT id,operation,status_code,bytes,grant_info,created_at
+         FROM connection_receipts WHERE connection_id=$1::uuid
+         ORDER BY created_at DESC LIMIT 50`,
+        [row.id],
+      )
+    ).rows;
+    return {
+      metadata: {
+        reference: row.reference,
+        service: row.service,
+        label: row.label ?? row.reference,
+        fieldNames: row.connection_metadata?.fieldNames ?? [],
+        allowedHosts: row.hosts ?? [],
+        createdAt: row.connection_metadata?.vaultCreatedAt ?? Math.floor(Date.now() / 1000),
+        stale: isMetadataStale(row.last_synced_at),
+        state: row.state === 'error' ? 'error' : 'active',
+      },
+      grants: (row.grants ?? []) as unknown as Output<'getConnectionDetail'>['grants'],
+      ledger: ledger.map((entry) => ({
+        id: entry.id,
+        timestamp: Math.floor(entry.created_at.getTime() / 1000),
+        action: entry.operation,
+        ...(entry.status_code !== null ? { status: entry.status_code } : {}),
+        ...(Number(entry.bytes) > 0 ? { bytes: Number(entry.bytes) } : {}),
+        ...(entry.grant_info ? { actor: entry.grant_info } : {}),
+      })),
+    };
+  }
+
+  /** Marks the connection's grants revoked server-side and stages the helper revoke. */
+  private async connectionGrantRevoke(
+    input: Input<'revokeConnectionGrants'>,
+    agentId: string,
+  ): Promise<Output<'revokeConnectionGrants'>> {
+    const row = (
+      await this.database.query<{
+        id: string;
+        connector_id: string;
+        reference: string;
+        grants: Array<Record<string, unknown>> | null;
+      }>(
+        `SELECT c.id,c.connector_id,c.reference,c.grants
+         FROM workspace_connections c
+         JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE k.helper_agent_id=$1 AND c.reference=$2`,
+        [agentId, input.ref],
+      )
+    ).rows[0];
+    if (!row) throw new Error(`unknown connection reference ${input.ref}`);
+    const live = (row.grants ?? []).filter((grant) => !grant.revokedAt);
+    const revokedAt = Math.floor(Date.now() / 1000);
+    const updated = (row.grants ?? []).map((grant) =>
+      grant.revokedAt ? grant : { ...grant, revokedAt },
+    );
+    await this.database.query(
+      `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
+      [row.id, JSON.stringify(updated)],
+    );
+    if (live.length)
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
+         WHERE id=$1::uuid`,
+        [row.connector_id, JSON.stringify([`revoke-grants:${row.reference}`])],
+      );
+    return { revoked: live.length, failed: 0 };
+  }
+
+  private async connectionUsage(
+    input: Input<'postConnectionUsage'>,
+    agentId: string,
+  ): Promise<Output<'postConnectionUsage'>> {
+    await receiveConnectionUsage(this.database, input, agentId);
+    return { id: input.requestId, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  private async bootstrap(agentId: string) {    const workspaces = await this.database.query<{ workspace_id: string }>(
       `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
       [agentId],
     );
@@ -1117,7 +1435,6 @@ export class DaemonService {
       force: false,
       pullRequestNumber: target.pull_request_number,
       headSha: target.head_sha,
-      patchId: input.patchId,
     });
     return {
       pullRequestNumber: target.pull_request_number,
@@ -3105,6 +3422,13 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentToolMandate: true,
   postAgentCommands: true,
   postAgentModelCatalog: true,
+  getConnectorAssignments: true,
+  installConnector: true,
+  getConnectorStatus: true,
+  getConnectorVaultList: true,
+  getConnectionDetail: true,
+  revokeConnectionGrants: true,
+  postConnectionUsage: true,
   postCornerLifecycle: true,
   postCornerRemoteState: true,
   postCornerPlan: true,
@@ -3112,15 +3436,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   requestAgentGrant: true,
   listAgentGrants: true,
   consumeAgentGrant: true,
-  // Workbench connector operations (PR 1 contract + helper side). The server
-  // executes them through the Workbench connector service in the Workbench
-  // server PR; until that lands execute() answers `unsupported daemon operation`.
-  installConnector: true,
-  getConnectorStatus: true,
-  getConnectorVaultList: true,
-  getConnectionDetail: true,
-  revokeConnectionGrants: true,
-  postConnectionUsage: true,
   createCorner: true,
   archiveCorner: true,
   ensureAgentMembership: true,

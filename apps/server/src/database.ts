@@ -715,9 +715,6 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 );
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
--- Same-diff carry-over: an approval recorded for one head stays valid for a later
--- head whose change against the target branch is byte-identical (see patch_id below).
-ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS patch_id text;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,
@@ -974,6 +971,74 @@ CREATE TABLE IF NOT EXISTS import_items (
   imported_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (import_id, source_type, source_id)
 );
+
+-- Workbench: per-human connector provisioning. One row per (Workspace,
+-- owner, connector type): a connection belongs to whoever provisioned it, so
+-- sovereignty is this row's owner_identity_id, re-checked on every read.
+CREATE TABLE IF NOT EXISTS workspace_connectors (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  connector_type text NOT NULL,
+  helper_agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'installing'
+    CHECK (status IN ('installing','connected','error','disconnected')),
+  status_steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status_error text,
+  -- Edge-triggered work tokens for the helper ('sync','revoke-grants:<ref>').
+  pending_ops jsonb NOT NULL DEFAULT '[]'::jsonb,
+  connected_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_owner_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, connector_type);
+CREATE INDEX IF NOT EXISTS workspace_connectors_helper_idx
+  ON workspace_connectors(helper_agent_id);
+
+-- One vault entry a helper sync reported. Secrets never leave the
+-- provider: only metadata and the opaque reference are stored.
+-- connection_metadata carries { fieldNames, vaultCreatedAt }.
+CREATE TABLE IF NOT EXISTS workspace_connections (
+  id uuid PRIMARY KEY,
+  connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  reference text NOT NULL,
+  service text NOT NULL DEFAULT '',
+  label text,
+  hosts jsonb NOT NULL DEFAULT '[]'::jsonb,
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','error')),
+  connection_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  grants jsonb NOT NULL DEFAULT '[]'::jsonb,
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (connector_id, reference)
+);
+CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
+  ON workspace_connections(owner_identity_id, connector_id);
+
+-- What an agent did with a connection, as reported by the helper. The ledger
+-- behind the connection detail screen; also the source for batched receipt
+-- DMs (one card per agent turn, keyed by turn_key).
+CREATE TABLE IF NOT EXISTS connection_receipts (
+  id uuid PRIMARY KEY,
+  connection_id uuid NOT NULL REFERENCES workspace_connections(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text REFERENCES identities(id) ON DELETE SET NULL,
+  operation text NOT NULL,
+  status_code integer,
+  bytes bigint NOT NULL DEFAULT 0,
+  grant_info text,
+  turn_key text,
+  message_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS connection_receipts_connection_idx
+  ON connection_receipts(connection_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
+  ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 `;
 
 export async function migrate(database: SqlDatabase): Promise<void> {

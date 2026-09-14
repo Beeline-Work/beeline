@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
-import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -111,11 +111,7 @@ type RailCommandProps = {
   presentation?: 'rail' | 'column';
 };
 
-/**
- * A rail command: glyph (or identity mark) over a mono micro-label. The label
- * is what makes the rail deliberate instead of a column of mystery icons, and
- * it is why these need no border — the affordance is named, not framed.
- */
+/** A rail command. The thin rail reveals secondary names on hover or focus. */
 function RailCommand({
   label,
   accessibilityLabel,
@@ -126,16 +122,33 @@ function RailCommand({
   presentation = 'rail',
 }: RailCommandProps) {
   const column = presentation === 'column';
+  const [labelled, setLabelled] = useState(false);
+  const keepsVisibleLabel = column || label === 'YOU';
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      onBlur={() => setLabelled(false)}
+      onFocus={() => setLabelled(true)}
+      onHoverIn={() => setLabelled(true)}
+      onHoverOut={() => setLabelled(false)}
       onPress={onPress}
       style={[styles.railCommand, column && styles.columnCommand]}
       testID={testID}
     >
       {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children}
-      <Text style={styles.railCommandLabel}>{label}</Text>
+      {keepsVisibleLabel && <Text style={styles.railCommandLabel}>{label}</Text>}
+      {Platform.OS === 'web' && labelled && !keepsVisibleLabel ? (
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          style={styles.railCommandHoverLabel}
+          testID={`${testID}-hover-label`}
+        >
+          <Text style={styles.railCommandHoverText}>{label}</Text>
+        </View>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -639,9 +652,8 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'flex-start',
       gap: 12,
     },
-    /* A rail command is named, so its glyph does not also have to shout: the
-     * mono micro-label under it carries the meaning and the glyph sits on the
-     * same quiet tier as the rest of the chrome. */
+    /* The glyph stays on the quiet chrome tier; the thin rail names secondary
+     * commands on hover, while the wider picker keeps every name visible. */
     railCommandGlyph: {
       ...Typography.default(),
       height: 22,
@@ -653,6 +665,24 @@ const styles = StyleSheet.create((theme) => {
     railCommandLabel: {
       ...Typography.mono('semiBold'),
       color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.6,
+    },
+    railCommandHoverLabel: {
+      position: 'absolute',
+      left: DRAWER_WIDTH - 6,
+      paddingHorizontal: groknight.space.sm,
+      paddingVertical: groknight.space.xs,
+      backgroundColor: groknight.bgHover,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: groknight.border,
+      borderRadius: groknight.radius,
+      zIndex: 2,
+    },
+    railCommandHoverText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
       fontSize: 9,
       lineHeight: 12,
       letterSpacing: 0.6,

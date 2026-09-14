@@ -369,9 +369,10 @@ The Workspace rail is the same slab with one hairline edge. Selection reads
 three redundant ways and none of them is a box or a fill: an edge bar (never a
 floating bracket), the mark's own heavier frame, and tone — the Workspaces you
 are _not_ in recede a step rather than the one you are in lighting up. Every
-rail command is _named_ by a mono micro-label rather than framed in a box — the
-affordance is named, not outlined — and its glyph sits on the chrome's quiet
-tier, because the label already carries the meaning.
+rail command is named rather than framed in a box. The thin rail keeps `YOU`
+visible and reveals `ADD` and `WORKSPACE` beside their glyphs on hover or
+keyboard focus; the wider drawer picker keeps all command labels visible. The
+glyphs sit on the chrome's quiet tier.
 
 **Settings is one entry, not two.** The rail's `YOU` command opens the account
 hub (`buzz/settings/`), which is itself an index in this same vocabulary —

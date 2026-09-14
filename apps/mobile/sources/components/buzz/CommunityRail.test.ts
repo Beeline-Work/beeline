@@ -29,7 +29,7 @@ vi.mock('react-native', async () => {
         },
       }),
     },
-    Platform: { select: (choices: Record<string, unknown>) => choices.default },
+    Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     StyleSheet: { absoluteFillObject: {}, create: (styles: unknown) => styles },
@@ -265,7 +265,13 @@ describe('Workspace drawer', () => {
       renderer.root
         .findAllByType('Text' as any)
         .some((node) => node.props.children === 'WORKSPACE'),
-    ).toBe(true);
+    ).toBe(false);
+    act(() => gear.props.onHoverIn());
+    expect(
+      renderer.root
+        .findByProps({ testID: 'workspace-settings-community-1-hover-label' })
+        .findByType('Text' as any).props.children,
+    ).toBe('WORKSPACE');
     act(() => gear.props.onPress());
     expect(onOpen).toHaveBeenCalledWith('community-1');
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
@@ -280,6 +286,29 @@ describe('Workspace drawer', () => {
     expect(
       memberRenderer.root.findAllByProps({ testID: 'workspace-settings-community-1' }),
     ).toHaveLength(0);
+  });
+
+  it('keeps only YOU visible in the thin rail and restores command words on hover', () => {
+    const renderer = renderShell();
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+
+    const visibleLabels = renderer.root
+      .findAllByType('Text' as any)
+      .map((node) => node.props.children);
+    expect(visibleLabels).not.toContain('ADD');
+    expect(visibleLabels).toContain('YOU');
+
+    const add = renderer.root.findByProps({ testID: 'community-rail-add' });
+    act(() => add.props.onHoverIn());
+    expect(
+      renderer.root
+        .findByProps({ testID: 'community-rail-add-hover-label' })
+        .findByType('Text' as any).props.children,
+    ).toBe('ADD');
+    act(() => add.props.onHoverOut());
+    expect(renderer.root.findAllByProps({ testID: 'community-rail-add-hover-label' })).toHaveLength(
+      0,
+    );
   });
 
   it('closes after selecting or adding a Workspace', () => {

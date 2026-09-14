@@ -175,6 +175,7 @@ export default function BuzzChannels() {
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletedWorkspaceNotice, setDeletedWorkspaceNotice] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
   const [memberPickerVisible, setMemberPickerVisible] = useState(false);
   const [agentConnectVisible, setAgentConnectVisible] = useState(false);
@@ -329,6 +330,9 @@ export default function BuzzChannels() {
         apply: (value) => {
           setWorkspaceList(value);
           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
+          if (value.deletedNotices?.length) {
+            setDeletedWorkspaceNotice('This workspace was deleted by its owner');
+          }
           if (
             value.workspaces[0]?.id &&
             (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId))
@@ -773,6 +777,15 @@ export default function BuzzChannels() {
           testID="empty-agent-connect-sheet"
           visible={agentConnectVisible}
         />
+        {!!deletedWorkspaceNotice && (
+          <TouchableOpacity
+            onPress={() => setDeletedWorkspaceNotice(null)}
+            style={styles.errorBar}
+            testID="workspace-deleted-notice"
+          >
+            <Text style={styles.error}>{deletedWorkspaceNotice}</Text>
+          </TouchableOpacity>
+        )}
         {!!error && (
           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>
             <Text style={styles.error}>{error}</Text>

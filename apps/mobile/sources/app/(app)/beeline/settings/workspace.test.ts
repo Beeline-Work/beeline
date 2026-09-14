@@ -549,4 +549,71 @@ describe('Workspace Settings authority', () => {
     // ...and the duplicate-name qualifier still keys off the RAW name.
     expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });
+
+  it('shows the delete row only to the Workspace owner', async () => {
+    const ownerRenderer = await render();
+    expect(ownerRenderer.root.findByProps({ testID: 'workspace-delete-row' })).toBeDefined();
+
+    roomViews.workspace.mockResolvedValue(workspaceView('admin'));
+    const adminRenderer = await render();
+    expect(
+      adminRenderer.root.findAllByProps({ testID: 'workspace-delete-row' }),
+    ).toHaveLength(0);
+  });
+
+  it('requires typing the exact Workspace name before deleting, then navigates home', async () => {
+    const renderer = await render();
+
+    act(() => renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-sheet' }).props.visible).toBe(
+      true,
+    );
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.disabled).toBe(
+      true,
+    );
+
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'workspace-delete-confirm-input' })
+        .props.onChangeText('not quite'),
+    );
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.disabled).toBe(
+      true,
+    );
+    expect(phoneOperation).not.toHaveBeenCalledWith('deleteWorkspace', expect.anything());
+
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'workspace-delete-confirm-input' })
+        .props.onChangeText('Hull'),
+    );
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.disabled).toBe(
+      false,
+    );
+
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.onPress();
+    });
+
+    expect(phoneOperation).toHaveBeenCalledWith('deleteWorkspace', { workspaceId: 'workspace-1' });
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('cancels the delete confirmation without deleting anything', async () => {
+    const renderer = await render();
+
+    act(() => renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.onPress());
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'workspace-delete-confirm-input' })
+        .props.onChangeText('Hull'),
+    );
+    act(() => renderer.root.findByProps({ testID: 'workspace-delete-cancel' }).props.onPress());
+
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-sheet' }).props.visible).toBe(
+      false,
+    );
+    expect(phoneOperation).not.toHaveBeenCalledWith('deleteWorkspace', expect.anything());
+    expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
+  });
 });

@@ -26,6 +26,10 @@ import { isCornerStatusRestatement } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
+import {
+  captureConnectionUsage,
+  ConnectorUsageRecorder,
+} from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
@@ -368,6 +372,8 @@ export interface MonolithCornerTurnOptions {
   /** The daemon's command-grant runner; this corner registers its worktree and current turn. */
   grantRunner?: GrantCommandRunner;
   grantRunnerEndpoint?: GrantRunnerEndpoint;
+  /** Connection usage capture: batched per turn into one postConnectionUsage. */
+  connectorUsage?: ConnectorUsageRecorder;
 }
 
 /**
@@ -1064,6 +1070,7 @@ export class MonolithCornerTurnLoop {
               const flushToolCalls = async (
                 calls: readonly ToolCallEntry[],
                 finalReply: string,
+                final = false,
               ): Promise<void> => {
                 await this.activityTail;
                 if (
@@ -1072,6 +1079,15 @@ export class MonolithCornerTurnLoop {
                 )
                   pendingToolNarrations.delete(lastNarratedToolCall);
                 publishToolCalls(calls, false);
+                await this.activityTail;
+                if (this.options.connectorUsage) {
+                  captureConnectionUsage(
+                    this.options.connectorUsage,
+                    { requestId, agentId: this.agent.publicKey, cornerId },
+                    calls,
+                  );
+                  if (final) await this.options.connectorUsage.flush(api, requestId);
+                }
                 await this.activityTail;
                 publishToolCalls(calls, false);
                 await this.activityTail;
@@ -1190,7 +1206,7 @@ export class MonolithCornerTurnLoop {
               if (!reply && explained?.recoveredText)
                 reply = durableReplyText(explained.recoveredText);
               reply = [replyBeforeNudge, reply].filter(Boolean).join('\n\n');
-              await flushToolCalls(result.toolCalls, reply);
+              await flushToolCalls(result.toolCalls, reply, true);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {
                 const failure = toolCallFailureLine(call);

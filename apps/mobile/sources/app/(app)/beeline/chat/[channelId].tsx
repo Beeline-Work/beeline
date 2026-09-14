@@ -165,6 +165,7 @@ import {
 import {
   formatAttachmentSize,
   MAX_MESSAGE_ATTACHMENTS,
+  pastedImageAttachment,
   pickedPhotoAttachments,
   type PickedChatAttachment,
   uploadChatAttachments,
@@ -2524,6 +2525,24 @@ export default function BuzzChat() {
     ]);
   }, [pendingAttachments.length]);
 
+  const pasteImage = useCallback(async () => {
+    if (pendingAttachments.length >= MAX_MESSAGE_ATTACHMENTS) {
+      Modal.alert(
+        'Attachment limit reached',
+        `A message can include up to ${MAX_MESSAGE_ATTACHMENTS} attachments.`,
+      );
+      return;
+    }
+    if (!(await Clipboard.hasImageAsync())) {
+      Modal.alert('Nothing to paste', 'Copy an image first, then try again.');
+      return;
+    }
+    const image = await Clipboard.getImageAsync({ format: 'png' });
+    if (!image) return;
+    const attachment = await pastedImageAttachment(image);
+    setPendingAttachments((current) => [...current, attachment]);
+  }, [pendingAttachments.length]);
+
   const chooseAttachment = useCallback(() => {
     setAttachmentPickerVisible(true);
   }, []);
@@ -4373,6 +4392,7 @@ export default function BuzzChat() {
         onClose={() => setAttachmentPickerVisible(false)}
         onPickDocument={() => void pickDocument()}
         onPickPhoto={() => void pickPhoto()}
+        onPickPasted={desktopExperience ? undefined : () => void pasteImage()}
       />
 
       <HullActionSheetModal

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   manipulateAsync: vi.fn(),
   readFileBytes: vi.fn(),
+  writeAsStringAsync: vi.fn(),
 }));
 
 vi.mock('expo-image-manipulator', () => ({
@@ -10,11 +11,17 @@ vi.mock('expo-image-manipulator', () => ({
   SaveFormat: { JPEG: 'jpeg', PNG: 'png' },
 }));
 vi.mock('@/utils/readFileBytes', () => ({ readFileBytes: mocks.readFileBytes }));
+vi.mock('expo-file-system/legacy', () => ({
+  writeAsStringAsync: mocks.writeAsStringAsync,
+  EncodingType: { Base64: 'base64' },
+  cacheDirectory: 'file:///cache/',
+}));
 
 import { canonicalizeJpeg } from './avatar-png';
 import {
   attachmentOpenUrl,
   formatAttachmentSize,
+  pastedImageAttachment,
   pickedPhotoAttachments,
   uploadChatAttachment,
   uploadChatAttachments,
@@ -133,6 +140,34 @@ describe('chat attachment display metadata', () => {
         height: 100,
       },
     ]);
+  });
+
+  it('writes a pasted clipboard image to a cache file as a picked attachment', async () => {
+    const base64 = Buffer.from('fake-png-bytes').toString('base64');
+    const attachment = await pastedImageAttachment(
+      { data: `data:image/png;base64,${base64}`, size: { width: 200, height: 100 } },
+      1700,
+    );
+
+    expect(mocks.writeAsStringAsync).toHaveBeenCalledWith(
+      'file:///cache/pasted-1700.png',
+      base64,
+      { encoding: 'base64' },
+    );
+    expect(attachment).toEqual({
+      uri: 'file:///cache/pasted-1700.png',
+      name: 'pasted-1700.png',
+      mimeType: 'image/png',
+      size: Math.ceil((base64.length * 3) / 4),
+      width: 200,
+      height: 100,
+    });
+  });
+
+  it('rejects clipboard image data that is not a base64 data URI', async () => {
+    await expect(
+      pastedImageAttachment({ data: 'not-a-data-uri', size: { width: 1, height: 1 } }),
+    ).rejects.toThrow('Clipboard image data was not readable.');
   });
 
   it('uploads a message attachment batch in display order', async () => {

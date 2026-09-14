@@ -24,6 +24,10 @@ export type PhoneOperationMap = {
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
+  /** Owner-only: a real cascade delete of the workspace and everything in it.
+   *  Idempotent: a second call on an already-deleted workspace resolves
+   *  without effect. */
+  deleteWorkspace: { input: WorkspaceInput; output: void };
   addWorkspaceMember: { input: WorkspaceMemberInput; output: MembershipResult };
   removeWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
   createRoom: { input: CreateRoomInput; output: IdResult };

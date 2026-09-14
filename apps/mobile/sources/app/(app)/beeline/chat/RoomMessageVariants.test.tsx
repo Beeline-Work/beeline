@@ -1386,6 +1386,40 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(agentAuthored);
   });
 
+  it('highlights a literal @channel token by its own reserved handle, sent as one tag never expanded into names', () => {
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          text: '@channel heads up, ship is live',
+          pubkey: 'speaker',
+          // The server tags every human it expands to; the SENT TEXT still
+          // carries the single literal token, never the expanded names.
+          mentionPubkeys: ['bee-id', 'carl-id'],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[
+          { pubkey: 'bee-id', handle: 'bee' },
+          { pubkey: 'carl-id', handle: 'carl' },
+        ]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(
+      expect.arrayContaining(['bee', 'carl', 'channel']),
+    );
+  });
+
   it('maps a pressed resolved mention back to the tagged member identity', () => {
     const onMention = vi.fn();
     render(

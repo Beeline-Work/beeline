@@ -36,15 +36,6 @@ import {
 
 export const CONNECTOR_METADATA_TTL_MS = 5 * 60_000;
 
-/** The statuses a connector row may legally hold (the helper's vocabulary). */
-export const CONNECTOR_STATUSES = ['installing', 'connected', 'error', 'disconnected'] as const;
-
-export function isConnectorStatus(value: unknown): value is ConnectorStatus['status'] {
-  return (
-    value === 'installing' || value === 'connected' || value === 'error' || value === 'disconnected'
-  );
-}
-
 export type ConnectorCatalogEntry = WorkbenchCatalogEntry;
 
 const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
@@ -92,10 +83,6 @@ export function connectorIdentityId(type: ConnectorKind): string {
 const CONNECTOR_TYPES_BY_ID = new Map(
   CONNECTOR_KINDS.map((type) => [connectorIdentityId(type), type]),
 );
-
-export function isConnectorIdentityId(identityId: string): boolean {
-  return CONNECTOR_TYPES_BY_ID.has(identityId);
-}
 
 /**
  * True when any direct participant of this DM is a connector identity. Those

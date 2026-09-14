@@ -1,5 +1,6 @@
 import {
   createAgentCommand,
+  reconcileConfiguredCornerReviewers,
   routeHumanMessage,
   turnRootMessageSql,
   type CommandRow,
@@ -3653,6 +3654,8 @@ export class PhoneService {
             [input.roomId, input.reviewerAgentId],
           );
       }
+      if (input.reviewerAgentId !== undefined)
+        await reconcileConfiguredCornerReviewers(database, input.roomId);
       if (input.visibility && input.visibility !== current?.visibility) {
         if (input.visibility === 'public')
           await joinWorkspaceMembersToPublicRoom(database, room.workspace_id, input.roomId);

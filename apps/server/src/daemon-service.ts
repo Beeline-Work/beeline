@@ -2208,13 +2208,20 @@ export class DaemonService {
       );
     }
     const kinds = [...new Set(requested)] as ServerEventKind[];
-    const updated = await this.database.query(
-      `UPDATE memberships SET event_subscriptions=$3::jsonb
-       WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+    const updated = await this.database.query<{ event_subscriptions: ServerEventKind[] }>(
+      `UPDATE memberships member
+       SET event_subscriptions=CASE WHEN parent.reviewer_agent_id=$2
+         AND NOT $3::jsonb @> '["check-passed"]'::jsonb
+         THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END
+       FROM rooms surface
+       JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
+       WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
+         AND surface.id=member.room_id
+       RETURNING member.event_subscriptions`,
       [input.roomId, agentId, JSON.stringify(kinds)],
     );
     if (!updated.rowCount) throw new Error('daemon room access denied');
-    return { kinds };
+    return { kinds: [...new Set(updated.rows[0]!.event_subscriptions)] };
   }
   private async listEventSubscriptions(input: Input<'listEventSubscriptions'>, agentId: string) {
     const rows = await this.database.query<{ event_subscriptions: unknown }>(

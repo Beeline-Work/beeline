@@ -6,7 +6,12 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { createAgentCommand, nextAgentDepth, routeSystemCommand } from './agent-command.js';
+import {
+  createAgentCommand,
+  nextAgentDepth,
+  reconcileConfiguredCornerReviewers,
+  routeSystemCommand,
+} from './agent-command.js';
 import { systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
@@ -101,6 +106,9 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`,
+  );
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
@@ -443,6 +451,9 @@ it('routes subscribed events, grants and changed corner checks through actions',
   await expect(
     daemon.execute('getAgentConfiguration', { agentId: A, roomId: C }, A),
   ).resolves.toEqual(expect.objectContaining({ reviewerHandle: 'hoots' }));
+  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE identity_id=$1`, [
+    A,
+  ]);
   for (let n = 0; n < 2; n++)
     await systemLine(db, {
       roomId: C,
@@ -486,6 +497,53 @@ it('routes subscribed events, grants and changed corner checks through actions',
   });
   expect(await commands(B, C)).toHaveLength(1);
   expect((await commands(B, C))[0]?.reason).toBe('corner_check');
+});
+it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green head', async () => {
+  const headSha = '7'.repeat(40);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state='passing' WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'passing',
+        lifecycle: 'in-review',
+        pr: { number: 17, url: 'https://github.com/acme/repo/pull/17', headSha },
+      }),
+    ],
+  );
+  const source = await systemLine(db, {
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+    object: { text: 'BODY SUITE', headSha },
+  });
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+  for (const roomId of [R, C]) {
+    await expect(
+      daemon.execute('setEventSubscriptions', { roomId, kinds: [] }, A),
+    ).resolves.toEqual({ kinds: ['check-passed'] });
+  }
+  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE identity_id=$1`, [
+    A,
+  ]);
+
+  await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
+    subscriptions: 2,
+    commands: 1,
+  });
+  expect(await commands(A, C)).toEqual([
+    expect.objectContaining({
+      sourceMessageId: source.id,
+      reason: 'subscribed_event',
+    }),
+  ]);
+  await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
+    subscriptions: 0,
+    commands: 0,
+  });
 });
 it('runs green review, fixes, exact-head approval, and implementer clearance as commands', async () => {
   const firstHead = '1'.repeat(40);

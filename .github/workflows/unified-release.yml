@@ -454,6 +454,9 @@ jobs:
           release_version: ${{ needs.initialize.outputs.release_version }}
           retry_attempt: ${{ inputs.retry_attempt }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
+          # A platform whose store binary was built in this run may treat that
+          # binary's embedded update as the rollback anchor for its new runtime.
+          embedded_anchor_platforms: ${{ format('{0}{1}', needs.mobile_native_android.result == 'success' && 'android,' || '', needs.mobile_native_ios.result == 'success' && 'ios' || '') }}
       - name: Checkpoint the OTA build
         if: needs.initialize.outputs.stage_mobile_ota == 'pending'
         run: |

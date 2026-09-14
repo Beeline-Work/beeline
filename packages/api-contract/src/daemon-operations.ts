@@ -110,7 +110,7 @@ export type DaemonOperationMap = {
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   getPrChecksStatus: Operation<
-    CornerInput & { pullRequest?: number | string },
+    CornerInput & { pullRequest?: number | string; patchId?: string },
     {
       checks: 'passed' | 'failed' | 'pending';
       pullRequest: string;
@@ -119,7 +119,7 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string },
+    CornerInput & { readonly headSha: string; readonly patchId?: string },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;

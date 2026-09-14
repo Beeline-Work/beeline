@@ -73,6 +73,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { validateArtifact } from './artifact-validation.js';
+import { computePatchId } from './patch-identity.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -1210,17 +1211,32 @@ async function closeCorner(): Promise<string> {
   return JSON.stringify({ cornerId, status: 'closed' });
 }
 
+/** Best-effort patch-id of this worktree's HEAD against the corner's target
+ * branch. Never throws: an absent id just falls back to exact head-sha
+ * matching on the server side. */
+async function cornerPatchId(cornerId: string): Promise<string | undefined> {
+  try {
+    const result = await daemonExecute('getRoomTargetBranch', { roomId: cornerId });
+    const targetBranch = result.targetBranch;
+    if (typeof targetBranch !== 'string' || !targetBranch) return undefined;
+    return await computePatchId({ worktreePath: configuredRoot(), targetBranch });
+  } catch {
+    return undefined;
+  }
+}
+
 export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
-  const [restore, conversation, roster, authority] = await Promise.all([
+  const [restore, conversation, roster, authority, patchId] = await Promise.all([
     daemonExecute('getCornerRestoreState', { cornerId }),
     // Newest page: a hold, an approval and a PR link are questions about where
     // the corner stands NOW, and this scan is last-write-wins over the page.
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
     daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
+    cornerPatchId(cornerId),
   ]);
   const humans = new Set(
     Array.isArray(roster.members)
@@ -1255,7 +1271,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   }
   const verdict =
     pullRequest !== undefined
-      ? await daemonExecute('getPrChecksStatus', { cornerId, pullRequest })
+      ? await daemonExecute('getPrChecksStatus', { cornerId, pullRequest, patchId })
       : undefined;
   if (verdict) pullRequest = verdict.pullRequest;
   const checks =
@@ -1292,7 +1308,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
           next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
-    rule: 'Merge only when checks is passed, held is false, and approvalPending is false. A local or gh checks result is not authorization; a pending server approval must finish without an agent race.',
+    rule: "Merge only when checks is passed, held is false, and approvalPending is false — then YOU merge it yourself with gh; the server never merges a corner's pull request and never sends a closing request of any kind, so waiting for one will wait forever. A local or gh checks result is not authorization on its own. approvalPending reflects only whether the reviewer's recorded PASS covers this exact head sha; it is not a hold on you merging once it is false. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.",
   });
 }
 
@@ -1300,7 +1316,8 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
-  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha }));
+  const patchId = await cornerPatchId(cornerId);
+  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha, patchId }));
 }
 
 export interface WriteScratchFileDeps {

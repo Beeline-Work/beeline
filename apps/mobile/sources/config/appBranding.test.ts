@@ -198,7 +198,7 @@ describe('Beeline display branding', () => {
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { version: string };
 
-    expect(packageJson.version).toBe('0.2.19');
+    expect(packageJson.version).toBe('0.2.20');
     expect(loadNativeVersion()).toBe(packageJson.version);
     expect(() => assertIosDisplayVersion(packageJson.version)).not.toThrow();
     expect(() => assertIosDisplayVersion('0.2.18-preview.1')).toThrow(

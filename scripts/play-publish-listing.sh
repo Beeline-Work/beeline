@@ -111,7 +111,7 @@ api POST "$API/edits/$EDIT_ID:validate" -H "Content-Length: 0" >/dev/null
 echo "  ok"
 
 echo "▸ Committing edit"
-api POST "$API/edits/$EDIT_ID:commit" -H "Content-Length: 0" >/dev/null
+api POST "$API/edits/$EDIT_ID:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
 echo "  Listing updates are live in Play Console."
 echo ""
 echo "What changed ($LANGUAGE): title, short description, full description,"

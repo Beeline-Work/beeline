@@ -7,6 +7,7 @@ import {
   AcpClient,
   AcpRequestTimeoutError,
   promptPayloadNote,
+  agentMessageRuns,
   agentStreamSnapshot,
   meaningfulHarnessStderr,
   isPureRetryNarration,
@@ -165,6 +166,20 @@ describe('ACP streaming lane classifier', () => {
         'pi-acp',
       ),
     ).toEqual({ messageText: '', thoughtText: 'First paragraph\n\nSecond paragraph' });
+  });
+
+  it('keeps a lone pi-acp newline delta alive so a Markdown bullet does not glue onto the previous line', () => {
+    // Production shape (Candy's dossier, DeepSeek via pi-acp): the model
+    // streams "gojiberry.ai", then a bare "\n" as its OWN delta, then the
+    // next line's "- **YC...". Stripping that lone newline to '' made the
+    // hyphen bullet read as a continuation of the previous word.
+    const deltas = ['gojiberry.ai', '\n', '- **YC'];
+    expect(
+      agentMessageRuns(
+        deltas.map((text) => update('agent_message_chunk', { content: { type: 'text', text } })),
+        'pi-acp',
+      ),
+    ).toEqual(['gojiberry.ai\n- **YC']);
   });
 });
 

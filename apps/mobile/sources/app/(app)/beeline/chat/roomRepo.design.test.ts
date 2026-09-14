@@ -87,7 +87,7 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(handleSend).toContain(
       'const activePendingAttachments = shortcut ? [] : pendingAttachments;',
     );
-    expect(handleSend).toContain('shortcut ? [] : selectedMentionsRef.current');
+    expect(handleSend).toContain('shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current');
     expect(handleSend).toMatch(/if \(!shortcut\) \{[\s\S]*setInputText\(''\)/);
     expect(chatSource).toContain("text: decision === 'open' ? 'go' : 'cancel'");
   });

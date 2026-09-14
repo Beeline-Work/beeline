@@ -282,6 +282,7 @@ import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
 type MessageShortcut = { text: string; replyTarget: MessageReplyTarget };
+const NO_SELECTED_MENTIONS: ReadonlyMap<string, string> = new Map();
 
 /**
  * The reserved `@channel` autocomplete row: tags every human in the Room (the
@@ -2292,7 +2293,7 @@ export default function BuzzChat() {
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
-      shortcut ? [] : selectedMentionsRef.current,
+      shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
     ).pubkeys;
     const selectedMentionedAgent = shortcut
       ? undefined

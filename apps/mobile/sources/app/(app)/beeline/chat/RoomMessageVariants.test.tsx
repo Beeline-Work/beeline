@@ -1770,3 +1770,53 @@ describe('relay hand-offs', () => {
     },
   );
 });
+
+describe('Connector receipt cards', () => {
+  const receiptMessage = (text: string): ChatDisplayMessage =>
+    message({ id: 'connector-receipt', text });
+
+  const renderReceipt = (text: string) => {
+    const row = receiptMessage(text);
+    return render(
+      <OrdinaryLedgerMessage
+        message={row}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onReact={vi.fn()}
+        onForward={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+  };
+
+  it('renders a receipt DM from a connector identity as prose plus the receipt card', () => {
+    const renderer = renderReceipt(
+      'Vercel deploy finished.\n' +
+        'receipt: Vercel · deploy · via Trusty Squire on squire-box · grant hoots · 2 calls · 2.1 kB',
+    );
+    const card = renderer.root.findByProps({ testID: 'connector-receipt-card' });
+    expect(card).toBeDefined();
+    const summary = (
+      renderer.root.findAllByProps({ testID: 'connector-receipt-summary' })[0] as any
+    ).props.children as string;
+    expect(summary).toBe('Vercel · deploy · squire-box · grant hoots · 2 calls · 2.1 kB');
+    // The receipt line itself never double-prints as ledger prose.
+    const ledgerProps = ledgerEntryRender.mock.lastCall?.[0];
+    expect(ledgerProps.bodyText).toBe('Vercel deploy finished.');
+  });
+
+  it('renders an ordinary message with no receipt line untouched', () => {
+    const renderer = renderReceipt('Just a normal ledger entry.');
+    expect(renderer.root.findAllByProps({ testID: 'connector-receipt-card' })).toHaveLength(0);
+    expect(ledgerEntryRender.mock.lastCall?.[0].bodyText).toBe('Just a normal ledger entry.');
+  });
+});

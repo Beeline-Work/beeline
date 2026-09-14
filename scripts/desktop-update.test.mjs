@@ -84,7 +84,8 @@ test('release workflow keeps signing keys vaulted and rolls back the manifest co
   assert.match(releaseWorkflow, /release_assets\+=\("\$previous"\)/);
   assert.match(releaseWorkflow, /\/releases\/latest never points at a half-published/);
   assert.match(releaseWorkflow, /The manifest is the commit point/);
-  assert.match(releaseWorkflow, /trap rollback_manifest ERR/);
+  assert.match(releaseWorkflow, /trap rollback_on_exit EXIT/);
+  assert.match(releaseWorkflow, /manifest_committed=true/);
   assert.match(releaseWorkflow, /desktop-update\.mjs verify/);
 });
 
@@ -92,4 +93,5 @@ test('the Linux Tauri runtime and webview adapter stay on one compatible minor',
   const lockfile = readFileSync(new URL('../apps/mobile/src-tauri/Cargo.lock', import.meta.url), 'utf8');
   assert.equal(lockedCrateVersion(lockfile, 'tauri-runtime').split('.').slice(0, 2).join('.'), '2.9');
   assert.equal(lockedCrateVersion(lockfile, 'tauri-runtime-wry').split('.').slice(0, 2).join('.'), '2.9');
+  assert.equal(lockedCrateVersion(lockfile, 'wry'), '0.53.4');
 });

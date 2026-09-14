@@ -273,4 +273,34 @@ describe('root OTA update coordinator', () => {
     expect(downloadAndInstall).toHaveBeenCalledTimes(1);
     await unmount(renderer);
   });
+
+  it('restores the prompt after an automatic desktop install fails and retries only on demand', async () => {
+    const downloadAndInstall = vi.fn()
+      .mockRejectedValueOnce(new Error('install failed'))
+      .mockResolvedValueOnce(undefined);
+    desktopShell.enabled = true;
+    process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
+    desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
+    const child = React.createElement(UpdateReadyPrompt);
+    const renderer = await renderUpdateRoot(child);
+
+    await act(async () => {
+      await vi.waitFor(() => expect(downloadAndInstall).toHaveBeenCalledTimes(1));
+    });
+    expect(renderer.root.findAllByProps({ testID: 'ota-update-ready-prompt' })).not.toHaveLength(0);
+
+    route.pathname = '/beeline/channels/settings';
+    await act(async () => renderer.update(React.createElement(UpdateProvider, null, child)));
+    await flushDynamicImports();
+    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'ota-update-restart' }).props.onPress();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
+    });
+    expect(downloadAndInstall).toHaveBeenCalledTimes(2);
+    await unmount(renderer);
+  });
 });

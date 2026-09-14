@@ -10,6 +10,7 @@ import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
   COMPONENT_PATH_RULES,
+  DESKTOP_VERSION_BASELINE,
   createServerImageLedger,
   evaluateServerCanarySample,
   evaluateServerCanaryWindow,
@@ -35,6 +36,13 @@ const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
 const RELEASE_SCRIPT = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
+
+test('the release planner reads its desktop migration floor from the Tauri version file', () => {
+  const desktopVersion = JSON.parse(readFileSync(
+    new URL('../apps/mobile/src-tauri/desktop-version.json', import.meta.url), 'utf8',
+  )).version;
+  assert.equal(DESKTOP_VERSION_BASELINE, desktopVersion);
+});
 
 function run(command, args, cwd) {
   return execFileSync(command, args, { cwd, encoding: 'utf8', timeout: 10_000 });

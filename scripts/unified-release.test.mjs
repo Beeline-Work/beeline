@@ -856,6 +856,8 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     )) {
       assert.match(step.if, /store_track != 'none'/);
     }
+    const playUpload = androidSteps.find((step) => step.name === 'Upload Android to the selected Play track');
+    assert.equal(playUpload.env.PACKAGE_NAME, 'app.usebeeline');
 
     const iosCredentials = ios.steps.find((step) => step.name === 'Require iOS release credentials');
     const iosBuild = ios.steps.find((step) => step.name === 'Build immutable iOS store binary locally');

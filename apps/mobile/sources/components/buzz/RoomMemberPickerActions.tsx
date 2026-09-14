@@ -81,7 +81,7 @@ export function RoomMemberPickerActions({
           <Text style={styles.label}>Invite a person…</Text>
         </TouchableOpacity>
       )}
-      {canConnectAgent && (
+      {canConnectAgent && kind !== 'person' && (
         <TouchableOpacity
           accessibilityLabel="Connect a new agent"
           disabled={busy}
@@ -93,7 +93,7 @@ export function RoomMemberPickerActions({
           <Text style={styles.label}>Connect a new agent…</Text>
         </TouchableOpacity>
       )}
-      {!canManage && !canConnectAgent && (
+      {!canManage && !(canConnectAgent && kind !== 'person') && (
         <Text style={styles.quiet} testID="room-member-picker-ask-manager">
           Ask a workspace manager to invite people
         </Text>

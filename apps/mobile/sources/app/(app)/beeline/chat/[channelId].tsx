@@ -133,7 +133,11 @@ import {
   createCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
 } from '@/buzz/community-invite';
-import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
+import {
+  MemberPickerSheet,
+  shouldOpenPeoplePicker,
+  type MemberPickerCandidate,
+} from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import { confirmRoomRepositoryLink } from '@/buzz/room-management';
 import {
@@ -4511,6 +4515,17 @@ export default function BuzzChat() {
         }}
         onAddPeople={() => {
           setMembershipError(null);
+          // Nobody left to add: skip the "Add people or agents" sheet and
+          // reach for the exact same invite-link share its "Invite a
+          // person…" row already opens (captain report: the intermediate
+          // sheet only restated that fact and handed back the same next step).
+          const addablePersonCount = (participantPickerCandidates ?? []).filter(
+            (candidate) => candidate.kind === 'person',
+          ).length;
+          if (workspaceRoster && !shouldOpenPeoplePicker(addablePersonCount)) {
+            void handleInvitePerson();
+            return;
+          }
           setParticipantPickerKind('person');
           setParticipantPickerVisible(true);
         }}

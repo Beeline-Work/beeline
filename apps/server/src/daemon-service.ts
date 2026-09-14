@@ -3111,6 +3111,15 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   requestAgentGrant: true,
   listAgentGrants: true,
   consumeAgentGrant: true,
+  // Workbench connector operations (PR 1 contract + helper side). The server
+  // executes them through the Workbench connector service in the Workbench
+  // server PR; until that lands execute() answers `unsupported daemon operation`.
+  installConnector: true,
+  getConnectorStatus: true,
+  getConnectorVaultList: true,
+  getConnectionDetail: true,
+  revokeConnectionGrants: true,
+  postConnectionUsage: true,
   createCorner: true,
   archiveCorner: true,
   ensureAgentMembership: true,

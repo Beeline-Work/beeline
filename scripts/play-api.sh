@@ -70,3 +70,35 @@ json_field() {
 play_console_url() {
   echo "https://play.google.com/console/u/0/developers/-/app-list?search=${PACKAGE_NAME}"
 }
+
+# commit_edit EDIT_ID — commit an edit whichever review mode the app is in.
+# Google toggles the required form of this call on the app's current state:
+# while an unsent/rejected change is pending, `:commit` must carry
+# `changesNotSentForReview=true` ("Changes cannot be sent for review
+# automatically. Please set the query parameter changesNotSentForReview to
+# true"); once changes are sent for review automatically, the same parameter
+# must NOT be set ("Changes are sent for review automatically. The query
+# parameter changesNotSentForReview must not be set."). Runs 34875518794 and
+# 34885345563 hit one each on the same day. Try the flagged form first and fall
+# back to the plain commit only on that exact complaint.
+commit_edit() {
+  local edit_id="$1"
+  if [ "${PLAY_DRY_RUN:-0}" = "1" ]; then
+    api POST "$API/edits/$edit_id:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
+    return 0
+  fi
+  local body status
+  body=$(curl -sS -w "\n%{http_code}" -X POST "$API/edits/$edit_id:commit?changesNotSentForReview=true" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" -H "Content-Length: 0")
+  status=$(echo "$body" | tail -n1)
+  body=$(echo "$body" | sed '$d')
+  if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then return 0; fi
+  if [ "$status" = 400 ] && echo "$body" | grep -q "changesNotSentForReview must not be set"; then
+    echo "  Play reports changes are sent for review automatically; committing without changesNotSentForReview"
+    api POST "$API/edits/$edit_id:commit" -H "Content-Length: 0" >/dev/null
+    return 0
+  fi
+  echo "::error::API call failed: POST $API/edits/$edit_id:commit?changesNotSentForReview=true → HTTP $status" >&2
+  echo "$body" >&2
+  return 1
+}

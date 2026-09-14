@@ -13,10 +13,16 @@ import { AppState, Platform } from 'react-native';
 import { usePathname } from 'expo-router';
 import * as Updates from 'expo-updates';
 import { trackOtaUpdateAvailable, trackOtaUpdateApplied } from '@/track';
+import { isTauri } from '@/utils/isTauri';
 
 type PendingOtaUpdate = {
     ota_version?: string;
     ota_runtime_version?: string;
+};
+
+type PendingDesktopUpdate = {
+    version: string;
+    downloadAndInstall: () => Promise<void>;
 };
 
 type UpdateContextValue = {
@@ -59,7 +65,9 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const pathnameRef = useRef(pathname);
     const checkingRef = useRef(false);
+    const applyingRef = useRef(false);
     const pendingUpdateRef = useRef<PendingOtaUpdate | null>(null);
+    const pendingDesktopUpdateRef = useRef<PendingDesktopUpdate | null>(null);
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [promptVisible, setPromptVisible] = useState(false);
     const [isChecking, setIsChecking] = useState(false);
@@ -67,6 +75,25 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     pathnameRef.current = pathname;
 
     const applyUpdate = useCallback(async (pendingUpdate?: PendingOtaUpdate): Promise<boolean> => {
+        const desktopUpdate = pendingDesktopUpdateRef.current;
+        if (desktopUpdate) {
+            if (applyingRef.current) return true;
+            applyingRef.current = true;
+            try {
+                await desktopUpdate.downloadAndInstall();
+                // The Windows NSIS installer exits and restarts the process itself.
+                // macOS and Linux return after installation and need this call.
+                const { relaunch } = await import('@tauri-apps/plugin-process');
+                await relaunch();
+                return true;
+            } catch (error) {
+                console.error('Error applying desktop update:', error);
+                return false;
+            } finally {
+                applyingRef.current = false;
+            }
+        }
+
         trackOtaUpdateApplied(pendingUpdate ?? pendingUpdateRef.current ?? undefined);
         if (Platform.OS === 'web') {
             window.location.reload();
@@ -95,6 +122,22 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         setIsChecking(true);
 
         try {
+            if (isTauri()) {
+                // Preview/dev shells share this source but are not signed for
+                // the production updater channel.
+                if (process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES !== '1') return;
+                const { check } = await import('@tauri-apps/plugin-updater');
+                const update = await check();
+                if (!update) return;
+                pendingDesktopUpdateRef.current = update;
+                setUpdateAvailable(true);
+                // The path effect below is the single owner of automatic
+                // installation. Keeping it out of this async check avoids a
+                // state-render race that could install the same update twice.
+                setPromptVisible(isUpdateBusyPath(pathnameRef.current));
+                return;
+            }
+
             const update = await Updates.checkForUpdateAsync();
             if (!update.isAvailable) {
                 return;
@@ -127,6 +170,12 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
             setIsChecking(false);
         }
     }, [applyUpdate]);
+
+    useEffect(() => {
+        if (!updateAvailable || !pendingDesktopUpdateRef.current || isUpdateBusyPath(pathname)) return;
+        setPromptVisible(false);
+        void applyUpdate();
+    }, [applyUpdate, pathname, updateAvailable]);
 
     useEffect(() => {
         const subscription = AppState.addEventListener('change', (nextState) => {

@@ -31,9 +31,19 @@ export: production exports with `NODE_ENV=production`, which is what
 Preview keeps the logs. `dev` also builds a smaller set of bundle targets,
 since nobody ships a dev build through an installer.
 
-The shipped version comes from `apps/mobile/package.json` via
-`"version": "../package.json"`, so a desktop build carries the same release
-version as the phone build from the same commit.
+Desktop versions are independent from phone/store versions. The unified
+release plan increments the last published desktop patch version only when the
+desktop component ships, then supplies that exact version to all three build
+runners. `desktop-version.json` is the migration floor and local/preview
+version; it must remain lower than every published updater version.
+
+Production releases use Tauri's mandatory updater signatures. The public
+Minisign key is embedded in the app from `TAURI_UPDATER_PUBLIC_KEY`; the private
+key and optional password stay in the release vault as
+`TAURI_UPDATER_PRIVATE_KEY` and `TAURI_UPDATER_PRIVATE_KEY_PASSWORD`. The
+release publishes signed AppImage, universal macOS archive, and NSIS payloads,
+then uploads `Beeline-latest.json` last. A failed live-manifest verification
+restores the prior manifest.
 
 ## Capabilities
 

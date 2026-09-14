@@ -281,6 +281,7 @@ import {
 import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
+type MessageShortcut = { text: string; replyTarget: MessageReplyTarget };
 
 /**
  * The reserved `@channel` autocomplete row: tags every human in the Room (the
@@ -485,6 +486,10 @@ export default function BuzzChat() {
     Record<string, AgentCommandList | null>
   >({});
   const [sending, setSending] = useState(false);
+  const [cornerProposalAction, setCornerProposalAction] = useState<{
+    messageId: string;
+    decision: 'open' | 'cancel';
+  } | null>(null);
   const failedOutboxIds = outbox.failedIds;
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
@@ -1772,6 +1777,17 @@ export default function BuzzChat() {
     return map;
   }, [visibleMessages]);
   const visibleMessageById = useStable(rawVisibleMessageById, sameMessageRefMap);
+  const answeredMessageIds = useMemo(
+    () =>
+      new Set(
+        visibleMessages
+          .filter(
+            (message) => message.authorIdentity?.kind === 'human' && Boolean(message.replyToId),
+          )
+          .map((message) => message.replyToId!),
+      ),
+    [visibleMessages],
+  );
   const rawImmediatelyPrecedingVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
     for (let index = 1; index < visibleMessages.length; index += 1) {
@@ -2240,11 +2256,13 @@ export default function BuzzChat() {
   const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
-  const handleSend = useCallback(async () => {
-    const rawText = inputTextRef.current.trim();
+  const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
+    const rawText = (shortcut?.text ?? inputTextRef.current).trim();
+    const activeReplyTarget = shortcut?.replyTarget ?? replyTarget;
+    const activePendingAttachments = shortcut ? [] : pendingAttachments;
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
-    if (sendInFlightRef.current || (!rawText && pendingAttachments.length === 0) || isArchived)
+    if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
       return;
     // The daemon already refuses corner-open on a repo-less Room; this is the
     // friendly client-side path — catch the common phrasing before the
@@ -2267,17 +2285,18 @@ export default function BuzzChat() {
       }
       return;
     }
-    const preparedReply = replyTarget ? prepareMessageReply(rawText, replyTarget) : undefined;
+    const preparedReply = activeReplyTarget
+      ? prepareMessageReply(rawText, activeReplyTarget)
+      : undefined;
     const text = preparedReply?.text ?? rawText;
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
-      selectedMentionsRef.current,
+      shortcut ? [] : selectedMentionsRef.current,
     ).pubkeys;
-    const selectedMentionedAgent = selectedMentionAgentPubkey(
-      text,
-      selectedAgentMentionsRef.current,
-    );
+    const selectedMentionedAgent = shortcut
+      ? undefined
+      : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
     const mentionedAgent =
       selectedMentionedAgent ??
       preparedReply?.agentPubkey ??
@@ -2314,7 +2333,7 @@ export default function BuzzChat() {
       preparedTransport = sendTransport;
       const attachments = await uploadChatAttachments(
         await sendTransport.ensureClient(),
-        pendingAttachments,
+        activePendingAttachments,
       );
       // Sign before append. The authoritative event id is the optimistic row
       // identity and the durable outbox key from its first frame onward.
@@ -2372,13 +2391,15 @@ export default function BuzzChat() {
         ...(attachments.length ? { attachments } : {}),
       });
       addMessages([optimistic]);
-      inputTextRef.current = '';
-      setInputText('');
-      setComposerHeight(COMPOSER_MIN_HEIGHT);
-      setInputSelection({ start: 0, end: 0 });
-      setPendingAttachments([]);
-      setReplyTarget(null);
-      if (desktopExperience) void saveDesktopDraft(decodedId, '');
+      if (!shortcut) {
+        inputTextRef.current = '';
+        setInputText('');
+        setComposerHeight(COMPOSER_MIN_HEIGHT);
+        setInputSelection({ start: 0, end: 0 });
+        setPendingAttachments([]);
+        setReplyTarget(null);
+        if (desktopExperience) void saveDesktopDraft(decodedId, '');
+      }
       await activeOutbox.attempted(preparedEvent.id);
       const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
       if (
@@ -2468,6 +2489,26 @@ export default function BuzzChat() {
     roomSurface,
     desktopExperience,
   ]);
+
+  const handleCornerProposalDecision = useCallback(
+    (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
+      if (sendInFlightRef.current) return;
+      const proposalReplyTarget = {
+        ...replyTargetForMessage(message),
+        ...(message.reference ? { reference: message.reference } : {}),
+      };
+      setCornerProposalAction({ messageId: message.id, decision });
+      void handleSend({
+        text: decision === 'open' ? 'go' : 'cancel',
+        replyTarget: proposalReplyTarget,
+      }).finally(() =>
+        setCornerProposalAction((current) =>
+          current?.messageId === message.id && current.decision === decision ? null : current,
+        ),
+      );
+    },
+    [handleSend, replyTargetForMessage],
+  );
 
   const pickPhoto = useCallback(async () => {
     const remaining = MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length;
@@ -3570,6 +3611,16 @@ export default function BuzzChat() {
           onCopy={handleCopyLedgerMessage}
           onReact={handleReactToMessage}
           onForward={beginForward}
+          {...(!isCorner &&
+          !isArchived &&
+          !viewerIsAgent &&
+          !isReadOnlyDirectMessage &&
+          !answeredMessageIds.has(item.relayId ?? item.id)
+            ? { onCornerProposalDecision: handleCornerProposalDecision }
+            : {})}
+          cornerProposalAction={
+            cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null
+          }
           onRetry={retryOutboxMessage}
           onDismiss={dismissOutboxMessage}
         />
@@ -3577,11 +3628,14 @@ export default function BuzzChat() {
     },
     [
       agentByPubkey,
+      answeredMessageIds,
       isDesktop,
       handleWritePermission,
       handleGrantDecision,
       handleOpenSystemIdentity,
       handleReactToMessage,
+      handleCornerProposalDecision,
+      cornerProposalAction,
       beginForward,
       grantActionId,
       handleConfirmTargetBranch,
@@ -3609,6 +3663,8 @@ export default function BuzzChat() {
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
       isReadOnlyDirectMessage,
+      isArchived,
+      isCorner,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

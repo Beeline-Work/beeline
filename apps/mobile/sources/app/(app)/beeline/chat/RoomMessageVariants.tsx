@@ -47,6 +47,7 @@ import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
+import { isCornerProposalText } from '@/buzz/corner-proposal';
 import {
   LedgerEntry,
   LedgerGhostLine,
@@ -1256,6 +1257,8 @@ export interface OrdinaryLedgerMessageProps {
   onCopy(text: string): void;
   onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
   onForward?(message: ChatDisplayMessage): void;
+  onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
+  cornerProposalAction?: 'open' | 'cancel' | null;
   onRetry(eventId: string): void;
   onDismiss(eventId: string): void;
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
@@ -1283,6 +1286,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onCopy,
   onReact = () => undefined,
   onForward = () => undefined,
+  onCornerProposalDecision,
+  cornerProposalAction = null,
   onRetry,
   onDismiss,
   announcementFeed = false,
@@ -1308,6 +1313,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     message.isAgentAuthor ||
     message.isAgentActivity ||
     Boolean(currentAgent);
+  const isCornerProposal =
+    isAgent &&
+    !message.isAgentActivity &&
+    !message.isAgentDraft &&
+    isCornerProposalText(message.text);
   const display = isAgent
     ? resolvePendingAgentDisplay(
         message.pubkey ?? indexedAuthor?.pubkey ?? 'unknown-agent',
@@ -1546,6 +1556,32 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             ))}
           </View>
         ) : null}
+        {isCornerProposal && onCornerProposalDecision ? (
+          <View
+            style={styles.cornerProposalActions}
+            testID={`corner-proposal-actions-${message.id}`}
+          >
+            <MonoButton
+              accessibilityLabel="Cancel proposed corner"
+              disabled={cornerProposalAction !== null}
+              label="Cancel"
+              loading={cornerProposalAction === 'cancel'}
+              onPress={() => onCornerProposalDecision(message, 'cancel')}
+              style={styles.cornerProposalAction}
+              testID={`corner-proposal-cancel-${message.id}`}
+              variant="secondary"
+            />
+            <MonoButton
+              accessibilityLabel="Open proposed corner"
+              disabled={cornerProposalAction !== null}
+              label="Open"
+              loading={cornerProposalAction === 'open'}
+              onPress={() => onCornerProposalDecision(message, 'open')}
+              style={styles.cornerProposalAction}
+              testID={`corner-proposal-open-${message.id}`}
+            />
+          </View>
+        ) : null}
       </View>
     </NewMessageMaterialize>
   );
@@ -1669,6 +1705,14 @@ const styles = StyleSheet.create((theme) => ({
     ...groknight.type.meta,
     color: groknight.textSecondary,
   },
+  cornerProposalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 10,
+    marginLeft: 8,
+  },
+  cornerProposalAction: { minWidth: 96 },
   forwardCaption: {
     ...groknight.type.sectionHead,
     marginTop: 5,

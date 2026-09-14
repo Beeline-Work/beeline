@@ -109,6 +109,7 @@ import {
   filterMentionCandidates,
   formatRoomParticipantTotal,
   isChannelMentionHandle,
+  mentionKindLabel,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
@@ -1046,6 +1047,10 @@ export default function BuzzChat() {
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
   );
+  const workspaceAgentByPubkey = useMemo(
+    () => new Map((workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent])),
+    [workspaceRoster],
+  );
   const personProfileByPubkey = useMemo(
     () => new Map(personProfiles.map((profile) => [profile.pubkey, profile])),
     [personProfiles],
@@ -1078,12 +1083,14 @@ export default function BuzzChat() {
     }
     for (const agent of availableAgents) {
       const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+      const model = workspaceAgentByPubkey.get(agent.pubkey)?.model;
       options.set(agent.pubkey, {
         pubkey: agent.pubkey,
         name: display.name,
         handle: display.handle,
         kind: 'agent',
         agent,
+        ...(model ? { model } : {}),
       });
     }
     // The snapshot membership selector is the Room roster authority. Workspace
@@ -1113,6 +1120,7 @@ export default function BuzzChat() {
     roomMembers,
     selectedMembers,
     userPubkey,
+    workspaceAgentByPubkey,
   ]);
   const roomParticipants = useMemo(
     () =>
@@ -1135,10 +1143,16 @@ export default function BuzzChat() {
   // The picker's candidates are the WORKSPACE roster minus this Room's
   // members. The old picker filtered this Room's own member list, so its
   // "add" section was always empty and the only visible path led to the
-  // pairing command (captain report C74). Read once per open; the sheet
-  // shows a loader until it lands and any failure inline.
+  // pairing command (captain report C74). The composer also reads it while
+  // focused so mention rows can show the same model metadata as roster rows.
+  // Sheets show a loader until it lands and any failure inline.
   useEffect(() => {
-    if ((!participantPickerVisible && !rosterVisible) || !roomClient || !activeCommunityId) return;
+    if (
+      (!participantPickerVisible && !rosterVisible && !composerFocused) ||
+      !roomClient ||
+      !activeCommunityId
+    )
+      return;
     let cancelled = false;
     setWorkspaceRoster(null);
     roomClient
@@ -1152,7 +1166,7 @@ export default function BuzzChat() {
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, participantPickerVisible, roomClient, rosterVisible]);
+  }, [activeCommunityId, composerFocused, participantPickerVisible, roomClient, rosterVisible]);
   const participantPickerCandidates = useMemo<MemberPickerCandidate[] | null>(() => {
     if (!workspaceRoster) return null;
     return [...workspaceRoster.members, ...workspaceRoster.agents]
@@ -4129,7 +4143,11 @@ export default function BuzzChat() {
                       : undefined;
                     return (
                       <TouchableOpacity
-                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
+                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}${
+                          participant.kind === 'agent' && participant.model
+                            ? `, ${participant.model}`
+                            : ''
+                        }`}
                         accessibilityRole="button"
                         accessibilityState={{ selected }}
                         key={participant.pubkey}
@@ -4170,12 +4188,10 @@ export default function BuzzChat() {
                             @{participant.handle}
                           </Text>
                         </View>
-                        <Text style={styles.mentionKind}>
+                        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.mentionKind}>
                           {participant.pubkey === CHANNEL_MENTION_PUBKEY
                             ? 'ROOM'
-                            : participant.kind === 'agent'
-                              ? 'AGENT'
-                              : 'PERSON'}
+                            : mentionKindLabel(participant)}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -5391,6 +5407,9 @@ const styles = StyleSheet.create((theme) => {
     },
     mentionKind: {
       ...Typography.mono('semiBold'),
+      maxWidth: '44%',
+      flexShrink: 1,
+      textAlign: 'right',
       color: groknight.faint,
       fontSize: 8,
       letterSpacing: 0.5,

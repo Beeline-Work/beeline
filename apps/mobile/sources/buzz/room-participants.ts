@@ -1,6 +1,7 @@
 export type MentionableAgent = { pubkey: string; name: string; handle?: string };
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
+type MentionKindParticipant = { kind: 'person' | 'agent'; model?: string };
 
 export type MentionCandidate = {
   name: string;
@@ -117,6 +118,12 @@ export function formatRoomParticipantList(names: string[]): string {
 /** Compact header member count; the unified roster sheet carries the actual names. */
 export function formatRoomParticipantTotal(total: number): string {
   return `${total} ${total === 1 ? 'member' : 'members'}`;
+}
+
+/** The mention row's compact kind/model line. Effort is deliberately not part of this surface. */
+export function mentionKindLabel(participant: MentionKindParticipant): string {
+  if (participant.kind !== 'agent') return 'PERSON';
+  return participant.model ? `AGENT · ${participant.model}` : 'AGENT';
 }
 
 /**

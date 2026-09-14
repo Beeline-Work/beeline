@@ -8,6 +8,7 @@ import {
   formatRoomParticipantTotal,
   hasChannelMentionToken,
   isChannelMentionHandle,
+  mentionKindLabel,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
@@ -32,6 +33,12 @@ describe('Room participant presentation', () => {
 
   it('shows up to five names without splitting people and agents', () => {
     expect(formatRoomParticipantList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C, D, E');
+  });
+
+  it('puts an agent model beside its kind without exposing effort', () => {
+    expect(mentionKindLabel({ kind: 'agent', model: 'Sonnet' })).toBe('AGENT · Sonnet');
+    expect(mentionKindLabel({ kind: 'agent' })).toBe('AGENT');
+    expect(mentionKindLabel({ kind: 'person', model: 'ignored' })).toBe('PERSON');
   });
 
   it('folds larger Rooms into four names plus one overflow phrase', () => {

@@ -182,6 +182,7 @@ describe('Room message variant components', () => {
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
+    expect(conversationSource).toContain(': mentionKindLabel(participant)');
     expect(conversationSource).toContain(
       'inputSelection.start === inputSelection.end\n        ? activeMentionAtCursor',
     );

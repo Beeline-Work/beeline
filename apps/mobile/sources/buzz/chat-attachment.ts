@@ -1,4 +1,6 @@
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { writeAsStringAsync, EncodingType, cacheDirectory } from 'expo-file-system/legacy';
+import type { ClipboardImage } from 'expo-clipboard';
 import type { BuzzClient, AttachmentReference } from '@beeline/buzz-client';
 import { canonicalizeJpeg, canonicalizePng } from '@/buzz/avatar-png';
 import { readFileBytes } from '@/utils/readFileBytes';
@@ -39,6 +41,30 @@ export function pickedPhotoAttachments(
     width: asset.width,
     height: asset.height,
   }));
+}
+
+const CLIPBOARD_IMAGE_DATA_URI = /^data:(image\/\w+);base64,(.+)$/;
+
+/** Spills expo-clipboard's base64 image data to a cache file so a paste flows through the same upload pipeline as a picked photo. */
+export async function pastedImageAttachment(
+  image: ClipboardImage,
+  pastedAt = Date.now(),
+): Promise<PickedChatAttachment> {
+  const match = CLIPBOARD_IMAGE_DATA_URI.exec(image.data);
+  if (!match) throw new Error('Clipboard image data was not readable.');
+  const [, mimeType, base64] = match;
+  if (!cacheDirectory) throw new Error('No cache directory is available to store the pasted image.');
+  const name = `pasted-${pastedAt}.${mimeType.split('/')[1] ?? 'png'}`;
+  const uri = `${cacheDirectory}${name}`;
+  await writeAsStringAsync(uri, base64, { encoding: EncodingType.Base64 });
+  return {
+    uri,
+    name,
+    mimeType,
+    size: Math.ceil((base64.length * 3) / 4),
+    width: image.size.width,
+    height: image.size.height,
+  };
 }
 
 export function formatAttachmentSize(size: number): string {

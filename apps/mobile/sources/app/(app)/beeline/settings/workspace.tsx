@@ -19,6 +19,7 @@ import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { isWorkspaceOwnerRole } from '@/buzz/workspace-role';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import {
   HullActionSheetCancel,
@@ -79,6 +80,9 @@ export default function WorkspaceSettings() {
   const [workspaceName, setWorkspaceName] = useState('');
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
+  const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +91,7 @@ export default function WorkspaceSettings() {
 
   const workspace = workspaceView?.workspace;
   const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
+  const isWorkspaceOwner = isWorkspaceOwnerRole(workspaceView?.viewer.role);
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
     const joinedRooms = new Map(
@@ -304,6 +309,28 @@ export default function WorkspaceSettings() {
     );
   }, []);
 
+  const closeDeleteSheet = useCallback(() => {
+    if (deleteBusy) return;
+    setDeleteSheetOpen(false);
+    setDeleteConfirmText('');
+  }, [deleteBusy]);
+
+  const confirmDeleteWorkspace = useCallback(async () => {
+    if (!communityId || !workspace || deleteConfirmText.trim() !== workspace.name || deleteBusy)
+      return;
+    setDeleteBusy(true);
+    setError(null);
+    try {
+      await monolithPhoneOperation('deleteWorkspace', { workspaceId: communityId });
+      setDeleteSheetOpen(false);
+      setDeleteConfirmText('');
+      router.replace('/beeline/channels');
+    } catch (caught) {
+      setError(`Could not delete ${WORKSPACE_LABEL}: ${String(caught)}`);
+      setDeleteBusy(false);
+    }
+  }, [communityId, deleteBusy, deleteConfirmText, workspace]);
+
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -498,6 +525,19 @@ export default function WorkspaceSettings() {
             })}
           </View>
 
+          {isWorkspaceOwner && (
+            <View style={styles.section} testID="workspace-danger-zone">
+              <Text style={styles.sectionLabel}>Danger zone</Text>
+              <SettingsRow
+                accessibilityLabel={`Delete this ${WORKSPACE_LABEL}`}
+                onPress={() => setDeleteSheetOpen(true)}
+                testID="workspace-delete-row"
+                title={`Delete ${WORKSPACE_LABEL}`}
+                tone="destructive"
+              />
+            </View>
+          )}
+
           {error && (
             <PixelGateReveal accessibilityRole="alert" style={styles.errorPanel}>
               <Text style={styles.errorLabel}>! Error</Text>
@@ -529,6 +569,49 @@ export default function WorkspaceSettings() {
           onPress={() => setVisibilityPickerOpen(false)}
           testID="workspace-visibility-close"
         />
+      </HullActionSheetModal>
+
+      <HullActionSheetModal
+        accessibilityLabel={`Close delete ${WORKSPACE_LABEL} confirmation`}
+        onClose={closeDeleteSheet}
+        subtitle={`This permanently deletes every ${ROOM_LABEL}, message, and member of "${
+          workspace?.name ?? ''
+        }". This cannot be undone. Type its name to confirm.`}
+        testID="workspace-delete-sheet"
+        title={`Delete ${WORKSPACE_LABEL}?`}
+        visible={deleteSheetOpen}
+      >
+        <View style={styles.inlineEditor}>
+          <TextInput
+            accessibilityLabel={`Type ${workspace?.name ?? ''} to confirm`}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!deleteBusy}
+            onChangeText={setDeleteConfirmText}
+            placeholder={workspace?.name ?? ''}
+            placeholderTextColor={theme.buzz.dim}
+            style={styles.input}
+            testID="workspace-delete-confirm-input"
+            value={deleteConfirmText}
+          />
+          <View style={styles.inlineEditorControls}>
+            <MonoButton
+              disabled={deleteBusy}
+              label="Cancel"
+              onPress={closeDeleteSheet}
+              testID="workspace-delete-cancel"
+              variant="secondary"
+            />
+            <MonoButton
+              disabled={deleteBusy || deleteConfirmText.trim() !== (workspace?.name ?? '\0')}
+              label={deleteBusy ? 'Deleting…' : `Delete ${WORKSPACE_LABEL}`}
+              loading={deleteBusy}
+              onPress={() => void confirmDeleteWorkspace()}
+              testID="workspace-delete-confirm"
+              variant="destructive"
+            />
+          </View>
+        </View>
       </HullActionSheetModal>
     </View>
   );

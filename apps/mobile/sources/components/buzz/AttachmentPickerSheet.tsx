@@ -8,6 +8,7 @@ type AttachmentPickerSheetProps = {
   onClose: () => void;
   onPickDocument: () => void;
   onPickPhoto: () => void;
+  onPickPasted?: () => void;
 };
 
 /** Attachment choices use the same bottom Hull action-sheet family as every menu. */
@@ -16,6 +17,7 @@ export function AttachmentPickerSheet({
   onClose,
   onPickDocument,
   onPickPhoto,
+  onPickPasted,
 }: AttachmentPickerSheetProps) {
   const isDesktop = useIsDesktop();
   const choose = (action: () => void) => {
@@ -46,6 +48,14 @@ export function AttachmentPickerSheet({
           onPress={() => choose(onPickDocument)}
           testID="attachment-picker-document"
         />
+        {onPickPasted && (
+          <HullActionSheetRow
+            label="Paste Image"
+            metadata="From clipboard"
+            onPress={() => choose(onPickPasted)}
+            testID="attachment-picker-paste"
+          />
+        )}
       </HullDialog>
     );
   }
@@ -71,6 +81,14 @@ export function AttachmentPickerSheet({
         onPress={() => choose(onPickDocument)}
         testID="attachment-picker-document"
       />
+      {onPickPasted && (
+        <HullActionSheetRow
+          label="Paste Image"
+          metadata="From clipboard"
+          onPress={() => choose(onPickPasted)}
+          testID="attachment-picker-paste"
+        />
+      )}
       <HullActionSheetCancel onPress={onClose} testID="attachment-picker-close" />
     </HullActionSheetModal>
   );

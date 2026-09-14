@@ -154,11 +154,6 @@ export function isConnectorIdentityId(identityId: string | undefined | null): bo
   return Boolean(identityId?.startsWith(CONNECTOR_IDENTITY_PREFIX));
 }
 
-/** `14:26` from the ledger row's stamp. */
-export function ledgerClock(at: string): string {
-  return at;
-}
-
 /** `api.vercel.com` joined, or `—` when a session kind has no host list. */
 export function connectionHostsLine(connection: WorkbenchConnection): string {
   return connection.hosts.length ? connection.hosts.join(', ') : '—';

@@ -152,7 +152,7 @@ short-lived Play access token from the service account, then runs
 → commit) and `scripts/play-publish-listing.sh` (one edit carrying title, short
 and full description, icon, feature graphic and phone screenshots, each image
 type cleared then re-uploaded in filename order, then committed).
-The release always lands as *Ready to publish*; you press Release in Play
+The internal-track release is published as *completed* (rolled out to internal testers with no press in Play
 Console.
 
 **`store_ios`** (TestFlight): version check, decodes the `.p8` secret to a

@@ -11,10 +11,12 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
+import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
+import type { ObjectService } from './object-service.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
 
@@ -59,6 +61,9 @@ export interface ServerOptions {
   live: LiveHub;
   connectionPresence?: ConnectionPresence;
   mediaMaximumBytes: number;
+  /** Absent when no S3 env is configured: object writes then refuse with a
+   *  clear 503 and every read keeps the legacy bytea path. */
+  objectService?: ObjectService;
   github?: GitHubServerHooks;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
   review?: ReviewAccess;
@@ -859,12 +864,54 @@ async function route(
     return;
   }
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
-    const mediaId = url.pathname.slice('/v1/media/'.length);
+    const last = url.pathname.slice('/v1/media/'.length);
+    // `open in browser`: mint the ten-minute signed storage link at tap time;
+    // a browser has no bearer token for the canonical media route.
+    const linkMatch = last.match(/^([0-9a-f-]+)\/link$/);
+    if (method === 'GET' && linkMatch && isMediaId(linkMatch[1]!)) {
+      if (!identityId) {
+        json(response, 401, { error: 'identity_required' });
+        return;
+      }
+      if (!options.objectService) {
+        json(response, 503, { error: 'object_storage_unavailable' });
+        return;
+      }
+      const link = await options.objectService.mediaLink(linkMatch[1]!);
+      if (!link) {
+        json(response, 404, { error: 'media_not_found' });
+        return;
+      }
+      json(response, 200, link);
+      return;
+    }
+    const mediaId = last;
     // An id that is not a UUID never named a row, and must not reach the uuid
     // cast below, where Postgres would answer a client typo with a 500.
     if (!isMediaId(mediaId)) {
       json(response, 404, { error: 'media_not_found' });
       return;
+    }
+    // Object-storage branch: a ready object redirects to a fresh signed GET;
+    // the redirect itself is never cached, so every read mints its own link.
+    if (options.objectService) {
+      const object = await options.objectService.readMediaObject(mediaId);
+      if (object?.kind === 'redirect') {
+        response.writeHead(302, {
+          location: object.location!,
+          'cache-control': 'private, no-store',
+        });
+        response.end();
+        return;
+      }
+      if (object?.kind === 'expired') {
+        json(response, 410, { error: 'media_expired', ttlHours: mediaTtlHours() });
+        return;
+      }
+      if (object?.kind === 'pending') {
+        json(response, 404, { error: 'media_not_found' });
+        return;
+      }
     }
     const media = (
       await options.database.query<{ bytes: Uint8Array; mime_type: string; name: string }>(
@@ -1007,6 +1054,92 @@ async function route(
     return;
   }
 
+  if (method === 'POST' && url.pathname === '/v1/daemon/artifacts') {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) {
+      await refuseDaemon(request, response, options);
+      return;
+    }
+    void options.connectionPresence?.evidence(undefined, agentId);
+    if (!options.objectService) {
+      json(response, 503, { error: 'object_storage_unavailable' });
+      return;
+    }
+    const raw = await bytes(request, ARTIFACT_MAXIMUM_BYTES + 1);
+    if (raw.length > ARTIFACT_MAXIMUM_BYTES) {
+      json(response, 413, { error: 'artifact_too_large', maximumBytes: ARTIFACT_MAXIMUM_BYTES });
+      return;
+    }
+    const mime =
+      typeof request.headers['content-type'] === 'string'
+        ? request.headers['content-type'].split(';')[0]!.trim()
+        : 'application/octet-stream';
+    const title =
+      typeof request.headers['x-artifact-title'] === 'string'
+        ? request.headers['x-artifact-title']
+        : '';
+    try {
+      json(
+        response,
+        201,
+        await options.objectService.uploadArtifact(agentId, raw, mime, title),
+      );
+    } catch (error) {
+      json(response, 422, {
+        error: 'artifact_rejected',
+        reason: error instanceof Error ? error.message : 'invalid artifact',
+      });
+    }
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/daemon/uploads') {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) {
+      await refuseDaemon(request, response, options);
+      return;
+    }
+    void options.connectionPresence?.evidence(undefined, agentId);
+    if (!options.objectService) {
+      json(response, 503, { error: 'object_storage_unavailable' });
+      return;
+    }
+    const input = await body(request);
+    try {
+      json(response, 201, await options.objectService.createUpload(agentId, input as never));
+    } catch (error) {
+      json(response, 422, {
+        error: 'upload_rejected',
+        reason: error instanceof Error ? error.message : 'invalid upload',
+      });
+    }
+    return;
+  }
+  match = url.pathname.match(/^\/v1\/daemon\/uploads\/([0-9a-f-]+)\/finalize$/);
+  if (method === 'POST' && match) {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) {
+      await refuseDaemon(request, response, options);
+      return;
+    }
+    if (!options.objectService) {
+      json(response, 503, { error: 'object_storage_unavailable' });
+      return;
+    }
+    if (!isMediaId(match[1]!)) {
+      json(response, 404, { error: 'object_not_found' });
+      return;
+    }
+    try {
+      json(
+        response,
+        200,
+        await options.objectService.finalizeUpload(agentId, { objectId: match[1]! }),
+      );
+    } catch {
+      json(response, 404, { error: 'object_not_found' });
+    }
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/daemon/media') {
     const agentId = await daemonIdentity(request, options);
     if (!agentId) {

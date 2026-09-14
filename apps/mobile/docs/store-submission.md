@@ -151,7 +151,7 @@ short-lived Play access token from the service account, then runs
 `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` or `default.txt`
 → commit) and `scripts/play-publish-listing.sh` (one edit carrying title, short
 and full description, icon, feature graphic and phone screenshots, each image
-type cleared then re-uploaded in filename order, validated and committed).
+type cleared then re-uploaded in filename order, then committed).
 The release always lands as *Ready to publish*; you press Release in Play
 Console.
 
@@ -168,7 +168,7 @@ never creates one non-interactively.
 
 `scripts/play-promote-track.sh` moves the newest release on one track onto
 another (it takes the highest `versionCode` with its name and notes, in one
-validated and committed edit). A track's first roll-out starts Google's review,
+committed edit). A track's first roll-out starts Google's review,
 so that stays a deliberate operator step rather than part of a release.
 
 Every Play script honours `PLAY_DRY_RUN=1`: it prints each API call (method,

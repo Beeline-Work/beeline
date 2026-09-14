@@ -66,7 +66,10 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
       },
     ],
   });
-  assert.equal(calls[3], `POST ${API}/edits/dry-run-edit:commit -H Content-Length: 0`);
+  assert.equal(
+    calls[3],
+    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+  );
   assert.match(stdout, /release notes from: .*default\.txt/);
   assert.match(stdout, /versionCode 28 is on the internal track as draft/);
   assert.match(stdout, new RegExp(`Play Console: https://play.google.com/console/u/0/developers/-/app-list\\?search=${PACKAGE}`));
@@ -124,8 +127,7 @@ test('play-publish-listing.sh: one edit carrying text, cleared+uploaded images, 
     `DELETE ${listings}/phoneScreenshots`,
     `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${locale}/images/phoneScreenshots/01-room.png`,
     `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${locale}/images/phoneScreenshots/02-corner.png`,
-    `POST ${API}/edits/dry-run-edit:validate -H Content-Length: 0`,
-    `POST ${API}/edits/dry-run-edit:commit -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
   ]);
 });
 
@@ -167,8 +169,11 @@ test('play-promote-track.sh: reads the source track and writes its newest releas
       },
     ],
   });
-  assert.equal(calls[3], `POST ${API}/edits/dry-run-edit:validate -H Content-Length: 0`);
-  assert.equal(calls[4], `POST ${API}/edits/dry-run-edit:commit -H Content-Length: 0`);
+  assert.equal(
+    calls[3],
+    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+  );
+  assert.equal(calls.length, 4);
   assert.match(stdout, /Ready to publish/);
 });
 

@@ -676,7 +676,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
-          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=draft bash scripts/play-publish.sh
+          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
       - name: Preserve Android build evidence
         uses: actions/upload-artifact@v4

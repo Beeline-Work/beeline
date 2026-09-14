@@ -609,7 +609,7 @@ it('routes a corner merge to its responsible parent Room agent without a subscri
     ).rowCount,
   ).toBe(0);
 });
-it('transfers a corner objective to every agent member without resetting the authorized chain', async () => {
+it('transfers a corner objective to the opener only, without resetting the authorized chain', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
   await send('@hoots');
   const [c] = await commands();
@@ -625,17 +625,15 @@ it('transfers a corner objective to every agent member without resetting the aut
     },
     A,
   );
-  const [objective, helperObjective] = await Promise.all([
-    commands(A, opened.cornerId).then(([command]) => command),
-    commands(B, opened.cornerId).then(([command]) => command),
-  ]);
-  for (const command of [objective, helperObjective]) {
-    expect(command?.reason).toBe('corner_objective');
-    expect(command?.rootCommandId).toBe(c!.id);
-    expect(command?.parentCommandId).toBe(c!.id);
-    expect(command?.agentDepth).toBe(c!.agentDepth);
-    expect(command?.source.body).toBe('Do this task');
-  }
+  const [objective] = await commands(A, opened.cornerId);
+  expect(objective?.reason).toBe('corner_objective');
+  expect(objective?.rootCommandId).toBe(c!.id);
+  expect(objective?.parentCommandId).toBe(c!.id);
+  expect(objective?.agentDepth).toBe(c!.agentDepth);
+  expect(objective?.source.body).toBe('Do this task');
+  // B is a member (it can read the corner and answer when tagged) but the
+  // objective is not its work: no intake command.
+  expect(await commands(B, opened.cornerId)).toEqual([]);
   expect(
     (
       await db.query<{ event_subscriptions: string[] }>(

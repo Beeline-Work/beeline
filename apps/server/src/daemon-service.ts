@@ -1108,20 +1108,38 @@ export class DaemonService {
       )
     ).rows[0];
     if (!target) throw new Error('corner reviewer approval denied');
-    if (!target.pull_request_number || !target.head_sha) throw new Error('corner has no pull request');
-    if (target.head_sha !== input.headSha)
+    // A check turn hands the reviewer the head to review, and it is the head
+    // this corner's lifecycle already records. A reviewer woken by a mention
+    // has no such instruction and may be sitting in a corner that carries no
+    // pull request of its own, so it names the pull request it reviewed and
+    // the server resolves that PR's live head — the same head the gate reads.
+    // The gate matches an approval by parent Room and PR number, so a verdict
+    // recorded from any corner of the Room still opens the author's gate.
+    let pullRequestNumber = target.pull_request_number;
+    let headSha = target.head_sha;
+    if (input.pullRequest !== undefined) {
+      if (!this.prChecksStatus) throw new Error('GitHub PR checks service unavailable');
+      const reviewed = await this.prChecksStatus({
+        cornerId: input.cornerId,
+        pullRequest: input.pullRequest,
+      });
+      pullRequestNumber = Number(reviewed.pullRequest.match(/\/pull\/(\d+)$/)?.[1]) || null;
+      headSha = reviewed.headSha;
+    }
+    if (!pullRequestNumber || !headSha) throw new Error('corner has no pull request');
+    if (headSha !== input.headSha)
       throw new Error('pull request head changed; review the current head before approving');
     await recordCornerMergeApproval(this.database, {
       cornerId: input.cornerId,
       approvedBy: agentId,
       force: false,
-      pullRequestNumber: target.pull_request_number,
-      headSha: target.head_sha,
+      pullRequestNumber,
+      headSha,
       patchId: input.patchId,
     });
     return {
-      pullRequestNumber: target.pull_request_number,
-      headSha: target.head_sha,
+      pullRequestNumber,
+      headSha,
       status: 'approved' as const,
     };
   }

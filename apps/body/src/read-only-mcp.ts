@@ -458,7 +458,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'approve_merge',
     description:
-      'Record the configured reviewer’s PASS for the exact pull-request head you reviewed. This does not merge. Call it only after a complete beeline-review PASS, using that review’s full head SHA; then tag the implementer with approval and clearance to merge.',
+      'Record the configured reviewer’s PASS for the exact pull-request head you reviewed. This does not merge. Call it only after a complete beeline-review PASS, using that review’s full head SHA; then tag the implementer with approval and clearance to merge. It works on any turn, not only a check turn: when a mention woke you, pass the pull request you reviewed as well and take its head from pr_checks_status.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
@@ -467,6 +467,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           pattern: '^[0-9a-fA-F]{40}$',
           description: 'The exact 40-character Git head SHA that passed review.',
+        },
+        pullRequest: {
+          anyOf: [{ type: 'integer', minimum: 1 }, { type: 'string' }],
+          description:
+            'The reviewed PR when it is not this corner’s own: number in this Room repository, or its full GitHub pull request URL. Its current head must be headSha.',
         },
       },
       additionalProperties: false,
@@ -1315,8 +1320,18 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
-  const patchId = await cornerPatchId(cornerId);
-  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha, patchId }));
+  const pullRequest = args.pullRequest;
+  // The patch id is this worktree's diff identity, so it stands for the
+  // reviewed change only while the pull request is this corner's own.
+  const patchId = pullRequest === undefined ? await cornerPatchId(cornerId) : undefined;
+  return JSON.stringify(
+    await daemonExecute('approveCornerMerge', {
+      cornerId,
+      headSha,
+      patchId,
+      ...(pullRequest === undefined ? {} : { pullRequest }),
+    }),
+  );
 }
 
 export interface WriteScratchFileDeps {

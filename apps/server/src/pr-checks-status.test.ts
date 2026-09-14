@@ -244,6 +244,36 @@ describe('PR-scoped check gate', () => {
     ).rejects.toThrow('corner reviewer approval denied');
   });
 
+  it('records a mention-woken reviewer verdict against the live head of the reviewed PR', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    // Woken by a mention rather than by a green check, the reviewer has no
+    // check-turn instruction quoting a head: it reads the live one from the
+    // gate, in a corner that carries no pull request of its own.
+    expect(await gate(C, 614)).toMatchObject({ headSha: SHA, approvalPending: true });
+    expect(
+      await daemon.execute(
+        'approveCornerMerge',
+        { cornerId: C, headSha: SHA, pullRequest: 614 },
+        A,
+      ),
+    ).toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
+    expect(await daemon.execute('getPrChecksStatus', { cornerId: AUTHOR }, A)).toMatchObject({
+      approvalPending: false,
+    });
+    // Still exact-head, and still reviewer-only.
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        { cornerId: C, headSha: '8'.repeat(40), pullRequest: 614 },
+        A,
+      ),
+    ).rejects.toThrow('pull request head changed');
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: C, headSha: SHA, pullRequest: 614 }, H),
+    ).rejects.toThrow('corner reviewer approval denied');
+  });
+
   it('carries a reviewer approval over a clean catch-up head via matching patch_id', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
@@ -341,53 +371,103 @@ describe('PR-scoped check gate', () => {
   });
 
   it('demonstrates the real helper tool returning passed over local HTTP for a PR it did not author', async () => {
-    server = createServer(async (request, response) => {
-      try {
-        const chunks: Buffer[] = [];
-        for await (const chunk of request) chunks.push(Buffer.from(chunk));
-        const operation = request.url!.split('/').pop() as keyof DaemonOperationMap;
-        const output = await daemon.execute(
-          operation,
-          JSON.parse(Buffer.concat(chunks).toString()),
-          A,
-        );
-        response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify(output));
-      } catch (error) {
-        response.writeHead(500);
-        response.end(JSON.stringify({ error: String(error) }));
-      }
-    });
-    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-    const address = server.address() as { port: number };
-    const child = spawn(
-      process.execPath,
-      [
-        '--import',
-        'tsx',
-        fileURLToPath(new globalThis.URL('../../body/src/read-only-mcp.ts', import.meta.url)),
-      ],
-      {
-        env: {
-          ...process.env,
-          BEELINE_MCP_SURFACE: 'agent',
-          BEELINE_AGENT_DM: '0',
-          BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${address.port}`,
-          BEELINE_DAEMON_TOKEN: 'local-test',
-          BEELINE_DAEMON_ROOM_ID: R,
-          BEELINE_DAEMON_CORNER_ID: C,
-          BEELINE_DAEMON_WORKSPACE_ID: W,
-          BEELINE_DAEMON_AGENT_ID: A,
-        },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    );
+    const helper = await startHelper();
     try {
+      const verdict = await helper.call('pr_checks_status', { pullRequest: 614 });
+      expect(verdict).toMatchObject({
+        checks: 'passed',
+        pullRequest: URL,
+        held: false,
+        approvalPending: false,
+      });
+      console.log('Demonstrated pr_checks_status:', JSON.stringify(verdict));
+    } finally {
+      helper.stop();
+    }
+  });
+
+  it('demonstrates a mention-woken reviewer recording a PASS that opens the merge gate', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    const helper = await startHelper();
+    try {
+      const before = await helper.call('pr_checks_status', { pullRequest: 614 });
+      expect(before).toMatchObject({ checks: 'passed', approvalPending: true });
+      const approval = await helper.call('approve_merge', {
+        headSha: before.headSha,
+        pullRequest: 614,
+      });
+      expect(approval).toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
+      const gateAfter = await daemon.execute('getPrChecksStatus', { cornerId: AUTHOR }, A);
+      expect(gateAfter).toMatchObject({ approvalPending: false });
+      console.log(
+        'Demonstrated approve_merge outside a check turn:',
+        JSON.stringify({ before, approval, authorGate: gateAfter }),
+      );
+    } finally {
+      helper.stop();
+    }
+  });
+});
+
+/** The reviewer's own path: the real MCP helper process, speaking to this
+ *  server over local HTTP as the reviewer agent, in the corner it was woken in. */
+async function startHelper(): Promise<{
+  call(name: string, args: Record<string, unknown>): Promise<Record<string, string>>;
+  stop(): void;
+}> {
+  server = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const operation = request.url!.split('/').pop() as keyof DaemonOperationMap;
+      const output = await daemon.execute(
+        operation,
+        JSON.parse(Buffer.concat(chunks).toString()),
+        A,
+      );
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(output));
+    } catch (error) {
+      response.writeHead(500);
+      response.end(JSON.stringify({ error: String(error) }));
+    }
+  });
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  const address = server.address() as { port: number };
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      fileURLToPath(new globalThis.URL('../../body/src/read-only-mcp.ts', import.meta.url)),
+    ],
+    {
+      env: {
+        ...process.env,
+        BEELINE_MCP_SURFACE: 'agent',
+        BEELINE_AGENT_DM: '0',
+        BEELINE_CORNER_REVIEWER: '1',
+        BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${address.port}`,
+        BEELINE_DAEMON_TOKEN: 'local-test',
+        BEELINE_DAEMON_ROOM_ID: R,
+        BEELINE_DAEMON_CORNER_ID: C,
+        BEELINE_DAEMON_WORKSPACE_ID: W,
+        BEELINE_DAEMON_AGENT_ID: A,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
+  const lines = createInterface({ input: child.stdout });
+  let nextId = 2;
+  return {
+    call(name, args) {
+      const id = nextId++;
       const answer = new Promise<Record<string, unknown>>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('helper timed out')), 10_000);
-        createInterface({ input: child.stdout }).on('line', (line) => {
+        lines.on('line', (line) => {
           const message = JSON.parse(line);
-          if (message.id === 2) {
+          if (message.id === id) {
             clearTimeout(timer);
             resolve(message);
           }
@@ -400,25 +480,18 @@ describe('PR-scoped check gate', () => {
       child.stdin.write(
         JSON.stringify({
           jsonrpc: '2.0',
-          id: 2,
+          id,
           method: 'tools/call',
-          params: { name: 'pr_checks_status', arguments: { pullRequest: 614 } },
+          params: { name, arguments: args },
         }) + '\n',
       );
-      const message = await answer;
-      const result = message.result as { isError?: boolean; content: { text: string }[] };
-      expect(message.error).toBeUndefined();
-      expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      const verdict = JSON.parse(result.content[0]!.text);
-      expect(verdict).toMatchObject({
-        checks: 'passed',
-        pullRequest: URL,
-        held: false,
-        approvalPending: false,
+      return answer.then((message) => {
+        const result = message.result as { isError?: boolean; content: { text: string }[] };
+        expect(message.error).toBeUndefined();
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        return JSON.parse(result.content[0]!.text);
       });
-      console.log('Demonstrated pr_checks_status:', JSON.stringify(verdict));
-    } finally {
-      child.kill();
-    }
-  });
-});
+    },
+    stop: () => void child.kill(),
+  };
+}

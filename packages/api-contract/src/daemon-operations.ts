@@ -119,7 +119,13 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string; readonly patchId?: string },
+    CornerInput & {
+      readonly headSha: string;
+      readonly patchId?: string;
+      /** The reviewed PR when it is not this corner's own: number or full URL,
+       *  as `getPrChecksStatus` takes it. Its live head must be `headSha`. */
+      readonly pullRequest?: number | string;
+    },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;

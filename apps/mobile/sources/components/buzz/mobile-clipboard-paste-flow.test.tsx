@@ -40,6 +40,16 @@ vi.mock('./HullDialog', async () => {
     ReactModule.createElement(name, props, props.children);
   return { HullDialog: host('HullDialog') };
 });
+// The composer renders MicGlyph, which imports react-native-svg. Stub it the
+// same way ConversationComposer.test.tsx does — the real package ships
+// untranspiled sources that vite cannot parse under this config.
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  const Svg = host('RNSVG');
+  return { default: Svg, Svg, Line: host('RNSVGLine') };
+});
 
 // chat-attachment.ts's non-clipboard imports, stubbed the same way
 // chat-attachment.test.ts stubs them — they're not exercised by this path.

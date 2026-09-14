@@ -79,6 +79,13 @@ type LedgerBodyProps = {
   byline?: LedgerByline;
   /** A run's opening entry gets air above it; a continuation keeps flowing. */
   continued?: boolean;
+  /**
+   * The transcript lays rows out chronologically (desktop's ordinary flow)
+   * rather than in the phone's inverted list, so a cell's layout-top — not its
+   * layout-bottom — is its visual top. The run-opening divider and its
+   * generous padding mirror to the other layout edge.
+   */
+  chronological?: boolean;
   marginalia?: React.ReactNode;
   replyReference?: React.ReactNode;
   attachments?: React.ReactNode;
@@ -378,6 +385,7 @@ export function LedgerEntry({
   bodyTestID,
   byline,
   continued = false,
+  chronological = false,
   luminous = false,
   replyReference,
   attachments,
@@ -392,6 +400,11 @@ export function LedgerEntry({
   const [leadText, remainingText] =
     bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
   const bodyTextStyle = luminous ? styles.ledgerTextLuminous : styles.ledgerText;
+  const runStyle = continued
+    ? styles.entryContinued
+    : chronological
+      ? styles.entryOpensChronological
+      : styles.entryOpens;
   // A settling reply was already typed out, live, in front of the reader. It
   // cross-fades; it never re-types itself.
   const typeOut = typewriter && !settleFrom;
@@ -435,10 +448,7 @@ export function LedgerEntry({
     </>
   );
   return (
-    <View
-      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
-      testID={`chat-message-${itemId}`}
-    >
+    <View style={[styles.entry, runStyle]} testID={`chat-message-${itemId}`}>
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {settleFrom && (leadText || remainingText) ? (
@@ -467,6 +477,7 @@ export function LedgerSteer({
   bodyTestID,
   byline,
   continued = false,
+  chronological = false,
   replyReference,
   attachments,
   mentionHandles,
@@ -477,11 +488,13 @@ export function LedgerSteer({
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
   // body's; ownership reads from the byline alone.
+  const runStyle = continued
+    ? styles.entryContinued
+    : chronological
+      ? styles.entryOpensChronological
+      : styles.entryOpens;
   return (
-    <View
-      style={[styles.entry, continued ? styles.entryContinued : styles.entryOpens]}
-      testID={`chat-message-${itemId}`}
-    >
+    <View style={[styles.entry, runStyle]} testID={`chat-message-${itemId}`}>
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {bodyText ? (
@@ -736,15 +749,28 @@ const styles = StyleSheet.create((theme) => ({
     width: '100%',
     minWidth: 0,
   },
-  // Turn separation: a hairline divider at the top of each opening turn (the
-  // inverted list renders a cell's layout-bottom at its visual top), plus the
-  // generous vertical padding above. Continuations of the same voice flow on
-  // with no divider.
+  // Turn separation: a hairline divider at the top of each opening turn, plus
+  // the generous vertical padding on that ONE outward side — the side facing
+  // the run's own continuation carries the continuation padding instead, so
+  // the gap between two consecutive same-voice messages is the continuation
+  // gap whether or not the upper row opened the run. Separation between
+  // different runs stays generous. The inverted list renders a cell's
+  // layout-bottom at its visual top, so the phone row wears the divider on its
+  // layout-bottom; the chronological flow renders a cell's layout-top at its
+  // visual top, so `entryOpensChronological` mirrors the whole block.
   entryOpens: {
-    paddingVertical: theme.buzz.turnPaddingVertical,
+    paddingTop: theme.buzz.continuationPaddingVertical,
+    paddingBottom: theme.buzz.turnPaddingVertical,
     marginBottom: theme.buzz.turnGap,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.turnDivider,
+  },
+  entryOpensChronological: {
+    paddingTop: theme.buzz.turnPaddingVertical,
+    paddingBottom: theme.buzz.continuationPaddingVertical,
+    marginTop: theme.buzz.turnGap,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.buzz.turnDivider,
   },
   entryContinued: {
     paddingVertical: theme.buzz.continuationPaddingVertical,

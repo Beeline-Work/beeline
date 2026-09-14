@@ -1565,6 +1565,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <LedgerSteer
             itemId={message.id}
             continued={continued}
+            chronological={desktopLayout}
             byline={byline}
             bodyText={forwarded.body}
             mentionHandles={mentionHandles}
@@ -1580,6 +1581,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             itemId={message.id}
             byline={byline}
             continued={continued}
+            chronological={desktopLayout}
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}

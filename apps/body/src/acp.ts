@@ -283,7 +283,13 @@ export function isPiAcpHarness(agentLabel: string | undefined): boolean {
 
 function withoutOneTrailingLineEnding(text: string): string {
   if (/\r?\n\r?\n$/.test(text)) return text;
-  return text.replace(/\r?\n$/, '');
+  const stripped = text.replace(/\r?\n$/, '');
+  // A delta that is nothing but its own line ending (DeepSeek via pi-acp
+  // streams a lone "\n" ahead of a Markdown bullet) must survive: stripping
+  // it to '' makes the delta invisible to agentMessageRuns, so the next
+  // chunk's leading "- " reads as a continuation of the previous word
+  // instead of a new line.
+  return stripped || text;
 }
 
 /**

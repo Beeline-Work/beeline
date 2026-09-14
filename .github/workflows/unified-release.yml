@@ -74,6 +74,7 @@ jobs:
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
       previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
       next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
+      desktop_version: ${{ steps.plan.outputs.desktop_version }}
       stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
       stage_website: ${{ steps.plan.outputs.stage_website }}
     steps:
@@ -206,6 +207,7 @@ jobs:
             echo "release_version=$release_version"
             echo "release_id=$release_id"
             node -e 'const p=require(process.argv[1]).plan;console.log("runtime_pin_changed="+(p.runtimePinChanged??false)+"\nprevious_runtime_version="+JSON.stringify(p.previousRuntimeVersion??"")+"\nnext_runtime_version="+JSON.stringify(p.nextRuntimeVersion??""))' "$RUNNER_TEMP/unified-release.json"
+            node -e 'console.log("desktop_version="+require(process.argv[1]).components.desktop.desktopVersion)' "$RUNNER_TEMP/unified-release.json"
             node -e 'const p=require(process.argv[1]).plan;for(const platform of ["android","ios"])console.log("native_"+platform+"="+(p.nativePlatforms??["android","ios"]).includes(platform))' "$RUNNER_TEMP/unified-release.json"
             for component in server helper mobile-ota mobile-native desktop website; do
               output="run_${component//-/_}"
@@ -535,6 +537,7 @@ jobs:
       variant: production
       release_sha: ${{ needs.initialize.outputs.release_sha }}
       release_version: ${{ needs.initialize.outputs.release_version }}
+      desktop_version: ${{ needs.initialize.outputs.desktop_version }}
     secrets: inherit
 
   desktop_checkpoint:
@@ -601,15 +604,16 @@ jobs:
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
       needs.initialize.outputs.native_android == 'true'
-    # Local EAS build on the self-hosted Linux runner (Android SDK + JDK 17 live
+    # Local EAS build on a self-hosted Linux runner (Android SDK + JDK 17 live
     # there): Expo's cloud build needs credits the free plan ran out of. The
     # keystore still comes from Expo's credential store via EXPO_TOKEN.
-    runs-on: [self-hosted, beeline-prod-host]
+    # `beeline-android` is a POOL label: the production host and the Chad box both
+    # carry it, so the job lands on whichever is online and free, and falls back
+    # to the production host on its own when Chad is offline.
+    runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
     env:
       EAS_CLI_VERSION: 22.2.0
-      ANDROID_HOME: /home/lunchbox/android-sdk
-      ANDROID_SDK_ROOT: /home/lunchbox/android-sdk
     steps:
       - uses: actions/checkout@v4
         with:
@@ -631,7 +635,14 @@ jobs:
           EAS_SKIP_AUTO_FINGERPRINT: '1'
         run: |
           set -euo pipefail
-          test -d "$ANDROID_HOME/platform-tools" || { echo "Android SDK missing at $ANDROID_HOME" >&2; exit 1; }
+          # Each pooled runner keeps its SDK in a different place; take the runner's
+          # own ANDROID_HOME when it is set, else the first known layout that exists.
+          for candidate in "${ANDROID_HOME:-}" /home/lunchbox/android-sdk "$HOME/Android/Sdk" /opt/android-sdk; do
+            if [ -n "$candidate" ] && [ -d "$candidate/platform-tools" ]; then export ANDROID_HOME="$candidate"; break; fi
+          done
+          test -d "${ANDROID_HOME:-}/platform-tools" || { echo "Android SDK missing on runner $(hostname)" >&2; exit 1; }
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "Android SDK: $ANDROID_HOME on $(hostname)"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           npm ci
           # --package + env -u: same reasons as the iOS leg (a bare spec matching a
@@ -660,10 +671,15 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           TRACK: ${{ inputs.store_track }}
+          # scripts/play-api.sh refuses to run without the Play package name (release
+          # run 34800657127 failed here after the first local Android build; the line
+          # was then lost in #1241's conflict resolution and run 34873052609 failed the
+          # same way). Same value as androidPackage in apps/mobile/app.config.js.
+          PACKAGE_NAME: app.usebeeline
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
-          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=draft bash scripts/play-publish.sh
+          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
       - name: Preserve Android build evidence
         uses: actions/upload-artifact@v4
@@ -758,7 +774,20 @@ jobs:
           # variable inherited the nested npx resolves eas-cli instead and fails with
           # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
-          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas submit --platform ios --profile production --path "$RUNNER_TEMP/beeline-ios.ipa" --non-interactive --wait
+          # Upload with Apple's own altool, not `eas submit`: EAS Submit is Expo's cloud
+          # queue, and on this account its wait grew from 7 min to 54 min and then past
+          # the job's 90-minute timeout (run 34863479172: build done in 19 min, then
+          # "in queue" for 71 min). altool talks to App Store Connect directly with the
+          # same API key; it finds the .p8 under ./private_keys of its working directory.
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          cp "$EXPO_ASC_API_KEY_PATH" "$RUNNER_TEMP/private_keys/AuthKey_${EXPO_ASC_KEY_ID}.p8"
+          (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$RUNNER_TEMP/beeline-ios.ipa" \
+            --apiKey "$EXPO_ASC_KEY_ID" --apiIssuer "$EXPO_ASC_ISSUER_ID" --output-format json) | tee "$RUNNER_TEMP/ios-upload.json"
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            if (!r["success-message"]) { console.error("altool upload did not report success:", JSON.stringify(r)); process.exit(1); }
+            console.log(r["success-message"]);
+          ' "$RUNNER_TEMP/ios-upload.json"
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:
@@ -772,8 +801,8 @@ jobs:
         # DerivedData: a cancelled attempt leaves both behind, and five of them filled
         # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
-          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa"
-          rm -rf "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
+          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-upload.json"
+          rm -rf "$RUNNER_TEMP/private_keys" "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
           df -h / | tail -1
       - name: Restore the runner user keychains
         if: always()
@@ -922,6 +951,36 @@ jobs:
           pattern: beeline-desktop-release-${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}-*
           path: ${{ runner.temp }}/desktop-release
           merge-multiple: true
+      - name: Preserve the previous updater manifest for publication rollback
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
+        run: |
+          state="$RUNNER_TEMP/release-attempt.json"
+          if [ "$RUN_DESKTOP" = true ]; then
+            previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).supersedes?.version ?? "")' "$state")
+          else
+            previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
+          fi
+          if [ -n "$previous_version" ]; then
+            mkdir -p "$RUNNER_TEMP/desktop-rollback"
+            gh release download "$previous_version" --pattern 'Beeline-latest.json' --dir "$RUNNER_TEMP/desktop-rollback"
+          fi
+      - name: Build the signed desktop update manifest
+        if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
+        env:
+          DESKTOP_VERSION: ${{ needs.initialize.outputs.desktop_version }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/desktop-manifest"
+          node scripts/desktop-update.mjs manifest \
+            --directory "$RUNNER_TEMP/desktop-release" \
+            --version "$DESKTOP_VERSION" \
+            --tag "$RELEASE_VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output "$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
       - name: Create the one GitHub release record and preserve stable desktop downloads
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         env:
@@ -936,19 +995,69 @@ jobs:
           if [ "$RUN_DESKTOP" != true ]; then
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
             gh release download "$previous_version" --pattern 'Beeline-*' --dir "$RUNNER_TEMP/desktop-release"
+            if [ ! -f "$RUNNER_TEMP/desktop-rollback/Beeline-latest.json" ] && [ -f "$RUNNER_TEMP/desktop-release/Beeline-latest.json" ]; then
+              mkdir -p "$RUNNER_TEMP/desktop-rollback"
+              cp "$RUNNER_TEMP/desktop-release/Beeline-latest.json" "$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
+            fi
           fi
           previous_sha=$(node -e 'process.stdout.write(require(process.argv[1]).supersedes?.sourceSha ?? "")' "$state")
           notes="$RUNNER_TEMP/release-notes.md"
           git log --pretty='- %s (%h)' "${previous_sha:+${previous_sha}..}${RELEASE_SHA}" > "$notes"
           [ -s "$notes" ] || echo '- No component changes required.' > "$notes"
-          assets=("$RUNNER_TEMP"/desktop-release/Beeline-*)
-          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            [ -e "${assets[0]}" ] && gh release upload "$RELEASE_VERSION" "${assets[@]}" --clobber
-          elif [ -e "${assets[0]}" ]; then
-            gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes" "${assets[@]}"
+          if [ "$RUN_DESKTOP" = true ]; then
+            manifest="$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
           else
-            gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
+            manifest="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
           fi
+          test -f "$manifest" || { echo 'desktop updater manifest is missing' >&2; exit 1; }
+          mapfile -t assets < <(find "$RUNNER_TEMP/desktop-release" -maxdepth 1 -type f -name 'Beeline-*' ! -name 'Beeline-latest.json' | sort)
+          previous="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            # A retry first restores the last known-good manifest. The new
+            # manifest remains the final, independently verified commit point.
+            [ ! -f "$previous" ] || gh release upload "$RELEASE_VERSION" "$previous" --clobber
+            [ "${#assets[@]}" -eq 0 ] || gh release upload "$RELEASE_VERSION" "${assets[@]}" --clobber
+          else
+            release_assets=("${assets[@]}")
+            # Seed a newly published release with the last known-good
+            # manifest so /releases/latest never points at a half-published
+            # desktop update while the new manifest is being committed.
+            [ ! -f "$previous" ] || release_assets+=("$previous")
+            if [ "${#release_assets[@]}" -gt 0 ]; then
+              gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes" "${release_assets[@]}"
+            else
+              gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
+            fi
+          fi
+          rollback_manifest() {
+            if [ -f "$previous" ]; then
+              gh release upload "$RELEASE_VERSION" "$previous#Beeline-latest.json" --clobber || true
+            else
+              gh release delete-asset "$RELEASE_VERSION" 'Beeline-latest.json' --yes || true
+            fi
+          }
+          manifest_committed=false
+          rollback_on_exit() {
+            status=$?
+            if [ "$manifest_committed" != true ]; then rollback_manifest; fi
+            return "$status"
+          }
+          trap rollback_on_exit EXIT
+          # The manifest is the commit point: every URL and signature it names
+          # is already present before clients can discover this version.
+          gh release upload "$RELEASE_VERSION" "$manifest" --clobber
+          manifest_url='https://github.com/Beeline-Work/beeline/releases/latest/download/Beeline-latest.json'
+          verified=false
+          for _ in {1..12}; do
+            if node scripts/desktop-update.mjs verify --url "$manifest_url" --expected "$manifest"; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          [ "$verified" = true ] || { echo 'desktop updater manifest did not converge' >&2; exit 1; }
+          manifest_committed=true
+          trap - EXIT
       - name: Notify clients without changing the authoritative release outcome
         id: notification
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'

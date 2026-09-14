@@ -152,15 +152,15 @@ short-lived Play access token from the service account, then runs
 → commit) and `scripts/play-publish-listing.sh` (one edit carrying title, short
 and full description, icon, feature graphic and phone screenshots, each image
 type cleared then re-uploaded in filename order, then committed).
-The release always lands as *Ready to publish*; you press Release in Play
-Console.
+The internal-track release is published as *completed* (rolled out to internal testers with no press in Play
+Console).
 
 **`store_ios`** (TestFlight): version check, decodes the `.p8` secret to a
 runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it **before** the build
 (eas-cli needs it to create or repair the App Store provisioning profile
 non-interactively), runs `eas build --profile production-ci --platform ios
 --non-interactive --wait --json`, refuses a build whose app version differs from
-the package version, then `eas submit --platform ios --profile production --id
+the package version, then `xcrun altool --upload-app` (the release workflow's TestFlight upload; `eas submit --platform ios --profile production --id
 <build> --non-interactive --wait`. TestFlight processing, tester groups and any
 external-tester review stay in App Store Connect. A missing distribution
 certificate fails the build with one printed command, because eas-cli 22.2.0

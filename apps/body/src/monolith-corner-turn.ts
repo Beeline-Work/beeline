@@ -106,6 +106,27 @@ export function cornerReviewerInstruction(input: {
   return `Checks are green on PR #${number} at ${headSha}. Review it now with the beeline-review skill against that exact head. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
 }
 
+/**
+ * A Room's sole configured reviewer who also opens its own corner has no
+ * other reviewer to wait on: `cornerReviewerInstruction` never fires for an
+ * opener, so without this the ordinary author instructions would tell this
+ * agent to wait for `@<its own handle>` to tag it, a permanent deadlock.
+ */
+export function cornerSelfReviewerInstruction(input: {
+  reviewerHandle?: string;
+  agentHandle?: string;
+  openedByAgent: boolean;
+}): string | undefined {
+  if (
+    !input.reviewerHandle ||
+    !input.agentHandle ||
+    !input.openedByAgent ||
+    input.agentHandle.replace(/^@/, '') !== input.reviewerHandle.replace(/^@/, '')
+  )
+    return undefined;
+  return "You are this Room's reviewer, so your own pull request needs no review: do not request one, do not tag any agent for review, and merge yourself with gh once checks pass and no hold exists.";
+}
+
 export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
 If the objective reports a defect, reproduce it first at the layer where it lives: the command, request, or tap sequence, and what was observed.
@@ -590,8 +611,10 @@ export class MonolithCornerTurnLoop {
         headSha: restore.lifecycle?.pr?.headSha,
       });
     }
+    const selfReviewerInstruction = cornerSelfReviewerInstruction(reviewerInput);
     this.cornerTurnEndNudge =
       reviewerInstruction ??
+      selfReviewerInstruction ??
       cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle);
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection =
@@ -785,10 +808,11 @@ export class MonolithCornerTurnLoop {
                       ? `Once the pull request exists, reply with its full URL and end the turn; do not tag the reviewer, check, or wait for CI.`
                       : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Only a later explicit human resume clears a hold.',
                     CORNER_AUTHOR_CONTRACT,
-                    cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
+                    selfReviewerInstruction ??
+                      cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request.',
+              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer\'s approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',
@@ -1013,7 +1037,19 @@ export class MonolithCornerTurnLoop {
               const pendingToolActivities = new Map<string, DaemonActivity[]>();
               let lastNarratedToolCall: string | undefined;
               let activityAttempt = 0;
-              const publishToolCalls = (calls: readonly ToolCallEntry[], settledOnly: boolean) => {
+              const publishToolCalls = (
+                calls: readonly ToolCallEntry[],
+                settledOnly: boolean,
+                /**
+                 * A live (mid-turn) publish must never finalize the ONE row
+                 * `flushToolCalls` may still rewrite: the most recently
+                 * narrated call's row is skipped here whenever it could still
+                 * turn out to hold the same text as the turn's eventual
+                 * durable reply (see the dedupe at the top of `flushToolCalls`).
+                 * Every earlier, already-superseded call streams immediately.
+                 */
+                exceptKey?: string,
+              ) => {
                 calls.forEach((call, index) => {
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
@@ -1022,7 +1058,13 @@ export class MonolithCornerTurnLoop {
                     pendingToolNarrations.set(key, narration);
                     if (narration) lastNarratedToolCall = key;
                   }
-                  if (settledOnly || publishedToolCalls.has(key) || !toolCallSettled(call)) return;
+                  if (
+                    settledOnly ||
+                    publishedToolCalls.has(key) ||
+                    !toolCallSettled(call) ||
+                    key === exceptKey
+                  )
+                    return;
                   publishedToolCalls.add(key);
                   const narration = pendingToolNarrations.get(key) ?? '';
                   this.activityTail = this.activityTail
@@ -1131,7 +1173,15 @@ export class MonolithCornerTurnLoop {
                   undefined,
                   (calls) => {
                     trace.toolCalls(calls);
+                    // Observe (snapshot the narration that preceded each newly
+                    // seen call) THEN publish: a human watching a corner sees a
+                    // tool's row the moment it settles, not batched at the
+                    // turn's end behind a still-running sibling call. The
+                    // current tail (`lastNarratedToolCall`) is held back:
+                    // `flushToolCalls` may still need to drop its narration if
+                    // it turns out to duplicate the turn's final reply.
                     publishToolCalls(calls, true);
+                    publishToolCalls(calls, false, lastNarratedToolCall);
                   },
                 );
               };

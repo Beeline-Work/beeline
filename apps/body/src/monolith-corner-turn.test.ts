@@ -16,12 +16,13 @@ import {
   cornerHasUndeliveredRepositoryWork,
   cornerMergeInstruction,
   cornerReviewerInstruction,
+  cornerSelfReviewerInstruction,
   cornerToolActivity,
   MonolithCornerTurnLoop,
 } from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SOUL_HOUSE_RULE } from './response-directives.js';
-import { attachFile, writeScratchFile } from './read-only-mcp.js';
+import { agentToolsFor, attachFile, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { sharedNpmCacheDir } from './warm-node-modules.js';
 
@@ -74,6 +75,28 @@ describe('corner merge instructions', () => {
     expect(instruction).not.toContain('unknown checks');
     expect(cornerReviewerInstruction({ ...reviewer, openedByAgent: true })).toBeUndefined();
     expect(cornerReviewerInstruction({ ...reviewer, agentHandle: 'bee' })).toBeUndefined();
+  });
+
+  it('gives the self-reviewer line only when the reviewer opens its own corner', () => {
+    const selfReviewer = { reviewerHandle: 'echo', agentHandle: 'echo', openedByAgent: true };
+    const instruction = cornerSelfReviewerInstruction(selfReviewer)!;
+    expect(instruction).toContain("You are this Room's reviewer");
+    expect(instruction).toContain('do not request one');
+    expect(instruction).toContain('do not tag any agent for review');
+    expect(instruction).toContain('merge yourself');
+    // A non-reviewer opener (someone else is the configured reviewer): nothing.
+    expect(
+      cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' }),
+    ).toBeUndefined();
+    // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
+    // that case instead, so this stays undefined.
+    expect(
+      cornerSelfReviewerInstruction({ ...selfReviewer, openedByAgent: false }),
+    ).toBeUndefined();
+    // No reviewer configured at all: nothing either.
+    expect(
+      cornerSelfReviewerInstruction({ ...selfReviewer, reviewerHandle: undefined }),
+    ).toBeUndefined();
   });
 
   it('nudges delivery for dirty work without disposing of it', async () => {
@@ -245,12 +268,22 @@ describe('corner merge instructions', () => {
         ]),
       }),
     );
-    expect(input?.mcpServers).toContainEqual(
-      expect.objectContaining({
-        name: 'beeline-agent',
-        env: expect.arrayContaining([{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }]),
-      }),
+    const agentServer = input?.mcpServers.find((server) => server.name === 'beeline-agent');
+    expect(agentServer?.env).toEqual(
+      expect.arrayContaining([
+        { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
+        { name: 'BEELINE_CORNER_REVIEWER', value: '1' },
+      ]),
     );
+    const agentEnvironment = new Map(agentServer?.env.map(({ name, value }) => [name, value]));
+    expect(
+      agentToolsFor(
+        agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+        agentEnvironment.get('BEELINE_AGENT_DM') === '1',
+        Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+        agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+      ).map((tool) => tool.name),
+    ).toContain('approve_merge');
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   });
 });
@@ -931,6 +964,97 @@ describe('corner close-request polling cadence', () => {
       scheduler,
     };
   }
+
+  it('publishes a settled tool call before a still-running sibling call completes', async () => {
+    let closeReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    const activityTitleAt = (): string[] =>
+      writes
+        .filter((write) => write.name === 'postAgentActivity')
+        .flatMap((write) =>
+          (write.input.activity as Array<{ title?: string }>).map((activity) => activity.title),
+        );
+    let titlesWhileSlowCallStillRunning: string[] = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        // Tool call A: issued and completes immediately.
+        const fast = {
+          kind: 'execute' as const,
+          title: 'Run fast check',
+          rawInput: { command: 'echo fast' },
+          status: 'in_progress' as const,
+        };
+        toolActivity?.([fast]);
+        const settledFast = { ...fast, status: 'completed' as const };
+        toolActivity?.([settledFast]);
+        // Let the corner turn's async activity-publish chain settle before the
+        // long-running sibling call (B) even starts, so a production 6-minute
+        // second tool call cannot be what makes A's row appear.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        titlesWhileSlowCallStillRunning = activityTitleAt();
+        // Tool call B: still running (never settled until here).
+        const slow = {
+          kind: 'execute' as const,
+          title: 'Run slow test suite',
+          rawInput: { command: 'vitest run' },
+          status: 'in_progress' as const,
+        };
+        toolActivity?.([slow]);
+        const settledSlow = { ...slow, status: 'completed' as const };
+        toolActivity?.([settledSlow]);
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Done.',
+          toolCalls: [settledFast, settledSlow],
+        };
+      },
+    );
+    await loop.run();
+    await scheduler.dispose();
+
+    // The failing-test behavior this reproduces: A's activity row was batched
+    // with B's and posted only after the whole turn (and B) finished, so
+    // `titlesWhileSlowCallStillRunning` came back empty here.
+    expect(titlesWhileSlowCallStillRunning).toContain('Run fast check');
+    expect(titlesWhileSlowCallStillRunning).not.toContain('Run slow test suite');
+    expect(activityTitleAt()).toEqual(
+      expect.arrayContaining(['Run fast check', 'Run slow test suite']),
+    );
+  });
 
   it('keeps a tool-only narration in the final reply once', async () => {
     let closeReads = 0;
@@ -1934,6 +2058,29 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining('Never restate server check or merge notes'),
+      }),
+    );
+    // Item 2: no schedule may poll the merge gate, and a schedule-triggered
+    // turn stays as silent as a checks turn unless it is actionable.
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'Never create a schedule to poll pr_checks_status or the merge gate',
+        ),
+      }),
+    );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'tagging any agent other than the configured reviewer cannot clear the gate',
+        ),
+      }),
+    );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+        ),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(

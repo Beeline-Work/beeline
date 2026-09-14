@@ -102,6 +102,9 @@ describe('RoomMemberPickerActions', () => {
   it('says the Room already holds them when the workspace has peers and none are addable (C83)', () => {
     // The captain's report: a Room whose Workspace members are ALL already in
     // it read "Nobody else in this workspace yet", which is a different fact.
+    // A people-scoped picker never offers "Connect a new agent" (the People
+    // "+" skips this render entirely once nobody is addable, but the row
+    // stays hidden here too since this component is the one authority).
     const renderer = render(
       <RoomMemberPickerActions
         addableCount={0}
@@ -115,12 +118,48 @@ describe('RoomMemberPickerActions', () => {
     );
     const empty = renderer.root.findAllByProps({ testID: 'room-member-picker-empty' }).at(-1)!;
     expect(empty.props.children).toBe('All the people in this workspace are already here.');
-    // The two workspace-level entries stay below it either way.
     expect(testIds(renderer)).toEqual([
       'room-member-picker-actions',
       'room-member-picker-empty',
       'room-member-picker-invite-person',
-      'room-member-picker-add-agent',
+    ]);
+  });
+
+  it('never offers "Connect a new agent" from a people-scoped picker, even with people addable', () => {
+    const onAddAgent = vi.fn();
+    const renderer = render(
+      <RoomMemberPickerActions
+        addableCount={2}
+        busy={false}
+        canManage
+        canConnectAgent
+        kind="person"
+        onAddAgent={onAddAgent}
+        onInvitePerson={vi.fn()}
+      />,
+    );
+    expect(testIds(renderer)).toEqual([
+      'room-member-picker-actions',
+      'room-member-picker-invite-person',
+    ]);
+  });
+
+  it('tells a non-manager to ask a workspace manager on a people-scoped picker too', () => {
+    const renderer = render(
+      <RoomMemberPickerActions
+        addableCount={0}
+        busy={false}
+        canManage={false}
+        canConnectAgent
+        kind="person"
+        onAddAgent={vi.fn()}
+        onInvitePerson={vi.fn()}
+      />,
+    );
+    expect(testIds(renderer)).toEqual([
+      'room-member-picker-actions',
+      'room-member-picker-empty',
+      'room-member-picker-ask-manager',
     ]);
   });
 

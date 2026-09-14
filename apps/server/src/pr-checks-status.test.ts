@@ -144,12 +144,32 @@ describe('PR-scoped check gate', () => {
       pullRequest: URL,
       headSha: SHA,
       approvalPending: false,
+      reviewer: null,
+      reviewerIsAuthor: false,
+      rule: 'This Room has no configured reviewer, so no agent approval gates this pull request.',
     });
     expect(requests.some((url) => url.endsWith('/status'))).toBe(true);
     expect(
       (await db.query(`SELECT facts FROM github_head_checks WHERE head_sha=$1`, [SHA])).rows[0]!
         .facts,
     ).toEqual({ 'run:1': 'passed' });
+  });
+
+  it('lifts the self-review deadlock when the corner opener is the parent Room\'s configured reviewer', async () => {
+    await ownPr();
+    await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
+    await db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [A, 'reviewer']);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    expect(await gate(AUTHOR)).toEqual({
+      checks: 'passed',
+      pullRequest: URL,
+      headSha: SHA,
+      approvalPending: false,
+      reviewer: '@reviewer',
+      reviewerIsAuthor: true,
+      rule:
+        "You opened this corner and are also this Room's configured reviewer (@reviewer), so self-review is not required — approve_merge cannot add signal over your own work. approvalPending is false; merge once checks pass.",
+    });
   });
 
   it('defaults to the author PR and shares existing head facts with a reviewer', async () => {
@@ -229,7 +249,13 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ approvalPending: true });
     await db.query(`DELETE FROM corner_merge_approvals`);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
-    expect(await gate()).toMatchObject({ approvalPending: true });
+    await db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [A, 'reviewer']);
+    expect(await gate()).toMatchObject({
+      approvalPending: true,
+      reviewer: '@reviewer',
+      reviewerIsAuthor: false,
+      rule: expect.stringContaining("Only @reviewer's approve_merge clears this gate"),
+    });
     await expect(
       daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
     ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });

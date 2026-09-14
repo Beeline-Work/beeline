@@ -10,6 +10,7 @@ import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
   COMPONENT_PATH_RULES,
+  DESKTOP_VERSION_BASELINE,
   createServerImageLedger,
   evaluateServerCanarySample,
   evaluateServerCanaryWindow,
@@ -32,8 +33,16 @@ import {
 } from './unified-release.mjs';
 
 const OLD_SHA = '1'.repeat(40);
+const MID_SHA = '3'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
 const RELEASE_SCRIPT = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
+
+test('the release planner reads its desktop migration floor from the Tauri version file', () => {
+  const desktopVersion = JSON.parse(readFileSync(
+    new URL('../apps/mobile/src-tauri/desktop-version.json', import.meta.url), 'utf8',
+  )).version;
+  assert.equal(DESKTOP_VERSION_BASELINE, desktopVersion);
+});
 
 function run(command, args, cwd) {
   return execFileSync(command, args, { cwd, encoding: 'utf8', timeout: 10_000 });
@@ -57,6 +66,7 @@ function deliveredPrevious() {
       version: 'v0.0.8',
       sourceSha: OLD_SHA,
       artifactRef: `${component}-v0.0.8-${OLD_SHA}`,
+      ...(component === 'desktop' ? { desktopVersion: '0.2.20' } : {}),
     }])),
   };
 }
@@ -488,9 +498,32 @@ test('unchanged components carry previous version, sha, and immutable artifact r
       version: 'v0.0.8',
       sourceSha: OLD_SHA,
       artifactRef: `${component}-v0.0.8-${OLD_SHA}`,
+      ...(component === 'desktop' ? { desktopVersion: '0.2.20' } : {}),
     });
   }
   assert.match(releasePlanSummary(state).carried.helper, /^v0\.0\.8@1111/);
+});
+
+test('a selected desktop advances only its own monotonic version', () => {
+  const state = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents: ['desktop'],
+  });
+  assert.equal(state.components.desktop.version, 'v0.0.9');
+  assert.equal(state.components.desktop.desktopVersion, '0.2.21');
+  assert.equal(state.components['mobile-native'].version, 'v0.0.8');
+});
+
+test('a carried desktop version advances once after intervening non-desktop releases', () => {
+  const nonDesktop = initializeRelease({
+    version: 'v0.0.9', sourceSha: MID_SHA, previous: deliveredPrevious(), selectedComponents: ['server'],
+  });
+  nonDesktop.state = 'delivered';
+  nonDesktop.components.server.state = 'checked';
+  const desktop = initializeRelease({
+    version: 'v0.0.10', sourceSha: NEW_SHA, previous: nonDesktop, selectedComponents: ['desktop'],
+  });
+  assert.equal(nonDesktop.components.desktop.desktopVersion, '0.2.20');
+  assert.equal(desktop.components.desktop.desktopVersion, '0.2.21');
 });
 
 test('same-identity selection supplements only a stale carried component', () => {
@@ -826,7 +859,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   assert.match(android.if, /run_mobile_native == 'true'/);
   assert.match(android.if, /native_android == 'true'/);
   assert.equal(android.needs, 'initialize');
-  assert.deepEqual(android['runs-on'], ['self-hosted', 'beeline-prod-host']);
+  assert.deepEqual(android['runs-on'], ['self-hosted', 'beeline-android']);
   assert.equal(android['timeout-minutes'], 60);
   assert.match(ios.if, /run_mobile_native == 'true'/);
   assert.match(ios.if, /native_ios == 'true'/);
@@ -845,7 +878,8 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     // The Android leg builds on the self-hosted Linux runner (PR #1229): one
     // pinned eas-cli, --package + env -u for the same reasons as the iOS leg,
     // and a local build that writes the aab straight into RUNNER_TEMP.
-    assert.match(androidBuild.run, /test -d "\$ANDROID_HOME\/platform-tools"/);
+    assert.match(androidBuild.run, /for candidate in "\$\{ANDROID_HOME:-\}" \/home\/lunchbox\/android-sdk "\$HOME\/Android\/Sdk"/);
+    assert.match(androidBuild.run, /test -d "\$\{ANDROID_HOME:-\}\/platform-tools"/);
     assert.match(
       androidBuild.run,
       /npx --yes --package="eas-cli@\$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform android --profile production-ci --non-interactive --output "\$RUNNER_TEMP\/beeline\.aab"/,
@@ -856,6 +890,8 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     )) {
       assert.match(step.if, /store_track != 'none'/);
     }
+    const playUpload = androidSteps.find((step) => step.name === 'Upload Android to the selected Play track');
+    assert.equal(playUpload.env.PACKAGE_NAME, 'app.usebeeline');
 
     const iosCredentials = ios.steps.find((step) => step.name === 'Require iOS release credentials');
     const iosBuild = ios.steps.find((step) => step.name === 'Build immutable iOS store binary locally');
@@ -877,7 +913,12 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.match(iosBuild.run, /build --local --platform ios --profile production-ci --non-interactive --output/);
     assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
     assert.match(iosBuild.run, /id:`local-\$\{sha256\}`/);
-    assert.match(iosSubmit.run, /submit --platform ios --profile production --path "\$RUNNER_TEMP\/beeline-ios\.ipa" --non-interactive --wait/);
+    assert.match(
+      iosSubmit.run,
+      /xcrun altool --upload-app -t ios -f "\$RUNNER_TEMP\/beeline-ios\.ipa" \\\n\s+--apiKey "\$EXPO_ASC_KEY_ID" --apiIssuer "\$EXPO_ASC_ISSUER_ID" --output-format json/,
+    );
+    assert.doesNotMatch(iosSubmit.run, /npx .*eas submit/);
+    assert.match(cleanup.run, /rm -rf "\$RUNNER_TEMP\/private_keys"/);
     const androidEvidence = androidSteps.find((step) => step.name === 'Preserve Android build evidence');
     const iosEvidence = ios.steps.find((step) => step.name === 'Preserve iOS build evidence');
     assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');

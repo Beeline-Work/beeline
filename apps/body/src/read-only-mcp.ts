@@ -45,6 +45,7 @@ import {
   normalizeCornerText,
   ARTIFACT_MIME_TYPES,
   isArtifactMime,
+  type ArtifactUploadResult,
 } from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_KINDS,
@@ -1465,7 +1466,7 @@ export async function attachFile(
 
 export interface PostArtifactDeps {
   roomId: string;
-  upload: (bytes: Buffer, mime: string, title: string) => Promise<JsonObject>;
+  upload: (bytes: Buffer, mime: string, title: string) => Promise<ArtifactUploadResult>;
   queue: (attachment: JsonObject) => Promise<void>;
 }
 
@@ -1509,9 +1510,8 @@ export async function postArtifact(
   }
   validateArtifact(mime, bytes, title);
   const uploaded = await deps.upload(bytes, mime, title);
-  const url = typeof uploaded.url === 'string' && uploaded.url ? uploaded.url : undefined;
-  if (!url) throw new Error('the artifact upload returned no url');
-  await deps.queue({ url, name: title, mimeType: mime, size: bytes.length });
+  if (!uploaded.url) throw new Error('the artifact upload returned no url');
+  await deps.queue({ url: uploaded.url, name: title, mimeType: mime, size: bytes.length });
   return (
     `Posted artifact "${title}" (${bytes.length} bytes, ${mime}); it is delivered with your ` +
     'final reply. Ask for feedback here in the Room.'
@@ -1954,7 +1954,7 @@ async function daemonUploadArtifact(
   bytes: Buffer,
   mime: string,
   title: string,
-): Promise<JsonObject> {
+): Promise<ArtifactUploadResult> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const response = await fetch(new URL('/v1/daemon/artifacts', `${baseUrl}/`), {
     method: 'POST',
@@ -1975,7 +1975,13 @@ async function daemonUploadArtifact(
     }
     throw new Error(`artifact upload failed (${response.status}: ${code})`);
   }
-  return (await response.json()) as JsonObject;
+  const body = (await response.json()) as JsonObject;
+  return {
+    url: typeof body.url === 'string' ? body.url : '',
+    mimeType: typeof body.mimeType === 'string' ? body.mimeType : mime,
+    size: typeof body.size === 'number' ? body.size : bytes.length,
+    name: typeof body.name === 'string' ? body.name : title,
+  };
 }
 
 async function callAgentTool(name: string, args: JsonObject): Promise<string> {

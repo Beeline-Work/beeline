@@ -1,4 +1,4 @@
-import { ARTIFACT_MAX_BYTES, ARTIFACT_MIME_TYPES, type ArtifactMime } from '@beeline/api-contract/daemon';
+import { ARTIFACT_MAX_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
 
 /**
  * The plan's per-format validation matrix for `post_artifact`. The mime
@@ -10,7 +10,6 @@ import { ARTIFACT_MAX_BYTES, ARTIFACT_MIME_TYPES, type ArtifactMime } from '@bee
  * mock that reaches for the network is not a mock.
  */
 
-export type ArtifactFormat = ArtifactMime;
 
 const SELF_CONTAINED_REFUSALS: readonly { pattern: RegExp; what: string }[] = [
   { pattern: /<\s*script[\s/>]/i, what: 'a <script> element' },

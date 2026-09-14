@@ -103,7 +103,7 @@ describe('beeline-agent post_artifact', () => {
     await expect(
       postArtifact(
         { title: 't', mime: 'text/html', html: VALID_HTML },
-        { roomId: 'room-1', upload: async () => ({}), queue: async (a) => void queued.push(a) },
+        { roomId: 'room-1', upload: async () => ({ url: '' }), queue: async (a) => void queued.push(a) },
       ),
     ).rejects.toThrow(/no url/);
     expect(queued).toHaveLength(0);

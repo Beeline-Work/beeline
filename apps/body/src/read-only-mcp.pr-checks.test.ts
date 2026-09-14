@@ -151,6 +151,20 @@ describe('approve_merge', () => {
     );
     expect(calls).toEqual([]);
   });
+
+  it.each([614, url])(
+    'records a mention-woken verdict for the explicit reviewer target %s',
+    async (pullRequest) => {
+      await expect(approveMerge({ pullRequest, headSha: 'A'.repeat(40) })).resolves.toContain(
+        '"approved"',
+      );
+      expect(calls).toContainEqual({
+        name: 'approveCornerMerge',
+        input: { cornerId: 'corner', pullRequest, headSha: 'a'.repeat(40) },
+      });
+      expect(computePatchId).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('patch identity wiring', () => {

@@ -1108,20 +1108,33 @@ export class DaemonService {
       )
     ).rows[0];
     if (!target) throw new Error('corner reviewer approval denied');
-    if (!target.pull_request_number || !target.head_sha) throw new Error('corner has no pull request');
-    if (target.head_sha !== input.headSha)
+    let pullRequestNumber = target.pull_request_number;
+    let headSha = target.head_sha;
+    if (input.pullRequest !== undefined) {
+      if (!this.prChecksStatus) throw new Error('GitHub PR checks service unavailable');
+      const live = await this.prChecksStatus({
+        cornerId: input.cornerId,
+        pullRequest: input.pullRequest,
+      });
+      const number = live.pullRequest.match(/\/pull\/(\d+)\/?$/)?.[1];
+      if (!number) throw new Error('GitHub returned an invalid pull request URL');
+      pullRequestNumber = Number(number);
+      headSha = live.headSha;
+    }
+    if (!pullRequestNumber || !headSha) throw new Error('corner has no pull request');
+    if (headSha !== input.headSha)
       throw new Error('pull request head changed; review the current head before approving');
     await recordCornerMergeApproval(this.database, {
       cornerId: input.cornerId,
       approvedBy: agentId,
       force: false,
-      pullRequestNumber: target.pull_request_number,
-      headSha: target.head_sha,
+      pullRequestNumber,
+      headSha,
       patchId: input.patchId,
     });
     return {
-      pullRequestNumber: target.pull_request_number,
-      headSha: target.head_sha,
+      pullRequestNumber,
+      headSha,
       status: 'approved' as const,
     };
   }

@@ -64,4 +64,9 @@ shares head-bound check facts across corners, and reconciles missing/invalidated
 with GitHub check runs and combined commit status. A single webhook check is not a complete
 snapshot. Human holds remain in the helper's requesting-corner conversation scan.
 
+`approveCornerMerge({ cornerId, pullRequest?, headSha })` records the configured reviewer's
+verdict. When `pullRequest` is supplied, the server resolves that PR in the parent Room's
+repository and rejects a verdict whose exact head has moved. This lets a reviewer woken in a
+different corner approve the same explicit PR it inspected with `getPrChecksStatus`.
+
 Deploy the server before helpers that call this operation.

@@ -119,7 +119,12 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string; readonly patchId?: string },
+    CornerInput & {
+      /** Required when the reviewed PR is not the current corner's durable PR. */
+      readonly pullRequest?: number | string;
+      readonly headSha: string;
+      readonly patchId?: string;
+    },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;

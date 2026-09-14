@@ -424,7 +424,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         html: {
           type: 'string',
-          description: 'The document as text. Use for text/html and image/svg+xml (and small text/markdown).',
+          description:
+            'The document as text. Use for text/html and image/svg+xml (and small text/markdown).',
         },
         bytes: {
           type: 'string',
@@ -458,11 +459,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'approve_merge',
     description:
-      'Record the configured reviewer’s PASS for the exact pull-request head you reviewed. This does not merge. Call it only after a complete beeline-review PASS, using that review’s full head SHA; then tag the implementer with approval and clearance to merge.',
+      'Record the configured reviewer’s PASS for the exact pull-request head you reviewed. This does not merge. Call it only after a complete beeline-review PASS, using that review’s full head SHA. When pr_checks_status used an explicit pullRequest, pass the same number or URL here; otherwise this defaults to the current corner’s PR. Then tag the implementer with approval and clearance to merge.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
       properties: {
+        pullRequest: {
+          anyOf: [{ type: 'integer', minimum: 1 }, { type: 'string' }],
+          description:
+            'The same PR number or full GitHub URL passed to pr_checks_status. Omit only when reviewing this corner’s own PR.',
+        },
         headSha: {
           type: 'string',
           pattern: '^[0-9a-fA-F]{40}$',
@@ -1315,8 +1321,21 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
-  const patchId = await cornerPatchId(cornerId);
-  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha, patchId }));
+  const pullRequest =
+    typeof args.pullRequest === 'number' || typeof args.pullRequest === 'string'
+      ? args.pullRequest
+      : undefined;
+  // An explicit PR can be a sibling's branch, so this corner's patch identity
+  // says nothing about whether that reviewed diff survived a later catch-up.
+  const patchId = pullRequest === undefined ? await cornerPatchId(cornerId) : undefined;
+  return JSON.stringify(
+    await daemonExecute('approveCornerMerge', {
+      cornerId,
+      ...(pullRequest === undefined ? {} : { pullRequest }),
+      headSha,
+      ...(patchId ? { patchId } : {}),
+    }),
+  );
 }
 
 export interface WriteScratchFileDeps {

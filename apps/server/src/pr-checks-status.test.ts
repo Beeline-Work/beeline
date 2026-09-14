@@ -244,6 +244,36 @@ describe('PR-scoped check gate', () => {
     ).rejects.toThrow('corner reviewer approval denied');
   });
 
+  it('records an exact-head verdict from a mention-woken reviewer corner', async () => {
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: C, pullRequest: URL, headSha: SHA }, A),
+    ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
+    expect(
+      await db.query(
+        `SELECT corner_id,approved_by,pull_request_number,head_sha,patch_id
+         FROM corner_merge_approvals WHERE corner_id=$1`,
+        [C],
+      ),
+    ).toMatchObject({
+      rows: [
+        {
+          corner_id: C,
+          approved_by: A,
+          pull_request_number: 614,
+          head_sha: SHA,
+          patch_id: null,
+        },
+      ],
+    });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
+
+    head = '7'.repeat(40);
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: C, pullRequest: 614, headSha: SHA }, A),
+    ).rejects.toThrow('pull request head changed');
+  });
+
   it('carries a reviewer approval over a clean catch-up head via matching patch_id', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);

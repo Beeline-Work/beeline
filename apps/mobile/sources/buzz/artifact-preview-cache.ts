@@ -65,5 +65,3 @@ async function existingPreview(objectId: string): Promise<string | null> {
 export function resetArtifactPreviewCache(): void {
   inFlight.clear();
 }
-
-export const ARTIFACT_PREVIEW_STORE = { snapshotArtifactPreview, resetArtifactPreviewCache };

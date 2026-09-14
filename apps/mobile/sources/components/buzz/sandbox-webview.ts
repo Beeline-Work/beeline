@@ -47,9 +47,3 @@ export function useSandboxWebView(): WebViewComponent | null {
   }, []);
   return webView;
 }
-
-/** Test seam: forget the cached module so a test can re-probe it. */
-export function resetSandboxWebViewCache(): void {
-  webviewModule = undefined;
-  webviewLoad = null;
-}

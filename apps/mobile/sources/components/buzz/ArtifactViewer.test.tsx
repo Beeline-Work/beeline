@@ -1,0 +1,176 @@
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  platformOS: { value: 'android' as string },
+  fetchArtifactBytes: vi.fn(),
+  fetchArtifactText: vi.fn(),
+  openArtifactInBrowserOrExplain: vi.fn(),
+  artifactPdfLocalUri: vi.fn(),
+  onClose: vi.fn(),
+}));
+
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: Record<string, unknown>) =>
+    ReactModule.createElement(name, props, props.children as React.ReactNode);
+  return {
+    Platform: {
+      get OS() {
+        return mocks.platformOS.value;
+      },
+      select: (choices: Record<string, unknown>) => choices.default,
+    },
+    Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
+    Text: host('Text'),
+    View: host('View'),
+  };
+});
+vi.mock('react-native-webview', () => ({
+  default: (props: Record<string, unknown>) => React.createElement('WebView', props, null),
+}));
+vi.mock('react-native-unistyles', () => ({
+  StyleSheet: {
+    hairlineWidth: 1,
+    create: (factory: (theme: unknown) => unknown) =>
+      factory({ buzz: { border: '#333', bgBase: '#111', space: { sm: 8, md: 12 } } }),
+  },
+}));
+vi.mock('@/buzz/artifact-link', () => ({
+  artifactPdfLocalUri: mocks.artifactPdfLocalUri,
+  fetchArtifactBytes: mocks.fetchArtifactBytes,
+  fetchArtifactText: mocks.fetchArtifactText,
+  openArtifactInBrowserOrExplain: mocks.openArtifactInBrowserOrExplain,
+}));
+vi.mock('@/components/buzz/MonoMarkdown', () => ({
+  MonoMarkdown: (props: Record<string, unknown>) => React.createElement('MonoMarkdown', props, null),
+}));
+
+import { ArtifactViewerSandbox, ArtifactViewerScreen } from './ArtifactViewer';
+
+const originalConsoleError = console.error;
+beforeAll(() => {
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    originalConsoleError(message, ...args);
+  });
+});
+afterAll(() => vi.restoreAllMocks());
+
+function attachment(overrides: Record<string, unknown> = {}) {
+  return {
+    url: 'https://usebeeline.app/v1/media/9f0f6a50-1111-4222-8333-444455556666',
+    name: 'login-mock.html',
+    mimeType: 'text/html',
+    size: 2048,
+    kind: 'artifact' as const,
+    title: 'Login mock',
+    ...overrides,
+  };
+}
+
+function render(element: React.ReactElement): ReactTestRenderer {
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(element);
+  });
+  return renderer;
+}
+
+async function flush(): Promise<void> {
+  // Real macrotask ticks, not just microtasks: under a loaded test worker the
+  // dynamic `import('react-native-webview')` a full suite run contends with
+  // needs more than a handful of Promise.resolve() turns to settle.
+  for (let round = 0; round < 20; round += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
+describe('the full-screen artifact viewer (mock 1c)', () => {
+  it('renders HTML in the sandboxed WebView: script off, guarded, no message bridge', async () => {
+    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body><p>mock</p></body></html>'));
+    const renderer = render(<ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />);
+    await flush();
+    const webview = renderer.root.findByType('WebView');
+    expect(webview.props.javaScriptEnabled).toBe(false);
+    expect(webview.props.originWhitelist).toEqual([]);
+    expect(webview.props.setSupportMultipleWindows).toBe(false);
+    expect(webview.props.allowFileAccess).toBe(false);
+    expect(Object.hasOwn(webview.props, 'onMessage')).toBe(false);
+    expect(webview.props.scrollEnabled).toBe(true);
+    // The wrapped source carries the CSP meta ahead of the page.
+    const html = (webview.props.source as { html: string }).html;
+    expect(html.indexOf('Content-Security-Policy')).toBeLessThan(html.indexOf('<body>'));
+    // Closing is the header affordance only.
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'artifact-viewer-close' }).props.onPress();
+    });
+    expect(mocks.onClose).toHaveBeenCalled();
+  });
+
+  it('every navigation after the initial load is denied', async () => {
+    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body></body></html>'));
+    const renderer = render(<ArtifactViewerSandbox attachment={attachment()} format="html" />);
+    await flush();
+    const webview = renderer.root.findByType('WebView');
+    const guard = webview.props.onShouldStartLoadWithRequest as (r: { url: string }) => boolean;
+    expect(guard({ url: 'about:blank' })).toBe(true);
+    expect(guard({ url: 'https://evil.example/next' })).toBe(false);
+  });
+
+  it('renders markdown through the app renderer with its own scroll', async () => {
+    mocks.fetchArtifactText.mockResolvedValue('# Heading');
+    const renderer = render(
+      <ArtifactViewerScreen
+        attachment={attachment({ mimeType: 'text/markdown', name: 'notes.md' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-markdown' })).toBeDefined();
+    expect(renderer.root.findByType('MonoMarkdown')).toBeDefined();
+  });
+
+  it('on Android a PDF is one handoff to the system viewer, then the modal closes', async () => {
+    mocks.platformOS.value = 'android';
+    mocks.openArtifactInBrowserOrExplain.mockResolvedValue(undefined);
+    const renderer = render(
+      <ArtifactViewerScreen
+        attachment={attachment({ mimeType: 'application/pdf', name: 'spec.pdf' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-handoff' })).toBeDefined();
+    expect(mocks.openArtifactInBrowserOrExplain).toHaveBeenCalled();
+    expect(mocks.onClose).toHaveBeenCalled();
+  });
+
+  it('on iOS a PDF rides the local cache file in the sandbox', async () => {
+    mocks.platformOS.value = 'ios';
+    mocks.artifactPdfLocalUri.mockResolvedValue('file:///cache/artifact-pdf-x.pdf');
+    const renderer = render(
+      <ArtifactViewerScreen
+        attachment={attachment({ mimeType: 'application/pdf', name: 'spec.pdf' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    const webview = renderer.root.findByType('WebView');
+    expect((webview.props.source as { uri: string }).uri).toBe('file:///cache/artifact-pdf-x.pdf');
+    expect(webview.props.javaScriptEnabled).toBe(false);
+  });
+
+  it('a failed fetch is a spoken state, never a blank screen', async () => {
+    mocks.fetchArtifactBytes.mockRejectedValue(new Error('404'));
+    const renderer = render(<ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />);
+    await flush();
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-failed' })).toBeDefined();
+  });
+});

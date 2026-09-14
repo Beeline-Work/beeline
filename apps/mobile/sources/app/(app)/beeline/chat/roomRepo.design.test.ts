@@ -61,10 +61,10 @@ describe('Room→repo header chip', () => {
 });
 
 describe('Room→repo corner-open lazy prompt', () => {
-  it('short-circuits handleSend on a repo-less Room before the composer is cleared', () => {
+  it('short-circuits message submission on a repo-less Room before the composer is cleared', () => {
     const handleSend = blockFrom(
       chatSource,
-      'const handleSend = useCallback(async () => {',
+      'const handleSend = useCallback(async (shortcut?: MessageShortcut) => {',
       'handleSend',
     );
     const guardIndex = handleSend.indexOf('looksLikeCornerOpenIntent(rawText)');
@@ -76,6 +76,20 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(handleSend.indexOf("setInputText('')")).toBeGreaterThan(
       handleSend.indexOf('setCornerOpenRepoPrompt(true)'),
     );
+  });
+
+  it('sends proposal shortcuts without consuming the composer draft or its attachments', () => {
+    const handleSend = blockFrom(
+      chatSource,
+      'const handleSend = useCallback(async (shortcut?: MessageShortcut) => {',
+      'handleSend',
+    );
+    expect(handleSend).toContain(
+      'const activePendingAttachments = shortcut ? [] : pendingAttachments;',
+    );
+    expect(handleSend).toContain('shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current');
+    expect(handleSend).toMatch(/if \(!shortcut\) \{[\s\S]*setInputText\(''\)/);
+    expect(chatSource).toContain("text: decision === 'open' ? 'go' : 'cancel'");
   });
 
   it('shows the repo access guidance in the prompt', () => {

@@ -91,6 +91,10 @@ vi.mock('@/buzz/chat-attachment', () => ({
 
 const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
 vi.mock('@/utils/open-external-url', () => openExternal);
+vi.mock('@/components/buzz/ArtifactCard', async () => {
+  const ReactModule = await import('react');
+  return { ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props) };
+});
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -819,6 +823,83 @@ describe('Room message variant components', () => {
     expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(
       0,
     );
+  });
+
+  it('adds Open and Cancel to an exact agent corner proposal without replacing reply swipe', () => {
+    const onDecision = vi.fn();
+    const onReply = vi.fn();
+    const proposal = message({
+      id: 'corner-proposal',
+      text: 'Proposed corner: Faster reads — Bound query latency under load',
+      pubkey: 'agent-sol',
+      isAgentAuthor: true,
+    });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={proposal}
+        agent={{ pubkey: 'agent-sol', displayName: 'Sol' }}
+        desktopLayout={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onCornerProposalDecision={onDecision}
+        onReply={onReply}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    act(() =>
+      renderer.root.findByProps({ testID: 'corner-proposal-open-corner-proposal' }).props.onPress(),
+    );
+    expect(onDecision).toHaveBeenCalledWith(proposal, 'open');
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'corner-proposal-cancel-corner-proposal' })
+        .props.onPress(),
+    );
+    expect(onDecision).toHaveBeenCalledWith(proposal, 'cancel');
+
+    const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
+    act(() => swipe.props.onSwipeableOpen('right'));
+    expect(onReply).toHaveBeenCalledWith(proposal);
+  });
+
+  it('does not add corner actions to an agent message that only quotes the proposal syntax', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'quoted-proposal',
+          text: 'Try replying with “Proposed corner: Faster reads — Bound latency”.',
+          pubkey: 'agent-sol',
+          isAgentAuthor: true,
+        })}
+        agent={{ pubkey: 'agent-sol', displayName: 'Sol' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onCornerProposalDecision={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(
+      renderer.root.findAllByProps({ testID: 'corner-proposal-actions-quoted-proposal' }),
+    ).toHaveLength(0);
   });
 
   it('uses the same reply swipe for corner narration and tool-call activity', () => {
@@ -1769,4 +1850,54 @@ describe('relay hand-offs', () => {
       expect(renderer.root.findAllByProps({ testID: 'relay-toggle-message' })).toHaveLength(0);
     },
   );
+});
+
+describe('Connector receipt cards', () => {
+  const receiptMessage = (text: string): ChatDisplayMessage =>
+    message({ id: 'connector-receipt', text });
+
+  const renderReceipt = (text: string) => {
+    const row = receiptMessage(text);
+    return render(
+      <OrdinaryLedgerMessage
+        message={row}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onReact={vi.fn()}
+        onForward={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+  };
+
+  it('renders a receipt DM from a connector identity as prose plus the receipt card', () => {
+    const renderer = renderReceipt(
+      'Vercel deploy finished.\n' +
+        'receipt: Vercel · deploy · via Trusty Squire on squire-box · grant hoots · 2 calls · 2.1 kB',
+    );
+    const card = renderer.root.findByProps({ testID: 'connector-receipt-card' });
+    expect(card).toBeDefined();
+    const summary = (
+      renderer.root.findAllByProps({ testID: 'connector-receipt-summary' })[0] as any
+    ).props.children as string;
+    expect(summary).toBe('Vercel · deploy · squire-box · grant hoots · 2 calls · 2.1 kB');
+    // The receipt line itself never double-prints as ledger prose.
+    const ledgerProps = ledgerEntryRender.mock.lastCall?.[0];
+    expect(ledgerProps.bodyText).toBe('Vercel deploy finished.');
+  });
+
+  it('renders an ordinary message with no receipt line untouched', () => {
+    const renderer = renderReceipt('Just a normal ledger entry.');
+    expect(renderer.root.findAllByProps({ testID: 'connector-receipt-card' })).toHaveLength(0);
+    expect(ledgerEntryRender.mock.lastCall?.[0].bodyText).toBe('Just a normal ledger entry.');
+  });
 });

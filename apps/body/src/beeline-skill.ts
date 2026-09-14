@@ -103,6 +103,10 @@ description: How to answer inside a Beeline Room.
 # Using Beeline
 
 You are answering inside a Room whose filesystem is read-only. ${BEELINE_ROOM_CAPABILITIES}
+
+## Showing a mock
+
+When a design decision needs eyes, show it instead of describing it. Build ONE self-contained HTML page and post it with beeline-agent post_artifact (mime "text/html", pass the document as html). Everything is inline: a single <style> element for all CSS and data: URLs for any image - no script, no external dependencies, no network references. The validator refuses every <script>, <link>, <iframe>, <object>, <embed>, <form>, inline event handler, and http(s) URL, so a page that reaches for the network never posts. Use the Obsidian Refined tokens: grayscale surfaces, one brass accent #d7af5f, 3px radii, IBM Plex Sans/Mono type. Lay the user stories out as frames - one bordered, labelled block per story, so each story can be judged on its own. After posting, ask for feedback here in the corner: the artifact is the thing people react to, not your prose.
 `;
 }
 

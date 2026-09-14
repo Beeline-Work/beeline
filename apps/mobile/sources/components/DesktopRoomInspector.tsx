@@ -26,6 +26,13 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal';
+import {
+  clearDesktopArtifactPane,
+  currentDesktopArtifact,
+  subscribeDesktopArtifact,
+  type DesktopArtifactSelection,
+} from '@/buzz/desktop-artifact-pane';
+import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
@@ -125,6 +132,11 @@ export function DesktopRoomInspector({
   const [workflowRunning, setWorkflowRunning] = React.useState<string | null>(null);
   const workflowLoadGeneration = React.useRef(0);
   const dragStart = React.useRef(width);
+  const [artifact, setArtifact] = React.useState<DesktopArtifactSelection | null>(currentDesktopArtifact());
+  React.useEffect(
+    () => subscribeDesktopArtifact((selection) => setArtifact(selection)),
+    [],
+  );
 
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
   React.useEffect(() => {
@@ -266,7 +278,13 @@ export function DesktopRoomInspector({
   return (
     <View style={[styles.inspector, { width }]} testID="desktop-inspector">
       <View {...resizePan.panHandlers} style={styles.resizer} testID="desktop-inspector-resizer" />
-      {selectedCornerId ? (
+      {artifact ? (
+        <DesktopArtifactPane
+          attachment={artifact.attachment}
+          authorHandle={artifact.authorHandle}
+          onClose={() => clearDesktopArtifactPane()}
+        />
+      ) : selectedCornerId ? (
         <CornerCockpit
           detail={detail}
           loading={loading}

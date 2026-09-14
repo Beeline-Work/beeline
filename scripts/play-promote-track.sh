@@ -81,7 +81,7 @@ api POST "$API/edits/$EDIT_ID:validate" -H "Content-Length: 0" >/dev/null
 echo "  ok"
 
 echo "▸ Committing edit"
-api POST "$API/edits/$EDIT_ID:commit" -H "Content-Length: 0" >/dev/null
+api POST "$API/edits/$EDIT_ID:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
 echo "  $FROM_TRACK → $TO_TRACK promotion committed."
 echo ""
 case "$RELEASE_STATUS" in

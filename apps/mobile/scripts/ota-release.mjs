@@ -27,11 +27,16 @@ import {
 const EAS_CLI_VERSION = '22.2.0';
 // During a compatibility rollout the production branch carries more than one
 // iOS runtime. Read enough history to resolve every current release target.
-const PRODUCTION_LOOKUP_LIMIT = '10';
+const PRODUCTION_LOOKUP_LIMIT = '30';
 // Keep this committed rollout switch on until runtime-24 adoption is high
 // enough that operators intentionally stop serving the App Store build-8
 // runtime. Turning it off removes only the iOS@23 compatibility target.
 export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
+// Same shape for Android: phones still on the Play 0.2.19 build (runtime 23)
+// keep receiving updates until the runtime-24 store binary has reached them.
+// The only native addition since runtime 23 (expo-speech-recognition) is
+// required lazily inside a try/catch, so the shared bundle runs on both.
+export const PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 
 function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
@@ -43,12 +48,14 @@ function targetKey(target) {
 export function releaseUpdateTargets(
   projectDir = process.cwd(),
   publishIosRuntime23 = PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
+  publishAndroidRuntime23 = PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT,
 ) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
   }
   const pins = readPinnedRuntimeVersion(projectDir);
   const targets = [
+    ...(publishAndroidRuntime23 ? [{ platform: 'android', runtimeVersion: '23' }] : []),
     { platform: 'android', runtimeVersion: pins.android },
     ...(publishIosRuntime23 ? [{ platform: 'ios', runtimeVersion: '23' }] : []),
     { platform: 'ios', runtimeVersion: pins.ios },

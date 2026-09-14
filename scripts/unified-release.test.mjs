@@ -877,7 +877,12 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.match(iosBuild.run, /build --local --platform ios --profile production-ci --non-interactive --output/);
     assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
     assert.match(iosBuild.run, /id:`local-\$\{sha256\}`/);
-    assert.match(iosSubmit.run, /submit --platform ios --profile production --path "\$RUNNER_TEMP\/beeline-ios\.ipa" --non-interactive --wait/);
+    assert.match(
+      iosSubmit.run,
+      /xcrun altool --upload-app -t ios -f "\$RUNNER_TEMP\/beeline-ios\.ipa" \\\n\s+--apiKey "\$EXPO_ASC_KEY_ID" --apiIssuer "\$EXPO_ASC_ISSUER_ID" --output-format json/,
+    );
+    assert.doesNotMatch(iosSubmit.run, /npx .*eas submit/);
+    assert.match(cleanup.run, /rm -rf "\$RUNNER_TEMP\/private_keys"/);
     const androidEvidence = androidSteps.find((step) => step.name === 'Preserve Android build evidence');
     const iosEvidence = ios.steps.find((step) => step.name === 'Preserve iOS build evidence');
     assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');

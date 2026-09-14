@@ -125,7 +125,9 @@ function RailCommand({
   const [labelled, setLabelled] = useState(false);
   const keepsVisibleLabel = column || label === 'YOU';
   return (
-    <TouchableOpacity
+    // Pressable, not a Touchable: onHoverIn/onHoverOut are real Pressable
+    // props, and a Touchable would silently drop them on web.
+    <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onBlur={() => setLabelled(false)}
@@ -133,7 +135,11 @@ function RailCommand({
       onHoverIn={() => setLabelled(true)}
       onHoverOut={() => setLabelled(false)}
       onPress={onPress}
-      style={[styles.railCommand, column && styles.columnCommand]}
+      style={({ pressed }) => [
+        styles.railCommand,
+        column && styles.columnCommand,
+        pressed && styles.railCommandPressed,
+      ]}
       testID={testID}
     >
       {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children}
@@ -146,10 +152,10 @@ function RailCommand({
           style={styles.railCommandHoverLabel}
           testID={`${testID}-hover-label`}
         >
-          <Text style={styles.railCommandHoverText}>{label}</Text>
+          <Text style={[styles.railCommandLabel, styles.railCommandHoverText]}>{label}</Text>
         </View>
       ) : null}
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -680,12 +686,10 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
       zIndex: 2,
     },
-    railCommandHoverText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.6,
+    railCommandHoverText: { color: groknight.textPrimary },
+    /* A press dims the command like the TouchableOpacity it replaced. */
+    railCommandPressed: {
+      opacity: 0.6,
     },
     drawerOverlay: {
       ...StyleSheet.absoluteFillObject,

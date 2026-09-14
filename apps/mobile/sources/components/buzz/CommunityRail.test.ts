@@ -259,20 +259,22 @@ describe('Workspace drawer', () => {
 
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
-    const gear = renderer.root.findByProps({ testID: 'workspace-settings-community-1' });
-    expect(gear.props.accessibilityLabel).toBe('Night Shift Workspace');
+    const gearButton = renderer.root
+      .findAllByType('Pressable' as any)
+      .find((node) => node.props.testID === 'workspace-settings-community-1');
+    expect(gearButton?.props.accessibilityLabel).toBe('Night Shift Workspace');
     expect(
       renderer.root
         .findAllByType('Text' as any)
         .some((node) => node.props.children === 'WORKSPACE'),
     ).toBe(false);
-    act(() => gear.props.onHoverIn());
+    act(() => gearButton!.props.onHoverIn());
     expect(
       renderer.root
         .findByProps({ testID: 'workspace-settings-community-1-hover-label' })
         .findByType('Text' as any).props.children,
     ).toBe('WORKSPACE');
-    act(() => gear.props.onPress());
+    act(() => gearButton!.props.onPress());
     expect(onOpen).toHaveBeenCalledWith('community-1');
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
 
@@ -298,14 +300,16 @@ describe('Workspace drawer', () => {
     expect(visibleLabels).not.toContain('ADD');
     expect(visibleLabels).toContain('YOU');
 
-    const add = renderer.root.findByProps({ testID: 'community-rail-add' });
-    act(() => add.props.onHoverIn());
+    const addButton = renderer.root
+      .findAllByType('Pressable' as any)
+      .find((node) => node.props.testID === 'community-rail-add');
+    act(() => addButton!.props.onHoverIn());
     expect(
       renderer.root
         .findByProps({ testID: 'community-rail-add-hover-label' })
         .findByType('Text' as any).props.children,
     ).toBe('ADD');
-    act(() => add.props.onHoverOut());
+    act(() => addButton!.props.onHoverOut());
     expect(renderer.root.findAllByProps({ testID: 'community-rail-add-hover-label' })).toHaveLength(
       0,
     );
@@ -335,7 +339,7 @@ describe('Workspace drawer', () => {
 
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     const mySettings = renderer.root
-      .findAllByType('TouchableOpacity' as any)
+      .findAllByType('Pressable' as any)
       .find((node) => node.props.testID === 'community-rail-settings');
     expect(mySettings?.props.accessibilityLabel).toBe('Your settings');
     act(() => renderer.root.findByProps({ testID: 'community-rail-settings' }).props.onPress());

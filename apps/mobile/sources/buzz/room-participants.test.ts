@@ -12,6 +12,7 @@ import {
   replaceActiveMention,
   resolveComposerMentions,
   selectedMentionPubkeys,
+  shouldReadWorkspaceRoster,
   sectionRoomParticipants,
   sectionRoomRoster,
 } from './room-participants';
@@ -32,6 +33,25 @@ describe('Room participant presentation', () => {
 
   it('shows up to five names without splitting people and agents', () => {
     expect(formatRoomParticipantList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C, D, E');
+  });
+
+  it('reads models on Room entry and keeps the cached roster across later reads', () => {
+    const firstRead = {
+      activeWorkspaceId: 'workspace',
+      cachedWorkspaceId: null,
+      rosterSurfaceVisible: false,
+    };
+    expect(shouldReadWorkspaceRoster(firstRead)).toBe(true);
+    expect(shouldReadWorkspaceRoster({ ...firstRead, cachedWorkspaceId: 'workspace' })).toBe(
+      false,
+    );
+    expect(
+      shouldReadWorkspaceRoster({
+        ...firstRead,
+        cachedWorkspaceId: 'workspace',
+        rosterSurfaceVisible: true,
+      }),
+    ).toBe(true);
   });
 
   it('folds larger Rooms into four names plus one overflow phrase', () => {

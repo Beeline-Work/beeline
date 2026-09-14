@@ -137,6 +137,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  agentBylineLabel,
   OrdinaryLedgerMessage,
   RelayHandOff,
   TargetBranchProposalCard,
@@ -176,12 +177,24 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 }
 
 describe('Room message variant components', () => {
+  it('keeps the agent label beside the model without changing model casing', () => {
+    expect(agentBylineLabel('  openrouter/deepseek-deepseek-v.4.1-flash  ')).toBe(
+      'AGENT · openrouter/deepseek-deepseek-v.4.1-flash',
+    );
+    expect(agentBylineLabel()).toBe('AGENT');
+    expect(agentBylineLabel('   ')).toBe('AGENT');
+  });
+
   it('keeps Room and corner conversations on one composer, mention, and transcript component path', () => {
     expect(conversationSource.match(/<ConversationComposer/g)).toHaveLength(1);
     expect(composerSource).toContain('testID={`${testIDPrefix}-input`}');
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
+    expect(conversationSource).toContain('agentModel={');
+    expect(conversationSource).toContain(
+      'workspaceAgentModelByPubkey.get(item.authorIdentity.pubkey)',
+    );
     expect(conversationSource).toContain(
       'inputSelection.start === inputSelection.end\n        ? activeMentionAtCursor',
     );
@@ -1370,6 +1383,7 @@ describe('Room message variant components', () => {
       <OrdinaryLedgerMessage
         message={consecutive}
         agent={{ pubkey: 'agent-lumen', displayName: 'Lumen' }}
+        agentModel="  openrouter/deepseek-deepseek-v.4.1-flash  "
         continued
         participantsHydrated
         viewerPubkey="viewer"
@@ -1387,7 +1401,7 @@ describe('Room message variant components', () => {
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Lumen',
-      role: 'agent',
+      role: 'AGENT · openrouter/deepseek-deepseek-v.4.1-flash',
       mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
   });

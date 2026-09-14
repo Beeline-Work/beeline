@@ -1236,6 +1236,8 @@ export function RelayHandOff({ message }: { message: ChatDisplayMessage }) {
 export interface OrdinaryLedgerMessageProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
+  /** Selected model for the agent byline. Effort is deliberately not accepted. */
+  agentModel?: string;
   participantsHydrated: boolean;
   personName?: string;
   viewerPubkey: string;
@@ -1266,6 +1268,12 @@ export interface OrdinaryLedgerMessageProps {
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
   announcementFeed?: boolean;
   desktopLayout?: boolean;
+}
+
+/** Keep the agent role explicit while adding model-only metadata. */
+export function agentBylineLabel(model?: string): string {
+  const selectedModel = model?.trim();
+  return selectedModel ? `AGENT · ${selectedModel}` : 'AGENT';
 }
 
 /**
@@ -1323,6 +1331,7 @@ export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   message,
   agent,
+  agentModel,
   participantsHydrated,
   personName,
   viewerPubkey,
@@ -1394,7 +1403,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
-          role: isAgent ? 'agent' : undefined,
+          role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp: ledgerStamp(message.timestamp),
           isViewer: isSelfSteer,
           ...(announcementFeed
@@ -1488,6 +1497,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <ActivityTimeline
             active={message.isAgentLiveTurn === true}
             handle={!continued && isAgent ? voiceName : undefined}
+            role={agentBylineLabel(agentModel)}
             mark={
               !continued && isAgent
                 ? {

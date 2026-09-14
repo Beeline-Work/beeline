@@ -436,7 +436,7 @@ describe('live streaming turn', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('line 9');
   });
 
-  it("renders the settled row's byline — IdentityMark + name + kind + stamp — on the live draft", () => {
+  it("renders the settled row's byline — IdentityMark + name + model + stamp — on the live draft", () => {
     // Captain report C42: the streamed draft lane's byline must be exactly
     // the settled message byline (`Ledger.LedgerBylineView`), so the agent
     // triangle is present and nothing changes visually when the draft
@@ -445,6 +445,7 @@ describe('live streaming turn', () => {
       <ActivityTimeline
         active
         handle="Codex"
+        role="AGENT · openrouter/deepseek-deepseek-v.4.1-flash"
         stamp="14:02"
         items={[{ kind: 'tool', id: 'edit', title: 'Edit files', toolKind: 'edit' }]}
         messageDraft="Working on it now."
@@ -471,8 +472,12 @@ describe('live streaming turn', () => {
     byline.findAll((node: any) => node.type === 'Text').forEach(collect);
     const bylineText = textStrings.join('');
     expect(bylineText).toContain('Codex');
-    expect(bylineText).toContain('agent');
+    expect(bylineText).toContain('AGENT · openrouter/deepseek-deepseek-v.4.1-flash');
+    expect(bylineText).not.toContain('effort');
     expect(bylineText).toContain('14:02');
+    const role = renderer.root.findByProps({ testID: 'chat-byline-role' });
+    expect(role.props.numberOfLines).toBe(1);
+    expect(role.props.ellipsizeMode).toBe('tail');
   });
 
   it('renders no identity mark when no byline handle is present', () => {

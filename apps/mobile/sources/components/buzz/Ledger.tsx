@@ -21,9 +21,9 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  *
  * Identity lives in the byline above every agent prose message and the first
  * message in a human run: the speaker's
- * 26px face tile, then the name in the identity's own hue at body size, a
- * quiet mono `agent` tag where applicable, and the mono HH:MM stamp pinned
- * right. A human message is plain body text — regular weight, primary tone,
+ * 26px face tile, then the name in the identity's own hue at body size, the
+ * quiet mono `AGENT · model` metadata (or `AGENT` fallback), and the mono HH:MM
+ * stamp pinned right. A human message is plain body text — regular weight, primary tone,
  * same size as everything — so nothing but the brass byline name marks it as
  * the viewer's own.
  *
@@ -59,7 +59,7 @@ export type LedgerBylineMark = {
 export type LedgerByline = {
   /** The voice's display name. */
   name?: string;
-  /** A quiet role tag, e.g. `agent`. */
+  /** Quiet agent metadata, e.g. `AGENT · claude-opus-4-1`. */
   role?: string;
   /** The 24h clock stamp, mono. */
   stamp: string;
@@ -312,7 +312,12 @@ function Byline({ byline }: { byline: LedgerByline }) {
           </Text>
         ) : null}
         {byline.role ? (
-          <Text style={styles.bylineTag} testID="chat-byline-role">
+          <Text
+            ellipsizeMode="tail"
+            numberOfLines={1}
+            style={styles.bylineTag}
+            testID="chat-byline-role"
+          >
             {byline.role}
           </Text>
         ) : null}
@@ -812,11 +817,12 @@ const styles = StyleSheet.create((theme) => ({
   // The quiet role tag and the clock stamp keep the mono metadata voice.
   bylineTag: {
     ...Typography.mono(),
+    maxWidth: '44%',
+    flexShrink: 1,
     color: theme.buzz.ledgerQuiet,
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 0.9,
-    textTransform: 'uppercase',
   },
   bylineStamp: {
     ...Typography.mono(),

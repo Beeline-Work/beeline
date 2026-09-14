@@ -32,6 +32,7 @@ import {
   formatNotificationHeadlines,
 } from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
+import { ArtifactCard } from '@/components/buzz/ArtifactCard';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
 import {
@@ -1529,9 +1530,23 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       testID={`chat-machine-noise-${message.id}`}
     />
   ) : null;
-  const attachments = message.attachments?.map((attachment) => (
-    <AttachmentCard attachment={attachment} key={`${message.id}-${attachment.url}`} />
-  ));
+  const attachments = message.attachments?.map((attachment) =>
+    attachment.kind === 'artifact' && !attachment.expired ? (
+      <ArtifactCard
+        attachment={attachment}
+        authorHandle={
+          attachment.author ??
+          (message.authorIdentity?.kind === 'agent'
+            ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
+            : undefined)
+        }
+        isDesktop={desktopLayout}
+        key={`${message.id}-${attachment.url}`}
+      />
+    ) : (
+      <AttachmentCard attachment={attachment} key={`${message.id}-${attachment.url}`} />
+    ),
+  );
 
   const content = (
     <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>

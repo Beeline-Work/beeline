@@ -92,7 +92,11 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|_app| {
+            #[cfg(desktop)]
+            _app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             #[cfg(target_os = "linux")]
             {
                 // AppImages have no installer to register their desktop file.

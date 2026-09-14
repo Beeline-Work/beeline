@@ -1,8 +1,7 @@
 [package]
 name = "beeline-desktop"
-# The shipped version is read from apps/mobile/package.json by
-# tauri.conf.json's `"version": "../package.json"`, so the release version has
-# exactly one home. This number only names the crate to cargo.
+# The shipped version is supplied by the desktop release plan. This number
+# only names the crate to cargo.
 version = "0.0.0"
 description = "Beeline desktop shell"
 authors = ["Beeline"]
@@ -32,6 +31,8 @@ tauri-plugin-http = "~2.5"
 tauri-plugin-opener = "~2.5"
 tauri-plugin-deep-link = "~2.4"
 tauri-plugin-single-instance = { version = "=2.3.2", features = ["deep-link"] }
+tauri-plugin-updater = "~2.9"
+tauri-plugin-process = "=2.3.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

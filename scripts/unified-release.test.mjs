@@ -32,6 +32,7 @@ import {
 } from './unified-release.mjs';
 
 const OLD_SHA = '1'.repeat(40);
+const MID_SHA = '3'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
 const RELEASE_SCRIPT = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
 
@@ -57,6 +58,7 @@ function deliveredPrevious() {
       version: 'v0.0.8',
       sourceSha: OLD_SHA,
       artifactRef: `${component}-v0.0.8-${OLD_SHA}`,
+      ...(component === 'desktop' ? { desktopVersion: '0.2.20' } : {}),
     }])),
   };
 }
@@ -488,9 +490,32 @@ test('unchanged components carry previous version, sha, and immutable artifact r
       version: 'v0.0.8',
       sourceSha: OLD_SHA,
       artifactRef: `${component}-v0.0.8-${OLD_SHA}`,
+      ...(component === 'desktop' ? { desktopVersion: '0.2.20' } : {}),
     });
   }
   assert.match(releasePlanSummary(state).carried.helper, /^v0\.0\.8@1111/);
+});
+
+test('a selected desktop advances only its own monotonic version', () => {
+  const state = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents: ['desktop'],
+  });
+  assert.equal(state.components.desktop.version, 'v0.0.9');
+  assert.equal(state.components.desktop.desktopVersion, '0.2.21');
+  assert.equal(state.components['mobile-native'].version, 'v0.0.8');
+});
+
+test('a carried desktop version advances once after intervening non-desktop releases', () => {
+  const nonDesktop = initializeRelease({
+    version: 'v0.0.9', sourceSha: MID_SHA, previous: deliveredPrevious(), selectedComponents: ['server'],
+  });
+  nonDesktop.state = 'delivered';
+  nonDesktop.components.server.state = 'checked';
+  const desktop = initializeRelease({
+    version: 'v0.0.10', sourceSha: NEW_SHA, previous: nonDesktop, selectedComponents: ['desktop'],
+  });
+  assert.equal(nonDesktop.components.desktop.desktopVersion, '0.2.20');
+  assert.equal(desktop.components.desktop.desktopVersion, '0.2.21');
 });
 
 test('same-identity selection supplements only a stale carried component', () => {

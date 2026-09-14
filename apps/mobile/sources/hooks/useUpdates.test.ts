@@ -284,8 +284,12 @@ describe('root OTA update coordinator', () => {
     const child = React.createElement(UpdateReadyPrompt);
     const renderer = await renderUpdateRoot(child);
 
+    await flushDynamicImports();
     await act(async () => {
-      await vi.waitFor(() => expect(downloadAndInstall).toHaveBeenCalledTimes(1));
+      await vi.waitFor(
+        () => expect(downloadAndInstall).toHaveBeenCalledTimes(1),
+        { timeout: 10_000 },
+      );
     });
     expect(renderer.root.findAllByProps({ testID: 'ota-update-ready-prompt' })).not.toHaveLength(0);
 

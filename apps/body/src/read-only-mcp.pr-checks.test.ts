@@ -4,6 +4,7 @@ import { approveMerge, prChecksStatus } from './read-only-mcp.js';
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
 let checks: string, approvalPending: boolean;
+let reviewer: string | null, reviewerIsAuthor: boolean, gateRule: string;
 let calls: { name: string; input: Record<string, unknown> }[];
 beforeEach(() => {
   for (const [key, value] of Object.entries({
@@ -18,6 +19,9 @@ beforeEach(() => {
   items = [];
   checks = 'passed';
   approvalPending = false;
+  reviewer = '@reviewer';
+  reviewerIsAuthor = false;
+  gateRule = "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
   calls = [];
   vi.stubGlobal('fetch', async (input: URL, init: RequestInit) => {
     const name = new URL(input).pathname.split('/').pop()!;
@@ -32,7 +36,15 @@ beforeEach(() => {
             : name === 'getRoomAuthority'
               ? { archived: false }
               : name === 'getPrChecksStatus'
-                ? { checks, pullRequest: url, headSha: 'a'.repeat(40), approvalPending }
+                ? {
+                  checks,
+                  pullRequest: url,
+                  headSha: 'a'.repeat(40),
+                  approvalPending,
+                  reviewer,
+                  reviewerIsAuthor,
+                  rule: gateRule,
+                }
                 : name === 'approveCornerMerge'
                   ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
                 : {};
@@ -99,6 +111,22 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       held: false,
       approvalPending: true,
+    });
+  });
+  it('passes through the named reviewer and folds the server rule into the merge-conditions rule', async () => {
+    const result = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(result).toMatchObject({ reviewer: '@reviewer', reviewerIsAuthor: false });
+    expect(result.rule).toContain(gateRule);
+    expect(result.rule).toContain('Merge only when checks is passed');
+  });
+  it('reports self-review as no gate when the opener is also the reviewer', async () => {
+    reviewerIsAuthor = true;
+    gateRule =
+      "You opened this corner and are also this Room's configured reviewer (@reviewer), so self-review is not required.";
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
+      reviewer: '@reviewer',
+      reviewerIsAuthor: true,
+      approvalPending: false,
     });
   });
   it('fails closed on a server error instead of using green chat prose', async () => {

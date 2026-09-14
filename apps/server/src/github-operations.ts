@@ -518,14 +518,18 @@ export class GitHubOperations {
       await this.database.query<{
         parent_id: string;
         lifecycle: CornerLifecycleView;
+        owner_agent_id: string | null;
         reviewer_agent_id: string | null;
+        reviewer_handle: string | null;
       }>(
-        `SELECT r.parent_id,f.lifecycle,reviewer.identity_id reviewer_agent_id
+        `SELECT r.parent_id,f.lifecycle,f.owner_agent_id,reviewer.identity_id reviewer_agent_id,
+                reviewer_identity.handle reviewer_handle
          FROM rooms r
          JOIN corner_facts f ON f.corner_id=r.id
          JOIN rooms parent ON parent.id=r.parent_id
          LEFT JOIN memberships reviewer ON reviewer.room_id=parent.id
            AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
+         LEFT JOIN identities reviewer_identity ON reviewer_identity.id=reviewer.identity_id
          WHERE r.id=$1`,
         [input.cornerId],
       )
@@ -598,13 +602,34 @@ export class GitHubOperations {
          AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
       [corner.parent_id, number, pr.headSha, corner.reviewer_agent_id],
     );
+    // The parent Room's reviewer opened this very corner: no OTHER agent's
+    // approve_merge can ever exist for it, so requiring one is a permanent
+    // deadlock, not a real gate.
+    const reviewerIsAuthor = Boolean(
+      corner.reviewer_agent_id &&
+        corner.owner_agent_id &&
+        corner.reviewer_agent_id === corner.owner_agent_id,
+    );
+    const approvalPending = reviewerIsAuthor
+      ? false
+      : corner.reviewer_agent_id
+        ? approval.rowCount === 0
+        : approval.rowCount > 0;
+    const reviewer = corner.reviewer_handle ? `@${corner.reviewer_handle}` : null;
+    const reviewerLabel = reviewer ?? 'the configured reviewer';
+    const rule = reviewerIsAuthor
+      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. approvalPending is false; merge once checks pass.`
+      : corner.reviewer_agent_id
+        ? `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
+        : 'This Room has no configured reviewer, so no agent approval gates this pull request.';
     return {
       checks,
       pullRequest: pr.url,
       headSha: pr.headSha,
-      approvalPending: corner.reviewer_agent_id
-        ? approval.rowCount === 0
-        : approval.rowCount > 0,
+      approvalPending,
+      reviewer,
+      reviewerIsAuthor,
+      rule,
     };
   }
 

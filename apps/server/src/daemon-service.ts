@@ -1117,6 +1117,7 @@ export class DaemonService {
       force: false,
       pullRequestNumber: target.pull_request_number,
       headSha: target.head_sha,
+      patchId: input.patchId,
     });
     return {
       pullRequestNumber: target.pull_request_number,
@@ -2813,28 +2814,20 @@ export class DaemonService {
          VALUES($1,$2,$3,$4,$5,'{"lifecycle":"working","checks":"unknown"}')`,
         [cornerId, agentId, commissionedBy ?? null, objective, input.requestId],
       );
-      // Membership makes every agent a participant in this shared Room, so
-      // each one needs a durable intake command for its initial objective.
-      // Merely copying membership lets a helper list and access the corner but
-      // leaves its command loop asleep forever.
-      const agents = await db.query<{ identity_id: string }>(
-        `SELECT membership.identity_id
-         FROM memberships membership
-         JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
-         WHERE membership.room_id=$1 AND membership.removed_at IS NULL
-         ORDER BY membership.identity_id`,
-        [cornerId],
-      );
-      for (const member of agents.rows)
-        await createAgentCommand(db, {
-          roomId: cornerId,
-          agentId: member.identity_id,
-          sourceMessageId: parentCommand.source_message_id,
-          reason: 'corner_objective',
-          parent: parentCommand,
-          retainDepth: true,
-          turnRequestId: input.requestId,
-        });
+      // The objective is the OPENER's work. Every other agent is copied in as a
+      // member so it can read the corner and answer when tagged, but it gets no
+      // intake command: #1206 fanned the objective out to every agent member and
+      // every agent in the workspace started working the same corner at once
+      // (captain report 2026-09-14 02:4xZ, corner "Workspace Rail Labels").
+      await createAgentCommand(db, {
+        roomId: cornerId,
+        agentId,
+        sourceMessageId: parentCommand.source_message_id,
+        reason: 'corner_objective',
+        parent: parentCommand,
+        retainDepth: true,
+        turnRequestId: input.requestId,
+      });
       // One durable open marker in the parent Room; the phone renders this as
       // a daemon-fact card and the push rule fires on it.
       await systemLine(db, {
@@ -3119,6 +3112,15 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   requestAgentGrant: true,
   listAgentGrants: true,
   consumeAgentGrant: true,
+  // Workbench connector operations (PR 1 contract + helper side). The server
+  // executes them through the Workbench connector service in the Workbench
+  // server PR; until that lands execute() answers `unsupported daemon operation`.
+  installConnector: true,
+  getConnectorStatus: true,
+  getConnectorVaultList: true,
+  getConnectionDetail: true,
+  revokeConnectionGrants: true,
+  postConnectionUsage: true,
   createCorner: true,
   archiveCorner: true,
   ensureAgentMembership: true,

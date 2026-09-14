@@ -26,6 +26,10 @@ import { isCornerStatusRestatement } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
+import {
+  captureConnectionUsage,
+  ConnectorUsageRecorder,
+} from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
@@ -75,9 +79,9 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (reviewerHandle)
-    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then merge with gh pr merge --squash --match-head-commit <sha>.`;
+    return `Commit, push, open the PR, and reply with the URL. Once @${reviewerHandle} tags you with approval, YOU merge it yourself with gh pr merge --squash --match-head-commit <sha> — the server never merges a corner's pull request and never sends any closing request; nothing else will do this for you. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.`;
   return yoloMode
-    ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
+    ? "Yolo is on: when the gate passes, merge this pull request with gh yourself — the server never merges. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again."
     : 'Yolo is off: never merge; wait for explicit human approval in the app.';
 }
 
@@ -119,7 +123,7 @@ export const CORNER_DELIVERY_NUDGE =
   'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
 
 export const CORNER_YOLO_MERGE_NUDGE =
-  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop without merging.';
+  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh yourself — the server never merges and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop without merging.';
 
 function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
   return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
@@ -368,6 +372,8 @@ export interface MonolithCornerTurnOptions {
   /** The daemon's command-grant runner; this corner registers its worktree and current turn. */
   grantRunner?: GrantCommandRunner;
   grantRunnerEndpoint?: GrantRunnerEndpoint;
+  /** Connection usage capture: batched per turn into one postConnectionUsage. */
+  connectorUsage?: ConnectorUsageRecorder;
 }
 
 /**
@@ -1064,6 +1070,7 @@ export class MonolithCornerTurnLoop {
               const flushToolCalls = async (
                 calls: readonly ToolCallEntry[],
                 finalReply: string,
+                final = false,
               ): Promise<void> => {
                 await this.activityTail;
                 if (
@@ -1072,6 +1079,15 @@ export class MonolithCornerTurnLoop {
                 )
                   pendingToolNarrations.delete(lastNarratedToolCall);
                 publishToolCalls(calls, false);
+                await this.activityTail;
+                if (this.options.connectorUsage) {
+                  captureConnectionUsage(
+                    this.options.connectorUsage,
+                    { requestId, agentId: this.agent.publicKey, cornerId },
+                    calls,
+                  );
+                  if (final) await this.options.connectorUsage.flush(api, requestId);
+                }
                 await this.activityTail;
                 publishToolCalls(calls, false);
                 await this.activityTail;
@@ -1190,7 +1206,7 @@ export class MonolithCornerTurnLoop {
               if (!reply && explained?.recoveredText)
                 reply = durableReplyText(explained.recoveredText);
               reply = [replyBeforeNudge, reply].filter(Boolean).join('\n\n');
-              await flushToolCalls(result.toolCalls, reply);
+              await flushToolCalls(result.toolCalls, reply, true);
               // A refusal the operator cannot read is a refusal that happens twice.
               for (const call of result.toolCalls) {
                 const failure = toolCallFailureLine(call);

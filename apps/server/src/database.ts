@@ -715,6 +715,9 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 );
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
+-- Same-diff carry-over: an approval recorded for one head stays valid for a later
+-- head whose change against the target branch is byte-identical (see patch_id below).
+ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS patch_id text;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,
@@ -852,6 +855,30 @@ CREATE TABLE IF NOT EXISTS push_delivery_floors (
   id text PRIMARY KEY,
   started_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Owner-initiated workspace deletion is a real DELETE FROM workspaces, whose
+-- ON DELETE CASCADE already empties rooms/memberships/messages/invites/etc
+-- (every one of those tables carries workspace_id or a room_id that chains to
+-- it). These two tables record the fact independent of the workspace row, so
+-- the audit trail and the other members' notice both survive the cascade.
+CREATE TABLE IF NOT EXISTS workspace_deletions (
+  workspace_id uuid PRIMARY KEY,
+  workspace_name text NOT NULL,
+  deleted_by text NOT NULL REFERENCES identities(id),
+  deleted_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- One row per member (other than the deleter) at deletion time, consumed by
+-- readWorkspaces on that member's next sync.
+CREATE TABLE IF NOT EXISTS workspace_deletion_notices (
+  id bigserial PRIMARY KEY,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL,
+  workspace_name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workspace_deletion_notices_identity_idx
+  ON workspace_deletion_notices(identity_id, created_at);
 
 CREATE TABLE IF NOT EXISTS workspace_join_notifications (
   id text PRIMARY KEY,

@@ -181,6 +181,6 @@ Then take exactly one action:
 
 - FAIL: reply \`@author\` with the confirmed findings to fix.
 - PASS: call \`approve_merge\` with the reviewed head SHA, then reply \`@author approved <reviewed sha>, merge\`.
-- Never merge the pull request yourself.
+- Never merge the pull request yourself. The author merges it with \`gh\` once the gate is open; the server never merges and never sends a closing request of any kind, so there is no further step to wait for. If the author reports the head moved only because the branch caught up on its target with no new changes, that does not need a fresh review — only re-review a head whose diff actually changed.
 `;
 }

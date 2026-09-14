@@ -110,7 +110,7 @@ export type DaemonOperationMap = {
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   getPrChecksStatus: Operation<
-    CornerInput & { pullRequest?: number | string },
+    CornerInput & { pullRequest?: number | string; patchId?: string },
     {
       checks: 'passed' | 'failed' | 'pending';
       pullRequest: string;
@@ -119,7 +119,7 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string },
+    CornerInput & { readonly headSha: string; readonly patchId?: string },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;
@@ -159,6 +159,15 @@ export type DaemonOperationMap = {
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
   listAgentGrants: Operation<AgentInput, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
+  installConnector: Operation<InstallConnectorInput, WriteResult>;
+  getConnectorStatus: Operation<AgentInput, ConnectorStatus>;
+  getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
+  getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
+  revokeConnectionGrants: Operation<
+    AgentInput & ConnectionRefInput,
+    ConnectionGrantRevokeResult
+  >;
+  postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   createCorner: Operation<CreateCornerInput, CornerResult>;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
@@ -545,6 +554,133 @@ export type AgentGrantListResult = {
 };
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };
+
+// ── Connector / Squire types ───────────────────────────────────────
+
+/** One named step in a connector install or status report. */
+export type ConnectorStep = {
+  readonly label: string;
+  readonly status: 'pending' | 'running' | 'done' | 'failed';
+  /** Human-readable failure reason, present only when status === 'failed'. */
+  readonly reason?: string;
+};
+
+/** Status of one connector on this helper. */
+export type ConnectorStatus = {
+  readonly connectorId: string;
+  readonly status: 'disconnected' | 'installing' | 'connected' | 'error';
+  /** Ordered installation steps; empty when disconnected or connected. */
+  readonly steps: readonly ConnectorStep[];
+  /** The Squire account email or handle this helper is signed in as. */
+  readonly signedInAs?: string;
+  /** Number of agents configured on the same helper.
+   * Present when the helper answers presence queries. */
+  readonly agentCount?: number;
+  /** Helpers are identified by name; present when status is installing or connected. */
+  readonly helperName?: string;
+  /** The version of the installed trusty-squire package. */
+  readonly squireVersion?: string;
+  /** How the human signs in, reported by the helper (Q7: Squire tells us).
+   * The app opens exactly what it is told: the streamed noVNC page URL or the
+   * OAuth authorization URL. */
+  readonly signIn?: ConnectorSignIn;
+  /** Human-readable error when status === 'error'. */
+  readonly errorMessage?: string;
+};
+
+/** The sign-in surface a connector reports while it waits for the human. */
+export type ConnectorSignIn = {
+  readonly method: 'streamed-page' | 'oauth';
+  readonly url: string;
+};
+
+/** Metadata about one vault entry (no secret values). */
+export type VaultConnectionMeta = {
+  readonly reference: string;
+  readonly service: string | null;
+  readonly label: string;
+  readonly fieldNames: readonly string[];
+  readonly allowedHosts: readonly string[];
+  readonly createdAt: number;
+  readonly stale: boolean;
+  readonly state: 'active' | 'error';
+};
+
+/** An egress grant bound to a credential. */
+export type ConnectionGrant = {
+  readonly grantId: string;
+  readonly credentialRef: string;
+  readonly createdAt: number;
+  readonly revokedAt?: number;
+  readonly rateLimitPerHour?: number;
+  readonly spendCapUsd?: number;
+};
+
+/** One entry in a connection's audit ledger. */
+export type ConnectionLedgerEntry = {
+  readonly id: string;
+  readonly timestamp: number;
+  readonly action: string;
+  readonly actor?: string;
+  readonly status?: number;
+  readonly bytes?: number;
+  /** Anomaly flag for failed or rate-limited calls. */
+  readonly anomaly?: boolean;
+  readonly anomalyReason?: string;
+};
+
+/** Full detail for one connection: live metadata plus grants and ledger. */
+export type ConnectionDetail = {
+  readonly metadata: VaultConnectionMeta;
+  /** Live grants on this credential. */
+  readonly grants: readonly ConnectionGrant[];
+  /** Recent ledger events (shaped ledger view). */
+  readonly ledger: readonly ConnectionLedgerEntry[];
+};
+
+/** Input to postConnectionUsage: one batched usage report per agent turn. */
+export type ConnectionUsageRecord = {
+  readonly ref: string;
+  readonly service: string | null;
+  readonly operation: string;
+  readonly statusCode: number;
+  readonly bytes: number;
+  readonly grantId?: string;
+  readonly grantLabel?: string;
+};
+
+/** The overall usage report for one agent turn. */
+export type PostConnectionUsageInput = {
+  readonly requestId: string;
+  readonly agentId: string;
+  readonly roomId?: string;
+  readonly cornerId?: string;
+  readonly usage: readonly ConnectionUsageRecord[];
+};
+
+/** Prerequisite check result for headless remote-login display. */
+export type LoginPrerequisiteCheck = {
+  readonly binary: string;
+  readonly found: boolean;
+  readonly path?: string;
+};
+
+// ── Connector operations ───────────────────────────────────────────
+
+export type InstallConnectorInput = AgentInput & {
+  readonly connectorId: string;
+  /** Connector-specific configuration; empty for phase 1. */
+  readonly config?: Record<string, unknown>;
+};
+
+export type ConnectionRefInput = { readonly ref: string };
+export type ConnectorVaultListResult = {
+  readonly connections: readonly VaultConnectionMeta[];
+};
+export type ConnectionGrantRevokeResult = {
+  readonly revoked: number;
+  readonly failed: number;
+};
 
 export type DaemonActivityItem = {
   readonly kind: 'thinking' | 'tool' | 'output' | 'summary';

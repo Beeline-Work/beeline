@@ -1194,6 +1194,107 @@ describe('monolith integration', () => {
     ).toBe(400);
   });
 
+  it('lets only the Workspace owner delete it, as a real cascade that leaves no orphan rows and retires bound helpers', async () => {
+    const aliceToken = await phoneToken('alice');
+    const aliceId = createHash('sha256').update('github:alice').digest('hex');
+    const bobId = createHash('sha256').update('github:bob').digest('hex');
+    const bobToken = await phoneToken('bob');
+    const workspaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    // A fresh agent whose ONLY membership is in this doomed Workspace, so the
+    // daemon-token revocation below is unambiguous — AGENT from the shared
+    // fixture also belongs to WORKSPACE and would not qualify.
+    const soleAgentId = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`,
+      [soleAgentId],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [
+      soleAgentId,
+      HUMAN,
+    ]);
+    await operation('createWorkspace', { workspaceId, name: 'Doomed' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'admin' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: bobId, role: 'member' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: soleAgentId, role: 'member' });
+    const room = (await (
+      await operation('createRoom', { workspaceId, name: 'Shared' })
+    ).json()) as { id: string };
+    await operation('addRoomMember', { roomId: room.id, memberId: aliceId });
+    await operation('sendRoomMessage', { roomId: room.id, text: 'last words' });
+    await operation('createInvite', { workspaceId });
+
+    const agentExchange = await auth.createDaemonExchange(soleAgentId);
+    const agentDaemonToken = (await auth.exchangeDaemonToken(agentExchange.exchangeToken))!
+      .daemonToken;
+
+    // Admins and members cannot delete the Workspace, only its owner can.
+    expect(
+      (await operation('deleteWorkspace', { workspaceId }, aliceToken)).status,
+    ).toBe(403);
+    expect((await operation('deleteWorkspace', { workspaceId }, bobToken)).status).toBe(403);
+
+    const deleted = await operation('deleteWorkspace', { workspaceId });
+    expect(deleted.status).toBe(204);
+    expect(await deleted.text()).toBe('');
+
+    // A real cascade: nothing keyed to this Workspace or its Rooms survives.
+    expect(
+      (await database.query(`SELECT 1 FROM workspaces WHERE id=$1`, [workspaceId])).rowCount,
+    ).toBe(0);
+    expect(
+      (await database.query(`SELECT 1 FROM rooms WHERE workspace_id=$1`, [workspaceId])).rowCount,
+    ).toBe(0);
+    expect(
+      (await database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1`, [workspaceId]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await database.query(`SELECT 1 FROM invites WHERE workspace_id=$1`, [workspaceId]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [room.id])).rowCount,
+    ).toBe(0);
+
+    // Audited: who deleted it and when, surviving the workspace row itself.
+    expect(
+      (
+        await database.query<{ deleted_by: string; workspace_name: string }>(
+          `SELECT deleted_by,workspace_name FROM workspace_deletions WHERE workspace_id=$1`,
+          [workspaceId],
+        )
+      ).rows[0],
+    ).toEqual({ deleted_by: HUMAN, workspace_name: 'Doomed' });
+
+    // Idempotent: a doubled/retried call by the very same owner resolves
+    // quietly even though its own owner membership row is now gone too.
+    const retried = await operation('deleteWorkspace', { workspaceId });
+    expect(retried.status).toBe(204);
+
+    // Other members learn about it on their next sync.
+    const aliceWorkspaces = (await (
+      await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
+    ).json()) as { deletedNotices?: Array<{ workspaceId: string; workspaceName: string }> };
+    expect(aliceWorkspaces.deletedNotices).toEqual([
+      { workspaceId, workspaceName: 'Doomed' },
+    ]);
+    // Consumed once: a second read carries no notice.
+    const aliceWorkspacesAgain = (await (
+      await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
+    ).json()) as { deletedNotices?: unknown };
+    expect(aliceWorkspacesAgain.deletedNotices).toBeUndefined();
+
+    // The bound helper's daemon token answers with the one settled fact it
+    // may retire itself on, instead of a 401 it would retry against forever.
+    const refused = await daemonOperation(
+      'getDaemonBootstrap',
+      { agentId: soleAgentId },
+      agentDaemonToken,
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'agent_removed' });
+  });
+
   it('creates a deterministic agent direct message inside the Workspace', async () => {
     await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
       lifecycleId: 'routing-fixture',

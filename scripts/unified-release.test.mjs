@@ -817,7 +817,7 @@ test('canonical routine release guidance is a single no-input dispatch', () => {
   assert.match(agents, /with no release worker and no inputs/);
 });
 
-test('native workflow keeps Android on EAS cloud and builds iOS locally on the Mac runner', () => {
+test('native workflow builds Android locally on the Linux runner and iOS locally on the Mac runner', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
@@ -826,7 +826,7 @@ test('native workflow keeps Android on EAS cloud and builds iOS locally on the M
   assert.match(android.if, /run_mobile_native == 'true'/);
   assert.match(android.if, /native_android == 'true'/);
   assert.equal(android.needs, 'initialize');
-  assert.equal(android['runs-on'], 'ubuntu-latest');
+  assert.deepEqual(android['runs-on'], ['self-hosted', 'beeline-prod-host']);
   assert.equal(android['timeout-minutes'], 60);
   assert.match(ios.if, /run_mobile_native == 'true'/);
   assert.match(ios.if, /native_ios == 'true'/);
@@ -836,25 +836,21 @@ test('native workflow keeps Android on EAS cloud and builds iOS locally on the M
   assert.equal(ios.steps.some((step) => step.uses === 'actions/setup-node@v4'), false);
 
   const androidSteps = android.steps;
-  const androidBuild = androidSteps.find((step) => step.name === 'Build immutable Android store binary');
+  const androidBuild = androidSteps.find((step) => step.name === 'Build immutable Android store binary locally');
   const credentials = androidSteps.find((step) => step.name === 'Require native release credentials');
   const project = mkdtempSync(join(tmpdir(), 'beeline-native-platforms-'));
   try {
     const env = { ...process.env, RUNNER_TEMP: project, EAS_CLI_VERSION: 'test', EXPO_TOKEN: 'fixture' };
     execFileSync('bash', ['-euc', credentials.run], { env });
-    execFileSync(
-      'bash',
-      [
-        '-euc',
-        `npm() { :; }
-        npx() { printf '%s\\n' "$*" >> "$RUNNER_TEMP/calls"; printf '{"id":"fixture","status":"FINISHED"}'; }
-        ${androidBuild.run}`,
-      ],
-      { env },
+    // The Android leg builds on the self-hosted Linux runner (PR #1229): one
+    // pinned eas-cli, --package + env -u for the same reasons as the iOS leg,
+    // and a local build that writes the aab straight into RUNNER_TEMP.
+    assert.match(androidBuild.run, /test -d "\$ANDROID_HOME\/platform-tools"/);
+    assert.match(
+      androidBuild.run,
+      /npx --yes --package="eas-cli@\$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform android --profile production-ci --non-interactive --output "\$RUNNER_TEMP\/beeline\.aab"/,
     );
-    const calls = readFileSync(join(project, 'calls'), 'utf8').trim().split('\n');
-    assert.equal(calls.length, 1);
-    assert.match(calls[0], /build --profile production --platform android --non-interactive --wait --json/);
+    assert.match(androidBuild.run, /test -s "\$RUNNER_TEMP\/beeline\.aab"/);
     for (const step of androidSteps.filter((step) =>
       ['Authenticate to Google Play', 'Upload Android to the selected Play track'].includes(step.name)
     )) {

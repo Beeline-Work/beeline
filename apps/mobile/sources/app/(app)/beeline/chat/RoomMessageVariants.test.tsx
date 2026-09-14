@@ -375,6 +375,9 @@ describe('Room message variant components', () => {
     // (b) header summary counts unique PRs per state
     const json = () => JSON.stringify(renderer.toJSON());
     expect(json()).toContain('PR · 1 failed, 4 merged');
+    expect(
+      renderer.root.findByProps({ testID: 'notification-run-head-message' }).props.style,
+    ).toMatchObject({ paddingVertical: 8 });
 
     // First item (most recently updated) is the presented cell
     expect(renderer.root.findByProps({ testID: 'notification-run-cell-corner' })).toBeDefined();

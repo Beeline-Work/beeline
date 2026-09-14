@@ -647,7 +647,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
     <View style={styles.ncFrameShell} testID={`notification-run-${message.id}`}>
       <View style={styles.ncFrame}>
         {/* Header */}
-        <View style={styles.ncHead}>
+        <View style={styles.ncHead} testID={`notification-run-head-${message.id}`}>
           <View style={styles.ncHeadCopy}>
             <View style={styles.ncTitleLine}>
               <Text style={styles.ncTitle} numberOfLines={1} ellipsizeMode="tail">
@@ -1902,7 +1902,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    paddingTop: theme.buzz.transcriptCard.headTop,
+    paddingVertical: theme.buzz.space.sm,
     paddingHorizontal: theme.buzz.transcriptCard.side,
   },
   ncHeadCopy: { flex: 1, minWidth: 0 },

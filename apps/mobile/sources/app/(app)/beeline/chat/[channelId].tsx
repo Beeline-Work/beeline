@@ -104,8 +104,11 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
+  CHANNEL_MENTION_HANDLE,
+  CHANNEL_MENTION_PUBKEY,
   filterMentionCandidates,
   formatRoomParticipantTotal,
+  isChannelMentionHandle,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
@@ -277,6 +280,20 @@ import {
 import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
+
+/**
+ * The reserved `@channel` autocomplete row: tags every human in the Room (the
+ * parent Room, for a corner) except the author, never an agent. It is not a
+ * roster member — `CHANNEL_MENTION_PUBKEY` is a sentinel, never a real
+ * identity — so it rides alongside `roomParticipants` only inside the
+ * mention menu's own candidate list.
+ */
+const CHANNEL_MENTION_OPTION: RoomMemberOption = {
+  pubkey: CHANNEL_MENTION_PUBKEY,
+  name: 'channel',
+  handle: CHANNEL_MENTION_HANDLE,
+  kind: 'person',
+};
 
 const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
@@ -1258,15 +1275,19 @@ export default function BuzzChat() {
   const mentionMenuKey = activeMention
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
+  const mentionCandidateRoster = useMemo(
+    () => [CHANNEL_MENTION_OPTION, ...roomParticipants],
+    [roomParticipants],
+  );
   const mentionSuggestions = useMemo(
     () =>
       activeMention
         ? filterMentionCandidates(
-            activeMentionCandidates(roomParticipants, agentPresences, presenceNow),
+            activeMentionCandidates(mentionCandidateRoster, agentPresences, presenceNow),
             activeMention.query,
           )
         : { matches: [], overflow: 0 },
-    [activeMention, roomParticipants, agentPresences, presenceNow],
+    [activeMention, mentionCandidateRoster, agentPresences, presenceNow],
   );
   const mentionMenuVisible = Boolean(
     composerFocused &&
@@ -2518,7 +2539,11 @@ export default function BuzzChat() {
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
-      selectedMentionsRef.current.set(participant.handle, participant.pubkey);
+      // `@channel` is a broadcast token, never a resolvable identity — it
+      // must not earn a picker→pubkey binding.
+      if (!isChannelMentionHandle(participant.handle)) {
+        selectedMentionsRef.current.set(participant.handle, participant.pubkey);
+      }
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;
@@ -4022,7 +4047,11 @@ export default function BuzzChat() {
                         style={[styles.mentionRow, selected && styles.mentionRowSelected]}
                         testID={`mention-suggestion-${participant.handle}`}
                       >
-                        {display ? (
+                        {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
+                          <View style={styles.mentionChannelGlyph}>
+                            <Text style={styles.mentionChannelGlyphText}>@</Text>
+                          </View>
+                        ) : display ? (
                           <IdentityMark
                             kind="agent"
                             seed={display.avatarSeed ?? participant.pubkey}
@@ -4043,14 +4072,20 @@ export default function BuzzChat() {
                         )}
                         <View style={styles.mentionIdentity}>
                           <Text numberOfLines={1} style={styles.mentionName}>
-                            {participant.name}
+                            {participant.pubkey === CHANNEL_MENTION_PUBKEY
+                              ? 'Everyone in this Room'
+                              : participant.name}
                           </Text>
                           <Text numberOfLines={1} style={styles.mentionHandle}>
                             @{participant.handle}
                           </Text>
                         </View>
                         <Text style={styles.mentionKind}>
-                          {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                          {participant.pubkey === CHANNEL_MENTION_PUBKEY
+                            ? 'ROOM'
+                            : participant.kind === 'agent'
+                              ? 'AGENT'
+                              : 'PERSON'}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -5225,6 +5260,20 @@ const styles = StyleSheet.create((theme) => {
     mentionIdentity: {
       flex: 1,
       minWidth: 0,
+    },
+    mentionChannelGlyph: {
+      width: 28,
+      height: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      borderRadius: groknight.radius,
+    },
+    mentionChannelGlyphText: {
+      ...Typography.default('semiBold'),
+      color: groknight.accent,
+      fontSize: 13,
     },
     mentionName: {
       ...Typography.default('semiBold'),

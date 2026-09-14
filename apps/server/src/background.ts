@@ -190,7 +190,7 @@ export class PushDeliveryLoop {
             recipient.push_level<>'off'
             AND (
               -- Direct attention is eligible at every level except off.
-              ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle')}
+              ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
               OR room.direct_participants IS NOT NULL
               OR EXISTS (
                 SELECT 1 FROM messages addressed

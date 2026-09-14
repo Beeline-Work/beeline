@@ -2,6 +2,22 @@ export type MentionableAgent = { pubkey: string; name: string; handle?: string }
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 type MentionKindParticipant = { kind: 'person' | 'agent'; model?: string };
+type AgentModelEntry = { identity: { pubkey: string }; model?: string };
+
+export function shouldReadWorkspaceRoster({
+  activeWorkspaceId,
+  cachedWorkspaceId,
+  composerFocused,
+  rosterSurfaceVisible,
+}: {
+  activeWorkspaceId?: string | null;
+  cachedWorkspaceId?: string | null;
+  composerFocused: boolean;
+  rosterSurfaceVisible: boolean;
+}): boolean {
+  if (!activeWorkspaceId) return false;
+  return rosterSurfaceVisible || (composerFocused && cachedWorkspaceId !== activeWorkspaceId);
+}
 
 export type MentionCandidate = {
   name: string;
@@ -123,7 +139,25 @@ export function formatRoomParticipantTotal(total: number): string {
 /** The mention row's compact kind/model line. Effort is deliberately not part of this surface. */
 export function mentionKindLabel(participant: MentionKindParticipant): string {
   if (participant.kind !== 'agent') return 'PERSON';
-  return participant.model ? `AGENT · ${participant.model}` : 'AGENT';
+  const model = participant.model?.trim();
+  return model ? `AGENT · ${model}` : 'AGENT';
+}
+
+/** Add model-only Workspace metadata to mention rows without touching the Room roster. */
+export function mentionCandidatesWithModels<T extends RoomParticipant & MentionKindParticipant>(
+  participants: readonly T[],
+  agents: readonly AgentModelEntry[],
+): T[] {
+  const models = new Map(
+    agents
+      .map((agent) => [agent.identity.pubkey, agent.model?.trim()] as const)
+      .filter((entry): entry is readonly [string, string] => Boolean(entry[1])),
+  );
+  return participants.map((participant) => {
+    if (participant.kind !== 'agent') return participant;
+    const model = models.get(participant.pubkey);
+    return model && model !== participant.model ? { ...participant, model } : participant;
+  });
 }
 
 /**

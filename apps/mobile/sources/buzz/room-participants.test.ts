@@ -8,11 +8,13 @@ import {
   formatRoomParticipantTotal,
   hasChannelMentionToken,
   isChannelMentionHandle,
+  mentionCandidatesWithModels,
   mentionKindLabel,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
   selectedMentionPubkeys,
+  shouldReadWorkspaceRoster,
   sectionRoomParticipants,
   sectionRoomRoster,
 } from './room-participants';
@@ -38,7 +40,57 @@ describe('Room participant presentation', () => {
   it('puts an agent model beside its kind without exposing effort', () => {
     expect(mentionKindLabel({ kind: 'agent', model: 'Sonnet' })).toBe('AGENT · Sonnet');
     expect(mentionKindLabel({ kind: 'agent' })).toBe('AGENT');
+    expect(mentionKindLabel({ kind: 'agent', model: '   ' })).toBe('AGENT');
     expect(mentionKindLabel({ kind: 'person', model: 'ignored' })).toBe('PERSON');
+  });
+
+  it('enriches only mention agents with trimmed models and never effort', () => {
+    const person = { pubkey: 'person', name: 'Person', handle: 'person', kind: 'person' as const };
+    const agent = { pubkey: 'agent', name: 'Agent', handle: 'agent', kind: 'agent' as const };
+    const missing = {
+      pubkey: 'missing',
+      name: 'Missing',
+      handle: 'missing',
+      kind: 'agent' as const,
+    };
+    const agentModels = [
+      { identity: { pubkey: 'agent' }, model: '  Sonnet  ', effort: 'high' },
+      { identity: { pubkey: 'missing' }, model: '   ', effort: 'low' },
+    ];
+    const enriched = mentionCandidatesWithModels([person, agent, missing], agentModels);
+
+    expect(enriched).toEqual([person, { ...agent, model: 'Sonnet' }, missing]);
+    expect(enriched[0]).toBe(person);
+    expect(enriched[2]).toBe(missing);
+    expect(JSON.stringify(enriched)).not.toContain('effort');
+  });
+
+  it('reads models on first focus but keeps the cached roster across later focuses', () => {
+    const firstFocus = {
+      activeWorkspaceId: 'workspace',
+      cachedWorkspaceId: null,
+      composerFocused: true,
+      rosterSurfaceVisible: false,
+    };
+    expect(shouldReadWorkspaceRoster(firstFocus)).toBe(true);
+    expect(shouldReadWorkspaceRoster({ ...firstFocus, cachedWorkspaceId: 'workspace' })).toBe(
+      false,
+    );
+    expect(
+      shouldReadWorkspaceRoster({
+        ...firstFocus,
+        cachedWorkspaceId: 'workspace',
+        composerFocused: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReadWorkspaceRoster({
+        ...firstFocus,
+        cachedWorkspaceId: 'workspace',
+        composerFocused: false,
+        rosterSurfaceVisible: true,
+      }),
+    ).toBe(true);
   });
 
   it('folds larger Rooms into four names plus one overflow phrase', () => {

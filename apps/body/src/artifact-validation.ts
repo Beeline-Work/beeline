@@ -1,4 +1,4 @@
-import { ARTIFACT_MAX_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
+import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
 
 /**
  * The plan's per-format validation matrix for `post_artifact`. The mime
@@ -38,9 +38,9 @@ export function validateArtifact(mime: string, bytes: Buffer, title: string): vo
     throw new Error(`artifact mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);
   }
   if (bytes.length === 0) throw new Error('artifact is empty');
-  if (bytes.length > ARTIFACT_MAX_BYTES) {
+  if (bytes.length > ARTIFACT_MAXIMUM_BYTES) {
     throw new Error(
-      `artifact exceeds the ${ARTIFACT_MAX_BYTES}-byte (2 MB) limit; send larger files through the media path`,
+      `artifact exceeds the ${ARTIFACT_MAXIMUM_BYTES}-byte (2 MB) limit; send larger files through the media path`,
     );
   }
   if (mime === 'text/html' || mime === 'image/svg+xml') {

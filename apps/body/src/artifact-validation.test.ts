@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARTIFACT_MAX_BYTES } from '@beeline/api-contract/daemon';
+import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
 import { validateArtifact } from './artifact-validation.js';
 
 const mb = (n: number) => Buffer.alloc(n);
@@ -82,11 +82,11 @@ describe('post_artifact validation matrix', () => {
 
   it('caps every format at 2 MB', () => {
     for (const mime of ['text/html', 'image/svg+xml', 'application/pdf', 'text/markdown']) {
-      const bytes = mime === 'application/pdf' ? Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAX_BYTES)]) : mb(ARTIFACT_MAX_BYTES + 1);
+      const bytes = mime === 'application/pdf' ? Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES)]) : mb(ARTIFACT_MAXIMUM_BYTES + 1);
       expect(() => validateArtifact(mime, bytes, 't')).toThrow(/2 MB/);
     }
     expect(() =>
-      validateArtifact('application/pdf', Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAX_BYTES - 5)]), 'Spec'),
+      validateArtifact('application/pdf', Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES - 5)]), 'Spec'),
     ).not.toThrow();
   });
 

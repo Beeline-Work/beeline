@@ -769,6 +769,33 @@ CREATE TABLE IF NOT EXISTS legacy_media_urls (
   media_id uuid NOT NULL REFERENCES media(id) ON DELETE CASCADE
 );
 
+-- Object-storage rows (object-storage.ts): the same lifecycle vocabulary as
+-- media, with the bytes in S3-compatible storage instead of bytea. The key is
+-- kind/owner/sha256; owner+sha256 dedupes exactly like media.
+CREATE TABLE IF NOT EXISTS objects (
+  id uuid PRIMARY KEY,
+  owner_id text NOT NULL REFERENCES identities(id),
+  kind text NOT NULL CHECK (kind IN ('media','artifact')),
+  key text NOT NULL UNIQUE,
+  mime text NOT NULL,
+  title text,
+  size bigint NOT NULL CHECK (size > 0),
+  sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','ready')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  UNIQUE (owner_id, sha256)
+);
+CREATE INDEX IF NOT EXISTS objects_expires_idx ON objects(expires_at);
+CREATE INDEX IF NOT EXISTS objects_pending_idx ON objects(created_at) WHERE state='pending';
+
+-- The same tombstone semantics as media_expirations: one row per swept
+-- object id, so the media read answers 410 Gone instead of 404.
+CREATE TABLE IF NOT EXISTS object_expirations (
+  id uuid PRIMARY KEY,
+  expired_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS github_installations (
   installation_id bigint PRIMARY KEY,
   owner_id text NOT NULL REFERENCES identities(id),

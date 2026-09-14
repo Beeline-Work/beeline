@@ -15,6 +15,11 @@ export interface AttachmentReference {
   thumbnailUrl?: string;
   width?: number;
   height?: number;
+  /** Object-storage artifact facts, stamped by the server projection
+   *  (packages/api-contract/src/artifacts.ts). */
+  kind?: 'artifact';
+  title?: string;
+  author?: string;
 }
 
 export interface AgentModelConfigOption {

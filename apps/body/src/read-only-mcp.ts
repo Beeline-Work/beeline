@@ -44,8 +44,7 @@ import {
   cornerTextRefusal,
   normalizeCornerText,
   ARTIFACT_MIME_TYPES,
-  isArtifactMime,
-  type ArtifactUploadResult,
+  type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
 import {
   AGENT_GRANT_KINDS,
@@ -1481,10 +1480,24 @@ export async function attachFile(
   return `Attached ${name} (${details.size} bytes); it will be delivered with your final reply.`;
 }
 
+/** The daemon-facing artifacts pass-through's response: `postArtifact` only
+ *  reads `url`, the rest of `UploadArtifactResult`
+ *  (`apps/server/src/object-service.ts`) rides along unused. */
+export interface DaemonArtifactUploadResult {
+  url: string;
+  mimeType?: string;
+  size?: number;
+  title?: string;
+}
+
 export interface PostArtifactDeps {
   roomId: string;
-  upload: (bytes: Buffer, mime: string, title: string) => Promise<ArtifactUploadResult>;
+  upload: (bytes: Buffer, mime: string, title: string) => Promise<DaemonArtifactUploadResult>;
   queue: (attachment: JsonObject) => Promise<void>;
+}
+
+function isArtifactMime(value: unknown): value is ArtifactMimeType {
+  return typeof value === 'string' && (ARTIFACT_MIME_TYPES as readonly string[]).includes(value);
 }
 
 export function postArtifactDepsFromEnv(): PostArtifactDeps {
@@ -1971,14 +1984,14 @@ async function daemonUploadArtifact(
   bytes: Buffer,
   mime: string,
   title: string,
-): Promise<ArtifactUploadResult> {
+): Promise<DaemonArtifactUploadResult> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const response = await fetch(new URL('/v1/daemon/artifacts', `${baseUrl}/`), {
     method: 'POST',
     headers: {
       authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
       'content-type': mime,
-      'x-file-name': title,
+      'x-artifact-title': title,
     },
     body: bytes,
   });
@@ -1997,7 +2010,7 @@ async function daemonUploadArtifact(
     url: typeof body.url === 'string' ? body.url : '',
     mimeType: typeof body.mimeType === 'string' ? body.mimeType : mime,
     size: typeof body.size === 'number' ? body.size : bytes.length,
-    name: typeof body.name === 'string' ? body.name : title,
+    title: typeof body.title === 'string' ? body.title : title,
   };
 }
 

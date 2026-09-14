@@ -4158,11 +4158,7 @@ export default function BuzzChat() {
                       : undefined;
                     return (
                       <TouchableOpacity
-                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}${
-                          participant.kind === 'agent' && participant.model
-                            ? `, ${participant.model}`
-                            : ''
-                        }`}
+                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
                         accessibilityRole="button"
                         accessibilityState={{ selected }}
                         key={participant.pubkey}

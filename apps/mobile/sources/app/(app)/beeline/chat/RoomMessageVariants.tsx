@@ -1270,6 +1270,12 @@ export interface OrdinaryLedgerMessageProps {
   desktopLayout?: boolean;
 }
 
+/** Keep the agent role explicit while adding model-only metadata. */
+export function agentBylineLabel(model?: string): string {
+  const selectedModel = model?.trim();
+  return selectedModel ? `AGENT · ${selectedModel}` : 'AGENT';
+}
+
 /**
  * The connector receipt card: the structured card a connector DM carries
  * (connection, operation, helper, grant, counts — never a value). The
@@ -1397,7 +1403,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
-          role: isAgent ? agentModel?.trim() || 'agent' : undefined,
+          role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp: ledgerStamp(message.timestamp),
           isViewer: isSelfSteer,
           ...(announcementFeed
@@ -1491,7 +1497,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <ActivityTimeline
             active={message.isAgentLiveTurn === true}
             handle={!continued && isAgent ? voiceName : undefined}
-            role={agentModel?.trim() || 'agent'}
+            role={agentBylineLabel(agentModel)}
             mark={
               !continued && isAgent
                 ? {

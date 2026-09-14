@@ -682,6 +682,15 @@ export class PhoneService {
        ORDER BY w.updated_at DESC, w.id LIMIT 51`,
       [viewerId],
     );
+    const deletedNotices = await this.database.query<{
+      id: string;
+      workspace_id: string;
+      workspace_name: string;
+    }>(
+      `DELETE FROM workspace_deletion_notices WHERE identity_id=$1
+       RETURNING id,workspace_id,workspace_name`,
+      [viewerId],
+    );
     return {
       workspaces: rows.rows.slice(0, 50).map((row) => ({
         id: row.id,
@@ -694,6 +703,14 @@ export class PhoneService {
       viewer: await this.requireIdentity(viewerId),
       truncated: rows.rows.length > 50,
       watchFilters: [],
+      ...(deletedNotices.rows.length
+        ? {
+            deletedNotices: deletedNotices.rows.map((row) => ({
+              workspaceId: row.workspace_id,
+              workspaceName: row.workspace_name,
+            })),
+          }
+        : {}),
     };
   }
 
@@ -2316,6 +2333,9 @@ export class PhoneService {
       case 'leaveWorkspace':
         await this.leaveWorkspace(input as Input<'leaveWorkspace'>, viewerId);
         return undefined as Output<Name>;
+      case 'deleteWorkspace':
+        await this.deleteWorkspace(input as Input<'deleteWorkspace'>, viewerId);
+        return undefined as Output<Name>;
       case 'addWorkspaceMember':
         return (await this.addWorkspaceMember(
           input as Input<'addWorkspaceMember'>,
@@ -3401,6 +3421,74 @@ export class PhoneService {
         cardType: 'member-left',
         card: { identityId: viewerId },
       });
+    });
+  }
+  /**
+   * Deletes the workspace and everything in it — a real `DELETE FROM
+   * workspaces`, not a flag. Owner-only. Idempotent: a retried or doubled
+   * call on an already-deleted workspace resolves without effect.
+   *
+   * `rooms`/`memberships`/`agent_schedules`/`invites`/`agent_pairing_codes`/
+   * `avatars`/`agent_grants` all carry `workspace_id ON DELETE CASCADE`, and
+   * everything scoped by `room_id` (messages, corner_facts, agent_turns,
+   * live_outputs, agent_commands, ...) chains through `rooms.workspace_id`'s
+   * own cascade — so the single DELETE below empties the whole graph. Media
+   * bytes are left for their existing TTL sweep (media-ttl.ts), same as
+   * `deleteRoom`.
+   *
+   * Before the workspace disappears: an audit row survives it
+   * (`workspace_deletions`, no FK back to the workspace), a notice row is
+   * queued for every other human member so their next `readWorkspaces` can
+   * tell them, and any agent whose only membership was here has its daemon
+   * tokens revoked so its next daemon call is refused `agent_removed` — the
+   * same terminal signal `removeAgent` uses, which the helper already
+   * retires itself on (`retireRemovedAgent`/`isAgentRemovedError`).
+   *
+   * The idempotency floor (does the workspace still exist) runs BEFORE the
+   * owner check, not after: a retried call must resolve quietly once the
+   * workspace is gone even though the retrying identity's own `owner`
+   * membership row went with it.
+   */
+  private async deleteWorkspace(input: Input<'deleteWorkspace'>, viewerId: string) {
+    await this.database.transaction(async (database) => {
+      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      const workspace = (
+        await database.query<{ name: string }>(`SELECT name FROM workspaces WHERE id=$1`, [
+          input.workspaceId,
+        ])
+      ).rows[0];
+      if (!workspace) return; // idempotent: already deleted
+      await this.requireWorkspaceOwner(input.workspaceId, viewerId, database);
+      const members = await database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
+        `SELECT m.identity_id,i.kind FROM memberships m JOIN identities i ON i.id=m.identity_id
+         WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL`,
+        [input.workspaceId],
+      );
+      for (const member of members.rows) {
+        if (member.identity_id === viewerId || member.kind !== 'human') continue;
+        await database.query(
+          `INSERT INTO workspace_deletion_notices(identity_id,workspace_id,workspace_name) VALUES ($1,$2,$3)`,
+          [member.identity_id, input.workspaceId, workspace.name],
+        );
+      }
+      const agentIds = members.rows.filter((m) => m.kind === 'agent').map((m) => m.identity_id);
+      if (agentIds.length)
+        await database.query(
+          `UPDATE daemon_tokens SET revoked_at=now()
+           WHERE agent_id=ANY($1) AND revoked_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM memberships m
+               WHERE m.identity_id=daemon_tokens.agent_id AND m.removed_at IS NULL
+                 AND m.workspace_id<>$2
+             )`,
+          [agentIds, input.workspaceId],
+        );
+      await database.query(
+        `INSERT INTO workspace_deletions(workspace_id,workspace_name,deleted_by)
+         VALUES ($1,$2,$3) ON CONFLICT (workspace_id) DO NOTHING`,
+        [input.workspaceId, workspace.name, viewerId],
+      );
+      await database.query(`DELETE FROM workspaces WHERE id=$1`, [input.workspaceId]);
     });
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
@@ -5052,6 +5140,19 @@ export class PhoneService {
     );
     if (!row.rowCount) throw new Error('workspace manager required');
   }
+  /** Owner-only: stricter than requireWorkspaceManager (owner|admin), for the
+   *  one action an admin may never take — deleting the whole workspace. */
+  private async requireWorkspaceOwner(
+    workspaceId: string,
+    identityId: string,
+    database = this.database,
+  ) {
+    const row = await database.query(
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role='owner' AND removed_at IS NULL`,
+      [workspaceId, identityId],
+    );
+    if (!row.rowCount) throw new Error('workspace owner access denied');
+  }
   private async members(workspaceId: string, roomId: string | null): Promise<RoomViewMember[]> {
     const rows = await this.database.query<MemberRow>(
       `SELECT i.id,
@@ -5405,6 +5506,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'createWorkspace',
   'updateWorkspace',
   'leaveWorkspace',
+  'deleteWorkspace',
   'addWorkspaceMember',
   'removeWorkspaceMember',
   'createRoom',

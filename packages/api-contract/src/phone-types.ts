@@ -453,6 +453,14 @@ export type WorkspaceListView = {
   readonly viewer: RoomViewIdentity;
   readonly truncated: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
+  /**
+   * Workspaces this viewer was a member of that its owner deleted since the
+   * last read. Server-consumed on delivery: each notice is returned once.
+   */
+  readonly deletedNotices?: readonly {
+    readonly workspaceId: string;
+    readonly workspaceName: string;
+  }[];
 };
 
 export type WorkspaceManagedRoomView = {

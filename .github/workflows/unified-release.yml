@@ -773,8 +773,13 @@ jobs:
           retention-days: 1
       - name: Remove iOS credentials and build output
         if: always()
+        # Also the local EAS build tree (under $TMPDIR, ~4 GB per attempt) and Xcode
+        # DerivedData: a cancelled attempt leaves both behind, and five of them filled
+        # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
           rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa"
+          rm -rf "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
+          df -h / | tail -1
       - name: Restore the runner user keychains
         if: always()
         run: |

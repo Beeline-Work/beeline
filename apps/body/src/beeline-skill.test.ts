@@ -93,3 +93,25 @@ describe('using-beeline Room guidance', () => {
     expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
   });
 });
+
+describe('using-beeline "Showing a mock" section', () => {
+  const markdown = usingBeelineSkillMarkdown('test-release');
+
+  it('carries the Showing a mock section with the post_artifact flow', () => {
+    expect(markdown).toContain('## Showing a mock');
+    expect(markdown).toContain('beeline-agent post_artifact');
+    expect(markdown).toContain('mime "text/html"');
+    expect(markdown).toContain('self-contained');
+    expect(markdown).toContain('data: URLs');
+    expect(markdown).toContain('no script, no external dependencies, no network references');
+    expect(markdown).toContain('user stories out as frames');
+    expect(markdown).toContain('ask for feedback here in the corner');
+  });
+
+  it('pins the Obsidian Refined tokens and the validator refusals', () => {
+    expect(markdown).toContain('Obsidian Refined tokens');
+    expect(markdown).toContain('#d7af5f');
+    expect(markdown).toContain('<script>');
+    expect(markdown).toContain('http(s) URL');
+  });
+});

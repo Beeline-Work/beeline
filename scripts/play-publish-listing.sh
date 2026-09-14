@@ -111,7 +111,7 @@ done < <(printf '%s\n' "${shots[@]}" | sort)
 # changesNotSentForReview=true (validate has no such parameter), and commit
 # validates the edit itself before applying it.
 echo "▸ Committing edit"
-api POST "$API/edits/$EDIT_ID:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
+commit_edit "$EDIT_ID"
 echo "  Listing updates are live in Play Console."
 echo ""
 echo "What changed ($LANGUAGE): title, short description, full description,"

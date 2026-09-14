@@ -24,6 +24,7 @@ import {
   takeProvisionalDraft,
 } from '@/buzz/draft-settle';
 import { splitLedgerText } from '@/buzz/ledger-text';
+import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
 import {
   type NotificationLifecycleRun,
@@ -1266,6 +1267,58 @@ export interface OrdinaryLedgerMessageProps {
   desktopLayout?: boolean;
 }
 
+/**
+ * The connector receipt card: the structured card a connector DM carries
+ * (connection, operation, helper, grant, counts — never a value). The
+ * prose above stays a normal ledger entry; the card is the receipt.
+ */
+export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
+  receipt,
+  connectorName = 'Trusty Squire',
+}: {
+  receipt: ConnectorReceipt;
+  connectorName?: string;
+}) {
+  const mark = connectorName
+    .split(' ')
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
+  return (
+    <View style={styles.connectorReceipt} testID="connector-receipt-card">
+      <Text style={styles.connectorReceiptHead}>
+        {mark} · {connectorName}
+      </Text>
+      <Text style={styles.connectorReceiptLine}>
+        {receipt.connection} · {receipt.operation}
+        {receipt.helper ? ` · on ${receipt.helper}` : ''}
+      </Text>
+      <Text style={styles.connectorReceiptLine}>
+        {[
+          receipt.grant ? `grant ${receipt.grant}` : undefined,
+          receipt.calls !== undefined ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}` : undefined,
+          receipt.bytes,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+      {/* One flat summary string; test assertions read it as a plain prop. */}
+      <Text style={styles.connectorReceiptLine} testID="connector-receipt-summary">
+        {[
+          receipt.connection,
+          receipt.operation,
+          receipt.helper,
+          receipt.grant ? `grant ${receipt.grant}` : undefined,
+          receipt.calls !== undefined ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}` : undefined,
+          receipt.bytes,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+    </View>
+  );
+});
+
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   message,
   agent,
@@ -1472,7 +1525,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     </View>
   ) : null;
   const forwarded = forwardedMessageParts(message.text);
-  const ledgerText = isSelfSteer ? undefined : splitLedgerText(forwarded.body);
+  const connectorReceipt = parseConnectorReceipt(forwarded.body);
+  const receiptBody = connectorReceipt ? connectorReceipt.prose : forwarded.body;
+  const ledgerText = isSelfSteer ? undefined : splitLedgerText(receiptBody);
+  const receiptCard =
+    connectorReceipt && !isSelfSteer ? (
+      <ConnectorReceiptCard receipt={connectorReceipt.receipt} />
+    ) : null;
   const machineNoise = ledgerText?.machine ? (
     <LedgerGhostLine
       body={ledgerText.machine}
@@ -1509,7 +1568,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}
-            bodyText={ledgerText ? ledgerText.prose : forwarded.body}
+            bodyText={ledgerText ? ledgerText.prose : receiptBody}
             mentionHandles={mentionHandles}
             onMention={handleMention}
             channelIndex={channelIndex}
@@ -1520,6 +1579,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             attachments={attachments}
           />
         )}
+        {receiptCard}
         {forwarded.caption ? (
           <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}>
             {forwarded.caption}
@@ -1614,6 +1674,25 @@ const styles = StyleSheet.create((theme) => ({
     color: groknight.ledgerGhost,
     fontSize: 11,
     lineHeight: 17,
+  },
+  connectorReceipt: {
+    marginTop: 4,
+    marginHorizontal: 8,
+    borderWidth: 1,
+    borderColor: groknight.borderStrong,
+    borderRadius: 3,
+    padding: 8,
+    gap: 2,
+  },
+  connectorReceiptHead: {
+    ...Typography.mono('semiBold'),
+    ...groknight.type.sectionHead,
+    color: groknight.textSecondary,
+  },
+  connectorReceiptLine: {
+    ...Typography.mono(),
+    ...groknight.type.machine,
+    color: groknight.textSecondary,
   },
   outboxFailure: {
     marginTop: 4,

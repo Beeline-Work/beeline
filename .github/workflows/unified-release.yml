@@ -660,11 +660,6 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           TRACK: ${{ inputs.store_track }}
-          # scripts/play-api.sh refuses to run without the Play package name
-          # (release run 34800657127 failed here right after the first local
-          # Android build succeeded). Same value as androidPackage in
-          # apps/mobile/app.config.js.
-          PACKAGE_NAME: app.usebeeline
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }

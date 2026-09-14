@@ -513,11 +513,7 @@ export class GitHubOperations {
   }
 
   /** Caller is authorized by DaemonService against the requesting corner membership. */
-  async prChecksStatus(input: {
-    cornerId: string;
-    pullRequest?: number | string;
-    patchId?: string;
-  }) {
+  async prChecksStatus(input: { cornerId: string; pullRequest?: number | string }) {
     const corner = (
       await this.database.query<{
         parent_id: string;
@@ -596,15 +592,11 @@ export class GitHubOperations {
       : !values.length || values.includes('pending')
         ? ('pending' as const)
         : ('passed' as const);
-    // A head match proves the exact reviewed commit; a patch-id match proves the
-    // reviewed CHANGE is unchanged even though the head moved (a clean catch-up
-    // onto main). Either is a live approval for this exact head.
     const approval = await this.database.query(
       `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
-       WHERE r.parent_id=$1 AND a.pull_request_number=$2
-         AND (a.head_sha=$3 OR ($5::text IS NOT NULL AND a.patch_id=$5))
+       WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
          AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
-      [corner.parent_id, number, pr.headSha, corner.reviewer_agent_id, input.patchId ?? null],
+      [corner.parent_id, number, pr.headSha, corner.reviewer_agent_id],
     );
     return {
       checks,

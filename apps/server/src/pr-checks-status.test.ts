@@ -244,6 +244,52 @@ describe('PR-scoped check gate', () => {
     ).rejects.toThrow('corner reviewer approval denied');
   });
 
+  it('carries a reviewer approval over a clean catch-up head via matching patch_id', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        { cornerId: AUTHOR, headSha: SHA, patchId: 'same-diff-patch-id' },
+        A,
+      ),
+    ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
+    expect(
+      (await db.query(`SELECT patch_id FROM corner_merge_approvals WHERE corner_id=$1`, [AUTHOR]))
+        .rows[0]!.patch_id,
+    ).toBe('same-diff-patch-id');
+    expect(
+      await daemon.execute(
+        'getPrChecksStatus',
+        { cornerId: AUTHOR, patchId: 'same-diff-patch-id' },
+        A,
+      ),
+    ).toMatchObject({ approvalPending: false, headSha: SHA });
+    // The head moves (a clean merge-from-main, reported live by GitHub) but the
+    // daemon reports the same patch_id for the unchanged diff.
+    const caughtUpHead = '9'.repeat(40);
+    head = caughtUpHead;
+    expect(
+      await daemon.execute(
+        'getPrChecksStatus',
+        { cornerId: AUTHOR, patchId: 'same-diff-patch-id' },
+        A,
+      ),
+    ).toMatchObject({ approvalPending: false, headSha: caughtUpHead });
+    // A real code change reports a different patch_id and requires fresh review.
+    expect(
+      await daemon.execute(
+        'getPrChecksStatus',
+        { cornerId: AUTHOR, patchId: 'a-different-patch-id' },
+        A,
+      ),
+    ).toMatchObject({ approvalPending: true, headSha: caughtUpHead });
+    // With no patch_id reported at all (older daemon), only the exact head still matches.
+    expect(
+      await daemon.execute('getPrChecksStatus', { cornerId: AUTHOR }, A),
+    ).toMatchObject({ approvalPending: true, headSha: caughtUpHead });
+  });
+
   it('reconciles an expired snapshot and never promotes a head with no checks', async () => {
     await gate();
     await db.query(`UPDATE github_head_checks SET verified_at=now()-interval '1 minute'`);

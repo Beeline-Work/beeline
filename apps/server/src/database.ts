@@ -715,6 +715,9 @@ CREATE TABLE IF NOT EXISTS corner_merge_approvals (
 );
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
+-- Same-diff carry-over: an approval recorded for one head stays valid for a later
+-- head whose change against the target branch is byte-identical (see patch_id below).
+ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS patch_id text;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,

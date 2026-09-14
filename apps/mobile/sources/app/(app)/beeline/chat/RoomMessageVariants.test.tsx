@@ -825,6 +825,83 @@ describe('Room message variant components', () => {
     );
   });
 
+  it('adds Open and Cancel to an exact agent corner proposal without replacing reply swipe', () => {
+    const onDecision = vi.fn();
+    const onReply = vi.fn();
+    const proposal = message({
+      id: 'corner-proposal',
+      text: 'Proposed corner: Faster reads — Bound query latency under load',
+      pubkey: 'agent-sol',
+      isAgentAuthor: true,
+    });
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={proposal}
+        agent={{ pubkey: 'agent-sol', displayName: 'Sol' }}
+        desktopLayout={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onCornerProposalDecision={onDecision}
+        onReply={onReply}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    act(() =>
+      renderer.root.findByProps({ testID: 'corner-proposal-open-corner-proposal' }).props.onPress(),
+    );
+    expect(onDecision).toHaveBeenCalledWith(proposal, 'open');
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'corner-proposal-cancel-corner-proposal' })
+        .props.onPress(),
+    );
+    expect(onDecision).toHaveBeenCalledWith(proposal, 'cancel');
+
+    const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
+    act(() => swipe.props.onSwipeableOpen('right'));
+    expect(onReply).toHaveBeenCalledWith(proposal);
+  });
+
+  it('does not add corner actions to an agent message that only quotes the proposal syntax', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'quoted-proposal',
+          text: 'Try replying with “Proposed corner: Faster reads — Bound latency”.',
+          pubkey: 'agent-sol',
+          isAgentAuthor: true,
+        })}
+        agent={{ pubkey: 'agent-sol', displayName: 'Sol' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onCornerProposalDecision={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(
+      renderer.root.findAllByProps({ testID: 'corner-proposal-actions-quoted-proposal' }),
+    ).toHaveLength(0);
+  });
+
   it('uses the same reply swipe for corner narration and tool-call activity', () => {
     const onNarrationReply = vi.fn();
     const narration = message({

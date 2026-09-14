@@ -48,6 +48,7 @@ import {
   resolveFace,
   type PhoneOperationMap,
   isPushLevel,
+  type ArtifactAttachment,
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
@@ -353,6 +354,43 @@ function withAttachmentExpiry<Message extends RoomViewMessage>(
   });
 }
 
+/**
+ * Stamp artifact facts onto attachments whose media id names a `kind='artifact'`
+ * object row: `{ kind:'artifact', title, author }` alongside the mime and size
+ * the attachment already carries. The message row is never edited.
+ */
+function withArtifactFacts<Message extends RoomViewMessage>(
+  messages: readonly Message[],
+  artifacts: ReadonlyMap<string, ArtifactAttachment>,
+): Message[] {
+  if (!artifacts.size) return [...messages];
+  return messages.map((message) => {
+    if (!message.attachments?.length) return message;
+    const attachments = message.attachments.map((attachment) => {
+      const id = mediaIdFromUrl(attachment.url);
+      const artifact = id ? artifacts.get(id) : undefined;
+      return artifact ? { ...attachment, ...artifact } : attachment;
+    });
+    return attachments.some((attachment, index) => attachment !== message.attachments![index])
+      ? { ...message, attachments }
+      : message;
+  });
+}
+
+/** Expiry tombstones and artifact facts, collected in one read. */
+interface AttachmentFacts {
+  expired: ReadonlySet<string>;
+  artifacts: ReadonlyMap<string, ArtifactAttachment>;
+}
+
+/** Both attachment decorations in one place, so no read path forgets one. */
+function decorateAttachments<Message extends RoomViewMessage>(
+  messages: readonly Message[],
+  facts: AttachmentFacts,
+): Message[] {
+  return withArtifactFacts(withAttachmentExpiry(messages, facts.expired), facts.artifacts);
+}
+
 function projectedMessage(
   row: MessageRow,
   publicOrigin: string,
@@ -617,7 +655,7 @@ export class PhoneService {
     return {
       type: 'message-delta',
       roomId,
-      message: withAttachmentExpiry([message], await this.expiredMediaIds([message]))[0]!,
+      message: decorateAttachments([message], await this.attachmentFacts([message]))[0]!,
     };
   }
 
@@ -1181,9 +1219,9 @@ export class PhoneService {
         .map((row) => projectedMessage(row, this.publicOrigin))
         .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)),
     );
-    const expiredMedia = await measured(
+    const attachmentFacts = await measured(
       'media',
-      this.expiredMediaIds(messages, toolRows, briefing),
+      this.attachmentFacts(messages, toolRows, briefing),
     );
     const cornerLifecycle = room.parent_id
       ? await measured('lifecycle', this.cornerLifecycle(room.id))
@@ -1194,8 +1232,10 @@ export class PhoneService {
         room.parent_id && !paintedRoom.about && facts?.objective
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
-      messages: withAttachmentExpiry(messages, expiredMedia),
-      ...(toolRows.length ? { toolRows: withAttachmentExpiry(toolRows, expiredMedia) } : {}),
+      messages: decorateAttachments(messages, attachmentFacts),
+      ...(toolRows.length
+        ? { toolRows: decorateAttachments(toolRows, attachmentFacts) }
+        : {}),
       members,
       latestAgentTurns,
       viewer: {
@@ -1215,7 +1255,7 @@ export class PhoneService {
         ? { directMessage: { participants: room.direct_participants as [string, string] } }
         : {}),
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
-      briefing: withAttachmentExpiry(briefing, expiredMedia),
+      briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
       ...((parent ?? room).repository_key && (parent ?? room).repository_remote
         ? {
@@ -1280,7 +1320,7 @@ export class PhoneService {
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
     return {
       roomId,
-      messages: withAttachmentExpiry(messages, await this.expiredMediaIds(messages)),
+      messages: decorateAttachments(messages, await this.attachmentFacts(messages)),
       ...(rows.length > 30 && tail
         ? { nextBefore: { createdAt: unix(tail.created_at), id: tail.id } }
         : {}),
@@ -5212,13 +5252,13 @@ export class PhoneService {
     }));
   }
   /**
-   * Which media ids referenced by these messages have expired. One query per
-   * read, over the tombstone table only: expiry is a fact the sweep wrote, so
-   * a read never has to reason about clocks.
+   * Which media ids referenced by these messages have expired, and which name
+   * artifact object rows. Two queries per read, both over indexed id sets: expiry
+   * is a fact the sweep wrote, and artifact facts live on the `objects` row.
    */
-  private async expiredMediaIds(
+  private async attachmentFacts(
     ...groups: readonly (readonly RoomViewMessage[])[]
-  ): Promise<ReadonlySet<string>> {
+  ): Promise<AttachmentFacts> {
     const ids = new Set<string>();
     for (const messages of groups)
       for (const message of messages)
@@ -5226,12 +5266,41 @@ export class PhoneService {
           const id = mediaIdFromUrl(attachment.url);
           if (id) ids.add(id);
         }
-    if (!ids.size) return ids;
-    const expired = await this.database.query<{ id: string }>(
-      `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
-      [[...ids]],
-    );
-    return new Set(expired.rows.map((row) => row.id));
+    if (!ids.size) return { expired: new Set(), artifacts: new Map() };
+    const [expired, objectRows] = await Promise.all([
+      this.database.query<{ id: string }>(
+        `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+        [[...ids]],
+      ),
+      this.database.query<{
+        id: string;
+        title: string;
+        mime: string;
+        size: string;
+        author: string;
+      }>(
+        `SELECT o.id::text id,o.title title,o.mime mime,o.size::text size,
+                COALESCE(i.handle, i.name) author
+         FROM objects o JOIN identities i ON i.id=o.owner_id
+         WHERE o.kind='artifact' AND o.state='ready' AND o.id=ANY($1::uuid[])`,
+        [[...ids]],
+      ),
+    ]);
+    return {
+      expired: new Set(expired.rows.map((row) => row.id)),
+      artifacts: new Map(
+        objectRows.rows.map((row) => [
+          row.id,
+          {
+            kind: 'artifact',
+            title: row.title,
+            mimeType: row.mime,
+            size: Number(row.size),
+            author: row.author,
+          } satisfies ArtifactAttachment,
+        ]),
+      ),
+    };
   }
 
   private async messageRows(

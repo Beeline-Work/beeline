@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   activeMentionAtCursor,
+  CHANNEL_MENTION_HANDLE,
   filterMentionCandidates,
   formatRoomParticipantList,
   formatRoomParticipantTotal,
+  hasChannelMentionToken,
+  isChannelMentionHandle,
   mentionedAgentPubkey,
   replaceActiveMention,
   resolveComposerMentions,
@@ -222,5 +225,51 @@ describe('Room participant presentation', () => {
     expect(
       replaceActiveMention('Ask @li tomorrow', { start: 4, end: 7, query: 'li' }, 'lina'),
     ).toEqual({ text: 'Ask @lina tomorrow', cursor: 9 });
+  });
+
+  it('recognizes the reserved @channel handle case-insensitively', () => {
+    expect(isChannelMentionHandle(CHANNEL_MENTION_HANDLE)).toBe(true);
+    expect(isChannelMentionHandle('Channel')).toBe(true);
+    expect(isChannelMentionHandle('CHANNEL')).toBe(true);
+    expect(isChannelMentionHandle('channels')).toBe(false);
+    expect(isChannelMentionHandle('ada')).toBe(false);
+  });
+
+  it('detects a live @channel token the same way as any other mention, code spans aside', () => {
+    expect(hasChannelMentionToken('@channel heads up')).toBe(true);
+    expect(hasChannelMentionToken('@Channel heads up')).toBe(true);
+    expect(hasChannelMentionToken('email@channel.example.com')).toBe(false);
+    expect(hasChannelMentionToken('@ada please review')).toBe(false);
+    expect(hasChannelMentionToken('no mention here')).toBe(false);
+  });
+
+  it('surfaces the reserved @channel row in the mention autocomplete after typing @c, alongside real candidates', () => {
+    const channelOption = { name: 'channel', handle: CHANNEL_MENTION_HANDLE };
+    const roster = [
+      channelOption,
+      { name: 'Carl', handle: 'carl' },
+      { name: 'Ada', handle: 'ada' },
+    ];
+    const mention = activeMentionAtCursor('Hey @c', 6);
+    expect(mention).toEqual({ start: 4, end: 6, query: 'c' });
+    const { matches } = filterMentionCandidates(roster, mention!.query);
+    expect(matches).toContainEqual(channelOption);
+    expect(matches.map((candidate) => candidate.handle)).toContain(CHANNEL_MENTION_HANDLE);
+  });
+
+  it('never resolves @channel to a pubkey, even when a roster entry or selection shares its handle, and does not block a sibling mention', () => {
+    const participants = [
+      { pubkey: 'human-decoy', name: 'Decoy', handle: 'channel' },
+      { pubkey: 'human-ada', name: 'Ada', handle: 'ada' },
+    ];
+    const selections = new Map([['channel', 'stray-pubkey']]);
+    expect(resolveComposerMentions('@channel heads up', participants, selections)).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
+    expect(resolveComposerMentions('@channel and @ada', participants, selections)).toEqual({
+      pubkeys: ['human-ada'],
+      handles: ['ada'],
+    });
   });
 });

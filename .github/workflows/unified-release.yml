@@ -660,11 +660,6 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           TRACK: ${{ inputs.store_track }}
-          # scripts/play-api.sh refuses to run without the Play package name
-          # (release run 34800657127 failed here right after the first local
-          # Android build succeeded). Same value as androidPackage in
-          # apps/mobile/app.config.js.
-          PACKAGE_NAME: app.usebeeline
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
@@ -773,8 +768,13 @@ jobs:
           retention-days: 1
       - name: Remove iOS credentials and build output
         if: always()
+        # Also the local EAS build tree (under $TMPDIR, ~4 GB per attempt) and Xcode
+        # DerivedData: a cancelled attempt leaves both behind, and five of them filled
+        # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
           rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa"
+          rm -rf "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
+          df -h / | tail -1
       - name: Restore the runner user keychains
         if: always()
         run: |
@@ -782,7 +782,10 @@ jobs:
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
 
   release_result:
-    if: always() && inputs.plan_only != true && needs.initialize.result == 'success'
+    # !cancelled(), not always(): a run superseded by cancel-in-progress must not
+    # classify itself as a failed attempt, and (below) must never redispatch its
+    # pinned identity — that redispatch cancelled the fresh cut that replaced it.
+    if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
     needs: [initialize, server, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
@@ -1038,7 +1041,7 @@ jobs:
 
   retry:
     if: >-
-      always() && inputs.plan_only != true && needs.release_result.result == 'failure' &&
+      !cancelled() && inputs.plan_only != true && needs.release_result.result == 'failure' &&
       fromJSON(inputs.retry_attempt || '1') < 3
     needs: [initialize, release_result]
     runs-on: [self-hosted, beeline-prod-host]

@@ -50,16 +50,9 @@ describe('corner merge instructions', () => {
     for (const yolo of [false, true]) {
       const instruction = cornerMergeInstruction(yolo, 'echo');
       expect(instruction).not.toContain('please review');
-      expect(instruction).toContain('Once @echo tags you with approval, YOU merge it yourself');
+      expect(instruction).toContain('do not merge until @echo tags you with approval');
       expect(instruction).toContain('gh pr merge --squash --match-head-commit <sha>');
-      expect(instruction).toContain("the server never merges a corner's pull request");
-      expect(instruction).toContain('never sends any closing request');
-      expect(instruction).toContain('gh pr update-branch');
     }
-    expect(cornerMergeInstruction(true)).toContain('the server never merges');
-    expect(cornerMergeInstruction(true)).toContain('gh pr update-branch');
-    expect(cornerMergeInstruction(true)).not.toContain('race');
-    expect(cornerMergeInstruction(false)).not.toContain('race');
   });
 
   it('selects the reviewer role by identity only for a non-opener', () => {
@@ -128,10 +121,6 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('pr_checks_status');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('checks="unknown"');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('merge this pull request with gh yourself');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('the server never merges');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('gh pr update-branch');
-    expect(CORNER_YOLO_MERGE_NUDGE).not.toContain('race');
   });
 
   it('boots a non-opener reviewer with the review instruction and repository gh surface', async () => {

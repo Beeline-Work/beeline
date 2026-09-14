@@ -376,23 +376,65 @@ describe('the ledger — a human turn is plain body text', () => {
         bodyTestID: 'steer-body',
       }),
     );
-    const spacingOf = (renderer: ReactTestRenderer, id: string) =>
-      renderer.root
+    const rowStyle = (renderer: ReactTestRenderer, id: string) => {
+      const styles = renderer.root
         .findByProps({ testID: `chat-message-${id}` })
-        .props.style.filter(Boolean)
-        .reduce(
-          (total: number, style: Record<string, number>) =>
-            total + (style.paddingVertical ?? 0) * 2 + (style.marginBottom ?? 0),
-          0,
-        );
+        .props.style.filter(Boolean);
+      return Object.assign({}, ...styles) as Record<string, number | undefined>;
+    };
 
-    // A continuation keeps flowing with compact padding; a new run opens a
-    // visibly wider stanza. Include padding in this assertion because equal
-    // row padding once overwhelmed the margin-only distinction.
-    expect(spacingOf(continued, 'b2')).toBe(12);
-    expect(spacingOf(opens, 'b1')).toBe(40);
-    expect(spacingOf(continued, 'b2')).toBeLessThan(spacingOf(opens, 'b1'));
+    // The opener's generous padding is ONE-SIDED: the side facing the run's
+    // own continuation carries the continuation padding, so the gap between
+    // two consecutive same-voice messages is the continuation gap whether or
+    // not the upper row opened the run. Separation between different runs
+    // stays generous on the outward side, beside the divider.
+    const opener = rowStyle(opens, 'b1');
+    const follower = rowStyle(continued, 'b2');
+    expect(follower.paddingVertical).toBe(6);
+    expect(follower.marginBottom).toBe(0);
+    expect(opener.paddingTop).toBe(follower.paddingVertical);
+    expect(opener.paddingBottom).toBe(18);
+    expect(opener.marginBottom).toBe(4);
+    // The phone list is inverted: a cell's layout-top is its visual bottom, so
+    // the same-voice gap between an upper and a lower row is the upper row's
+    // layout-top padding plus the lower row's layout-bottom padding and margin.
+    const sides = (row: Record<string, number | undefined>) => ({
+      top: row.paddingTop ?? row.paddingVertical ?? 0,
+      bottom: row.paddingBottom ?? row.paddingVertical ?? 0,
+    });
+    const sameVoiceGap = (upper: Record<string, number | undefined>, lower: typeof follower) =>
+      sides(upper).top + sides(lower).bottom + (lower.marginBottom ?? 0);
+    expect(sameVoiceGap(opener, follower)).toBe(sameVoiceGap(follower, follower));
+    // The outward side of a run (previous row above, opener below) keeps the
+    // divider and the generous padding: wider than the same-voice flow.
+    expect(sameVoiceGap(follower, opener)).toBeGreaterThan(sameVoiceGap(opener, follower));
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
+  });
+
+  it('mirrors the one-sided run opening for a chronological transcript', () => {
+    // Desktop lays rows out upright, so a cell's layout-top is its visual top:
+    // the divider and the generous padding move to the other layout edge, and
+    // the run-facing side still carries the continuation padding.
+    const opens = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'c1',
+        chronological: true,
+        byline: { name: 'You', stamp: '10:00', isViewer: true },
+        bodyText: 'Do the thing.',
+        bodyTestID: 'steer-body',
+      }),
+    );
+    const row = Object.assign(
+      {},
+      ...opens.root
+        .findByProps({ testID: 'chat-message-c1' })
+        .props.style.filter(Boolean),
+    ) as Record<string, number | undefined>;
+    expect(row.paddingTop).toBe(18);
+    expect(row.paddingBottom).toBe(6);
+    expect(row.marginTop).toBe(4);
+    expect(row.borderTopWidth).toBeTruthy();
+    expect(row.borderBottomWidth).toBeUndefined();
   });
 });
 

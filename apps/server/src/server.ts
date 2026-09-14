@@ -17,6 +17,7 @@ import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
+import { connectorLogo } from './workbench.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
 
@@ -840,6 +841,22 @@ async function route(
   }
 
   const identityId = await phoneIdentity(request, options);
+  if (method === 'GET' && url.pathname.startsWith('/v1/connectors/logo/')) {
+    const type = url.pathname.slice('/v1/connectors/logo/'.length).replace(/\.svg$/, '');
+    const logo = connectorLogo(type);
+    if (!logo) {
+      json(response, 404, { error: 'connector_not_found' });
+      return;
+    }
+    response.writeHead(200, {
+      'content-type': 'image/svg+xml',
+      'content-length': String(Buffer.byteLength(logo)),
+      'cache-control': 'public, max-age=86400',
+      'x-content-type-options': 'nosniff',
+    });
+    response.end(logo);
+    return;
+  }
   if (method === 'GET' && url.pathname.startsWith('/v1/avatars/')) {
     const id = url.pathname.slice('/v1/avatars/'.length);
     const avatar = isMediaId(id)

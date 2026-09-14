@@ -110,7 +110,7 @@ export type DaemonOperationMap = {
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   getPrChecksStatus: Operation<
-    CornerInput & { pullRequest?: number | string; patchId?: string },
+    CornerInput & { pullRequest?: number | string },
     {
       checks: 'passed' | 'failed' | 'pending';
       pullRequest: string;
@@ -119,7 +119,7 @@ export type DaemonOperationMap = {
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string; readonly patchId?: string },
+    CornerInput & { readonly headSha: string },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;
@@ -168,11 +168,11 @@ export type DaemonOperationMap = {
     ConnectionGrantRevokeResult
   >;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
+  getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
   createCorner: Operation<CreateCornerInput, CornerResult>;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
 };
-
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
 export type RoomInput = { readonly roomId: string };
 export type AgentInput = { readonly agentId: string };
@@ -682,6 +682,27 @@ export type ConnectionGrantRevokeResult = {
   readonly failed: number;
 };
 
+/** Connector types the Workbench can provision (phase 1: Trusty Squire). */
+export type ConnectorKind =
+  | 'trusty-squire'
+  | 'wallet'
+  | 'tailscale';
+
+/** The helper's work queue (server → helper delivery). */
+export type ConnectorAssignment =
+  | { readonly kind: 'install'; readonly connectorId: string; readonly connectorType: ConnectorKind }
+  | { readonly kind: 'sync'; readonly connectorId: string; readonly connectorType: ConnectorKind }
+  | {
+      readonly kind: 'revoke-grants';
+      readonly connectorId: string;
+      readonly connectorType: ConnectorKind;
+      readonly reference: string;
+    }
+  | { readonly kind: 'uninstall'; readonly connectorId: string; readonly connectorType: ConnectorKind };
+
+export type ConnectorAssignmentsResult = {
+  readonly assignments: readonly ConnectorAssignment[];
+};
 export type DaemonActivityItem = {
   readonly kind: 'thinking' | 'tool' | 'output' | 'summary';
   readonly title: string;

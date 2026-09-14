@@ -8,6 +8,17 @@ import type {
   InviteView,
   MessageReactionEmoji,
 } from './phone-types.js';
+import type {
+  ConnectionDetailView,
+  PairConnectorInput,
+  PairConnectorResult,
+  ReadConnectionDetailInput,
+  ReadWorkbenchInput,
+  RevokeConnectionGrantsInput,
+  RevokeConnectionGrantsResult,
+  UnpairConnectorInput,
+  WorkbenchView,
+} from './workbench.js';
 
 export type PhoneOperationMap = {
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
@@ -81,6 +92,14 @@ export type PhoneOperationMap = {
    *  call resolves without effect once the identity row is gone. */
   deleteAccount: { input: EmptyInput; output: void };
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
+  readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
+  pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
+  unpairConnector: { input: UnpairConnectorInput; output: void };
+  readConnectionDetail: { input: ReadConnectionDetailInput; output: ConnectionDetailView };
+  revokeConnectionGrants: {
+    input: RevokeConnectionGrantsInput;
+    output: RevokeConnectionGrantsResult;
+  };
 };
 
 export type EmptyInput = Record<string, never>;

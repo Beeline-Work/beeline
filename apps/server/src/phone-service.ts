@@ -75,6 +75,7 @@ import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub 
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
+const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -94,6 +95,16 @@ import {
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
+import {
+  connectorCatalog,
+  connectorDisplayName,
+  defaultConnectorSteps,
+  dmParticipantsIncludeConnectorIdentity,
+  ensureConnectorDirectMessageRoom,
+  isConnectableConnector,
+  isMetadataStale,
+} from './workbench.js';
+import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { closeCornerState } from './corner-close.js';
 import {
@@ -2552,6 +2563,29 @@ export class PhoneService {
       case 'reportRunningUpdate':
         await this.reportUpdate(input as Input<'reportRunningUpdate'>, viewerId);
         return undefined as Output<Name>;
+      case 'readWorkbench':
+        return (await this.readWorkbench(
+          input as Input<'readWorkbench'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'pairConnector':
+        return (await this.pairConnector(
+          input as Input<'pairConnector'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'unpairConnector':
+        await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
+        return undefined as Output<Name>;
+      case 'readConnectionDetail':
+        return (await this.readConnectionDetail(
+          input as Input<'readConnectionDetail'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'revokeConnectionGrants':
+        return (await this.revokeConnectionGrants(
+          input as Input<'revokeConnectionGrants'>,
+          viewerId,
+        )) as Output<Name>;
       case 'sendPushTest':
         if (!this.sendPushTest) throw new Error('push delivery is not configured');
         await this.sendPushTest(viewerId);
@@ -5103,15 +5137,341 @@ export class PhoneService {
    * read it) still cannot send or reply, so this is distinct from
    * `hasRoomAccess`.
    */
+  // --- Workbench: connector provisioning and connection sovereignty ------------
+
+  private async assertWorkbenchViewer(workspaceId: string, viewerId: string): Promise<void> {
+    const row = await this.database.query(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [workspaceId, viewerId],
+    );
+    if (!row.rowCount) throw new Error('workspace membership required');
+  }
+
+  /** Every read here is scoped to the VIEWER's own connectors/connections. */
+  async readWorkbench(input: Input<'readWorkbench'>, viewerId: string): Promise<Output<'readWorkbench'>> {
+    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    const connectors = (
+      await this.database.query<{
+        id: string;
+        connector_type: Input<'pairConnector'>['connectorType'];
+        status: ConnectorStatus['status'];
+        status_steps: ConnectorStep[];
+        status_error: string | null;
+        helper_agent_id: string;
+        helper_name: string | null;
+        connected_at: Date | null;
+        created_at: Date;
+      }>(
+        `SELECT c.id,c.connector_type,c.status,c.status_steps,c.status_error,
+                c.helper_agent_id,i.name helper_name,c.connected_at,c.created_at
+         FROM workspace_connectors c
+         JOIN identities i ON i.id=c.helper_agent_id
+         WHERE c.workspace_id=$1 AND c.owner_identity_id=$2
+         ORDER BY c.created_at`,
+        [input.workspaceId, viewerId],
+      )
+    ).rows;
+    const connections = (
+      await this.database.query<{
+        id: string;
+        connector_id: string;
+        reference: string;
+        service: string | null;
+        label: string | null;
+        hosts: string[];
+        state: 'active' | 'error';
+        last_synced_at: Date | null;
+        created_at: Date;
+      }>(
+        `SELECT id,connector_id,reference,service,label,hosts,state,last_synced_at,created_at
+         FROM workspace_connections
+         WHERE owner_identity_id=$1
+         ORDER BY service,reference`,
+        [viewerId],
+      )
+    ).rows;
+    return {
+      workspaceId: input.workspaceId,
+      catalog: connectorCatalog(),
+      connectors: connectors.map((row) => ({
+        connectorId: row.id,
+        connectorType: row.connector_type,
+        status: {
+          connectorId: row.id,
+          status: row.status,
+          steps: row.status_steps ?? [],
+          ...(row.helper_name ? { helperName: row.helper_name } : {}),
+          ...(row.status_error ? { errorMessage: row.status_error } : {}),
+        } as ConnectorStatus,
+        helperAgentId: row.helper_agent_id,
+        ...(row.connected_at ? { connectedAt: seconds(row.connected_at) } : {}),
+        createdAt: seconds(row.created_at),
+      })),
+      connections: connections.map((row) => ({
+        connectionId: row.id,
+        connectorId: row.connector_id,
+        reference: row.reference,
+        service: row.service,
+        label: row.label ?? row.reference,
+        allowedHosts: row.hosts ?? [],
+        state: row.state,
+        ...(row.last_synced_at
+          ? {
+              lastSyncedAt: seconds(row.last_synced_at),
+              ...(isMetadataStale(row.last_synced_at) ? { stale: true } : {}),
+            }
+          : { stale: true }),
+        createdAt: seconds(row.created_at),
+      })),
+    };
+  }
+
+  async pairConnector(
+    input: Input<'pairConnector'>,
+    viewerId: string,
+  ): Promise<Output<'pairConnector'>> {
+    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    if (!isConnectableConnector(input.connectorType))
+      throw new Error(`${connectorDisplayName(input.connectorType)} is not connectable yet`);
+    const helper = await this.database.query(
+      `SELECT 1 FROM memberships m
+       JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
+       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.identity_id=$2 AND m.removed_at IS NULL`,
+      [input.workspaceId, input.helperAgentId],
+    );
+    if (!helper.rowCount)
+      throw new Error('the connector helper must be a current agent member of this Workspace');
+    const id = randomUUID();
+    await this.database.query(
+      `INSERT INTO workspace_connectors(
+         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,status,status_steps
+       ) VALUES ($1,$2,$3,$4,$5,'installing',$6::jsonb)
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type) DO NOTHING`,
+      [
+        id,
+        input.workspaceId,
+        viewerId,
+        input.connectorType,
+        input.helperAgentId,
+        JSON.stringify(defaultConnectorSteps()),
+      ],
+    );
+    const existing =
+      (
+        await this.database.query<{
+          id: string;
+          status: ConnectorStatus['status'];
+          status_steps: ConnectorStep[] | null;
+          status_error: string | null;
+        }>(
+          `SELECT id,status,status_steps,status_error FROM workspace_connectors
+           WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3`,
+          [input.workspaceId, viewerId, input.connectorType],
+        )
+      ).rows[0] ?? {
+        id,
+        status: 'installing' as const,
+        status_steps: defaultConnectorSteps() as ConnectorStep[],
+        status_error: null,
+      };
+    // The helper sees the install assignment on its next poll.
+    await ensureConnectorDirectMessageRoom(
+      this.database,
+      input.workspaceId,
+      input.connectorType,
+      viewerId,
+    );
+    return {
+      connectorId: existing.id,
+      status: {
+        connectorId: existing.id,
+        status: existing.status,
+        steps: existing.status_steps ?? [],
+        ...(existing.status_error ? { errorMessage: existing.status_error } : {}),
+      } as ConnectorStatus,
+    };
+  }
+
+  private async assertOwnedConnector(
+    workspaceId: string,
+    connectorId: string,
+    viewerId: string,
+  ) {
+    const row = await this.database.query<{
+      id: string;
+      connector_type: Input<'pairConnector'>['connectorType'];
+      status: string;
+    }>(
+      `SELECT id,connector_type,status FROM workspace_connectors
+       WHERE id=$1::uuid AND workspace_id=$2 AND owner_identity_id=$3`,
+      [connectorId, workspaceId, viewerId],
+    );
+    if (!row.rowCount) throw new Error('connector not found (access denied)');
+    return row.rows[0]!;
+  }
+
+  /** Unpair revokes everything the helper holds, then waits for its uninstall ack. */
+  async unpairConnector(input: Input<'unpairConnector'>, viewerId: string): Promise<void> {
+    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    const connector = await this.assertOwnedConnector(
+      input.workspaceId,
+      input.connectorId,
+      viewerId,
+    );
+    // Receipts and connections are the connector's work; unpair clears them.
+    await this.database.query(
+      `DELETE FROM workspace_connections WHERE connector_id=$1::uuid`,
+      [input.connectorId],
+    );
+    await this.database.query(
+      `UPDATE workspace_connectors
+       SET status='disconnected', status_steps='[]'::jsonb, status_error=NULL,
+           pending_ops='[]'::jsonb, connected_at=NULL, updated_at=now()
+       WHERE id=$1::uuid`,
+      [input.connectorId],
+    );
+  }
+
+  async readConnectionDetail(
+    input: Input<'readConnectionDetail'>,
+    viewerId: string,
+  ): Promise<Output<'readConnectionDetail'>> {
+    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    const connection = (
+      await this.database.query<{
+        id: string;
+        connector_id: string;
+        reference: string;
+        service: string;
+        label: string | null;
+        hosts: string[];
+        state: 'active' | 'error';
+        grants: unknown[];
+        connection_metadata: Record<string, unknown>;
+        last_synced_at: Date | null;
+        created_at: Date;
+      }>(
+        `SELECT id,connector_id,reference,service,label,hosts,state,grants,
+                connection_metadata,last_synced_at,created_at
+         FROM workspace_connections WHERE id=$1::uuid AND owner_identity_id=$2`,
+        [input.connectionId, viewerId],
+      )
+    ).rows[0];
+    if (!connection) throw new Error('connection not found (access denied)');
+    // Live detail reads: cached provider metadata older than the TTL asks the
+    // helper for a fresh snapshot on its next poll.
+    if (isMetadataStale(connection.last_synced_at))
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
+         WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
+        [connection.connector_id],
+      );
+    const ledger = (
+      await this.database.query<{
+        id: string;
+        agent_name: string | null;
+        operation: string;
+        status_code: number | null;
+        bytes: string;
+        grant_info: string | null;
+        created_at: Date;
+      }>(
+        `SELECT r.id,r.operation,r.status_code,r.bytes,r.grant_info,r.created_at,
+                i.name agent_name
+         FROM connection_receipts r
+         LEFT JOIN identities i ON i.id=r.agent_id
+         WHERE r.connection_id=$1::uuid
+         ORDER BY r.created_at DESC LIMIT 50`,
+        [connection.id],
+      )
+    ).rows;
+    return {
+      connection: {
+        connectionId: connection.id,
+        connectorId: connection.connector_id,
+        reference: connection.reference,
+        service: connection.service,
+        label: connection.label ?? connection.reference,
+        allowedHosts: connection.hosts ?? [],
+        state: connection.state,
+        ...(connection.last_synced_at
+          ? {
+              lastSyncedAt: seconds(connection.last_synced_at),
+              ...(isMetadataStale(connection.last_synced_at) ? { stale: true } : {}),
+            }
+          : { stale: true }),
+        createdAt: seconds(connection.created_at),
+      },
+      grants: (connection.grants ?? []) as Output<'readConnectionDetail'>['grants'],
+      ledger: ledger.map((row) => ({
+        id: row.id,
+        ...(row.agent_name ? { agentName: row.agent_name } : {}),
+        operation: row.operation,
+        ...(row.status_code !== null ? { statusCode: row.status_code } : {}),
+        ...(Number(row.bytes) > 0 ? { bytes: Number(row.bytes) } : {}),
+        ...(row.grant_info ? { grant: row.grant_info } : {}),
+        createdAt: seconds(row.created_at),
+      })),
+    };
+  }
+
+  async revokeConnectionGrants(
+    input: Input<'revokeConnectionGrants'>,
+    viewerId: string,
+  ): Promise<Output<'revokeConnectionGrants'>> {
+    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    const connection = (
+      await this.database.query<{
+        id: string;
+        connector_id: string;
+        connector_type: Input<'pairConnector'>['connectorType'];
+        reference: string;
+        grants: Array<Record<string, unknown>>;
+      }>(
+        `SELECT c.id,c.connector_id,k.connector_type,c.reference,c.grants
+         FROM workspace_connections c
+         JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE c.id=$1::uuid AND c.owner_identity_id=$2`,
+        [input.connectionId, viewerId],
+      )
+    ).rows[0];
+    if (!connection) throw new Error('connection not found (access denied)');
+    const live = (connection.grants ?? []).filter((grant) => !grant.revokedAt);
+    const revokedAt = Math.floor(Date.now() / 1000);
+    const updated = (connection.grants ?? []).map((grant) =>
+      grant.revokedAt ? grant : { ...grant, revokedAt },
+    );
+    await this.database.query(`UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`, [
+      connection.id,
+      JSON.stringify(updated),
+    ]);
+    if (live.length)
+      await this.database.query(
+        `UPDATE workspace_connectors
+         SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
+         WHERE id=$1::uuid`,
+        [connection.connector_id, JSON.stringify([`revoke-grants:${connection.reference}`])],
+      );
+    return { revoked: live.length, failed: 0 };
+  }
+
   private async assertRoomIsWritable(roomId: string, author: string): Promise<void> {
     if (author === SYSTEM_IDENTITY_ID) return;
     const room = await this.database.query<{ direct_participants: string[] | null }>(
       `SELECT direct_participants FROM rooms WHERE id=$1`,
       [roomId],
     );
-    if (room.rows[0]?.direct_participants?.includes(SYSTEM_IDENTITY_ID)) {
+    const participants = room.rows[0]?.direct_participants ?? null;
+    if (participants?.includes(SYSTEM_IDENTITY_ID)) {
       throw new Error(
         'this is a read-only system announcements channel; only @system may post here (access denied)',
+      );
+    }
+    if (dmParticipantsIncludeConnectorIdentity(participants)) {
+      throw new Error(
+        'this is a read-only connector receipts channel; only the connector identity may post here (access denied)',
       );
     }
   }
@@ -5626,5 +5986,10 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'unregisterPushDevice',
   'sendPushTest',
   'reportRunningUpdate',
+  'readWorkbench',
+  'pairConnector',
+  'unpairConnector',
+  'readConnectionDetail',
+  'revokeConnectionGrants',
   'deleteAccount',
 ]);

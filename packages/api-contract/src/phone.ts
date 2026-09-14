@@ -12,3 +12,4 @@ export * from './default-workspace.js';
 export * from './corner-text.js';
 export * from './corner-state.js';
 export * from './push-level.js';
+export * from './workbench.js';

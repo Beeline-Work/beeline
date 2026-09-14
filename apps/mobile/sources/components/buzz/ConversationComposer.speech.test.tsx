@@ -1,0 +1,334 @@
+import * as React from 'react';
+// @ts-expect-error No renderer declarations in this workspace.
+import { act, create } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Synchronous mock for react-native.
+const platformSetter = vi.hoisted(() => {
+  let _os = 'android';
+  return {
+    setOS: (v: string) => { _os = v; },
+    getOS: () => _os,
+  };
+});
+vi.mock('react-native', () => {
+  function host(name: string) {
+    return (props: any) => React.createElement(name, props, props.children);
+  }
+  return {
+    Text: host('Text'),
+    TextInput: host('TextInput'),
+    TouchableOpacity: host('TouchableOpacity'),
+    Pressable: host('Pressable'),
+    View: host('View'),
+    Linking: { openSettings: vi.fn() },
+    Platform: {
+      get OS() { return platformSetter.getOS(); },
+      select: (choices: any) => choices.default,
+    },
+    StyleSheet: { create: (styles: any) => styles },
+  } as any;
+});
+
+vi.mock('react-native-svg', () => {
+  function host(name: string) {
+    return (props: any) => React.createElement(name, props, props.children);
+  }
+  const Svg = host('RNSVG');
+  return { default: Svg, Svg, Line: host('RNSVGLine') };
+});
+
+// Mock the speech adapter.
+const mockMod = {
+  start: vi.fn(),
+  stop: vi.fn(),
+  abort: vi.fn(),
+  getPermissionsAsync: vi.fn(),
+  requestPermissionsAsync: vi.fn(),
+  addListener: vi.fn((_event: string, _handler: (...args: any[]) => void) => ({
+    remove: vi.fn(),
+  })),
+};
+vi.mock('@/buzz/speech-recognition-adapter', () => ({
+  getRecognitionModule: () => mockMod,
+}));
+
+vi.mock('@/buzz/groknight', () => ({
+  groknight: {
+    type: { body: { lineHeight: 20 }, machine: {} },
+    buzz: {
+      dim: '#83838d',
+      accent: '#b08a4a',
+      dialogDanger: '#c4544d',
+      ledgerQuiet: '#83838d',
+      textSecondary: '#c9c9d1',
+      textMuted: '#83838d',
+      textPrimary: '#f0f0f3',
+      bgRaised: '#190e21',
+      border: '#291e33',
+      radius: 3,
+      bgBase: '#14091A',
+      type: {
+        body: { fontFamily: 'SpaceGrotesk-Regular', fontSize: 16, lineHeight: 23, letterSpacing: 0 },
+        machine: { fontFamily: 'IBMPlexMono-Regular', fontSize: 13, lineHeight: 19, letterSpacing: 0 },
+        meta: { fontFamily: 'SpaceGrotesk-Regular', fontSize: 13, lineHeight: 19, letterSpacing: 0 },
+      },
+      transcriptCard: { rowTitleSize: 15, rowKindSize: 12 },
+    },
+  },
+}));
+
+vi.mock('expo-haptics', () => ({
+  impactAsync: vi.fn(),
+  ImpactFeedbackStyle: { Medium: 'medium' },
+}));
+
+import {
+  COMPOSER_MAX_INPUT_HEIGHT,
+  COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+  ConversationComposer,
+} from './ConversationComposer';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Shared handler map used by the mock's addListener.
+const handlerMap = new Map<string, (...args: any[]) => void>();
+
+function fireEvent(eventName: string, data?: any) {
+  const handler = handlerMap.get(eventName);
+  if (handler) handler(data);
+}
+
+const renderers: any[] = [];
+
+function render(props: Record<string, any> = {}) {
+  const onSend = vi.fn();
+  const onChangeText = vi.fn();
+  let renderer: any;
+  act(() => {
+    renderer = create(
+      <ConversationComposer
+        value=""
+        height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+        maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+        focused={false}
+        disabled={false}
+        onAttach={vi.fn()}
+        onBlur={vi.fn()}
+        onChangeText={onChangeText}
+        onContentSizeChange={vi.fn()}
+        onFocus={vi.fn()}
+        onKeyPress={vi.fn()}
+        onSend={onSend}
+        {...props}
+      />,
+    );
+  });
+  renderers.push(renderer);
+  return { renderer, onSend, onChangeText };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  handlerMap.clear();
+  platformSetter.setOS('android');
+  mockMod.getPermissionsAsync.mockResolvedValue({ status: 'granted', granted: true, canAskAgain: true });
+  mockMod.requestPermissionsAsync.mockResolvedValue({ status: 'granted', granted: true, canAskAgain: true });
+  mockMod.addListener.mockImplementation((event: string, handler: (...args: any[]) => void) => {
+    handlerMap.set(event, handler);
+    return { remove: vi.fn(() => handlerMap.delete(event)) };
+  });
+});
+
+afterEach(() => {
+  act(() => renderers.splice(0).forEach((r) => r.unmount()));
+});
+
+describe('mic button visibility', () => {
+  it('does not render the mic button on web/desktop', () => {
+    platformSetter.setOS('web');
+    const { renderer } = render();
+    expect(renderer.root.findAllByProps({ testID: 'chat-mic' })).toHaveLength(0);
+  });
+
+  it('renders the mic button on Android', () => {
+    const { renderer } = render();
+    const mic = renderer.root.findByProps({ testID: 'chat-mic' });
+    expect(mic.props.accessibilityLabel).toBe('Start speech input');
+  });
+
+  it('renders the mic button on iOS', () => {
+    platformSetter.setOS('ios');
+    const { renderer } = render();
+    const mic = renderer.root.findByProps({ testID: 'chat-mic' });
+    expect(mic.props.accessibilityLabel).toBe('Start speech input');
+  });
+});
+
+describe('listening flow', () => {
+  it('tapping mic calls start and shows listening state', async () => {
+    const { renderer } = render();
+    const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });
+
+    await act(async () => micBtn.props.onPress());
+
+    // Allow microtask for state update
+    await act(async () => {});
+
+    expect(mockMod.getPermissionsAsync).toHaveBeenCalledOnce();
+    expect(mockMod.start).toHaveBeenCalledOnce();
+
+    // Check placeholder
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Listening');
+  });
+
+  it('shows interim transcript in status line', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'hello world', confidence: 0.9, segments: [] }],
+        isFinal: false,
+      });
+    });
+
+    const statusLine = renderer.root.findByProps({ testID: 'chat-speech-status' });
+    const statusText = statusLine.findByType('Text');
+    const flattened: any[] = [];
+    const collect = (node: any) => {
+      if (node == null || typeof node === 'boolean') return;
+      if (Array.isArray(node)) { node.forEach(collect); return; }
+      if (typeof node === 'object') {
+        if (typeof node.props?.children !== 'undefined') collect(node.props.children);
+        return;
+      }
+      flattened.push(String(node));
+    };
+    collect(statusText.props.children);
+    expect(flattened.join('')).toContain('hello world');
+  });
+
+  it('commits final result to onChangeText', async () => {
+    const onChangeText = vi.fn();
+    const { renderer } = render({ value: 'some text', onChangeText });
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    // Simulate final result
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'hello there', confidence: 0.95, segments: [] }],
+        isFinal: true,
+      });
+    });
+
+    expect(onChangeText).toHaveBeenCalledWith('some text hello there');
+  });
+
+  it('auto-stops after silence timeout', async () => {
+    vi.useFakeTimers();
+    const onChangeText = vi.fn();
+    const { renderer } = render({ value: '', onChangeText });
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'final words', confidence: 0.9, segments: [] }],
+        isFinal: true,
+      });
+    });
+
+    await act(async () => vi.advanceTimersByTime(2100));
+
+    expect(onChangeText).toHaveBeenCalledWith('final words');
+    vi.useRealTimers();
+  });
+
+  it('restarts on end event', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    mockMod.start.mockClear();
+
+    await act(async () => fireEvent('end', null));
+
+    expect(mockMod.start).toHaveBeenCalled();
+  });
+});
+
+describe('edge states', () => {
+  it('shows permission-denied status and dims mic', async () => {
+    mockMod.getPermissionsAsync.mockResolvedValue({ status: 'undetermined' });
+    mockMod.requestPermissionsAsync.mockResolvedValue({ status: 'denied', granted: false, canAskAgain: false });
+
+    const { renderer } = render();
+    const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });
+
+    await act(async () => micBtn.props.onPress());
+    await act(async () => {});
+
+    const statusLine = renderer.root.findByProps({ testID: 'chat-speech-status' });
+    const statusText = statusLine.findByType('Text');
+    expect(String(statusText.props.children)).toContain('microphone off in settings');
+
+    expect(micBtn.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ opacity: 0.4 })]),
+    );
+  });
+
+  it('shows "nothing recognised" when stopped without result', async () => {
+    const { renderer } = render();
+    const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });
+
+    await act(async () => micBtn.props.onPress());
+    await act(async () => {});
+
+    // Stop without any final result
+    await act(async () => micBtn.props.onPress());
+    await act(async () => {});
+
+    const statusLine = renderer.root.findByProps({ testID: 'chat-speech-status' });
+    const statusText = statusLine.findByType('Text');
+    expect(String(statusText.props.children)).toContain("didn't catch that");
+  });
+});
+
+describe('send and mic state', () => {
+  it('disables send while listening (even with text)', async () => {
+    const { renderer } = render({ value: 'some text' });
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    expect(renderer.root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(true);
+  });
+
+  it('text input remains editable', async () => {
+    const onChangeText = vi.fn();
+    const { renderer } = render({ onChangeText });
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'chat-input' }).props.onChangeText('typed text');
+    });
+    expect(onChangeText).toHaveBeenCalledWith('typed text');
+  });
+
+  it('placeholder reverts after listening ends', async () => {
+    const { renderer } = render({ value: '' });
+    const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });
+
+    await act(async () => micBtn.props.onPress());
+    await act(async () => {});
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Listening');
+
+    // Stop listening
+    await act(async () => micBtn.props.onPress());
+    await act(async () => {});
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
+  });
+});

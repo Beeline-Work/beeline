@@ -57,7 +57,7 @@ describe('Option A composer chrome', () => {
     expect(composer).toContain(
       'attachButtonText: {\n    ...theme.buzz.type.body,\n    color: theme.buzz.textMuted',
     );
-    expect(composer.match(/hitSlop=\{9\}/g)).toHaveLength(2);
+    expect(composer.match(/hitSlop=\{9\}/g)).toHaveLength(3);
   });
 
   it('holds Rooms, DMs, corners, and desktop to 16px side margins', () => {

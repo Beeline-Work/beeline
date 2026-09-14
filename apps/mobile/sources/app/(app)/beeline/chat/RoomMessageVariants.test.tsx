@@ -27,7 +27,34 @@ vi.mock('react-native', async () => {
       props,
       typeof props.children === 'function' ? props.children({ pressed: false }) : props.children,
     );
+  const animatedValues = new Map<string, { value: number }>();
+  const Animated = {
+    Value: vi.fn((initial: number) => {
+      const id = `${Math.random()}`;
+      const state = { value: initial };
+      animatedValues.set(id, state);
+      return {
+        _id: id,
+        _state: state,
+        interpolate: vi.fn(() => ({
+          _inputRange: [] as number[],
+          _outputRange: [] as string[],
+        })),
+        setValue: vi.fn((v: number) => {
+          state.value = v;
+        }),
+      };
+    }),
+    timing: vi.fn(() => ({
+      start: vi.fn((callback?: () => void) => {
+        callback?.();
+      }),
+    })),
+    Text: host('Animated.Text'),
+    View: host('Animated.View'),
+  };
   return {
+    Animated,
     Image: host('Image'),
     Linking: { openURL: vi.fn(async () => undefined) },
     Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
@@ -307,77 +334,83 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('folds a PR batch, names its most recent merge inline, and expands all rows', () => {
+  it('renders one cell per PR with header summary, accordion, and per-cell navigation', () => {
     const onOpenCorner = vi.fn();
     const onOpenUrl = vi.fn();
+    const items = [
+      {
+        id: 'corner',
+        title: 'Duplicate draft settle',
+        state: 'Merged' as const,
+        kindLine: 'corner · PR #1126',
+        cornerId: 'corner-1126',
+        objective: 'Ship the accordion PR card design',
+        actor: 'hoots',
+      },
+      ...Array.from({ length: 4 }, (_, index) => ({
+        id: `pr-${index}`,
+        title: `Change ${index}`,
+        state: index === 3 ? ('Checks failed' as const) : ('Merged' as const),
+        kindLine: `PR #${1130 + index}`,
+        ...(index === 3 ? { danger: true, url: `https://github.test/pr/${1130 + index}` as const } : {}),
+      })),
+    ];
     const renderer = render(
       <NotificationLifecycleCard
         message={message({
           notificationLifecycleRun: {
-            headline: '3 merged · 1 checks failed · 1 opened',
+            headline: '4 merged, 1 failed',
             subline: 'by @sol, @octocat · 09:41 – 10:28',
-            items: [
-              {
-                id: 'corner',
-                title: 'Duplicate draft settle',
-                state: 'Merged',
-                kindLine: 'corner · PR #1126',
-                cornerId: 'corner-1126',
-              },
-              ...Array.from({ length: 4 }, (_, index) => ({
-                id: `pr-${index}`,
-                title: `Change ${index}`,
-                state: index === 3 ? ('Checks failed' as const) : ('Merged' as const),
-                kindLine: `PR #${1130 + index}`,
-                ...(index === 3 ? { danger: true } : {}),
-                url: `https://github.test/pr/${1130 + index}`,
-              })),
-            ],
+            items,
           },
         })}
         onOpenCorner={onOpenCorner}
         onOpenUrl={onOpenUrl}
       />,
     );
-    expect(renderer.root.findByProps({ testID: 'notification-run-message' })).toBeDefined();
-    expect(
-      renderer.root.findAll((node: ReactTestInstance) =>
-        /^transcript-card-row-/.test(node.props.testID ?? ''),
-      ),
-    ).toHaveLength(0);
-    const cardTitle = renderer.root.find(
-      (node: ReactTestInstance) =>
-        node.type === 'Text' &&
-        node.children.includes('PR 4 merged, 1 failed · Duplicate draft settle'),
+    // (b) header summary counts unique PRs per state
+    const json = () => JSON.stringify(renderer.toJSON());
+    expect(json()).toContain('PR · 1 failed, 4 merged');
+
+    // First item (most recently updated) is the presented cell
+    expect(renderer.root.findByProps({ testID: 'notification-run-cell-corner' })).toBeDefined();
+    // Presented cell has objective and author
+    expect(json()).toContain('Ship the accordion PR card design');
+    expect(json()).toContain('hoots');
+
+    // (e) single-PR check: with 5 items, strip says "4 more ▾"
+    expect(json()).toContain('4 more ▾');
+    expect(json()).not.toContain('less ▴');
+
+    // Navigation callbacks work for the initial presented cell: Corner → (has cornerId)
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-corner-corner' }).props.onPress(),
     );
-    expect(cardTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
-    const disclosure = renderer.root.findByProps({
-      testID: 'notification-run-message-disclosure',
-    });
-    expect(disclosure.props.accessibilityState).toEqual({ expanded: false });
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('2 more');
-    act(() => disclosure.props.onPress());
-    const rowTitle = renderer.root.find(
-      (node: ReactTestInstance) =>
-        node.type === 'Text' && node.children.includes('Duplicate draft settle'),
-    );
-    expect(rowTitle.props).toMatchObject({ ellipsizeMode: 'tail', numberOfLines: 1 });
-    expect(rowTitle.parent?.parent?.parent?.props.style).toMatchObject({ flex: 1, minWidth: 0 });
-    expect(
-      renderer.root.findAll(
-        (node: ReactTestInstance) =>
-          node.type === 'Pressable' && /^transcript-card-row-/.test(node.props.testID ?? ''),
-      ),
-    ).toHaveLength(5);
-    act(() => renderer.root.findByProps({ testID: 'transcript-card-row-corner' }).props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
-    act(() => renderer.root.findByProps({ testID: 'transcript-card-row-pr-3' }).props.onPress());
+
+    // Tap expand strip to see contracted cells
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress(),
+    );
+    expect(json()).toContain('less ▴');
+    expect(json()).not.toContain('4 more ▾');
+
+    // (c) tapping a contracted cell presents it and contracts the previous
+    const contractedPressed = renderer.root.findByProps({
+      testID: 'notification-run-contracted-pr-3',
+    });
+    act(() => contractedPressed.props.onPress());
+    // The previously presented cell is now contracted; pr-3 is presented
+    expect(renderer.root.findByProps({ testID: 'notification-run-cell-pr-3' })).toBeDefined();
+
+    // View ↗ for the new presented cell (pr-3 has url, no cornerId)
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-url-pr-3' }).props.onPress(),
+    );
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pr/1133');
-    expect(JSON.stringify(renderer.toJSON())).toContain('failed');
-    expect(JSON.stringify(renderer.toJSON())).toContain('Less');
   });
 
-  it('renders an all-green check batch as one folded line and expands its check rows', () => {
+  it('renders an all-green check batch as one accordion card with header summary', () => {
     const renderer = render(
       <NotificationLifecycleCard
         message={message({
@@ -407,19 +440,19 @@ describe('Room message variant components', () => {
       />,
     );
     const json = () => JSON.stringify(renderer.toJSON());
-    expect(json()).toContain('Check 2 passed');
-    expect(json()).not.toContain('Build');
-    expect(json()).not.toContain('Lint');
-    expect(json()).not.toContain('11:07 – 11:07');
+    expect(json()).toContain('Check · 2 passed');
+    // The first item (Build) is the presented cell
+    expect(renderer.root.findByProps({ testID: 'notification-run-cell-build' })).toBeDefined();
+    // With 2 items, the expand strip shows "1 more ▾"
+    expect(json()).toContain('1 more ▾');
+    // Tap to expand and see Lint
     act(() =>
-      renderer.root.findByProps({ testID: 'notification-run-message-disclosure' }).props.onPress(),
+      renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress(),
     );
-    expect(json()).toContain('Build');
-    expect(json()).toContain('Lint');
-    expect(json()).toContain('passed');
+    expect(renderer.root.findByProps({ testID: 'notification-run-contracted-lint' })).toBeDefined();
   });
 
-  it('shows failed check names inline while passed checks stay folded', () => {
+  it('presents the most recently updated check item by recency order with header summary', () => {
     const renderer = render(
       <NotificationLifecycleCard
         message={message({
@@ -457,9 +490,12 @@ describe('Room message variant components', () => {
       />,
     );
     const json = JSON.stringify(renderer.toJSON());
-    expect(json).toContain('Check 2 passed, 1 failed');
-    expect(json).toContain('Lint');
-    expect(json).not.toContain('Build');
+    // Header counts unique PRs per state: 1 failed, 2 passed
+    expect(json).toContain('Check · 1 failed, 2 passed');
+    // First item (Build) is presented, not folded away
+    expect(json).toContain('Build');
+    // Lint (Checks failed) is contracted, visible after expand
+    expect(json).not.toContain('Lint');
     expect(json).not.toContain('Test');
   });
 

@@ -598,10 +598,15 @@ jobs:
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
       needs.initialize.outputs.native_android == 'true'
-    runs-on: ubuntu-latest
+    # Local EAS build on the self-hosted Linux runner (Android SDK + JDK 17 live
+    # there): Expo's cloud build needs credits the free plan ran out of. The
+    # keystore still comes from Expo's credential store via EXPO_TOKEN.
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 60
     env:
       EAS_CLI_VERSION: 22.2.0
+      ANDROID_HOME: /home/lunchbox/android-sdk
+      ANDROID_SDK_ROOT: /home/lunchbox/android-sdk
     steps:
       - uses: actions/checkout@v4
         with:
@@ -616,21 +621,26 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           test -n "$EXPO_TOKEN" || { echo 'EXPO_TOKEN is required for a native release' >&2; exit 1; }
-      - name: Build immutable Android store binary
+      - name: Build immutable Android store binary locally
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_SKIP_AUTO_FINGERPRINT: '1'
         run: |
           set -euo pipefail
+          test -d "$ANDROID_HOME/platform-tools" || { echo "Android SDK missing at $ANDROID_HOME" >&2; exit 1; }
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
           npm ci
-          npx --yes "eas-cli@$EAS_CLI_VERSION" build --profile production --platform android --non-interactive --wait --json > "$RUNNER_TEMP/android-build.json"
-          node - "$RUNNER_TEMP/android-build.json" <<'NODE'
+          # --package + env -u: same reasons as the iOS leg (a bare spec matching a
+          # global eas-cli prepends its bin dir; npm leaks --package into eas's own
+          # nested npx for the local build plugin).
+          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform android --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline.aab"
+          test -s "$RUNNER_TEMP/beeline.aab" || { echo 'local EAS build did not produce a non-empty aab' >&2; exit 1; }
+          sha256=$(sha256sum "$RUNNER_TEMP/beeline.aab" | awk '{print $1}')
+          node - "$RUNNER_TEMP/android-build.json" "$RUNNER_TEMP/beeline.aab" "$sha256" <<'NODE'
           const fs = require('node:fs');
-          for (const path of process.argv.slice(2)) {
-            const raw = JSON.parse(fs.readFileSync(path));
-            const build = Array.isArray(raw) ? raw[0] : raw;
-            if (build?.status !== 'FINISHED' || !build?.id) throw new Error(`${path} has no finished immutable build`);
-          }
+          const [output, path, sha256] = process.argv.slice(2);
+          fs.writeFileSync(output, JSON.stringify({source:'local',status:'FINISHED',id:`local-${sha256}`,artifacts:{path},sha256})+'\n');
           NODE
       - name: Resolve the store-facing app version
         id: native_version
@@ -649,8 +659,7 @@ jobs:
           TRACK: ${{ inputs.store_track }}
         run: |
           set -euo pipefail
-          archive=$(jq -r 'if type=="array" then .[0] else . end | .artifacts.applicationArchiveUrl // .artifacts.buildUrl' "$RUNNER_TEMP/android-build.json")
-          curl -fsSL "$archive" -o "$RUNNER_TEMP/beeline.aab"
+          test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=draft bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
       - name: Preserve Android build evidence
@@ -660,6 +669,9 @@ jobs:
           path: ${{ runner.temp }}/android-build.json
           if-no-files-found: error
           retention-days: 1
+      - name: Remove Android build output
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/beeline.aab" apps/mobile/android/app/build apps/mobile/android/build 2>/dev/null || true
 
   mobile_native_ios:
     needs: initialize

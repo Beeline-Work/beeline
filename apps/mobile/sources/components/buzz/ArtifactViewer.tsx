@@ -11,26 +11,9 @@ import {
   openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
+import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { groknight } from '@/buzz/groknight';
-
-let webviewModule: { default: React.ComponentType<Record<string, unknown>> } | null | undefined;
-function sandboxWebView(): React.ComponentType<Record<string, unknown>> | null {
-  if (webviewModule !== undefined) {
-    return webviewModule ? (webviewModule.default ?? null) : null;
-  }
-  if (Platform.OS === 'web') {
-    webviewModule = null;
-    return null;
-  }
-  try {
-    webviewModule = require('react-native-webview');
-    return webviewModule.default ?? null;
-  } catch {
-    webviewModule = null;
-    return null;
-  }
-}
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still script off,
@@ -111,7 +94,7 @@ export function ArtifactViewerSandbox({
       live = false;
     };
   }, [attachment, format]);
-  const WebView = sandboxWebView();
+  const WebView = useSandboxWebView();
   if (failed) {
     return (
       <View style={styles.placeholder} testID="artifact-viewer-failed">
@@ -167,7 +150,7 @@ function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReferenc
   }
   return (
     <ScrollView contentContainerStyle={styles.markdownBody} testID="artifact-viewer-markdown">
-      <MonoMarkdown markdown={markdown} />
+      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
     </ScrollView>
   );
 }
@@ -219,6 +202,7 @@ const styles = StyleSheet.create((theme) => ({
   body: { flex: 1 },
   webview: { flex: 1, backgroundColor: 'transparent' },
   markdownBody: { padding: theme.buzz.space.md },
+  markdownText: { ...groknight.type.body, color: groknight.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   placeholderText: { ...groknight.type.meta, color: groknight.ledgerQuiet },
 }));

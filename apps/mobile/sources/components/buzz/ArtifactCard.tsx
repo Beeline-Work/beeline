@@ -24,29 +24,11 @@ import {
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
 import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
+import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { groknight } from '@/buzz/groknight';
 import { Modal } from '@/modal';
-
-let webviewModule: { default: React.ComponentType<Record<string, unknown>> } | null | undefined;
-function sandboxWebView(): React.ComponentType<Record<string, unknown>> | null {
-  if (webviewModule !== undefined) {
-    return webviewModule ? (webviewModule.default ?? null) : null;
-  }
-  if (Platform.OS === 'web') {
-    webviewModule = null;
-    return null;
-  }
-  try {
-    // Lazy so node-side unit tests never load the native module.
-    webviewModule = require('react-native-webview');
-    return webviewModule?.default ?? null;
-  } catch {
-    webviewModule = null;
-    return null;
-  }
-}
 
 const PREVIEW_SNAPSHOT_DELAY_MS = 1200;
 
@@ -255,7 +237,7 @@ export function ArtifactSandboxPreview({
     const timer = setTimeout(() => void capture(), PREVIEW_SNAPSHOT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [capture, rendering]);
-  const WebView: React.ComponentType<Record<string, unknown>> | null = sandboxWebView();
+  const WebView = useSandboxWebView();
   if (snapshotPath) {
     return (
       <View style={styles.preview} testID="artifact-preview-snapshot">
@@ -324,7 +306,7 @@ export function ArtifactMarkdownPreview({ attachment }: { attachment: Attachment
   }
   return (
     <View pointerEvents="none" style={[styles.preview, styles.markdownCrop]} testID="artifact-preview-markdown">
-      <MonoMarkdown markdown={markdown} />
+      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
       <View style={styles.previewFade} />
     </View>
   );
@@ -357,6 +339,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: `${theme.buzz.bgBase}CC`,
   },
   markdownCrop: { overflow: 'hidden', padding: theme.buzz.space.sm },
+  markdownText: { ...groknight.type.body, color: groknight.textPrimary },
   previewPlaceholder: {
     height: ARTIFACT_MAX_PREVIEW_HEIGHT,
     alignItems: 'center',

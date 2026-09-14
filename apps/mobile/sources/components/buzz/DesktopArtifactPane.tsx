@@ -159,7 +159,7 @@ function DesktopArtifactMarkdown({ attachment }: { attachment: AttachmentReferen
   }
   return (
     <ScrollView contentContainerStyle={styles.markdownBody} testID="desktop-artifact-markdown">
-      <MonoMarkdown markdown={markdown} />
+      <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
     </ScrollView>
   );
 }
@@ -188,6 +188,7 @@ const styles = StyleSheet.create((theme) => ({
   openLink: { ...groknight.type.body, color: groknight.accent },
   close: { ...groknight.type.body, color: groknight.ledgerQuiet },
   markdownBody: { padding: theme.buzz.space.md },
+  markdownText: { ...groknight.type.body, color: groknight.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: theme.buzz.space.md },
   placeholderText: { ...groknight.type.meta, color: groknight.ledgerQuiet, textAlign: 'center' },
 }));

@@ -1,3 +1,5 @@
+import type { RefObject } from 'react';
+import type { View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { cacheDirectory, getInfoAsync, moveAsync } from 'expo-file-system/legacy';
 
@@ -21,7 +23,7 @@ export function artifactPreviewCachePath(objectId: string): string {
 /** Resolves to the snapshot path once one capture has landed, or null when nothing could be captured. */
 export async function snapshotArtifactPreview(
   attachmentUrl: string,
-  viewRef: React.MutableRefObject<number | null>,
+  viewRef: RefObject<View | null>,
 ): Promise<string | null> {
   const objectId = mediaIdFromUrl(attachmentUrl);
   if (!objectId || inFlight.has(objectId)) return null;

@@ -82,9 +82,12 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 async function flush(): Promise<void> {
-  for (let round = 0; round < 6; round += 1) {
+  // Real macrotask ticks, not just microtasks: under a loaded test worker the
+  // dynamic `import('react-native-webview')` a full suite run contends with
+  // needs more than a handful of Promise.resolve() turns to settle.
+  for (let round = 0; round < 20; round += 1) {
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
 }

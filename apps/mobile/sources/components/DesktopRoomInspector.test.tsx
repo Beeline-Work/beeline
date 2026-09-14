@@ -99,6 +99,12 @@ vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', async () => {
       ReactModule.createElement('OrdinaryLedgerMessage', props),
   };
 });
+vi.mock('@/components/buzz/DesktopArtifactPane', async () => {
+  const ReactModule = await import('react');
+  return {
+    DesktopArtifactPane: (props: any) => ReactModule.createElement('DesktopArtifactPane', props),
+  };
+});
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn() }));
 vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));

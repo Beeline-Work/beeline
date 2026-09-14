@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   platformOS: { value: 'android' as string },
@@ -99,6 +99,19 @@ beforeAll(() => {
   });
 });
 afterAll(() => vi.restoreAllMocks());
+beforeEach(() => {
+  webviewCreated.length = 0;
+  mocks.modalShow.mockClear();
+  mocks.modalAlert.mockClear();
+  mocks.probeArtifactPreview.mockReset();
+  mocks.snapshotArtifactPreview.mockReset();
+  mocks.resetArtifactPreviewCache.mockClear();
+  mocks.fetchArtifactBytes.mockReset();
+  mocks.fetchArtifactText.mockReset();
+  mocks.openArtifactInBrowserOrExplain.mockReset();
+  mocks.artifactPdfLocalUri.mockReset();
+  mocks.openArtifactInDesktopWorkPane.mockClear();
+});
 
 function artifactAttachment(overrides: Record<string, unknown> = {}) {
   return {
@@ -122,22 +135,28 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 function textOf(renderer: ReactTestRenderer): string {
-  return renderer.root.findAll((node) => typeof node.props.children === 'string' || Array.isArray(node.props.children))
-    .map((node) => (Array.isArray(node.props.children) ? node.props.children.join(' ') : node.props.children))
+  return renderer.root
+    .findAll(
+      (node: any) => typeof node.props.children === 'string' || Array.isArray(node.props.children),
+    )
+    .map((node: any) => (Array.isArray(node.props.children) ? node.props.children.join(' ') : node.props.children))
     .join(' | ');
 }
 
 /** Host-level node lookup: mocked RN components render a nested host twin with the same props. */
 function hostNodes(renderer: ReactTestRenderer, testID: string) {
   return renderer.root.findAll(
-    (node) => typeof node.type === 'string' && node.props.testID === testID,
+    (node: any) => typeof node.type === 'string' && node.props.testID === testID,
   );
 }
 
 async function flush(): Promise<void> {
-  for (let round = 0; round < 6; round += 1) {
+  // Real macrotask ticks, not just microtasks: under a loaded test worker the
+  // dynamic `import('react-native-webview')` a full suite run contends with
+  // needs more than a handful of Promise.resolve() turns to settle.
+  for (let round = 0; round < 20; round += 1) {
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
 }
@@ -162,7 +181,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
     expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
-    expect(renderer.root.findAll((n) => typeof n.type === 'string' && n.type === 'Image')).toHaveLength(1);
+    expect(renderer.root.findAll((n: any) => typeof n.type === 'string' && n.type === 'Image')).toHaveLength(1);
   });
 
   it('renders the page itself in the script-off sandbox once, then snapshots it', async () => {
@@ -173,7 +192,12 @@ describe('the artifact card is the preview (mock 1b)', () => {
     await flush();
     const webview = renderer.root.findByProps({ testID: 'artifact-preview-render' });
     expect(webview).toBeDefined();
-    await flush();
+    // The delayed-capture timer is the fallback for a load-end that never
+    // fires; the WebView mock never calls onLoadEnd, so it is what fires here.
+    await act(async () => {
+      renderer.root.findByType('WebView').props.onLoadEnd();
+      await Promise.resolve();
+    });
     expect(mocks.snapshotArtifactPreview).toHaveBeenCalledWith(
       artifactAttachment().url,
       expect.anything(),

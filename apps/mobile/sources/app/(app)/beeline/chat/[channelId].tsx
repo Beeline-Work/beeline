@@ -203,7 +203,11 @@ import {
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
 } from '@/buzz/message-reply';
-import { mentionKeyboardAction, transcriptKeyboardDismissMode } from '@/buzz/composer-keyboard';
+import {
+  composerBottomPadding,
+  mentionKeyboardAction,
+  transcriptKeyboardDismissMode,
+} from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
@@ -2018,6 +2022,7 @@ export default function BuzzChat() {
   // runs, preserving the old offset as an empty gap. Capture the verdict in
   // render, including the two independently mounted status lines.
   const keyboardHeight = useKeyboardState((state) => state.height);
+  const composerBottomInset = composerBottomPadding(insets.bottom, keyboardHeight);
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
     cornerLiveBar ? 'corner' : 'no-corner',
@@ -3793,7 +3798,6 @@ export default function BuzzChat() {
         <KeyboardAvoidingView
           style={styles.container}
           behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -4127,7 +4131,7 @@ export default function BuzzChat() {
               </Text>
             </View>
           ) : (
-            <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={[styles.inputBar, { paddingBottom: composerBottomInset }]}>
               {slashMenuVisible &&
                 (() => {
                   const mentionAgent = mentionSlashAgentPubkey

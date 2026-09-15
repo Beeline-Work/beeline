@@ -688,7 +688,12 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
   assert.match(source, /release ceiling is 20 minutes/);
-  assert.doesNotMatch(source.replace(/  mobile_native_android:[\s\S]*?\n  release_result:/, ''), /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/);
+  assert.doesNotMatch(
+    source
+      .replace(/  release_proof:[\s\S]*?\n  mobile_ota:/, '')
+      .replace(/  mobile_native_android:[\s\S]*?\n  release_result:/, ''),
+    /timeout-minutes:\s*(?:[2-9][0-9]|[1-9][0-9]{2,})/,
+  );
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -703,20 +708,20 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /needs\.initialize\.outputs\.run_server == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_helper == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_mobile_ota == 'true'/);
-  assert.deepEqual(workflow.jobs.mobile_ota.needs, ['initialize', 'mobile_native_android', 'mobile_native_ios']);
+  assert.deepEqual(workflow.jobs.mobile_ota.needs, ['initialize', 'mobile_native_android', 'mobile_native_ios', 'release_proof']);
   assert.match(workflow.jobs.mobile_ota.if, /runtime_pin_changed != 'true'/);
   assert.match(workflow.jobs.mobile_ota.if, /stage_mobile_native == 'checked'/);
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_android\.result == 'success'/);
   assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_ios\.result == 'success'/);
   assert.deepEqual(workflow.jobs.release_result.needs, [
     'initialize', 'server', 'helper', 'mobile_ota', 'mobile_native_android', 'mobile_native_ios',
-    'desktop_installers', 'desktop_checkpoint', 'website',
+    'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
   ]);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_website == 'true'/);
   assert.equal(workflow.jobs.server_deploy_plan.if, 'inputs.plan_only == true');
-  for (const job of ['server', 'helper', 'mobile_ota', 'desktop_installers', 'desktop_checkpoint', 'website', 'mobile_native_android', 'mobile_native_ios', 'release_result', 'retry']) {
+  for (const job of ['server', 'helper', 'mobile_ota', 'desktop_installers', 'desktop_checkpoint', 'website', 'mobile_native_android', 'mobile_native_ios', 'release_proof', 'release_result', 'retry']) {
     assert.match(String(workflow.jobs[job].if), /inputs\.plan_only != true/);
   }
   assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-server/);
@@ -850,6 +855,48 @@ test('canonical routine release guidance is a single no-input dispatch', () => {
   assert.match(agents, /with no release worker and no inputs/);
 });
 
+test('the emulator release proof gates OTA promotion', () => {
+  const source = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
+  const workflow = parse(source);
+  const proof = workflow.jobs.release_proof;
+  assert.match(proof.if, /run_mobile_ota == 'true'/);
+  assert.match(proof.if, /native_android != 'true' \|\| needs\.mobile_native_android\.result == 'success'/);
+  assert.deepEqual(proof['runs-on'], ['self-hosted', 'beeline-android']);
+  const steps = proof.steps;
+  const aab = steps.find((step) => step.name === 'Download the native AAB under proof');
+  const apk = steps.find((step) => step.name === 'Build the sideload APK under proof (OTA-only releases)');
+  const run = steps.find((step) => step.name === 'Run the emulator release proof');
+  const evidence = steps.find((step) => step.name === 'Preserve release-proof evidence');
+  assert.equal(aab.if, "needs.initialize.outputs.native_android == 'true'");
+  assert.match(aab.with.name, /mobile-native-android-build-/);
+  assert.equal(apk.if, "needs.initialize.outputs.native_android != 'true'");
+  // The shared rig emulator must survive the OTA-only APK build's teardown.
+  assert.equal(apk.env.BEELINE_ANDROID_KEEP_DEVICE, '1');
+  assert.match(apk.env.ANDROID_SIDELOAD_KEYSTORE_B64, /secrets\./);
+  assert.match(run.run, /release-proof\.mjs --aab "\$RUNNER_TEMP\/proof-binary\/beeline\.aab"/);
+  assert.match(run.run, /release-proof\.mjs --apk apps\/mobile\/android\/app\/build\/outputs\/apk\/release\/app-release\.apk/);
+  assert.equal(evidence.if, 'always()');
+  assert.match(evidence.with.path, /release-proof-out/);
+
+  // Promotion itself is gated, not just the job: the built checkpoint still
+  // lands when the proof fails, and a failed proof fails mobile_ota loudly.
+  const ota = workflow.jobs.mobile_ota;
+  const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
+  assert.match(promote.if, /needs\.release_proof\.result == 'success'/);
+  const refuse = ota.steps.find((step) => step.name === 'Refuse promotion when the release proof failed');
+  assert.equal(refuse.if, "needs.release_proof.result == 'failure'");
+  assert.match(refuse.run, /exit 1/);
+  for (const step of ota.steps.filter((step) =>
+    [
+      'Checkpoint OTA promotion',
+      'Locate promoted OTA evidence for a check-only retry',
+      'Require rollback evidence and write checkpoint',
+    ].includes(step.name),
+  )) {
+    assert.match(step.if, /needs\.release_proof\.result == 'success'/);
+  }
+});
+
 test('native workflow builds Android locally on the Linux runner and iOS locally on the Mac runner', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
@@ -922,7 +969,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     const androidEvidence = androidSteps.find((step) => step.name === 'Preserve Android build evidence');
     const iosEvidence = ios.steps.find((step) => step.name === 'Preserve iOS build evidence');
     assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');
-    assert.equal(androidEvidence.with.path, '${{ runner.temp }}/android-build.json');
+    assert.match(androidEvidence.with.path, /android-build\.json[\s\S]*beeline\.aab/);
     assert.equal(iosEvidence.with.name, 'mobile-native-ios-build-${{ needs.initialize.outputs.release_id }}');
     assert.equal(iosEvidence.with.path, '${{ runner.temp }}/ios-build.json');
 

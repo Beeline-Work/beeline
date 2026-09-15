@@ -15,6 +15,7 @@ import {
   prepareRoomAgentHome,
   roomAgentHomeEnv,
 } from './agent-home.js';
+import { BEELINE_REVIEW_SKILL_NAME, USING_BEELINE_SKILL_NAME } from './beeline-skill.js';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
@@ -419,7 +420,12 @@ describe('operator skills + MCP passthrough', () => {
     const operatorHome = await operatorHomeWithHarnessConfigs();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      operatorHome,
+      agentKind: 'claude',
+      isReviewer: true,
+    });
 
     // Only the SELECTED harness's tree is materialized (C104); the other three
     // are the copies nobody was ever going to read.
@@ -435,7 +441,10 @@ describe('operator skills + MCP passthrough', () => {
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
     expect(reviewSkill).toContain('@author approved <reviewed sha>, merge');
-    expect(reviewSkill).toContain('Never merge the pull request yourself');
+    expect(reviewSkill).toContain(
+      'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
+    );
+    expect(reviewSkill).not.toContain('Never merge');
     expect(reviewSkill).not.toContain('approved pending checks');
     expect(reviewSkill).not.toContain('unknown checks');
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
@@ -477,6 +486,38 @@ describe('operator skills + MCP passthrough', () => {
     const operatorText = readFileSync(resolve(operatorHome, '.codex/config.toml'), 'utf8');
     expect(operatorText).toContain('@trusty-squire/mcp');
     expect(operatorText).not.toContain('scribe');
+  });
+
+  it('installs the review skill only for the configured reviewer, and retracts it when the flag moves', async () => {
+    // An implementer that reads the review procedure mistakes the reviewer's
+    // never-merge rule for its own, so a non-reviewer home must not carry it.
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.agents/skills/greet'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.agents/skills/greet/SKILL.md'), 'say hi');
+    const implementerRoot = resolve(await scratch('beeline-implementer-'), 'agent-home');
+    const reviewerRoot = resolve(await scratch('beeline-reviewer-'), 'agent-home');
+
+    await prepareRoomAgentHome({ root: implementerRoot, operatorHome, agentKind: 'claude' });
+    expect(
+      readdirSync(resolve(implementerRoot, 'claude', 'skills')).sort(),
+    ).toEqual(['greet', USING_BEELINE_SKILL_NAME]);
+
+    await prepareRoomAgentHome({
+      root: reviewerRoot,
+      operatorHome,
+      agentKind: 'claude',
+      isReviewer: true,
+    });
+    expect(
+      readdirSync(resolve(reviewerRoot, 'claude', 'skills')).sort(),
+    ).toEqual([BEELINE_REVIEW_SKILL_NAME, 'greet', USING_BEELINE_SKILL_NAME]);
+
+    // Provisioning is deletion too: the same home losing its reviewer role
+    // loses the skill on the next activation, never keeping a stale copy.
+    await prepareRoomAgentHome({ root: reviewerRoot, operatorHome, agentKind: 'claude' });
+    expect(readdirSync(resolve(reviewerRoot, 'claude', 'skills')).sort()).not.toContain(
+      BEELINE_REVIEW_SKILL_NAME,
+    );
   });
 
   it('reports malformed ambient skills as concise skipped-entry lines', async () => {
@@ -530,6 +571,7 @@ describe('operator skills + MCP passthrough', () => {
       operatorHome,
       sharedSkills: ['review-pr'],
       agentKind: 'pi',
+      isReviewer: true,
     });
     await prepareRoomAgentHome({ root: cleanAgent, operatorHome, agentKind: 'pi' });
 
@@ -827,7 +869,12 @@ describe('skill provision reuse', () => {
     expect(
       (
         await provisionTwice(
-          { root: deletedRoot, operatorHome: deleted, agentKind: 'claude' },
+          {
+            root: deletedRoot,
+            operatorHome: deleted,
+            agentKind: 'claude',
+            isReviewer: true,
+          },
           () => rm(resolve(deleted, '.agents/skills/greet'), { recursive: true }),
         )
       ).rebuilt,

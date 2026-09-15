@@ -3,7 +3,10 @@ import { SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
   beelineCapabilityContextForHarness,
   beelinePrimer,
+  BEELINE_REVIEW_SKILL_NAME,
+  isConfiguredReviewer,
   usingBeelineSkillMarkdown,
+  beelineReviewSkillMarkdown,
 } from './beeline-skill.js';
 
 describe('using-beeline Room guidance', () => {
@@ -91,6 +94,48 @@ describe('using-beeline Room guidance', () => {
       'Tag the user only when you need a decision or input, or when the task they asked for is finished.',
     );
     expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
+  });
+});
+
+describe('using-beeline merge ownership', () => {
+  const markdown = usingBeelineSkillMarkdown('test-release');
+
+  it('names merging as the author\'s own step after the reviewer approves', () => {
+    // An implementer that never hears this reads the reviewer skill (if it
+    // can find one) and refuses to merge on the reviewer's rule.
+    expect(markdown).toContain(
+      'merging is your step: once the configured reviewer approves and tags you, you run `gh pr merge` yourself - nothing merges it for you.',
+    );
+  });
+
+  it('carries no never-merge rule for the implementer', () => {
+    expect(markdown).not.toContain('Never merge');
+  });
+});
+
+describe('beeline-review reviewer skill', () => {
+  const markdown = beelineReviewSkillMarkdown('test-release');
+
+  it('ends the reviewer\'s authority at approval and leaves the merge to the author', () => {
+    expect(markdown).toContain('## 8. Gate and verdict');
+    expect(markdown).toContain(
+      'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
+    );
+  });
+
+  it('carries no bare never-merge sentence the implementer could borrow', () => {
+    expect(markdown).not.toContain('Never merge');
+  });
+});
+
+describe('isConfiguredReviewer', () => {
+  it('matches handles with or without their @ prefix and refuses blanks', () => {
+    expect(isConfiguredReviewer('fathom', '@fathom')).toBe(true);
+    expect(isConfiguredReviewer('@fathom', 'fathom')).toBe(true);
+    expect(isConfiguredReviewer('@hoots', '@fathom')).toBe(false);
+    expect(isConfiguredReviewer(undefined, '@fathom')).toBe(false);
+    expect(isConfiguredReviewer('@hoots', undefined)).toBe(false);
+    expect(isConfiguredReviewer('@hoots', '')).toBe(false);
   });
 });
 

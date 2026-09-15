@@ -26,7 +26,7 @@ import {
   withoutImageData,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { beelineCapabilityContextForHarness } from './beeline-skill.js';
+import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
@@ -504,6 +504,7 @@ export class MonolithRoomTurnLoop {
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
+          isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }

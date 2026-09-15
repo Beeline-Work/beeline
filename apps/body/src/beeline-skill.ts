@@ -6,6 +6,23 @@ import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 export const BEELINE_REVIEW_SKILL_NAME = 'beeline-review';
 
+/**
+ * Whether THIS agent is the parent Room's configured reviewer, read from the
+ * signals already plumbed to the daemon (`getAgentConfiguration`'s
+ * `reviewerHandle` against the agent's own roster handle). Only a reviewer's
+ * agent home carries the `beeline-review` skill (`agent-home.ts`).
+ */
+export function isConfiguredReviewer(
+  agentHandle: string | undefined,
+  reviewerHandle: string | undefined,
+): boolean {
+  return Boolean(
+    agentHandle &&
+      reviewerHandle &&
+      agentHandle.replace(/^@/, '') === reviewerHandle.replace(/^@/, ''),
+  );
+}
+
 const BEELINE_ROOM_CAPABILITIES = [
   'The repository filesystem is read-only in this Room session.',
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
@@ -104,6 +121,8 @@ description: How to answer inside a Beeline Room.
 
 You are answering inside a Room whose filesystem is read-only. ${BEELINE_ROOM_CAPABILITIES}
 
+When your corner's pull request is ready, merging is your step: once the configured reviewer approves and tags you, you run \`gh pr merge\` yourself - nothing merges it for you.
+
 ## Tools and the Workbench
 
 A **tool** is something you can use once a human pairs it; a **key** is the credential that tool holds for that human. You spend a key through the mounted connector and never see the credential itself.
@@ -195,6 +214,6 @@ Then take exactly one action:
 
 - FAIL: reply \`@author\` with the confirmed findings to fix.
 - PASS: call \`approve_merge\` with the reviewed head SHA, then reply \`@author approved <reviewed sha>, merge\`.
-- Never merge the pull request yourself.
+- Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.
 `;
 }

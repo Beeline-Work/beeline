@@ -533,6 +533,11 @@ async function main() {
   const avd = process.env.RELEASE_PROOF_AVD ?? 'buzzy_api36';
   const outDir = args.out;
   mkdirSync(outDir, { recursive: true });
+  // Self-ignoring evidence dir. apps/mobile/.gitignore is a hashed
+  // @expo/fingerprint source (bareGitIgnore), so a committed ignore entry
+  // there would move the NATIVE FINGERPRINT stamp; nothing may be added to
+  // that file for tooling output.
+  writeFileSync(join(outDir, '.gitignore'), '*\n!.gitignore\n');
 
   const lock = await acquireLock(device);
   let competingDisabled = [];

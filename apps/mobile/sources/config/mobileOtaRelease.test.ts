@@ -1599,9 +1599,14 @@ esac
     );
     expect(unifiedWorkflow).toContain("needs.initialize.outputs.run_mobile_ota == 'true'");
     expect(unifiedWorkflow).toContain('release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota');
-    expect(unifiedWorkflow).not.toMatch(
-      /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
-    );
+    // The only sanctioned device work in the release workflow is the
+    // `release_proof` component gate, which runs the rig's proof flows
+    // BEFORE promotion and whose failure blocks the promote leg. The retired
+    // shapes were a post-promote Actions device rehearsal of the promoted
+    // rollout; nothing of that shape may return.
+    expect(unifiedWorkflow).toContain('release_proof:');
+    expect(unifiedWorkflow.indexOf('release_proof:')).toBeLessThan(unifiedWorkflow.indexOf('mobile_ota:'));
+    expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal/);
     // The predecessor comes from the release run's promoted-ledger artifact.
     expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-promoted-')");
     expect(rollbackWorkflow).toContain("workflow_id: 'unified-release.yml'");
@@ -2386,9 +2391,10 @@ esac
     expect(workflow).toContain('Store release ledger, timings, and promotion proof');
     expect(unifiedWorkflow).toContain('unified-release.mjs apply-checkpoints');
     expect(unifiedWorkflow).toContain('unified-release.mjs finalize');
-    expect(unifiedWorkflow).not.toMatch(
-      /mobile-ota-post-promote|post_promote_rehearsal|emulator|Maestro/,
-    );
+    // The `release_proof` rig gate (see above) is the one bounded component
+    // check that touches a device; the retired post-promote rehearsal shapes
+    // stay forbidden.
+    expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal/);
     expect(daemonWorkflow).toContain('Record asynchronous fleet uptake without blocking the release');
     expect(unifiedWorkflow).toContain('- uses: ./.github/actions/server-leg');
     expect(serverWorkflow).toContain(

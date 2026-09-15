@@ -7,7 +7,6 @@ import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/bu
 import { fetchArtifactBytes, fetchArtifactText, openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
-import { groknight } from '@/buzz/groknight';
 
 /**
  * The desktop work pane's artifact view (mock 1c, desktop): the page rendered
@@ -183,12 +182,12 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   caption: { flex: 1, minWidth: 0 },
-  title: { ...groknight.type.bodyStrong, color: groknight.textPrimary },
-  kindLine: { ...groknight.type.machine, color: groknight.ledgerQuiet },
-  openLink: { ...groknight.type.body, color: groknight.accent },
-  close: { ...groknight.type.body, color: groknight.ledgerQuiet },
+  title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  kindLine: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
+  openLink: { ...theme.buzz.type.body, color: theme.buzz.accent },
+  close: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   markdownBody: { padding: theme.buzz.space.md },
-  markdownText: { ...groknight.type.body, color: groknight.textPrimary },
+  markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: theme.buzz.space.md },
-  placeholderText: { ...groknight.type.meta, color: groknight.ledgerQuiet, textAlign: 'center' },
+  placeholderText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, textAlign: 'center' },
 }));

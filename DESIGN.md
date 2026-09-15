@@ -29,13 +29,23 @@ modal sheet or merge-approval panel. Transcript asks use `TranscriptCard`'s
 raised fill without the HullSurface texture; transcript records have no fill.
 
 Source of truth: `apps/mobile/sources/buzz/groknight.ts`. It exports one
-semantic token shape and one set: Obsidian Refined. There is no theme picker;
-the app ships this one visual language everywhere (the former Editorial Ink and
-Ledger sets are retired). Obsidian content runs `#f0f0f3` /
-`#c9c9d1`; `#83838d` and `#6c6c76` are reserved for chrome, labels, timestamps,
-and redundant machine noise. Brass is `#b08a4a` in Obsidian (the Editorial
-direction's single accent; the older gold `#c9a24b` is retired); diff green/red
-remains the one domain-color exception.
+semantic token shape and two sets built from it: Obsidian Refined (dark) and
+Bone (light), picked from a Settings → Appearance toggle (the former Editorial
+Ink and Ledger sets are still retired — this is not their return, just a
+light/dark pair of the one Speakeasy language). Obsidian content runs
+`#f0f0f3` / `#c9c9d1`; `#83838d` and `#6c6c76` are reserved for chrome,
+labels, timestamps, and redundant machine noise. Brass is `#b08a4a` in
+Obsidian (the Editorial direction's single accent; the older gold `#c9a24b`
+is retired); diff green/red remains the one domain-color exception.
+
+Bone is Obsidian's construction rules run in reverse: a warm bone canvas
+(`#F3EEE4`) instead of the warm-dark aubergine, "content near-black, chrome
+mid" instead of "content near-white, chrome dim," and brass darkened to
+`#8a6323` since the shipped `#b08a4a` is tuned for contrast against
+near-black and reads too light against bone. Every elevation, border, and
+divider step keeps Obsidian's relative position on the ladder, re-based on
+the bone canvas. Diff green/red and the other domain colors are unchanged
+between the two sets.
 
 ## Shape
 
@@ -445,8 +455,9 @@ outer silhouette — bear, cat, bat, whale and pigeon on a dark plate; hare,
 heron, moth and owl on a light one; never the hue-bodied fox, octopus and
 stag. An agent's plate is always a light hue (lightness ≈0.62), so an agent
 takes the light rule in either theme: an INK hairline under its bone shapes,
-nothing under its ink ones. The shipped themes are all dark; the light
-treatment exists so the same tile is correct anywhere a light ground appears.
+nothing under its ink ones. Obsidian is dark and Bone is light; the edge
+layer's light-ground treatment was carried by Bone before Bone shipped, so
+the same tile is already correct on either canvas.
 
 **5 · A gold ring means working.** An agent with a live turn or a live corner
 right now takes a gold ring plus a wider low-alpha halo drawn _around_ its

@@ -32,7 +32,17 @@ vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
     create: (factory: (theme: unknown) => unknown) =>
-      factory({ buzz: { border: '#333', bgBase: '#111', space: { sm: 8, md: 12 } } }),
+      factory({
+        buzz: {
+          border: '#333',
+          bgBase: '#111',
+          textPrimary: '#eee',
+          ledgerQuiet: '#777',
+          accent: '#b08a4a',
+          space: { sm: 8, md: 12 },
+          type: { body: {}, bodyStrong: {}, machine: {}, meta: {} },
+        },
+      }),
   },
 }));
 vi.mock('@/buzz/artifact-link', () => ({

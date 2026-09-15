@@ -53,6 +53,9 @@ import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegis
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
+import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
+import { setAppAppearance } from '@/unistyles';
+import { useLocalSettingMutable } from '@/sync/storage';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
@@ -505,6 +508,14 @@ export default function BuzzIdentitySettings() {
   const managedHandleLabel = managedHandle ? `@${managedHandle}` : '';
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const githubCanLink = linkedAccount === 'not-linked' && Platform.OS !== 'web';
+  const [appearance, setAppearance] = useLocalSettingMutable('appearance');
+  const changeAppearance = useCallback(
+    (next: typeof appearance) => {
+      setAppearance(next);
+      setAppAppearance(next);
+    },
+    [setAppearance],
+  );
 
   const commitName = () => {
     if (normalizePersonName(profileName) === savedProfileName) return;
@@ -527,6 +538,11 @@ export default function BuzzIdentitySettings() {
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.section} testID="appearance-section">
+          <Text style={styles.sectionLabel}>Appearance</Text>
+          <AppearanceSetting onChange={changeAppearance} value={appearance} />
+        </View>
+
         {profilePubkey && (
           <View style={styles.section} testID="identity-settings">
             <Text style={styles.sectionLabel}>Identity</Text>

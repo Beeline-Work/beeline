@@ -486,6 +486,12 @@ export type Theme = typeof lightTheme;
 function createBeelineAppTheme(buzz: BeelineThemeTokens) {
     return {
         ...darkTheme,
+        // darkTheme's own `dark: true` is a fixed legacy default; a bridged
+        // theme is only actually dark when its buzz token set says so (Bone
+        // is light), so the flag every `theme.dark` call site branches on
+        // (status bar style, blur tint, MobileGlass) must follow buzz, not
+        // the legacy base object it was spread from.
+        dark: buzz.dark,
         colors: {
             ...darkTheme.colors,
             text: buzz.textPrimary,
@@ -563,4 +569,5 @@ function createBeelineAppTheme(buzz: BeelineThemeTokens) {
 }
 
 export const obsidianTheme = createBeelineAppTheme(beelineThemes.obsidian);
+export const boneTheme = createBeelineAppTheme(beelineThemes.bone);
 export type BeelineAppTheme = typeof obsidianTheme;

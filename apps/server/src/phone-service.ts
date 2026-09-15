@@ -5263,9 +5263,13 @@ export class PhoneService {
         online: boolean;
       }>(
         // A helper is a machine the VIEWER connected: an agent whose owner is
-        // this viewer and which is still a current Workspace member. Online
-        // reads the same durable presence evidence readers age out after 90s.
-        `SELECT a.agent_id,i.name,
+        // this viewer and which is still a current Workspace member. The
+        // Workbench is human-scoped, not workspace-scoped, so this is NOT
+        // filtered by a workspace id (there is none in the request), only by
+        // owner and current-member status; DISTINCT collapses a helper that
+        // belongs to more than one Workspace. Online reads the same durable
+        // presence evidence readers age out after 90s.
+        `SELECT DISTINCT a.agent_id,i.name,
            EXISTS(SELECT 1 FROM live_outputs p
              WHERE p.agent_id=a.agent_id AND p.kind='presence'
                AND p.body->>'status'='online'
@@ -5273,10 +5277,10 @@ export class PhoneService {
          FROM agents a
          JOIN identities i ON i.id=a.agent_id
          JOIN memberships m ON m.identity_id=a.agent_id
-           AND m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
-         WHERE a.owner_id=$2
+           AND m.room_id IS NULL AND m.removed_at IS NULL
+         WHERE a.owner_id=$1
          ORDER BY i.name`,
-        [input.workspaceId, viewerId],
+        [viewerId],
       )
     ).rows;
     const walletRow = (

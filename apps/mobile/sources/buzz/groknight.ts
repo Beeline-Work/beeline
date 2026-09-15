@@ -10,8 +10,6 @@ import brand from './brand.json';
  */
 const shared = {
   brandMark: brand.mark,
-  diffAdded: '#3FB950',
-  diffRemoved: '#F85149',
   // The one box radius, shared by every theme (DESIGN.md → Shape).
   radius: 3,
   // Human and agent relay photos defeat their identity axes, so their shared
@@ -163,6 +161,11 @@ export const beelineThemes = {
     accent: '#b08a4a',
     humanRail: '#b08a4a',
     agentRail: '#3b3048',
+    // Diff green/red is the one domain-color exception (DESIGN.md), tuned
+    // per canvas like brass is: legible text against near-black here, and
+    // against Bone's near-white canvas in that theme's own values below.
+    diffAdded: '#3FB950',
+    diffRemoved: '#F85149',
     ledgerBright: '#f0f0f3',
     ledgerBody: '#c9c9d1',
     ledgerQuiet: '#83838d',
@@ -257,6 +260,12 @@ export const beelineThemes = {
     accent: '#8a6323',
     humanRail: '#8a6323',
     agentRail: '#C9BBA0',
+    // GitHub's current light-mode diff text green/red (not Obsidian's
+    // #3FB950/#F85149 re-run at low contrast on a light canvas) — ~4.4:1 and
+    // ~4.6:1 against Bone's bgBase, since these ship as text color in
+    // TranscriptCard/ActivityTimeline/RoomMessageVariants, not swatches.
+    diffAdded: '#1a7f37',
+    diffRemoved: '#cf222e',
     ledgerBright: '#171310',
     ledgerBody: '#4A4038',
     ledgerQuiet: '#8B7F6E',

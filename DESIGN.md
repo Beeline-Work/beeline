@@ -44,8 +44,11 @@ mid" instead of "content near-white, chrome dim," and brass darkened to
 `#8a6323` since the shipped `#b08a4a` is tuned for contrast against
 near-black and reads too light against bone. Every elevation, border, and
 divider step keeps Obsidian's relative position on the ladder, re-based on
-the bone canvas. Diff green/red and the other domain colors are unchanged
-between the two sets.
+the bone canvas. Diff green/red ships as text color, not a swatch, so it is
+tuned per canvas the same way brass is: Obsidian keeps `#3FB950`/`#F85149`,
+Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — the domain
+color is still the one exception (never a third hue), it is just no longer
+one literal hex shared by every canvas.
 
 ## Shape
 

@@ -539,7 +539,7 @@ export default function BuzzIdentitySettings() {
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.section} testID="appearance-section">
-          <Text style={styles.sectionLabel}>Appearance</Text>
+          <Text style={styles.sectionLabel}>Display</Text>
           <AppearanceSetting onChange={changeAppearance} value={appearance} />
         </View>
 

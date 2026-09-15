@@ -465,14 +465,21 @@ jobs:
       - name: Resolve the Android SDK
         run: |
           set -euo pipefail
+          # A value written to $GITHUB_ENV reaches LATER steps, never this
+          # shell, so the guard has to read what the loop resolved rather
+          # than $ANDROID_HOME. Checking the env var made a runner whose
+          # SDK was found but whose ANDROID_HOME was unset (the rig's own
+          # beeline-runner account) fail as 'SDK missing'.
+          resolved=""
           for candidate in "${ANDROID_HOME:-}" "$HOME/Android/Sdk" /home/lunchbox/android-sdk /opt/android-sdk; do
             if [ -n "$candidate" ] && [ -d "$candidate/platform-tools" ]; then
-              echo "ANDROID_HOME=$candidate" >> "$GITHUB_ENV"
-              echo "$candidate/platform-tools" >> "$GITHUB_PATH"
+              resolved="$candidate"
               break
             fi
           done
-          test -n "${ANDROID_HOME:-}" || { echo 'Android SDK missing on runner' >&2; exit 1; }
+          test -n "$resolved" || { echo 'Android SDK missing on runner' >&2; exit 1; }
+          echo "ANDROID_HOME=$resolved" >> "$GITHUB_ENV"
+          echo "$resolved/platform-tools" >> "$GITHUB_PATH"
       - name: Download the native AAB under proof
         if: needs.initialize.outputs.native_android == 'true'
         uses: actions/download-artifact@v4

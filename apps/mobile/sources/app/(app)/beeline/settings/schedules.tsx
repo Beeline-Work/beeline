@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { RoomScheduleCadence, RoomScheduleView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { groknight } from '@/buzz/groknight';
 import { Typography } from '@/constants/Typography';
 import { PixelLoader } from '@/components/buzz/MonoHull';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -174,33 +173,33 @@ export default function ScheduledWork() {
   );
 }
 
-const styles = StyleSheet.create(() => ({
-  container: { flex: 1, backgroundColor: groknight.bgTerminal },
+const styles = StyleSheet.create((theme) => ({
+  container: { flex: 1, backgroundColor: theme.buzz.bgTerminal },
   header: { paddingHorizontal: 16, paddingTop: 8 },
-  subtitle: { ...Typography.mono(), color: groknight.textMuted, fontSize: 10 },
+  subtitle: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 10 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 18 },
   listSection: { gap: 10 },
   sectionLabel: {
     ...Typography.mono('semiBold'),
-    color: groknight.chrome,
+    color: theme.buzz.chrome,
     fontSize: 11,
     letterSpacing: 1,
   },
-  notice: { ...Typography.default(), color: groknight.textMuted, fontSize: 13, lineHeight: 19 },
-  empty: { ...Typography.default(), color: groknight.textMuted, fontSize: 13, lineHeight: 19 },
-  scheduleRow: { borderTopWidth: 1, borderTopColor: groknight.border, paddingTop: 12, gap: 4 },
-  scheduleAgent: { ...Typography.mono('semiBold'), color: groknight.chrome, fontSize: 12 },
+  notice: { ...Typography.default(), color: theme.buzz.textMuted, fontSize: 13, lineHeight: 19 },
+  empty: { ...Typography.default(), color: theme.buzz.textMuted, fontSize: 13, lineHeight: 19 },
+  scheduleRow: { borderTopWidth: 1, borderTopColor: theme.buzz.border, paddingTop: 12, gap: 4 },
+  scheduleAgent: { ...Typography.mono('semiBold'), color: theme.buzz.chrome, fontSize: 12 },
   scheduleMessage: {
     ...Typography.default(),
-    color: groknight.textPrimary,
+    color: theme.buzz.textPrimary,
     fontSize: 15,
     lineHeight: 21,
   },
-  scheduleMeta: { ...Typography.mono(), color: groknight.textMuted, fontSize: 10, lineHeight: 15 },
+  scheduleMeta: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 10, lineHeight: 15 },
   stopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 20 },
   stopAction: { minHeight: 44, justifyContent: 'center' },
-  stopText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 10 },
-  confirmText: { ...Typography.mono('semiBold'), color: groknight.danger, fontSize: 10 },
-  error: { ...Typography.mono(), color: groknight.danger, fontSize: 11, lineHeight: 17 },
+  stopText: { ...Typography.mono('semiBold'), color: theme.buzz.textMuted, fontSize: 10 },
+  confirmText: { ...Typography.mono('semiBold'), color: theme.buzz.danger, fontSize: 10 },
+  error: { ...Typography.mono(), color: theme.buzz.danger, fontSize: 11, lineHeight: 17 },
 }));

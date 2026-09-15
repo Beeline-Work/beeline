@@ -6,9 +6,9 @@ vi.mock('react-native', () => ({
 }));
 
 import { beelineThemes } from './buzz/groknight';
-import { obsidianTheme } from './theme';
+import { boneTheme, obsidianTheme } from './theme';
 
-const bridged = [obsidianTheme];
+const bridged = [obsidianTheme, boneTheme];
 
 describe('the legacy-theme bridge carries the Speakeasy language to lesser screens', () => {
   it('maps the Beeline theme onto the app canvas and brass accent', () => {
@@ -20,6 +20,17 @@ describe('the legacy-theme bridge carries the Speakeasy language to lesser scree
       expect(theme.colors.header.background).toBe(theme.buzz.bgBase);
     }
     expect(obsidianTheme.buzz.name).toBe('obsidian');
+    expect(boneTheme.buzz.name).toBe('bone');
+  });
+
+  it('carries dark/light through the bridge, not the legacy base object it was spread from', () => {
+    // The bridge builds every theme by spreading the legacy darkTheme object
+    // (whose own `dark` field is a fixed `true`) and layering buzz tokens on
+    // top. `theme.dark` is what MobileGlass/StatusBarProvider/AnimatedOverlay
+    // branch their blur tint and status bar style on, so it must track the
+    // buzz set actually in use, not the legacy base's literal default.
+    expect(obsidianTheme.dark).toBe(true);
+    expect(boneTheme.dark).toBe(false);
   });
 
   it('never ships the iOS default green or blue through toggles or status', () => {

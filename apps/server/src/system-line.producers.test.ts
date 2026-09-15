@@ -166,6 +166,24 @@ describe('system-line producers', () => {
     }
   });
 
+  it('keeps an explicit Room join visible when it accompanies a Workspace join', async () => {
+    const database = await fixture();
+    try {
+      await joinRooms(database, {
+        workspaceId: WORKSPACE,
+        identityId: LATE,
+        invitedById: OWNER,
+        rooms: { type: 'rooms', roomIds: [ROOM] },
+        workspaceJoined: true,
+      });
+      expect((await lines(database)).map((line) => line.text)).toEqual([
+        '@candy joined · invited by @owner',
+      ]);
+    } finally {
+      await database.close();
+    }
+  });
+
   it('attributes an added agent to the manager without changing its connected owner', async () => {
     const database = await fixture();
     try {

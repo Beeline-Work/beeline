@@ -256,7 +256,7 @@ export async function joinRooms(
     // Workspace arrival. Announce that arrival once per existing person in
     // their @system DM, not again in every projected Room. An explicit Room
     // join still belongs in that Room and keeps its subscribed `joined` event.
-    if (!input.workspaceJoined) {
+    if (input.rooms.type !== 'all-live-top-level') {
       for (const roomId of roomIds)
         await systemLine(transaction, {
           roomId,

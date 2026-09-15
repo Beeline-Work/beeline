@@ -32,8 +32,55 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  */
 export default function WorkbenchScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[] }>();
-  const workspaceId = firstParam(params.workspaceId) ?? '';
-  const viewerId = firstParam(params.viewerId) ?? '';
+  // Every caller reaches this screen WITHOUT params: settings/identity.tsx
+  // pushes the bare path, and connect.tsx / connect-signin.tsx both
+  // router.replace() it after pairing. The mock source ignored the ids, so
+  // empty strings were harmless; the real source sends them to the server and
+  // an empty workspace id fails the read, which is why the screen showed
+  // "Workbench is unavailable right now" for everyone. Resolve them here the
+  // same way identity.tsx does, so the screen works from any entry point, and
+  // let explicit params win when a caller does supply them.
+  const [resolved, setResolved] = useState<{ workspaceId: string; viewerId: string } | null>(null);
+  const paramWorkspaceId = firstParam(params.workspaceId) ?? '';
+  const paramViewerId = firstParam(params.viewerId) ?? '';
+  const workspaceId = paramWorkspaceId || (resolved?.workspaceId ?? '');
+  const viewerId = paramViewerId || (resolved?.viewerId ?? '');
+
+  useEffect(() => {
+    if (paramWorkspaceId && paramViewerId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        // Imported lazily: `buzz-identity-storage` pulls in expo-secure-store,
+        // and a static import would drag it into every test that renders this
+        // screen without exercising the fallback.
+        const [{ getEffectiveRelayUrl, loadBuzzIdentity }, { loadActiveCommunityId }, { RoomViewClient }] =
+          await Promise.all([
+            import('@/auth/buzz-identity-storage'),
+            import('@/buzz/community-storage'),
+            import('@/sync/transport/room-view-client'),
+          ]);
+        const identity = await loadBuzzIdentity();
+        if (!identity) return;
+        const relayUrl = await getEffectiveRelayUrl();
+        const [workspaceList, activeCommunityId] = await Promise.all([
+          new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces(),
+          loadActiveCommunityId(identity.publicKey),
+        ]);
+        const communityId = workspaceList.workspaces.some((item) => item.id === activeCommunityId)
+          ? (activeCommunityId ?? undefined)
+          : workspaceList.workspaces[0]?.id;
+        if (!cancelled && communityId) {
+          setResolved({ workspaceId: communityId, viewerId: identity.publicKey });
+        }
+      } catch {
+        // Leave the ids empty; `load` below reports the read failure.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [paramWorkspaceId, paramViewerId]);
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [error, setError] = useState<string | null>(null);
 

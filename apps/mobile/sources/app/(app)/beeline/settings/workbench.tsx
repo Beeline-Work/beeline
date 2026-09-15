@@ -97,9 +97,6 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
             Tools
           </Text>
-          <Text style={styles.sectionDesc} testID="workbench-tools-desc">
-            Something your agents can use. Pair it once.
-          </Text>
           {connectors.map((connector) => {
             // The wallet is not a pairing flow: tapping it IS the intent, so
             // the row opens the wallet screen itself (mock §Screens 1).
@@ -142,13 +139,9 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-keys-head">
             Keys
           </Text>
-          <Text style={styles.sectionDesc} testID="workbench-keys-desc">
-            A credential that tool holds for you. Your agents spend it; they never see it.
-          </Text>
           {connections.length === 0 ? (
             <SettingsRow
               disabled
-              description="Other members’ keys are not listed and cannot be spent."
               testID="workbench-connections-empty"
               title="None yet"
               tone="quiet"
@@ -184,7 +177,6 @@ const styles = StyleSheet.create((theme) => {
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
-    sectionDesc: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl, gap: hull.space.md },
     centeredMessage: {
       ...Typography.default(),

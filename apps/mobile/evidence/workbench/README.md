@@ -17,6 +17,8 @@ the mocked `WorkbenchSource` (`sources/buzz/workbench-source.ts`) with per-viewe
 | workbench-connection-vercel.png | Connection detail: hosts, created by, grants with kinds, spend cap, ledger |
 | workbench-connection-revoke-confirm.png | Revoke confirmation prompt |
 | workbench-connection-revoked.png | After confirming: `Revoked 2 grants` line |
+| workbench-two-backs-before.png | v0.0.104 fault: the screen's own ‹ header row stacked under the navigator's back control, plus the four-line Keys empty state |
+| workbench-polish-after.png | After the fix: one stack-header back control, Workbench title, and the two-line Keys empty state |
 
 Note: the DM connector receipt card is covered by render tests in
 `chat/RoomMessageVariants.test.tsx` (no live DM backend available on the emulator).

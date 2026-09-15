@@ -455,7 +455,6 @@ export default function WorkspaceSettings() {
           </View>
 
           <View style={styles.section} testID="workspace-visibility-setting">
-            <Text style={styles.sectionLabel}>Visibility</Text>
             <SettingsRow
               accessibilityLabel={`Change who can find this ${WORKSPACE_LABEL}`}
               chevron="right"
@@ -472,7 +471,6 @@ export default function WorkspaceSettings() {
           </View>
 
           <View style={styles.section} testID="workspace-members-link">
-            <Text style={styles.sectionLabel}>{MEMBERS_LABEL}</Text>
             <SettingsRow
               chevron="right"
               description="Invite people, connect agents, and manage roles."

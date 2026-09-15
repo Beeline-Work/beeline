@@ -11,7 +11,7 @@ import {
   openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
-import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
+import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sandbox-webview';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 
 /**
@@ -69,24 +69,25 @@ export function ArtifactViewerSandbox({
   format: 'html' | 'svg' | 'pdf' | 'document';
 }) {
   const [source, setSource] = useState<{ html: string } | { uri: string } | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const guardRef = useRef(createInitialLoadGuard());
   useEffect(() => {
     let live = true;
     void (async () => {
       try {
         if (format === 'pdf') {
-          setSource({ uri: await artifactPdfLocalUri(attachment) });
+          const uri = await artifactPdfLocalUri(attachment);
+          if (live) setSource({ uri });
           return;
         }
         if (format === 'html' || format === 'svg') {
           const bytes = await fetchArtifactBytes(attachment);
-          setSource({ html: wrapArtifactMarkup(new TextDecoder().decode(bytes), format) });
+          if (live) setSource({ html: wrapArtifactMarkup(new TextDecoder().decode(bytes), format) });
           return;
         }
-        setFailed(true);
+        if (live) setFailed('This file type has no inline preview — open it in a browser instead.');
       } catch {
-        if (live) setFailed(true);
+        if (live) setFailed('The page could not be loaded. Try again.');
       }
     })();
     return () => {
@@ -94,10 +95,18 @@ export function ArtifactViewerSandbox({
     };
   }, [attachment, format]);
   const WebView = useSandboxWebView();
+  const webviewStatus = useSandboxWebViewStatus();
+  useEffect(() => {
+    // The renderer never became available (the dynamic import failed): the
+    // honest state is spoken, not an eternal "Loading…".
+    if (source && !WebView && webviewStatus === 'unavailable') {
+      setFailed('The in-app page renderer is unavailable — open it in a browser instead.');
+    }
+  }, [source, WebView, webviewStatus]);
   if (failed) {
     return (
       <View style={styles.placeholder} testID="artifact-viewer-failed">
-        <Text style={styles.placeholderText}>The page could not be loaded. Try again.</Text>
+        <Text style={styles.placeholderText}>{failed}</Text>
       </View>
     );
   }

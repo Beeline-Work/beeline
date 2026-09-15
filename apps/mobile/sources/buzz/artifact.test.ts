@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ARTIFACT_CSP,
+  ARTIFACT_DEFAULT_CANVAS,
   ARTIFACT_MAX_PREVIEW_HEIGHT,
   artifactFormat,
   createInitialLoadGuard,
@@ -81,6 +82,22 @@ describe('markup wrapping', () => {
     expect(wrapped).toContain(ARTIFACT_CSP);
     expect(wrapped.trim().endsWith('</svg>') || wrapped.includes('<svg')).toBe(true);
     expect(wrapped).toContain('<style>');
+  });
+
+  it('gives an unstyled HTML page a browser-default canvas, not the app ink plate', () => {
+    const wrapped = wrapArtifactMarkup('<h1>Impact Report</h1>', 'html');
+    expect(wrapped).toContain(ARTIFACT_DEFAULT_CANVAS);
+  });
+
+  it('injects the canvas sheet ahead of the document’s own styles so authored pages win', () => {
+    const wrapped = wrapArtifactMarkup(
+      '<html><head><style>html{background:#111}</style></head><body></body></html>',
+      'html',
+    );
+    const canvasAt = wrapped.indexOf(ARTIFACT_DEFAULT_CANVAS);
+    const authoredAt = wrapped.indexOf('html{background:#111}');
+    expect(canvasAt).toBeGreaterThanOrEqual(0);
+    expect(authoredAt).toBeGreaterThan(canvasAt);
   });
 });
 

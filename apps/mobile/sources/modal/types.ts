@@ -54,6 +54,8 @@ export interface CustomModalConfig extends BaseModalConfig {
   type: 'custom';
   component: ComponentType<any>;
   props?: any;
+  /** HullModal placement; defaults to 'center' (max-width 460, height-free). */
+  placement?: 'bottom' | 'center' | 'fill';
 }
 
 export type ModalConfig =

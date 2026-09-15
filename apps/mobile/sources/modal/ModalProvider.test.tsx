@@ -133,4 +133,16 @@ describe('ModalProvider Hull integration', () => {
     expect(selected).toHaveBeenCalledOnce();
     expect(renderer.root.findAllByType('HullActionSheetModal' as any)).toHaveLength(0);
   });
+
+  it('passes a custom modal\'s placement through to CustomModal untouched', async () => {
+    const renderer = await renderProvider();
+    const Screen = () => React.createElement('Screen');
+
+    await act(async () => {
+      Modal.show({ component: Screen, props: { id: 'x' }, placement: 'fill' });
+    });
+
+    const custom = renderer.root.findByType('CustomModal' as any);
+    expect(custom.props.config).toMatchObject({ type: 'custom', component: Screen, placement: 'fill' });
+  });
 });

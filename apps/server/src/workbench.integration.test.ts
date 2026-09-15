@@ -205,6 +205,25 @@ describe('workbench connectors', () => {
     expect(view.catalog.length).toBeGreaterThan(0);
   });
 
+  it('pairs a connector when the client sends no workspace id (the connect-screen path)', async () => {
+    // The connect screen sends workspaceId:''. pairConnector must derive the
+    // Workspace from a viewer/helper co-membership instead of casting '' to a
+    // uuid (which threw a 400 "invalid input syntax for type uuid").
+    const response = await operation('pairConnector', {
+      workspaceId: '',
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    });
+    expect(response.status).toBe(200);
+    const paired = (await response.json()) as { connectorId: string; status: { status: string } };
+    expect(paired.status.status).toBe('installing');
+    // And it is readable back through the human-scoped, param-less read.
+    const view = (await phoneOperation('readWorkbench', { workspaceId: '' })) as {
+      connectors: { connectorId: string }[];
+    };
+    expect(view.connectors.map((c) => c.connectorId)).toContain(paired.connectorId);
+  });
+
   it('rejects pairing a connector that is not connectable and a helper outside the Workspace', async () => {
     expect((await operation('pairConnector', { workspaceId: WORKSPACE, connectorType: 'wallet', helperAgentId: HELPER })).status).toBe(503);
     expect(

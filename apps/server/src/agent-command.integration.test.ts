@@ -1004,6 +1004,30 @@ it('accepts and settles draft, thought, activity, attachment and final under one
     `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES($1,$2,$3,'text/plain','result.txt',$4) ON CONFLICT(id) DO NOTHING`,
     [media, A, Buffer.from('ok'), id()],
   );
+  // An artifact lives in `objects` and is handed to the agent as the same
+  // /v1/media/<id> reference; the ownership check used to look only in `media`
+  // and rejected every artifact with "attachment media is not owned by this
+  // agent" (captain, 2026-09-15). Attaching one must work the same way.
+  const artifact = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  await db.query(
+    `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+     VALUES($1,$2,'artifact',$3,'text/html','Mock',12,$4,'ready',now()+interval '24 hours')
+     ON CONFLICT(id) DO NOTHING`,
+    [artifact, A, `artifact/${A}/${id()}`, id()],
+  );
+  await daemon.execute(
+    'postAgentAttachment',
+    {
+      ...input,
+      attachment: {
+        url: 'http://test/v1/media/' + artifact,
+        name: 'mock.html',
+        mimeType: 'text/html',
+        size: 12,
+      },
+    },
+    A,
+  );
   await daemon.execute(
     'postAgentAttachment',
     {
@@ -1023,7 +1047,7 @@ it('accepts and settles draft, thought, activity, attachment and final under one
       final.id,
     ])
   ).rows[0]!;
-  expect(saved.attachments).toHaveLength(1);
+  expect(saved.attachments).toHaveLength(2);
   expect(
     (
       await db.query(

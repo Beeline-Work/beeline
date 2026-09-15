@@ -5151,9 +5151,20 @@ export class PhoneService {
     if (!row.rowCount) throw new Error('workspace membership required');
   }
 
-  /** Every read here is scoped to the VIEWER's own connectors/connections. */
+  /**
+   * Every read here is scoped to the VIEWER and to nobody else.
+   *
+   * The Workbench is a property of the HUMAN, not of a workspace: it lives in
+   * personal settings, which cross workspace boundaries, and a paired tool and
+   * its keys belong to the person who provisioned them wherever they are
+   * working. `workspace_connections` was always keyed on `owner_identity_id`
+   * alone; only the connector half carried a workspace, which made the screen
+   * demand a workspace id no caller had and gave a person a separate helper
+   * per workspace. Read both halves by owner. `input.workspaceId` is accepted
+   * and ignored for wire compatibility with clients that still send it.
+   */
   async readWorkbench(input: Input<'readWorkbench'>, viewerId: string): Promise<Output<'readWorkbench'>> {
-    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    void input;
     const connectors = (
       await this.database.query<{
         id: string;
@@ -5174,9 +5185,9 @@ export class PhoneService {
                 c.signed_in_as,c.sign_in,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
-         WHERE c.workspace_id=$1 AND c.owner_identity_id=$2
+         WHERE c.owner_identity_id=$1
          ORDER BY c.created_at`,
-        [input.workspaceId, viewerId],
+        [viewerId],
       )
     ).rows;
     const connections = (

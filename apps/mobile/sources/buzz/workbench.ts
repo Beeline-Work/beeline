@@ -119,6 +119,13 @@ export function connectionsForViewer(
   view: WorkbenchView,
   viewerId: string,
 ): readonly WorkbenchConnection[] {
+  // The server already returns only the viewer's own rows; this filter is a
+  // second line of defence, not the authority. An EMPTY viewer id therefore
+  // means "the caller did not carry one", not "this person owns nothing", and
+  // must not blank a list the server already scoped. The Workbench screen is
+  // reached from personal settings with no route params, which is exactly
+  // that case.
+  if (!viewerId) return view.connections;
   return view.connections.filter((connection) => connection.ownerId === viewerId);
 }
 

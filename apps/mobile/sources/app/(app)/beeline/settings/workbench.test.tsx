@@ -89,6 +89,22 @@ describe('Workbench settings screen', () => {
     );
   });
 
+  it('heads the two lists Tools and Keys with their one-line descriptions', async () => {
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'workbench-tools-head' }).props.children).toBe(
+      'Tools',
+    );
+    expect(renderer.root.findByProps({ testID: 'workbench-tools-desc' }).props.children).toBe(
+      'Something your agents can use. Pair it once.',
+    );
+    expect(renderer.root.findByProps({ testID: 'workbench-keys-head' }).props.children).toBe(
+      'Keys',
+    );
+    expect(renderer.root.findByProps({ testID: 'workbench-keys-desc' }).props.children).toBe(
+      'A credential that tool holds for you. Your agents spend it; they never see it.',
+    );
+  });
+
   it('lists the viewer’s own connections with kind and host', async () => {
     const renderer = await render();
     const vercel = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
@@ -105,7 +121,13 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const empty = renderer.root.findByProps({ testID: 'workbench-connections-empty' });
     expect(empty.props.title).toBe('None yet');
-    expect(empty.props.description).toContain('Connections from other members are not listed');
+    // The sovereignty rule, in the Keys vocabulary the captain fixed on:
+    // other members’ keys are not listed and cannot be spent by your agents.
+    expect(empty.props.description).toBe(
+      'Keys appear here once a tool stores them. Keys other members provisioned are not listed and your agents cannot spend them.',
+    );
+    expect(empty.props.description).toContain('Keys other members provisioned are not listed');
+    expect(empty.props.description).toContain('your agents cannot spend them');
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_google' })).toHaveLength(0);
   });

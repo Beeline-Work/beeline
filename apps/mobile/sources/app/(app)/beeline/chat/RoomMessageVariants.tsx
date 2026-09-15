@@ -1235,7 +1235,9 @@ export function RelayHandOff({ message }: { message: ChatDisplayMessage }) {
 export interface OrdinaryLedgerMessageProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
-  /** Selected model for the agent byline. Effort is deliberately not accepted. */
+  /** The model stamped on the message at generation time, rendered verbatim
+   *  in the agent byline. Absent keeps the plain `AGENT` word — never a live
+   *  roster lookup, which would retro-label old messages with today's setting. */
   agentModel?: string;
   participantsHydrated: boolean;
   personName?: string;
@@ -1269,10 +1271,13 @@ export interface OrdinaryLedgerMessageProps {
   desktopLayout?: boolean;
 }
 
-/** Keep the agent role explicit while adding model-only metadata. */
+/** The byline's quiet role tag carries the model the agent serves — the name
+ *  already says who the speaker is, so the model REPLACES the old `AGENT`
+ *  label rather than sitting beside it (captain ruling 2026-09-15). An agent
+ *  with no known model keeps the plain `AGENT` word. */
 export function agentBylineLabel(model?: string): string {
   const selectedModel = model?.trim();
-  return selectedModel ? `AGENT · ${selectedModel}` : 'AGENT';
+  return selectedModel || 'AGENT';
 }
 
 /**

@@ -203,6 +203,7 @@ interface MessageRow {
   root_message_id: string | null;
   request_id: string | null;
   turn_id: string | null;
+  agent_model: string | null;
   activity: unknown[] | null;
   durable_fact: RoomViewMessage['durableFact'] | null;
   card_type: string | null;
@@ -456,6 +457,7 @@ function projectedMessage(
         }
       : {}),
     ...(row.tagged_ids.length ? { mentionPubkeys: row.tagged_ids } : {}),
+    ...(row.agent_model ? { agentModel: row.agent_model } : {}),
     ...(Object.keys(row.reactions ?? {}).length
       ? {
           reactions: MESSAGE_REACTION_EMOJIS.flatMap((emoji) => {

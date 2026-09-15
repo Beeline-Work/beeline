@@ -1223,4 +1223,21 @@ describe('Room/corner relays', () => {
       (await db.query("SELECT id FROM messages WHERE card_type='relay' AND text='No'")).rowCount,
     ).toBe(0);
   });
+
+  it('stamps the producing model on an agent reply at generation time', async () => {
+    await db.query(`UPDATE agents SET selected_model='grok-4-fast' WHERE agent_id=$1`, [A]);
+    await send('@hoots model check');
+    const command = (await commands(A))[0]!;
+    await claim(command);
+    await result(command, 'Stamped answer');
+    // The stamp freezes the selection as of the turn; a later roster change
+    // must not retro-label the row.
+    await db.query(`UPDATE agents SET selected_model='newer-model' WHERE agent_id=$1`, [A]);
+    const view = await phone.readRoom(R, H);
+    const reply = view!.messages.find((message) => message.text === 'Stamped answer');
+    expect(reply?.agentModel).toBe('grok-4-fast');
+    // A human row carries no stamp, and an agent row with no known model
+    // stays unstamped rather than guessing.
+    expect(view!.messages.find((message) => message.author.pubkey === H)?.agentModel).toBeUndefined();
+  });
 });

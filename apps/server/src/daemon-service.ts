@@ -1824,8 +1824,9 @@ export class DaemonService {
             `WITH inserted AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,
-                 reply_to_message_id,root_message_id,agent_hop_count,attachments
-               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
+                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+                 (SELECT selected_model FROM agents WHERE agent_id=$3))
                RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
@@ -1847,8 +1848,9 @@ export class DaemonService {
           `WITH inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments
-             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+               (SELECT selected_model FROM agents WHERE agent_id=$3))
              RETURNING *
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
@@ -1936,9 +1938,10 @@ export class DaemonService {
            ), inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
-                 writable.agent_depth,attachment_payload.attachments
+                 writable.agent_depth,attachment_payload.attachments,
+                 (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
              RETURNING *
            ), completed AS (

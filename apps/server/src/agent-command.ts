@@ -74,6 +74,64 @@ export function turnRootMessageSql(turn: 'turn' | 'written'): string {
 export function nextAgentDepth(parentDepth: number): number | undefined {
   return parentDepth < COMMAND_MAX_DEPTH ? parentDepth + 1 : undefined;
 }
+/**
+ * A corner's configured reviewer must hold CORNER membership to read its
+ * review commands (`DaemonService.access`), but nothing else maintains that
+ * projection: a reviewer configured after a corner was opened (or one whose
+ * corner membership was never written) leaves every green check in that
+ * corner without a reachable reviewer. Left alone, `routeSystemCommand`
+ * rerouted the REVIEW to the corner owner, whose daemon then ran the review
+ * and posted its text under the OWNER's name — the producing agent's
+ * authorship was lost. This repairs the reviewer's corner membership in the
+ * caller's transaction — restoring a removed projection row too, because
+ * `rooms.reviewer_agent_id` is the sole authority and a configured reviewer
+ * still holding parent membership is a live review actor, not a removal
+ * intent (a retired agent fails the parent-membership guard and is never
+ * restored). The repair is silent: no join note, push, or wake belongs to it.
+ * Returns whether the reviewer can now read the corner.
+ */
+export async function repairReviewerCornerMembership(
+  db: SqlDatabase,
+  cornerId: string,
+  reviewerAgentId: string,
+): Promise<boolean> {
+  await db.query(
+    `UPDATE memberships m SET removed_at=NULL,joined_at=now()
+     FROM rooms corner
+     WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
+       AND m.room_id=corner.id AND m.identity_id=$2 AND m.removed_at IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM memberships parent_member
+         WHERE parent_member.room_id=corner.parent_id
+           AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
+       )`,
+    [cornerId, reviewerAgentId],
+  );
+  await db.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT parent.workspace_id,corner.id,$2,'member'
+     FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM memberships parent_member
+         WHERE parent_member.room_id=corner.parent_id
+           AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM memberships corner_member
+         WHERE corner_member.room_id=corner.id AND corner_member.identity_id=$2
+       )`,
+    [cornerId, reviewerAgentId],
+  );
+  const member = await db.query(
+    `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
+     WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
+    [cornerId, reviewerAgentId],
+  );
+  return member.rowCount > 0;
+}
+
 export async function createAgentCommand(
   db: SqlDatabase,
   input: {
@@ -422,10 +480,6 @@ export async function routeSystemCommand(
                 (
                   SELECT reviewer_membership.identity_id
                   FROM memberships reviewer_membership
-                  JOIN memberships corner_membership
-                    ON corner_membership.room_id=corner.id
-                   AND corner_membership.identity_id=reviewer_membership.identity_id
-                   AND corner_membership.removed_at IS NULL
                   JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
                     AND reviewer.kind='agent'
                   WHERE reviewer_membership.room_id=parent.id
@@ -462,14 +516,31 @@ export async function routeSystemCommand(
           sourceMessageId: input.sourceMessageId,
           reason: 'corner_check',
         });
-      } else {
-        await createAgentCommand(db, {
-          roomId: input.roomId,
-          agentId: fact.reviewer_agent_id,
-          sourceMessageId: input.sourceMessageId,
-          reason: 'subscribed_event',
-        });
+        await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
+          input.roomId,
+          fact.state,
+        ]);
+        return;
       }
+      // A green review belongs to the configured reviewer and to nobody else.
+      // Dispatch it only when the reviewer can actually read the corner: the
+      // missing corner-membership projection is repaired above (never an
+      // explicitly removed one). If the reviewer stays unreachable, dispatch
+      // NOTHING — the old reroute handed the review to the corner owner,
+      // whose daemon posted the review text under the owner's name. Leave
+      // command_check_state alone so a later green transition retries.
+      const deliverable = await repairReviewerCornerMembership(
+        db,
+        input.roomId,
+        fact.reviewer_agent_id,
+      );
+      if (!deliverable) return;
+      await createAgentCommand(db, {
+        roomId: input.roomId,
+        agentId: fact.reviewer_agent_id,
+        sourceMessageId: input.sourceMessageId,
+        reason: 'subscribed_event',
+      });
       await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
         input.roomId,
         fact.state,
@@ -555,6 +626,41 @@ export async function reconcileConfiguredCornerReviewers(
        AND reviewer_membership.identity_id=parent.reviewer_agent_id
        AND reviewer_membership.removed_at IS NULL
        AND NOT reviewer_membership.event_subscriptions @> '["check-passed"]'::jsonb
+       AND ($1::uuid IS NULL OR parent.id=$1)`,
+    [parentRoomId ?? null],
+  );
+  // Repair the reviewer corner-membership projection first: the candidates
+  // join below requires the reviewer to already read every corner, and
+  // nothing else ever wrote that row for corners opened before the reviewer
+  // was configured (or after the row was removed some other way). A retired
+  // reviewer has no current parent membership and is never restored.
+  await db.query(
+    `UPDATE memberships m SET removed_at=NULL,joined_at=now()
+     FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN memberships parent_reviewer ON parent_reviewer.room_id=parent.id
+       AND parent_reviewer.identity_id=parent.reviewer_agent_id
+       AND parent_reviewer.removed_at IS NULL
+     WHERE corner.parent_id IS NOT NULL AND corner.archived_at IS NULL
+       AND m.room_id=corner.id AND m.identity_id=parent.reviewer_agent_id
+       AND m.removed_at IS NOT NULL
+       AND ($1::uuid IS NULL OR parent.id=$1)`,
+    [parentRoomId ?? null],
+  );
+  await db.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT parent.workspace_id,corner.id,parent.reviewer_agent_id,'member'
+     FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN memberships parent_reviewer ON parent_reviewer.room_id=parent.id
+       AND parent_reviewer.identity_id=parent.reviewer_agent_id
+       AND parent_reviewer.removed_at IS NULL
+     WHERE corner.parent_id IS NOT NULL AND corner.archived_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM memberships corner_member
+         WHERE corner_member.room_id=corner.id
+           AND corner_member.identity_id=parent.reviewer_agent_id
+       )
        AND ($1::uuid IS NULL OR parent.id=$1)`,
     [parentRoomId ?? null],
   );

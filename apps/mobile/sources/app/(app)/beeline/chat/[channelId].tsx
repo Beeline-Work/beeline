@@ -122,7 +122,7 @@ import {
   resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
 import { roomListCorners, type CornerSummary } from '@/buzz/corners';
-import { cornerDisplayState, cornerHeaderStateLabel } from '@/buzz/corner-display-state';
+import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -1233,18 +1233,6 @@ export default function BuzzChat() {
       }),
     );
   }, [roomParticipants, workspaceRoster]);
-  const workspaceAgentModelByPubkey = useMemo(
-    () =>
-      new Map(
-        (workspaceRoster?.workspace.id === activeCommunityId ? workspaceRoster.agents : []).flatMap(
-          (agent) => {
-            const model = agent.model?.trim();
-            return model ? [[agent.identity.pubkey, model] as const] : [];
-          },
-        ),
-      ),
-    [activeCommunityId, workspaceRoster],
-  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1650,16 +1638,10 @@ export default function BuzzChat() {
       lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
     },
   );
-  const cornerHeaderState = cornerHeaderStateLabel(cornerHeaderDisplay);
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
   );
-  // The gold ring on a byline means WORKING: this channel's fresh working
-  // receipt, or this corner's agent while the corner is live — the same
-  // proofs the thinking line and the corner header read. Never the presence
-  // lease (C77: a helper whose every turn fails still renews it). Only true
-  // entries, identity-stable until a verdict genuinely flips.
   const rawSpeakerWorking = useMemo(
     () =>
       selectWorkingAgents({
@@ -1669,13 +1651,29 @@ export default function BuzzChat() {
     [activeAgentTurns, cornerAgentPubkey, sessionState],
   );
   const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
-  const cornerAgentDisplay = cornerAgentPubkey
+  // The corner header names the corner's OWN agent — the server projection's
+  // `agent` (`corners.created_by`, the agent the corner belongs to), never
+  // whichever agent currently holds a live turn. While a reviewer works in
+  // the corner the transcript attribution is the reviewer's and stays there;
+  // the corner does not change hands. The transcript-derived identity fills
+  // in only before the server projection has landed. The gold ring on a
+  // byline still names the actual worker (C77).
+  const cornerHeaderAgentView = cornerHeaderAgent({
+    ownerPubkey: canonicalCornerItem?.agent?.pubkey ?? cornerAgentPubkey,
+    status: cornerHeaderDisplay.status,
+    ...(cornerHeaderDisplay.headerSuffix ? { headerSuffix: cornerHeaderDisplay.headerSuffix } : {}),
+    activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey),
+  });
+  const cornerOwnerPubkey = cornerHeaderAgentView.pubkey;
+  const cornerOwnerDisplay = cornerOwnerPubkey
     ? resolvePendingAgentDisplay(
-        cornerAgentPubkey,
-        agentByPubkey.get(cornerAgentPubkey),
+        cornerOwnerPubkey,
+        agentByPubkey.get(cornerOwnerPubkey),
         participantsHydrated,
       )
     : undefined;
+  const cornerHeaderWord = cornerHeaderAgentView.stateWord;
+  const cornerOwnerWorking = cornerHeaderAgentView.ownerWorking;
   const visibleMessages = useMemo(
     () => projectActiveTurnStream(messages, activeAgentTurns, isArchived),
     [activeAgentTurns, isArchived, messages],
@@ -3638,13 +3636,11 @@ export default function BuzzChat() {
       return (
         <OrdinaryLedgerMessage
           message={item}
-          agentModel={
-            item.authorIdentity?.kind === 'agent'
-              ? workspaceAgentModelByPubkey.get(item.authorIdentity.pubkey)
-              : item.pubkey
-                ? workspaceAgentModelByPubkey.get(item.pubkey)
-                : undefined
-          }
+          // The byline carries the model stamped on the message at
+          // generation time (server-side from the producing turn); an agent
+          // row with no stamp keeps the plain `AGENT` word — never a live
+          // roster lookup retro-labeling old messages with today's setting.
+          agentModel={item.agentModel}
           desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
@@ -3700,7 +3696,6 @@ export default function BuzzChat() {
       cacheViewerPubkey,
       roomRepository,
       roomParticipants,
-      workspaceAgentModelByPubkey,
       targetBranchActionId,
       targetBranchNotice,
       viewerChannelRole,
@@ -3822,21 +3817,23 @@ export default function BuzzChat() {
               </TouchableOpacity>
             )}
             {/*
-            The agent that OPENED this corner, stated here once and never
-            repeated on a message. It is history, not ownership: any member
-            agent can be addressed in a corner and carry the branch on, so
-            this mark says who started the work, not who owns it.
+            The corner's OWN agent — the server projection's `agent`
+            (`corners.created_by`), stated here once and never repeated on a
+            message. A reviewer or helper holding a live turn in the corner
+            never swaps this mark or the name under it: their work is
+            attributed in the transcript, and the state word reads
+            `reviewing` while it runs.
           */}
-            {isCorner && cornerAgentPubkey && (
+            {isCorner && cornerOwnerPubkey && (
               <HeaderIdentitySlot testID="corner-header-agent">
                 <IdentityMark
                   kind="agent"
-                  seed={cornerAgentDisplay?.avatarSeed ?? cornerAgentPubkey}
-                  avatarUrl={cornerAgentDisplay?.avatarUrl}
-                  face={cornerAgentDisplay?.face}
-                  name={cornerAgentDisplay?.name ?? 'Agent'}
+                  seed={cornerOwnerDisplay?.avatarSeed ?? cornerOwnerPubkey}
+                  avatarUrl={cornerOwnerDisplay?.avatarUrl}
+                  face={cornerOwnerDisplay?.face}
+                  name={cornerOwnerDisplay?.name ?? 'Agent'}
                   size={26}
-                  alive={sessionState === 'working'}
+                  alive={cornerOwnerWorking}
                 />
               </HeaderIdentitySlot>
             )}
@@ -3896,7 +3893,7 @@ export default function BuzzChat() {
                             : styles.cornerHeaderWaiting,
                     ]}
                   >
-                    {(cornerAgentDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderState}
+                    {(cornerOwnerDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderWord}
                   </Text>
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
@@ -4783,7 +4780,7 @@ export default function BuzzChat() {
         accessibilityLabel={`Close ${CORNER_LABEL} actions`}
         onClose={() => setCornerActionsVisible(false)}
         testID="corner-actions-sheet"
-        title={headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
+        title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
         <HullActionSheetRow

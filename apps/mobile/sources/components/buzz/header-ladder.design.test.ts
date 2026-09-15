@@ -85,7 +85,10 @@ describe('Chat header — one language for Room and Corner', () => {
   });
 
   it('leads the Corner with the agent mark through the same slot', () => {
-    const branch = chatSource.indexOf('{isCorner && cornerAgentPubkey && (');
+    // The mark names the corner's OWN agent: the pure helper's owner pubkey
+    // (server projection, transcript-derived only as cold-start fallback),
+    // never whoever currently holds a live turn.
+    const branch = chatSource.indexOf('{isCorner && cornerOwnerPubkey && (');
     expect(branch, 'missing the Corner mark branch').toBeGreaterThanOrEqual(0);
     const window = chatSource.slice(branch, branch + 400);
     expect(window).toContain('<HeaderIdentitySlot testID="corner-header-agent">');
@@ -185,13 +188,18 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toContain('cornerAgentOnline');
     expect(chatSource).not.toContain('corner-view-status');
     expect(chatSource).not.toContain('displayedCornerStatus');
-    expect(chatSource).toContain('cornerHeaderStateLabel');
-    expect(chatSource).toContain('cornerHeaderState}');
+    // The header's identity and state word come from the one pure helper:
+    // owner pubkey, `reviewing` while a non-owner holds the live turn, and
+    // the owner-only gold ring all derive from `cornerHeaderAgent`.
+    expect(chatSource).toContain('cornerHeaderAgent(');
+    expect(chatSource).toContain('cornerHeaderAgentView.stateWord');
+    expect(chatSource).toContain('cornerHeaderAgentView.ownerWorking');
+    expect(chatSource).not.toContain('cornerHeaderStateLabel');
     // Membership is in overflow; the subtitle carries opener + canonical state.
     const branch = chatSource.match(/isCorner \? \(\s*<HeaderMetaRow>[\s\S]*?<\/HeaderMetaRow>/);
     expect(branch, 'missing corner meta row branch').toBeTruthy();
     expect(branch![0]).toContain('cornerHeaderAgent');
-    expect(branch![0]).toContain('cornerHeaderState');
+    expect(branch![0]).toContain('{cornerHeaderWord}');
     expect(branch![0]).not.toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 });

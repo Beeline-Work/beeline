@@ -9,6 +9,7 @@ import {
   cornerDisplayState,
   cornerHeaderStateLabel,
   cornerDisplayItems,
+  cornerHeaderAgent,
 } from './corner-display-state';
 
 const lifecycle = (overrides: Partial<CornerLifecycleView> = {}): CornerLifecycleView => ({
@@ -78,5 +79,66 @@ describe('server-owned corner display state', () => {
     const source = readFileSync(new URL('./corner-display-state.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/machineState|machineReason|currentCornerStatus|mergedAt|outcome/);
     expect(source).toContain('const { state } = item;');
+  });
+
+  describe('cornerHeaderAgent', () => {
+    it('keeps the corner owned by A naming A while agent B holds the live turn', () => {
+      const view = cornerHeaderAgent({
+        ownerPubkey: 'a'.repeat(64),
+        status: 'working',
+        activeTurnPubkeys: ['b'.repeat(64)],
+      });
+      expect(view.pubkey).toBe('a'.repeat(64));
+      expect(view.reviewerTurnRunning).toBe(true);
+      expect(view.stateWord).toBe('reviewing');
+      expect(view.ownerWorking).toBe(false);
+    });
+
+    it('reads working when the owner itself holds the live turn', () => {
+      const view = cornerHeaderAgent({
+        ownerPubkey: 'a'.repeat(64),
+        status: 'working',
+        activeTurnPubkeys: ['a'.repeat(64)],
+      });
+      expect(view.reviewerTurnRunning).toBe(false);
+      expect(view.stateWord).toBe('working');
+      expect(view.ownerWorking).toBe(true);
+    });
+
+    it('carries the header suffix through the reviewing word', () => {
+      const view = cornerHeaderAgent({
+        ownerPubkey: 'a'.repeat(64),
+        status: 'working',
+        headerSuffix: 'checks failed',
+        activeTurnPubkeys: ['b'.repeat(64)],
+      });
+      expect(view.stateWord).toBe('reviewing · checks failed');
+      expect(view.ownerWorking).toBe(false);
+    });
+
+    it('never reads reviewing when the corner is not working or no turn runs', () => {
+      expect(
+        cornerHeaderAgent({
+          ownerPubkey: 'a'.repeat(64),
+          status: 'waiting',
+          activeTurnPubkeys: ['b'.repeat(64)],
+        }).stateWord,
+      ).toBe('waiting');
+      expect(
+        cornerHeaderAgent({
+          ownerPubkey: 'a'.repeat(64),
+          status: 'working',
+          activeTurnPubkeys: [],
+        }).stateWord,
+      ).toBe('working');
+      // No owner known yet (cold start): a running turn cannot be attributed
+      // to a non-owner, so the word stays the plain state.
+      expect(
+        cornerHeaderAgent({
+          status: 'working',
+          activeTurnPubkeys: ['b'.repeat(64)],
+        }).reviewerTurnRunning,
+      ).toBe(false);
+    });
   });
 });

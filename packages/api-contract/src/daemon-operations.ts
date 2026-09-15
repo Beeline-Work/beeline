@@ -166,6 +166,8 @@ export type DaemonOperationMap = {
   listAgentGrants: Operation<AgentInput, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   installConnector: Operation<InstallConnectorInput, WriteResult>;
+  postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
+  postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
   getConnectorStatus: Operation<AgentInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
@@ -688,6 +690,30 @@ export type InstallConnectorInput = AgentInput & {
   readonly connectorId: string;
   /** Connector-specific configuration; empty for phase 1. */
   readonly config?: Record<string, unknown>;
+  /** Final install report (the completion of a `postConnectorStatus` run). */
+  readonly squireVersion?: string;
+  readonly signedInAs?: string;
+  readonly signIn?: ConnectorSignIn;
+};
+
+/**
+ * Incremental helper install report: the ordered steps as they settle, posted
+ * once per step transition while the helper runs an install or after a sync.
+ * A `errorMessage` marks the run failed; otherwise the row stays installing
+ * until `installConnector` completes it.
+ */
+export type PostConnectorStatusInput = AgentInput & {
+  readonly connectorId: string;
+  readonly steps: readonly ConnectorStep[];
+  readonly squireVersion?: string;
+  readonly signedInAs?: string;
+  readonly signIn?: ConnectorSignIn;
+  readonly errorMessage?: string;
+};
+
+/** One helper vault report (metadata only; secrets never leave the helper). */
+export type PostConnectorVaultInput = AgentInput & {
+  readonly connections: readonly VaultConnectionMeta[];
 };
 
 export type ConnectionRefInput = { readonly ref: string };

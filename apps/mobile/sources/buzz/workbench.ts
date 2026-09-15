@@ -44,14 +44,21 @@ export type WorkbenchConnection = {
 export type WorkbenchView = {
   connectors: readonly WorkbenchConnector[];
   connections: readonly WorkbenchConnection[];
+  /** The viewer's own connected machines — the Workbench's helper candidates. */
+  helpers: readonly WorkbenchHelper[];
 };
 
 export type WorkbenchHelper = {
   id: string;
   name: string;
-  platform: 'linux' | 'macos' | 'windows';
-  agentCount: number;
   online: boolean;
+};
+
+/** The quiet line under each catalog row before anything is paired. */
+export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
+  'trusty-squire': 'vault · sign-ups · payments for your agents',
+  wallet: 'crypto wallet for agents',
+  tailscale: 'private network for your helpers',
 };
 
 export type ConnectorInstallStepStatus = 'done' | 'active' | 'pending' | 'failed';
@@ -72,16 +79,17 @@ export type ConnectorSignIn = {
 };
 
 export type ConnectorInstallState = {
-  requestId: string;
-  helperName: string;
+  connectorId: string;
+  helperName?: string;
   steps: readonly ConnectorInstallStep[];
   signIn: ConnectorSignIn | null;
   connected: boolean;
 };
 
 export type ConnectionGrant = {
-  agent: string;
-  kinds: readonly string[];
+  grantId: string;
+  createdAt?: number;
+  spendCapUsd?: number;
 };
 
 export type ConnectionLedgerRow = {
@@ -94,7 +102,8 @@ export type ConnectionLedgerRow = {
 
 export type ConnectionDetailView = {
   connection: WorkbenchConnection;
-  createdBy: { handle: string; cause: string; at: string };
+  /** Present only when the vault reports the provisioning event. */
+  createdBy?: { handle: string; cause: string; at: string };
   grants: readonly ConnectionGrant[];
   spendCap: string;
   ledger: readonly ConnectionLedgerRow[];
@@ -159,15 +168,40 @@ export function connectionHostsLine(connection: WorkbenchConnection): string {
   return connection.hosts.length ? connection.hosts.join(', ') : '—';
 }
 
-/** `@hoots · sign-up · 13 Sep` */
+/** `@hoots · sign-up · 13 Sep`, or '' when the vault reports no such fact. */
 export function connectionCreatedByLine(detail: ConnectionDetailView): string {
+  if (!detail.createdBy) return '';
   return `${detail.createdBy.handle} · ${detail.createdBy.cause} · ${detail.createdBy.at}`;
 }
 
-/** `hoots (deploy, list) · terra (list)` — the agent and its grant kinds. */
+/** `2 live grants` — the server's grants carry no agent attribution. */
 export function connectionGrantsLine(detail: ConnectionDetailView): string {
   if (!detail.grants.length) return 'none';
-  return detail.grants
-    .map((grant) => `${grant.agent} (${grant.kinds.join(', ')})`)
-    .join(' · ');
+  return `${detail.grants.length} live grant${detail.grants.length === 1 ? '' : 's'}`;
+}
+
+/** `none`, or the tightest per-grant cap the vault reports. */
+export function connectionSpendCap(grants: readonly ConnectionGrant[]): string {
+  const caps = grants
+    .map((grant) => grant.spendCapUsd)
+    .filter((cap): cap is number => typeof cap === 'number');
+  if (!caps.length) return 'none';
+  return `$${Math.min(...caps)} cap`;
+}
+
+/** `14:26` when the entry is from today, otherwise `13 Sep`. */
+export function ledgerStamp(createdAt: number, now: number = Date.now()): string {
+  const date = new Date(createdAt < 1e12 ? createdAt * 1000 : createdAt);
+  const sameDay = new Date(now).toDateString() === date.toDateString();
+  if (sameDay) {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  }
+  return `${date.getDate()} ${date.toLocaleString('en', { month: 'short' })}`;
+}
+
+/** `1.2 kB` for a ledger row's bytes column. */
+export function ledgerBytes(bytes: number): string | undefined {
+  if (!Number.isFinite(bytes) || bytes <= 0) return undefined;
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} kB`;
 }

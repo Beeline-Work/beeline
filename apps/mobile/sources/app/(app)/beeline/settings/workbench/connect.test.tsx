@@ -4,10 +4,6 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
-const webBrowser = vi.hoisted(() => ({
-  openBrowserAsync: vi.fn(async () => 'closed'),
-  openAuthSessionAsync: vi.fn(async () => 'closed'),
-}));
 const searchParams = vi.hoisted(() => ({
   params: {
     workspaceId: 'workspace-1',
@@ -21,8 +17,6 @@ vi.mock('expo-router', () => ({
   useLocalSearchParams: () => searchParams.params,
 }));
 
-vi.mock('expo-web-browser', () => webBrowser);
-
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -34,6 +28,7 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    ActivityIndicator: host('ActivityIndicator'),
   };
 });
 
@@ -46,13 +41,7 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
 
 import ConnectTrustySquireScreen from './connect';
 import { getWorkbenchSource, setWorkbenchSource } from '@/buzz/workbench-source';
-
-type MockHooks = {
-  failNextPair(connectorId: string): void;
-  setSignInMethod(method: 'streamed' | 'oauth' | undefined): void;
-};
-
-const mockHooks = (): MockHooks => getWorkbenchSource() as unknown as MockHooks;
+import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 
 const originalConsoleError = console.error;
 
@@ -75,7 +64,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setWorkbenchSource();
+  setWorkbenchSource(new MockWorkbenchSource());
   searchParams.params = {
     workspaceId: 'workspace-1',
     viewerId: 'human-dani',
@@ -111,7 +100,7 @@ async function advancePolls(count = 1): Promise<void> {
 
 async function pair(renderer: ReactTestRenderer, helperId = 'helper-squire-box'): Promise<void> {
   await act(async () => {
-    renderer.root.findByProps({ testID: `connect-helper-${helperId}` }).props.onPress();
+    renderer.root.findByProps({ testID: `connect-machine-${helperId}` }).props.onPress();
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -125,20 +114,45 @@ async function untilSignin(renderer: ReactTestRenderer): Promise<void> {
   throw new Error('sign-in step never arrived');
 }
 
-describe('Connect Trusty Squire flow', () => {
-  it('lists helpers with platform, agents and online status, dimming offline ones', async () => {
+describe('Connect Trusty Squire flow — ONE connect path', () => {
+  it('with no connected machine, honestly says what to run and offers no picker', async () => {
+    setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { listHelpers: async () => [] }));
     const renderer = await render();
-    const online = renderer.root.findByProps({ testID: 'connect-helper-helper-squire-box' });
-    expect(online.props.title).toBe('squire-box');
-    expect(online.props.description).toBe('linux · 3 agents · online');
-    expect(online.props.value).toBe('pair');
-    expect(online.props.disabled).toBe(false);
-    const offline = renderer.root.findByProps({ testID: 'connect-helper-helper-office-mini' });
-    expect(offline.props.value).toBe('offline');
-    expect(offline.props.disabled).toBe(true);
+    const empty = renderer.root.findByProps({ testID: 'connect-no-helper' });
+    expect(empty).toBeDefined();
+    const texts = empty.findAll((node: any) => typeof node.props?.children === 'string');
+    expect(texts.some((node: any) => node.props.children === 'npx usebeeline connect')).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-picker' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-helper-squire-box' })).toHaveLength(0);
   });
 
-  it('shows the helper’s step-by-step install progress and then the sign-in button', async () => {
+  it('with exactly one machine, pairs immediately without asking', async () => {
+    setWorkbenchSource(
+      Object.assign(new MockWorkbenchSource(), {
+        listHelpers: async () => [{ id: 'helper-squire-box', name: 'squire-box', online: true }],
+      }),
+    );
+    const renderer = await render();
+    expect(navigation.push).not.toHaveBeenCalled();
+    await advancePolls(2);
+    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-picker' })).toHaveLength(0);
+  });
+
+  it('with more than one machine, asks once with a single machine list', async () => {
+    const renderer = await render();
+    const online = renderer.root.findByProps({ testID: 'connect-machine-helper-squire-box' });
+    expect(online.props.title).toBe('squire-box');
+    expect(online.props.description).toBe('online');
+    expect(online.props.value).toBe('pair');
+    expect(online.props.disabled).toBe(false);
+    const offline = renderer.root.findByProps({ testID: 'connect-machine-helper-office-mini' });
+    expect(offline.props.value).toBe('offline');
+    expect(offline.props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: 'connect-helper-picker' })).toHaveLength(0);
+  });
+
+  it('shows the machine’s step-by-step install progress and then the sign-in button', async () => {
     const renderer = await render();
     await pair(renderer);
     await advancePolls(2);
@@ -151,7 +165,7 @@ describe('Connect Trusty Squire flow', () => {
     expect(renderer.root.findByProps({ testID: 'connect-sign-in' })).toBeDefined();
   });
 
-  it('opens the streamed sign-in URL the server relays, verbatim, in the in-app browser', async () => {
+  it('sign-in is a full-screen route, never a browser call inside the step list', async () => {
     const renderer = await render();
     await pair(renderer);
     await untilSignin(renderer);
@@ -160,30 +174,17 @@ describe('Connect Trusty Squire flow', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(webBrowser.openBrowserAsync).toHaveBeenCalledWith(
-      'https://login.example-squire.test/vnc.html#helper=helper-squire-box',
-    );
-    expect(webBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
+    expect(navigation.push).toHaveBeenCalledTimes(1);
+    const [route] = navigation.push.mock.calls[0] as [
+      { pathname: string; params: Record<string, string> },
+    ];
+    expect(route.pathname).toBe('/beeline/settings/workbench/connect-signin');
+    expect(route.params.method).toBe('streamed');
+    expect(route.params.url).toContain('https://');
   });
 
-  it('opens an OAuth URL through the auth session when the helper reports OAuth', async () => {
-    mockHooks().setSignInMethod('oauth');
-    const renderer = await render();
-    await pair(renderer);
-    await untilSignin(renderer);
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'connect-sign-in' }).props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(webBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
-      'https://login.example-squire.test/vnc.html#helper=helper-squire-box',
-    );
-    expect(webBrowser.openBrowserAsync).not.toHaveBeenCalled();
-  });
-
-  it('reports a failed step in red with the helper’s reason and a Retry', async () => {
-    mockHooks().failNextPair('trusty-squire');
+  it('reports a failed step in red with the helper’s reason and Retry re-pairs', async () => {
+    (getWorkbenchSource() as MockWorkbenchSource).failNextPair('trusty-squire');
     const renderer = await render();
     await pair(renderer);
     for (let tick = 0; tick < 12; tick += 1) {
@@ -197,6 +198,14 @@ describe('Connect Trusty Squire flow', () => {
       renderer.root.findByProps({ testID: 'connect-step-2-reason' }).props.children,
     ).toContain('helper');
     expect(renderer.root.findAllByProps({ testID: 'connect-sign-in' })).toHaveLength(0);
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'connect-retry' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findAllByProps({ testID: 'connect-install-progress' }).length).toBe(0);
+    await advancePolls(2);
+    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
   });
 
   it('returns to the Workbench once the install reports connected', async () => {

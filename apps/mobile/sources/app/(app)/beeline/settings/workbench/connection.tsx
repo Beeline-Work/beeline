@@ -97,7 +97,9 @@ export default function ConnectionDetailScreen() {
         {detail ? (
           <View testID="connection-detail-metadata">
             <SettingsRow disabled title="Hosts" value={connectionHostsLine(detail.connection)} />
-            <SettingsRow disabled title="Created by" value={connectionCreatedByLine(detail)} />
+            {detail.createdBy ? (
+              <SettingsRow disabled title="Created by" value={connectionCreatedByLine(detail)} />
+            ) : null}
             <SettingsRow
               disabled
               testID="connection-detail-grants"

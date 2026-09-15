@@ -120,13 +120,13 @@ describe('installSquire', () => {
     });
   });
 
-  it('runs connect non-interactively with the skip-browser flag', async () => {
-    let argv: string[] = [];
+  it('runs connect non-interactively with the skip-browser flag, then probes the version', async () => {
+    const invocations: string[][] = [];
     await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
       run: async (_command, args) => {
-        argv = [...args];
+        invocations.push([...args]);
         return {
           code: 0,
           stdout: 'https://squire.example/oauth/authorize?x=1',
@@ -135,12 +135,9 @@ describe('installSquire', () => {
       },
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(argv).toEqual([
-      '-y',
-      '@trusty-squire/mcp',
-      'connect',
-      '--target=pi',
-      '--skip-browser',
+    expect(invocations).toEqual([
+      ['-y', '@trusty-squire/mcp', 'connect', '--target=pi', '--skip-browser'],
+      ['-y', '@trusty-squire/mcp', '--version'],
     ]);
   });
 

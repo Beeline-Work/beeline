@@ -1,27 +1,39 @@
-import {
-  type ConnectionDetailView,
-  type ConnectorInstallState,
-  type WorkbenchHelper,
-  type WorkbenchView,
+import type {
+  ConnectionDetailView,
+  ConnectorInstallState,
+  ConnectorInstallStep,
+  WorkbenchConnector,
+  WorkbenchConnectorId,
+  WorkbenchHelper,
+  WorkbenchView,
 } from './workbench';
+import { CONNECTOR_DESCRIPTIONS, connectionSpendCap, ledgerBytes, ledgerStamp } from './workbench';
+import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 /**
- * The Workbench data source. Until PR 2's server endpoints land, the only
- * implementation is the mock below; the screens and tests import
- * `getWorkbenchSource()`, so the swap to signed RoomView endpoints is one
- * module change. Shapes follow the scout report's §5 PR 2/PR 3 contracts.
+ * The Workbench data source. The DEFAULT is the real monolith source: every
+ * method resolves through the same authenticated phone operations the rest
+ * of the app uses (`monolithPhoneOperation`), and the server scopes every
+ * read to the session's viewer — a connection belongs to whoever provisioned
+ * it, so `viewerId` is accepted for interface compatibility and the client
+ * sovereignty projection (`connectionsForViewer`) still holds. Tests install
+ * the mock (`workbench-source.mock.ts`) through `setWorkbenchSource()`; the
+ * screens never read either implementation directly.
  */
 export interface WorkbenchSource {
   readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView>;
   listHelpers(input: { workspaceId: string }): Promise<readonly WorkbenchHelper[]>;
-  /** Pair an online helper: returns the install request the flow polls. */
+  /** Pair a machine's helper: returns the connector whose install is polled. */
   pairConnector(input: {
     workspaceId: string;
     connectorId: string;
     helperId: string;
-    viewerId: string;
-  }): Promise<{ requestId: string }>;
-  readInstallState(input: { requestId: string }): Promise<ConnectorInstallState | null>;
+  }): Promise<{ connectorId: string }>;
+  readInstallState(input: {
+    workspaceId: string;
+    connectorId: string;
+  }): Promise<ConnectorInstallState | null>;
   readConnectionDetail(input: {
     workspaceId: string;
     ref: string;
@@ -31,198 +43,120 @@ export interface WorkbenchSource {
   disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void>;
 }
 
-type MockViewer = {
-  id: string;
-  name: string;
-  connections: ConnectionDetailView[];
-};
+type WorkbenchDto = PhoneOperationMap['readWorkbench']['output'];
+type ConnectorViewDto = WorkbenchDto['connectors'][number];
+type ConnectionViewDto = WorkbenchDto['connections'][number];
 
-const MEMBER_A = 'human-dani';
-const MEMBER_B = 'human-terra';
+function toConnector(
+  entry: { connectorType: string; name: string; available: boolean; row?: ConnectorViewDto },
+): WorkbenchConnector {
+  const id = entry.connectorType as WorkbenchConnectorId;
+  return {
+    id,
+    name: entry.name,
+    description: CONNECTOR_DESCRIPTIONS[id] ?? '',
+    available: entry.available,
+    ...(entry.row
+      ? {
+          status: entry.row.status.status,
+          helperName: entry.row.status.helperName,
+          agentCount: entry.row.status.agentCount,
+          signedInAs: entry.row.status.signedInAs,
+        }
+      : {}),
+  };
+}
 
-const VERCEL_CONNECTION: ConnectionDetailView = {
-  connection: {
-    ref: 'cred_vercel',
-    name: 'Vercel',
-    kind: 'token',
-    hosts: ['api.vercel.com'],
-    state: 'active',
-    ownerId: MEMBER_A,
-    grantCount: 2,
-  },
-  createdBy: { handle: '@hoots', cause: 'sign-up', at: '13 Sep' },
-  grants: [
-    { agent: 'hoots', kinds: ['deploy', 'list'] },
-    { agent: 'terra', kinds: ['list'] },
-  ],
-  spendCap: 'none',
-  ledger: [
-    { at: '14:26', actor: '@hoots', action: 'deploy', status: '200', bytes: '1.2 kB' },
-    { at: '14:19', actor: '@hoots', action: 'deploy', status: '200', bytes: '0.9 kB' },
-    { at: '13:41', actor: '@terra', action: 'list projects', status: '200' },
-    { at: '13:40', actor: '', action: 'grant minted for @terra' },
-    { at: '12:02', actor: '', action: 'credential stored by @hoots (sign-up)' },
-  ],
-};
+function toConnection(dto: ConnectionViewDto, viewerId: string): WorkbenchView['connections'][number] {
+  return {
+    ref: dto.reference,
+    name: dto.label,
+    kind: dto.service ?? 'vault',
+    hosts: dto.allowedHosts,
+    state: dto.state,
+    ownerId: viewerId,
+  };
+}
 
-const GOOGLE_CONNECTION: ConnectionDetailView = {
-  connection: {
-    ref: 'cred_google',
-    name: 'Google',
-    kind: 'session',
-    hosts: [],
-    state: 'active',
-    ownerId: MEMBER_A,
-    grantCount: 1,
-  },
-  createdBy: { handle: '@hoots', cause: 'sign-in', at: '12 Sep' },
-  grants: [{ agent: 'hoots', kinds: ['mail', 'calendar'] }],
-  spendCap: 'none',
-  ledger: [
-    { at: '09:12', actor: '@hoots', action: 'send mail', status: '200', bytes: '0.4 kB' },
-    { at: '08:58', actor: '', action: 'credential stored by @hoots (sign-in)' },
-  ],
-};
-
-const MOCK_VIEWERS: readonly MockViewer[] = [
-  { id: MEMBER_A, name: 'dani', connections: [VERCEL_CONNECTION, GOOGLE_CONNECTION] },
-  { id: MEMBER_B, name: 'terra', connections: [] },
-];
-
-const MOCK_HELPERS: readonly WorkbenchHelper[] = [
-  { id: 'helper-squire-box', name: 'squire-box', platform: 'linux', agentCount: 3, online: true },
-  { id: 'helper-macbook', name: "Dani's MacBook", platform: 'macos', agentCount: 1, online: true },
-  { id: 'helper-office-mini', name: 'office-mini', platform: 'macos', agentCount: 0, online: false },
-];
-
-const INSTALL_STEP_LABELS = [
-  (helperName: string) => `helper ${helperName} reached`,
-  () => 'trusty-squire 1.4.2 installed',
-  (workspaceName: string) => `paired to workspace ${workspaceName}`,
-  () => 'waiting for sign-in',
-  () => 'connections sync',
-] as const;
+function toSteps(steps: readonly { label: string; status: string; reason?: string }[]): readonly ConnectorInstallStep[] {
+  return steps.map((step) => ({
+    label: step.label,
+    status:
+      step.status === 'done'
+        ? ('done' as const)
+        : step.status === 'running'
+          ? ('active' as const)
+          : step.status === 'failed'
+            ? ('failed' as const)
+            : ('pending' as const),
+    ...(step.reason ? { reason: step.reason } : {}),
+  }));
+}
 
 /**
- * The mock install script: one step is revealed per poll, exactly the way the
- * helper's status reports arrive. `failAtStep` injects a failed step with a
- * helper reason, both for the failure UI and its render tests.
+ * The real source: one signed `readWorkbench` projection per poll, resolved
+ * through the session's own viewer on the server.
  */
-class MockWorkbenchSource implements WorkbenchSource {
-  private readonly installs = new Map<string, MockInstall>();
-  private failedConnectors = new Set<string>();
-  private signInMethod: 'streamed' | 'oauth' | undefined;
-
+export class MonolithWorkbenchSource implements WorkbenchSource {
   async readWorkbench(input: {
     workspaceId: string;
     viewerId: string;
   }): Promise<WorkbenchView> {
-    const viewer = this.viewer(input.viewerId);
-    const connected = this.installs.size > 0 || this.failedConnectors.size > 0;
+    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
     return {
-      connectors: [
-        {
-          id: 'trusty-squire',
-          name: 'Trusty Squire',
-          description: 'vault · sign-ups · payments for your agents',
-          available: true,
-          ...(connected
-            ? {
-                status: this.failedConnectors.has('trusty-squire')
-                  ? ('error' as const)
-                  : ('connected' as const),
-                helperName: 'squire-box',
-                agentCount: 3,
-                signedInAs: viewer ? `${viewer.name}@…` : undefined,
-              }
-            : {}),
-        },
-        {
-          id: 'wallet',
-          name: 'Wallet',
-          description: 'crypto wallet for agents',
-          available: false,
-        },
-        {
-          id: 'tailscale',
-          name: 'Tailscale',
-          description: 'private network for your helpers',
-          available: false,
-        },
-      ],
-      connections: viewer ? viewer.connections.map((detail) => detail.connection) : [],
+      helpers: dto.helpers.map(
+        (helper): WorkbenchHelper => ({ id: helper.agentId, name: helper.name, online: helper.online }),
+      ),
+      connectors: dto.catalog.map((entry) =>
+        toConnector({
+          connectorType: entry.connectorType,
+          name: entry.name,
+          available: entry.available,
+          row: dto.connectors.find((candidate) => candidate.connectorType === entry.connectorType),
+        }),
+      ),
+      connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
   }
 
-  async listHelpers(): Promise<readonly WorkbenchHelper[]> {
-    return MOCK_HELPERS;
+  async listHelpers(input: { workspaceId: string }): Promise<readonly WorkbenchHelper[]> {
+    const view = await this.readWorkbench({ ...input, viewerId: '' });
+    return view.helpers;
   }
 
   async pairConnector(input: {
     workspaceId: string;
     connectorId: string;
     helperId: string;
-    viewerId: string;
-  }): Promise<{ requestId: string }> {
-    if (!MOCK_HELPERS.some((helper) => helper.id === input.helperId && helper.online)) {
-      throw new Error('Helper is offline');
-    }
-    const requestId = `install-${input.helperId}-${this.installs.size + 1}`;
-    this.installs.set(
-      requestId,
-      {
-        requestId,
-        helperId: input.helperId,
-        revealed: 0,
-        failAtStep: this.failedConnectors.has(input.connectorId) ? 2 : undefined,
-      },
-    );
-    return { requestId };
+  }): Promise<{ connectorId: string }> {
+    const result = await monolithPhoneOperation('pairConnector', {
+      workspaceId: input.workspaceId,
+      connectorType: input.connectorId as PhoneOperationMap['pairConnector']['input']['connectorType'],
+      helperAgentId: input.helperId,
+    });
+    return { connectorId: result.connectorId };
   }
 
-  async readInstallState(input: { requestId: string }): Promise<ConnectorInstallState | null> {
-    const install = this.installs.get(input.requestId);
-    if (!install) return null;
-    install.revealed = Math.min(install.revealed + 1, INSTALL_STEP_LABELS.length);
-    const helper = MOCK_HELPERS.find((candidate) => candidate.id === install.helperId);
-    const steps = INSTALL_STEP_LABELS.map((label, index) => {
-      const failShown =
-        install.failAtStep !== undefined && install.revealed >= install.failAtStep;
-      if (failShown && index === install.failAtStep) {
-        return {
-          label: label(helper?.name ?? 'the helper'),
-          status: 'failed' as const,
-          reason: 'the helper could not reach the package registry',
-        };
-      }
-      if (failShown && index > (install.failAtStep as number)) {
-        return { label: label(helper?.name ?? 'the helper'), status: 'pending' as const };
-      }
-      return {
-        label: label(helper?.name ?? 'the helper'),
-        status:
-          index < install.revealed - 1
-            ? ('done' as const)
-            : index === install.revealed - 1
-              ? ('active' as const)
-              : ('pending' as const),
-      };
-    });
-    const reachedSignIn =
-      install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length - 1;
-    const complete = install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length;
+  async readInstallState(input: {
+    workspaceId: string;
+    connectorId: string;
+  }): Promise<ConnectorInstallState | null> {
+    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+    const row = dto.connectors.find(
+      (candidate) => candidate.connectorType === input.connectorId,
+    );
+    if (!row) return null;
     return {
-      requestId: install.requestId,
-      helperName: helper?.name ?? 'the helper',
-      steps,
-      signIn: reachedSignIn
+      connectorId: row.connectorId,
+      ...(row.status.helperName ? { helperName: row.status.helperName } : {}),
+      steps: toSteps(row.status.steps),
+      signIn: row.status.signIn
         ? {
-            method: this.signInMethod ?? 'streamed',
-            // The streamed noVNC page the helper reports; the app opens it verbatim.
-            url: `https://login.example-squire.test/vnc.html#helper=${install.helperId}`,
+            method: row.status.signIn.method === 'oauth' ? ('oauth' as const) : ('streamed' as const),
+            url: row.status.signIn.url,
           }
         : null,
-      connected: complete,
+      connected: row.status.status === 'connected',
     };
   }
 
@@ -231,57 +165,63 @@ class MockWorkbenchSource implements WorkbenchSource {
     ref: string;
     viewerId: string;
   }): Promise<ConnectionDetailView | null> {
-    const viewer = this.viewer(input.viewerId);
-    const detail = viewer?.connections.find((candidate) => candidate.connection.ref === input.ref);
-    return detail ?? null;
+    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+    const connection = dto.connections.find((candidate) => candidate.reference === input.ref);
+    if (!connection) return null;
+    const detail = await monolithPhoneOperation('readConnectionDetail', {
+      workspaceId: input.workspaceId,
+      connectionId: connection.connectionId,
+    });
+    return {
+      connection: toConnection(detail.connection, input.viewerId),
+      grants: detail.grants
+        .filter((grant) => grant.revokedAt === undefined)
+        .map((grant) => ({
+          grantId: grant.grantId,
+          createdAt: grant.createdAt,
+          ...(grant.spendCapUsd !== undefined ? { spendCapUsd: grant.spendCapUsd } : {}),
+        })),
+      spendCap: connectionSpendCap(detail.grants),
+      ledger: detail.ledger.map((entry) => ({
+        at: ledgerStamp(entry.createdAt),
+        actor: entry.agentName ?? '',
+        action: entry.operation,
+        ...(entry.statusCode !== undefined ? { status: String(entry.statusCode) } : {}),
+        ...(entry.bytes !== undefined ? { bytes: ledgerBytes(entry.bytes) } : {}),
+      })),
+    };
   }
 
   async revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{ revoked: number }> {
-    const detail = MOCK_VIEWERS.flatMap((candidate) => candidate.connections).find(
-      (candidate) => candidate.connection.ref === input.ref,
-    );
-    if (!detail) return { revoked: 0 };
-    const revoked = detail.grants.length;
-    detail.grants = [];
-    detail.connection = { ...detail.connection, grantCount: 0 };
-    return { revoked };
+    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+    const connection = dto.connections.find((candidate) => candidate.reference === input.ref);
+    if (!connection) return { revoked: 0 };
+    const result = await monolithPhoneOperation('revokeConnectionGrants', {
+      workspaceId: input.workspaceId,
+      connectionId: connection.connectionId,
+    });
+    return { revoked: result.revoked };
   }
 
-  async disconnectConnector(): Promise<void> {
-    this.installs.clear();
-  }
-
-  /** Test hook: make the next pairing of this connector fail at a step. */
-  failNextPair(connectorId: string): void {
-    this.failedConnectors.add(connectorId);
-  }
-
-  /** Test hook: what sign-in method installs report (default streamed). */
-  setSignInMethod(method: 'streamed' | 'oauth' | undefined): void {
-    this.signInMethod = method;
-  }
-
-  private viewer(id: string): MockViewer | undefined {
-    return MOCK_VIEWERS.find((candidate) => candidate.id === id);
+  async disconnectConnector(input: {
+    workspaceId: string;
+    connectorId: string;
+  }): Promise<void> {
+    await monolithPhoneOperation('unpairConnector', {
+      workspaceId: input.workspaceId,
+      connectorId: input.connectorId,
+    });
   }
 }
 
-type MockInstall = {
-  requestId: string;
-  helperId: string;
-  revealed: number;
-  failAtStep?: number;
-};
+let source: WorkbenchSource = new MonolithWorkbenchSource();
 
-let source: WorkbenchSource = new MockWorkbenchSource();
-
-/** The one source the Workbench screens read. PR 2 replaces the mock here. */
+/** The one source the Workbench screens read. */
 export function getWorkbenchSource(): WorkbenchSource {
   return source;
 }
 
-/** Test seam: install a source (or restore the mock with no argument). */
+/** Test seam: install a source (or restore the real one with no argument). */
 export function setWorkbenchSource(next?: WorkbenchSource): void {
-  source = next ?? new MockWorkbenchSource();
+  source = next ?? new MonolithWorkbenchSource();
 }
-

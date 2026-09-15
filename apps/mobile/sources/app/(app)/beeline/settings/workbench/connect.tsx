@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -18,12 +17,13 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 const INSTALL_POLL_MS = 700;
 
 /**
- * Connect Trusty Squire — the pairing flow (report §5, stories 1–2). Three
- * phases on one screen: pick the helper to pair (offline helpers are dimmed
- * and refuse), the helper's own step-by-step install reports (a failed step
- * turns red with the helper's reason and a Retry), and the sign-in button
- * that opens exactly the URL and method the server relays — the streamed
- * page in the in-app browser, an OAuth URL through the auth session.
+ * Connect Trusty Squire — the pairing flow. ONE connect path (captain
+ * ruling, steer-1): pairing asks once. With no connected machine the screen
+ * says honestly what to run; with exactly one machine it pairs immediately;
+ * only with more than one does a list appear. The helper's own step reports
+ * follow (a failed step turns red with the helper's reason and a Retry that
+ * re-pairs), and sign-in is a full-screen in-app browser route, never a row
+ * inside the step list.
  */
 export default function ConnectTrustySquireScreen() {
   const params = useLocalSearchParams<{
@@ -38,6 +38,8 @@ export default function ConnectTrustySquireScreen() {
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoPairedRef = useRef(false);
+  const pairedHelperRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,11 +74,11 @@ export default function ConnectTrustySquireScreen() {
   }, []);
 
   const startPolling = useCallback(
-    (requestId: string) => {
+    (pairedConnectorId: string) => {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(() => {
         void getWorkbenchSource()
-          .readInstallState({ requestId })
+          .readInstallState({ connectorId: pairedConnectorId, workspaceId })
           .then((state) => {
             if (!state) return;
             setInstall(state);
@@ -87,41 +89,46 @@ export default function ConnectTrustySquireScreen() {
           .catch(() => undefined);
       }, INSTALL_POLL_MS);
     },
-    [finishPolling],
+    [finishPolling, workspaceId],
   );
 
   const pair = useCallback(
-    async (helper: WorkbenchHelper) => {
+    async (helperId: string) => {
       setError(null);
+      pairedHelperRef.current = helperId;
       try {
-        const { requestId } = await getWorkbenchSource().pairConnector({
+        const { connectorId: pairedConnectorId } = await getWorkbenchSource().pairConnector({
           workspaceId,
           connectorId,
-          helperId: helper.id,
-          viewerId,
+          helperId,
         });
-        startPolling(requestId);
+        startPolling(pairedConnectorId);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Pairing failed');
       }
     },
-    [connectorId, startPolling, viewerId, workspaceId],
+    [connectorId, startPolling, workspaceId],
   );
+
+  // One machine: pairing is not a question. Exactly one auto-pair per screen.
+  useEffect(() => {
+    if (helpers && helpers.length === 1 && !autoPairedRef.current) {
+      autoPairedRef.current = true;
+      void pair(helpers[0]!.id);
+    }
+  }, [helpers, pair]);
 
   const retry = useCallback(() => {
     setInstall(null);
-  }, []);
-
-  const signIn = useCallback(async (state: ConnectorInstallState) => {
-    if (!state.signIn) return;
-    if (state.signIn.method === 'oauth') {
-      await WebBrowser.openAuthSessionAsync(state.signIn.url);
-    } else {
-      await WebBrowser.openBrowserAsync(state.signIn.url);
-    }
-  }, []);
+    const helperId = pairedHelperRef.current;
+    if (helperId) void pair(helperId);
+  }, [pair]);
 
   const connectorName = connectorId === 'trusty-squire' ? 'Trusty Squire' : connectorId;
+
+  const noHelpers = helpers !== null && helpers.length === 0;
+  const oneHelper = helpers !== null && helpers.length === 1;
+  const manyHelpers = helpers !== null && helpers.length > 1;
 
   return (
     <View style={styles.container}>
@@ -138,32 +145,41 @@ export default function ConnectTrustySquireScreen() {
         <Text style={styles.title}>Connect {connectorName}</Text>
       </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
-        {install === null ? (
-          <View testID="connect-helper-picker">
+        {noHelpers ? (
+          <View testID="connect-no-helper">
             <Text style={styles.note}>
               Squire runs on a helper. Every agent on that helper can use its keys, within the
               grants you set.
             </Text>
-            <Text style={styles.sectionLabel}>Helpers</Text>
-            {(helpers ?? []).map((helper) => (
+            <Text style={styles.command}>npx usebeeline connect</Text>
+            <Text style={styles.note}>
+              Run this on the machine you want to hold your keys. When it appears here, come back
+              and pair it.
+            </Text>
+          </View>
+        ) : null}
+        {install === null && manyHelpers ? (
+          <View testID="connect-machine-picker">
+            <Text style={styles.sectionLabel}>Machines</Text>
+            {helpers!.map((helper) => (
               <SettingsRow
                 key={helper.id}
-                description={
-                  helper.online
-                    ? `${helper.platform} · ${helper.agentCount} ${helper.agentCount === 1 ? 'agent' : 'agents'} · online`
-                    : `${helper.platform} · offline`
-                }
+                description={helper.online ? 'online' : 'offline'}
                 disabled={!helper.online}
-                onPress={() => void pair(helper)}
-                testID={`connect-helper-${helper.id}`}
+                onPress={() => void pair(helper.id)}
+                testID={`connect-machine-${helper.id}`}
                 title={helper.name}
                 value={helper.online ? 'pair' : 'offline'}
               />
             ))}
-            <Text style={styles.note}>Pair a helper, not an agent. Offline helpers cannot be paired.</Text>
+            <Text style={styles.note}>Pair a helper, not an agent. Offline machines cannot be paired.</Text>
           </View>
-        ) : (
+        ) : null}
+        {install !== null ? (
           <View testID="connect-install-progress">
+            {oneHelper && helpers?.[0] ? (
+              <Text style={styles.note}>Pairing with {helpers[0].name}…</Text>
+            ) : null}
             <View style={styles.steps}>
               {install.steps.map((step, index) => (
                 <View key={`${step.label}-${index}`} testID={`connect-step-${index}-${step.status}`}>
@@ -203,7 +219,20 @@ export default function ConnectTrustySquireScreen() {
             ) : install.signIn ? (
               <TouchableOpacity
                 accessibilityRole="button"
-                onPress={() => void signIn(install)}
+                onPress={() => {
+                  const { signIn } = install;
+                  if (!signIn) return;
+                  router.push({
+                    pathname: '/beeline/settings/workbench/connect-signin' as never,
+                    params: {
+                      workspaceId,
+                      viewerId,
+                      connectorId,
+                      url: signIn.url,
+                      method: signIn.method,
+                    },
+                  });
+                }}
                 style={styles.signInButton}
                 testID="connect-sign-in"
               >
@@ -213,7 +242,7 @@ export default function ConnectTrustySquireScreen() {
               </TouchableOpacity>
             ) : null}
           </View>
-        )}
+        ) : null}
         {error ? (
           <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
             {error}
@@ -243,6 +272,7 @@ const styles = StyleSheet.create((theme) => {
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     note: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    command: { ...Typography.mono(), ...hull.type.body, color: hull.textPrimary },
     steps: { gap: hull.space.xs },
     stepText: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
     stepDone: { color: hull.textSecondary },

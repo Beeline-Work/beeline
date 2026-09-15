@@ -61,6 +61,14 @@ export type WorkbenchCatalogEntry = {
   readonly available: boolean;
 };
 
+/** One machine the viewer connected that can serve as a connector helper. */
+export type WorkbenchHelperView = {
+  readonly agentId: string;
+  readonly name: string;
+  /** Live durable presence evidence (the same 90-second window readers use). */
+  readonly online: boolean;
+};
+
 export type WorkbenchView = {
   readonly workspaceId: string;
   readonly catalog: readonly WorkbenchCatalogEntry[];
@@ -68,6 +76,8 @@ export type WorkbenchView = {
   readonly connectors: readonly WorkbenchConnectorView[];
   /** The VIEWER's connections. Another member's connections are never visible. */
   readonly connections: readonly WorkbenchConnectionView[];
+  /** The viewer's own connected machines — the Workbench's helper candidates. */
+  readonly helpers: readonly WorkbenchHelperView[];
 };
 
 export type ReadWorkbenchInput = { readonly workspaceId: string };

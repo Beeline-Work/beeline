@@ -29,6 +29,7 @@ import {
 } from './access-policy.js';
 import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
+import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import {
@@ -288,6 +289,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   scratchSweepTimer.unref();
 
   let ready = false;
+  let connectorLoop: ConnectorAssignmentLoop | undefined;
   let stoppingStatus = 'daemon stopped';
   try {
     const core = new ThinDaemonCore(runtime, configPath, config, { daemonApi });
@@ -395,6 +397,15 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             ? { startupUnavailable: config.modelUnavailable.unavailable.label }
             : {}),
         });
+        // The connector work queue (pair/revoke/sync) drains on the same
+        // cadence; one loop per daemon process, started idempotently so a
+        // reconnect never stacks a second timer.
+        connectorLoop ??= new ConnectorAssignmentLoop({
+          api: daemonApi,
+          agentId: runtime.agent.publicKey,
+          log: (message) => console.log(`[body] connector: ${message}`),
+        });
+        connectorLoop.start();
       },
       onProgress: async (status) => {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);

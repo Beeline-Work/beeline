@@ -39,6 +39,8 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
 });
 
 import ConnectionDetailScreen from './connection';
+import { setWorkbenchSource } from '@/buzz/workbench-source';
+import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 
 const originalConsoleError = console.error;
 
@@ -57,6 +59,7 @@ afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setWorkbenchSource(new MockWorkbenchSource());
   searchParams.params = {
     workspaceId: 'workspace-1',
     viewerId: 'human-dani',
@@ -84,18 +87,30 @@ async function flush(times = 4): Promise<void> {
 }
 
 describe('Connection detail screen', () => {
-  it('renders hosts, creator, grants with kinds and the spend cap', async () => {
+  it('renders hosts, creator, live-grant count and the spend cap', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-detail-metadata' })).toBeDefined();
     const grants = renderer.root.findByProps({ testID: 'connection-detail-grants' });
-    expect(grants.props.value).toContain('hoots (deploy, list)');
-    expect(grants.props.value).toContain('terra (list)');
+    expect(grants.props.value).toBe('2 live grants');
   });
 
   it('renders the Squire ledger rows', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-ledger-0' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'connection-ledger-2' })).toBeDefined();
+  });
+
+  it('omits the Created-by row when the vault reports no provisioning fact', async () => {
+    const data = new MockWorkbenchSource();
+    const source = new MockWorkbenchSource();
+    source.readConnectionDetail = async (input) => {
+      const detail = await data.readConnectionDetail(input);
+      return detail ? { ...detail, createdBy: undefined } : null;
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'connection-detail-metadata' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ title: 'Created by' })).toHaveLength(0);
   });
 
   it('revokes all grants only behind an explicit confirmation', async () => {

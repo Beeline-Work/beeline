@@ -603,6 +603,30 @@ describe('Room message variant components', () => {
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
+  it('shows a manually closed corner as settled without an Open action', () => {
+    const renderer = render(
+      <DaemonFactCard
+        message={message({
+          daemonFact: {
+            type: 'corner-complete',
+            cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+            name: 'flaky auth',
+            objective: 'Fix the flaky auth test',
+            outcome: 'abandoned',
+          },
+        })}
+        onOpenCorner={() => undefined}
+        onOpenUrl={() => undefined}
+      />,
+    );
+    expect(JSON.stringify(renderer.toJSON())).toContain('closed');
+    expect(
+      renderer.root.findAllByProps({
+        testID: 'daemon-fact-card-corner-complete-primary-action',
+      }),
+    ).toHaveLength(0);
+  });
+
   it('names the agent that OPENED the corner, never one that owns it', () => {
     // Any member agent can be addressed in a corner and carry its branch on,
     // so the card records who started the work rather than who holds it.

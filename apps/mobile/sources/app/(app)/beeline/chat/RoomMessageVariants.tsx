@@ -852,15 +852,17 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
             testID: 'corner-summary-card-primary-action',
           },
         ]
-      : [
-          {
-            label: 'Open →',
-            primary: true,
-            accessibilityRole: 'link',
-            onPress: () => onOpenCorner(fact.cornerId),
-            testID: `daemon-fact-card-${fact.type}-primary-action`,
-          },
-        ];
+      : fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'
+        ? []
+        : [
+            {
+              label: 'Open →',
+              primary: true,
+              accessibilityRole: 'link',
+              onPress: () => onOpenCorner(fact.cornerId),
+              testID: `daemon-fact-card-${fact.type}-primary-action`,
+            },
+          ];
   return (
     <RepositoryFactCard
       title={landedCorner ? 'PR 1 merged' : title}

@@ -296,7 +296,9 @@ function notificationLifecycleEvent(
         : fact.type === 'checks-failing'
           ? 'Checks failed'
           : fact.type === 'corner-complete'
-            ? 'Merged'
+            ? fact.outcome === 'abandoned'
+              ? 'Closed'
+              : 'Merged'
             : undefined;
     return {
       id: message.id,

@@ -4263,8 +4263,19 @@ describe('monolith integration', () => {
       ).rows[0]?.close_requested,
     ).toBe(false);
 
-    const closed = await operation('requestCornerClose', { roomId: cornerId });
-    expect(closed.status).toBe(204);
+    const closeLive = new LiveHub();
+    const closePhone = new PhoneService(
+      database,
+      'http://placeholder',
+      githubOperations,
+      sendPushTest,
+      closeLive,
+    );
+    const parentEvents: unknown[] = [];
+    const unsubscribe = closeLive.subscribe(ROOM, (event) => parentEvents.push(event));
+    await closePhone.execute('requestCornerClose', { roomId: cornerId }, HUMAN);
+    unsubscribe();
+    expect(parentEvents).toContainEqual({ type: 'invalidate', roomId: ROOM, reason: 'corner' });
     expect((await operation('requestCornerClose', { roomId: cornerId })).status).toBe(204);
     expect(
       (
@@ -4326,6 +4337,16 @@ describe('monolith integration', () => {
         )
       ).rowCount,
     ).toBe(0);
+    const parent = await phone.readRoom(ROOM, HUMAN);
+    expect(
+      parent?.messages.find((message) => message.daemonFact?.cornerId === cornerId)?.daemonFact,
+    ).toMatchObject({
+      type: 'corner-complete',
+      cornerId,
+      name: 'Close request',
+      objective: 'Close this corner from the phone',
+      outcome: 'abandoned',
+    });
   });
 
   it('deduplicates push delivery claims in Postgres', async () => {

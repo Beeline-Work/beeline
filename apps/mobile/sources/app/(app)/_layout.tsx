@@ -142,6 +142,14 @@ export default function RootLayout() {
             statusBarStyle: 'light',
           }}
         />
+        {/* Workbench keeps the stack header (its back control); the page draws none. */}
+        <Stack.Screen
+          name="beeline/settings/workbench"
+          options={{
+            headerTitle: 'Workbench',
+            statusBarStyle: 'light',
+          }}
+        />
         <Stack.Screen
           name="beeline/chat/[channelId]"
           options={{

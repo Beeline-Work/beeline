@@ -116,18 +116,19 @@ describe('Workbench settings screen', () => {
     ).toBeDefined();
   });
 
-  it('shows the none-yet state with the sovereignty note for a member with no connections', async () => {
+  it('shows the none-yet state with a short sovereignty note for a member with no connections', async () => {
     searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-terra' };
     const renderer = await render();
     const empty = renderer.root.findByProps({ testID: 'workbench-connections-empty' });
     expect(empty.props.title).toBe('None yet');
-    // The sovereignty rule, in the Keys vocabulary the captain fixed on:
+    // The sovereignty rule, folded to one short line (captain, 2026-09-15):
     // other members’ keys are not listed and cannot be spent by your agents.
+    // The credential idea already lives in the Keys section description.
     expect(empty.props.description).toBe(
-      'Keys appear here once a tool stores them. Keys other members provisioned are not listed and your agents cannot spend them.',
+      'Other members’ keys are not listed and cannot be spent.',
     );
-    expect(empty.props.description).toContain('Keys other members provisioned are not listed');
-    expect(empty.props.description).toContain('your agents cannot spend them');
+    expect(empty.props.description).toContain('not listed');
+    expect(empty.props.description).toContain('cannot be spent');
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_google' })).toHaveLength(0);
   });

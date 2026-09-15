@@ -14,7 +14,8 @@ import { joinWorkspaceMembersToPublicRoom } from './membership-join.js';
  * nothing, a membership someone ended (`removed_at`) is never resurrected,
  * and the Room's `about` is written once so a later edit survives a reboot.
  * The backfill is silent (no join line, no push); a new sign-in still joins
- * through `joinRooms`, which posts the ordinary `<name> joined` line.
+ * through `joinRooms`, which announces the Workspace arrival in each existing
+ * person's read-only `@system` DM.
  * Workspace owners/admins manage `#welcome` with the same role.
  */
 export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void> {

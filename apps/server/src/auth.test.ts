@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash, verifierFromEnvironment } from './auth.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
@@ -180,7 +181,7 @@ describe('opaque token ceremony', () => {
         .map((identity_id) => ({ identity_id, role: 'member' })),
     );
   });
-  it('joins new sign-ins to existing Welcome Rooms with one note and one push event', async () => {
+  it('joins new sign-ins to existing Welcome Rooms with one @system DM note and one push event', async () => {
     const welcomeId = 'bee11e00-0000-4000-8000-000000000001';
     const roomId = '11111111-1111-4111-8111-111111111111';
     const firstAuth = new TokenAuth(db, async () => ({
@@ -223,8 +224,20 @@ describe('opaque token ceremony', () => {
       (
         await db.query<{ text: string; presentation: string }>(
           `SELECT text,presentation FROM messages
-           WHERE room_id=$1 AND author_id=$2 AND card_type='member-joined'`,
-          [roomId, second.identityId],
+           WHERE room_id=$1 AND card_type='member-joined'`,
+          [roomId],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await db.query<{ text: string; presentation: string }>(
+          `SELECT message.text,message.presentation FROM messages message
+           JOIN rooms room ON room.id=message.room_id
+           WHERE room.workspace_id=$1
+             AND room.direct_participants @> jsonb_build_array($2::text,$3::text)
+             AND message.card_type='workspace-member-joined'`,
+          [welcomeId, first.identityId, SYSTEM_IDENTITY_ID],
         )
       ).rows,
     ).toEqual([{ text: '@second joined', presentation: 'system' }]);

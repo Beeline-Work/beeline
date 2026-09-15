@@ -147,7 +147,7 @@ describe('default Workspace seed', () => {
     expect(roomMembership.rowCount).toBe(0);
   });
 
-  it('joins a new sign-in to the Workspace and #welcome with the ordinary joined line', async () => {
+  it('joins a new sign-in to the Workspace and #welcome without a shared Room line', async () => {
     const auth = new TokenAuth(db, async () => ({ subject: 'new', login: 'newbie', name: 'New' }));
     const tokens = await auth.exchangeGitHubOidc('proof');
     const memberships = await db.query<{ room_id: string | null; role: string }>(
@@ -163,7 +163,7 @@ describe('default Workspace seed', () => {
       `SELECT text,presentation FROM messages WHERE room_id=$1`,
       [WELCOME_ROOM_ID],
     );
-    expect(lines.rows).toEqual([{ text: '@newbie joined', presentation: 'system' }]);
+    expect(lines.rows).toEqual([]);
   });
 
   it('lets a person leave #welcome like any Room, and the deck lists Beeline Welcome', async () => {

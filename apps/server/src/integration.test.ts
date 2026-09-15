@@ -1523,7 +1523,7 @@ describe('monolith integration', () => {
     expect(response.status).toBe(400);
   });
 
-  it('emits one workspace push and auto-joins public Rooms with their join notes', async () => {
+  it('emits one workspace push and silently auto-joins public Rooms', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -1567,7 +1567,7 @@ describe('monolith integration', () => {
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };
-    expect(roomView.messages).toContainEqual(
+    expect(roomView.messages).not.toContainEqual(
       expect.objectContaining({
         text: '@alice joined · invited by @owner',
         presentation: 'system',
@@ -1579,8 +1579,7 @@ describe('monolith integration', () => {
     expect(chats.chats).toContainEqual(
       expect.objectContaining({
         room: expect.objectContaining({ id: room.id }),
-        latestMessage: expect.objectContaining({ text: '@alice joined · invited by @owner' }),
-        unread: true,
+        unread: false,
       }),
     );
   });
@@ -3389,7 +3388,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('publishes one note per joined Room and one push through agent connect', async () => {
+  it('publishes one @system DM note and one push through agent connect', async () => {
     const secondRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'Workshop' })
     ).json()) as { id: string };
@@ -7589,12 +7588,12 @@ describe('monolith integration', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('wakes a public Room subscriber exactly once for a Workspace-scoped arrival', async () => {
+  it('does not wake public Room subscribers for a Workspace-scoped arrival', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
-    // The greeter subscribed to `joined` in #welcome; the ordinary Room's agent
-    // subscribed to nothing and must not spend a turn on a join it never asked for.
+    // Workspace membership projects into #welcome, but that projection does
+    // not become a Room-scoped join event.
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
        VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
@@ -7616,15 +7615,7 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
-    expect(joined.rows).toEqual([
-      expect.objectContaining({
-        tagged_ids: [],
-        text: '@play-review joined',
-        system_event: expect.objectContaining({ kind: 'joined' }),
-        event_woken: 1,
-        woke: [WELCOME_AGENT],
-      }),
-    ]);
+    expect(joined.rows).toEqual([]);
 
     const workspaceDms = await database.query<{
       text: string;

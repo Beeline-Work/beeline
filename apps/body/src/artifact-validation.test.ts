@@ -80,10 +80,10 @@ describe('post_artifact validation matrix', () => {
     expect(() => validateArtifact('text/markdown', Buffer.from('<script>x</script>'), 'Notes')).not.toThrow();
   });
 
-  it('caps every format at 2 MB', () => {
+  it('caps every format at the artifact ceiling', () => {
     for (const mime of ['text/html', 'image/svg+xml', 'application/pdf', 'text/markdown']) {
       const bytes = mime === 'application/pdf' ? Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES)]) : mb(ARTIFACT_MAXIMUM_BYTES + 1);
-      expect(() => validateArtifact(mime, bytes, 't')).toThrow(/2 MB/);
+      expect(() => validateArtifact(mime, bytes, 't')).toThrow(/-byte limit/);
     }
     expect(() =>
       validateArtifact('application/pdf', Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES - 5)]), 'Spec'),
@@ -91,7 +91,7 @@ describe('post_artifact validation matrix', () => {
   });
 
   it('refuses unknown mimes, empty artifacts, and empty titles', () => {
-    expect(() => validateArtifact('text/plain', Buffer.from('x'), 't')).toThrow(/mime must be one of/);
+    expect(() => validateArtifact('audio/mpeg', Buffer.from('x'), 't')).toThrow(/mime must be one of/);
     expect(() => validateArtifact('text/html', Buffer.alloc(0), 't')).toThrow(/empty/);
     expect(() => validateArtifact('text/html', Buffer.from('<p>hi</p>'), '  ')).toThrow(/title/);
   });

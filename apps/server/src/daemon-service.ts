@@ -1837,7 +1837,7 @@ export class DaemonService {
     const hopCount = command?.agent_depth ?? 0;
     let messageWriteStartedAt: number | undefined;
     const saveCompatibilityReply = async (database: SqlDatabase) => {
-      // Attachments queued this turn by beeline-agent attach_file ride on this
+      // Attachments queued this turn by beeline-agent post_artifact ride on this
       // final reply; they are drained exactly once, here.
       const pending = (
         await database.query<{
@@ -2136,7 +2136,7 @@ export class DaemonService {
       createdAt: seconds(saved.created_at),
     };
   }
-  /** An agent-claimed attachment queued by attach_file; stamped onto the agent's
+  /** An agent-claimed attachment queued by post_artifact; stamped onto the agent's
    *  next final Room reply. Only media this agent uploaded through the daemon
    *  media endpoint may be queued. */
   private async postAgentAttachment(input: Input<'postAgentAttachment'>, agentId: string) {

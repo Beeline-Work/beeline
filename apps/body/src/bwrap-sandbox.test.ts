@@ -89,7 +89,7 @@ describe('sandbox mount plan', () => {
   it('gives a Room its attach-scratch root a writable bind too, not just harness state', () => {
     // The attach scratch root (BEELINE_ATTACH_SCRATCH_ROOT, normally the
     // per-Room agent-home dir) is where `write_scratch_file` writes so
-    // `attach_file` has something to send — it is not itself harness state,
+    // `post_artifact` has something to send — it is not itself harness state,
     // so it must be threaded through `additionalWritablePaths`.
     const plan = sandboxMountPlan({
       mode: 'readonly',

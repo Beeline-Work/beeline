@@ -23,7 +23,7 @@ export function beelineAgentMcpServer(
     reviewer?: boolean;
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its
-     *  TMPDIR): a second legal attach_file root covering anywhere the
+     *  TMPDIR): a second legal post_artifact root covering anywhere the
      *  harness itself could have put a file it generated. */
     attachScratchRoot?: string;
     directMessage?: boolean;

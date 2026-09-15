@@ -882,8 +882,36 @@ async function route(
   }
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
     const last = url.pathname.slice('/v1/media/'.length);
-    // `open in browser`: mint the ten-minute signed storage link at tap time;
-    // a browser has no bearer token for the canonical media route.
+    // `open in browser`: redeem the capability token minted by `/link` (a
+    // browser has no bearer token for the canonical media route) into a
+    // ten-minute signed storage GET. The token — an HMAC over the object id
+    // and expiry — keeps the raw storage hosts out of every shareable link.
+    const openMatch = last.match(/^([0-9a-f-]+)\/open$/);
+    if (method === 'GET' && openMatch && isMediaId(openMatch[1]!)) {
+      if (!options.objectService) {
+        json(response, 503, { error: 'object_storage_unavailable' });
+        return;
+      }
+      const expires = Number(new URL(request.url ?? '', 'http://x').searchParams.get('expires'));
+      const token = new URL(request.url ?? '', 'http://x').searchParams.get('token') ?? '';
+      const result = await options.objectService.openMediaLink(openMatch[1]!, expires, token);
+      if (result.kind === 'redirect') {
+        response.writeHead(302, { location: result.location });
+        response.end();
+        return;
+      }
+      if (result.kind === 'expired') {
+        json(response, 410, { error: 'media_expired' });
+        return;
+      }
+      if (result.kind === 'missing' || result.kind === 'pending') {
+        json(response, 404, { error: 'media_not_found' });
+        return;
+      }
+      json(response, 403, { error: 'link_invalid_or_expired' });
+      return;
+    }
+    // `open in browser` minting: hand out the capability URL at tap time.
     const linkMatch = last.match(/^([0-9a-f-]+)\/link$/);
     if (method === 'GET' && linkMatch && isMediaId(linkMatch[1]!)) {
       if (!identityId) {
@@ -1158,26 +1186,19 @@ async function route(
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/daemon/media') {
+    // Retired: the agent file-sharing path is `post_artifact` (object storage,
+    // an `objects` row, a card). The bytea `media` store takes no NEW agent
+    // writes; a 410 tells an un-upgraded daemon why instead of a bare 404.
     const agentId = await daemonIdentity(request, options);
     if (!agentId) {
       await refuseDaemon(request, response, options);
       return;
     }
     void options.connectionPresence?.evidence(undefined, agentId);
-    const raw = await bytes(request, options.mediaMaximumBytes + 1);
-    const mime =
-      typeof request.headers['content-type'] === 'string'
-        ? request.headers['content-type']
-        : 'application/octet-stream';
-    const name =
-      typeof request.headers['x-file-name'] === 'string'
-        ? request.headers['x-file-name']
-        : 'upload';
-    json(
-      response,
-      201,
-      await options.phone.uploadMedia(agentId, raw, mime, name, options.mediaMaximumBytes),
-    );
+    json(response, 410, {
+      error: 'media_store_retired',
+      detail: 'agents share files with post_artifact; the bytea media store no longer accepts agent uploads',
+    });
     return;
   }
   match = url.pathname.match(/^\/v1\/daemon\/operations\/([A-Za-z][A-Za-z0-9]+)$/);

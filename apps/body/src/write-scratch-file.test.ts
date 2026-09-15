@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import {
-  attachFile,
-  attachFileDepsFromEnv,
+  postArtifact,
+  postArtifactDepsFromEnv,
   resolveWriteScratchPath,
   writeScratchFile,
   writeScratchFileDepsFromEnv,
@@ -91,31 +91,31 @@ describe('beeline-agent write_scratch_file', () => {
     await expect(writeScratchFile({ path: 'a.txt' }, deps)).rejects.toThrow(/content/);
   });
 
-  it('a written file attaches through the same session area root', async () => {
+  it('a written file posts through the same session area root', async () => {
     const deps: WriteScratchFileDeps = { root };
     const message = await writeScratchFile({ path: 'report/out.md', content: '# hi' }, deps);
     const path = message.match(/Wrote \d+ bytes to (\S+);/)?.[1];
     expect(path).toBe(join(root, 'report', 'out.md'));
 
-    const uploads: Array<{ bytes: Buffer; mimeType: string; name: string }> = [];
+    const uploads: Array<{ bytes: Buffer; mime: string; title: string }> = [];
     const queued: unknown[] = [];
-    const attached = await attachFile(
+    const posted = await postArtifact(
       { path: 'report/out.md' },
       {
-        roots: [root],
-        baseUrl: 'https://server.example',
-        token: 'token',
         roomId: 'room-1',
-        upload: async (bytes, mimeType, name) => {
-          uploads.push({ bytes, mimeType, name });
-          return { url: 'https://server.example/v1/media/abc', name, mimeType, size: bytes.length };
+        roots: [root],
+        upload: async (bytes, mime, title) => {
+          uploads.push({ bytes, mime, title });
+          return { url: 'https://server.example/v1/media/abc', mimeType: mime, size: bytes.length };
         },
         queue: async (attachment) => {
           queued.push(attachment);
         },
       },
     );
-    expect(attached).toMatch(/Attached out\.md/);
+    expect(posted).toMatch(/Posted artifact "out\.md"/);
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toMatchObject({ mime: 'text/markdown', title: 'out.md' });
     expect(queued).toHaveLength(1);
   });
 
@@ -125,7 +125,7 @@ describe('beeline-agent write_scratch_file', () => {
       process.env = { ...savedEnv };
     });
 
-    it('the scratch root wired for attach_file is the same root write_scratch_file uses', () => {
+    it('the scratch root wired for post_artifact is the same root write_scratch_file uses', () => {
       const attachRoot = mkdtempSync(join(tmpdir(), 'write-scratch-checkout-'));
       const scratchRoot = mkdtempSync(join(tmpdir(), 'write-scratch-home-'));
       const api = new DaemonApiClient('https://server.example', 'daemon-secret', 'agent-id');
@@ -149,8 +149,8 @@ describe('beeline-agent write_scratch_file', () => {
       for (const { name, value } of server.env) process.env[name] = value;
       const writeDeps = writeScratchFileDepsFromEnv();
       expect(writeDeps.root).toBe(scratchRoot);
-      const attachDeps = attachFileDepsFromEnv();
-      expect(attachDeps.roots).toEqual([attachRoot, scratchRoot]);
+      const postDeps = postArtifactDepsFromEnv();
+      expect(postDeps.roots).toEqual([attachRoot, scratchRoot]);
 
       // A corner worktree passed as attachRoot must never become a write
       // target: writes stay pinned to the session scratch root only.

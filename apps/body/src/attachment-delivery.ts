@@ -22,7 +22,7 @@ import { basename, extname, join } from 'node:path';
 import type { DaemonAttachment } from '@beeline/api-contract/daemon';
 import type { AcpPromptBlock } from './acp.js';
 
-/** Same ceiling as the server media store and attach_file (`read-only-mcp.ts`). */
+/** Same ceiling as the artifact path (`read-only-mcp.ts`). */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /**
  * Attachment bytes live 24 hours on the server (`apps/server/src/media-ttl.ts`).

@@ -949,7 +949,7 @@ CREATE TABLE IF NOT EXISTS device_update_receipts (
   PRIMARY KEY (identity_id, device_id)
 );
 
--- Attachments queued by an agent's beeline-agent attach_file tool, drained onto
+-- Attachments queued by an agent's beeline-agent post_artifact tool, drained onto
 -- the agent's next final Room reply (see DaemonService.postRoomMessage).
 CREATE TABLE IF NOT EXISTS agent_pending_attachments (
   id bigserial PRIMARY KEY,

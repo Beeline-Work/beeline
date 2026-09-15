@@ -1,13 +1,15 @@
 import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
 
 /**
- * The plan's per-format validation matrix for `post_artifact`. The mime
- * selects the validator; every format is capped at 2 MB.
+ * The per-format validation matrix for `post_artifact`. The mime selects the
+ * validator; every format is capped at `ARTIFACT_MAXIMUM_BYTES` (25 MB).
  *
  * HTML and SVG must be SELF-CONTAINED: inline `<style>` and `data:` URLs
  * only. Every script carrier, external reference and interactive-submitting
  * element is refused by name, because the viewer runs with script off and a
- * mock that reaches for the network is not a mock.
+ * mock that reaches for the network is not a mock. PDF is signature-checked.
+ * The remaining formats (raster images, text, JSON, CSV, zip, and the
+ * octet-stream fallback) are size-only: the viewer renders a document card.
  */
 
 
@@ -39,9 +41,7 @@ export function validateArtifact(mime: string, bytes: Buffer, title: string): vo
   }
   if (bytes.length === 0) throw new Error('artifact is empty');
   if (bytes.length > ARTIFACT_MAXIMUM_BYTES) {
-    throw new Error(
-      `artifact exceeds the ${ARTIFACT_MAXIMUM_BYTES}-byte (2 MB) limit; send larger files through the media path`,
-    );
+    throw new Error(`artifact exceeds the ${ARTIFACT_MAXIMUM_BYTES}-byte limit`);
   }
   if (mime === 'text/html' || mime === 'image/svg+xml') {
     assertSelfContainedDocument(bytes, mime);

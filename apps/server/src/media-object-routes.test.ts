@@ -54,7 +54,11 @@ describe('media object routes', () => {
   function objectService(overrides: Partial<Record<keyof ObjectService, unknown>> = {}) {
     return {
       readMediaObject: vi.fn(async () => ({ kind: 'redirect', location: 'https://s3/get' })),
-      mediaLink: vi.fn(async () => ({ url: 'https://s3/get', expiresIn: 600 })),
+      mediaLink: vi.fn(async () => ({
+        url: `https://server.usebeeline.app/v1/media/${UUID}/open?expires=1&token=${'a'.repeat(64)}`,
+        expiresIn: 600,
+      })),
+      openMediaLink: vi.fn(async () => ({ kind: 'redirect', location: 'https://s3/get' })),
       uploadArtifact: vi.fn(async () => ({ objectId: UUID, url: `https://x/v1/media/${UUID}` })),
       createUpload: vi.fn(async () => ({ objectId: UUID, deduped: false, url: `https://x/v1/media/${UUID}`, upload: { url: 'https://s3/post', fields: {} }, expiresAt: 1 })),
       finalizeUpload: vi.fn(async () => ({ state: 'ready' })),
@@ -94,7 +98,7 @@ describe('media object routes', () => {
     await expect(legacy.json()).resolves.toMatchObject({ error: 'media_not_found' });
   });
 
-  it('the link endpoint is authenticated and object-backed', async () => {
+  it('the link endpoint is authenticated, object-backed, and ours to host', async () => {
     const objects = objectService();
     const origin = await start({ objectService: objects });
     expect((await fetch(`${origin}/v1/media/${UUID}/link`)).status).toBe(401);
@@ -102,7 +106,10 @@ describe('media object routes', () => {
       headers: { authorization: PHONE_TOKEN },
     });
     expect(authorized.status).toBe(200);
-    await expect(authorized.json()).resolves.toEqual({ url: 'https://s3/get', expiresIn: 600 });
+    await expect(authorized.json()).resolves.toMatchObject({
+      url: expect.stringContaining('server.usebeeline.app/v1/media/'),
+      expiresIn: 600,
+    });
     expect(objects.mediaLink).toHaveBeenCalledWith(UUID);
 
     const unknown = objectService({ mediaLink: vi.fn(async () => undefined) } as never);
@@ -111,6 +118,35 @@ describe('media object routes', () => {
       (await fetch(`${origin2}/v1/media/${UUID}/link`, { headers: { authorization: PHONE_TOKEN } }))
         .status,
     ).toBe(404);
+  });
+
+  it('the open endpoint redeems a capability token without identity', async () => {
+    const objects = objectService();
+    const origin = await start({ objectService: objects });
+    const open = await fetch(
+      `${origin}/v1/media/${UUID}/open?expires=123&token=${'a'.repeat(64)}`,
+      { redirect: 'manual' },
+    );
+    expect(open.status).toBe(302);
+    expect(open.headers.get('location')).toBe('https://s3/get');
+    expect(objects.openMediaLink).toHaveBeenCalledWith(UUID, 123, 'a'.repeat(64));
+  });
+
+  it('the open endpoint maps verdicts onto status codes', async () => {
+    const verdict = async (kind: string, body: Record<string, unknown>) => {
+      const objects = objectService({
+        openMediaLink: vi.fn(async () => body),
+      } as never);
+      const origin = await start({ objectService: objects as ObjectService });
+      return fetch(`${origin}/v1/media/${UUID}/open?expires=1&token=${'a'.repeat(64)}`, {
+        redirect: 'manual',
+      });
+    };
+    expect((await verdict('redirect', { kind: 'redirect', location: 'https://s3/get' })).status).toBe(302);
+    expect((await verdict('expired', { kind: 'expired' })).status).toBe(410);
+    expect((await verdict('missing', { kind: 'missing' })).status).toBe(404);
+    expect((await verdict('pending', { kind: 'pending' })).status).toBe(404);
+    expect((await verdict('invalid', { kind: 'invalid' })).status).toBe(403);
   });
 
   it('uploads small artifacts through the server with a title header', async () => {
@@ -148,7 +184,7 @@ describe('media object routes', () => {
     const origin = await start({ objectService: objects });
     const response = await fetch(`${origin}/v1/daemon/artifacts`, {
       method: 'POST',
-      body: Buffer.alloc(2 * 1024 * 1024 + 1, 1),
+      body: Buffer.alloc(25 * 1024 * 1024 + 1, 1),
       headers: { authorization: AGENT_TOKEN, 'content-type': 'text/html' },
     });
     expect(response.status).toBe(413);

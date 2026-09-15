@@ -10,18 +10,30 @@
  * path differs (a 302 to a short-lived signed GET).
  */
 
-/** The artifact formats phase one accepts; the mime selects validator, preview and renderer. */
+/** The artifact formats `post_artifact` accepts; the mime selects the
+ *  validator and the viewer. HTML and SVG are self-contained-document
+ *  validated; PDF is signature-checked; the rest are size-only. */
 export const ARTIFACT_MIME_TYPES = [
   'text/html',
   'image/svg+xml',
   'application/pdf',
   'text/markdown',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'text/plain',
+  'application/json',
+  'text/csv',
+  'application/zip',
+  'application/octet-stream',
 ] as const;
 
 export type ArtifactMimeType = (typeof ARTIFACT_MIME_TYPES)[number];
 
-/** Artifacts upload through the server; larger files use the presigned media path. */
-export const ARTIFACT_MAXIMUM_BYTES = 2 * 1024 * 1024;
+/** Artifacts upload through the server; this is also the `write_scratch_file`
+ *  ceiling, so anything the helper can write it can post. */
+export const ARTIFACT_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 /** How a presigned-POST upload object is created. `kind` is part of the storage key. */
 export type UploadObjectKind = 'media' | 'artifact';

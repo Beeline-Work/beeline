@@ -86,12 +86,12 @@ describe('ObjectService', () => {
 
   it('refuses bad mime, empty bytes, over-cap bytes, and a blank title', async () => {
     await expect(
-      service.uploadArtifact(AGENT, Buffer.from('x'), 'application/octet-stream', 't'),
+      service.uploadArtifact(AGENT, Buffer.from('x'), 'audio/mpeg', 't'),
     ).rejects.toThrow(/artifact mime/);
     await expect(
       service.uploadArtifact(AGENT, Buffer.alloc(0), 'text/html', 't'),
     ).rejects.toThrow(/size/);
-    const big = Buffer.alloc(2 * 1024 * 1024 + 1, 7);
+    const big = Buffer.alloc(25 * 1024 * 1024 + 1, 7);
     await expect(service.uploadArtifact(AGENT, big, 'text/html', 't')).rejects.toThrow(/size/);
     await expect(service.uploadArtifact(AGENT, Buffer.from('x'), 'text/html', '  ')).rejects.toThrow(
       /title/,
@@ -255,20 +255,70 @@ describe('ObjectService', () => {
       .toBeUndefined();
   });
 
-  it('mediaLink mints a ten-minute inline link only for ready artifacts', async () => {
-    const result = await service.uploadArtifact(AGENT, Buffer.from(HTML), 'text/html', 'Mock Page');
-    const link = await service.mediaLink(result.objectId);
-    expect(link).toMatchObject({ url: 'https://s3/signed-get', expiresIn: 600 });
-    expect(fake.get).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        responseContentDisposition: 'inline; filename="Mock Page"',
-        responseContentType: 'text/html',
-      }),
+  it('mediaLink mints a capability URL on our origin; openMediaLink redeems it', async () => {
+    process.env.MEDIA_LINK_SECRET = 'test-link-secret';
+    try {
+      const result = await service.uploadArtifact(AGENT, Buffer.from(HTML), 'text/html', 'Mock Page');
+      const link = await service.mediaLink(result.objectId);
+      expect(link?.expiresIn).toBe(600);
+      expect(link!.url).toMatch(
+        /^https:\/\/server\.usebeeline\.app\/v1\/media\/[0-9a-f-]+\/open\?expires=\d+&token=[0-9a-f]{64}$/,
+      );
+      expect(link!.url).not.toContain('s3');
+      const url = new URL(link!.url);
+      const mediaId = url.pathname.split('/')[3]!;
+      const expires = Number(url.searchParams.get('expires'));
+      const token = url.searchParams.get('token')!;
+      await expect(
+        service.openMediaLink(mediaId, expires, token),
+      ).resolves.toEqual({ kind: 'redirect', location: 'https://s3/signed-get' });
+      expect(fake.get).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          responseContentDisposition: 'inline; filename="Mock Page"',
+          responseContentType: 'text/html',
+        }),
+      );
+      await expect(
+        service.mediaLink('99999999-9999-4999-8999-999999999999'),
+      ).resolves.toBeUndefined();
+    } finally {
+      delete process.env.MEDIA_LINK_SECRET;
+    }
+  });
+
+  it('openMediaLink rejects tampered, stale, cross-object, and keyless links', async () => {
+    process.env.MEDIA_LINK_SECRET = 'test-link-secret';
+    try {
+      const result = await service.uploadArtifact(AGENT, Buffer.from(HTML), 'text/html', 'Mock');
+      const link = (await service.mediaLink(result.objectId))!;
+      const url = new URL(link.url);
+      const mediaId = url.pathname.split('/')[3]!;
+      const expires = Number(url.searchParams.get('expires'));
+      const token = url.searchParams.get('token')!;
+      await expect(
+        service.openMediaLink(mediaId, expires, 'a'.repeat(64)),
+      ).resolves.toEqual({ kind: 'invalid' });
+      await expect(
+        service.openMediaLink(mediaId, expires - 1, token),
+      ).resolves.toEqual({ kind: 'invalid' });
+      const other = '77777777-7777-4777-8777-777777777777';
+      await expect(
+        service.openMediaLink(other, expires, token),
+      ).resolves.toEqual({ kind: 'invalid' });
+      // A swept object is an expired fact even under a valid token.
+      await database.query(`INSERT INTO object_expirations(id) VALUES($1)`, [mediaId]);
+      await expect(
+        service.openMediaLink(mediaId, expires, token),
+      ).resolves.toEqual({ kind: 'expired' });
+    } finally {
+      delete process.env.MEDIA_LINK_SECRET;
+    }
+    // No signing key: minting refuses, redemption reads as invalid.
+    const bare = await service.uploadArtifact(AGENT, Buffer.from(HTML), 'text/html', 'Bare');
+    await expect(service.mediaLink(bare.objectId)).rejects.toThrow(
+      'media link signing key is not configured',
     );
-    await expect(
-      service.mediaLink('99999999-9999-4999-8999-999999999999'),
-    ).resolves.toBeUndefined();
   });
 
   it('every write refuses with a clear error when storage is not configured', async () => {
@@ -287,9 +337,23 @@ describe('ObjectService', () => {
   });
 
   it('classifies artifact mime types exactly', () => {
-    for (const mime of ['text/html', 'image/svg+xml', 'application/pdf', 'text/markdown'])
+    for (const mime of [
+      'text/html',
+      'image/svg+xml',
+      'application/pdf',
+      'text/markdown',
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'text/plain',
+      'application/json',
+      'text/csv',
+      'application/zip',
+      'application/octet-stream',
+    ])
       expect(isArtifactMimeType(mime)).toBe(true);
-    expect(isArtifactMimeType('text/plain')).toBe(false);
-    expect(isArtifactMimeType('application/json')).toBe(false);
+    expect(isArtifactMimeType('audio/mpeg')).toBe(false);
+    expect(isArtifactMimeType('application/x-thing')).toBe(false);
   });
 });

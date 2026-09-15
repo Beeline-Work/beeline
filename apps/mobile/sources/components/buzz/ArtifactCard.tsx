@@ -67,6 +67,10 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     Modal.show({
       component: ArtifactViewerScreen,
       props: { attachment, authorHandle },
+      // The viewer is a full-screen surface: the default centered placement
+      // constrains width to 460 and no height, collapsing its flex:1 root to
+      // nothing — a dimmed room with an invisible viewer.
+      placement: 'fill',
     });
   }, [attachment, authorHandle, isDesktop]);
 

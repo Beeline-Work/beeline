@@ -8,6 +8,7 @@ type WebViewComponent = React.ComponentType<Record<string, unknown>>;
 // `require`) so node-side unit tests can mock the module — a literal
 // `require()` call bypasses vi.mock and resolves the real native package.
 let webviewModule: WebViewComponent | null | undefined;
+let webviewFailed = false;
 let webviewLoad: Promise<WebViewComponent | null> | null = null;
 
 function loadSandboxWebView(): Promise<WebViewComponent | null> {
@@ -23,9 +24,29 @@ function loadSandboxWebView(): Promise<WebViewComponent | null> {
     })
     .catch(() => {
       webviewModule = null;
+      webviewFailed = true;
       return null;
     });
   return webviewLoad;
+}
+
+export type SandboxWebViewStatus = 'loading' | 'ready' | 'unavailable';
+
+/** Whether the sandboxed WebView loaded, is still loading, or is unavailable. */
+export function useSandboxWebViewStatus(): SandboxWebViewStatus {
+  const [status, setStatus] = useState<SandboxWebViewStatus>(() =>
+    webviewModule ? 'ready' : webviewFailed ? 'unavailable' : 'loading',
+  );
+  useEffect(() => {
+    let live = true;
+    void loadSandboxWebView().then((mod) => {
+      if (live) setStatus(() => (mod ? 'ready' : 'unavailable'));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return status;
 }
 
 /** The sandboxed WebView component once it has loaded, or null before/never. */

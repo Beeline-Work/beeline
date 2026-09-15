@@ -26,9 +26,17 @@ export const ARTIFACT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-
 
 export const ARTIFACT_MAX_PREVIEW_HEIGHT = 220;
 
+/**
+ * The browser-default canvas: an unstyled page reads black-on-white, never
+ * black on the app's ink plate (the sandbox WebView is transparent). The
+ * sheet is injected ahead of the document's own styles, so any authored
+ * background or color overrides it.
+ */
+export const ARTIFACT_DEFAULT_CANVAS = '<style>html{background:#ffffff}body{color:#111111}</style>';
+
 /** SVG bytes are wrapped in a minimal HTML document so the same sandbox renders them. */
 export function wrapArtifactMarkup(documentText: string, format: 'html' | 'svg'): string {
-  if (format === 'html') return injectCspMeta(documentText);
+  if (format === 'html') return injectDefaultCanvas(injectCspMeta(documentText));
   return [
     '<!doctype html><html><head>',
     `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`,
@@ -58,6 +66,16 @@ export function injectCspMeta(html: string): string {
     return html.replace(/<html([^>]*)>/i, (head) => `${head}<head>${meta}</head>`);
   }
   return `${meta}${html}`;
+}
+
+/**
+ * Place the default-canvas sheet right after the CSP meta (which the CSP step
+ * guarantees exists as the first head element), so it precedes every authored
+ * style: first policy wins for the meta, last rule wins for the canvas.
+ */
+export function injectDefaultCanvas(html: string): string {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  return html.replace(meta, `${meta}${ARTIFACT_DEFAULT_CANVAS}`);
 }
 
 /**

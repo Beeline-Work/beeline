@@ -182,4 +182,17 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     await flush();
     expect(renderer.root.findByProps({ testID: 'artifact-viewer-failed' })).toBeDefined();
   });
+
+  it('a format with no inline preview is explained, never a blank screen', async () => {
+    const renderer = render(
+      <ArtifactViewerSandbox
+        attachment={attachment({ mimeType: 'application/octet-stream', name: 'blob.bin' })}
+        format="document"
+      />,
+    );
+    await flush();
+    const failed = renderer.root.findByProps({ testID: 'artifact-viewer-failed' });
+    const text = failed.findByType('Text' as any).props.children;
+    expect(text).toContain('no inline preview');
+  });
 });

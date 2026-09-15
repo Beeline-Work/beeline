@@ -3270,7 +3270,7 @@ export class PhoneService {
    * structured stop command. No chat sentence is created or interpreted.
    */
   private async requestCornerClose(roomId: string, viewerId: string) {
-    await this.database.transaction(async (database) => {
+    const parentId = await this.database.transaction(async (database) => {
       const access = await database.query(
         `SELECT room_member.identity_id FROM memberships room_member
          JOIN rooms room ON room.id=room_member.room_id
@@ -3329,8 +3329,9 @@ export class PhoneService {
           [roomId],
         );
       }
-      await closeCornerState(database, roomId);
+      return (await closeCornerState(database, roomId)).parentId;
     });
+    this.live?.publish({ type: 'invalidate', roomId: parentId, reason: 'corner' });
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (

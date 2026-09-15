@@ -29,6 +29,7 @@ function corner(
   type: 'corner-open' | 'corner-complete' | 'checks-failing' | 'worktree-cleaned',
   cornerId = id,
   prNumber?: number,
+  outcome: 'landed' | 'abandoned' = 'landed',
 ): ChatDisplayMessage {
   return {
     id,
@@ -41,7 +42,7 @@ function corner(
       cornerId,
       name: `Corner ${cornerId}`,
       objective: `Complete ${cornerId}`,
-      ...(type === 'corner-complete' ? { outcome: 'landed' as const } : {}),
+      ...(type === 'corner-complete' ? { outcome } : {}),
       ...(prNumber
         ? {
             pullRequest: {
@@ -232,6 +233,19 @@ describe('notification lifecycle folding', () => {
     expect(folded).toHaveLength(1);
     expect(folded[0]).toMatchObject({ id: '1', timestamp: count });
     expect(folded[0]!.notificationLifecycleRun?.items).toHaveLength(count);
+  });
+
+  it('labels an abandoned corner closed when lifecycle cards fold', () => {
+    const run = foldSystemLines([
+      corner('1', 'corner-complete', 'closed-corner', undefined, 'abandoned'),
+      corner('2', 'corner-open', 'open-corner'),
+    ])[0]!.notificationLifecycleRun!;
+
+    expect(run.items.map(({ title, state }) => [title, state])).toEqual([
+      ['Corner open-corner', 'Opened'],
+      ['Corner closed-corner', 'Closed'],
+    ]);
+    expect(run.headline).toBe('PR 1 opened, 1 closed');
   });
 
   it('deduplicates a corner and its PR transitively, keeps a standalone PR, and absorbs cleanup', () => {

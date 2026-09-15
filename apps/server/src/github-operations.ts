@@ -1022,6 +1022,9 @@ export class GitHubOperations {
       }
       const check = checkFact(event, body);
       if (check) {
+        // Capture these outside the transaction for post-transaction reconciliation.
+        let summaryStatus: string | undefined;
+        let headShaForReconcile: string | null = null;
         await database.transaction(async (database) => {
           // Check deliveries for one corner overlap in production. Lock the lifecycle row so
           // each delivery folds its fact and aggregate before the next delivery takes a snapshot.
@@ -1057,6 +1060,9 @@ export class GitHubOperations {
             },
             database,
           );
+          // Capture summary and headSha for post-transaction reconciliation
+          headShaForReconcile = check.headSha ?? null;
+          summaryStatus = summary.status;
           const label = check.status === 'pending' ? 'started' : check.status;
           await this.systemNote(
             target.corner_id,
@@ -1083,7 +1089,121 @@ export class GitHubOperations {
             database,
           );
         });
+        // After the transaction: if the check itself is completed (not pending) but the
+        // local aggregate is stuck at pending, reconcile with GitHub's authoritative state.
+        // A skipped workflow run may have been requested but never completed, leaving a
+        // stale pending fact that blocks reviewer dispatch.
+        if (
+          check.status !== 'pending' &&
+          summaryStatus === 'pending' &&
+          headShaForReconcile &&
+          repository
+        ) {
+          await this.#reconcileHeadCheckFacts(
+            target.corner_id,
+            Number(target.installation_id),
+            Number(target.repository_id),
+            repository,
+            target.author_id,
+            headShaForReconcile,
+          );
+        }
       }
+    }
+  }
+
+  /**
+   * When a check event arrives for a completed check but the local aggregate is still
+   * pending (typically because a skipped/on-demand workflow_run sent a `requested`
+   * webhook but never completed), query GitHub's authoritative combined check state
+   * and update any stuck pending facts. This ensures the reviewer is dispatched when
+   * the head is genuinely green.
+   *
+   * Best-effort: failures are logged but never abort the webhook. Only facts that are
+   * `pending` locally but resolved on GitHub (passed/failed) are updated; a genuinely
+   * pending or failed check on GitHub is left alone.
+   */
+  async #reconcileHeadCheckFacts(
+    cornerId: string,
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    authorId: string,
+    headSha: string,
+  ): Promise<void> {
+    try {
+      const { token } = await this.app.installationToken(installationId, {
+        repositoryIds: [repositoryId],
+      });
+      const authoritative = await this.app.readCommitChecks(token, fullName, headSha);
+
+      await this.database.transaction(async (database) => {
+        // Lock the lifecycle so we don't race with concurrent check events.
+        const current = (
+          await database.query<{ lifecycle: CornerLifecycleView; checks: string | null }>(
+            `SELECT lifecycle,
+                    command_check_state
+             FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            [cornerId],
+          )
+        ).rows[0];
+        if (!current) return;
+        // Only reconcile when the head SHA still matches the current PR.
+        if (current.lifecycle.pr?.headSha && current.lifecycle.pr.headSha !== headSha) return;
+        // Only reconcile when the aggregate is actually stuck pending.
+        if (current.lifecycle.checks !== 'pending') return;
+
+        // For every fact that is pending locally but resolved on GitHub, update it.
+        for (const [key, state] of Object.entries(authoritative)) {
+          if (state !== 'passed' && state !== 'failed') continue;
+          await database.query(
+            `UPDATE corner_check_facts SET status=$2,updated_at=now()
+             WHERE corner_id=$1 AND name=$3 AND status='pending'`,
+            [cornerId, state, key],
+          );
+        }
+
+        // Recompute the summary after fixing stuck facts.
+        const summary = await this.checksSummary(cornerId, database);
+        if (summary.status === current.lifecycle.checks) return;
+
+        await this.updateLifecycle(
+          cornerId,
+          {
+            checks: summary.status,
+            checksSummary: summary,
+          },
+          database,
+        );
+
+        // Fire a system event so routeSystemCommand dispatches the reviewer.
+        const kind =
+          summary.status === 'passing'
+            ? ('check-passed' as const)
+            : summary.status === 'failing'
+              ? ('check-failed' as const)
+              : undefined;
+        if (!kind) return;
+
+        await this.systemNote(
+          cornerId,
+          authorId,
+          {
+            subject: GITHUB_SUBJECT,
+            verb: `reconciled ${kind === 'check-passed' ? 'passed' : 'failed'} checks`,
+            kind,
+            object: { text: 'check reconciliation', headSha },
+          },
+          `github:checks:reconciled:${headSha}:${kind}`,
+          database,
+        );
+      });
+    } catch (error) {
+      // Reconciliation is best-effort: network failures must not abort the webhook.
+      console.error(
+        `[server] failed to reconcile head checks for ${fullName} @ ${headSha.slice(0, 12)}:`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 

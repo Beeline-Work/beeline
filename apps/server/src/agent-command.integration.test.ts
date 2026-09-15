@@ -565,6 +565,48 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
     commands: 0,
   });
 });
+it('does not wake the author, or consume the transition, when a configured reviewer is unreachable', async () => {
+  const headSha = '9'.repeat(40);
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    [
+      C,
+      JSON.stringify({
+        checks: 'passing',
+        lifecycle: 'in-review',
+        pr: { number: 21, url: 'https://github.com/acme/repo/pull/21', headSha },
+      }),
+    ],
+  );
+  // The reviewer stays CONFIGURED on the parent room but is no longer a member
+  // of it, which is the exact state that used to collapse to "no reviewer".
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    A,
+  ]);
+  await db.query(`DELETE FROM agent_commands`);
+
+  await systemLine(db, {
+    roomId: C,
+    authorId: H,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+    object: { text: 'BODY SUITE', headSha },
+  });
+
+  // Nobody is woken: not the reviewer, and above all not the author in its place.
+  expect(await commands(A, C)).toEqual([]);
+  expect(await commands(B, C)).toEqual([]);
+  // And the transition is NOT consumed, so a later check event or
+  // reconcileConfiguredCornerReviewers can still deliver it.
+  const fact = await db.query<{ command_check_state: string | null }>(
+    `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
+    [C],
+  );
+  expect(fact.rows[0]?.command_check_state).toBeNull();
+});
 it('runs green review, fixes, exact-head approval, and implementer clearance as commands', async () => {
   const firstHead = '1'.repeat(40);
   const approvedHead = '2'.repeat(40);

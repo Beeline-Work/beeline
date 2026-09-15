@@ -472,11 +472,13 @@ export async function routeSystemCommand(
     const fact = (
       await db.query<{
         owner_agent_id: string;
+        configured_reviewer_agent_id: string | null;
         reviewer_agent_id: string | null;
         state: string;
         command_check_state: string | null;
       }>(
         `SELECT fact.owner_agent_id,
+                parent.reviewer_agent_id configured_reviewer_agent_id,
                 (
                   SELECT reviewer_membership.identity_id
                   FROM memberships reviewer_membership
@@ -502,6 +504,32 @@ export async function routeSystemCommand(
         fact.state === fact.command_check_state
       )
         return;
+      // A CONFIGURED reviewer that cannot be resolved is not the same thing as
+      // a corner with no reviewer, and the two used to collapse into one NULL.
+      // The membership subquery above only yields an id while the reviewer is
+      // a current member of the PARENT room, so a lapsed or never-projected
+      // membership fell into the no-reviewer fallback: it woke the AUTHOR in
+      // the reviewer's place and stamped command_check_state, consuming the one
+      // transition so no later check ever retried. The author is told to stay
+      // silent on a checks turn unless it merges or pushes a fix, so the corner
+      // went quiet with a green pull request and nobody woken. Bail instead,
+      // WITHOUT consuming the transition, so the next check event and
+      // reconcileConfiguredCornerReviewers can both still deliver it.
+      if (
+        input.kind === 'check-passed' &&
+        fact.configured_reviewer_agent_id &&
+        !fact.reviewer_agent_id
+      ) {
+        console.warn(
+          '[corner-review] configured reviewer unreachable; not waking the author and not consuming the transition',
+          {
+            cornerId: input.roomId,
+            reviewer: fact.configured_reviewer_agent_id,
+            state: fact.state,
+          },
+        );
+        return;
+      }
       if (input.kind === 'check-failed' || !fact.reviewer_agent_id) {
         const fallbackCarrier =
           (

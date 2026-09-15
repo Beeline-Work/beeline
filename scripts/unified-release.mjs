@@ -419,7 +419,7 @@ export function applyComponentCheckpoints(state, checkpoints) {
   return state;
 }
 
-export function finalizeRelease(state, { outcome = 'success', finishedAt = now(), failureClass } = {}) {
+export function finalizeRelease(state, { outcome = 'success', finishedAt = now(), failureClass, unproven } = {}) {
   currentRelease(state);
   if (!['success', 'failure'].includes(outcome)) fail(`invalid release outcome: ${outcome}`);
   if (outcome === 'success') {
@@ -430,7 +430,15 @@ export function finalizeRelease(state, { outcome = 'success', finishedAt = now()
   } else if (!failureClass) fail('failed releases require a failure class');
   const durationSeconds = Math.max(0, Math.round((Date.parse(finishedAt) - Date.parse(state.startedAt)) / 1000));
   state.state = outcome === 'success' ? 'delivered' : 'failed';
-  state.delivery = { state: outcome, finishedAt, durationSeconds, ...(failureClass ? { failureClass } : {}) };
+  state.delivery = {
+    state: outcome,
+    finishedAt,
+    durationSeconds,
+    ...(failureClass ? { failureClass } : {}),
+    // Escape-hatch audit: a release promoted while the release proof was
+    // bypassed (skipped or failed) carries the reason on the record forever.
+    ...(outcome === 'success' && unproven ? { unproven: String(unproven) } : {}),
+  };
   state.updatedAt = finishedAt;
   return state;
 }
@@ -599,7 +607,8 @@ async function main(argv) {
     return;
   }
   if (command === 'finalize') {
-    finalizeRelease(state, { outcome: args.outcome, failureClass: args['failure-class'] });
+    if (args.unproven && args.outcome !== 'success') fail('--unproven only applies to successful releases');
+    finalizeRelease(state, { outcome: args.outcome, failureClass: args['failure-class'], unproven: args.unproven });
     writeJson(args.state, state);
     return;
   }
@@ -607,7 +616,8 @@ async function main(argv) {
     validateReleaseIdentity(args.version, args.sha);
     if (args.version !== state.version || args.sha !== state.sourceSha) fail('mixed-version delivery report refused');
     if (state.state !== 'delivered') fail(`NOT DELIVERED: ${state.version}@${state.sourceSha}`);
-    console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s`);
+    console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s` +
+      (state.delivery.unproven ? ` · UNPROVEN: ${state.delivery.unproven}` : ''));
     return;
   }
   fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|server-deploy-plan|server-canary-sample|server-ledger|server-rollback-image|mark-stage|apply-checkpoints|finalize|notify|report>');

@@ -149,7 +149,7 @@ describe('top-level Room MCP permission policy', () => {
     });
 
     it('allows every other tool on a mounted server, not just the corner opener', () => {
-      for (const tool of ['attach_file', 'pr_checks_status', 'request_grant']) {
+      for (const tool of ['post_artifact', 'pr_checks_status', 'request_grant']) {
         expect(
           roomMcpPermissionDecision({
             toolCall: {

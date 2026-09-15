@@ -263,7 +263,7 @@ export function isMountedMcpToolPermissionRequest(
 const AGENT_SURFACE_TOOL_NAMES = [
   'open_corner',
   'pr_checks_status',
-  'attach_file',
+  'post_artifact',
   'write_scratch_file',
 ] as const;
 

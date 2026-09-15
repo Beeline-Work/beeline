@@ -4021,9 +4021,11 @@ describe('monolith integration', () => {
     ).toBe(200);
   });
 
-  it('delivers an agent attach_file attachment onto the final reply as a valid RoomView', async () => {
-    // 1. Daemon media upload, authenticated as the agent, same storage as phone uploads.
-    const upload = await fetch(`${origin}/v1/daemon/media`, {
+  it('retires the agent bytea-media upload and still drains queued attachments', async () => {
+    // The agent file-sharing path is post_artifact (object storage); the bytea
+    // media store answers a 410 that names the replacement instead of a bare
+    // 404, and an unauthenticated daemon still answers 401 first.
+    const retired = await fetch(`${origin}/v1/daemon/media`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${daemonToken}`,
@@ -4032,32 +4034,37 @@ describe('monolith integration', () => {
       },
       body: Buffer.from('agent-file-bytes'),
     });
-    expect(upload.status).toBe(201);
-    const attachment = (await upload.json()) as {
-      url: string;
-      name: string;
-      mimeType: string;
-      size: number;
-    };
-    expect(attachment).toMatchObject({
-      name: 'notes.txt',
-      mimeType: 'text/plain',
-      size: 16,
-    });
+    expect(retired.status).toBe(410);
+    await expect(retired.json()).resolves.toMatchObject({ error: 'media_store_retired' });
     expect(
       await (
         await fetch(`${origin}/v1/daemon/media`, { method: 'POST', body: 'x' })
       ).status,
     ).toBe(401);
 
-    // 2. Only media owned by the authenticated agent may be queued.
+    // Attachment queueing and the final-reply drain survive the retirement:
+    // post_artifact rows land in the same bounded pending-attachment lane.
+    const mediaId = '22222222-2222-4222-8222-222222222222';
+    await database.query(
+      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
+       VALUES($1,$2,$3,'text/plain','notes.txt',$4)`,
+      [mediaId, AGENT, Buffer.from('agent-file-bytes'), createHash('sha256').update('agent-file-bytes').digest('hex')],
+    );
+    const attachment = {
+      url: `${origin}/v1/media/${mediaId}`,
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      size: 16,
+      sha256: createHash('sha256').update('agent-file-bytes').digest('hex'),
+    };
+    // Only media owned by the authenticated agent may be queued.
     expect(
       (
         await daemonOperation('postAgentAttachment', {
           roomId: ROOM,
           attachment: {
             ...attachment,
-            url: `${origin}/v1/media/22222222-2222-4222-8222-222222222222`,
+            url: `${origin}/v1/media/33333333-3333-4333-8333-333333333333`,
           },
         })
       ).status,
@@ -4071,7 +4078,7 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(503);
 
-    // 3. Queue then drain onto the agent's final reply.
+    // Queue then drain onto the agent's final reply.
     expect(
       (
         await daemonOperation('postAgentAttachment', {
@@ -4127,21 +4134,18 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
-    const upload = await fetch(`${origin}/v1/daemon/media`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${daemonToken}`,
-        'content-type': 'video/mp4',
-        'x-file-name': 'clip.mp4',
-      },
-      body: Buffer.from('video-bytes'),
-    });
-    expect(upload.status).toBe(201);
-    const attachment = (await upload.json()) as {
-      url: string;
-      name: string;
-      mimeType: string;
-      size: number;
+    const mediaId = '66666666-6666-4666-8666-666666666666';
+    await database.query(
+      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
+       VALUES($1,$2,$3,'video/mp4','clip.mp4',$4)`,
+      [mediaId, AGENT, Buffer.from('video-bytes'), createHash('sha256').update('video-bytes').digest('hex')],
+    );
+    const attachment = {
+      url: `${origin}/v1/media/${mediaId}`,
+      name: 'clip.mp4',
+      mimeType: 'video/mp4',
+      size: 11,
+      sha256: createHash('sha256').update('video-bytes').digest('hex'),
     };
     expect(
       (await daemonOperation('postAgentAttachment', { roomId: cornerId, attachment })).status,

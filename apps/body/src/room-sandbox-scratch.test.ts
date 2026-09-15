@@ -5,7 +5,7 @@ import { commandFixtureApi } from './command-fixture.test-support.js';
  * `agent-home` dir, see `room-session.ts`/`read-only-mcp.ts`), but a Room
  * session's bwrap plan bound only harness state writable — the scratch root
  * itself stayed under the whole-root `--ro-bind`, so every write failed
- * EROFS and `attach_file` never had anything to send.
+ * EROFS and `post_artifact` never had anything to send.
  */
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';

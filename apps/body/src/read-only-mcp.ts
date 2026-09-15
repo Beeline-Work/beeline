@@ -382,7 +382,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and attach_file delivery. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
+      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -406,21 +406,29 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'post_artifact',
     description:
-      'Post one artifact into this Room or corner: a self-contained HTML or SVG mock page, a PDF, or Markdown, carried as an attachment under your title. HTML and SVG must be fully self-contained - all CSS in an inline <style>, images only as data: URLs; every script, <link>, <iframe>, <object>, <embed>, <form>, inline event handler and http(s) reference is refused, because the viewer runs with script off. Capped at 2 MB. Pass html for markup text or bytes for base64-encoded content, never both. Use it when a design decision needs eyes: build the page, post it, then ask for feedback here in the Room.',
+      'Post one artifact into this Room or corner: it is uploaded now and delivered as an attachment under your next reply. This is the only way to share a file - there is no separate attach tool. Two ways to supply content: pass path for a file that already exists in your checkout or writable session home (title and mime then default to the file name and its extension), or pass html (markup text) or bytes (base64) directly, never both content forms. HTML and SVG must be fully self-contained - all CSS in an inline <style>, images only as data: URLs; every script, <link>, <iframe>, <object>, <embed>, <form>, inline event handler and http(s) reference is refused, because the viewer runs with script off. A PDF must start with the %PDF- signature. The other formats are size-checked only. Capped at 25 MB. Use it when a design decision needs eyes: build the page, post it, then ask for feedback here in the Room.',
     inputSchema: {
       type: 'object',
-      required: ['title', 'mime'],
+      required: [],
       properties: {
+        path: {
+          type: 'string',
+          description:
+            'Path of an existing file inside your checkout or writable session home, e.g. one written by write_scratch_file.',
+          maxLength: 1024,
+        },
         title: {
           type: 'string',
           minLength: 1,
           maxLength: 200,
-          description: 'The artifact title, e.g. "Room list mock". Titles the card everywhere.',
+          description:
+            'The artifact title, e.g. "Room list mock". Titles the card everywhere. Optional when posting by path (defaults to the file name); required for html/bytes content.',
         },
         mime: {
           type: 'string',
           enum: [...ARTIFACT_MIME_TYPES],
-          description: 'The artifact mime type; it selects the validator and the viewer.',
+          description:
+            'The artifact mime type; it selects the validator and the viewer. Optional when posting by path (defaults to the file extension).',
         },
         html: {
           type: 'string',
@@ -428,7 +436,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         bytes: {
           type: 'string',
-          description: 'The artifact content base64-encoded. Required for application/pdf.',
+          description: 'The artifact content base64-encoded. Use for binary formats.',
         },
       },
       additionalProperties: false,
@@ -475,7 +483,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'write_scratch_file',
     description:
-      'Write a file into your writable session area (the same scratch root attach_file reaches beyond your checkout) and return its path so attach_file can send it. This is how you create a file at all in a Room, whose filesystem is otherwise read-only. Content is plain text by default; pass encoding "base64" to write bytes you computed yourself. Capped at the same size attach_file allows. Path must be relative and stay inside your session area - no absolute paths, no .. traversal, no symlink escapes; in a corner this still writes only to your session area, never the worktree. This produces the file, not a picture: turning text, markdown, JSON or SVG into a raster image needs a converter, which needs shell, which a Room does not have.',
+      'Write a file into your writable session area (the same root post_artifact reads paths from, beyond your checkout) and return its path so post_artifact can post it. This is how you create a file at all in a Room, whose filesystem is otherwise read-only. Content is plain text by default; pass encoding "base64" to write bytes you computed yourself. Capped at the same size post_artifact allows. Path must be relative and stay inside your session area - no absolute paths, no .. traversal, no symlink escapes; in a corner this still writes only to your session area, never the worktree. This produces the file, not a picture: turning text, markdown, JSON or SVG into a raster image needs a converter, which needs shell, which a Room does not have.',
     inputSchema: {
       type: 'object',
       required: ['path', 'content'],
@@ -493,23 +501,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           enum: ['utf8', 'base64'],
           description: 'How to interpret content. Defaults to utf8.',
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'attach_file',
-    description:
-      'Attach one file from your own checkout (Room read-only checkout or corner worktree) or anywhere in your writable session home (wherever a harness put a file it generated, not just where you asked it to) to your final reply in this Room or corner. Paths outside those are refused. The file is uploaded now and delivered with your next reply; describe it in your reply text.',
-    inputSchema: {
-      type: 'object',
-      required: ['path'],
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Path of the file inside your checkout, worktree, or writable session home.',
-          maxLength: 1024,
         },
       },
       additionalProperties: false,
@@ -592,7 +583,12 @@ const TOOLS = agentToolsFor(
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
+/** The extension→mime map for posting files by path. Formats the artifact
+ *  validator knows get their own entry; anything else posts as
+ *  application/octet-stream, which is size-checked only. */
 const ATTACH_MIME_BY_EXTENSION: Record<string, string> = {
+  '.html': 'text/html',
+  '.htm': 'text/html',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -1327,7 +1323,7 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
 
 export interface WriteScratchFileDeps {
   /** The agent's own writable session area - the same scratch root
-   *  attach_file treats as a second legal root, never the checkout/worktree. */
+   *  post_artifact treats as a second legal root, never the checkout/worktree. */
   root: string;
 }
 
@@ -1385,37 +1381,7 @@ export async function writeScratchFile(
   }
   const resolved = resolveWriteScratchPath(deps.root, path);
   writeFileSync(resolved, bytes);
-  return `Wrote ${bytes.length} bytes to ${resolved}; attach_file with this path sends it.`;
-}
-
-export interface AttachFileDeps {
-  /** Legal attachment roots: the session checkout, and (when configured) the
-   *  session's whole writable home overlay, wherever the harness put a file
-   *  it generated. */
-  roots: string[];
-  baseUrl: string;
-  token: string;
-  roomId: string;
-  upload: (bytes: Buffer, mimeType: string, name: string) => Promise<JsonObject>;
-  queue: (attachment: JsonObject) => Promise<void>;
-}
-
-export function attachFileDepsFromEnv(): AttachFileDeps {
-  const scratchRoot = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
-  return {
-    roots: [requiredEnv('BEELINE_ATTACH_ROOT'), ...(scratchRoot ? [scratchRoot] : [])],
-    baseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
-    token: requiredEnv('BEELINE_DAEMON_TOKEN'),
-    roomId: process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-    upload: (bytes, mimeType, name) => daemonUploadMedia(bytes, mimeType, name),
-    queue: async (attachment) => {
-      await daemonExecute('postAgentAttachment', {
-        roomId:
-          process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-        attachment,
-      });
-    },
-  };
+  return `Wrote ${bytes.length} bytes to ${resolved}; post_artifact with this path sends it.`;
 }
 
 function withinRoot(root: string, resolved: string): boolean {
@@ -1423,7 +1389,7 @@ function withinRoot(root: string, resolved: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-/** Resolve an attach_file path inside the session checkout or anywhere in
+/** Resolve a post_artifact `path` inside the session checkout or anywhere in
  *  the session's writable home overlay (wherever a harness put a file it
  *  generated), never following a symlink outside either root. Returns the
  *  real path of an existing regular file. A relative `input` is tried
@@ -1459,33 +1425,6 @@ function finishResolvedAttachPath(resolved: string): string {
   return resolved;
 }
 
-export async function attachFile(
-  args: JsonObject,
-  deps: AttachFileDeps = attachFileDepsFromEnv(),
-): Promise<string> {
-  if (args.caption !== undefined && typeof args.caption !== 'string') {
-    throw new Error('caption must be a string');
-  }
-  const path = resolveAttachPath(deps.roots, stringArg(args, 'path') ?? '');
-  const details = statSync(path);
-  if (details.size > MAX_ATTACH_BYTES) {
-    throw new Error(`file exceeds the ${MAX_ATTACH_BYTES}-byte attachment limit`);
-  }
-  const name = path.split(sep).pop() ?? 'attachment';
-  const mimeType =
-    ATTACH_MIME_BY_EXTENSION[name.slice(name.lastIndexOf('.')).toLowerCase()] ??
-    'application/octet-stream';
-  const uploaded = await deps.upload(readFileSync(path), mimeType, name);
-  const attachment = {
-    url: uploaded.url,
-    name: typeof uploaded.name === 'string' && uploaded.name ? uploaded.name : name,
-    mimeType: typeof uploaded.mimeType === 'string' ? uploaded.mimeType : mimeType,
-    size: typeof uploaded.size === 'number' ? uploaded.size : details.size,
-  };
-  await deps.queue(attachment);
-  return `Attached ${name} (${details.size} bytes); it will be delivered with your final reply.`;
-}
-
 /** The daemon-facing artifacts pass-through's response: `postArtifact` only
  *  reads `url`, the rest of `UploadArtifactResult`
  *  (`apps/server/src/object-service.ts`) rides along unused. */
@@ -1498,6 +1437,10 @@ export interface DaemonArtifactUploadResult {
 
 export interface PostArtifactDeps {
   roomId: string;
+  /** Legal source roots for the `path` argument: the session checkout and
+   *  (when configured) the session's whole writable home overlay, wherever
+   *  the harness put a file it generated. */
+  roots: string[];
   upload: (bytes: Buffer, mime: string, title: string) => Promise<DaemonArtifactUploadResult>;
   queue: (attachment: JsonObject) => Promise<void>;
 }
@@ -1507,8 +1450,10 @@ function isArtifactMime(value: unknown): value is ArtifactMimeType {
 }
 
 export function postArtifactDepsFromEnv(): PostArtifactDeps {
+  const scratchRoot = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
   return {
     roomId: agentScheduleRoomId(),
+    roots: [requiredEnv('BEELINE_ATTACH_ROOT'), ...(scratchRoot ? [scratchRoot] : [])],
     upload: (bytes, mime, title) => daemonUploadArtifact(bytes, mime, title),
     queue: async (attachment) => {
       await daemonExecute('postAgentAttachment', { roomId: agentScheduleRoomId(), attachment });
@@ -1517,33 +1462,66 @@ export function postArtifactDepsFromEnv(): PostArtifactDeps {
 }
 
 /** post_artifact: validate, upload through the artifacts pass-through, then
- *  queue the attachment on this turn's final reply. The server refuses the
+ *  queue the attachment on this turn's final reply. Content comes either
+ *  from `path` (a file in the session checkout or writable home, with title
+ *  and mime defaulted) or from `html`/`bytes` inline. The server refuses the
  *  attachment outside an active turn (postAgentAttachment is turn-authority
  *  bound), so there is no separate surface-side turn check here. */
 export async function postArtifact(
   args: JsonObject,
   deps: PostArtifactDeps = postArtifactDepsFromEnv(),
 ): Promise<string> {
-  const title = stringArg(args, 'title')?.trim();
-  if (!title) throw new Error('title must be a non-empty string');
-  if (title.length > 200) throw new Error('title must be at most 200 characters');
-  const mime = stringArg(args, 'mime');
+  const pathArg = stringArg(args, 'path');
+  const html = args.html;
+  const encoded = args.bytes;
+  const contentArgs = (html !== undefined ? 1 : 0) + (encoded !== undefined ? 1 : 0);
+  if (pathArg !== undefined && contentArgs > 0) {
+    throw new Error('pass either path (a file already in your session) or html/bytes content, not both');
+  }
+  if (contentArgs > 1) {
+    throw new Error('pass html (the document as text) or bytes (base64), not both');
+  }
+  if (pathArg === undefined && contentArgs === 0) {
+    throw new Error('pass a file path, or exactly one of html (the document as text) or bytes (base64)');
+  }
+  let bytes: Buffer;
+  let fileName: string;
+  if (pathArg !== undefined) {
+    const resolved = resolveAttachPath(deps.roots, pathArg);
+    const details = statSync(resolved);
+    if (details.size > MAX_ATTACH_BYTES) {
+      throw new Error(`file exceeds the ${MAX_ATTACH_BYTES}-byte artifact limit`);
+    }
+    bytes = readFileSync(resolved);
+    fileName = resolved.split(sep).pop() ?? 'artifact';
+  } else {
+    if (html !== undefined) {
+      if (typeof html !== 'string') throw new Error('html must be a string');
+      bytes = Buffer.from(html, 'utf8');
+    } else {
+      if (typeof encoded !== 'string') throw new Error('bytes must be a base64 string');
+      bytes = Buffer.from(encoded, 'base64');
+    }
+    fileName = 'artifact';
+  }
+  let mime = stringArg(args, 'mime');
+  if (mime === undefined) {
+    const extension = fileName.includes('.')
+      ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
+      : '';
+    mime = ATTACH_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+  }
   if (!isArtifactMime(mime)) {
     throw new Error(`mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);
   }
-  const html = args.html;
-  const encoded = args.bytes;
-  if ((html === undefined) === (encoded === undefined)) {
-    throw new Error('pass exactly one of html (the document as text) or bytes (base64)');
+  let title = stringArg(args, 'title')?.trim();
+  if (!title) {
+    if (pathArg === undefined) {
+      throw new Error('title must be a non-empty string (or post by path to default it to the file name)');
+    }
+    title = fileName;
   }
-  let bytes: Buffer;
-  if (html !== undefined) {
-    if (typeof html !== 'string') throw new Error('html must be a string');
-    bytes = Buffer.from(html, 'utf8');
-  } else {
-    if (typeof encoded !== 'string') throw new Error('bytes must be a base64 string');
-    bytes = Buffer.from(encoded, 'base64');
-  }
+  if (title.length > 200) throw new Error('title must be at most 200 characters');
   validateArtifact(mime, bytes, title);
   const uploaded = await deps.upload(bytes, mime, title);
   if (!uploaded.url) throw new Error('the artifact upload returned no url');
@@ -1956,34 +1934,6 @@ export async function runGrantedCommand(
   return `ran under grant ${grantId}: ${verdict}\n${output}${refused}`;
 }
 
-async function daemonUploadMedia(
-  bytes: Buffer,
-  mimeType: string,
-  name: string,
-): Promise<JsonObject> {
-  const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
-  const response = await fetch(new URL('/v1/daemon/media', `${baseUrl}/`), {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
-      'content-type': mimeType,
-      'x-file-name': name,
-    },
-    body: bytes,
-  });
-  if (!response.ok) {
-    let code = 'request_failed';
-    try {
-      const body = (await response.json()) as { error?: unknown };
-      if (typeof body.error === 'string') code = body.error;
-    } catch {
-      // Never reflect a server body into the model-facing tool error.
-    }
-    throw new Error(`daemon media upload failed (${response.status}: ${code})`);
-  }
-  return (await response.json()) as JsonObject;
-}
-
 /** The small-object pass-through: the server validates and streams the
  *  bytes to storage in one step and answers with the stored artifact url. */
 async function daemonUploadArtifact(
@@ -2034,8 +1984,6 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return approveMerge(args);
     case 'write_scratch_file':
       return writeScratchFile(args);
-    case 'attach_file':
-      return attachFile(args);
     case 'post_artifact':
       return postArtifact(args);
     case 'create_schedule':

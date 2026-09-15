@@ -141,7 +141,7 @@ Two MCP surfaces are mounted into every agent session.
 | ------------------------------------------------------ | --------------- | ------------------------------------------------------------- |
 | `open_corner`                                          | Top-level Rooms | Open one write-enabled corner with a ≤24-word objective       |
 | `pr_checks_status`                                     | Corners         | Read checks, human hold, and PR/head-bound merge approval     |
-| `attach_file`                                          | Everywhere      | Attach one file from the checkout or scratch dir to the reply |
+| `post_artifact`                                        | Everywhere      | Upload one file (path or html/bytes) as an attachment         |
 | `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere      | Run a prompt again later — interval minutes or a 5-field cron |
 | `request_grant`                                        | Everywhere      | Ask the owner for reach outside the sandbox                   |
 | `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |

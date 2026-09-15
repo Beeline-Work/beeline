@@ -14,7 +14,7 @@
  * refuses every write with a clear error; reads and the legacy bytea path are
  * unaffected.
  */
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type {
   CreateUploadInput,
   CreateUploadResult,
@@ -35,6 +35,36 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 /** Upload shape (a) — the mime types an artifact may carry. */
 export function isArtifactMimeType(mime: string): mime is ArtifactMimeType {
   return (ARTIFACT_MIME_TYPES as readonly string[]).includes(mime);
+}
+
+/** Seconds a minted open link stays valid — the same window the storage GET keeps. */
+export const MEDIA_LINK_EXPIRY_SECONDS = 600;
+
+/**
+ * The HMAC key for open-link capability tokens. The storage credential is
+ * already the secret that authorizes open-by-URL reads (every presigned GET is
+ * derived from it), so it keys these tokens too unless an explicit
+ * `MEDIA_LINK_SECRET` is set. Resolved per call so tests can pin it.
+ */
+export function mediaLinkKey(env: NodeJS.ProcessEnv = process.env): Buffer | undefined {
+  const secret = env.MEDIA_LINK_SECRET ?? env.AWS_SECRET_ACCESS_KEY;
+  if (!secret) return undefined;
+  return createHash('sha256').update(`beeline-media-link-v1:${secret}`).digest();
+}
+
+function signMediaLinkToken(key: Buffer, mediaId: string, expires: number): string {
+  return createHmac('sha256', key).update(`beeline-media-link:${mediaId}:${expires}`).digest('hex');
+}
+
+function verifyMediaLinkToken(
+  key: Buffer,
+  mediaId: string,
+  expires: number,
+  token: string,
+): boolean {
+  const expected = Buffer.from(signMediaLinkToken(key, mediaId, expires), 'hex');
+  const presented = Buffer.from(token, 'hex');
+  return expected.length === presented.length && timingSafeEqual(expected, presented);
 }
 
 export interface UploadArtifactResult {
@@ -269,9 +299,12 @@ export class ObjectService {
   }
 
   /**
-   * The `open in browser` link: the same signed GET the 302 hands out, minted
-   * at tap time because a browser has no bearer token for `/v1/media/<id>`.
-   * Only stored objects have a storage link; legacy media answers undefined.
+   * The `open in browser` link: a short-lived capability URL on OUR origin —
+   * `/v1/media/<id>/open?expires=…&token=…` — minted at tap time because a
+   * browser has no bearer token for `/v1/media/<id>`. The token is an HMAC
+   * over the object id and expiry (`mediaLinkKey`), so raw storage hosts
+   * never appear in a shareable link; `openMediaLink` redeems it. Only stored
+   * objects have a link; legacy media answers undefined.
    */
   async mediaLink(mediaId: string): Promise<{ url: string; expiresIn: number } | undefined> {
     const row = (
@@ -281,12 +314,60 @@ export class ObjectService {
       )
     ).rows[0];
     if (!row || row.state !== 'ready') return undefined;
-    const expiresIn = 600;
-    const url = await this.#requireStorage().presignGet(row.key, {
+    const key = mediaLinkKey();
+    if (!key) throw new Error('media link signing key is not configured');
+    const expiresIn = MEDIA_LINK_EXPIRY_SECONDS;
+    const expires = Math.floor(Date.now() / 1000) + expiresIn;
+    const token = signMediaLinkToken(key, mediaId, expires);
+    return {
+      url: `${this.publicOrigin}/v1/media/${mediaId}/open?expires=${expires}&token=${token}`,
       expiresIn,
+    };
+  }
+
+  /**
+   * Redeem an open link: verify the capability token and its expiry, then
+   * re-mint the storage GET with the disposition inside the signature. The
+   * same read facts as `readMediaObject` — tombstone wins, pending never
+   * existed for readers — plus an `invalid` verdict for a bad or stale token.
+   */
+  async openMediaLink(
+    mediaId: string,
+    expires: number,
+    token: string,
+  ): Promise<
+    | { kind: 'redirect'; location: string }
+    | { kind: 'expired' }
+    | { kind: 'pending' }
+    | { kind: 'invalid' }
+    | { kind: 'missing' }
+  > {
+    if (
+      !Number.isSafeInteger(expires) ||
+      !/^[0-9a-f]{64}$/.test(token) ||
+      expires * 1000 < Date.now()
+    ) {
+      return { kind: 'invalid' };
+    }
+    const key = mediaLinkKey();
+    if (!key || !verifyMediaLinkToken(key, mediaId, expires, token)) return { kind: 'invalid' };
+    const expired = await this.database.query(`SELECT 1 FROM object_expirations WHERE id=$1`, [
+      mediaId,
+    ]);
+    if (expired.rows.length) return { kind: 'expired' };
+    const row = (
+      await this.database.query<{ key: string; mime: string; title: string | null; state: string }>(
+        `SELECT key,mime,title,state FROM objects WHERE id=$1`,
+        [mediaId],
+      )
+    ).rows[0];
+    if (!row) return { kind: 'missing' };
+    if (row.state !== 'ready') return { kind: 'pending' };
+    const location = await this.#requireStorage().presignGet(row.key, {
+      expiresIn: MEDIA_LINK_EXPIRY_SECONDS,
       responseContentDisposition: `inline; filename="${(row.title ?? 'download').replaceAll('"', '')}"`,
       responseContentType: row.mime,
     });
-    return { url, expiresIn };
+    return { kind: 'redirect', location };
   }
 }

@@ -22,7 +22,7 @@ import {
 } from './monolith-corner-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SOUL_HOUSE_RULE } from './response-directives.js';
-import { agentToolsFor, attachFile, writeScratchFile } from './read-only-mcp.js';
+import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { sharedNpmCacheDir } from './warm-node-modules.js';
 
@@ -379,18 +379,16 @@ describe('corner close-request polling cadence', () => {
         { root: env.get('BEELINE_ATTACH_SCRATCH_ROOT')! },
       );
       expect(generated).toContain('demo.mp4');
-      await attachFile(
+      await postArtifact(
         { path: 'clips/demo.mp4' },
         {
           roots: [env.get('BEELINE_ATTACH_ROOT')!, env.get('BEELINE_ATTACH_SCRATCH_ROOT')!],
-          baseUrl: 'https://server.example',
-          token: 'daemon-token',
           roomId: 'corner-id',
-          upload: async (bytes, mimeType, name) => ({
+          upload: async (bytes, mime, title) => ({
             url: 'https://server.example/v1/media/clip',
-            name,
-            mimeType,
+            mimeType: mime,
             size: bytes.length,
+            title,
           }),
           queue: async (attachment) => {
             await api.execute('postAgentAttachment', { roomId: 'corner-id', attachment });

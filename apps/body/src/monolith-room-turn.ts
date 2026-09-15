@@ -548,7 +548,7 @@ export class MonolithRoomTurnLoop {
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
-    // (below): attach_file can only send what write_scratch_file could write,
+    // (below): post_artifact can only post what write_scratch_file could write,
     // so the sandbox must leave this writable too.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });

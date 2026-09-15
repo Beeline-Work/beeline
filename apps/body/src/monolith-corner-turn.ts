@@ -694,7 +694,7 @@ export class MonolithCornerTurnLoop {
     const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
-    // (below): attach_file can only send what write_scratch_file could write,
+    // (below): post_artifact can only post what write_scratch_file could write,
     // so the sandbox must leave this writable too. It sits under the
     // protected supervisorRoot above, so it needs its own re-bind.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
@@ -773,7 +773,7 @@ export class MonolithCornerTurnLoop {
       }),
     ];
     // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
-    // on pi would have no `pr_checks_status` and no `attach_file` either.
+    // on pi would have no `pr_checks_status` and no `post_artifact` either.
     await installPiMcpBridge({
       agentCommand: command,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
@@ -818,7 +818,7 @@ export class MonolithCornerTurnLoop {
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',
-              "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then attach_file to send them back to the corner.",
+              "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then post_artifact with the path to send them back to the corner.",
               'Do not initialize a repository, create a branch, push, open a pull request, or wait for GitHub checks.',
             ]),
       ]

@@ -1,9 +1,9 @@
 /**
  * Deletes stale files under the per-session attach scratch roots
  * (`<runtimeDir>/rooms/<roomId>/agent-home`, `BEELINE_ATTACH_SCRATCH_ROOT` —
- * `room-session.ts`, `room-runtime.ts`'s `roomAgentHomeRoot`). `attach_file`
+ * `room-session.ts`, `room-runtime.ts`'s `roomAgentHomeRoot`). `post_artifact`
  * and `write_scratch_file` (`read-only-mcp.ts`) both resolve anywhere inside
- * this same root, and `attach_file` reads + uploads a file synchronously
+ * this same root, and `post_artifact` reads + uploads a file synchronously
  * within one MCP call — nothing is left "pending" past that call returning,
  * so a file younger than the TTL is the only guard a still-running turn
  * needs.

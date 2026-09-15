@@ -480,14 +480,19 @@ jobs:
           test -n "$resolved" || { echo 'Android SDK missing on runner' >&2; exit 1; }
           echo "ANDROID_HOME=$resolved" >> "$GITHUB_ENV"
           echo "$resolved/platform-tools" >> "$GITHUB_PATH"
+      # `native_android` says android is one of this release's platforms, NOT
+      # that a native build ran in THIS run. When the native component is
+      # carried forward from an earlier release, the AAB artifact lives in
+      # that older run and cannot be downloaded here. The binary under proof
+      # therefore follows whether the native job actually ran and succeeded.
       - name: Download the native AAB under proof
-        if: needs.initialize.outputs.native_android == 'true'
+        if: needs.mobile_native_android.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/proof-binary
-      - name: Build the sideload APK under proof (OTA-only releases)
-        if: needs.initialize.outputs.native_android != 'true'
+      - name: Build the sideload APK under proof (no native build in this run)
+        if: needs.mobile_native_android.result != 'success'
         working-directory: apps/mobile
         env:
           ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
@@ -502,6 +507,7 @@ jobs:
           npm ci
           bash scripts/android-build.sh
       - name: Run the emulator release proof
+        id: proof
         env:
           ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
           ANDROID_SIDELOAD_KEY_ALIAS: ${{ secrets.ANDROID_SIDELOAD_KEY_ALIAS }}
@@ -509,13 +515,15 @@ jobs:
           ANDROID_SIDELOAD_KEY_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ "${{ needs.initialize.outputs.native_android }}" = 'true' ]; then
+          if [ "${{ needs.mobile_native_android.result }}" = 'success' ]; then
             node apps/mobile/scripts/release-proof.mjs --aab "$RUNNER_TEMP/proof-binary/beeline.aab"
           else
             node apps/mobile/scripts/release-proof.mjs --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           fi
+      # Only demand evidence when the proof itself ran; a proof that never
+      # started has nothing to preserve and must not fail twice for it.
       - name: Preserve release-proof evidence
-        if: always()
+        if: always() && steps.proof.conclusion != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: release-proof-${{ needs.initialize.outputs.release_id }}

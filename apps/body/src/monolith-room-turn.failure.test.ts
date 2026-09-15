@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AcpClient } from './acp.js';
+import { AcpClient, AcpRequestTimeoutError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop, ROOM_PROMPT_INACTIVITY_TIMEOUT_MS } from './monolith-room-turn.js';
@@ -31,6 +31,8 @@ async function runTurn(options: {
     attempt: number;
     /** The ACP delta hook, so a test can stream a draft before it fails. */
     onChunk: (delta: string, full: string) => void;
+    /** The ACP tool-call hook: every stream update's tool-call snapshot. */
+    onToolCalls?: (calls: readonly ToolCallEntry[]) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
 }): Promise<{
   receipts: Array<Record<string, unknown>>;
@@ -78,6 +80,7 @@ async function runTurn(options: {
   } as BodyConfig;
   let inboxReads = 0;
   const receipts: Array<Record<string, unknown>> = [];
+  let cornerOpens = 0;
   const respond = async (name: string, input: Record<string, unknown>) => {
     if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
     if (name === 'getRoomRepositoryState') return { resolution: 'none' };
@@ -146,15 +149,18 @@ async function runTurn(options: {
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
   let attempts = 0;
   const promptTimeouts: number[] = [];
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation((_sessionId, _prompt, timeoutMs, onChunk) => {
-    attempts += 1;
-    promptTimeouts.push(timeoutMs);
-    return options.prompt({
-      agentHomeRoot,
-      attempt: attempts,
-      onChunk: (delta, full) => onChunk?.(delta, full),
-    });
-  });
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+    (_sessionId, _prompt, timeoutMs, onChunk, _activity, onToolCalls) => {
+      attempts += 1;
+      promptTimeouts.push(timeoutMs);
+      return options.prompt({
+        agentHomeRoot,
+        attempt: attempts,
+        onChunk: (delta, full) => onChunk?.(delta, full),
+        onToolCalls: (calls) => onToolCalls?.(calls),
+      });
+    },
+  );
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
   const loop = new MonolithRoomTurnLoop({
@@ -166,6 +172,9 @@ async function runTurn(options: {
     api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
     scheduler,
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+    onCornerOpened: () => {
+      cornerOpens += 1;
+    },
     signal: abort.signal,
     pollMs: 10,
     createAcpClient: () => acp,
@@ -181,7 +190,7 @@ async function runTurn(options: {
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
-  return { receipts, posted, attempts, promptTimeouts, agentHomeRoot, writes };
+  return { receipts, posted, attempts, promptTimeouts, agentHomeRoot, writes, cornerOpens };
 }
 
 /** The turn's writes to the live lane and the transcript, in order. */
@@ -191,6 +200,66 @@ const laneWrites = (writes: readonly string[]): string[] =>
   );
 
 describe('Room turn failure receipt', () => {
+  it('excuses an inactivity timeout after the turn opened a corner: complete, no failure line', async () => {
+    // The production shape (2026-09-15, #ai-study): Charles's turn opened the
+    // corner, the Room session then went quiet, and the timeout reported
+    // "could not answer" two minutes before the corner reached `done`. The
+    // corner-opened fact is observed live from the stream — a throw out of
+    // runPrompt() never produces the result the success path reads — so the
+    // timeout settles the turn the same quiet, successful way a corner-opening
+    // turn that returns normally without text does.
+    const timeout = new AcpRequestTimeoutError(
+      'session/prompt',
+      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+      '',
+      true,
+    );
+    const { receipts, posted, cornerOpens } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onToolCalls }) => {
+        onToolCalls?.([
+          { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+        ]);
+        throw timeout;
+      },
+    });
+
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
+    );
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
+    expect(posted).toEqual([]);
+    expect(cornerOpens).toBe(1);
+  });
+
+  it('still reports failed when the inactivity timeout hits a turn that opened no corner', async () => {
+    // The timeout is doing real work on turns that genuinely wedge. Without a
+    // corner to excuse it, an inactivity timeout keeps its old ending.
+    const timeout = new AcpRequestTimeoutError(
+      'session/prompt',
+      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+      '',
+      true,
+    );
+    const { receipts, posted, cornerOpens } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: () => Promise.reject(timeout),
+    });
+
+    const failed = receipts.find((receipt) => receipt.status === 'failed')!;
+    expect(failed).toEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
+    );
+    expect(failed.reason).toBe(
+      `ACP session/prompt timed out after ${ROOM_PROMPT_INACTIVITY_TIMEOUT_MS}ms of inactivity`,
+    );
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'complete' }));
+    expect(posted).toEqual([]);
+    expect(cornerOpens).toBe(0);
+  });
+
   it('allows a Room model three minutes of inactivity before timing out', async () => {
     const { promptTimeouts, posted } = await runTurn({
       agentCommand: '/opt/harness/pi-acp',

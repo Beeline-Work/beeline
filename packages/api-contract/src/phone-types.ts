@@ -195,6 +195,10 @@ export type RoomViewMessage = {
   readonly requestId?: string;
   readonly attachments?: readonly AttachmentReference[];
   readonly mentionPubkeys?: readonly string[];
+  /** The model that produced this agent reply, stamped at generation time on
+   *  the server. Absent on rows before the stamp existed and on non-agent
+   *  rows; the byline falls back to no model, never a roster lookup. */
+  readonly agentModel?: string;
   /** Fixed-vocabulary reactions. Reactor identities never leave the server. */
   readonly reactions?: readonly MessageReactionView[];
   /** Same-Room proof returned by the indexer and passed unchanged to reply signing. */

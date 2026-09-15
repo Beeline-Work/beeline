@@ -445,7 +445,7 @@ describe('live streaming turn', () => {
       <ActivityTimeline
         active
         handle="Codex"
-        role="AGENT · openrouter/deepseek-deepseek-v.4.1-flash"
+        role="openrouter/deepseek-deepseek-v.4.1-flash"
         stamp="14:02"
         items={[{ kind: 'tool', id: 'edit', title: 'Edit files', toolKind: 'edit' }]}
         messageDraft="Working on it now."
@@ -472,7 +472,7 @@ describe('live streaming turn', () => {
     byline.findAll((node: any) => node.type === 'Text').forEach(collect);
     const bylineText = textStrings.join('');
     expect(bylineText).toContain('Codex');
-    expect(bylineText).toContain('AGENT · openrouter/deepseek-deepseek-v.4.1-flash');
+    expect(bylineText).toContain('openrouter/deepseek-deepseek-v.4.1-flash');
     expect(bylineText).not.toContain('effort');
     expect(bylineText).toContain('14:02');
     const role = renderer.root.findByProps({ testID: 'chat-byline-role' });

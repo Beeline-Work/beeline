@@ -168,6 +168,136 @@ async function activateWith(
   return setConfigCalls;
 }
 
+/**
+ * Drive one real turn through `activate()` for a grok-style harness whose
+ * launch-time model/effort are baked into `agentArgs` as `--model`/
+ * `--reasoning-effort` flags, with no per-agent override and no persisted
+ * `modelSelection` at all. Returns the exact argv handed to the harness
+ * process, so a regression that clears both flags (rather than merely
+ * failing to override them) is caught directly.
+ */
+async function activateGrokLaunchArgv(): Promise<string[]> {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-room-grok-launch-'));
+  roots.push(root);
+  const identity = identityFromKey(AGENT_HEX, 'Bee');
+  const agent = {
+    name: 'Bee',
+    publicKey: identity.publicKey,
+    secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+  };
+  const runtime = {
+    agent,
+    rooms: [],
+    supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+  } as unknown as AgentRuntimeRecord;
+  const config: BodyConfig = {
+    agentBinary: '/opt/grok/grok',
+    agentKind: 'custom',
+    agentCommand: '/opt/grok/grok',
+    agentArgs: ['agent', '--model', 'grok-4.5', '--reasoning-effort', 'high', 'stdio'],
+    mcpBinary: '/fake-dev-mcp',
+    readonlyMcpCommand: '/fake-beeline-mcp',
+    agentEnv: {},
+    workspaceRoot: join(root, 'room'),
+    autoApprovePermissions: true,
+    accessPolicy: 'everyone',
+    agentHomeRoot: join(root, 'agent-home'),
+    operatorHome: join(root, 'operator-home'),
+  } as BodyConfig;
+
+  let bootstrapped = false;
+  let delivered = false;
+  const receipts: Array<Record<string, unknown>> = [];
+  const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+    if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+    if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+    if (name === 'getWorkspaceRoster') {
+      return {
+        members: [
+          { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+        ],
+      };
+    }
+    if (name === 'postAgentTurnReceipt') receipts.push(input);
+    if (name === 'getRoomInbox') {
+      if (!bootstrapped) {
+        bootstrapped = true;
+        return { items: [], cursor: 'latest' };
+      }
+      if (!delivered) {
+        delivered = true;
+        return {
+          items: [
+            {
+              id: 'ask-1',
+              authorId: HUMAN,
+              createdAt: 1,
+              type: 'message',
+              body: 'hello',
+              attachments: [],
+            },
+          ],
+          cursor: 'ask-1',
+        };
+      }
+      return { items: [], cursor: 'latest' };
+    }
+    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+    return { id: 'write-id', createdAt: 1 };
+  });
+  const api = {
+    execute,
+    connection: () => ({
+      baseUrl: 'https://server.example',
+      daemonToken: 'daemon-token',
+      agentId: agent.publicKey,
+    }),
+  } as unknown as DaemonApiClient;
+
+  const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
+  vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+  vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
+  vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'setConfigOption').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+    stopReason: 'end_turn',
+    updates: [],
+    agentText: 'hi',
+    toolCalls: [],
+  });
+
+  let capturedArgs: string[] | undefined;
+  const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+  const abort = new AbortController();
+  const loop = new MonolithRoomTurnLoop({
+    roomId: 'room-id',
+    workspaceId: 'workspace',
+    cwd: config.workspaceRoot,
+    runtime,
+    config,
+    api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
+    scheduler,
+    health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+    signal: abort.signal,
+    pollMs: 5,
+    createAcpClient: (options) => {
+      capturedArgs = options.agentArgs;
+      return acp;
+    },
+  });
+  const running = loop.run();
+  await vi.waitFor(() => expect(receipts.length).toBeGreaterThan(0), { timeout: 10_000 });
+  abort.abort();
+  await running.catch(() => undefined);
+  await scheduler.dispose();
+  return capturedArgs ?? [];
+}
+
 describe('Room session activation model/effort selection', () => {
   it('falls back to the persisted effort when only the model is overridden', async () => {
     const calls = await activateWith(
@@ -190,5 +320,23 @@ describe('Room session activation model/effort selection', () => {
 
     expect(calls).toContainEqual(['model-axis', 'default-model']);
     expect(calls).toContainEqual(['effort-axis', 'low']);
+  });
+
+  it('keeps a grok harness launch-time model and effort flags when nothing overrides them', async () => {
+    // The per-axis merge must fall back to `undefined` (not `{model: undefined,
+    // effort: undefined}`) when neither the per-agent config nor the persisted
+    // modelSelection selects anything: an always-truthy selection object made
+    // `agentArgsWithModelSelection` strip grok's baked-in --model/--reasoning-effort
+    // launch flags without anything to splice back in, silently clearing both.
+    const argv = await activateGrokLaunchArgv();
+
+    expect(argv).toEqual([
+      'agent',
+      '--model',
+      'grok-4.5',
+      '--reasoning-effort',
+      'high',
+      'stdio',
+    ]);
   });
 });

@@ -62,6 +62,7 @@ import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
+import { isConfiguredReviewer } from './beeline-skill.js';
 import {
   harvestWarmNodeModules,
   sharedNpmCacheDir,
@@ -625,6 +626,7 @@ export class MonolithCornerTurnLoop {
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
+          isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }

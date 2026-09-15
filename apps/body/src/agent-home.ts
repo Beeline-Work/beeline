@@ -256,6 +256,13 @@ export interface RoomAgentHomeInput {
    */
   agentKind?: AgentKind;
   /**
+   * This activation runs as the parent Room's configured reviewer. Only a
+   * reviewer's home carries the `beeline-review` skill: an implementer that
+   * reads the review procedure mistakes its reviewer-never-merge rule for
+   * its own (see `usingBeelineSkillMarkdown`'s merge line).
+   */
+  isReviewer?: boolean;
+  /**
    * The OpenRouter model this activation will run, when there is one. Its
    * live-derived provider set (`openrouter-routing.ts`, cached under
    * `cacheDir` for 24h) is pinned on that one model's pi `models.json` entry.
@@ -313,6 +320,7 @@ export async function prepareRoomAgentHome(
         input.sharedSkills ?? [],
         agentSkillDir(input.agentKind),
         input.openRouterRouting,
+        input.isReviewer ?? false,
       ),
     );
   agentHomeProvisionQueues.set(root, provision);
@@ -343,10 +351,13 @@ async function provisionAgentSkillsAndMcp(
   sharedSkills: string[],
   skillDir: AgentSkillDir,
   openRouterRouting: RoomAgentHomeInput['openRouterRouting'],
+  isReviewer: boolean,
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
-    { name: BEELINE_REVIEW_SKILL_NAME, content: beelineReviewSkillMarkdown(skillReleaseId) },
+    ...(isReviewer
+      ? [{ name: BEELINE_REVIEW_SKILL_NAME, content: beelineReviewSkillMarkdown(skillReleaseId) }]
+      : []),
   ];
   const shared = await resolveSharedSkillSources(operatorHome, sharedSkills);
   await provisionManagedSkillsDir(

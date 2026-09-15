@@ -281,25 +281,16 @@ export function isPiAcpHarness(agentLabel: string | undefined): boolean {
   return Boolean(agentLabel && PI_ACP_HARNESS.test(agentLabel));
 }
 
-function withoutOneTrailingLineEnding(text: string): string {
-  if (/\r?\n\r?\n$/.test(text)) return text;
-  const stripped = text.replace(/\r?\n$/, '');
-  // A delta that is nothing but its own line ending (DeepSeek via pi-acp
-  // streams a lone "\n" ahead of a Markdown bullet) must survive: stripping
-  // it to '' makes the delta invisible to agentMessageRuns, so the next
-  // chunk's leading "- " reads as a continuation of the previous word
-  // instead of a new line.
-  return stripped || text;
-}
-
 /**
- * pi-acp frames each incremental text token with one line ending. Treating
- * that transport delimiter as authored Markdown renders every token as a
- * paragraph and can split a word (`be\n` + `eline\n`). Remove one terminal
- * frame from every Pi delta while preserving explicit blank lines.
+ * pi-acp 0.0.33 forwards the model's text deltas verbatim (`handlePiEvent` →
+ * `text_delta` → `text: ame.delta`, no line-ending framing), so no
+ * normalization is needed. This remains the named seam for the stream-delta
+ * pipeline; the previous `withoutOneTrailingLineEnding` framing workaround
+ * was deleted after that check — it ate authored line endings and glued
+ * numbered-list items together.
  */
-function normalizeStreamDelta(text: string, agentLabel?: string): string {
-  return agentLabel && PI_ACP_HARNESS.test(agentLabel) ? withoutOneTrailingLineEnding(text) : text;
+function normalizeStreamDelta(text: string, _agentLabel?: string): string {
+  return text;
 }
 
 /** Group streaming text into assistant-message runs separated by tool,
@@ -394,7 +385,10 @@ export function isPureRetryNarration(text: string): boolean {
  *  Never scan backwards past the last run: an earlier pre-tool progress
  *  sentence is not the answer just because the turn later degraded into
  *  retry narration. */
-function finalAgentMessageText(updates: readonly SessionUpdate[], agentLabel?: string): string {
+export function finalAgentMessageText(
+  updates: readonly SessionUpdate[],
+  agentLabel?: string,
+): string {
   const last = agentMessageRuns(updates, agentLabel).at(-1);
   if (!last || isPureRetryNarration(last)) return '';
   return last;

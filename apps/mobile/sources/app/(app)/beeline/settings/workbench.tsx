@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
@@ -23,6 +23,8 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * about (Trusty Squire live, Wallet and Tailscale as `soon`), and the
  * viewer's OWN keys. Captain ruling 2026-09-15 (mock 91aa0358328d716e): a
  * tool is what your agents can use; a key is what that tool holds for you.
+ * Like `schedules`, the screen draws no header of its own: the stack header
+ * is the one back control, and the layout names the screen Workbench.
  * Sovereignty is per human: the projection in `connectionsForViewer` paints
  * only rows the viewer provisioned, matching the server's own enforcement
  * in PR 2. Data-model names (`WorkbenchConnector`, `connections`, …) keep
@@ -53,18 +55,6 @@ export default function WorkbenchScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="workbench-back"
-        >
-          <Text style={styles.backButtonText}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Workbench</Text>
-      </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         <View testID="workbench-connectors">
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
@@ -103,7 +93,7 @@ export default function WorkbenchScreen() {
           {connections.length === 0 ? (
             <SettingsRow
               disabled
-              description="Keys appear here once a tool stores them. Keys other members provisioned are not listed and your agents cannot spend them."
+              description="Other members’ keys are not listed and cannot be spent."
               testID="workbench-connections-empty"
               title="None yet"
               tone="quiet"
@@ -141,17 +131,6 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    header: {
-      minHeight: 66,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },

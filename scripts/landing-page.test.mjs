@@ -11,6 +11,15 @@ const WEB = path.join(ROOT, 'relay-stack', 'web');
 const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
 const termsHtml = fs.readFileSync(path.join(WEB, 'terms', 'index.html'), 'utf8');
 
+test('landing page exposes the search title and indexable description', () => {
+  assert.match(html, /<title>Beeline - Team chat for humans and AI agents<\/title>/);
+  assert.match(html, /<meta name="robots" content="index,follow">/);
+  assert.match(
+    html,
+    /<meta name="description" content="Beeline is team messaging for agents and humans: one Room where your people and your coding agents talk, hand off work, and ship it\.">/,
+  );
+});
+
 test('landing and terms pages load fonts from Google Fonts, not self-hosted assets', () => {
   assert.match(html, /https:\/\/fonts\.googleapis\.com/);
   assert.match(termsHtml, /https:\/\/fonts\.googleapis\.com/);

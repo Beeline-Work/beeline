@@ -212,7 +212,7 @@ describe('listening flow', () => {
 
   it('commits final result to onChangeText', async () => {
     const onChangeText = vi.fn();
-    const { renderer } = render({ value: 'some text', onChangeText });
+    const { renderer } = render({ value: '', onChangeText });
 
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
@@ -225,7 +225,37 @@ describe('listening flow', () => {
       });
     });
 
-    expect(onChangeText).toHaveBeenCalledWith('some text hello there');
+    expect(onChangeText).toHaveBeenCalledWith('hello there');
+
+    // While the dictation is still live, a later final result appends to the
+    // committed text (the parent echoes the committed value back in).
+    const { root } = { root: renderer.root };
+    act(() => {
+      renderer.update(
+        <ConversationComposer
+          value="hello there"
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={onChangeText}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={vi.fn()}
+        />,
+      );
+    });
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'friend', confidence: 0.95, segments: [] }],
+        isFinal: true,
+      });
+    });
+    expect(onChangeText).toHaveBeenCalledWith('hello there friend');
+    expect(root).toBeTruthy();
   });
 
   it('auto-stops after silence timeout', async () => {
@@ -299,13 +329,15 @@ describe('edge states', () => {
 });
 
 describe('send and mic state', () => {
-  it('disables send while listening (even with text)', async () => {
-    const { renderer } = render({ value: 'some text' });
+  it('keeps the trailing control the mic while listening; send is not rendered', async () => {
+    const { renderer } = render({ value: '' });
+    expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
 
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
 
-    expect(renderer.root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
   });
 
   it('text input remains editable', async () => {

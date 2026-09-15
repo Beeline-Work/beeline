@@ -1824,8 +1824,9 @@ export class DaemonService {
             `WITH inserted AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,
-                 reply_to_message_id,root_message_id,agent_hop_count,attachments
-               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
+                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+                 (SELECT selected_model FROM agents WHERE agent_id=$3))
                RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
@@ -1847,8 +1848,9 @@ export class DaemonService {
           `WITH inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments
-             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+               (SELECT selected_model FROM agents WHERE agent_id=$3))
              RETURNING *
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
@@ -1936,9 +1938,10 @@ export class DaemonService {
            ), inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
-                 writable.agent_depth,attachment_payload.attachments
+                 writable.agent_depth,attachment_payload.attachments,
+                 (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
              RETURNING *
            ), completed AS (
@@ -2075,10 +2078,19 @@ export class DaemonService {
       throw new Error('attachment mimeType is invalid');
     const mediaId = MEDIA_URL_PATTERN.exec(attachment.url)?.[1];
     if (!mediaId) throw new Error('attachment url is not a server media reference');
-    const owned = await this.database.query(`SELECT 1 FROM media WHERE id=$1 AND owner_id=$2`, [
-      mediaId,
-      agentId,
-    ]);
+    // An artifact lives in `objects`, not `media`, yet `uploadArtifact` hands
+    // the agent the same `/v1/media/<id>` reference, so `post_artifact` used to
+    // fail here with "attachment media is not owned by this agent" (captain,
+    // 2026-09-15, every artifact rejected once storage was wired). Accept a
+    // reference the agent owns in EITHER store; an object still has to be
+    // `ready` and unexpired, the same bar the media read path applies.
+    const owned = await this.database.query(
+      `SELECT 1 FROM media WHERE id=$1 AND owner_id=$2
+       UNION ALL
+       SELECT 1 FROM objects
+        WHERE id=$1 AND owner_id=$2 AND state='ready' AND expires_at > now()`,
+      [mediaId, agentId],
+    );
     if (!owned.rowCount) throw new Error('attachment media is not owned by this agent');
     const queued = await this.database.query<{ total: string }>(
       `SELECT COALESCE(SUM(size),0)::text total FROM agent_pending_attachments

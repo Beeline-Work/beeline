@@ -14,6 +14,7 @@ export type CommittedMessageLiveRow = {
   root_message_id: string | null;
   request_id: string | null;
   turn_id: string | null;
+  agent_model: string | null;
   activity: unknown[] | null;
   durable_fact: RoomViewMessage['durableFact'] | null;
   card_type: string | null;

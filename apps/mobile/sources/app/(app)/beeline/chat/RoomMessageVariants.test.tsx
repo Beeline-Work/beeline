@@ -177,9 +177,9 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 }
 
 describe('Room message variant components', () => {
-  it('keeps the agent label beside the model without changing model casing', () => {
+  it('replaces the AGENT label with the model, falling back when no model is known', () => {
     expect(agentBylineLabel('  openrouter/deepseek-deepseek-v.4.1-flash  ')).toBe(
-      'AGENT · openrouter/deepseek-deepseek-v.4.1-flash',
+      'openrouter/deepseek-deepseek-v.4.1-flash',
     );
     expect(agentBylineLabel()).toBe('AGENT');
     expect(agentBylineLabel('   ')).toBe('AGENT');
@@ -191,10 +191,10 @@ describe('Room message variant components', () => {
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
-    expect(conversationSource).toContain('agentModel={');
-    expect(conversationSource).toContain(
-      'workspaceAgentModelByPubkey.get(item.authorIdentity.pubkey)',
-    );
+    expect(conversationSource).toContain('agentModel={item.agentModel}');
+    // The byline renders the model stamped at generation time; the roster
+    // lookup is retired so old rows keep their own turn's model (or none).
+    expect(conversationSource).not.toContain('workspaceAgentModelByPubkey');
     expect(conversationSource).toContain(
       'inputSelection.start === inputSelection.end\n        ? activeMentionAtCursor',
     );
@@ -1401,7 +1401,7 @@ describe('Room message variant components', () => {
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Lumen',
-      role: 'AGENT · openrouter/deepseek-deepseek-v.4.1-flash',
+      role: 'openrouter/deepseek-deepseek-v.4.1-flash',
       mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
   });

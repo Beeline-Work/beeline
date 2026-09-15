@@ -51,7 +51,20 @@ vi.mock('react-native-webview', () => ({
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: (theme: unknown) => unknown) => factory({ buzz: { border: '#333', bgBase: '#111', bgHighlight: '#222', space: { sm: 8, md: 12 }, transcriptCard: { cornerRadius: 3, footerMinHeight: 40, footerVertical: 6, side: 12 } } }),
+    create: (factory: (theme: unknown) => unknown) => factory({
+      buzz: {
+        border: '#333',
+        bgBase: '#111',
+        bgHighlight: '#222',
+        textPrimary: '#eee',
+        steel: '#888',
+        ledgerQuiet: '#777',
+        accent: '#b08a4a',
+        space: { sm: 8, md: 12 },
+        transcriptCard: { cornerRadius: 3, footerMinHeight: 40, footerVertical: 6, side: 12 },
+        type: { body: {}, bodyStrong: {}, machine: {} },
+      },
+    }),
   },
 }));
 vi.mock('@/modal', () => ({

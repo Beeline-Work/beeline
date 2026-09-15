@@ -50,7 +50,6 @@
     "exports:apps/mobile/sources/components/ShortcutHints.tsx:SessionShortcutHintBadge",
     "exports:apps/mobile/sources/components/buzz/MonoHull.tsx:HullActivityTip",
     "exports:apps/mobile/sources/components/buzz/MonoHull.tsx:HullWaveSignal",
-    "exports:apps/mobile/sources/components/buzz/MonoHull.tsx:hairlineDivider",
     "exports:apps/mobile/sources/components/glassInteractionPolicy.ts:shouldUseExpoNativeSettingsMenu",
     "exports:apps/mobile/sources/constants/Typography.ts:FontWeights",
     "exports:apps/mobile/sources/sync/storage.ts:useLocalSettings",

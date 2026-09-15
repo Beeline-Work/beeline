@@ -17,11 +17,12 @@ function singleParam(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Connection detail (report §5, story 3): what Squire's vault holds for one
- * connection — hosts, who created it, the grants with their kinds, the spend
- * cap — plus its ledger rows, read from Squire's audit. Revoke all grants is
- * a Squire command available only to the human who provisioned the
- * connection, behind an explicit confirmation.
+ * Key detail (report §5, story 3): what a tool's vault holds for one key —
+ * hosts, who created it, the grants with their kinds, the spend cap — plus
+ * its ledger rows, read from the tool's audit. Revoke all grants is a tool
+ * command available only to the human who provisioned the key, behind an
+ * explicit confirmation. Captain ruling 2026-09-15: user-visible copy says
+ * Key; the data model (`WorkbenchConnection`, `ref`) keeps its names.
  */
 export default function ConnectionDetailScreen() {
   const params = useLocalSearchParams<{
@@ -45,13 +46,13 @@ export default function ConnectionDetailScreen() {
       .then((result) => {
         if (cancelled) return;
         if (result === null) {
-          setError('Connection not found — it belongs to another member or no longer exists');
+          setError('Key not found — it belongs to another member or no longer exists');
         } else {
           setDetail(result);
         }
       })
       .catch(() => {
-        if (!cancelled) setError('Connection unavailable right now');
+        if (!cancelled) setError('Key unavailable right now');
       });
     return () => {
       cancelled = true;
@@ -89,7 +90,7 @@ export default function ConnectionDetailScreen() {
         >
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>{detail?.connection.name ?? 'Connection'}</Text>
+        <Text style={styles.title}>{detail?.connection.name ?? 'Key'}</Text>
         <Text style={styles.subtitle}>{detail?.connection.kind ?? ''}</Text>
       </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
@@ -132,7 +133,7 @@ export default function ConnectionDetailScreen() {
         ) : null}
         {confirmRevoke ? (
           <View style={styles.confirm} testID="connection-revoke-confirm">
-            <Text style={styles.confirmText}>Revoke every grant on this connection?</Text>
+            <Text style={styles.confirmText}>Revoke every grant on this key?</Text>
             <TouchableOpacity
               accessibilityRole="button"
               onPress={() => void revoke()}

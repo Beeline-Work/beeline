@@ -523,6 +523,11 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_depth integer;
 -- below held that no text could be read back for, because a system line
 -- addresses agents by subscription rather than by anything in its sentence.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS event_woken integer;
+-- The model that produced an agent's durable reply, stamped at generation time
+-- on the server (from the author's agents.selected_model, the daemon-posted
+-- live selection) so a byline renders the model of THAT turn, not today's
+-- roster setting retro-labeling old messages.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_model text;
 CREATE INDEX IF NOT EXISTS messages_event_root_idx ON messages(event_root_cause_id)
   WHERE event_root_cause_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
@@ -1060,12 +1065,14 @@ CREATE TABLE IF NOT EXISTS connection_receipts (
   grant_info text,
   turn_key text,
   message_id text,
+  event_class text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS connection_receipts_connection_idx
   ON connection_receipts(connection_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
+ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 `;
 
 export async function migrate(database: SqlDatabase): Promise<void> {

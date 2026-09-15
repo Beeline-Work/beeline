@@ -36,6 +36,8 @@ import {
   savePreferredPersonName,
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { connectionsForViewer } from '@/buzz/workbench';
+import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -53,6 +55,9 @@ import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegis
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
+import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
+import { setAppAppearance } from '@/unistyles';
+import { useLocalSettingMutable } from '@/sync/storage';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
@@ -110,6 +115,7 @@ export default function BuzzIdentitySettings() {
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
+  const [keyCount, setKeyCount] = useState<number | null>(null);
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubWorking, setGitHubWorking] = useState(false);
@@ -238,6 +244,19 @@ export default function BuzzIdentitySettings() {
           setPushEnabledState(enabled);
           setPushRegistration(registration);
           setPushPermission(permission);
+        }
+        try {
+          if (communityId) {
+            const view = await getWorkbenchSource().readWorkbench({
+              workspaceId: communityId,
+              viewerId: identity.publicKey,
+            });
+            if (!cancelled) {
+              setKeyCount(connectionsForViewer(view, identity.publicKey).length);
+            }
+          }
+        } catch {
+          // The key count is best-effort; the row still opens the Workbench.
         }
         try {
           if (monolithEnabled) {
@@ -505,6 +524,14 @@ export default function BuzzIdentitySettings() {
   const managedHandleLabel = managedHandle ? `@${managedHandle}` : '';
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const githubCanLink = linkedAccount === 'not-linked' && Platform.OS !== 'web';
+  const [appearance, setAppearance] = useLocalSettingMutable('appearance');
+  const changeAppearance = useCallback(
+    (next: typeof appearance) => {
+      setAppearance(next);
+      setAppAppearance(next);
+    },
+    [setAppearance],
+  );
 
   const commitName = () => {
     if (normalizePersonName(profileName) === savedProfileName) return;
@@ -527,6 +554,11 @@ export default function BuzzIdentitySettings() {
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.section} testID="appearance-section">
+          <Text style={styles.sectionLabel}>Display</Text>
+          <AppearanceSetting onChange={changeAppearance} value={appearance} />
+        </View>
+
         {profilePubkey && (
           <View style={styles.section} testID="identity-settings">
             <Text style={styles.sectionLabel}>Identity</Text>
@@ -604,7 +636,12 @@ export default function BuzzIdentitySettings() {
               style={styles.row}
               testID="settings-workbench-row"
             >
-              <Text style={styles.rowTitle}>Connections</Text>
+              <Text style={styles.rowTitle}>Tools &amp; keys</Text>
+              {keyCount !== null ? (
+                <Text style={styles.rowMeta} testID="settings-workbench-key-count">
+                  {keyCount}
+                </Text>
+              ) : null}
               <Text style={styles.chevron}>›</Text>
             </TouchableOpacity>
           </View>

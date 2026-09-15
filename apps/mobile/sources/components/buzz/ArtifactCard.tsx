@@ -27,7 +27,6 @@ import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
-import { groknight } from '@/buzz/groknight';
 import { Modal } from '@/modal';
 
 const PREVIEW_SNAPSHOT_DELAY_MS = 1200;
@@ -339,7 +338,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: `${theme.buzz.bgBase}CC`,
   },
   markdownCrop: { overflow: 'hidden', padding: theme.buzz.space.sm },
-  markdownText: { ...groknight.type.body, color: groknight.textPrimary },
+  markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   previewPlaceholder: {
     height: ARTIFACT_MAX_PREVIEW_HEIGHT,
     alignItems: 'center',
@@ -353,10 +352,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: 9,
     paddingHorizontal: theme.buzz.space.sm,
   },
-  docGlyph: { ...groknight.type.body, color: groknight.steel },
+  docGlyph: { ...theme.buzz.type.body, color: theme.buzz.steel },
   docName: {
-    ...groknight.type.body,
-    color: groknight.textPrimary,
+    ...theme.buzz.type.body,
+    color: theme.buzz.textPrimary,
     flex: 1,
     minWidth: 0,
   },
@@ -368,11 +367,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.buzz.space.sm,
   },
   captionTitle: {
-    ...groknight.type.bodyStrong,
-    color: groknight.textPrimary,
+    ...theme.buzz.type.bodyStrong,
+    color: theme.buzz.textPrimary,
     flexShrink: 1,
   },
-  captionKind: { ...groknight.type.machine, color: groknight.ledgerQuiet },
+  captionKind: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   footer: {
     minHeight: theme.buzz.transcriptCard.footerMinHeight,
     flexDirection: 'row',
@@ -383,8 +382,8 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.buzz.border,
   },
   footerSpacer: { flex: 1 },
-  footerQuiet: { ...groknight.type.body, color: groknight.ledgerQuiet },
-  footerPrimary: { ...groknight.type.body, color: groknight.accent },
+  footerQuiet: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  footerPrimary: { ...theme.buzz.type.body, color: theme.buzz.accent },
 }));
 
 // Referenced by tests and the cache module's key derivation.

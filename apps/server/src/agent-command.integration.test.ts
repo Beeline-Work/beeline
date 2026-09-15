@@ -148,33 +148,53 @@ describe.each([R, C])('server command authority in %s', (room) => {
     expect(first.messageId).toBe(active!.sourceMessageId);
   });
 
-  it('routes an untagged continuation only to the immediately preceding agent', async () => {
+  it('routes a human message to an agent only when the message addresses it', async () => {
+    // A typed tag routes.
     await send('@hoots ask Goosy', room);
     const [first] = await commands(A, room);
     expect(first).toBeDefined();
     await claim(first!);
-    await result(first!, '@goosy please help');
-    const [delegated] = await commands(B, room);
-    expect(delegated?.agentDepth).toBe(1);
-    await claim(delegated!);
-    await result(delegated!, 'Here is the answer');
-    expect(await commands(A, room)).toEqual([]);
-    await send('@hoots explain tags', room);
-    const [next] = await commands(A, room);
-    await claim(next!);
-    await result(next!, 'Tag @goosy and Goosy answers');
+    await result(first!, 'Tag @goosy and Goosy answers');
     const [tagged] = await commands(B, room);
     expect(tagged).toBeDefined();
     await claim(tagged!);
     await result(tagged!, 'Goosy answered');
+    expect(await commands(A, room)).toEqual([]);
+
+    // An untagged message routes to nobody, even when an agent wrote the
+    // immediately preceding message: transcript adjacency starts no turn.
     await send('Thanks everyone', room);
     expect(await commands(A, room)).toEqual([]);
-    expect((await commands(B, room))[0]?.reason).toBe('human_continuation');
+    expect(await commands(B, room)).toEqual([]);
 
+    // A reply composed through the mobile helper (replyMessageText in
+    // apps/mobile/sources/buzz/message-reply.ts) prepends the parent agent's
+    // @handle, so it routes as a tag.
+    const agentReply = (
+      await db.query<{ id: string; text: string }>(
+        `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='message'
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [room, B],
+      )
+    ).rows[0]!;
+    expect(agentReply.text).toBe('Goosy answered');
+    await phone.execute(
+      'sendRoomReply',
+      { roomId: room, parentMessageId: agentReply.id, text: '@goosy Thanks again' },
+      H,
+    );
+    const [replyCommand] = await commands(B, room);
+    expect(replyCommand?.reason).toBe('human_tag');
+    expect(replyCommand?.sourceMessageId).not.toBe(agentReply.id);
+    expect(await commands(A, room)).toEqual([]);
+    await claim(replyCommand!);
+    await result(replyCommand!, 'Settled');
+
+    // Untagged messages after human traffic still route to nobody.
     await send('An intervening human message', room);
     await send('This is not a continuation', room);
     expect(await commands(A, room)).toEqual([]);
-    expect(await commands(B, room)).toHaveLength(1);
+    expect(await commands(B, room)).toEqual([]);
   });
   it('allows depths zero through three and refuses a fourth dispatch', async () => {
     await send('@hoots start', room);
@@ -774,33 +794,6 @@ it('still presents an offline notice without dropping the durable command', asyn
     1,
   );
 });
-it('routes an untagged continuation without a false offline notice', async () => {
-  await send('@hoots start');
-  const [command] = await commands(A);
-  await claim(command!);
-  await result(command!, 'Previous answer');
-  await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [A]);
-  const noticesBefore = (
-    await db.query(
-      `SELECT 1 FROM messages
-       WHERE room_id=$1 AND presentation='system' AND text LIKE '%helper is offline%'`,
-      [R],
-    )
-  ).rowCount;
-
-  const continuation = await send('Continue');
-
-  expect((await commands(A))[0]?.sourceMessageId).toBe(continuation.messageId);
-  expect(
-    (
-      await db.query(
-        `SELECT 1 FROM messages
-         WHERE room_id=$1 AND presentation='system' AND text LIKE '%helper is offline%'`,
-        [R],
-      )
-    ).rowCount,
-  ).toBe(noticesBefore);
-});
 it('selects exactly one winner when two generations claim a pending command together', async () => {
   await send('@hoots');
   const [c] = await commands();
@@ -1004,6 +997,30 @@ it('accepts and settles draft, thought, activity, attachment and final under one
     `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES($1,$2,$3,'text/plain','result.txt',$4) ON CONFLICT(id) DO NOTHING`,
     [media, A, Buffer.from('ok'), id()],
   );
+  // An artifact lives in `objects` and is handed to the agent as the same
+  // /v1/media/<id> reference; the ownership check used to look only in `media`
+  // and rejected every artifact with "attachment media is not owned by this
+  // agent" (captain, 2026-09-15). Attaching one must work the same way.
+  const artifact = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  await db.query(
+    `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+     VALUES($1,$2,'artifact',$3,'text/html','Mock',12,$4,'ready',now()+interval '24 hours')
+     ON CONFLICT(id) DO NOTHING`,
+    [artifact, A, `artifact/${A}/${id()}`, id()],
+  );
+  await daemon.execute(
+    'postAgentAttachment',
+    {
+      ...input,
+      attachment: {
+        url: 'http://test/v1/media/' + artifact,
+        name: 'mock.html',
+        mimeType: 'text/html',
+        size: 12,
+      },
+    },
+    A,
+  );
   await daemon.execute(
     'postAgentAttachment',
     {
@@ -1023,7 +1040,7 @@ it('accepts and settles draft, thought, activity, attachment and final under one
       final.id,
     ])
   ).rows[0]!;
-  expect(saved.attachments).toHaveLength(1);
+  expect(saved.attachments).toHaveLength(2);
   expect(
     (
       await db.query(
@@ -1205,5 +1222,22 @@ describe('Room/corner relays', () => {
     expect(
       (await db.query("SELECT id FROM messages WHERE card_type='relay' AND text='No'")).rowCount,
     ).toBe(0);
+  });
+
+  it('stamps the producing model on an agent reply at generation time', async () => {
+    await db.query(`UPDATE agents SET selected_model='grok-4-fast' WHERE agent_id=$1`, [A]);
+    await send('@hoots model check');
+    const command = (await commands(A))[0]!;
+    await claim(command);
+    await result(command, 'Stamped answer');
+    // The stamp freezes the selection as of the turn; a later roster change
+    // must not retro-label the row.
+    await db.query(`UPDATE agents SET selected_model='newer-model' WHERE agent_id=$1`, [A]);
+    const view = await phone.readRoom(R, H);
+    const reply = view!.messages.find((message) => message.text === 'Stamped answer');
+    expect(reply?.agentModel).toBe('grok-4-fast');
+    // A human row carries no stamp, and an agent row with no known model
+    // stays unstamped rather than guessing.
+    expect(view!.messages.find((message) => message.author.pubkey === H)?.agentModel).toBeUndefined();
   });
 });

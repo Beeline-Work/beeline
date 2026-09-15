@@ -22,7 +22,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * Identity lives in the byline above every agent prose message and the first
  * message in a human run: the speaker's
  * 26px face tile, then the name in the identity's own hue at body size, the
- * quiet mono `AGENT · model` metadata (or `AGENT` fallback), and the mono HH:MM
+ * quiet mono model metadata (`claude-opus-4-1`, or the `AGENT` fallback), and
+ * the mono HH:MM
  * stamp pinned right. A human message is plain body text — regular weight, primary tone,
  * same size as everything — so nothing but the brass byline name marks it as
  * the viewer's own.
@@ -59,7 +60,7 @@ export type LedgerBylineMark = {
 export type LedgerByline = {
   /** The voice's display name. */
   name?: string;
-  /** Quiet agent metadata, e.g. `AGENT · claude-opus-4-1`. */
+  /** Quiet agent metadata, e.g. `claude-opus-4-1` (or the `AGENT` fallback). */
   role?: string;
   /** The 24h clock stamp, mono. */
   stamp: string;

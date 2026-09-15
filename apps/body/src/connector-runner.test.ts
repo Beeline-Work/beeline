@@ -81,6 +81,43 @@ describe('squireUsageFromToolCall', () => {
       }),
     ).toMatchObject({ ref: 'cred_2', service: 'stripe', operation: 'grant_app_access cred_2' });
   });
+
+  it('classes ordinary use_credential spending as ordinary use (no event class)', () => {
+    expect(squireUsageFromToolCall(squireCall)).not.toHaveProperty('eventClass');
+  });
+
+  it('classes a credential read in clear as an approval request', () => {
+    expect(
+      squireUsageFromToolCall({
+        title: 'squire__fetch_credential',
+        status: 'completed',
+        rawInput: { reference: 'cred_3', service: 'stripe' },
+        content: { content: { status: 200, body: 'tok_secret' } },
+      })!.eventClass,
+    ).toBe('approval');
+  });
+
+  it('classes a host added to a key as an approval request', () => {
+    expect(
+      squireUsageFromToolCall({
+        title: 'squire__grant_app_access',
+        status: 'ok',
+        rawInput: { reference: 'cred_2', service: 'stripe' },
+        content: {},
+      })!.eventClass,
+    ).toBe('approval');
+  });
+
+  it('classes revoked access as a vault change made on the owner\'s behalf', () => {
+    expect(
+      squireUsageFromToolCall({
+        title: 'squire__revoke_app_access',
+        status: 'ok',
+        rawInput: { reference: 'cred_2', grant_id: 'g1' },
+        content: {},
+      })!.eventClass,
+    ).toBe('vault-change');
+  });
 });
 
 describe('ConnectorUsageRecorder', () => {

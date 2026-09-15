@@ -18,7 +18,9 @@ describe('desktop layout mode', () => {
     expect(sidebar).toContain('event.metaKey || event.ctrlKey');
     expect(sidebar).toContain('desktopWorkspaceRoute(');
     const rail = source('components/buzz/DesktopWorkspaceRail.tsx');
-    expect(rail).toContain("backgroundColor: 'rgba(20,9,26,.66)'");
+    // Dims to the active theme's own canvas (Obsidian or Bone), not a
+    // hardcoded Obsidian aubergine.
+    expect(rail).toContain('backgroundColor: `${hull.bgVoid}A8`');
     expect(rail).toContain('<DesktopWorkspacePortal>');
     expect(source('components/buzz/DesktopWorkspacePortal.tsx')).toContain('createPortal(');
     expect(rail).toContain('accessibilityRole="menuitem"');

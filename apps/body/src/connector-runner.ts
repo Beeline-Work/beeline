@@ -14,9 +14,19 @@
  * result, and accumulates it on the turn's batch. The turn's final flush
  * publishes the whole batch at once and clears it; a failed publish is logged,
  * never raised — usage capture must not fail an agent turn.
+ *
+ * Each record also carries its event class (captain ruling 2026-09-15): the
+ * server turns only approval requests (a credential read in clear, a host
+ * added to a key) and vault changes made on the owner's behalf into receipt
+ * DMs. Ordinary `use_credential` spending stays on the key's own Workbench
+ * record and never arrives as a DM.
  */
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import type { ConnectionUsageRecord, ToolCallLike } from './connector-usage-types.js';
+import type {
+  ConnectionUsageEventClass,
+  ConnectionUsageRecord,
+  ToolCallLike,
+} from './connector-usage-types.js';
 
 /** The smallest tool-call shape both turn loops already hold. */
 export type { ToolCallLike };
@@ -37,9 +47,21 @@ export type ConnectionTurn = {
 
 function toolName(call: ToolCallLike): string {
   const raw = `${call.title ?? ''} ${call.kind ?? ''}`;
-  const match = raw.match(/(?:^|__|\b)(use_credential|fetch_credential|grant_app_access)\b/);
+  const match = raw.match(
+    /(?:^|__|\b)(use_credential|fetch_credential|grant_app_access|revoke_app_access)\b/,
+  );
   return match?.[1] ?? '';
 }
+
+/**
+ * The event class each Squire verb means to the key's owner. Ordinary
+ * `use_credential` spending carries no class: it is recorded, never DM'd.
+ */
+const SQUIRE_EVENT_CLASS: Readonly<Record<string, ConnectionUsageEventClass>> = {
+  fetch_credential: 'approval', // the credential was read in clear
+  grant_app_access: 'approval', // a host was added to a key
+  revoke_app_access: 'vault-change', // access removed on the owner's behalf
+};
 
 function record(call: unknown): Record<string, unknown> {
   return call && typeof call === 'object' ? (call as Record<string, unknown>) : {};
@@ -81,6 +103,7 @@ export function squireUsageFromToolCall(call: ToolCallLike): ConnectionUsageReco
     statusCode,
     bytes: serializedSize(resultPayload.body ?? resultPayload),
     ...(typeof args.grant_id === 'string' ? { grantId: args.grant_id } : {}),
+    ...(SQUIRE_EVENT_CLASS[tool] ? { eventClass: SQUIRE_EVENT_CLASS[tool] } : {}),
   };
 }
 

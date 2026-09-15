@@ -16,4 +16,12 @@ describe('Settings Workbench entry', () => {
     expect(settings).toContain('testID="workbench-section"');
     expect(settings).toMatch(/sectionLabel}>Workbench</);
   });
+
+  // Captain ruling 2026-09-15 (mock 91aa0358328d716e): the row speaks the
+  // Workbench vocabulary — Tools & keys — and carries the viewer's key count.
+  it('names the row Tools & keys and shows the viewer’s key count', () => {
+    expect(settings).toMatch(/rowTitle}>Tools &amp; keys</);
+    expect(settings).toContain('testID="settings-workbench-key-count"');
+    expect(settings).not.toMatch(/rowTitle}>Connections</);
+  });
 });

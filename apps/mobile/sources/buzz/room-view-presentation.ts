@@ -229,6 +229,9 @@ export type ChatDisplayMessage = {
   durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];
   mentionPubkeys?: string[];
+  /** The model stamped on the message at generation time (server-side); the
+   *  agent byline renders it verbatim and falls back to no model. */
+  agentModel?: string;
   reactions?: RoomViewMessage['reactions'];
   replyToId?: string;
   isNew?: boolean;
@@ -341,6 +344,7 @@ export function displayRoomMessage(
     ...(message.activity ? { activity: activityItems(message) } : {}),
     ...(message.attachments ? { attachments: [...message.attachments] } : {}),
     ...(message.mentionPubkeys ? { mentionPubkeys: [...message.mentionPubkeys] } : {}),
+    ...(message.agentModel ? { agentModel: message.agentModel } : {}),
     ...(message.reactions
       ? { reactions: message.reactions.map((reaction) => ({ ...reaction })) }
       : {}),

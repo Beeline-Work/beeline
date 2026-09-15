@@ -56,6 +56,51 @@ export function cornerHeaderStateLabel(state: CornerDisplayState): string {
   return state.headerSuffix ? `${state.status} · ${state.headerSuffix}` : state.status;
 }
 
+export type CornerHeaderAgentInput = {
+  /** The corner's OWN agent: the server projection's `agent`
+   * (`corners.created_by`). The transcript-derived identity is only a
+   * cold-start fallback the caller may pass when the projection has not
+   * landed; the name never swaps to whoever holds a live turn. */
+  readonly ownerPubkey?: string;
+  readonly status: CornerState;
+  readonly headerSuffix?: 'failed' | 'checks failed';
+  /** Pubkeys holding a live working receipt in this corner. */
+  readonly activeTurnPubkeys: readonly string[];
+};
+
+export type CornerHeaderAgent = {
+  readonly pubkey?: string;
+  /** A reviewer's live turn is still work IN the corner, so the state stays
+   * a working state — it reads `reviewing` while the running turn belongs to
+   * an agent other than the corner's own. The name never swaps. */
+  readonly reviewerTurnRunning: boolean;
+  readonly stateWord: string;
+  /** The header mark's gold ring is the corner's own agent's aliveness, not
+   * the corner's: a reviewer's turn must not light the owner's creature. */
+  readonly ownerWorking: boolean;
+};
+
+export function cornerHeaderAgent(input: CornerHeaderAgentInput): CornerHeaderAgent {
+  const base = input.headerSuffix
+    ? `${input.status} · ${input.headerSuffix}`
+    : input.status;
+  const reviewerTurnRunning =
+    input.status === 'working' &&
+    input.ownerPubkey !== undefined &&
+    input.activeTurnPubkeys.length > 0 &&
+    !input.activeTurnPubkeys.includes(input.ownerPubkey);
+  return {
+    ...(input.ownerPubkey !== undefined ? { pubkey: input.ownerPubkey } : {}),
+    reviewerTurnRunning,
+    stateWord: reviewerTurnRunning
+      ? input.headerSuffix
+        ? `reviewing · ${input.headerSuffix}`
+        : 'reviewing'
+      : base,
+    ownerWorking: input.ownerPubkey !== undefined && input.activeTurnPubkeys.includes(input.ownerPubkey),
+  };
+}
+
 export function cornerDisplayItems<T extends CornerDisplayItem>(
   corners: readonly T[],
 ): Array<{ readonly item: T; readonly display: CornerDisplayState }> {

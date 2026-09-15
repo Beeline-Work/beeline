@@ -402,6 +402,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
         HEX.test(reply.rootId))) &&
     optionalString(item.liveTurnId) &&
     optionalString(item.requestId) &&
+    optionalString(item.agentModel) &&
     (item.attachments === undefined ||
       (Array.isArray(item.attachments) && item.attachments.every(attachment))) &&
     (item.mentionPubkeys === undefined ||

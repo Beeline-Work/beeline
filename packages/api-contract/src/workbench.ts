@@ -14,6 +14,9 @@
  * the helper PR.
  */
 import type { ConnectorStatus, ConnectorStep } from './daemon-operations.js';
+import type { WalletLedgerEntry } from './wallet.js';
+
+export type { WalletLedgerEntry };
 
 export type { ConnectorStatus, ConnectorStep };
 
@@ -78,6 +81,14 @@ export type WorkbenchView = {
   readonly connections: readonly WorkbenchConnectionView[];
   /** The viewer's own connected machines — the Workbench's helper candidates. */
   readonly helpers: readonly WorkbenchHelperView[];
+  /** Present when the VIEWER has created their wallet (no helper involved).
+   *  `delegationActive` mirrors the wallet's delegated-signing grant — the
+   *  row reads "agents can spend" only while it stands. */
+  readonly wallet?: {
+    readonly createdAt: number;
+    readonly delegationActive: boolean;
+    readonly delegationExpiresAt: number | null;
+  };
 };
 
 export type ReadWorkbenchInput = { readonly workspaceId: string };

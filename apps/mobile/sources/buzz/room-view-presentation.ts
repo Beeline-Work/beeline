@@ -266,6 +266,10 @@ export type ChatDisplayMessage = {
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
   /** An agent asking its owner for reach; rendered as the grant card. */
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
+  /** @wallet ledger facts, rendered as ledger cards in the @wallet thread. */
+  walletTx?: NonNullable<RoomViewMessage['walletTx']>;
+  walletInsufficient?: NonNullable<RoomViewMessage['walletInsufficient']>;
+  walletDelegation?: NonNullable<RoomViewMessage['walletDelegation']>;
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -387,6 +391,9 @@ export function displayRoomMessage(
           },
         }
       : {}),
+    ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),
+    ...(message.walletInsufficient ? { walletInsufficient: { ...message.walletInsufficient } } : {}),
+    ...(message.walletDelegation ? { walletDelegation: { ...message.walletDelegation } } : {}),
     ...(message.permission
       ? {
           writePermission: {

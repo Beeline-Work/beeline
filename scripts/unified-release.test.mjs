@@ -869,7 +869,12 @@ test('the emulator release proof gates OTA promotion', () => {
   const workflow = parse(source);
   const proof = workflow.jobs.release_proof;
   assert.match(proof.if, /run_mobile_ota == 'true'/);
-  assert.match(proof.if, /native_android != 'true' \|\| needs\.mobile_native_android\.result == 'success'/);
+  // A native build that was skipped because it was not needed (carried
+  // forward or already checkpointed) no longer suppresses the proof: only a
+  // genuinely failed native build stops it. Run 34972989027 skipped the
+  // proof exactly because the old clause treated `skipped` as a hold.
+  assert.doesNotMatch(proof.if, /native_android != 'true'/);
+  assert.match(proof.if, /needs\.mobile_native_android\.result != 'failure'/);
   assert.deepEqual(proof['runs-on'], ['self-hosted', 'beeline-android']);
   const steps = proof.steps;
   const aab = steps.find((step) => step.name === 'Download the native AAB under proof');
@@ -888,17 +893,19 @@ test('the emulator release proof gates OTA promotion', () => {
   assert.match(evidence.with.path, /release-proof-out/);
 
   // Promotion itself is gated, not just the job: the built checkpoint still
-  // lands when the proof fails, and a failed proof fails mobile_ota loudly.
-  // The skip_release_proof input is the one recovery escape hatch when the
-  // rig is down; the refusal message names it, and the release record is
-  // marked unproven.
+  // lands when the proof fails, and any proof outcome short of success fails
+  // mobile_ota loudly — a proof that did not run is not a proof. The
+  // skip_release_proof input is the one recovery escape hatch when the
+  // rig is down; the refusal message names it and the actual outcome, and
+  // the release record is marked unproven.
   const ota = workflow.jobs.mobile_ota;
   const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
   assert.match(promote.if, /needs\.release_proof\.result == 'success' \|\| inputs\.skip_release_proof == true/);
-  const refuse = ota.steps.find((step) => step.name === 'Refuse promotion when the release proof failed');
-  assert.equal(refuse.if, "needs.release_proof.result == 'failure' && inputs.skip_release_proof != true");
+  const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
+  assert.equal(refuse.if, "needs.release_proof.result != 'success' && inputs.skip_release_proof != true");
   assert.match(refuse.run, /exit 1/);
   assert.match(refuse.run, /skip_release_proof=true/);
+  assert.match(refuse.run, /result: \$\{\{ needs\.release_proof\.result \}\}/);
   for (const step of ota.steps.filter((step) =>
     [
       'Checkpoint OTA promotion',
@@ -917,6 +924,184 @@ test('the emulator release proof gates OTA promotion', () => {
   const record = result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
   assert.match(record.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
   assert.match(record.run, /Promoted with skip_release_proof=true/);
+});
+
+// Evaluates the subset of GitHub workflow expressions the release gates use:
+// && || == !=, parentheses, 'literals', true/false, dotted context paths,
+// always(), and contains(fromJSON('…'), path). Missing context resolves to
+// null, matching GitHub, and comparisons coerce like GitHub's loose equality.
+function githubGate(condition, values) {
+  const loose = (a, b) => {
+    const norm = (v) => (v === null || v === undefined ? '' : v);
+    a = norm(a);
+    b = norm(b);
+    if ((typeof a === 'boolean' || typeof b === 'boolean') && typeof a !== typeof b) return Number(a) === Number(b);
+    return String(a) === String(b);
+  };
+  const tokens = [];
+  const tokenRe = /\s*(==|!=|&&|\|\||\(|\)|,|'[^']*'|[A-Za-z_][A-Za-z0-9_.-]*)/y;
+  let index = 0;
+  while (index < condition.length) {
+    tokenRe.lastIndex = index;
+    const match = tokenRe.exec(condition);
+    if (!match) throw new Error(`unparsable gate at ${index}: ${condition.slice(index)}`);
+    tokens.push(match[1]);
+    index = tokenRe.lastIndex;
+  }
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const take = () => tokens[pos++];
+  const parseOr = () => {
+    let left = parseAnd();
+    while (peek() === '||') {
+      take();
+      const right = parseAnd();
+      left = Boolean(left) || Boolean(right);
+    }
+    return left;
+  };
+  const parseAnd = () => {
+    let left = parseCompare();
+    while (peek() === '&&') {
+      take();
+      const right = parseCompare();
+      left = Boolean(left) && Boolean(right);
+    }
+    return left;
+  };
+  const parseCompare = () => {
+    const left = parsePrimary();
+    if (peek() === '==' || peek() === '!=') {
+      const operator = take();
+      const right = parsePrimary();
+      return operator === '==' ? loose(left, right) : !loose(left, right);
+    }
+    return left;
+  };
+  const parsePrimary = () => {
+    if (peek() === '(') {
+      take();
+      const value = parseOr();
+      if (peek() !== ')') throw new Error(`expected ) in ${condition}`);
+      take();
+      return value;
+    }
+    const token = take();
+    if (token === undefined) throw new Error(`unexpected end of gate: ${condition}`);
+    if (token.startsWith("'")) return token.slice(1, -1);
+    if (token === 'true') return true;
+    if (token === 'false') return false;
+    if (token === 'always') {
+      take();
+      take();
+      return true;
+    }
+    if (token === 'contains') {
+      take();
+      if (take() !== 'fromJSON') throw new Error('contains supports fromJSON lists only');
+      take();
+      const json = take();
+      take();
+      if (take() !== ',') throw new Error(`expected , in contains: ${condition}`);
+      const needle = parseOr();
+      if (peek() !== ')') throw new Error(`expected ) in contains: ${condition}`);
+      take();
+      return JSON.parse(json.slice(1, -1)).includes(String(needle));
+    }
+    return values[token] ?? null;
+  };
+  const result = parseOr();
+  if (pos !== tokens.length) throw new Error(`trailing tokens in gate: ${condition}`);
+  return result;
+}
+
+test('a skipped release proof blocks promotion and fails mobile_ota; success or the override still promotes', () => {
+  const workflow = parse(
+    readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
+  );
+  const proofIf = workflow.jobs.release_proof.if;
+  const ota = workflow.jobs.mobile_ota;
+  const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
+  const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
+
+  const proofEnv = ({ native_android = 'true', native_result = 'success', run_mobile_ota = 'true', skip = false } = {}) => ({
+    'inputs.plan_only': false,
+    'inputs.skip_release_proof': skip,
+    'needs.initialize.result': 'success',
+    'needs.initialize.outputs.run_mobile_ota': run_mobile_ota,
+    'needs.initialize.outputs.native_android': native_android,
+    'needs.initialize.outputs.native_ios': 'false',
+    'needs.initialize.outputs.runtime_pin_changed': 'false',
+    'needs.initialize.outputs.stage_mobile_native': 'carried',
+    'needs.initialize.outputs.stage_mobile_ota': 'pending',
+    'needs.mobile_native_android.result': native_result,
+    'needs.mobile_native_ios.result': 'skipped',
+    'needs.release_proof.result': 'success',
+  });
+
+  // The proof must run whenever an update will be promoted. Run
+  // 34972989027's exact shape: the native Android build was carried forward
+  // (skipped, not failed) while native_android stayed true — the proof used
+  // to skip there, silently stranding the built OTA.
+  const carried = proofEnv({ native_result: 'skipped' });
+  assert.equal(githubGate(proofIf, carried), true, 'a skipped native build must not stop the proof');
+  assert.equal(githubGate(ota.if, carried), true, 'mobile_ota runs its build phase for the carried shape');
+  assert.equal(githubGate(proofIf, proofEnv({})), true, 'a successful native build keeps the proof running');
+  assert.equal(
+    githubGate(proofIf, proofEnv({ native_android: 'false', native_result: 'skipped' })),
+    true,
+    'an OTA-only release has no native build to wait for',
+  );
+  // Only a native build that genuinely FAILED stops the proof, and the
+  // explicit override still suppresses it.
+  assert.equal(githubGate(proofIf, proofEnv({ native_result: 'failure' })), false);
+  assert.equal(githubGate(proofIf, proofEnv({ skip: true })), false);
+
+  // Promotion truth table: only a successful proof — or the explicit
+  // override — promotes; every other proof outcome blocks promotion AND
+  // fails the job at the refusal step, naming the outcome.
+  const gateEnv = (proof, skip) => ({
+    'needs.initialize.outputs.stage_mobile_ota': 'pending',
+    'needs.release_proof.result': proof,
+    'inputs.skip_release_proof': skip,
+  });
+  for (const [proof, skip] of [
+    ['success', false], ['success', true],
+    ['failure', false], ['failure', true],
+    ['skipped', false], ['skipped', true],
+    ['cancelled', false], ['cancelled', true],
+  ]) {
+    const promotes = proof === 'success' || skip;
+    assert.equal(githubGate(promote.if, gateEnv(proof, skip)), promotes, `promote(${proof}, skip=${skip})`);
+    assert.equal(githubGate(refuse.if, gateEnv(proof, skip)), !promotes, `refuse(${proof}, skip=${skip})`);
+  }
+});
+
+test('a skipped release proof classifies the attempt as a failed mobile-ota component, not a clean release', () => {
+  // With the refusal step failing mobile_ota, only the built checkpoint
+  // lands, so release_result's apply-checkpoints must leave mobile-ota
+  // incomplete and the attempt classifies `component:mobile-ota` — never a
+  // clean success with an unpromoted update.
+  const state = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
+    selectedComponents: ['server', 'helper', 'mobile-ota', 'desktop', 'website'],
+    startedAt: '2026-09-15T13:07:00.000Z',
+  });
+  applyComponentCheckpoints(state, [
+    { component: 'server', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: 'server-ref' },
+    { component: 'helper', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: 'helper-ref' },
+    { component: 'mobile-ota', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'built', artifactRef: 'ota-built-ref' },
+    { component: 'desktop', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: 'desktop-ref' },
+    { component: 'website', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: 'website-ref' },
+  ]);
+  assert.deepEqual(
+    Object.entries(retryPlan(state)).filter(([, runnable]) => runnable).map(([component]) => component),
+    ['mobile-ota'],
+  );
+  assert.throws(
+    () => finalizeRelease(state, { outcome: 'success' }),
+    /mobile-ota has no delivered or carried artifact/,
+  );
 });
 
 test('native workflow builds Android locally on the Linux runner and iOS locally on the Mac runner', () => {

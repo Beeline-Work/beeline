@@ -1080,7 +1080,46 @@ CREATE INDEX IF NOT EXISTS connection_receipts_connection_idx
 CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
-`;
+
+-- Wallet connector: the binding row (this account owns that wallet), never a
+-- secret. The one app-wide Coinbase credential lives in server secrets, and
+-- cdp_user_id is the CDP end-user the binding points at.
+CREATE TABLE IF NOT EXISTS wallet_bindings (
+  identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  cdp_user_id text NOT NULL,
+  eoa_address text NOT NULL,
+  solana_address text,
+  -- Delegated signing grant: the backend signs with the CDP key pair while
+  -- this stands; one user-scoped delegation at a time, expiring by default
+  -- in 24h. NULL until the user grants it the first time.
+  delegation_expires_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- One wallet transaction, in AND out, as the @wallet ledger wrote it. The
+-- balance_after_usd is what the line left behind; agent_id names the agent
+-- that spent on outbound lines. tx identity is unique per wallet so an
+-- inbound reconciliation never double-writes a deposit.
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+  id uuid PRIMARY KEY,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  tx_id text NOT NULL,
+  direction text NOT NULL CHECK (direction IN ('in','out')),
+  asset text NOT NULL,
+  amount text NOT NULL,
+  counterparty text NOT NULL,
+  chain text NOT NULL,
+  balance_after_usd text NOT NULL,
+  agent_id text REFERENCES identities(id) ON DELETE SET NULL,
+  tx_url text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (identity_id, tx_id)
+);
+CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
+  ON wallet_transactions(identity_id, created_at DESC);
+`; 
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);

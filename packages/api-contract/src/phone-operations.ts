@@ -2,12 +2,23 @@ import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
 import type {
+  GrantWalletDelegationInput,
+  GrantWalletDelegationResult,
+} from './wallet.js';
+import type {
   AgentModelSelection,
   AgentPairingClaimView,
   AttachmentReference,
   InviteView,
   MessageReactionEmoji,
 } from './phone-types.js';
+import type {
+  CreateWalletInput,
+  ReadWalletInput,
+  SendFromWalletInput,
+  WalletSendOutcome,
+  WalletView,
+} from './wallet.js';
 import type {
   ConnectionDetailView,
   PairConnectorInput,
@@ -100,7 +111,20 @@ export type PhoneOperationMap = {
     input: RevokeConnectionGrantsInput;
     output: RevokeConnectionGrantsResult;
   };
+  /** One tap creates the wallet bound to the viewer's identity. */
+  createWallet: { input: CreateWalletInput; output: WalletView };
+  readWallet: { input: ReadWalletInput; output: WalletView };
+  sendFromWallet: { input: SendFromWalletInput; output: WalletSendOutcome };
+  grantWalletDelegation: { input: GrantWalletDelegationInput; output: GrantWalletDelegationResult };
 };
+
+export type {
+  CreateWalletInput,
+  ReadWalletInput,
+  SendFromWalletInput,
+  WalletSendOutcome,
+  WalletView,
+} from './wallet.js';
 
 export type EmptyInput = Record<string, never>;
 export type WorkspaceInput = { readonly workspaceId: string };

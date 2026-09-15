@@ -78,6 +78,7 @@ import {
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
+import { agentWalletTool } from './wallet.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -653,6 +654,20 @@ export class DaemonService {
           input as Input<'ensureAgentMembership'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getWalletToolState':
+        return (await agentWalletTool(this.database, 'state', authenticatedAgentId)) as Output<Name>;
+      case 'getWalletToolBalance':
+        return (await agentWalletTool(this.database, 'balance', authenticatedAgentId, input as Input<'getWalletToolBalance'>)) as Output<Name>;
+      case 'getWalletToolChains':
+        return (await agentWalletTool(this.database, 'chains', authenticatedAgentId)) as Output<Name>;
+      case 'getWalletToolHistory':
+        return (await agentWalletTool(this.database, 'history', authenticatedAgentId, input as Input<'getWalletToolHistory'>)) as Output<Name>;
+      case 'getWalletToolQuote':
+        return (await agentWalletTool(this.database, 'quote', authenticatedAgentId, input as Input<'getWalletToolQuote'>)) as Output<Name>;
+      case 'walletPay':
+        return (await agentWalletTool(this.database, 'pay', authenticatedAgentId, input as Input<'walletPay'>)) as Output<Name>;
+      case 'walletSwap':
+        return (await agentWalletTool(this.database, 'swap', authenticatedAgentId, input as Input<'walletSwap'>)) as Output<Name>;
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
     }
@@ -3551,6 +3566,13 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   createCorner: true,
   archiveCorner: true,
   ensureAgentMembership: true,
+  getWalletToolState: true,
+  getWalletToolBalance: true,
+  getWalletToolChains: true,
+  getWalletToolHistory: true,
+  getWalletToolQuote: true,
+  walletPay: true,
+  walletSwap: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

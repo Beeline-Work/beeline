@@ -460,6 +460,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
       # The proof builds its own sideload APK when the native build was
       # carried, and that build runs Metro. Without this the job inherits the
       # runner's system node, which is older than metro-config's use of
@@ -471,8 +473,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
       - name: Resolve the Android SDK
         run: |
           set -euo pipefail

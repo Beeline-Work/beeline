@@ -21,5 +21,15 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
        updated_at=now() WHERE corner_id=$1`,
     [cornerId],
   );
+  // The parent transcript owns one durable card for this corner. Settle that
+  // card in the same transaction as the corner so the next parent repaint
+  // cannot retain an actionable open state.
+  await database.query(
+    `UPDATE messages
+     SET card=card||'{"type":"corner-complete","outcome":"abandoned"}'::jsonb
+     WHERE room_id=$2 AND card_type='daemon-fact'
+       AND card->>'type'='corner-open' AND card->>'cornerId'=$1`,
+    [cornerId, corner.parent_id],
+  );
   return { parentId: corner.parent_id };
 }

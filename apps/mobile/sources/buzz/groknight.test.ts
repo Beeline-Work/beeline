@@ -20,8 +20,8 @@ describe('Beeline theme tokens', () => {
   });
 
   it('keeps content brighter than chrome and reserves mono for identity', () => {
-    // Obsidian Refined is the only shipped visual language.
-    expect(Object.keys(beelineThemes)).toEqual(['obsidian']);
+    // Obsidian Refined (dark) and Bone (light) are the two shipped sets.
+    expect(Object.keys(beelineThemes)).toEqual(['obsidian', 'bone']);
     for (const theme of Object.values(beelineThemes)) {
       expect(theme.textPrimary).not.toBe(theme.textMuted);
       expect(theme.ledgerBright).toBe(theme.textPrimary);
@@ -34,19 +34,31 @@ describe('Beeline theme tokens', () => {
 });
 
 describe('Speakeasy canvas alignment', () => {
-  it('sets the app-wide background to the Speakeasy brand canvas ', () => {
+  it('sets Obsidian to the Speakeasy dark brand canvas and Bone to its light counterpart', () => {
+    expect(beelineThemes.obsidian.bgVoid).toBe('#14091A');
+    expect(beelineThemes.obsidian.bgTerminal).toBe('#14091A');
+    expect(beelineThemes.obsidian.bgBase).toBe('#14091A');
+    expect(beelineThemes.obsidian.avatarGround).toBe('#14091A');
+    expect(beelineThemes.bone.bgVoid).toBe('#F3EEE4');
+    expect(beelineThemes.bone.bgTerminal).toBe('#F3EEE4');
+    expect(beelineThemes.bone.bgBase).toBe('#F3EEE4');
+    expect(beelineThemes.bone.avatarGround).toBe('#F3EEE4');
     for (const theme of Object.values(beelineThemes)) {
-      expect(theme.bgVoid).toBe('#14091A');
-      expect(theme.bgTerminal).toBe('#14091A');
-      expect(theme.bgBase).toBe('#14091A');
-      expect(theme.avatarGround).toBe('#14091A');
+      // Every screen reads one canvas value, whichever set is active.
+      expect(theme.bgVoid).toBe(theme.bgTerminal);
+      expect(theme.bgTerminal).toBe(theme.bgBase);
+      expect(theme.avatarGround).toBe(theme.bgVoid);
     }
   });
 
-  it('keeps every elevation stop at or above the canvas, in ladder order', () => {
+  it('keeps every elevation stop moving away from the canvas, in ladder order', () => {
     // Luminance proxy: the green channel dominates perceived brightness here
     // and every stop shares a near-identical hue direction, so ordering on it
-    // is a faithful check that no stop was pushed BELOW its canvas.
+    // is a faithful check that no stop drifted back toward its canvas.
+    // Obsidian's canvas sits near black, so its ladder climbs toward mid-gray
+    // (brighter); Bone's canvas sits near white, so its ladder descends
+    // toward mid-gray (darker) — same ladder, canvas-relative direction
+    // flipped by `theme.dark`.
     const lum = (hex: string) => {
       const value = hex.replace('#', '');
       const r = parseInt(value.slice(0, 2), 16);
@@ -55,20 +67,22 @@ describe('Speakeasy canvas alignment', () => {
       return 0.2126 * r + 0.7152 * g + 0.0722 * b;
     };
     for (const theme of Object.values(beelineThemes)) {
-      const canvas = lum(theme.bgBase);
-      expect(lum(theme.bgRaised)).toBeGreaterThanOrEqual(canvas);
-      expect(lum(theme.bgHighlight)).toBeGreaterThan(canvas);
+      const sign = theme.dark ? 1 : -1;
+      const away = (hex: string) => sign * lum(hex);
+      const canvas = away(theme.bgBase);
+      expect(away(theme.bgRaised)).toBeGreaterThanOrEqual(canvas);
+      expect(away(theme.bgHighlight)).toBeGreaterThan(canvas);
       // Ledger deliberately shares one stop for highlight and hover.
-      expect(lum(theme.bgHover)).toBeGreaterThanOrEqual(lum(theme.bgHighlight));
-      expect(lum(theme.bgPressed)).toBeGreaterThan(lum(theme.bgHighlight));
-      expect(lum(theme.bgTexturePeak)).toBeGreaterThan(lum(theme.bgPressed));
+      expect(away(theme.bgHover)).toBeGreaterThanOrEqual(away(theme.bgHighlight));
+      expect(away(theme.bgPressed)).toBeGreaterThan(away(theme.bgHighlight));
+      expect(away(theme.bgTexturePeak)).toBeGreaterThan(away(theme.bgPressed));
       // The unread-row ground lift sits exactly one step above the canvas —
       // an area cue for unread rows that must never outrank selection
       // (bgHighlight) or hover.
-      expect(lum(theme.bgUnread)).toBeGreaterThan(canvas);
-      expect(lum(theme.bgUnread)).toBeLessThan(lum(theme.bgHighlight));
+      expect(away(theme.bgUnread)).toBeGreaterThan(canvas);
+      expect(away(theme.bgUnread)).toBeLessThan(away(theme.bgHighlight));
       // Hairlines must stay visible against both the canvas and raised surfaces.
-      expect(lum(theme.border)).toBeGreaterThan(canvas);
+      expect(away(theme.border)).toBeGreaterThan(canvas);
     }
   });
 });

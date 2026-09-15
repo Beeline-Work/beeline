@@ -3,9 +3,12 @@
  * `connector-runner.ts` so tests and turn loops can import the types without
  * pulling in the implementation.
  */
-import type { ConnectionUsageRecord } from '@beeline/api-contract/daemon';
+import type {
+  ConnectionUsageEventClass,
+  ConnectionUsageRecord,
+} from '@beeline/api-contract/daemon';
 
-export type { ConnectionUsageRecord };
+export type { ConnectionUsageEventClass, ConnectionUsageRecord };
 
 /** The subset of the ACP `ToolCallEntry` the usage capture reads. */
 export type ToolCallLike = {

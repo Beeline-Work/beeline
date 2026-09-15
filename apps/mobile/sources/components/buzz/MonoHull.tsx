@@ -25,7 +25,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
-import { groknight, typeRoles } from '@/buzz/groknight';
+import { typeRoles } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { cornerVisualState, type CornerVisualState } from '@/buzz/corners';
 import type { CornerState } from '@beeline/api-contract/phone';
@@ -48,16 +48,6 @@ export const motionTokens = {
    */
   demoteDip: 90,
 } as const;
-
-/**
- * The one separator a repeating list row is allowed: a single hairline,
- * never a border+fill+radius box. Spread into a row's own style alongside
- * that screen's background.
- */
-export const hairlineDivider: ViewStyle = {
-  borderBottomWidth: 1,
-  borderBottomColor: groknight.border,
-};
 
 const easeOutQuint = Easing.out(Easing.poly(5));
 

@@ -236,7 +236,10 @@ const stylesheet = StyleSheet.create((theme) => {
     scrim: {
       ...StyleSheet.absoluteFillObject,
       left: RAIL_WIDTH,
-      backgroundColor: 'rgba(20,9,26,.66)',
+      // The canvas color itself plus alpha, so the dim reads as "this
+      // theme's own ground, deepened" on either Obsidian or Bone rather than
+      // a hardcoded Obsidian aubergine dimming a Bone app to near-black.
+      backgroundColor: `${hull.bgVoid}A8`,
     },
     rail: {
       position: 'absolute',
@@ -293,7 +296,7 @@ const stylesheet = StyleSheet.create((theme) => {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.borderStrong,
       borderRadius: 8,
-      backgroundColor: '#0f0713',
+      backgroundColor: hull.bgHighlight,
       transform: [{ translateY: '-50%' }],
       zIndex: 2,
     } as any,

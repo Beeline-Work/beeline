@@ -6,7 +6,7 @@ import type {
 } from '@beeline/api-contract/daemon';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
-import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
 export const COMMAND_MAX_DEPTH = 3;
@@ -205,31 +205,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     )
   ).rows[0];
   if (!source) return;
+  // A human message reaches an agent only when it addresses that agent: a
+  // typed tag, or membership of a direct conversation. Nothing routes on
+  // transcript adjacency — an untagged top-level message starts no turn.
   const targets = new Set([...source.tagged_ids, ...(source.direct_participants ?? [])]);
   targets.delete(source.author_id);
-  // An untagged top-level message continues only the immediately preceding
-  // conversational agent message. Do not search farther back: intervening
-  // human or agent traffic ends that continuity.
-  let continuationAgent: string | undefined;
-  if (!targets.size && typedMentionHandles(source.text).size === 0) {
-    continuationAgent = (
-      await db.query<{ author_id: string }>(
-        `SELECT previous.author_id
-         FROM messages current
-         JOIN LATERAL (
-           SELECT message.author_id
-           FROM messages message
-           WHERE message.room_id=current.room_id AND message.id<>current.id
-             AND message.presentation='message'
-           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
-         ) previous ON true
-         JOIN identities identity ON identity.id=previous.author_id AND identity.kind='agent'
-         WHERE current.id=$1 AND current.reply_to_message_id IS NULL`,
-        [sourceId],
-      )
-    ).rows[0]?.author_id;
-    if (continuationAgent) targets.add(continuationAgent);
-  }
   for (const target of targets) {
     const agent = (
       await db.query<{ owner_id: string; access_policy: unknown }>(
@@ -252,11 +232,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       roomId: source.room_id,
       agentId: target,
       sourceMessageId: sourceId,
-      reason: source.direct_participants
-        ? 'direct_message'
-        : continuationAgent === target
-          ? 'human_continuation'
-          : 'human_tag',
+      reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
   }
 }

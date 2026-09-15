@@ -10,8 +10,8 @@ import brand from './brand.json';
  */
 const shared = {
   brandMark: brand.mark,
-  diffAdded: '#3FB950',
-  diffRemoved: '#F85149',
+  // The one box radius, shared by every theme (DESIGN.md → Shape).
+  radius: 3,
   // Human and agent relay photos defeat their identity axes, so their shared
   // photo gate stays off. Workspace pictures are the explicit exception and
   // are gated separately in photo-overrides.ts.
@@ -161,7 +161,11 @@ export const beelineThemes = {
     accent: '#b08a4a',
     humanRail: '#b08a4a',
     agentRail: '#3b3048',
-    radius: 3,
+    // Diff green/red is the one domain-color exception (DESIGN.md), tuned
+    // per canvas like brass is: legible text against near-black here, and
+    // against Bone's near-white canvas in that theme's own values below.
+    diffAdded: '#3FB950',
+    diffRemoved: '#F85149',
     ledgerBright: '#f0f0f3',
     ledgerBody: '#c9c9d1',
     ledgerQuiet: '#83838d',
@@ -208,6 +212,101 @@ export const beelineThemes = {
     proseMedium: 'SpaceGrotesk-Medium',
     turnDivider: '#1b1024',
     codeError: '#c98a8a',
+  },
+  // Bone: Obsidian Refined's light counterpart. Same construction rules as
+  // Obsidian (design note 2026-09-14, DESIGN.md → Appearance) — a warm
+  // canvas rather than a cold white, "content near-black, chrome mid" (the
+  // inverse of Obsidian's "content near-white, chrome dim"), and every
+  // elevation/border/divider step keeping the same relative position on the
+  // ladder as its Obsidian counterpart, just re-based on the bone canvas.
+  // Brass is darkened from Obsidian's `#b08a4a` to `#8a6323`: the shipped
+  // brass is tuned for contrast against near-black and reads too light
+  // against bone.
+  bone: {
+    ...shared,
+    type: typeRoles,
+    space,
+    layout,
+    name: 'bone',
+    label: 'Bone',
+    description: 'Readable sans prose on a quiet bone field',
+    dark: false,
+    bgVoid: '#F3EEE4',
+    bgTerminal: '#F3EEE4',
+    bgBase: '#F3EEE4',
+    bgRaised: '#ECE4D5',
+    bgCode: '#ECE4D5',
+    bgHighlight: '#E4D9C4',
+    bgUnread: '#EFE8DA',
+    bgHover: '#E2D7C2',
+    bgPressed: '#E0D5BE',
+    bgTexturePeak: '#C9BBA0',
+    bgVisual: '#ECE4D5',
+    textPrimary: '#171310',
+    textSecondary: '#4A4038',
+    textMuted: '#8B7F6E',
+    textDisabled: '#A79C89',
+    textInverted: '#FBF8F2',
+    actionFill: '#171310',
+    chrome: '#8B7F6E',
+    steel: '#8B7F6E',
+    signalBright: '#4A4038',
+    signalMid: '#8B7F6E',
+    signalDim: '#A79C89',
+    danger: '#171310',
+    dialogDanger: '#c4544d',
+    success: '#171310',
+    warning: '#8a6323',
+    accent: '#8a6323',
+    humanRail: '#8a6323',
+    agentRail: '#C9BBA0',
+    // GitHub's current light-mode diff text green/red (not Obsidian's
+    // #3FB950/#F85149 re-run at low contrast on a light canvas) — ~4.4:1 and
+    // ~4.6:1 against Bone's bgBase, since these ship as text color in
+    // TranscriptCard/ActivityTimeline/RoomMessageVariants, not swatches.
+    diffAdded: '#1a7f37',
+    diffRemoved: '#cf222e',
+    ledgerBright: '#171310',
+    ledgerBody: '#4A4038',
+    ledgerQuiet: '#8B7F6E',
+    ledgerGhost: '#A79C89',
+    ledgerGlow: 'transparent',
+    avatarGround: '#F3EEE4',
+    avatarInk: '#171310',
+    avatarSoft: '#8B7F6E',
+    avatarDim: '#C9BBA0',
+    agentAccent: '#8a6323',
+    borderQuiet: '#DED2BC',
+    border: '#DED2BC',
+    borderStrong: '#C9BBA0',
+    focus: '#8B7F6E',
+    selectedBorder: '#8B7F6E',
+    selection: '#E4D9C4',
+    muted: '#8B7F6E',
+    dim: '#8B7F6E',
+    gutter: '#A79C89',
+    faint: '#C9BBA0',
+    tertiary: '#A79C89',
+    borderActive: '#8B7F6E',
+    proseRegular: 'SpaceGrotesk-Regular',
+    proseItalic: 'IBMPlexSans-Italic',
+    proseSemibold: 'SpaceGrotesk-SemiBold',
+    monoRegular: 'IBMPlexMono-Regular',
+    monoItalic: 'IBMPlexMono-Italic',
+    monoSemibold: 'IBMPlexMono-SemiBold',
+    proseSize: 16,
+    proseLineHeight: 25,
+    leadSize: 16,
+    leadLineHeight: 25,
+    turnGap: 4,
+    continuationGap: 0,
+    turnPaddingVertical: 18,
+    continuationPaddingVertical: 6,
+    railWidth: 2,
+    railInset: 12,
+    proseMedium: 'SpaceGrotesk-Medium',
+    turnDivider: '#E9E1D0',
+    codeError: '#a8524f',
   },
 } as const;
 

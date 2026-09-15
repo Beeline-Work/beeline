@@ -1065,12 +1065,14 @@ CREATE TABLE IF NOT EXISTS connection_receipts (
   grant_info text,
   turn_key text,
   message_id text,
+  event_class text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS connection_receipts_connection_idx
   ON connection_receipts(connection_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
+ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 `;
 
 export async function migrate(database: SqlDatabase): Promise<void> {

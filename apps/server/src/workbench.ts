@@ -146,8 +146,12 @@ function formatBytes(bytes: number): string {
 /**
  * One batched helper usage report (one per agent turn): a ledger row per
  * record ALWAYS, and one receipt card DM per connection from the connector
- * identity to the connection's human. The turn's request id is the batch
- * key, so a turn that used a connection five times reads as one line.
+ * identity to the connection's human - but only for records the helper
+ * classed as needing the human (`eventClass`: an approval request or a vault
+ * change made on the owner's behalf; captain ruling 2026-09-15). Ordinary
+ * use stays on the key's own Workbench record and never arrives as a DM.
+ * The turn's request id is the batch key, so a turn that used a connection
+ * five times reads as one line.
  *
  * Sovereignty boundary: the receipt goes to the connection's owner only, and
  * only while that person remains a current member of the Workspace.
@@ -171,8 +175,8 @@ export async function receiveConnectionUsage(
     await database.query(
       `INSERT INTO connection_receipts(
          id,connection_id,workspace_id,owner_identity_id,agent_id,
-         operation,status_code,bytes,grant_info,turn_key
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+         operation,status_code,bytes,grant_info,turn_key,event_class
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         randomUUID(),
         connection.id,
@@ -184,12 +188,18 @@ export async function receiveConnectionUsage(
         Math.max(0, Math.round(record.bytes ?? 0)),
         record.grantId ?? null,
         input.requestId,
+        record.eventClass ?? null,
       ],
     );
   }
   for (const [reference, { connection, connector }] of byRef) {
     const records = input.usage.filter((record) => record.ref === reference);
-    const messageId = await postUsageReceiptCard(database, input, connection, connector, records);
+    // Only events the human must see become a receipt DM; the ledger rows
+    // above already carry the full record of the turn.
+    const receiptRecords = records.filter((record) => record.eventClass !== undefined);
+    const messageId = receiptRecords.length
+      ? await postUsageReceiptCard(database, input, connection, connector, receiptRecords)
+      : null;
     results.push({ connectionId: connection.id, messageId });
   }
   return results;
@@ -292,11 +302,12 @@ async function postUsageReceiptCard(
   const card = receiptCard(connector, connection, agent);
 
   // One card per agent turn: restate the existing card in place, aggregating
-  // every ledger row this turn has already written.
+  // every receipt-worthy ledger row this turn has already written.
   const existing = (
     await database.query<{ message_id: string }>(
       `SELECT message_id FROM connection_receipts
        WHERE connection_id=$1 AND turn_key=$2 AND message_id IS NOT NULL
+         AND event_class IS NOT NULL
        ORDER BY created_at DESC LIMIT 1`,
       [connection.id, input.requestId],
     )
@@ -305,7 +316,8 @@ async function postUsageReceiptCard(
     const totals = (
       await database.query<{ calls: string; total_bytes: string }>(
         `SELECT count(*)::text calls, COALESCE(SUM(bytes),0)::text total_bytes
-         FROM connection_receipts WHERE connection_id=$1 AND turn_key=$2`,
+         FROM connection_receipts
+         WHERE connection_id=$1 AND turn_key=$2 AND event_class IS NOT NULL`,
         [connection.id, input.requestId],
       )
     ).rows[0]!;

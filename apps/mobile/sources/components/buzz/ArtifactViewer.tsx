@@ -13,7 +13,6 @@ import {
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
-import { groknight } from '@/buzz/groknight';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still script off,
@@ -193,16 +192,16 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   headerTitle: {
-    ...groknight.type.bodyStrong,
-    color: groknight.textPrimary,
+    ...theme.buzz.type.bodyStrong,
+    color: theme.buzz.textPrimary,
     flex: 1,
     minWidth: 0,
   },
-  headerClose: { ...groknight.type.body, color: groknight.ledgerQuiet },
+  headerClose: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   body: { flex: 1 },
   webview: { flex: 1, backgroundColor: 'transparent' },
   markdownBody: { padding: theme.buzz.space.md },
-  markdownText: { ...groknight.type.body, color: groknight.textPrimary },
+  markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  placeholderText: { ...groknight.type.meta, color: groknight.ledgerQuiet },
+  placeholderText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
 }));

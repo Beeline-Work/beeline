@@ -189,6 +189,22 @@ describe('workbench connectors', () => {
     expect(otherView.connections).toEqual([]);
   });
 
+  it('reads the workbench when the client sends no workspace id (the settings screen path)', async () => {
+    // The Workbench screen navigates with NO route params, so the client sends
+    // workspaceId:''. It must NOT be cast to a uuid — the helpers query used to
+    // do exactly that and threw `invalid input syntax for type uuid: ""`, which
+    // surfaced as "Workbench is unavailable right now" for every member.
+    const connectorId = await pairOwnerConnector();
+    const response = await operation('readWorkbench', { workspaceId: '' });
+    expect(response.status).toBe(200);
+    const view = (await response.json()) as {
+      connectors: { connectorId: string }[];
+      catalog: unknown[];
+    };
+    expect(view.connectors.map((c) => c.connectorId)).toContain(connectorId);
+    expect(view.catalog.length).toBeGreaterThan(0);
+  });
+
   it('rejects pairing a connector that is not connectable and a helper outside the Workspace', async () => {
     expect((await operation('pairConnector', { workspaceId: WORKSPACE, connectorType: 'wallet', helperAgentId: HELPER })).status).toBe(503);
     expect(

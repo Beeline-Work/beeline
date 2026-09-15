@@ -462,6 +462,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      # The proof builds its own sideload APK when the native build was
+      # carried, and that build runs Metro. Without this the job inherits the
+      # runner's system node, which is older than metro-config's use of
+      # Array.prototype.toReversed, so `createBundleReleaseJsAndAssets` dies
+      # with "configs.toReversed is not a function" and NO release whose
+      # Android build was carried can ever be proven. Same version and cache
+      # as mobile_native_android so both legs bundle on identical node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - name: Resolve the Android SDK
         run: |
           set -euo pipefail

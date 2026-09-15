@@ -10,6 +10,7 @@ import {
 import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
+  AcpRequestTimeoutError,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -789,6 +790,12 @@ export class MonolithRoomTurnLoop {
     // throws never reaches its settle, and only this reference can dissolve
     // what the model had already written.
     let liveStream: AgentTurnStream | undefined;
+    // Corner-opened observed LIVE from the stream, held where the catch below
+    // can reach it, not only read from the final result: a timeout thrown out
+    // of runPrompt() never produces a result, so the success path's
+    // `openedACorner` check alone cannot see that the work already moved to
+    // the corner.
+    let liveCornerOpened = false;
     try {
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
@@ -933,7 +940,10 @@ export class MonolithRoomTurnLoop {
                         stream.onChunk(delta, full);
                       },
                       undefined,
-                      (calls) => trace.toolCalls(calls),
+                      (calls) => {
+                        trace.toolCalls(calls);
+                        if (openedACorner(openCornerToolCall(calls))) liveCornerOpened = true;
+                      },
                     );
                   } catch (error) {
                     promptError = error;
@@ -1088,6 +1098,40 @@ export class MonolithRoomTurnLoop {
           `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} stopped by the requester`,
         );
         await trace.finish('cancelled');
+        return;
+      }
+      // An inactivity timeout on a turn that already opened a corner is not a
+      // failure: the work moved to the corner, and the Room going quiet is the
+      // correct successful ending — the same one the success path produces when
+      // a corner-opening turn returns normally without text. Only the
+      // inactivity timeout is excused; a provider error, a crash, or a stop
+      // keeps reporting exactly as before. The timeout does real work on turns
+      // that genuinely wedge and is not lengthened or removed.
+      if (
+        liveCornerOpened &&
+        error instanceof AcpRequestTimeoutError &&
+        error.inactivity &&
+        error.method === 'session/prompt'
+      ) {
+        console.log(
+          `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
+            'inactivity timeout after opening a corner; the work continues in the corner',
+        );
+        this.options.onCornerOpened?.();
+        await liveStream?.retract().catch((retractError: unknown) => {
+          console.error(
+            `[thin-core] monolith Room ${this.options.roomId} draft retract failed:`,
+            retractError,
+          );
+        });
+        await api.execute('postAgentTurnReceipt', {
+          agentId: this.agent.publicKey,
+          roomId: this.options.roomId,
+          requestId: item.id,
+          status: 'complete',
+          generationId: this.commandContext.generationId,
+        });
+        await trace.finish('complete');
         return;
       }
       // A failed turn ends owning no live output. Only `settle` dissolves the

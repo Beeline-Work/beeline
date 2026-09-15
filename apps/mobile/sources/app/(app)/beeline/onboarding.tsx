@@ -1028,6 +1028,7 @@ export default function BuzzOnboarding() {
           <MonoButton
             labelStyle={styles.buttonLabel}
             label={signInLabel}
+            testID="onboarding-github-sign-in"
             loading={
               loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'
             }

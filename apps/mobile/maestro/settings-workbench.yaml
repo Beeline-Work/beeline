@@ -1,0 +1,21 @@
+# Release proof: the settings workbench (Connectors) is reachable from the
+# room-list deck through the workspace rail.
+appId: app.usebeeline
+name: settings-workbench
+---
+- launchApp:
+    clearState: false
+- assertVisible:
+    id: room-list
+- tapOn:
+    id: workspace-avatar-trigger
+- assertVisible:
+    id: community-rail-settings
+- tapOn:
+    id: community-rail-settings
+- assertVisible:
+    id: settings-workbench-row
+- tapOn:
+    id: settings-workbench-row
+- assertVisible:
+    id: workbench-connectors

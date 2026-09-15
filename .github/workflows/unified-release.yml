@@ -40,6 +40,11 @@ on:
         type: boolean
         default: false
         required: false
+      skip_release_proof:
+        description: Recovery only - promote mobile OTA without the emulator release proof when the Android rig is down
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   actions: write
@@ -432,8 +437,82 @@ jobs:
           path: checkpoint-helper.json
           if-no-files-found: error
 
+  release_proof:
+    # The emulator proof is a release gate, not a check: a blank-screen build
+    # must never promote its OTA (the failure class it exists to catch). It
+    # drives the rig emulator under /tmp/emulator-5554.lock through
+    # apps/mobile/scripts/release-proof.mjs, which never starts, stops, or
+    # restarts the emulator itself. The rig AVD and its signed-in session live
+    # on the beeline-android pool hosts; a host without them fails the lane
+    # loudly instead of passing vacuously.
+    needs: [initialize, mobile_native_android]
+    if: >-
+      always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
+      inputs.skip_release_proof != true &&
+      needs.initialize.outputs.run_mobile_ota == 'true' &&
+      (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success')
+    runs-on: [self-hosted, beeline-android]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Resolve the Android SDK
+        run: |
+          set -euo pipefail
+          for candidate in "${ANDROID_HOME:-}" "$HOME/Android/Sdk" /home/lunchbox/android-sdk /opt/android-sdk; do
+            if [ -n "$candidate" ] && [ -d "$candidate/platform-tools" ]; then
+              echo "ANDROID_HOME=$candidate" >> "$GITHUB_ENV"
+              echo "$candidate/platform-tools" >> "$GITHUB_PATH"
+              break
+            fi
+          done
+          test -n "${ANDROID_HOME:-}" || { echo 'Android SDK missing on runner' >&2; exit 1; }
+      - name: Download the native AAB under proof
+        if: needs.initialize.outputs.native_android == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/proof-binary
+      - name: Build the sideload APK under proof (OTA-only releases)
+        if: needs.initialize.outputs.native_android != 'true'
+        working-directory: apps/mobile
+        env:
+          ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
+          ANDROID_SIDELOAD_KEY_ALIAS: ${{ secrets.ANDROID_SIDELOAD_KEY_ALIAS }}
+          ANDROID_SIDELOAD_STORE_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_STORE_PASSWORD }}
+          ANDROID_SIDELOAD_KEY_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_KEY_PASSWORD }}
+          # The emulator is a shared rig: the build's teardown must neither kill
+          # it nor the adb server the proof itself is about to use.
+          BEELINE_ANDROID_KEEP_DEVICE: '1'
+        run: |
+          set -euo pipefail
+          npm ci
+          bash scripts/android-build.sh
+      - name: Run the emulator release proof
+        env:
+          ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
+          ANDROID_SIDELOAD_KEY_ALIAS: ${{ secrets.ANDROID_SIDELOAD_KEY_ALIAS }}
+          ANDROID_SIDELOAD_STORE_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_STORE_PASSWORD }}
+          ANDROID_SIDELOAD_KEY_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.initialize.outputs.native_android }}" = 'true' ]; then
+            node apps/mobile/scripts/release-proof.mjs --aab "$RUNNER_TEMP/proof-binary/beeline.aab"
+          else
+            node apps/mobile/scripts/release-proof.mjs --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          fi
+      - name: Preserve release-proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-proof-${{ needs.initialize.outputs.release_id }}
+          path: apps/mobile/release-proof-out/
+          if-no-files-found: error
+          retention-days: 90
+
   mobile_ota:
-    needs: [initialize, mobile_native_android, mobile_native_ios]
+    needs: [initialize, mobile_native_android, mobile_native_ios, release_proof]
     if: >-
       always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
       needs.initialize.outputs.run_mobile_ota == 'true' &&
@@ -471,7 +550,9 @@ jobs:
           path: checkpoint-mobile-ota-built.json
           if-no-files-found: error
       - uses: ./.github/actions/mobile-ota-leg
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota)
+        if: >-
+          contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
+          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
@@ -482,18 +563,32 @@ jobs:
           receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
           receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
       - name: Checkpoint OTA promotion
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota)
+        if: >-
+          contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
+          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
         run: |
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota-promoted.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
             "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota)
+        if: >-
+          contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
+          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
         with:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-promoted
           path: checkpoint-mobile-ota-promoted.json
           if-no-files-found: error
+      - name: Refuse promotion when the release proof failed
+        if: needs.release_proof.result == 'failure' && inputs.skip_release_proof != true
+        run: |
+          echo 'The emulator release proof FAILED: the build under proof does not render its surfaces.' >&2
+          echo 'OTA promotion is blocked. See the release-proof-<id> artifact for screenshots and logs.' >&2
+          echo 'To promote anyway while the rig is down, re-run with the workflow_dispatch input skip_release_proof=true —' >&2
+          echo 'the release record will be marked unproven.' >&2
+          exit 1
       - name: Locate promoted OTA evidence for a check-only retry
-        if: needs.initialize.outputs.stage_mobile_ota == 'promoted'
+        if: >-
+          needs.initialize.outputs.stage_mobile_ota == 'promoted' &&
+          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
         id: ota_promoted
         uses: actions/github-script@v7
         with:
@@ -507,13 +602,16 @@ jobs:
             if (!artifact) core.setFailed(`missing immutable artifact ${name}`);
             else core.setOutput('run_id', String(artifact.workflow_run.id));
       - uses: actions/download-artifact@v4
-        if: needs.initialize.outputs.stage_mobile_ota == 'promoted'
+        if: >-
+          needs.initialize.outputs.stage_mobile_ota == 'promoted' &&
+          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
         with:
           name: mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/mobile-ota-resume
           run-id: ${{ steps.ota_promoted.outputs.run_id }}
           github-token: ${{ github.token }}
       - name: Require rollback evidence and write checkpoint
+        if: needs.release_proof.result == 'success' || inputs.skip_release_proof == true
         run: |
           set -euo pipefail
           ledger="$RUNNER_TEMP/mobile-ota-ledger.json"
@@ -524,6 +622,7 @@ jobs:
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"checked",artifactRef})+"\n")' \
             "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
+        if: needs.release_proof.result == 'success' || inputs.skip_release_proof == true
         with:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota
           path: checkpoint-mobile-ota.json
@@ -685,7 +784,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/android-build.json
+          # The AAB rides along so the release-proof lane can install the exact
+          # store binary (bundletool re-signs it with the sideload key) instead
+          # of rebuilding an APK from source.
+          path: |
+            ${{ runner.temp }}/android-build.json
+            ${{ runner.temp }}/beeline.aab
           if-no-files-found: error
           retention-days: 1
       - name: Remove Android build output
@@ -815,7 +919,7 @@ jobs:
     # classify itself as a failed attempt, and (below) must never redispatch its
     # pinned identity — that redispatch cancelled the fresh cut that replaced it.
     if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website]
+    needs: [initialize, server, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
     permissions:
@@ -884,6 +988,7 @@ jobs:
           SERVER_RESULT: ${{ needs.server.result }}
           HELPER_RESULT: ${{ needs.helper.result }}
           MOBILE_OTA_RESULT: ${{ needs.mobile_ota.result }}
+          RELEASE_PROOF_RESULT: ${{ needs.release_proof.result }}
           MOBILE_NATIVE_ANDROID_RESULT: ${{ needs.mobile_native_android.result }}
           MOBILE_NATIVE_IOS_RESULT: ${{ needs.mobile_native_ios.result }}
           DESKTOP_RESULT: ${{ needs.desktop_installers.result }}
@@ -910,7 +1015,7 @@ jobs:
           # every component yet was classified "budget" and never published its
           # release record. When a native build ran, allow 60 minutes instead.
           budget_seconds=1200
-          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ]; then
+          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
             budget_seconds=3600
           fi
           if [ "$elapsed" -ge "$budget_seconds" ]; then
@@ -988,6 +1093,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
+          RELEASE_PROOF_UNPROVEN: ${{ inputs.skip_release_proof == true && needs.release_proof.result != 'success' }}
         run: |
           set -euo pipefail
           state="$RUNNER_TEMP/release-attempt.json"
@@ -1004,6 +1110,9 @@ jobs:
           notes="$RUNNER_TEMP/release-notes.md"
           git log --pretty='- %s (%h)' "${previous_sha:+${previous_sha}..}${RELEASE_SHA}" > "$notes"
           [ -s "$notes" ] || echo '- No component changes required.' > "$notes"
+          if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
+            echo '- Promoted with skip_release_proof=true: the emulator release proof did not run (Android rig unavailable).' >> "$notes"
+          fi
           if [ "$RUN_DESKTOP" = true ]; then
             manifest="$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
           else
@@ -1074,7 +1183,14 @@ jobs:
           --output "$RUNNER_TEMP/release-notification.json"
       - name: Finalize successful delivery after every selected promotion and record
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
-        run: node scripts/unified-release.mjs finalize --state "$RUNNER_TEMP/release-attempt.json" --outcome success
+        env:
+          RELEASE_PROOF_UNPROVEN: ${{ inputs.skip_release_proof == true && needs.release_proof.result != 'success' }}
+        run: |
+          args=(--state "$RUNNER_TEMP/release-attempt.json" --outcome success)
+          if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
+            args+=(--unproven "mobile OTA promoted with skip_release_proof=true; the emulator release proof did not run")
+          fi
+          node scripts/unified-release.mjs finalize "${args[@]}"
       - name: Publish the one successful release index
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         uses: actions/upload-artifact@v4

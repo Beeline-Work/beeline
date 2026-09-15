@@ -63,25 +63,43 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionDesc} testID="workbench-tools-desc">
             Something your agents can use. Pair it once.
           </Text>
-          {connectors.map((connector) => (
-            <SettingsRow
-              key={connector.id}
-              description={connectorDescription(connector)}
-              disabled={!connector.available || connector.status === 'connected'}
-              onPress={
-                connector.available && connector.status !== 'connected'
-                  ? () =>
-                      router.push({
-                        pathname: '/beeline/settings/workbench/connect',
-                        params: { workspaceId, viewerId, connectorId: connector.id },
-                      } as unknown as Href)
-                  : undefined
-              }
-              testID={`workbench-connector-${connector.id}`}
-              title={connector.name}
-              value={connectorRowValue(connector)}
-            />
-          ))}
+          {connectors.map((connector) => {
+            // The wallet is not a pairing flow: tapping it IS the intent, so
+            // the row opens the wallet screen itself (mock §Screens 1).
+            const isWallet = connector.id === 'wallet';
+            const walletOnPress = isWallet
+              ? () =>
+                  router.push({
+                    pathname: '/beeline/settings/workbench/wallet',
+                    params: { workspaceId },
+                  } as unknown as Href)
+              : undefined;
+            return (
+              <SettingsRow
+                key={connector.id}
+                action={isWallet ? 'create' : undefined}
+                description={connectorDescription(connector)}
+                disabled={
+                  !isWallet &&
+                  (!connector.available || connector.status === 'connected')
+                }
+                onPress={
+                  isWallet
+                    ? walletOnPress
+                    : connector.available && connector.status !== 'connected'
+                      ? () =>
+                          router.push({
+                            pathname: '/beeline/settings/workbench/connect',
+                            params: { workspaceId, viewerId, connectorId: connector.id },
+                          } as unknown as Href)
+                      : undefined
+                }
+                testID={`workbench-connector-${connector.id}`}
+                title={connector.name}
+                value={isWallet ? undefined : connectorRowValue(connector)}
+              />
+            );
+          })}
         </View>
         <View testID="workbench-connections">
           <Text style={styles.sectionLabel} testID="workbench-keys-head">

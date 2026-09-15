@@ -105,6 +105,16 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
+import type {
+  GrantWalletDelegationInput,
+} from '@beeline/api-contract/wallet';
+import {
+  createWallet,
+  readWallet,
+  sendFromWallet,
+  grantWalletDelegation,
+  walletBinding,
+} from './wallet.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { closeCornerState } from './corner-close.js';
 import {
@@ -495,6 +505,18 @@ function projectedMessage(
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
+    case 'wallet-tx':
+      return { ...base, walletTx: row.card as NonNullable<RoomViewMessage['walletTx']> };
+    case 'wallet-insufficient':
+      return {
+        ...base,
+        walletInsufficient: row.card as NonNullable<RoomViewMessage['walletInsufficient']>,
+      };
+    case 'wallet-delegation':
+      return {
+        ...base,
+        walletDelegation: row.card as NonNullable<RoomViewMessage['walletDelegation']>,
+      };
     case 'target-branch':
       return { ...base, targetBranch: row.card as NonNullable<RoomViewMessage['targetBranch']> };
     case 'github-event':
@@ -2578,6 +2600,31 @@ export class PhoneService {
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
         return undefined as Output<Name>;
+      case 'createWallet':
+        return (await createWallet(
+          this.database,
+          viewerId,
+          (input as Input<'createWallet'>).workspaceId,
+        )) as Output<Name>;
+      case 'readWallet':
+        return (await readWallet(
+          this.database,
+          viewerId,
+          (input as Input<'readWallet'>).workspaceId,
+        )) as Output<Name>;
+      case 'sendFromWallet':
+        return (await sendFromWallet(
+          this.database,
+          viewerId,
+          (input as Input<'sendFromWallet'>).workspaceId,
+          input as unknown as Input<'sendFromWallet'>,
+        )) as Output<Name>;
+      case 'grantWalletDelegation':
+        return (await grantWalletDelegation(
+          this.database,
+          viewerId,
+          (input as Input<'grantWalletDelegation'>).workspaceId,
+        )) as Output<Name>;
       case 'readConnectionDetail':
         return (await this.readConnectionDetail(
           input as Input<'readConnectionDetail'>,
@@ -5221,9 +5268,28 @@ export class PhoneService {
         [input.workspaceId, viewerId],
       )
     ).rows;
+    const walletRow = (
+      await this.database.query<{ created_at: Date; delegation_expires_at: Date | null }>(
+        `SELECT created_at,delegation_expires_at FROM wallet_bindings WHERE identity_id=$1`,
+        [viewerId],
+      )
+    ).rows[0];
     return {
       workspaceId: input.workspaceId,
       catalog: connectorCatalog(),
+      ...(walletRow
+        ? {
+            wallet: {
+              createdAt: seconds(walletRow.created_at),
+              delegationActive:
+                walletRow.delegation_expires_at !== null &&
+                walletRow.delegation_expires_at.getTime() > Date.now(),
+              delegationExpiresAt: walletRow.delegation_expires_at
+                ? seconds(walletRow.delegation_expires_at)
+                : null,
+            },
+          }
+        : {}),
       helpers: helpers.map((row) => ({
         agentId: row.agent_id,
         name: row.name,
@@ -6029,5 +6095,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'unpairConnector',
   'readConnectionDetail',
   'revokeConnectionGrants',
+  'createWallet',
+  'readWallet',
+  'sendFromWallet',
+  'grantWalletDelegation',
   'deleteAccount',
 ]);

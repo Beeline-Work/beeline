@@ -7,6 +7,22 @@ import type {
 } from './agent-grants.js';
 import type { CornerLifecycleView } from './phone-types.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
+import type {
+  WalletPayInput,
+  WalletSendOutcome,
+  WalletSwapInput,
+  WalletSwapResult,
+  WalletToolBalanceInput,
+  WalletToolBalanceResult,
+  WalletToolChainsInput,
+  WalletToolChainsResult,
+  WalletToolHistoryInput,
+  WalletToolHistoryResult,
+  WalletToolQuoteInput,
+  WalletToolQuoteResult,
+  WalletToolState,
+  WalletToolStateInput,
+} from './wallet.js';
 
 /** Maximum number of consecutive agent-authored turns in one Room exchange. */
 export const AGENT_TO_AGENT_HOP_CAP = 3;
@@ -180,6 +196,13 @@ export type DaemonOperationMap = {
   createCorner: Operation<CreateCornerInput, CornerResult>;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
+  getWalletToolState: Operation<WalletToolStateInput, WalletToolState>;
+  getWalletToolBalance: Operation<WalletToolBalanceInput, WalletToolBalanceResult>;
+  getWalletToolChains: Operation<WalletToolChainsInput, WalletToolChainsResult>;
+  getWalletToolHistory: Operation<WalletToolHistoryInput, WalletToolHistoryResult>;
+  getWalletToolQuote: Operation<WalletToolQuoteInput, WalletToolQuoteResult>;
+  walletPay: Operation<WalletPayInput, WalletSendOutcome>;
+  walletSwap: Operation<WalletSwapInput, WalletSwapResult>;
 };
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
 export type RoomInput = { readonly roomId: string };

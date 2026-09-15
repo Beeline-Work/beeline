@@ -81,15 +81,18 @@ describe('Workbench settings screen', () => {
     expect(squire.props.title).toBe('Trusty Squire');
     expect(squire.props.value).toBe('connect');
     expect(squire.props.disabled).toBe(false);
-    expect(renderer.root.findByProps({ testID: 'workbench-connector-wallet' }).props.value).toBe(
-      'soon',
-    );
+    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet' });
+    // The wallet is not a pairing flow: the row IS the intent (mock §Screens 1).
+    expect(wallet.props.value).toBeUndefined();
+    expect(wallet.props.action).toBe('create');
+    expect(wallet.props.disabled).toBe(false);
+    expect(wallet.props.onPress).toBeTypeOf('function');
     expect(
       renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.value,
     ).toBe('soon');
-    expect(renderer.root.findByProps({ testID: 'workbench-connector-wallet' }).props.disabled).toBe(
-      true,
-    );
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.disabled,
+    ).toBe(true);
   });
 
   it('heads the two lists Tools and Keys with their one-line descriptions', async () => {

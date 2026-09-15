@@ -125,6 +125,40 @@ function grantRequest(value: unknown): boolean {
   );
 }
 
+function walletTx(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    (item.direction === 'in' || item.direction === 'out') &&
+    typeof item.amountText === 'string' &&
+    typeof item.counterparty === 'string' &&
+    typeof item.chain === 'string' &&
+    typeof item.balanceAfterUsd === 'string' &&
+    (item.txUrl === undefined || typeof item.txUrl === 'string') &&
+    (item.agentName === undefined || typeof item.agentName === 'string' || item.agentName === null),
+  );
+}
+
+function walletInsufficient(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    typeof item.needed === 'string' &&
+    typeof item.asset === 'string' &&
+    typeof item.chain === 'string' &&
+    (item.available === undefined || typeof item.available === 'string' || item.available === null) &&
+    (item.agentName === undefined || typeof item.agentName === 'string' || item.agentName === null) &&
+    (item.reason === undefined || typeof item.reason === 'string'),
+  );
+}
+
+function walletDelegation(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item && integer(item.expiresAt) && integer(item.ttlHours),
+  );
+}
+
 function activity(value: unknown): boolean {
   const item = record(value);
   const rollup = item?.rollup === undefined ? undefined : record(item.rollup);
@@ -434,6 +468,9 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.corner === undefined || messageCorner(item.corner)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
     (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
+    (item.walletTx === undefined || walletTx(item.walletTx)) &&
+    (item.walletInsufficient === undefined || walletInsufficient(item.walletInsufficient)) &&
+    (item.walletDelegation === undefined || walletDelegation(item.walletDelegation)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
     (item.githubEvent === undefined || githubEvent(item.githubEvent)) &&
     (item.relay === undefined ||

@@ -246,6 +246,30 @@ export type RoomViewMessage = {
     readonly targetBranch?: string;
   };
   /** A daemon-authored repository lifecycle fact, rendered as an actionable card. */
+  /** The @wallet ledger line: every transaction, in and out. */
+  readonly walletTx?: {
+    readonly direction: 'in' | 'out';
+    readonly amountText: string;
+    readonly counterparty: string;
+    readonly chain: string;
+    readonly balanceAfterUsd: string;
+    readonly txUrl?: string;
+    readonly agentName?: string | null;
+  };
+  /** The one non-transaction @wallet message: a refused payment. */
+  readonly walletInsufficient?: {
+    readonly agentName?: string | null;
+    readonly needed: string;
+    readonly available?: string | null;
+    readonly asset: string;
+    readonly chain: string;
+    readonly reason?: string;
+  };
+  /** The delegation grant/renewal fact in the @wallet thread. */
+  readonly walletDelegation?: {
+    readonly expiresAt: number;
+    readonly ttlHours: number;
+  };
   readonly daemonFact?: {
     readonly type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned' | 'corner-open';
     readonly cornerId: string;
@@ -297,6 +321,11 @@ export type AgentGrantView = {
    */
   readonly script?: CommandGrantScript;
 };
+
+/** One @wallet ledger card (the mobile twin of the server card payload). */
+export type WalletTxCardView = NonNullable<RoomViewMessage['walletTx']>;
+export type WalletInsufficientCardView = NonNullable<RoomViewMessage['walletInsufficient']>;
+export type WalletDelegationCardView = NonNullable<RoomViewMessage['walletDelegation']>;
 
 export type GrantRequestCardView = {
   readonly agent: RoomViewIdentity;

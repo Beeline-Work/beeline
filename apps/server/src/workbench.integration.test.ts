@@ -112,6 +112,17 @@ describe('workbench connectors', () => {
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
 
+  async function connectionReceiptCards() {
+    return (
+      await database.query<{ author_id: string; text: string; card_type: string }>(
+        `SELECT m.author_id,m.text,m.card_type FROM messages m
+         JOIN rooms r ON r.id=m.room_id
+         WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND m.card_type='connection-receipt'`,
+        [WORKSPACE],
+      )
+    ).rows;
+  }
+
   async function pairOwnerConnector() {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
@@ -191,9 +202,9 @@ describe('workbench connectors', () => {
     ).toBe(503);
   });
 
-  it('posts usage receipts as DMs from the connector identity, batched per agent turn', async () => {
+  it('records ordinary usage on the key but no longer DMs it to the owner', async () => {
     const connectorId = await pairOwnerConnector();
-    const requestId = createHash('sha256').update('turn-1').digest('hex');
+    const requestId = createHash('sha256').update('turn-quiet').digest('hex');
     await daemonOperation('postConnectionUsage', {
       requestId,
       agentId: HELPER,
@@ -205,12 +216,6 @@ describe('workbench connectors', () => {
           statusCode: 200,
           bytes: 1200,
         },
-      ],
-    });
-    await daemonOperation('postConnectionUsage', {
-      requestId,
-      agentId: HELPER,
-      usage: [
         {
           ref: 'github.com/acme/tooling',
           service: 'github',
@@ -220,16 +225,86 @@ describe('workbench connectors', () => {
         },
       ],
     });
-    const cards = await database.query<{ author_id: string; text: string; card_type: string }>(
-      `SELECT m.author_id,m.text,m.card_type FROM messages m
-       JOIN rooms r ON r.id=m.room_id
-       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND m.card_type='connection-receipt'`,
-      [WORKSPACE],
+    // The key's own record keeps every call.
+    const rows = await database.query<{ operation: string; event_class: string | null }>(
+      `SELECT r.operation,r.event_class FROM connection_receipts r
+       JOIN workspace_connections c ON c.id=r.connection_id
+       WHERE c.connector_id=$1::uuid AND r.turn_key=$2`,
+      [connectorId, requestId],
     );
-    expect(cards.rows).toHaveLength(1);
-    expect(cards.rows[0]!.author_id).toBe(connectorIdentityId('trusty-squire'));
-    expect(cards.rows[0]!.text).toContain('@bee used Acme tooling');
-    expect(cards.rows[0]!.text).toContain('2 calls');
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.every((row) => row.event_class === null)).toBe(true);
+    // And the owner receives no receipt DM at all.
+    const cards = await connectionReceiptCards();
+    expect(cards).toHaveLength(0);
+  });
+
+  it('DMs exactly one receipt card for an approval-class event', async () => {
+    const connectorId = await pairOwnerConnector();
+    const requestId = createHash('sha256').update('turn-approval').digest('hex');
+    await daemonOperation('postConnectionUsage', {
+      requestId,
+      agentId: HELPER,
+      usage: [
+        {
+          ref: 'github.com/acme/tooling',
+          service: 'github',
+          operation: 'fetch_credential github.com/acme/tooling',
+          statusCode: 200,
+          bytes: 120,
+          eventClass: 'approval',
+        },
+        {
+          ref: 'github.com/acme/tooling',
+          service: 'github',
+          operation: 'list_files',
+          statusCode: 200,
+          bytes: 800,
+        },
+      ],
+    });
+    const cards = await connectionReceiptCards();
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(cards[0]!.text).toContain('@bee used Acme tooling');
+    // The card is about the approval-class event, not the ordinary use.
+    expect(cards[0]!.text).toContain('fetch_credential');
+  });
+
+  it('aggregates a second approval-class report into the turn\'s existing card', async () => {
+    const connectorId = await pairOwnerConnector();
+    const requestId = createHash('sha256').update('turn-batched').digest('hex');
+    const approval = {
+      ref: 'github.com/acme/tooling',
+      service: 'github',
+      operation: 'grant_app_access github.com/acme/tooling',
+      statusCode: 200,
+      bytes: 100,
+      eventClass: 'approval' as const,
+    };
+    await daemonOperation('postConnectionUsage', {
+      requestId,
+      agentId: HELPER,
+      usage: [approval],
+    });
+    await daemonOperation('postConnectionUsage', {
+      requestId,
+      agentId: HELPER,
+      usage: [
+        { ...approval, bytes: 200 },
+        // Ordinary use in the same turn neither opens nor restates a card.
+        {
+          ref: 'github.com/acme/tooling',
+          service: 'github',
+          operation: 'list_files',
+          statusCode: 200,
+          bytes: 800,
+        },
+      ],
+    });
+    const cards = await connectionReceiptCards();
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.text).toContain('2 calls');
   });
 
   it('keeps connection detail, ledger, and management sovereign', async () => {
@@ -345,7 +420,12 @@ describe('workbench connectors', () => {
       requestId: createHash('sha256').update('turn-3').digest('hex'),
       agentId: HELPER,
       usage: [
-        { ref: 'github.com/acme/tooling', service: 'github', operation: 'get_pull_request' },
+        {
+          ref: 'github.com/acme/tooling',
+          service: 'github',
+          operation: 'fetch_credential github.com/acme/tooling',
+          eventClass: 'approval',
+        },
       ],
     });
     const room = await database.query<{ id: string }>(

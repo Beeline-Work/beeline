@@ -42,13 +42,35 @@ function getPlatform(): { OS: string } | null {
   }
 }
 
-function loadModule(): SpeechRecognitionModule | null {
+function nativeSpeechModulePresent(): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('expo-speech-recognition') as SpeechRecognitionModule;
+    const core = require('expo-modules-core');
+    if (typeof core?.requireOptionalNativeModule !== 'function') return false;
+    return Boolean(core.requireOptionalNativeModule('ExpoSpeechRecognition'));
+  } catch {
+    return false;
+  }
+}
+
+function loadModule(): SpeechRecognitionModule | null {
+  // A binary built before this native module existed still RESOLVES the JS
+  // package, and requiring it there throws `Cannot find native module
+  // 'ExpoSpeechRecognition'` from inside the package — including after the
+  // throw escapes this frame — which took the whole Room screen down on the
+  // captain's runtime-23 Android (2026-09-14, blank screen). Ask
+  // expo-modules-core whether the native half exists BEFORE requiring the
+  // package at all; it answers null instead of throwing.
+  if (!nativeSpeechModulePresent()) return null;
+  let mod: SpeechRecognitionModule | undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mod = require('expo-speech-recognition') as SpeechRecognitionModule;
   } catch {
     return null;
   }
+  if (!mod || !mod.ExpoSpeechRecognitionModule) return null;
+  return mod;
 }
 
 export function getRecognitionModule(): SpeechRecognitionInterface | null {

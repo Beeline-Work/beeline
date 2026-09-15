@@ -445,12 +445,17 @@ jobs:
     # restarts the emulator itself. The rig AVD and its signed-in session live
     # on the beeline-android pool hosts; a host without them fails the lane
     # loudly instead of passing vacuously.
+    # The proof runs whenever an update will be promoted: a native Android
+    # build that was skipped because it was not needed (carried forward or
+    # already checkpointed) is a perfectly good state to proof against — the
+    # proof builds its own sideload APK for an OTA-only release. Only a
+    # native build that genuinely FAILED stops the proof.
     needs: [initialize, mobile_native_android]
     if: >-
       always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
       inputs.skip_release_proof != true &&
       needs.initialize.outputs.run_mobile_ota == 'true' &&
-      (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success')
+      needs.mobile_native_android.result != 'failure'
     runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
     steps:
@@ -577,11 +582,12 @@ jobs:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-promoted
           path: checkpoint-mobile-ota-promoted.json
           if-no-files-found: error
-      - name: Refuse promotion when the release proof failed
-        if: needs.release_proof.result == 'failure' && inputs.skip_release_proof != true
+      - name: Refuse promotion unless the release proof succeeded
+        if: needs.release_proof.result != 'success' && inputs.skip_release_proof != true
         run: |
-          echo 'The emulator release proof FAILED: the build under proof does not render its surfaces.' >&2
-          echo 'OTA promotion is blocked. See the release-proof-<id> artifact for screenshots and logs.' >&2
+          echo "The emulator release proof did not succeed (result: ${{ needs.release_proof.result }})." >&2
+          echo 'A proof that did not run is not a proof: OTA promotion is blocked.' >&2
+          echo 'If the proof ran and failed, see the release-proof-<id> artifact for screenshots and logs.' >&2
           echo 'To promote anyway while the rig is down, re-run with the workflow_dispatch input skip_release_proof=true —' >&2
           echo 'the release record will be marked unproven.' >&2
           exit 1

@@ -594,6 +594,22 @@ export default function BuzzIdentitySettings() {
           </View>
         )}
 
+        {monolithEnabled && (
+          <View style={styles.section} testID="workbench-section">
+            <Text style={styles.sectionLabel}>Workbench</Text>
+            <TouchableOpacity
+              accessibilityLabel="Open your Workbench"
+              accessibilityRole="button"
+              onPress={() => router.push('/beeline/settings/workbench' as never)}
+              style={styles.row}
+              testID="settings-workbench-row"
+            >
+              <Text style={styles.rowTitle}>Connections</Text>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {pushSupported ? (
           <View style={styles.section} testID="notifications-section">
             <Text style={styles.sectionLabel}>Notifications</Text>

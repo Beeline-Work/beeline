@@ -124,7 +124,15 @@ export function ConversationComposer({
   });
   const isListening = speech.state === 'listening';
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
-  const sendDisabled = disabled || !(canSend ?? Boolean(value.trim())) || isListening;
+  const hasSomethingToSend = canSend ?? Boolean(value.trim());
+  const sendDisabled = disabled || !hasSomethingToSend || isListening;
+  // The trailing control is mic XOR send, in one slot: while dictation is live
+  // the control stays the listening/stop control even as partial transcript
+  // fills the input; without speech, or once there is something to send, the
+  // send control shows (disabled when nothing is sendable), so the corner is
+  // never empty.
+  const showMic = speechAvailable && (isListening || !hasSomethingToSend);
+  const showSend = !showMic;
 
   // When listening, show the status line with optional partial text.
   const statusLine: string =
@@ -331,7 +339,7 @@ export function ConversationComposer({
             </View>
           ) : null}
         </View>
-        {speechAvailable ? (
+        {showMic && speechAvailable ? (
           <TouchableOpacity
             accessibilityLabel={
               isListening
@@ -372,6 +380,7 @@ export function ConversationComposer({
             />
           </TouchableOpacity>
         ) : null}
+        {showSend ? (
         <Pressable
           accessibilityLabel={armed ? 'Release to stop this turn' : 'Send message'}
           accessibilityHint={
@@ -412,6 +421,7 @@ export function ConversationComposer({
             </Text>
           )}
         </Pressable>
+        ) : null}
       </View>
       {statusLine ? (
         <TouchableOpacity
@@ -447,7 +457,9 @@ const styles = StyleSheet.create((theme) => ({
   micButton: {
     width: 26,
     height: 26,
-    marginLeft: 0,
+    // Same slot and size as the send control it swaps with, so the input's
+    // width never jumps on the mic<->send exchange.
+    marginLeft: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -584,7 +596,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   input: {
     ...theme.buzz.type.body,
-    flex: 1,
+    // Android sizes the field from its explicit `{ height, maxHeight }`.
+    // Yoga's column parent makes `flex: 1` a HEIGHT flex (flexBasis 0 wins
+    // over the explicit height), which pinned the field to one line and
+    // clipped every line above the caret; the width comes from the parent's
+    // default cross-axis stretch instead. iOS grows natively and web's flex
+    // axis is width, so both keep flex: 1.
+    ...Platform.select({ android: {}, default: { flex: 1 } }),
     minWidth: 0,
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
     color: theme.buzz.textSecondary,

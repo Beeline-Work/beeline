@@ -834,7 +834,7 @@ describe('the ledger — the byline says who is talking', () => {
     const role = merged(renderer.root.findByProps({ testID: 'chat-byline-role' }));
     expect(role.fontFamily).toBe('IBMPlexMono-Regular');
     expect(role.fontSize).toBe(10);
-    expect(role.textTransform).toBe('uppercase');
+    expect(role.textTransform).toBeUndefined();
     const stamp = merged(renderer.root.findByProps({ testID: 'chat-byline-stamp' }));
     expect(stamp.fontFamily).toBe('IBMPlexMono-Regular');
     expect(stamp.fontSize).toBe(10);

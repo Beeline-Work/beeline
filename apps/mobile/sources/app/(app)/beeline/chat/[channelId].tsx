@@ -114,6 +114,7 @@ import {
   resolveComposerMentions,
   sectionRoomParticipants,
   selectedMentionAgentPubkey,
+  shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -202,7 +203,11 @@ import {
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
 } from '@/buzz/message-reply';
-import { mentionKeyboardAction, transcriptKeyboardDismissMode } from '@/buzz/composer-keyboard';
+import {
+  composerBottomPadding,
+  mentionKeyboardAction,
+  transcriptKeyboardDismissMode,
+} from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
@@ -511,10 +516,11 @@ export default function BuzzChat() {
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
   const [addingMembers, setAddingMembers] = useState(false);
-  /** The Workspace roster behind the member picker; null while its read is in flight. */
+  /** The Workspace roster behind member and mention pickers; null until the first scoped read. */
   const [workspaceRoster, setWorkspaceRoster] = useState<Awaited<
     ReturnType<NonNullable<typeof roomClient>['workspace']>
   > | null>(null);
+  const workspaceRosterScopeRef = useRef<string | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
@@ -1131,19 +1137,36 @@ export default function BuzzChat() {
   // The picker's candidates are the WORKSPACE roster minus this Room's
   // members. The old picker filtered this Room's own member list, so its
   // "add" section was always empty and the only visible path led to the
-  // pairing command (captain report C74). Read once per open; the sheet
-  // shows a loader until it lands and any failure inline.
+  // pairing command (captain report C74). The transcript reads the Workspace
+  // roster once on entry so every agent byline can name its model. Later sheet
+  // refreshes keep the last roster visible until the fresh response lands.
   useEffect(() => {
-    if ((!participantPickerVisible && !rosterVisible) || !roomClient || !activeCommunityId) return;
-    let cancelled = false;
+    workspaceRosterScopeRef.current = null;
     setWorkspaceRoster(null);
+  }, [activeCommunityId]);
+  useEffect(() => {
+    const rosterSurfaceVisible = participantPickerVisible || rosterVisible;
+    if (!roomClient || !activeCommunityId) return;
+    if (
+      !shouldReadWorkspaceRoster({
+        activeWorkspaceId: activeCommunityId,
+        cachedWorkspaceId: workspaceRosterScopeRef.current,
+        rosterSurfaceVisible,
+      })
+    )
+      return;
+    let cancelled = false;
     roomClient
       .workspace(activeCommunityId)
       .then((view) => {
-        if (!cancelled) setWorkspaceRoster(view);
+        if (!cancelled) {
+          workspaceRosterScopeRef.current = activeCommunityId;
+          setWorkspaceRoster(view);
+        }
       })
       .catch((err) => {
-        if (!cancelled) setMembershipError(`Could not read the Workspace roster: ${String(err)}`);
+        if (!cancelled && rosterSurfaceVisible)
+          setMembershipError(`Could not read the Workspace roster: ${String(err)}`);
       });
     return () => {
       cancelled = true;
@@ -1210,6 +1233,18 @@ export default function BuzzChat() {
       }),
     );
   }, [roomParticipants, workspaceRoster]);
+  const workspaceAgentModelByPubkey = useMemo(
+    () =>
+      new Map(
+        (workspaceRoster?.workspace.id === activeCommunityId ? workspaceRoster.agents : []).flatMap(
+          (agent) => {
+            const model = agent.model?.trim();
+            return model ? [[agent.identity.pubkey, model] as const] : [];
+          },
+        ),
+      ),
+    [activeCommunityId, workspaceRoster],
+  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1987,6 +2022,7 @@ export default function BuzzChat() {
   // runs, preserving the old offset as an empty gap. Capture the verdict in
   // render, including the two independently mounted status lines.
   const keyboardHeight = useKeyboardState((state) => state.height);
+  const composerBottomInset = composerBottomPadding(insets.bottom, keyboardHeight);
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
     cornerLiveBar ? 'corner' : 'no-corner',
@@ -3602,6 +3638,13 @@ export default function BuzzChat() {
       return (
         <OrdinaryLedgerMessage
           message={item}
+          agentModel={
+            item.authorIdentity?.kind === 'agent'
+              ? workspaceAgentModelByPubkey.get(item.authorIdentity.pubkey)
+              : item.pubkey
+                ? workspaceAgentModelByPubkey.get(item.pubkey)
+                : undefined
+          }
           desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
@@ -3657,6 +3700,7 @@ export default function BuzzChat() {
       cacheViewerPubkey,
       roomRepository,
       roomParticipants,
+      workspaceAgentModelByPubkey,
       targetBranchActionId,
       targetBranchNotice,
       viewerChannelRole,
@@ -3754,7 +3798,6 @@ export default function BuzzChat() {
         <KeyboardAvoidingView
           style={styles.container}
           behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -4088,7 +4131,7 @@ export default function BuzzChat() {
               </Text>
             </View>
           ) : (
-            <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={[styles.inputBar, { paddingBottom: composerBottomInset }]}>
               {slashMenuVisible &&
                 (() => {
                   const mentionAgent = mentionSlashAgentPubkey

@@ -644,6 +644,15 @@ export type ConnectionDetail = {
   readonly ledger: readonly ConnectionLedgerEntry[];
 };
 
+/**
+ * What one usage event means to the human who owns the key (captain ruling
+ * 2026-09-15): only approval requests (a payment, a credential read in
+ * clear, a host added to a key) and vault changes made on the owner's behalf
+ * reach them as a receipt DM. Ordinary use carries no class and stays on the
+ * key's own Workbench record.
+ */
+export type ConnectionUsageEventClass = 'approval' | 'vault-change';
+
 /** Input to postConnectionUsage: one batched usage report per agent turn. */
 export type ConnectionUsageRecord = {
   readonly ref: string;
@@ -653,6 +662,8 @@ export type ConnectionUsageRecord = {
   readonly bytes: number;
   readonly grantId?: string;
   readonly grantLabel?: string;
+  /** Absent means ordinary use: recorded, never DM'd to the owner. */
+  readonly eventClass?: ConnectionUsageEventClass;
 };
 
 /** The overall usage report for one agent turn. */

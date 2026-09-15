@@ -18,6 +18,8 @@ type ActivityTimelineProps = {
   active?: boolean;
   items: readonly AgentActivityItem[];
   handle?: string;
+  /** Model text shown in the agent byline; defaults to the legacy role label. */
+  role?: string;
   stamp?: string;
   testID?: string;
   messageDraft?: string;
@@ -144,6 +146,7 @@ function activitySummary(rows: readonly ToolCallRow[], active: boolean, count: n
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
   handle,
+  role = 'agent',
   items,
   stamp,
   testID,
@@ -175,7 +178,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   return (
     <View style={styles.timeline} testID={testID}>
       {handle ? (
-        <LedgerBylineView byline={{ name: handle, role: 'agent', stamp: stamp ?? '', mark }} />
+        <LedgerBylineView byline={{ name: handle, role, stamp: stamp ?? '', mark }} />
       ) : null}
       {turn.narration.map((narration, index) => (
         <MonoMarkdown

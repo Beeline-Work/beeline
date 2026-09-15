@@ -94,6 +94,30 @@ describe('using-beeline Room guidance', () => {
   });
 });
 
+describe('using-beeline "Tools and the Workbench" section', () => {
+  const markdown = usingBeelineSkillMarkdown('test-release');
+
+  it('gives the agent the tool/key vocabulary and what each known tool is FOR', () => {
+    expect(markdown).toContain('## Tools and the Workbench');
+    expect(markdown).toContain('A **tool** is something you can use once a human pairs it');
+    expect(markdown).toContain('a **key** is the credential that tool holds for that human');
+    expect(markdown).toContain('Trusty Squire - vaulted credentials and a browser that signs in');
+    expect(markdown).toContain('Wallet and Tailscale');
+    expect(markdown).toContain('not yet available');
+  });
+
+  it('holds the never-pair / never-ask rule and names the exact path', () => {
+    expect(markdown).toContain('You NEVER pair a tool and never ask for a raw credential in chat.');
+    expect(markdown).toContain('Settings → Workbench → Tools');
+  });
+
+  it('holds the key-sovereignty rule', () => {
+    expect(markdown).toContain(
+      'they belong to the human who provisioned them. You cannot use another member\'s key and must not ask a member to share one.',
+    );
+  });
+});
+
 describe('using-beeline "Showing a mock" section', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 

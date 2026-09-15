@@ -2,6 +2,19 @@ export type MentionableAgent = { pubkey: string; name: string; handle?: string }
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 
+export function shouldReadWorkspaceRoster({
+  activeWorkspaceId,
+  cachedWorkspaceId,
+  rosterSurfaceVisible,
+}: {
+  activeWorkspaceId?: string | null;
+  cachedWorkspaceId?: string | null;
+  rosterSurfaceVisible: boolean;
+}): boolean {
+  if (!activeWorkspaceId) return false;
+  return rosterSurfaceVisible || cachedWorkspaceId !== activeWorkspaceId;
+}
+
 export type MentionCandidate = {
   name: string;
   handle: string;

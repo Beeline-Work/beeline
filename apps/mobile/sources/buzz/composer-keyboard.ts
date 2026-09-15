@@ -33,3 +33,14 @@ export type TranscriptKeyboardDismissMode = 'interactive' | 'on-drag';
 export function transcriptKeyboardDismissMode(os: string): TranscriptKeyboardDismissMode {
   return os === 'ios' ? 'interactive' : 'on-drag';
 }
+
+const COMPOSER_EDGE_GAP = 8;
+
+/**
+ * The software keyboard already covers the device's bottom unsafe area. Keep
+ * the home-indicator/navigation inset while the keyboard is closed, then use
+ * only the ordinary composer gap while it is open.
+ */
+export function composerBottomPadding(safeAreaBottom: number, keyboardHeight: number): number {
+  return keyboardHeight > 0 ? COMPOSER_EDGE_GAP : Math.max(safeAreaBottom, COMPOSER_EDGE_GAP);
+}

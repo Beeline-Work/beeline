@@ -183,8 +183,13 @@ describe('system-line producers', () => {
         MANAGER,
       );
       await phone.execute('addRoomMember', { roomId: ROOM, memberId: ADDED_AGENT }, MANAGER);
-      expect((await lines(database)).map((line) => line.text)).toEqual([
-        '@scout joined · invited by @manager',
+      expect(await lines(database)).toEqual([]);
+      expect(await workspaceLineCounts(database, ['workspace-member-joined'])).toEqual([
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: '@scout joined · invited by @manager',
+          count: 5,
+        },
       ]);
       expect(
         (
@@ -342,11 +347,11 @@ describe('system-line producers', () => {
     try {
       const phone = new PhoneService(database, 'http://local.test');
       await Promise.all([
-        phone.execute('updateRoom', { roomId: ROOM, visibility: 'public' }, OWNER),
-        phone.execute('updateRoom', { roomId: ROOM, visibility: 'public' }, OWNER),
+        phone.execute('updateRoom', { roomId: ROOM, visibility: 'invite-only' }, OWNER),
+        phone.execute('updateRoom', { roomId: ROOM, visibility: 'invite-only' }, OWNER),
       ]);
       expect((await lines(database)).map((line) => line.text)).toEqual([
-        '@owner changed room visibility to public',
+        '@owner changed room visibility to invite-only',
       ]);
     } finally {
       await database.close();

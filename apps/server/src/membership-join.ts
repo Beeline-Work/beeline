@@ -252,15 +252,17 @@ export async function joinRooms(
         cardType: 'workspace-member-joined',
       });
     }
-    // A Workspace arrival is also a Room arrival when the public-Room
-    // projection adds it. The shared Room line owns the subscribed event;
-    // the Workspace-level announcement above is an unkinded ledger fact, so
-    // one arrival cannot wake the same Room subscriber twice.
-    for (const roomId of roomIds)
-      await systemLine(transaction, {
-        roomId,
-        ...line,
-      });
+    // Auto-joining public Rooms is only a membership projection of the
+    // Workspace arrival. Announce that arrival once per existing person in
+    // their @system DM, not again in every projected Room. An explicit Room
+    // join still belongs in that Room and keeps its subscribed `joined` event.
+    if (!input.workspaceJoined) {
+      for (const roomId of roomIds)
+        await systemLine(transaction, {
+          roomId,
+          ...line,
+        });
+    }
 
     const notificationId = `workspace-join:${randomUUID()}`;
     await transaction.query(

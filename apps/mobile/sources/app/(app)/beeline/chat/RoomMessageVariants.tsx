@@ -64,6 +64,7 @@ import {
   type TranscriptCardRow,
 } from '@/components/buzz/TranscriptCard';
 import { forwardedMessageParts } from '@/buzz/message-forward';
+import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
 
 type WriteDecision = 'allow' | 'deny';
 
@@ -1545,6 +1546,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const connectorReceipt = parseConnectorReceipt(forwarded.body);
   const receiptBody = connectorReceipt ? connectorReceipt.prose : forwarded.body;
   const ledgerText = isSelfSteer ? undefined : splitLedgerText(receiptBody);
+  const proseBody = ledgerText ? ledgerText.prose : receiptBody;
+  const renderedBody = isAgent ? (agentMessageJsonMarkdown(proseBody) ?? proseBody) : proseBody;
   const receiptCard =
     connectorReceipt && !isSelfSteer ? (
       <ConnectorReceiptCard receipt={connectorReceipt.receipt} />
@@ -1601,7 +1604,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}
-            bodyText={ledgerText ? ledgerText.prose : receiptBody}
+            bodyText={renderedBody}
             mentionHandles={mentionHandles}
             onMention={handleMention}
             channelIndex={channelIndex}

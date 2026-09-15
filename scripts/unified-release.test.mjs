@@ -638,6 +638,13 @@ test('final manifest refuses absent artifacts and records outcome duration', () 
   finalizeRelease(state, { finishedAt: '2026-09-09T12:03:20.000Z' });
   assert.equal(state.delivery.durationSeconds, 200);
   assert.equal(state.state, 'delivered');
+  assert.equal(state.delivery.unproven, undefined);
+  state.delivery = undefined;
+  finalizeRelease(state, {
+    finishedAt: '2026-09-09T12:03:20.000Z',
+    unproven: 'mobile OTA promoted with skip_release_proof=true; the emulator release proof did not run',
+  });
+  assert.equal(state.delivery.unproven, 'mobile OTA promoted with skip_release_proof=true; the emulator release proof did not run');
 });
 
 test('release notification timeout is a bounded warning', async () => {
@@ -683,6 +690,8 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(inputs.selection.default, 'auto');
   assert.equal(inputs.store_track.default, 'none');
   assert.equal(inputs.plan_only.default, false);
+  assert.equal(inputs.skip_release_proof.default, false);
+  assert.equal(inputs.skip_release_proof.type, 'boolean');
   for (const input of Object.values(inputs)) assert.match(input.description, /Recovery only/);
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
@@ -880,12 +889,16 @@ test('the emulator release proof gates OTA promotion', () => {
 
   // Promotion itself is gated, not just the job: the built checkpoint still
   // lands when the proof fails, and a failed proof fails mobile_ota loudly.
+  // The skip_release_proof input is the one recovery escape hatch when the
+  // rig is down; the refusal message names it, and the release record is
+  // marked unproven.
   const ota = workflow.jobs.mobile_ota;
   const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
-  assert.match(promote.if, /needs\.release_proof\.result == 'success'/);
+  assert.match(promote.if, /needs\.release_proof\.result == 'success' \|\| inputs\.skip_release_proof == true/);
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion when the release proof failed');
-  assert.equal(refuse.if, "needs.release_proof.result == 'failure'");
+  assert.equal(refuse.if, "needs.release_proof.result == 'failure' && inputs.skip_release_proof != true");
   assert.match(refuse.run, /exit 1/);
+  assert.match(refuse.run, /skip_release_proof=true/);
   for (const step of ota.steps.filter((step) =>
     [
       'Checkpoint OTA promotion',
@@ -893,8 +906,17 @@ test('the emulator release proof gates OTA promotion', () => {
       'Require rollback evidence and write checkpoint',
     ].includes(step.name),
   )) {
-    assert.match(step.if, /needs\.release_proof\.result == 'success'/);
+    assert.match(step.if, /needs\.release_proof\.result == 'success' \|\| inputs\.skip_release_proof == true/);
   }
+
+  // The bypass records the unproven promotion on the release itself.
+  const result = workflow.jobs.release_result;
+  const fin = result.steps.find((step) => step.name === 'Finalize successful delivery after every selected promotion and record');
+  assert.match(fin.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
+  assert.match(fin.run, /--unproven/);
+  const record = result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
+  assert.match(record.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
+  assert.match(record.run, /Promoted with skip_release_proof=true/);
 });
 
 test('native workflow builds Android locally on the Linux runner and iOS locally on the Mac runner', () => {

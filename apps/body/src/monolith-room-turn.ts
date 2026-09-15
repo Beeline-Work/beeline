@@ -497,10 +497,12 @@ export class MonolithRoomTurnLoop {
       Array.isArray(repositoryState.directParticipants) &&
       repositoryState.directParticipants.length === 2;
     await mkdir(this.options.cwd, { recursive: true });
+    const selectionModel = configuration.model ?? this.options.config.modelSelection?.model;
+    const selectionEffort = configuration.effort ?? this.options.config.modelSelection?.effort;
     const selection =
-      configuration.model || configuration.effort
-        ? { model: configuration.model, effort: configuration.effort }
-        : this.options.config.modelSelection;
+      selectionModel || selectionEffort
+        ? { model: selectionModel, effort: selectionEffort }
+        : undefined;
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,

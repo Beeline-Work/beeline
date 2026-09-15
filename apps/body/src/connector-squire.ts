@@ -119,14 +119,35 @@ export type InstallSquireOptions = {
   /** The Squire MCP used for the post-install pairing probe. */
   readonly mcp?: SquireMcpClient;
   readonly probeBinary?: (binary: string) => Promise<LoginPrerequisiteCheck>;
+  /**
+   * Called after every step settles with the steps so far — the helper
+   * forwards each snapshot to the server so the phone paints progress live.
+   */
+  readonly onProgress?: (steps: readonly ConnectorStep[]) => void;
 };
 
 export type InstallSquireResult = {
   readonly status: 'connected' | 'error' | 'installing';
   readonly steps: readonly ConnectorStep[];
   readonly signIn?: ConnectorSignIn;
+  readonly squireVersion?: string;
+  readonly signedInAs?: string;
   readonly errorMessage?: string;
 };
+
+/** The installed trusty-squire version, straight from the package itself. */
+export async function installedSquireVersion(
+  run: ShellRunner,
+): Promise<string | undefined> {
+  const probe = await run('npx', ['-y', SQUIRE_CONNECT_PACKAGE, '--version']);
+  const version = probe.stdout.match(/\d+\.\d+\.\d+[^\s]*/)?.[0];
+  return version;
+}
+
+/** The account line Squire prints once a human completes sign-in. */
+export function parseSignedInAs(output: string): string | undefined {
+  return output.match(/signed in as ([^\s,;]+)/i)?.[1];
+}
 
 /**
  * Install and pair Squire on this helper, reporting every step in order.
@@ -137,17 +158,24 @@ export type InstallSquireResult = {
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
   const run = options.run ?? defaultShellRunner;
   const steps: ConnectorStep[] = [step('helper reached', 'done')];
+  const emit = () => options.onProgress?.([...steps]);
+  const push = (next: ConnectorStep) => {
+    steps.push(next);
+    emit();
+  };
   const fail = (reason: string): InstallSquireResult => {
     steps.push(step('waiting for sign-in', 'pending'));
+    emit();
     return { status: 'error', steps, errorMessage: reason };
   };
+  emit();
 
   const checks = await checkRemoteLoginPrerequisites(options.probeBinary);
   if (checks.some((check) => !check.found)) {
-    steps.push(missingPrerequisiteStep(checks));
+    push(missingPrerequisiteStep(checks));
     return fail('this helper cannot host the remote sign-in surface');
   }
-  steps.push(step('remote sign-in prerequisites', 'done'));
+  push(step('remote sign-in prerequisites', 'done'));
 
   const install = await run('npx', [
     '-y',
@@ -157,25 +185,40 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     '--skip-browser',
   ]);
   if (install.code !== 0) {
-    steps.push(step('trusty-squire installed', 'failed', install.stderr.trim() || 'connect failed'));
+    push(step('trusty-squire installed', 'failed', install.stderr.trim() || 'connect failed'));
     return fail('the trusty-squire install command failed');
   }
-  steps.push(step('trusty-squire installed', 'done'));
+  const version = await installedSquireVersion(run);
+  push(step(`trusty-squire${version ? ` ${version}` : ''} installed`, 'done'));
 
-  const signIn = parseConnectOutput(`${install.stdout}\n${install.stderr}`);
+  const output = `${install.stdout}\n${install.stderr}`;
+  const signIn = parseConnectOutput(output);
   if (!signIn) {
-    steps.push(step('waiting for sign-in', 'failed', 'connect printed no sign-in URL'));
+    push(step('waiting for sign-in', 'failed', 'connect printed no sign-in URL'));
     return fail('the trusty-squire connect command printed no sign-in surface');
   }
-  steps.push(step('waiting for sign-in', 'done'));
+  push(step('waiting for sign-in', 'done'));
+  const signedInAs = parseSignedInAs(output);
 
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {
-    steps.push(step('paired to workspace', 'failed', pair.reason));
-    return { status: 'installing', steps, signIn };
+    push(step('paired to workspace', 'failed', pair.reason));
+    return {
+      status: 'installing',
+      steps,
+      signIn,
+      ...(version ? { squireVersion: version } : {}),
+      ...(signedInAs ? { signedInAs } : {}),
+    };
   }
-  steps.push(step('paired to workspace', 'done'));
-  return { status: 'connected', steps, signIn };
+  push(step('paired to workspace', 'done'));
+  return {
+    status: 'connected',
+    steps,
+    signIn,
+    ...(version ? { squireVersion: version } : {}),
+    ...(signedInAs ? { signedInAs } : {}),
+  };
 }
 
 /** Probe the mounted Squire MCP to confirm the account is live on this helper. */

@@ -3,12 +3,15 @@ import {
   connectionCreatedByLine,
   connectionGrantsLine,
   connectionHostsLine,
+  connectionSpendCap,
   connectionsForViewer,
   connectorDescription,
   connectorIdentityHandle,
   connectorIdentityId,
   connectorRowValue,
   isConnectorIdentityId,
+  ledgerBytes,
+  ledgerStamp,
   type ConnectionDetailView,
   type WorkbenchView,
 } from './workbench';
@@ -106,10 +109,10 @@ const detail: ConnectionDetailView = {
   connection: view.connections[0],
   createdBy: { handle: '@hoots', cause: 'sign-up', at: '13 Sep' },
   grants: [
-    { agent: 'hoots', kinds: ['deploy', 'list'] },
-    { agent: 'terra', kinds: ['list'] },
+    { grantId: 'hoots', createdAt: 1, spendCapUsd: 25 },
+    { grantId: 'terra', createdAt: 2 },
   ],
-  spendCap: 'none',
+  spendCap: '$25 cap',
   ledger: [],
 };
 
@@ -119,13 +122,31 @@ describe('connection detail copy', () => {
     expect(connectionHostsLine(view.connections[1])).toBe('—');
   });
 
-  it('reads who created the connection and why', () => {
+  it('reads who created the connection and why, and omits the row when absent', () => {
     expect(connectionCreatedByLine(detail)).toBe('@hoots · sign-up · 13 Sep');
+    expect(connectionCreatedByLine({ ...detail, createdBy: undefined })).toBe('');
   });
 
-  it('prints grants with their kinds, and none when empty', () => {
-    expect(connectionGrantsLine(detail)).toBe('hoots (deploy, list) · terra (list)');
+  it('counts live grants — the server carries no agent attribution', () => {
+    expect(connectionGrantsLine(detail)).toBe('2 live grants');
+    expect(connectionGrantsLine({ ...detail, grants: [{ grantId: 'hoots', createdAt: 1 }] })).toBe(
+      '1 live grant',
+    );
     expect(connectionGrantsLine({ ...detail, grants: [] })).toBe('none');
+  });
+
+  it('reports the tightest per-grant spend cap, or none', () => {
+    expect(connectionSpendCap(detail.grants)).toBe('$25 cap');
+    expect(connectionSpendCap([{ grantId: 'terra', createdAt: 2 }])).toBe('none');
+  });
+
+  it('stamps ledger rows today as a clock and older ones as a date', () => {
+    const noon = new Date('2026-09-15T12:00:00').getTime();
+    expect(ledgerStamp(new Date('2026-09-15T09:26:00').getTime(), noon)).toBe('09:26');
+    expect(ledgerStamp(new Date('2026-09-13T09:26:00').getTime(), noon)).toBe('13 Sep');
+    expect(ledgerBytes(1234)).toBe('1.2 kB');
+    expect(ledgerBytes(80)).toBe('80 B');
+    expect(ledgerBytes(0)).toBeUndefined();
   });
 });
 

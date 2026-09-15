@@ -5163,11 +5163,15 @@ export class PhoneService {
         status_error: string | null;
         helper_agent_id: string;
         helper_name: string | null;
+        squire_version: string | null;
+        signed_in_as: string | null;
+        sign_in: ConnectorStatus['signIn'] | null;
         connected_at: Date | null;
         created_at: Date;
       }>(
         `SELECT c.id,c.connector_type,c.status,c.status_steps,c.status_error,
-                c.helper_agent_id,i.name helper_name,c.connected_at,c.created_at
+                c.helper_agent_id,i.name helper_name,c.squire_version,
+                c.signed_in_as,c.sign_in,c.connected_at,c.created_at
          FROM workspace_connectors c
          JOIN identities i ON i.id=c.helper_agent_id
          WHERE c.workspace_id=$1 AND c.owner_identity_id=$2
@@ -5194,9 +5198,37 @@ export class PhoneService {
         [viewerId],
       )
     ).rows;
+    const helpers = (
+      await this.database.query<{
+        agent_id: string;
+        name: string;
+        online: boolean;
+      }>(
+        // A helper is a machine the VIEWER connected: an agent whose owner is
+        // this viewer and which is still a current Workspace member. Online
+        // reads the same durable presence evidence readers age out after 90s.
+        `SELECT a.agent_id,i.name,
+           EXISTS(SELECT 1 FROM live_outputs p
+             WHERE p.agent_id=a.agent_id AND p.kind='presence'
+               AND p.body->>'status'='online'
+               AND p.updated_at > now() - interval '90 seconds') online
+         FROM agents a
+         JOIN identities i ON i.id=a.agent_id
+         JOIN memberships m ON m.identity_id=a.agent_id
+           AND m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+         WHERE a.owner_id=$2
+         ORDER BY i.name`,
+        [input.workspaceId, viewerId],
+      )
+    ).rows;
     return {
       workspaceId: input.workspaceId,
       catalog: connectorCatalog(),
+      helpers: helpers.map((row) => ({
+        agentId: row.agent_id,
+        name: row.name,
+        online: row.online,
+      })),
       connectors: connectors.map((row) => ({
         connectorId: row.id,
         connectorType: row.connector_type,
@@ -5205,6 +5237,9 @@ export class PhoneService {
           status: row.status,
           steps: row.status_steps ?? [],
           ...(row.helper_name ? { helperName: row.helper_name } : {}),
+          ...(row.signed_in_as ? { signedInAs: row.signed_in_as } : {}),
+          ...(row.squire_version ? { squireVersion: row.squire_version } : {}),
+          ...(row.sign_in ? { signIn: row.sign_in } : {}),
           ...(row.status_error ? { errorMessage: row.status_error } : {}),
         } as ConnectorStatus,
         helperAgentId: row.helper_agent_id,

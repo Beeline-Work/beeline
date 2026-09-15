@@ -1050,6 +1050,13 @@ CREATE TABLE IF NOT EXISTS workspace_connections (
 CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
   ON workspace_connections(owner_identity_id, connector_id);
 
+-- The helper's incremental install report: the sign-in surface it printed
+-- (the app opens exactly that URL), the installed trusty-squire version, and
+-- the account it is signed in as, once the human completes it.
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
+
 -- What an agent did with a connection, as reported by the helper. The ledger
 -- behind the connection detail screen; also the source for batched receipt
 -- DMs (one card per agent turn, keyed by turn_key).

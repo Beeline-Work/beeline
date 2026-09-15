@@ -39,6 +39,8 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
 });
 
 import WorkbenchScreen from './workbench';
+import { setWorkbenchSource } from '@/buzz/workbench-source';
+import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 
 const originalConsoleError = console.error;
 
@@ -57,6 +59,7 @@ afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setWorkbenchSource(new MockWorkbenchSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
 });
 

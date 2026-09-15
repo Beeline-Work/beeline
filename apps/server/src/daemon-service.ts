@@ -66,7 +66,7 @@ import {
   type SystemPhrase,
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
-import { isMetadataStale, receiveConnectionUsage } from './workbench.js';
+import { applyVaultList, isMetadataStale, receiveConnectionUsage } from './workbench.js';
 import type {
   ConnectorAssignment,
   ConnectorStatus,
@@ -577,6 +577,16 @@ export class DaemonService {
           input as Input<'installConnector'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postConnectorStatus':
+        return (await this.connectorStatusReport(
+          input as Input<'postConnectorStatus'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'postConnectorVault':
+        return (await this.connectorVaultReport(
+          input as Input<'postConnectorVault'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getConnectorStatus':
         return (await this.connectorStatusView(authenticatedAgentId)) as Output<Name>;
       case 'getConnectorVaultList':
@@ -713,11 +723,79 @@ export class DaemonService {
     await this.database.query(
       `UPDATE workspace_connectors
        SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
+           squire_version=COALESCE($2,squire_version),
+           signed_in_as=COALESCE($3,signed_in_as),
+           sign_in=COALESCE($4::jsonb,sign_in),
            connected_at=COALESCE(connected_at, now()), updated_at=now()
        WHERE id=$1::uuid`,
-      [row.id],
+      [
+        row.id,
+        input.squireVersion ?? null,
+        input.signedInAs ?? null,
+        input.signIn ? JSON.stringify(input.signIn) : null,
+      ],
     );
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * One incremental install report from the helper: the ordered steps as they
+   * settle, plus the sign-in surface and installed version it learned. A
+   * report carrying `errorMessage` marks the run failed; otherwise the row
+   * stays installing until `installConnector` completes it.
+   */
+  private async connectorStatusReport(
+    input: Input<'postConnectorStatus'>,
+    agentId: string,
+  ): Promise<Output<'postConnectorStatus'>> {
+    const row = (
+      await this.database.query<{ id: string }>(
+        `SELECT id FROM workspace_connectors WHERE id=$1::uuid AND helper_agent_id=$2`,
+        [input.connectorId, agentId],
+      )
+    ).rows[0];
+    if (!row) throw new Error('connector not found for this helper');
+    await this.database.query(
+      `UPDATE workspace_connectors
+       SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
+           status_error=COALESCE($3::text,status_error),
+           status_steps=$2::jsonb,
+           squire_version=COALESCE($4,squire_version),
+           signed_in_as=COALESCE($5,signed_in_as),
+           sign_in=COALESCE($6::jsonb,sign_in),
+           updated_at=now()
+       WHERE id=$1::uuid`,
+      [
+        row.id,
+        JSON.stringify(input.steps),
+        input.errorMessage ?? null,
+        input.squireVersion ?? null,
+        input.signedInAs ?? null,
+        input.signIn ? JSON.stringify(input.signIn) : null,
+      ],
+    );
+    return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * One helper vault report (metadata only): upserted into the sovereign
+   * connection rows of every live trusty-squire connector this helper serves.
+   * One helper carries ONE Squire account, so one report covers them all.
+   */
+  private async connectorVaultReport(
+    input: Input<'postConnectorVault'>,
+    agentId: string,
+  ): Promise<Output<'postConnectorVault'>> {
+    const connectors = (
+      await this.database.query<{ id: string; owner_identity_id: string }>(
+        `SELECT id,owner_identity_id FROM workspace_connectors
+         WHERE helper_agent_id=$1 AND connector_type='trusty-squire' AND status='connected'`,
+        [agentId],
+      )
+    ).rows;
+    for (const connector of connectors)
+      await applyVaultList(this.database, connector, input.connections);
+    return { id: agentId, createdAt: Math.floor(Date.now() / 1000) };
   }
 
   /** The helper polls its connector's state; stale metadata stages a sync. */
@@ -3456,6 +3534,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   getConnectorAssignments: true,
   installConnector: true,
+  postConnectorStatus: true,
+  postConnectorVault: true,
   getConnectorStatus: true,
   getConnectorVaultList: true,
   getConnectionDetail: true,

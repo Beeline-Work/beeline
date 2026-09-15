@@ -19,11 +19,14 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
- * lists of `SettingsRow`s under small-caps heads: the connectors this build
- * knows about (Trusty Squire live, Wallet and Tailscale as `soon`), and the
- * viewer's OWN connections. Sovereignty is per human: the projection in
- * `connectionsForViewer` paints only rows the viewer provisioned, matching
- * the server's own enforcement in PR 2.
+ * lists of `SettingsRow`s under small-caps heads: the tools this build knows
+ * about (Trusty Squire live, Wallet and Tailscale as `soon`), and the
+ * viewer's OWN keys. Captain ruling 2026-09-15 (mock 91aa0358328d716e): a
+ * tool is what your agents can use; a key is what that tool holds for you.
+ * Sovereignty is per human: the projection in `connectionsForViewer` paints
+ * only rows the viewer provisioned, matching the server's own enforcement
+ * in PR 2. Data-model names (`WorkbenchConnector`, `connections`, …) keep
+ * their vocabulary; only user-visible copy speaks Tools and Keys.
  */
 export default function WorkbenchScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[] }>();
@@ -64,7 +67,12 @@ export default function WorkbenchScreen() {
       </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         <View testID="workbench-connectors">
-          <Text style={styles.sectionLabel}>Connectors</Text>
+          <Text style={styles.sectionLabel} testID="workbench-tools-head">
+            Tools
+          </Text>
+          <Text style={styles.sectionDesc} testID="workbench-tools-desc">
+            Something your agents can use. Pair it once.
+          </Text>
           {connectors.map((connector) => (
             <SettingsRow
               key={connector.id}
@@ -86,11 +94,16 @@ export default function WorkbenchScreen() {
           ))}
         </View>
         <View testID="workbench-connections">
-          <Text style={styles.sectionLabel}>Connections</Text>
+          <Text style={styles.sectionLabel} testID="workbench-keys-head">
+            Keys
+          </Text>
+          <Text style={styles.sectionDesc} testID="workbench-keys-desc">
+            A credential that tool holds for you. Your agents spend it; they never see it.
+          </Text>
           {connections.length === 0 ? (
             <SettingsRow
               disabled
-              description="Connections appear here once a connector stores them. Connections from other members are not listed and cannot be used on your behalf."
+              description="Keys appear here once a tool stores them. Keys other members provisioned are not listed and your agents cannot spend them."
               testID="workbench-connections-empty"
               title="None yet"
               tone="quiet"
@@ -142,6 +155,7 @@ const styles = StyleSheet.create((theme) => {
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
+    sectionDesc: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger, padding: hull.space.md },
   };
 });

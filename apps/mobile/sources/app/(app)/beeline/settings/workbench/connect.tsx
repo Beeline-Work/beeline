@@ -141,8 +141,8 @@ export default function ConnectTrustySquireScreen() {
         {install === null ? (
           <View testID="connect-helper-picker">
             <Text style={styles.note}>
-              Squire runs on a helper. Every agent on that helper can use its connections, within
-              the grants you set.
+              Squire runs on a helper. Every agent on that helper can use its keys, within the
+              grants you set.
             </Text>
             <Text style={styles.sectionLabel}>Helpers</Text>
             {(helpers ?? []).map((helper) => (

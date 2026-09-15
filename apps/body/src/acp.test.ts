@@ -8,6 +8,7 @@ import {
   AcpRequestTimeoutError,
   promptPayloadNote,
   agentMessageRuns,
+  finalAgentMessageText,
   agentStreamSnapshot,
   meaningfulHarnessStderr,
   isPureRetryNarration,
@@ -105,45 +106,6 @@ describe('ACP streaming lane classifier', () => {
     ).toEqual({ messageText: '', thoughtText: 'Reading the workspace' });
   });
 
-  it('joins newline-framed token chunks without splitting words in the live thought lane', () => {
-    const tokens = [
-      'No',
-      ' be',
-      'eline',
-      ' skill',
-      ' in',
-      ' pi',
-      ' docs',
-      '.',
-      ' Search',
-      ' more',
-      ' broadly',
-    ];
-    const expected = 'No beeline skill in pi docs. Search more broadly';
-
-    expect(
-      agentStreamSnapshot(
-        tokens.map((text) =>
-          update('agent_thought_chunk', {
-            content: { type: 'text', text: `${text}\n` },
-          }),
-        ),
-        'pi-acp',
-      ),
-    ).toEqual({ messageText: '', thoughtText: expected });
-
-    expect(
-      agentStreamSnapshot(
-        tokens.map((text) =>
-          update('agent_message_chunk', {
-            content: { type: 'text', text: `${text}\n` },
-          }),
-        ),
-        '/usr/local/bin/pi-acp',
-      ),
-    ).toEqual({ messageText: expected });
-  });
-
   it('preserves authored line endings from other harnesses and explicit Pi paragraphs', () => {
     expect(
       agentStreamSnapshot(
@@ -166,6 +128,32 @@ describe('ACP streaming lane classifier', () => {
         'pi-acp',
       ),
     ).toEqual({ messageText: '', thoughtText: 'First paragraph\n\nSecond paragraph' });
+  });
+
+  it('keeps every newline of a numbered list streamed by pi-acp (captain report 2026-09-15)', () => {
+    // The captain's exact delta stream: a numbered list where every item but
+    // the last ends its own delta with a line ending. The old trailing-line
+    // strip ate those endings, gluing items 1-4 into one paragraph; item 5
+    // survived only because the blank line before it hit the `\n\n` guard.
+    const deltas = [
+      'A language model is a probability distribution over tokens (not a lookup table)\n',
+      '2. How text generation works, one token at a time\n',
+      '3. How images are generated\n',
+      '4. The AI value chain, from chips to chat\n\n',
+      '5. Where the value sits',
+    ];
+    const expected = deltas.join('');
+
+    expect(
+      agentMessageRuns(
+        deltas.map((text) => update('agent_message_chunk', { content: { type: 'text', text } })),
+        'pi-acp',
+      ),
+    ).toEqual([expected]);
+    expect(finalAgentMessageText(
+      deltas.map((text) => update('agent_message_chunk', { content: { type: 'text', text } })),
+      'pi-acp',
+    )).toBe(expected);
   });
 
   it('keeps a lone pi-acp newline delta alive so a Markdown bullet does not glue onto the previous line', () => {
@@ -1261,41 +1249,6 @@ describe('AcpClient live steering', () => {
         { delta: 'world', fullText: 'Hello world' },
       ]);
       expect(result.agentText).toBe('Hello world');
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it('streams and finalizes pi newline-framed token chunks as continuous prose', async () => {
-    const tokens = ['No\n', ' be\n', 'eline\n', ' skill\n', ' in\n', ' pi\n', ' docs\n', '.\n'];
-    const client = new AcpClient({
-      agentBinary: await fakeStreamingAgent(tokens),
-      agentLabel: 'pi-acp',
-      agentEnv: {},
-    });
-    await client.start();
-    try {
-      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
-      const drafts: string[] = [];
-      const currentRuns: string[] = [];
-      const snapshots: Array<{ messageText: string; thoughtText?: string }> = [];
-      const result = await client.sessionPrompt(
-        sessionId,
-        'go',
-        5_000,
-        (_delta, fullText, currentRun) => {
-          drafts.push(fullText);
-          if (currentRun) currentRuns.push(currentRun);
-        },
-        (snapshot) => {
-          if (snapshot) snapshots.push(snapshot);
-        },
-      );
-
-      expect(drafts.at(-1)).toBe('No beeline skill in pi docs.');
-      expect(currentRuns.at(-1)).toBe('No beeline skill in pi docs.');
-      expect(snapshots.at(-1)).toEqual({ messageText: 'No beeline skill in pi docs.' });
-      expect(result.agentText).toBe('No beeline skill in pi docs.');
     } finally {
       await client.stop();
     }

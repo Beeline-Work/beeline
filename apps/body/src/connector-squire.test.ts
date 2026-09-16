@@ -141,8 +141,8 @@ describe('installSquire', () => {
     await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
-      streamRun: async (_cmd, args) => {
-        streamInvocations.push([...args]);
+      streamRun: async (cmd, args) => {
+        streamInvocations.push([cmd, ...args]);
         return {
           stdout: 'https://squire.example/oauth/authorize?x=1',
           stderr: '',
@@ -157,7 +157,7 @@ describe('installSquire', () => {
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
     expect(streamInvocations).toEqual([
-      ['-y', '@trusty-squire/mcp', 'connect', '--force-relogin=google', '--target=codex'],
+      ['xvfb-run', '-a', 'npx', '-y', '@trusty-squire/mcp', 'connect', '--force-relogin=google', '--target=codex'],
     ]);
     expect(runInvocations).toEqual([
       ['-y', '@trusty-squire/mcp', '--version'],

@@ -40,7 +40,7 @@ export interface SquireMcpClient {
 }
 
 /** The binaries the noVNC remote sign-in surface needs on a headless host. */
-export const REMOTE_LOGIN_BINARIES = ['Xvfb', 'x11vnc', 'websockify', 'cloudflared'] as const;
+export const REMOTE_LOGIN_BINARIES = ['xvfb-run', 'Xvfb', 'x11vnc', 'websockify', 'cloudflared'] as const;
 
 /** Where Squire installs the agent's own sign-in surface. */
 export const SQUIRE_CONNECT_PACKAGE = '@trusty-squire/mcp';
@@ -289,7 +289,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // Squire's `connect --force-relogin=google` prints the noVNC URL and then
   // blocks waiting for sign-in. The streaming runner captures the URL from
   // live stdout and resolves immediately — keeping the process alive.
-  const install = await streamRun('npx', [
+  const install = await streamRun('xvfb-run', [
+    '-a',
+    'npx',
     '-y',
     SQUIRE_CONNECT_PACKAGE,
     'connect',

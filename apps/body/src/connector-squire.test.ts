@@ -130,10 +130,10 @@ describe('installSquire', () => {
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
     expect(streamInvocations).toEqual([
-      ['npx', '-y', '@trusty-squire/mcp', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
+      ['npx', '-y', '@trusty-squire/mcp@next', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
     ]);
     expect(runInvocations).toEqual([
-      ['-y', '@trusty-squire/mcp', '--version'],
+      ['-y', '@trusty-squire/mcp@next', '--version'],
     ]);
   });
 

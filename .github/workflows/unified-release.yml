@@ -527,6 +527,9 @@ jobs:
           ANDROID_SIDELOAD_KEY_ALIAS: ${{ secrets.ANDROID_SIDELOAD_KEY_ALIAS }}
           ANDROID_SIDELOAD_STORE_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_STORE_PASSWORD }}
           ANDROID_SIDELOAD_KEY_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_KEY_PASSWORD }}
+          # Lets the proof sign itself in via the /review bypass after the
+          # install wipes the app, so it no longer needs a persisted GitHub session.
+          BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
         run: |
           set -euo pipefail
           if [ "${{ needs.mobile_native_android.result }}" = 'success' ]; then

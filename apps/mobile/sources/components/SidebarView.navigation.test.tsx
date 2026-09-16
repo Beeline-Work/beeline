@@ -230,6 +230,23 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
   });
 
+  it('keeps profile settings reachable from the persistent desktop navigation', () => {
+    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
+
+    expect(profileSettings.props.accessibilityLabel).toBe('Open profile settings');
+    expect(
+      profileSettings
+        .findAllByType('Text')
+        .some(
+          (node: { props: { children?: unknown } }) => node.props.children === 'PROFILE & SETTINGS',
+        ),
+    ).toBe(true);
+
+    act(() => profileSettings.props.onPress());
+
+    expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
+  });
+
   it('closes without routing when the current Workspace is picked', () => {
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
     act(() => tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-a'));

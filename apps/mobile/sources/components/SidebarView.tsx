@@ -177,8 +177,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    minHeight: 48,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.divider,
   },
@@ -632,17 +633,19 @@ export const SidebarView = React.memo(function SidebarView() {
             ))
           )}
         </ScrollView>
-        {!isDesktop && (
-          <Pressable
-            accessibilityLabel="Open Beeline settings"
-            accessibilityRole="button"
-            onPress={() => router.push('/beeline/settings' as Href)}
-            style={styles.settingsRow}
-          >
-            <Ionicons name="settings-outline" size={18} color={stylesheet.settingsText.color} />
-            <Text style={styles.settingsText}>SETTINGS</Text>
-          </Pressable>
-        )}
+        <Pressable
+          accessibilityLabel="Open profile settings"
+          accessibilityRole="button"
+          onPress={() => router.push('/beeline/settings' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            (pathname.startsWith('/beeline/settings') || pressed) && styles.roomRowSelected,
+          ]}
+          testID="profile-settings-navigation"
+        >
+          <Ionicons name="person-outline" size={18} color={stylesheet.settingsText.color} />
+          <Text style={styles.settingsText}>{isDesktop ? 'PROFILE & SETTINGS' : 'SETTINGS'}</Text>
+        </Pressable>
       </>
       {isDesktop && (
         <DesktopWorkspaceRail

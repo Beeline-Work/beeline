@@ -15,6 +15,7 @@ import {
   postgresPoolConfig,
   markSchemaCurrent,
   PostgresDatabase,
+  HEALTH_POOL_WAIT_TIMEOUT_MS,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
@@ -22,6 +23,85 @@ import { PgliteDatabase } from './test-support.js';
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
 }
+
+const TERMINATED = () => new Error('Connection terminated unexpectedly');
+
+function stubClient() {
+  const client = new EventEmitter() as EventEmitter & {
+    query: ReturnType<typeof vi.fn>;
+    release: ReturnType<typeof vi.fn>;
+  };
+  client.query = vi.fn().mockResolvedValue(result([]));
+  client.release = vi.fn();
+  return client;
+}
+
+function poolHandingOut(clients: unknown[]) {
+  const connect = vi.fn();
+  clients.forEach((client) => connect.mockResolvedValueOnce(client));
+  return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
+}
+
+describe('a terminated checked-out connection never wedges the pool', () => {
+  it('frees a checked-out transaction client that errors while no query is pending, and the pool recovers', async () => {
+    const dying = stubClient();
+    dying.query
+      .mockResolvedValueOnce(result([])) // BEGIN
+      .mockRejectedValue(TERMINATED()); // COMMIT (and ROLLBACK) on the dead socket
+    const healthy = stubClient();
+    const database = new PostgresDatabase('', 5, { pool: poolHandingOut([dying, healthy]) });
+
+    let releaseWork: (() => void) | undefined;
+    const work = new Promise<void>((resolve) => {
+      releaseWork = resolve;
+    }).then(() => 'first work');
+    const first = database.transaction(() => work);
+    await vi.waitFor(() => expect(dying.query).toHaveBeenCalledWith('BEGIN'));
+
+    // The socket dies while the transaction body is doing non-database work:
+    // nothing in the app is awaiting this client, so nothing else will free it.
+    dying.emit('error', TERMINATED());
+    expect(dying.release).toHaveBeenCalledWith(expect.any(Error));
+
+    releaseWork!();
+    await expect(first).rejects.toThrow(/Connection terminated/);
+    // The app's own finally must not double-release the reclaimed client.
+    expect(dying.release).toHaveBeenCalledTimes(1);
+
+    // The freed slot hands out a fresh client: the pool recovered.
+    await expect(database.transaction(() => 'second work')).resolves.toBe('second work');
+    expect(healthy.query).toHaveBeenCalledWith('BEGIN');
+  });
+
+  it('releases and recovers when a pool query hits a terminated connection', async () => {
+    const pool = {
+      query: vi
+        .fn()
+        .mockRejectedValueOnce(TERMINATED())
+        .mockResolvedValueOnce(result([{ answer: 2 }])),
+      on: vi.fn(),
+      connect: vi.fn(),
+      end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+
+    await expect(database.query<{ answer: number }>('SELECT 2')).resolves.toEqual(
+      result([{ answer: 2 }]),
+    );
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds every pool acquisition and keeps half-open connections from hanging silently', () => {
+    expect(postgresPoolConfig('postgres://app', 1, 'long-running')).toMatchObject({
+      connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
+      keepAlive: true,
+    });
+    expect(postgresPoolConfig('postgres://app', 1, 'diagnostics')).toMatchObject({
+      connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
+      keepAlive: true,
+    });
+  });
+});
 
 describe('release-owned schema readiness', () => {
   it('fails boot clearly until the release migration writes its final marker', async () => {
@@ -82,10 +162,10 @@ describe('PostgresDatabase reconnects', () => {
   });
 
   it('retries transaction acquisition but does not replay transaction work', async () => {
-    const client = {
+    const client = Object.assign(new EventEmitter(), {
       query: vi.fn().mockResolvedValue(result([])),
       release: vi.fn(),
-    };
+    });
     const connect = vi
       .fn()
       .mockRejectedValueOnce(

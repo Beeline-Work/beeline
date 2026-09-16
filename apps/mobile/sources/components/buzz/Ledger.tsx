@@ -16,8 +16,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * Grotesk prose with IBM Plex Mono reserved for bylines, code, tool readouts,
  * and system lines. Hierarchy on a long agent turn comes from weight and
  * brightness — a medium-weight bright lead line, then regular secondary
- * prose — never from size. Turns separate by a hairline divider plus generous
- * vertical padding; there are no speaker rails, bubbles, or boxes.
+ * prose — never from size. Messages use one compact vertical rhythm beneath
+ * their sender byline; there are no speaker rails, bubbles, dividers, or boxes.
  *
  * Identity lives in the byline above every agent prose message and the first
  * message in a human run: the speaker's
@@ -78,15 +78,8 @@ type LedgerBodyProps = {
    * The message byline. Omitted only for a human continuation in the same run.
    */
   byline?: LedgerByline;
-  /** A run's opening entry gets air above it; a continuation keeps flowing. */
+  /** True when this message continues the speaker run above it. */
   continued?: boolean;
-  /**
-   * The transcript lays rows out chronologically (desktop's ordinary flow)
-   * rather than in the phone's inverted list, so a cell's layout-top — not its
-   * layout-bottom — is its visual top. The run-opening divider and its
-   * generous padding mirror to the other layout edge.
-   */
-  chronological?: boolean;
   marginalia?: React.ReactNode;
   replyReference?: React.ReactNode;
   attachments?: React.ReactNode;
@@ -382,8 +375,8 @@ function SettleFade({ provisional, children }: { provisional: string; children: 
  * An agent turn (`luminous`) may lead with one medium-weight line in the
  * primary tone — hierarchy by weight and brightness at the SAME size — then
  * flows in regular secondary prose. Everyone else writes plain body text at
- * the identical size. Turns separate by a hairline divider; a continuation of
- * the voice directly above keeps flowing with no divider and no byline.
+ * the identical size. Every message keeps the same compact spacing; a human
+ * continuation of the voice directly above simply omits the repeated byline.
  */
 export function LedgerEntry({
   itemId,
@@ -391,7 +384,6 @@ export function LedgerEntry({
   bodyTestID,
   byline,
   continued = false,
-  chronological = false,
   luminous = false,
   replyReference,
   attachments,
@@ -406,11 +398,6 @@ export function LedgerEntry({
   const [leadText, remainingText] =
     bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
   const bodyTextStyle = luminous ? styles.ledgerTextLuminous : styles.ledgerText;
-  const runStyle = continued
-    ? styles.entryContinued
-    : chronological
-      ? styles.entryOpensChronological
-      : styles.entryOpens;
   // A settling reply was already typed out, live, in front of the reader. It
   // cross-fades; it never re-types itself.
   const typeOut = typewriter && !settleFrom;
@@ -454,7 +441,7 @@ export function LedgerEntry({
     </>
   );
   return (
-    <View style={[styles.entry, runStyle]} testID={`chat-message-${itemId}`}>
+    <View style={[styles.entry]} testID={`chat-message-${itemId}`}>
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {settleFrom && (leadText || remainingText) ? (
@@ -482,8 +469,6 @@ export function LedgerSteer({
   bodyText,
   bodyTestID,
   byline,
-  continued = false,
-  chronological = false,
   replyReference,
   attachments,
   mentionHandles,
@@ -494,13 +479,8 @@ export function LedgerSteer({
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
   // body's; ownership reads from the byline alone.
-  const runStyle = continued
-    ? styles.entryContinued
-    : chronological
-      ? styles.entryOpensChronological
-      : styles.entryOpens;
   return (
-    <View style={[styles.entry, runStyle]} testID={`chat-message-${itemId}`}>
+    <View style={[styles.entry]} testID={`chat-message-${itemId}`}>
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {bodyText ? (
@@ -754,33 +734,8 @@ const styles = StyleSheet.create((theme) => ({
   entry: {
     width: '100%',
     minWidth: 0,
-  },
-  // Turn separation: a hairline divider at the top of each opening turn, plus
-  // the generous vertical padding on that ONE outward side — the side facing
-  // the run's own continuation carries the continuation padding instead, so
-  // the gap between two consecutive same-voice messages is the continuation
-  // gap whether or not the upper row opened the run. Separation between
-  // different runs stays generous. The inverted list renders a cell's
-  // layout-bottom at its visual top, so the phone row wears the divider on its
-  // layout-bottom; the chronological flow renders a cell's layout-top at its
-  // visual top, so `entryOpensChronological` mirrors the whole block.
-  entryOpens: {
-    paddingTop: theme.buzz.continuationPaddingVertical,
-    paddingBottom: theme.buzz.turnPaddingVertical,
-    marginBottom: theme.buzz.turnGap,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.turnDivider,
-  },
-  entryOpensChronological: {
-    paddingTop: theme.buzz.turnPaddingVertical,
-    paddingBottom: theme.buzz.continuationPaddingVertical,
-    marginTop: theme.buzz.turnGap,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.buzz.turnDivider,
-  },
-  entryContinued: {
-    paddingVertical: theme.buzz.continuationPaddingVertical,
-    marginBottom: theme.buzz.continuationGap,
+    paddingVertical: theme.buzz.messagePaddingVertical,
+    marginBottom: theme.buzz.messageGap,
   },
   byline: {
     flexDirection: 'row',
@@ -966,7 +921,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   marginalia: {
     position: 'absolute',
-    top: theme.buzz.turnPaddingVertical + 2,
+    top: theme.buzz.messagePaddingVertical + 2,
     right: 0,
     width: LEDGER_MARGINALIA_WIDTH,
     alignItems: 'flex-end',

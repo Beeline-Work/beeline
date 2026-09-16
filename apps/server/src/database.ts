@@ -28,6 +28,11 @@ export function postgresPoolConfig(
   return {
     connectionString,
     max: maximumConnections,
+    // Half-open TCP connections (peer/NAT dropped without FIN/RST) never emit
+    // an error on their own; keepalive probes eventually fail and surface the
+    // dead connection so the pool can reclaim it instead of wedging.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     application_name:
       mode === 'enrichment'
         ? ENRICHMENT_DATABASE_NAME
@@ -51,7 +56,9 @@ export function postgresPoolConfig(
               statement_timeout: HEALTH_STATEMENT_TIMEOUT_MS,
               connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
             }
-          : {}),
+          : {
+              connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
+            }),
   };
 }
 
@@ -190,8 +197,37 @@ export class PostgresDatabase implements ClosableDatabase {
     return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
   }
 
+  // pg-pool removes its idle error listener while a client is checked out, so
+  // a checked-out client that errors with no pending query (or whose query
+  // promise never settles) would stay checked out forever and wedge the pool.
+  // Arm our own guard that destroys it and frees the slot. `release` is safe
+  // to call more than once: later calls are no-ops after the guard fired.
+  async #connectCheckedOut(): Promise<{
+    client: PoolClient;
+    release: (error?: Error) => void;
+  }> {
+    const client = await this.#pool.connect();
+    let released = false;
+    const onError = (error: Error) => {
+      console.error('postgres checked-out client error', error);
+      release(error);
+    };
+    const release = (error?: Error) => {
+      if (released) return;
+      released = true;
+      client.removeListener('error', onError);
+      try {
+        client.release(error);
+      } catch {
+        // The guard already returned this client to the pool.
+      }
+    };
+    client.once('error', onError);
+    return { client, release };
+  }
+
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    const client = await this.#beginTransaction();
+    const { client, release } = await this.#beginTransaction();
     let releaseError: Error | undefined;
     try {
       const database: SqlDatabase = {
@@ -226,7 +262,7 @@ export class PostgresDatabase implements ClosableDatabase {
       }
       throw error;
     } finally {
-      client.release(releaseError);
+      release(releaseError);
     }
   }
 
@@ -244,14 +280,17 @@ export class PostgresDatabase implements ClosableDatabase {
     return this.#pool.end();
   }
 
-  async #beginTransaction(): Promise<PoolClient> {
+  async #beginTransaction(): Promise<{
+    client: PoolClient;
+    release: (error?: Error) => void;
+  }> {
     return this.#retryTransientConnection(async () => {
-      const client = await this.#pool.connect();
+      const checkedOut = await this.#connectCheckedOut();
       try {
-        await client.query('BEGIN');
-        return client;
+        await checkedOut.client.query('BEGIN');
+        return checkedOut;
       } catch (error) {
-        client.release(error instanceof Error ? error : new Error('transaction begin failed'));
+        checkedOut.release(error instanceof Error ? error : new Error('transaction begin failed'));
         throw error;
       }
     });
@@ -1131,7 +1170,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 );
 CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
-`; 
+`;
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);

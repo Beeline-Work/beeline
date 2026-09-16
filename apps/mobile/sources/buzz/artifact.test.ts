@@ -84,6 +84,19 @@ describe('markup wrapping', () => {
     expect(wrapped).toContain('<style>');
   });
 
+  it('paints wrapped SVG on the browser-default canvas, never on the app ink plate', () => {
+    const wrapped = wrapArtifactMarkup('<svg xmlns="http://www.w3.org/2000/svg"/>', 'svg');
+    // The canvas precedes the SVG so default-black paint reads on white.
+    const canvasAt = wrapped.indexOf(ARTIFACT_DEFAULT_CANVAS);
+    expect(canvasAt).toBeGreaterThanOrEqual(0);
+    expect(wrapped.indexOf('<svg')).toBeGreaterThan(canvasAt);
+    // The regression: a transparent page let an SVG's default-black paint
+    // land on the app's dark ink plate, and the viewer read as a blank page.
+    expect(wrapped.includes('background:transparent')).toBe(false);
+    // The centered fit survives the canvas.
+    expect(wrapped).toContain('align-items:center');
+  });
+
   it('gives an unstyled HTML page a browser-default canvas, not the app ink plate', () => {
     const wrapped = wrapArtifactMarkup('<h1>Impact Report</h1>', 'html');
     expect(wrapped).toContain(ARTIFACT_DEFAULT_CANVAS);

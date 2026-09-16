@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FlatList, View, Text, StyleSheet } from 'react-native';
 // The real decision under test, exactly as the app imports it.
-import { desktopTailLanding } from '../../apps/mobile/sources/buzz/room-scroll-follow';
+import { desktopTailLanding, tailFollowStalled } from '../../apps/mobile/sources/buzz/room-scroll-follow';
 
 // Deterministic variable-height rows, like real ledger entries.
 const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42, 66];
@@ -12,6 +12,7 @@ const DESKTOP_TAIL_LANDING_CAP = 24;
 const DESKTOP_TAIL_SETTLE_MS = 1_000;
 const DESKTOP_TAIL_POLL_MS = 50;
 const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
+const DESKTOP_TAIL_STALL_EPS = 1;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
 // `noguard` reproduces the settle-window shape WITHOUT the reader-motion
 // disarm — exactly the code the escape scenario below convicts.
@@ -70,6 +71,8 @@ function App() {
   const viewportRef = useRef(0);
   // Where the follow last held the reader; production clears it on disarm.
   const landedOffsetRef = useRef<number | null>(null);
+  // Scroll state left by the previous landing (production stall-test mirror).
+  const lastLandRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
 
   // The app's tail follow: decide during render, scroll in a layout effect.
   // Mirrors production exactly: the follow arms on a NEWEST-id change while
@@ -137,6 +140,7 @@ function App() {
         budgetLeft: landingsRef.current,
         scrollTop: scroller ? Math.round(scroller.scrollTop) : null,
         scrollHeight: scroller ? scroller.scrollHeight : null,
+        gapLog: (window as any).__gapLog?.slice(-14),
       };
       logRef.current.push(JSON.stringify(verdict));
       document.getElementById('log').textContent = logRef.current.join('\n');
@@ -208,6 +212,7 @@ function App() {
         }}
         onContentSizeChange={(_w: number, h: number) => {
           if (NOFIX) return;
+          (window as any).__gapLog ??= [];
           if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
           disarmTimerRef.current = null;
           stableSinceRef.current = null;
@@ -216,6 +221,7 @@ function App() {
           const tailGap = scrollNode
             ? scrollNode.scrollHeight - scrollNode.clientHeight - scrollNode.scrollTop
             : h - viewportRef.current - offsetRef.current;
+          (window as any).__gapLog.push(Math.round(tailGap));
           const landing = desktopTailLanding({
             tailGapAboveThreshold: tailGap > TAIL_PIN_THRESHOLD,
             tailStable: false,
@@ -231,8 +237,21 @@ function App() {
           });
           landingsRef.current = landing.disarm
             ? 0
-            : Math.max(0, landingsRef.current - (landing.land ? 1 : 0));
-          if (landing.disarm) landedOffsetRef.current = null;
+            : landing.land
+              ? tailFollowStalled(
+                  lastLandRef.current,
+                  scrollNode
+                    ? { scrollHeight: scrollNode.scrollHeight, scrollTop: scrollNode.scrollTop }
+                    : null,
+                  DESKTOP_TAIL_STALL_EPS,
+                )
+                ? Math.max(0, landingsRef.current - 1)
+                : Math.min(DESKTOP_TAIL_LANDING_CAP, landingsRef.current + 1)
+              : landingsRef.current;
+          if (landing.disarm) {
+            landedOffsetRef.current = null;
+            lastLandRef.current = null;
+          }
           if (landing.land) {
             listRef.current?.scrollToOffset({
               offset: scrollNode?.scrollHeight ?? h,
@@ -240,6 +259,10 @@ function App() {
             });
             if (scrollNode) {
               landedOffsetRef.current = scrollNode.scrollHeight - scrollNode.clientHeight;
+              lastLandRef.current = {
+                scrollHeight: scrollNode.scrollHeight,
+                scrollTop: scrollNode.scrollTop,
+              };
             }
           }
           if (!landing.disarm && landingsRef.current > 0) {
@@ -271,18 +294,39 @@ function App() {
               });
               landingsRef.current = settledDecision.disarm
                 ? 0
-                : Math.max(0, landingsRef.current - (settledDecision.land ? 1 : 0));
-              if (settledDecision.disarm) landedOffsetRef.current = null;
+                : settledDecision.land
+                  ? tailFollowStalled(
+                      lastLandRef.current,
+                      settledNode
+                        ? {
+                            scrollHeight: settledNode.scrollHeight,
+                            scrollTop: settledNode.scrollTop,
+                          }
+                        : null,
+                      DESKTOP_TAIL_STALL_EPS,
+                    )
+                    ? Math.max(0, landingsRef.current - 1)
+                    : Math.min(DESKTOP_TAIL_LANDING_CAP, landingsRef.current + 1)
+                  : landingsRef.current;
+              if (settledDecision.disarm) {
+                landedOffsetRef.current = null;
+                lastLandRef.current = null;
+              }
               if (settledDecision.land && settledNode) {
                 listRef.current?.scrollToOffset({
                   offset: settledNode.scrollHeight,
                   animated: false,
                 });
                 landedOffsetRef.current = settledNode.scrollHeight - settledNode.clientHeight;
+                lastLandRef.current = {
+                  scrollHeight: settledNode.scrollHeight,
+                  scrollTop: settledNode.scrollTop,
+                };
               }
               if (settledDecision.disarm || landingsRef.current <= 0) {
                 landingsRef.current = 0;
                 landedOffsetRef.current = null;
+                lastLandRef.current = null;
                 disarmTimerRef.current = null;
                 return;
               }

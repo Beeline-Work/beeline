@@ -80,6 +80,41 @@ escape inside the first second (no wheel/touch to veto) re-opened the gap
 and the budget re-landed the reader at the bottom. The held-offset guard
 closes it for every modality.
 
+## Long-transcript convergence (`count=200` / `count=500`)
+
+The review round measured the 500-row transcript still stranded five seconds
+after one append: tail gap 4,782px with an exhausted landing budget. The
+instrumented gap sequence explained why: on a long transcript every landing
+**reaches the bottom it was shown**, and RN Web then measures rows above the
+viewport, so the measured gap grows after every successful landing
+(`618 → 613 → 1246 → 1870 → 2471 → 3094 → 3712 → 4357 → 4762 → 4855`). A
+gap-based budget charges exactly the landings that are working, so the fixed
+cap became transcript-length-dependent.
+
+The budget now charges a landing only when the previous one left the follow
+in the **same place** — extent and scroll position unchanged while the gap
+stays open (`tailFollowStalled` in `room-scroll-follow.ts`) — which is the
+honest stalled fact and the case the cap exists for. A landing that reached
+the bottom is refunded. The cap is once again a non-progress backstop, never
+a transcript-length limit. Results (`count >= 200` waits five seconds in
+`run.mjs`):
+
+```text
+count=200 appends=1 FIX   -> tailGap 49  newestRowVisible true  overlaps 0 budgetLeft 0
+count=500 appends=1 FIX   -> tailGap 47  newestRowVisible true  overlaps 0 budgetLeft 24
+count=30  appends=1 FIX   -> tailGap 0   newestRowVisible true  overlaps 0 budgetLeft 0
+count=60  appends=1 FIX   -> tailGap 0   newestRowVisible true  overlaps 0 budgetLeft 0
+count=500 appends=1 NOFIX -> tailGap 4855 newestRowVisible false overlaps 0 budgetLeft 0
+```
+
+The residual 47–49px gap is inside `TAIL_PIN_THRESHOLD` (50): the reader is
+pinned within the band every tail decision already calls "at the tail", and
+the newest row is fully on screen. `budgetLeft 24` at the 5s mark is the
+settle window still pending (it disarms one second after the last content
+change). The reader-escape guard still holds at 500 rows: an escape without
+wheel/touch leaves the reader at scrollTop 0 with the follow drained
+(`run-escape.mjs 500 early` → scrollTop 0).
+
 Sibling note: `feature/corner-dda5e1cca0e8` (cold-open landing, 6d726691)
 uses the same measured-landing technique for cold open and touches the same
 lines — whichever PR merges second rebases over the other.

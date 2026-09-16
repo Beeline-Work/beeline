@@ -165,6 +165,7 @@ import {
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
   desktopTailLanding,
+  tailFollowStalled,
 } from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
@@ -333,6 +334,14 @@ const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
 // Scroll positions within 1px of the held offset are measurement noise, not
 // the reader leaving the tail.
 const DESKTOP_READER_MOTION_EPS = 1;
+// A landing that left the follow in the SAME place (extent and scroll
+// position unchanged, gap still open) is stalled and charged against the
+// budget. Everything else — including a landing that reached the bottom and
+// RN Web then measured more rows above the viewport — is the follow still
+// converging, so it is refunded: on a long transcript the measured gap
+// grows after every successful landing, and charging those would make the
+// cap transcript-length-dependent.
+const DESKTOP_TAIL_STALL_EPS = 1;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1750,6 +1759,13 @@ export default function BuzzChat() {
   // scrollTop, so a drop below this offset is the reader leaving for
   // history, never provisional measurement. Null once disarmed.
   const desktopTailHeldOffsetRef = useRef<number | null>(null);
+  // The scroll state (extent + offset) left by the previous landing, for the
+  // stall test: a landing that changes nothing while the gap stays open is
+  // charged; any other landing is still converging and is refunded.
+  const desktopTailLastLandRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   // Last wheel/touch scroll activity — the web drag guard.
   const userScrolledAtRef = useRef(0);
   // Viewport height from the last scroll event, for the tail-gap verdict.
@@ -1773,6 +1789,7 @@ export default function BuzzChat() {
       desktopTailLandingsRef.current = 0;
       desktopTailStableSinceRef.current = null;
       desktopTailHeldOffsetRef.current = null;
+      desktopTailLastLandRef.current = null;
       if (desktopTailDisarmTimerRef.current !== null) {
         clearTimeout(desktopTailDisarmTimerRef.current);
         desktopTailDisarmTimerRef.current = null;
@@ -1842,6 +1859,7 @@ export default function BuzzChat() {
       // still unmeasured; the measured content size re-lands it.
       desktopTailLandingsRef.current = DESKTOP_TAIL_LANDING_CAP;
       desktopTailStableSinceRef.current = null;
+      desktopTailLastLandRef.current = null;
       // The follow holds the reader where they were pinned on arrival; any
       // later drop from this offset is the reader leaving, not growth.
       const armNode = flatListRef.current?.getScrollableNode() as
@@ -4176,11 +4194,33 @@ export default function BuzzChat() {
                       desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
                   landingsRemaining: desktopTailLandingsRef.current,
                 });
-                desktopTailLandingsRef.current = landing.disarm
-                  ? 0
-                  : Math.max(0, desktopTailLandingsRef.current - (landing.land ? 1 : 0));
+                // Charge the landing only when the previous one left the
+                // follow in the same place (stalled). A landing that
+                // reached the bottom it was shown cannot be charged for
+                // the gap RN Web later reopens by measuring rows above
+                // the viewport — a long transcript needs many such
+                // landings, so the budget must never become a
+                // transcript-length limit.
+                const stalled = tailFollowStalled(
+                  desktopTailLastLandRef.current,
+                  scrollNode
+                    ? { scrollHeight: scrollNode.scrollHeight, scrollTop: scrollNode.scrollTop }
+                    : null,
+                  DESKTOP_TAIL_STALL_EPS,
+                );
+                if (landing.disarm) {
+                  desktopTailLandingsRef.current = 0;
+                } else if (landing.land) {
+                  desktopTailLandingsRef.current = stalled
+                    ? Math.max(0, desktopTailLandingsRef.current - 1)
+                    : Math.min(
+                        DESKTOP_TAIL_LANDING_CAP,
+                        desktopTailLandingsRef.current + 1,
+                      );
+                }
                 if (landing.disarm) {
                   desktopTailHeldOffsetRef.current = null;
+                  desktopTailLastLandRef.current = null;
                 }
                 if (landing.land) {
                   flatListRef.current?.scrollToOffset({
@@ -4190,6 +4230,13 @@ export default function BuzzChat() {
                   if (scrollNode) {
                     desktopTailHeldOffsetRef.current =
                       scrollNode.scrollHeight - scrollNode.clientHeight;
+                    // Record the state this landing left, read after the
+                    // scroll so the next event's stall test compares the
+                    // real landed position.
+                    desktopTailLastLandRef.current = {
+                      scrollHeight: scrollNode.scrollHeight,
+                      scrollTop: scrollNode.scrollTop,
+                    };
                   }
                 }
                 if (!landing.disarm && desktopTailLandingsRef.current > 0) {
@@ -4221,14 +4268,31 @@ export default function BuzzChat() {
                           desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
                       landingsRemaining: desktopTailLandingsRef.current,
                     });
-                    desktopTailLandingsRef.current = settledDecision.disarm
-                      ? 0
-                      : Math.max(
-                          0,
-                          desktopTailLandingsRef.current - (settledDecision.land ? 1 : 0),
-                        );
+                    // Same stall test as the content-size site: charge only
+                    // a poll landing that left the follow unchanged.
+                    const settledStalled = tailFollowStalled(
+                      desktopTailLastLandRef.current,
+                      settledNode
+                        ? {
+                            scrollHeight: settledNode.scrollHeight,
+                            scrollTop: settledNode.scrollTop,
+                          }
+                        : null,
+                      DESKTOP_TAIL_STALL_EPS,
+                    );
+                    if (settledDecision.disarm) {
+                      desktopTailLandingsRef.current = 0;
+                    } else if (settledDecision.land) {
+                      desktopTailLandingsRef.current = settledStalled
+                        ? Math.max(0, desktopTailLandingsRef.current - 1)
+                        : Math.min(
+                            DESKTOP_TAIL_LANDING_CAP,
+                            desktopTailLandingsRef.current + 1,
+                          );
+                    }
                     if (settledDecision.disarm) {
                       desktopTailHeldOffsetRef.current = null;
+                      desktopTailLastLandRef.current = null;
                     }
                     if (settledDecision.land && settledNode) {
                       flatListRef.current?.scrollToOffset({
@@ -4237,10 +4301,15 @@ export default function BuzzChat() {
                       });
                       desktopTailHeldOffsetRef.current =
                         settledNode.scrollHeight - settledNode.clientHeight;
+                      desktopTailLastLandRef.current = {
+                        scrollHeight: settledNode.scrollHeight,
+                        scrollTop: settledNode.scrollTop,
+                      };
                     }
                     if (settledDecision.disarm || desktopTailLandingsRef.current <= 0) {
                       desktopTailLandingsRef.current = 0;
                       desktopTailHeldOffsetRef.current = null;
+                      desktopTailLastLandRef.current = null;
                       desktopTailDisarmTimerRef.current = null;
                       return;
                     }

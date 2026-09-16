@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { desktopTailLanding } from './room-scroll-follow';
+import { desktopTailLanding, tailFollowStalled } from './room-scroll-follow';
 
 const chatSource = readFileSync(
   new URL('../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
@@ -93,6 +93,39 @@ describe('desktopTailLanding', () => {
   });
 });
 
+describe('tailFollowStalled', () => {
+  const EPS = 1;
+
+  it('a landing that reached the bottom is never stalled, even when the measured gap then grows', () => {
+    // Measured on a 500-row transcript: every landing reaches the
+    // then-current bottom and RN Web then measures rows above the
+    // viewport, so the gap grows 618 → 613 → 1246 → … — none of that is
+    // a stalled follow.
+    expect(
+      tailFollowStalled(
+        { scrollHeight: 17000, scrollTop: 15000 },
+        { scrollHeight: 17618, scrollTop: 15000 },
+        EPS,
+      ),
+    ).toBe(false);
+  });
+
+  it('a landing that changes nothing is stalled', () => {
+    expect(
+      tailFollowStalled(
+        { scrollHeight: 20446, scrollTop: 15119 },
+        { scrollHeight: 20446, scrollTop: 15119 },
+        EPS,
+      ),
+    ).toBe(true);
+  });
+
+  it('missing state on either side is not a stall', () => {
+    expect(tailFollowStalled(null, { scrollHeight: 10, scrollTop: 0 }, EPS)).toBe(false);
+    expect(tailFollowStalled({ scrollHeight: 10, scrollTop: 0 }, null, EPS)).toBe(false);
+  });
+});
+
 describe('desktop tail landing wiring', () => {
   it('arms the cap on the desktop arrival path', () => {
     const arrivalEffect = chatSource.slice(
@@ -153,5 +186,17 @@ describe('desktop tail landing wiring', () => {
     expect(chatSource.match(/desktopTailHeldOffsetRef\.current =/g)?.length).toBeGreaterThanOrEqual(
       6,
     );
+  });
+
+  it('charges the budget only for a stalled landing, at both decision sites', () => {
+    // The cap must never become a transcript-length limit: a landing that
+    // reached the bottom it was shown is still converging (RN Web reopens
+    // the gap by measuring rows above the viewport), so the content size
+    // site and the settle poll both refund it and charge only a landing
+    // that left the follow unchanged.
+    const stalledSites = chatSource.match(/tailFollowStalled\(/g)?.length ?? 0;
+    expect(stalledSites).toBeGreaterThanOrEqual(2);
+    expect(chatSource).toContain('DESKTOP_TAIL_STALL_EPS');
+    expect(chatSource).toContain('desktopTailLastLandRef.current = null');
   });
 });

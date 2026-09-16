@@ -23,7 +23,9 @@ for (let i = 0; i < Number(appendsArg); i++) {
   await page.evaluate(() => window.__appendOne());
   await page.waitForTimeout(60);
 }
-await page.waitForTimeout(1600);
+// A long transcript converges through many measured windows; give it the
+// five-second window the review round used before reporting.
+await page.waitForTimeout(Number(countArg) >= 200 ? 5000 : 1600);
 await page.evaluate((label) => window.__measure(label), `after ${appendsArg} append(s)`);
 const last = await page.evaluate(() => {
   const lines = document.getElementById('log').textContent.trim().split('\n');

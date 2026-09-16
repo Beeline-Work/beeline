@@ -190,3 +190,26 @@ export function desktopTailLanding({
   if (tailGapAboveThreshold) return { land: true, disarm: false };
   return { land: false, disarm: tailStable };
 }
+
+/**
+ * Did the previous landing leave the follow in the SAME place (extent and
+ * scroll position unchanged)? That is the only honest "stalled" fact: a
+ * landing that reached the bottom it was shown cannot be charged for the
+ * gap RN Web later reopens by measuring rows above the viewport — on a long
+ * transcript every landing reaches the bottom and the measured gap still
+ * grows, so a gap-based budget would exhaust before a 500-row list ever
+ * converges and the cap would become transcript-length-dependent. A follow
+ * that produces no movement at all while the gap stays open is the backstop
+ * case the cap exists for.
+ */
+export function tailFollowStalled(
+  previous: { scrollHeight: number; scrollTop: number } | null,
+  current: { scrollHeight: number; scrollTop: number } | null,
+  stallEpsilon: number,
+): boolean {
+  if (!previous || !current) return false;
+  return (
+    Math.abs(previous.scrollHeight - current.scrollHeight) <= stallEpsilon &&
+    Math.abs(previous.scrollTop - current.scrollTop) <= stallEpsilon
+  );
+}

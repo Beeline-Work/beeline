@@ -105,7 +105,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
     return {
       helpers: dto.helpers.map(
-        (helper): WorkbenchHelper => ({ id: helper.agentId, name: helper.name, online: helper.online }),
+        (helper): WorkbenchHelper => ({ id: helper.id, name: helper.name, online: helper.online }),
       ),
       connectors: dto.catalog.map((entry) =>
         toConnector({

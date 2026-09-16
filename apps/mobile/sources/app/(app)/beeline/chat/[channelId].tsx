@@ -161,7 +161,11 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { useScrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
+import {
+  useScrollFollowOnArrival,
+  useScrollFollowOnLayoutChange,
+  desktopTailLanding,
+} from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -314,6 +318,10 @@ const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
 const TAIL_PIN_THRESHOLD = 50;
+// The desktop arrival follow's own metrics are stale the moment a row
+// appends (RN Web estimates unmeasured frames), so each content change
+// re-lands from the measured height while this budget lasts.
+const DESKTOP_TAIL_LANDINGS = 3;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1719,6 +1727,10 @@ export default function BuzzChat() {
   const preserveReaderOffsetUntilRef = useRef(0);
   const preservedTailGrowthRef = useRef(0);
   const nativeContentHeightRef = useRef<number | null>(null);
+  // Remaining measured-content landings that put the desktop arrival follow
+  // on the tail; the arrival scroll's estimated metrics land short the
+  // moment the row appends, so the measured content size re-lands it.
+  const desktopTailLandingsRef = useRef(0);
   // Updated on every onScroll; native's inverted list uses offset 0, while
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
@@ -1762,6 +1774,11 @@ export default function BuzzChat() {
         }, 320);
       }
       return;
+    }
+    if (desktopTranscript) {
+      // The arrival scroll may land short while the appended row's window is
+      // still unmeasured; the measured content size re-lands it.
+      desktopTailLandingsRef.current = DESKTOP_TAIL_LANDINGS;
     }
     scrollToNewestMessage();
   }, [newestMessageId, scrollToNewestMessage]);
@@ -4042,8 +4059,25 @@ export default function BuzzChat() {
             onContentSizeChange={(_width, height) => {
               const previousHeight = nativeContentHeightRef.current;
               nativeContentHeightRef.current = height;
+              if (desktopTranscript) {
+                // The measured content height is the desktop landing
+                // authority on append: scrollToEnd's estimated metrics land
+                // mid-list the moment the row appends, and scrolling past
+                // the measured height clamps to the exact bottom. Only a
+                // reader mid-drag keeps their place — the pinned verdict
+                // cannot be consulted because the arrival scroll itself
+                // moved the offset before the tail window measured.
+                const landing = desktopTailLanding({
+                  landingsRemaining: desktopTailLandingsRef.current,
+                  isUserDragging: userDraggingRef.current,
+                });
+                desktopTailLandingsRef.current = landing.remainingAfter;
+                if (landing.land) {
+                  flatListRef.current?.scrollToOffset({ offset: height, animated: false });
+                }
+                return;
+              }
               if (
-                desktopTranscript ||
                 Date.now() > preserveReaderOffsetUntilRef.current ||
                 previousHeight === null
               ) {

@@ -141,3 +141,33 @@ export function useScrollFollowOnLayoutChange({
   }, [footprint, layoutKey]);
   return decision;
 }
+
+export type TailLandingDecision = {
+  /** Re-land the viewport on the measured tail with this content change. */
+  land: boolean;
+  /** Measured re-landings left after this decision. */
+  remainingAfter: number;
+};
+
+/**
+ * One measured desktop tail landing (2026-09): the arrival scroll's own
+ * metrics are stale the moment a row appends — React Native Web's FlatList
+ * estimates unmeasured frames, so `scrollToEnd` lands mid-list and strands
+ * the reader above the row they asked to follow (proof/desktop-append-
+ * overlap). The measured content size is the landing authority: scrolling
+ * past it clamps to the exact bottom, and each content change re-lands while
+ * the budget lasts. A reader mid-drag keeps their place; the pinned verdict
+ * cannot be consulted here because the arrival scroll itself moved the
+ * offset before the tail window measured.
+ */
+export function desktopTailLanding({
+  landingsRemaining,
+  isUserDragging,
+}: {
+  landingsRemaining: number;
+  isUserDragging: boolean;
+}): TailLandingDecision {
+  if (isUserDragging) return { land: false, remainingAfter: landingsRemaining };
+  if (landingsRemaining <= 0) return { land: false, remainingAfter: 0 };
+  return { land: true, remainingAfter: landingsRemaining - 1 };
+}

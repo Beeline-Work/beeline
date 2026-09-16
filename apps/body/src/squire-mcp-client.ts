@@ -87,7 +87,9 @@ export class StdioSquireMcpClient {
 
   private initialize(): Promise<void> {
     const child = (this.options.spawn ?? spawn)(this.options.command ?? 'npx', [
-      ...(this.options.args ?? ['-y', '@trusty-squire/mcp']),
+      // `@next` RC: only the RC coordinates with a running Trusty Squire broker
+      // for concurrent sessions; stable `latest` cannot share its browser.
+      ...(this.options.args ?? ['-y', '@trusty-squire/mcp@next']),
     ]) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

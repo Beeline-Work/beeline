@@ -15,6 +15,7 @@ describe('desktopTailLanding', () => {
         tailGapAboveThreshold: true,
         tailStable: false,
         isUserScrolling: false,
+        readerMovedUp: false,
         landingsRemaining: 20,
       }),
     ).toEqual({ land: true, disarm: false });
@@ -26,6 +27,7 @@ describe('desktopTailLanding', () => {
         tailGapAboveThreshold: false,
         tailStable: false,
         isUserScrolling: false,
+        readerMovedUp: false,
         landingsRemaining: 20,
       }),
     ).toEqual({ land: false, disarm: false });
@@ -48,6 +50,31 @@ describe('desktopTailLanding', () => {
         tailGapAboveThreshold: true,
         tailStable: false,
         isUserScrolling: true,
+        readerMovedUp: false,
+        landingsRemaining: 20,
+      }),
+    ).toEqual({ land: false, disarm: true });
+  });
+
+  it('a reader who moved up away from the held tail vetoes and disarms, even with budget left', () => {
+    // A scrollbar drag or PageUp leaves no wheel/touch event on web, but it
+    // lowers scrollTop below the offset the follow last held the reader at —
+    // the open gap it leaves behind must never read as "re-land them".
+    expect(
+      desktopTailLanding({
+        tailGapAboveThreshold: true,
+        tailStable: false,
+        isUserScrolling: false,
+        readerMovedUp: true,
+        landingsRemaining: 20,
+      }),
+    ).toEqual({ land: false, disarm: true });
+    expect(
+      desktopTailLanding({
+        tailGapAboveThreshold: false,
+        tailStable: false,
+        isUserScrolling: false,
+        readerMovedUp: true,
         landingsRemaining: 20,
       }),
     ).toEqual({ land: false, disarm: true });
@@ -59,6 +86,7 @@ describe('desktopTailLanding', () => {
         tailGapAboveThreshold: true,
         tailStable: false,
         isUserScrolling: false,
+        readerMovedUp: false,
         landingsRemaining: 0,
       }),
     ).toEqual({ land: false, disarm: true });
@@ -110,9 +138,20 @@ describe('desktop tail landing wiring', () => {
     );
     expect(contentSizeChange).toContain('TAIL_PIN_THRESHOLD');
     expect(contentSizeChange).toContain('DESKTOP_USER_SCROLL_WINDOW_MS');
+    expect(contentSizeChange).toContain('readerMovedUp');
     expect(contentSizeChange).toContain('landing.disarm');
     expect(contentSizeChange.indexOf('if (desktopTranscript) {')).toBeLessThan(
       contentSizeChange.indexOf('preserveReaderOffsetUntilRef'),
+    );
+  });
+
+  it('records the held reader offset on arm and on every landing', () => {
+    // The reader-motion guard needs a baseline the follow itself placed the
+    // reader at; both decision sites compare against it and any disarm
+    // clears it so a stale offset can never outlive the follow.
+    expect(chatSource).toContain('desktopTailHeldOffsetRef.current = armNode');
+    expect(chatSource.match(/desktopTailHeldOffsetRef\.current =/g)?.length).toBeGreaterThanOrEqual(
+      6,
     );
   });
 });

@@ -159,24 +159,33 @@ export type TailLandingDecision = {
  * render batch, so a longer transcript simply needs more landings — re-land
  * while the tail gap is still above the pin threshold, then disarm after it
  * remains closed across the settle window so a leftover can never move a
- * reader who has since paged into history. Fresh wheel or touch activity
- * vetoes and disarms the follow too: React Native Web never fires
- * the drag callbacks on the platform that runs this code. The cap is a
- * backstop against a landing that stops advancing, not the termination
- * condition.
+ * reader who has since paged into history. The follow also holds a measured
+ * offset: growth below the tail never lowers scrollTop, so a drop below the
+ * held offset is the reader leaving for history — wheel, scrollbar, PageUp,
+ * any modality — and it disarms the follow immediately instead of yanking
+ * them back. Fresh wheel or touch activity vetoes and disarms the follow
+ * too: React Native Web never fires the drag callbacks on the platform that
+ * runs this code. The cap is a backstop against a landing that stops
+ * advancing, not the termination condition.
  */
 export function desktopTailLanding({
   tailGapAboveThreshold,
   tailStable,
   isUserScrolling,
+  readerMovedUp,
   landingsRemaining,
 }: {
   tailGapAboveThreshold: boolean;
   tailStable: boolean;
   isUserScrolling: boolean;
+  /**
+   * The reader's offset dropped below the offset the follow last held them
+   * at; only deliberate upward motion can do that, never tail growth.
+   */
+  readerMovedUp: boolean;
   landingsRemaining: number;
 }): TailLandingDecision {
-  if (isUserScrolling) return { land: false, disarm: true };
+  if (isUserScrolling || readerMovedUp) return { land: false, disarm: true };
   if (landingsRemaining <= 0) return { land: false, disarm: true };
   if (tailGapAboveThreshold) return { land: true, disarm: false };
   return { land: false, disarm: tailStable };

@@ -37,17 +37,48 @@ Objective: reproduce + fix the desktop transcript row overlap when a message app
 real DOM tail gap rather than a fixed landing count or RN Web's provisional
 event metrics. The list polls through the settling render window, re-lands on
 renewed growth, and disarms after the real gap stays closed for one second.
-Wheel or touch activity disarms immediately so no stale follow
-survives into history paging. A 24-landing cap is only the non-progress
-backstop. The harness imports the production decision and offers `nofix` for
-the before case. One-append results:
+A 24-landing cap is only the non-progress backstop. Three reader guards
+disarm it immediately so no stale follow can ever move someone who left the
+tail: fresh wheel or touch activity on the web scroll node (React Native Web
+never fires the drag callbacks), a gap-closed settle window, and — added for
+the review round — a held measured offset: growth below the tail never
+lowers scrollTop, so a drop below the offset the follow last held the reader
+at is the reader leaving for history (scrollbar drag, PageUp — any modality
+without wheel/touch events) and disarms the follow before it can yank them
+back. The harness imports the production decision and offers `nofix` for the
+before case and `noguard` for the pre-guard shape. One-append results
+(`node proof/desktop-append-overlap/run.mjs <count> <appends> [flags]`,
+run from the repo root):
 
 ```text
-count=30 FIX   -> tailGap 0 newestRowVisible true  overlaps 0 budgetLeft 0
-count=60 FIX   -> tailGap 0 newestRowVisible true  overlaps 0 budgetLeft 0
-count=30 NOFIX -> tailGap 1261 newestRowVisible false overlaps 0 budgetLeft 0
-count=60 NOFIX -> tailGap 3115 newestRowVisible false overlaps 0 budgetLeft 0
+count=30 appends=1 FIX   -> tailGap 0    newestRowVisible true  overlaps 0 budgetLeft 0
+count=60 appends=1 FIX   -> tailGap 0    newestRowVisible true  overlaps 0 budgetLeft 0
+count=30 appends=3 FIX   -> tailGap 29   newestRowVisible true  overlaps 0 budgetLeft 0
+count=60 appends=3 FIX   -> tailGap 0    newestRowVisible true  overlaps 0 budgetLeft 0
+count=30 appends=1 NOFIX -> tailGap 1261 newestRowVisible false overlaps 0 budgetLeft 0
+count=60 appends=1 NOFIX -> tailGap 3115 newestRowVisible false overlaps 0 budgetLeft 0
 ```
+
+## Reader-escape scenario (`run-escape.mjs`)
+
+One append arms the follow, the reader jumps to the top with no wheel/touch
+event (the scrollbar-drag / PageUp shape), an older page prepends, and we
+report where the reader ended up:
+
+```text
+count=30 phase=early noguard -> scrollTop 2238 tailGap 0    budgetLeft 18   # yanked back to the bottom
+count=60 phase=early noguard -> scrollTop 4092 tailGap 0    budgetLeft 15   # yanked back to the bottom
+count=30 phase=early fix     -> scrollTop 0    tailGap 2238 budgetLeft 0    # reader stays in history
+count=60 phase=early fix     -> scrollTop 0    tailGap 4092 budgetLeft 0    # reader stays in history
+count=30 phase=late  fix     -> scrollTop 0    tailGap 2238 budgetLeft 0
+count=60 phase=late  fix     -> scrollTop 0    tailGap 4092 budgetLeft 0
+count=30 phase=late  noguard -> scrollTop 0    tailGap 2238 budgetLeft 0    # settle window only covers late escapes
+```
+
+The `noguard` early rows are the residual hole the settle window left: an
+escape inside the first second (no wheel/touch to veto) re-opened the gap
+and the budget re-landed the reader at the bottom. The held-offset guard
+closes it for every modality.
 
 Sibling note: `feature/corner-dda5e1cca0e8` (cold-open landing, 6d726691)
 uses the same measured-landing technique for cold open and touches the same

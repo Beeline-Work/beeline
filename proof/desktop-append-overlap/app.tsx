@@ -13,6 +13,9 @@ const DESKTOP_TAIL_SETTLE_MS = 1_000;
 const DESKTOP_TAIL_POLL_MS = 50;
 const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
+// `noguard` reproduces the settle-window shape WITHOUT the reader-motion
+// disarm — exactly the code the escape scenario below convicts.
+const NOGUARD = new URLSearchParams(location.search).has('noguard');
 
 type Msg = { id: string; h: number };
 
@@ -65,15 +68,48 @@ function App() {
   const userScrolledAtRef = useRef(0);
   const offsetRef = useRef(0);
   const viewportRef = useRef(0);
+  // Where the follow last held the reader; production clears it on disarm.
+  const landedOffsetRef = useRef<number | null>(null);
 
   // The app's tail follow: decide during render, scroll in a layout effect.
+  // Mirrors production exactly: the follow arms on a NEWEST-id change while
+  // the reader is pinned, never on an unrelated data change (history paging
+  // prepends rows without touching the newest id).
+  const newestId = messages.at(-1)?.id ?? null;
+  const previousNewestRef = useRef<string | null>(null);
   useLayoutEffect(() => {
+    const previous = previousNewestRef.current;
+    previousNewestRef.current = newestId;
+    if (newestId === null || previous === null || newestId === previous) return;
     if (!appendedRef.current) return;
     landingsRef.current = NOFIX ? 0 : DESKTOP_TAIL_LANDING_CAP;
     stableSinceRef.current = null;
+    const armNode = listRef.current?.getScrollableNode() as HTMLElement | null | undefined;
+    landedOffsetRef.current = armNode ? armNode.scrollTop : offsetRef.current;
     if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
     listRef.current?.scrollToEnd({ animated: false });
-  }, [messages]);
+  }, [newestId]);
+
+  useEffect(() => {
+    // Mirrors the production web drag guard: the scroll node's own wheel and
+    // touchmove events, since React Native Web never fires the drag props.
+    const scrollNode = listRef.current?.getScrollableNode() as HTMLElement | null | undefined;
+    if (!scrollNode?.addEventListener || !scrollNode.removeEventListener) return;
+    const disarmDesktopTailFollow = () => {
+      userScrolledAtRef.current = Date.now();
+      landingsRef.current = 0;
+      stableSinceRef.current = null;
+      landedOffsetRef.current = null;
+      if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
+      disarmTimerRef.current = null;
+    };
+    scrollNode.addEventListener('wheel', disarmDesktopTailFollow, { passive: true });
+    scrollNode.addEventListener('touchmove', disarmDesktopTailFollow, { passive: true });
+    return () => {
+      scrollNode.removeEventListener('wheel', disarmDesktopTailFollow);
+      scrollNode.removeEventListener('touchmove', disarmDesktopTailFollow);
+    };
+  }, []);
 
   useEffect(() => {
     const measure = (label: string) => {
@@ -120,6 +156,30 @@ function App() {
           { id: `m${prev.length}`, h: ROW_HEIGHTS[prev.length % ROW_HEIGHTS.length] },
         ]);
       };
+      // History paging shape: rows prepend, newest id unchanged, so the
+      // follow must not re-arm and must not yank the reader back down.
+      let prependSeq = 0;
+      (window as any).__prependOlder = (n: number) => {
+        setMessages((prev) => {
+          const older: Msg[] = [];
+          for (let i = 0; i < n; i++) {
+            prependSeq += 1;
+            older.push({
+              id: `o${prependSeq}`,
+              h: ROW_HEIGHTS[(prependSeq * 5 + 3) % ROW_HEIGHTS.length],
+            });
+          }
+          return [...older, ...prev];
+        });
+      };
+      // The scrollbar-drag / PageUp shape: scrollTop drops with no wheel or
+      // touch event ever fired.
+      (window as any).__goTop = () => {
+        const scroller = document.querySelector(
+          '[data-testid="chat-messages"]',
+        ) as HTMLElement | null;
+        if (scroller) scroller.scrollTop = 0;
+      };
       (window as any).__measure = measure;
       document.getElementById('status').textContent = 'ready';
     })();
@@ -146,20 +206,6 @@ function App() {
           offsetRef.current = contentOffset.y;
           viewportRef.current = layoutMeasurement.height;
         }}
-        onWheel={() => {
-          userScrolledAtRef.current = Date.now();
-          landingsRef.current = 0;
-          stableSinceRef.current = null;
-          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
-          disarmTimerRef.current = null;
-        }}
-        onTouchMove={() => {
-          userScrolledAtRef.current = Date.now();
-          landingsRef.current = 0;
-          stableSinceRef.current = null;
-          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
-          disarmTimerRef.current = null;
-        }}
         onContentSizeChange={(_w: number, h: number) => {
           if (NOFIX) return;
           if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
@@ -176,16 +222,25 @@ function App() {
             isUserScrolling:
               userScrolledAtRef.current > 0 &&
               Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+            readerMovedUp:
+              !NOGUARD &&
+              landedOffsetRef.current !== null &&
+              scrollNode != null &&
+              scrollNode.scrollTop < landedOffsetRef.current - 1,
             landingsRemaining: landingsRef.current,
           });
           landingsRef.current = landing.disarm
             ? 0
             : Math.max(0, landingsRef.current - (landing.land ? 1 : 0));
+          if (landing.disarm) landedOffsetRef.current = null;
           if (landing.land) {
             listRef.current?.scrollToOffset({
               offset: scrollNode?.scrollHeight ?? h,
               animated: false,
             });
+            if (scrollNode) {
+              landedOffsetRef.current = scrollNode.scrollHeight - scrollNode.clientHeight;
+            }
           }
           if (!landing.disarm && landingsRef.current > 0) {
             const settleDesktopTail = () => {
@@ -207,19 +262,27 @@ function App() {
                 isUserScrolling:
                   userScrolledAtRef.current > 0 &&
                   Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+                readerMovedUp:
+                  !NOGUARD &&
+                  landedOffsetRef.current !== null &&
+                  settledNode != null &&
+                  settledNode.scrollTop < landedOffsetRef.current - 1,
                 landingsRemaining: landingsRef.current,
               });
               landingsRef.current = settledDecision.disarm
                 ? 0
                 : Math.max(0, landingsRef.current - (settledDecision.land ? 1 : 0));
+              if (settledDecision.disarm) landedOffsetRef.current = null;
               if (settledDecision.land && settledNode) {
                 listRef.current?.scrollToOffset({
                   offset: settledNode.scrollHeight,
                   animated: false,
                 });
+                landedOffsetRef.current = settledNode.scrollHeight - settledNode.clientHeight;
               }
               if (settledDecision.disarm || landingsRef.current <= 0) {
                 landingsRef.current = 0;
+                landedOffsetRef.current = null;
                 disarmTimerRef.current = null;
                 return;
               }

@@ -330,6 +330,9 @@ const DESKTOP_TAIL_POLL_MS = 50;
 // Recent web scroll interaction vetoes the landing follow: React Native Web
 // never fires the drag callbacks on the platform that runs this code.
 const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
+// Scroll positions within 1px of the held offset are measurement noise, not
+// the reader leaving the tail.
+const DESKTOP_READER_MOTION_EPS = 1;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1741,6 +1744,12 @@ export default function BuzzChat() {
   const desktopTailLandingsRef = useRef(0);
   const desktopTailDisarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const desktopTailStableSinceRef = useRef<number | null>(null);
+  // The scroll offset the follow last held the reader at — armed from the
+  // pinned arrival position and refreshed by every landing (scrollToOffset
+  // clamps to the extent's bottom). Growth below the tail never lowers
+  // scrollTop, so a drop below this offset is the reader leaving for
+  // history, never provisional measurement. Null once disarmed.
+  const desktopTailHeldOffsetRef = useRef<number | null>(null);
   // Last wheel/touch scroll activity — the web drag guard.
   const userScrolledAtRef = useRef(0);
   // Viewport height from the last scroll event, for the tail-gap verdict.
@@ -1763,6 +1772,7 @@ export default function BuzzChat() {
       userScrolledAtRef.current = Date.now();
       desktopTailLandingsRef.current = 0;
       desktopTailStableSinceRef.current = null;
+      desktopTailHeldOffsetRef.current = null;
       if (desktopTailDisarmTimerRef.current !== null) {
         clearTimeout(desktopTailDisarmTimerRef.current);
         desktopTailDisarmTimerRef.current = null;
@@ -1832,6 +1842,15 @@ export default function BuzzChat() {
       // still unmeasured; the measured content size re-lands it.
       desktopTailLandingsRef.current = DESKTOP_TAIL_LANDING_CAP;
       desktopTailStableSinceRef.current = null;
+      // The follow holds the reader where they were pinned on arrival; any
+      // later drop from this offset is the reader leaving, not growth.
+      const armNode = flatListRef.current?.getScrollableNode() as
+        | { scrollHeight: number; clientHeight: number; scrollTop: number }
+        | null
+        | undefined;
+      desktopTailHeldOffsetRef.current = armNode
+        ? armNode.scrollTop
+        : currentScrollOffsetRef.current;
       if (desktopTailDisarmTimerRef.current !== null) {
         clearTimeout(desktopTailDisarmTimerRef.current);
         desktopTailDisarmTimerRef.current = null;
@@ -4150,16 +4169,28 @@ export default function BuzzChat() {
                   isUserScrolling:
                     userScrolledAtRef.current > 0 &&
                     Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+                  readerMovedUp:
+                    desktopTailHeldOffsetRef.current !== null &&
+                    scrollNode != null &&
+                    scrollNode.scrollTop <
+                      desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
                   landingsRemaining: desktopTailLandingsRef.current,
                 });
                 desktopTailLandingsRef.current = landing.disarm
                   ? 0
                   : Math.max(0, desktopTailLandingsRef.current - (landing.land ? 1 : 0));
+                if (landing.disarm) {
+                  desktopTailHeldOffsetRef.current = null;
+                }
                 if (landing.land) {
                   flatListRef.current?.scrollToOffset({
                     offset: scrollNode?.scrollHeight ?? height,
                     animated: false,
                   });
+                  if (scrollNode) {
+                    desktopTailHeldOffsetRef.current =
+                      scrollNode.scrollHeight - scrollNode.clientHeight;
+                  }
                 }
                 if (!landing.disarm && desktopTailLandingsRef.current > 0) {
                   const settleDesktopTail = () => {
@@ -4183,6 +4214,11 @@ export default function BuzzChat() {
                       isUserScrolling:
                         userScrolledAtRef.current > 0 &&
                         Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+                      readerMovedUp:
+                        desktopTailHeldOffsetRef.current !== null &&
+                        settledNode != null &&
+                        settledNode.scrollTop <
+                          desktopTailHeldOffsetRef.current - DESKTOP_READER_MOTION_EPS,
                       landingsRemaining: desktopTailLandingsRef.current,
                     });
                     desktopTailLandingsRef.current = settledDecision.disarm
@@ -4191,14 +4227,20 @@ export default function BuzzChat() {
                           0,
                           desktopTailLandingsRef.current - (settledDecision.land ? 1 : 0),
                         );
+                    if (settledDecision.disarm) {
+                      desktopTailHeldOffsetRef.current = null;
+                    }
                     if (settledDecision.land && settledNode) {
                       flatListRef.current?.scrollToOffset({
                         offset: settledNode.scrollHeight,
                         animated: false,
                       });
+                      desktopTailHeldOffsetRef.current =
+                        settledNode.scrollHeight - settledNode.clientHeight;
                     }
                     if (settledDecision.disarm || desktopTailLandingsRef.current <= 0) {
                       desktopTailLandingsRef.current = 0;
+                      desktopTailHeldOffsetRef.current = null;
                       desktopTailDisarmTimerRef.current = null;
                       return;
                     }

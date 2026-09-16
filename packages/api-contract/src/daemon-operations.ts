@@ -760,11 +760,6 @@ export type ConnectorKind =
   | 'google-drive'
   | 'google-youtube';
 
-/** True for the Google Workspace tool connectors (one Google OAuth grant each). */
-export function isGoogleConnectorKind(value: ConnectorKind): boolean {
-  return value.startsWith('google-');
-}
-
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =
   | { readonly kind: 'install'; readonly connectorId: string; readonly connectorType: ConnectorKind }

@@ -22,7 +22,7 @@
  * the private key. The Wallet Secret rides the `X-Wallet-Auth` header on
  * wallet-scoped calls.
  */
-import { createPrivateKey, randomUUID, sign } from 'node:crypto';
+import { createPrivateKey, randomUUID, sign, type KeyObject } from 'node:crypto';
 import {
   walletAssetName,
   walletExplorerTxUrl,
@@ -93,7 +93,7 @@ export function cdpJwt(credentials: CdpCredentials, method: string, pathname: st
   const signature = sign(
     null,
     Buffer.from(`${header}.${payload}`),
-    createPrivateKey(normalizePem(credentials.keySecret)),
+    cdpPrivateKey(credentials.keySecret),
   );
   return `${header}.${payload}.${signature.toString('base64url')}`;
 }
@@ -269,13 +269,25 @@ function formatUsd(value: number): string {
 }
 
 /** Accept the PEM form CDP shows, or the raw base64 Ed25519 seed. */
-function normalizePem(secret: string): string {
-  if (secret.includes('-----BEGIN')) return secret;
-  const raw = Buffer.from(secret.replace(/\s+/g, ''), 'base64');
-  return [
-    '-----BEGIN PRIVATE KEY-----',
-    raw.toString('base64').replace(/(.{64})/g, '$1\n'),
-    '-----END PRIVATE KEY-----',
-    '',
-  ].join('\n');
+/**
+ * Coinbase CDP's Ed25519 API key secret is the RAW key bytes (a 32-byte seed,
+ * or a 64-byte seed+public value), base64-encoded. Node's createPrivateKey
+ * cannot ingest those raw bytes: it needs a PKCS8 wrapper around the 32-byte
+ * seed. Wrapping the raw bytes in a generic PEM (the previous behaviour) made
+ * createPrivateKey throw `DECODER routines::unsupported`, so every signed CDP
+ * request 503'd and the wallet could never create or read. Build the PKCS8 the
+ * seed needs; also accept a PEM the caller pasted, or an already-DER PKCS8.
+ */
+function cdpPrivateKey(secret: string): KeyObject {
+  const trimmed = secret.trim();
+  if (trimmed.includes('-----BEGIN')) return createPrivateKey(trimmed);
+  const raw = Buffer.from(trimmed.replace(/\s+/g, ''), 'base64');
+  if (raw.length === 32 || raw.length === 64) {
+    const pkcs8 = Buffer.concat([
+      Buffer.from('302e020100300506032b657004220420', 'hex'),
+      raw.subarray(0, 32),
+    ]);
+    return createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+  }
+  return createPrivateKey({ key: raw, format: 'der', type: 'pkcs8' });
 }

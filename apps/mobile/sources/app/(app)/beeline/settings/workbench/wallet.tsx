@@ -22,6 +22,7 @@ export default function WalletScreen() {
   const [wallet, setWallet] = useState<WalletView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [granting, setGranting] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -46,6 +47,18 @@ export default function WalletScreen() {
     }
   }, [workspaceId, load]);
 
+  const create = useCallback(async () => {
+    setCreating(true);
+    try {
+      setWallet(await getWalletSource().createWallet({ workspaceId }));
+      setError(null);
+    } catch {
+      setError('Could not create the wallet. Try again.');
+    } finally {
+      setCreating(false);
+    }
+  }, [workspaceId]);
+
   const needsGrant = wallet !== null && !wallet.delegation.active;
 
   return (
@@ -53,7 +66,14 @@ export default function WalletScreen() {
       <ScrollView contentContainerStyle={styles.contentInner} style={styles.content}>
         <View testID="wallet-screen">
           {error ? (
-            <SettingsRow disabled testID="wallet-error" title={error} tone="quiet" />
+            <SettingsRow
+              action="create"
+              description="A wallet only you control. Your agents spend it; they never see the key."
+              onPress={creating ? undefined : create}
+              testID="wallet-create"
+              title="Create wallet"
+              tone="action"
+            />
           ) : (
             <>
               {needsGrant ? (

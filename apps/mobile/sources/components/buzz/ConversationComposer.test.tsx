@@ -229,6 +229,46 @@ describe('one composer', () => {
     expect(input.props.style[3]).toBeUndefined();
   });
 
+  it('rejects changes from a consumed input revision and replaces the native field', () => {
+    const onChangeText = vi.fn();
+    let activeInputRevision = 4;
+    const f = render('sent text');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer
+          {...props}
+          inputRevision={4}
+          isInputRevisionCurrent={(revision) => revision === activeInputRevision}
+          onChangeText={onChangeText}
+        />,
+      ),
+    );
+    const consumedInput = f.renderer.root.findByType('TextInput');
+    const consumedOnChangeText = consumedInput.props.onChangeText;
+
+    activeInputRevision = 5;
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer
+          {...props}
+          value=""
+          inputRevision={5}
+          isInputRevisionCurrent={(revision) => revision === activeInputRevision}
+          onChangeText={onChangeText}
+        />,
+      ),
+    );
+    const replacementInput = f.renderer.root.findByType('TextInput');
+
+    act(() => consumedOnChangeText('sent text'));
+    act(() => replacementInput.props.onChangeText('next draft'));
+    expect(onChangeText).toHaveBeenCalledOnce();
+    expect(onChangeText).toHaveBeenCalledWith('next draft');
+    expect(replacementInput).not.toBe(consumedInput);
+    expect(replacementInput.props.value).toBe('');
+  });
+
   it('keeps measured multiline sizing on web', () => {
     const f = render('first line\nsecond line\nthird line');
     // Read the numbers from the constants the harness passes in. Spelling them

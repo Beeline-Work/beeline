@@ -96,24 +96,53 @@ in the **same place** — extent and scroll position unchanged while the gap
 stays open (`tailFollowStalled` in `room-scroll-follow.ts`) — which is the
 honest stalled fact and the case the cap exists for. A landing that reached
 the bottom is refunded. The cap is once again a non-progress backstop, never
-a transcript-length limit. Results (`count >= 200` waits five seconds in
-`run.mjs`):
+a transcript-length limit.
+
+## Second review round: the residual 600px flake was the fill walk
+
+The stall-charging budget fixed the exhaustion but not the timing: the
+reviewer still reproduced 2–3 of ~10 five-second 500-row runs stranded with a
+601–633px gap, budget intact. Instrumented under Chrome CPU throttling
+(6x — the loaded-machine shape the reviewer hit), the runs failed 6/6 with a
+stable 645px gap and `budgetLeft 24`: the follow was ARMED, landing on every
+content change, and the extent was still growing ~620px per event five
+seconds in. DOM dump explains it: mounted rows `m0–m9` (sticky initial
+window) + leading spacer + `m46–m139` — **RN Web's windowed fill walks
+toward the newest row `maxToRenderPerBatch` (default 10) new cells per render
+commit**, and every landing scroll puts the viewport past the mounted end,
+re-triggering a high-priority fill. Revealing the appended row is an
+O(rows/10)-commit walk whose duration scales with transcript length AND
+machine speed; the ~620px residual gap is one fill batch short of done, and
+the appended row is not even mounted mid-walk. (Flow layout reserves no
+trailing extent — `scrollHeight` is the mounted rows only.)
+
+Fix, still at the list layout layer: the desktop transcript passes
+`maxToRenderPerBatch = 100` (`DESKTOP_MAX_TO_RENDER_PER_BATCH` in
+`[channelId].tsx`; native keeps the default — the prop is desktop-gated).
+The walk is now a handful of commits instead of ~50. Both drivers now FAIL
+(exit 1) when the verdict is false — newest row off screen or overlapping
+rects — and `run.mjs` takes a reps argument; `run-throttled.mjs` runs the
+same protocol under Chrome CPU throttling:
 
 ```text
-count=200 appends=1 FIX   -> tailGap 49  newestRowVisible true  overlaps 0 budgetLeft 0
-count=500 appends=1 FIX   -> tailGap 47  newestRowVisible true  overlaps 0 budgetLeft 24
-count=30  appends=1 FIX   -> tailGap 0   newestRowVisible true  overlaps 0 budgetLeft 0
-count=60  appends=1 FIX   -> tailGap 0   newestRowVisible true  overlaps 0 budgetLeft 0
-count=500 appends=1 NOFIX -> tailGap 4855 newestRowVisible false overlaps 0 budgetLeft 0
+count=500  appends=1 FIX   reps=2       -> tailGap 0  visible true  PASS (unthrottled)
+count=30   appends=1 FIX               -> tailGap 0  visible true  PASS
+count=60   appends=3 FIX               -> tailGap 0  visible true  PASS
+count=500  rate=6x  reps=6 -> 6/6 PASS -> tailGap 0  visible true   (was 6/6 FAIL, gap 645, budget 24)
+count=500  rate=10x reps=4 -> 4/4 PASS -> tailGap 0  visible true
+count=500  rate=12x reps=3 -> FAIL, exit 1 (12x is an absurd box; the failure path is the point)
+count=60   appends=1 NOFIX             -> tailGap 3115 visible false FAIL, exit 1
+escape 30/60/500 x early/late          -> reader stays at scrollTop 0, follow drained
 ```
 
-The residual 47–49px gap is inside `TAIL_PIN_THRESHOLD` (50): the reader is
-pinned within the band every tail decision already calls "at the tail", and
-the newest row is fully on screen. `budgetLeft 24` at the 5s mark is the
-settle window still pending (it disarms one second after the last content
-change). The reader-escape guard still holds at 500 rows: an escape without
-wheel/touch leaves the reader at scrollTop 0 with the follow drained
-(`run-escape.mjs 500 early` → scrollTop 0).
+The residual 0px gap replaces the old 47–49px band: with the fill no longer
+starved, the measured bottom is the real bottom. The reader-escape guard
+still holds at 500 rows: an escape without wheel/touch leaves the reader at
+scrollTop 0 with the follow drained (`run-escape.mjs 500 early` → scrollTop
+0). The walk now finishes inside the settle window on any realistic machine;
+the 12x-throttled failure is a machine several times slower than the loaded
+box that reproduced the original bug, and it fails loudly instead of
+printing a false verdict.
 
 Sibling note: `feature/corner-dda5e1cca0e8` (cold-open landing, 6d726691)
 uses the same measured-landing technique for cold open and touches the same

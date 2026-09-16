@@ -13,6 +13,10 @@ const DESKTOP_TAIL_SETTLE_MS = 1_000;
 const DESKTOP_TAIL_POLL_MS = 50;
 const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
 const DESKTOP_TAIL_STALL_EPS = 1;
+// Mirrors the desktop fill prop: RN Web's windowed fill walks
+// `maxToRenderPerBatch` new cells per commit, so the default 10 turns tail
+// reveal on a long transcript into an O(rows/10)-commit walk.
+const DESKTOP_MAX_TO_RENDER_PER_BATCH = 100;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
 // `noguard` reproduces the settle-window shape WITHOUT the reader-motion
 // disarm — exactly the code the escape scenario below convicts.
@@ -205,6 +209,7 @@ function App() {
         style={styles.messageList}
         contentContainerStyle={[styles.messageListContent, styles.messageListContentDesktop]}
         scrollEventThrottle={100}
+        maxToRenderPerBatch={NOFIX ? undefined : DESKTOP_MAX_TO_RENDER_PER_BATCH}
         onScroll={(e: any) => {
           const { contentOffset, layoutMeasurement } = e.nativeEvent;
           offsetRef.current = contentOffset.y;

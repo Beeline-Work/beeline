@@ -199,4 +199,22 @@ describe('desktop tail landing wiring', () => {
     expect(chatSource).toContain('DESKTOP_TAIL_STALL_EPS');
     expect(chatSource).toContain('desktopTailLastLandRef.current = null');
   });
+
+  it('raises the desktop fill batch so tail reveal is not an O(rows/10)-commit walk', () => {
+    // RN Web's windowed fill adds at most `maxToRenderPerBatch` new cells
+    // per render commit (default 10) and every landing scroll triggers a
+    // high-priority fill, so revealing the appended row walked the whole
+    // remaining transcript ten rows per commit — measured still mid-walk
+    // five seconds after one append on a 500-row transcript under load,
+    // with the landing budget untouched. The prop is desktop-only so the
+    // native fill pacing is untouched.
+    const flatListProps = chatSource.slice(
+      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
+      chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
+    );
+    expect(flatListProps).toContain(
+      'maxToRenderPerBatch={\n              desktopTranscript ? DESKTOP_MAX_TO_RENDER_PER_BATCH : undefined\n            }',
+    );
+    expect(chatSource).toContain('const DESKTOP_MAX_TO_RENDER_PER_BATCH = 100;');
+  });
 });

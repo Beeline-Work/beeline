@@ -342,6 +342,15 @@ const DESKTOP_READER_MOTION_EPS = 1;
 // grows after every successful landing, and charging those would make the
 // cap transcript-length-dependent.
 const DESKTOP_TAIL_STALL_EPS = 1;
+// RN Web's windowed fill adds at most `maxToRenderPerBatch` new cells per
+// render commit (default 10), and every tail landing scrolls the viewport
+// past the mounted end, so a fresh high-priority fill would walk a long
+// transcript toward its newest row ten rows per commit — a convergence time
+// that scales with transcript length and machine speed (measured: still
+// mid-walk five seconds after one append on a 500-row transcript). The
+// desktop transcript raises the per-commit fill so the walk finishes in a
+// few commits; web renders a few hundred simple rows per commit fine.
+const DESKTOP_MAX_TO_RENDER_PER_BATCH = 100;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -4116,6 +4125,9 @@ export default function BuzzChat() {
                     // Native offset 0 is the visual bottom.
                     autoscrollToTopThreshold: 50,
                   }
+            }
+            maxToRenderPerBatch={
+              desktopTranscript ? DESKTOP_MAX_TO_RENDER_PER_BATCH : undefined
             }
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}

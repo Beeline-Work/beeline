@@ -417,6 +417,10 @@ export default function BuzzChat() {
   // immediately taps send. Keep the authoritative in-flight draft beside the
   // native TextInput so an @mention never drops trailing text.
   const inputTextRef = useRef('');
+  // A successful send replaces the native input. Advance this ref before any
+  // asynchronous React update so an event already queued by the consumed
+  // native field cannot put its text back into the next draft.
+  const composerInputRevisionRef = useRef(0);
   // The picker knows the exact agent key, whereas text-only lookup is a
   // fallback for manually typed mentions. Keep that identity through trailing
   // typing so an async roster refresh cannot turn a selected agent into an
@@ -491,6 +495,7 @@ export default function BuzzChat() {
     bindingsRef: roomSurfaceBindingsRef,
   });
   const [inputText, setInputText] = useState('');
+  const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
@@ -2459,8 +2464,15 @@ export default function BuzzChat() {
       });
       addMessages([optimistic]);
       if (!shortcut) {
+        const nextInputRevision = composerInputRevisionRef.current + 1;
+        composerInputRevisionRef.current = nextInputRevision;
+        // Clear both owners of the controlled field. `clear()` removes the
+        // platform value immediately; the revision remount below guarantees
+        // the replacement starts empty even if native reconciliation lags.
+        composerRef.current?.clear();
         inputTextRef.current = '';
         setInputText('');
+        setComposerInputRevision(nextInputRevision);
         setComposerHeight(COMPOSER_MIN_HEIGHT);
         setInputSelection({ start: 0, end: 0 });
         setPendingAttachments([]);
@@ -4416,6 +4428,10 @@ export default function BuzzChat() {
                   )
                 }
                 value={inputText}
+                inputRevision={composerInputRevision}
+                isInputRevisionCurrent={(inputRevision) =>
+                  inputRevision === composerInputRevisionRef.current
+                }
                 height={composerHeight}
                 maxHeight={COMPOSER_MAX_HEIGHT}
                 focused={composerFocused}

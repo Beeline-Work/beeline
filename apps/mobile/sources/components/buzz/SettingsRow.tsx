@@ -136,7 +136,7 @@ export function SettingsRow({
         </Text>
         {description ? (
           <View style={styles.descriptionRow}>
-            <Text numberOfLines={1} style={styles.description}>
+            <Text numberOfLines={descriptionAction ? 1 : undefined} style={styles.description}>
               {description}
             </Text>
             {descriptionAction ? (

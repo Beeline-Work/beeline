@@ -159,8 +159,8 @@ export type TailLandingDecision = {
  * render batch, so a longer transcript simply needs more landings — re-land
  * while the tail gap is still above the pin threshold, then disarm after it
  * remains closed across the settle window so a leftover can never move a
- * reader who has since paged into history. Fresh wheel, touch, or pointer
- * activity vetoes and disarms the follow too: React Native Web never fires
+ * reader who has since paged into history. Fresh wheel or touch activity
+ * vetoes and disarms the follow too: React Native Web never fires
  * the drag callbacks on the platform that runs this code. The cap is a
  * backstop against a landing that stops advancing, not the termination
  * condition.

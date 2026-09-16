@@ -37,7 +37,7 @@ Objective: reproduce + fix the desktop transcript row overlap when a message app
 real DOM tail gap rather than a fixed landing count or RN Web's provisional
 event metrics. The list polls through the settling render window, re-lands on
 renewed growth, and disarms after the real gap stays closed for one second.
-Wheel, touch, or pointer activity disarms immediately so no stale follow
+Wheel or touch activity disarms immediately so no stale follow
 survives into history paging. A 24-landing cap is only the non-progress
 backstop. The harness imports the production decision and offers `nofix` for
 the before case. One-append results:

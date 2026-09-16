@@ -160,13 +160,6 @@ function App() {
           if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
           disarmTimerRef.current = null;
         }}
-        onPointerDown={() => {
-          userScrolledAtRef.current = Date.now();
-          landingsRef.current = 0;
-          stableSinceRef.current = null;
-          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
-          disarmTimerRef.current = null;
-        }}
         onContentSizeChange={(_w: number, h: number) => {
           if (NOFIX) return;
           if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);

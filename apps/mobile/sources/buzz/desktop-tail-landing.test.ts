@@ -83,11 +83,10 @@ describe('desktop tail landing wiring', () => {
     expect(onScroll).not.toContain('contentSize.height - layoutMeasurement.height');
   });
 
-  it('stamps wheel, touch, and pointer activity as web user-scroll signals', () => {
+  it('stamps wheel and touch activity as web user-scroll signals', () => {
     expect(chatSource).toContain('onWheel={() => {');
     expect(chatSource).toContain('userScrolledAtRef.current = Date.now();');
     expect(chatSource).toContain('onTouchMove={() => {');
-    expect(chatSource).toContain('onPointerDown={() => {');
   });
 
   it('converges on the measured tail gap from the content size change', () => {

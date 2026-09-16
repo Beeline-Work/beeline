@@ -4091,15 +4091,6 @@ export default function BuzzChat() {
                 desktopTailDisarmTimerRef.current = null;
               }
             }}
-            onPointerDown={() => {
-              userScrolledAtRef.current = Date.now();
-              desktopTailLandingsRef.current = 0;
-              desktopTailStableSinceRef.current = null;
-              if (desktopTailDisarmTimerRef.current !== null) {
-                clearTimeout(desktopTailDisarmTimerRef.current);
-                desktopTailDisarmTimerRef.current = null;
-              }
-            }}
             onScrollBeginDrag={() => {
               userDraggingRef.current = true;
             }}

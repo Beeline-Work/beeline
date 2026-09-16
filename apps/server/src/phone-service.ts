@@ -2604,13 +2604,13 @@ export class PhoneService {
         return (await createWallet(
           this.database,
           viewerId,
-          (input as Input<'createWallet'>).workspaceId,
+          await this.viewerWorkbenchWorkspace(viewerId),
         )) as Output<Name>;
       case 'readWallet':
         return (await readWallet(
           this.database,
           viewerId,
-          (input as Input<'readWallet'>).workspaceId,
+          await this.viewerWorkbenchWorkspace(viewerId),
         )) as Output<Name>;
       case 'sendFromWallet':
         return (await sendFromWallet(
@@ -5189,13 +5189,30 @@ export class PhoneService {
    */
   // --- Workbench: connector provisioning and connection sovereignty ------------
 
-  private async assertWorkbenchViewer(workspaceId: string, viewerId: string): Promise<void> {
-    const row = await this.database.query(
-      `SELECT 1 FROM memberships
-       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-      [workspaceId, viewerId],
+  private async assertWorkbenchViewer(_workspaceId: string, viewerId: string): Promise<void> {
+    // The Workbench is human-scoped: a paired tool and its keys belong to the
+    // person, not a Workspace, and the screen sends no workspace id. Authorize
+    // on the authenticated viewer being a member of ANY Workspace, never on a
+    // client-supplied id (an empty one used to be cast to uuid and throw).
+    await this.viewerWorkbenchWorkspace(viewerId);
+  }
+
+  /**
+   * A stable Workspace to anchor a human-scoped Workbench write in (the connector
+   * and wallet rows still carry a workspace_id column). The screen supplies none,
+   * so resolve the viewer's own earliest Workspace membership rather than trust a
+   * client value. Throws only when the account belongs to no Workspace at all.
+   */
+  private async viewerWorkbenchWorkspace(viewerId: string): Promise<string> {
+    const row = await this.database.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM memberships
+        WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL
+        ORDER BY joined_at, workspace_id LIMIT 1`,
+      [viewerId],
     );
-    if (!row.rowCount) throw new Error('workspace membership required');
+    const workspaceId = row.rows[0]?.workspace_id;
+    if (!workspaceId) throw new Error('no Workspace for this account');
+    return workspaceId;
   }
 
   /**
@@ -5350,17 +5367,26 @@ export class PhoneService {
     input: Input<'pairConnector'>,
     viewerId: string,
   ): Promise<Output<'pairConnector'>> {
-    await this.assertWorkbenchViewer(input.workspaceId, viewerId);
     if (!isConnectableConnector(input.connectorType))
       throw new Error(`${connectorDisplayName(input.connectorType)} is not connectable yet`);
-    const helper = await this.database.query(
-      `SELECT 1 FROM memberships m
-       JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
-       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.identity_id=$2 AND m.removed_at IS NULL`,
-      [input.workspaceId, input.helperAgentId],
+    // Human-scoped: derive the Workspace to anchor the connector row in from a
+    // Workspace the viewer shares with the chosen helper, rather than a
+    // client-supplied id (the screen sends none). This both authorizes the pair
+    // and satisfies workspace_connectors.workspace_id without a uuid cast on ''.
+    const helper = await this.database.query<{ workspace_id: string }>(
+      `SELECT mv.workspace_id
+         FROM memberships mv
+         JOIN memberships mh
+           ON mh.workspace_id=mv.workspace_id AND mh.room_id IS NULL
+          AND mh.removed_at IS NULL AND mh.identity_id=$2
+         JOIN identities i ON i.id=mh.identity_id AND i.kind='agent'
+        WHERE mv.room_id IS NULL AND mv.removed_at IS NULL AND mv.identity_id=$1
+        ORDER BY mv.joined_at, mv.workspace_id LIMIT 1`,
+      [viewerId, input.helperAgentId],
     );
-    if (!helper.rowCount)
-      throw new Error('the connector helper must be a current agent member of this Workspace');
+    const workspaceId = helper.rows[0]?.workspace_id;
+    if (!workspaceId)
+      throw new Error('the connector helper must be a current agent you share a Workspace with');
     const id = randomUUID();
     await this.database.query(
       `INSERT INTO workspace_connectors(
@@ -5369,7 +5395,7 @@ export class PhoneService {
        ON CONFLICT (workspace_id,owner_identity_id,connector_type) DO NOTHING`,
       [
         id,
-        input.workspaceId,
+        workspaceId,
         viewerId,
         input.connectorType,
         input.helperAgentId,
@@ -5386,7 +5412,7 @@ export class PhoneService {
         }>(
           `SELECT id,status,status_steps,status_error FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3`,
-          [input.workspaceId, viewerId, input.connectorType],
+          [workspaceId, viewerId, input.connectorType],
         )
       ).rows[0] ?? {
         id,
@@ -5397,7 +5423,7 @@ export class PhoneService {
     // The helper sees the install assignment on its next poll.
     await ensureConnectorDirectMessageRoom(
       this.database,
-      input.workspaceId,
+      workspaceId,
       input.connectorType,
       viewerId,
     );
@@ -5412,19 +5438,16 @@ export class PhoneService {
     };
   }
 
-  private async assertOwnedConnector(
-    workspaceId: string,
-    connectorId: string,
-    viewerId: string,
-  ) {
+  private async assertOwnedConnector(connectorId: string, viewerId: string) {
+    // Human-scoped: a connector is owned by the viewer, wherever it is stored.
     const row = await this.database.query<{
       id: string;
       connector_type: Input<'pairConnector'>['connectorType'];
       status: string;
     }>(
       `SELECT id,connector_type,status FROM workspace_connectors
-       WHERE id=$1::uuid AND workspace_id=$2 AND owner_identity_id=$3`,
-      [connectorId, workspaceId, viewerId],
+       WHERE id=$1::uuid AND owner_identity_id=$2`,
+      [connectorId, viewerId],
     );
     if (!row.rowCount) throw new Error('connector not found (access denied)');
     return row.rows[0]!;
@@ -5433,11 +5456,7 @@ export class PhoneService {
   /** Unpair revokes everything the helper holds, then waits for its uninstall ack. */
   async unpairConnector(input: Input<'unpairConnector'>, viewerId: string): Promise<void> {
     await this.assertWorkbenchViewer(input.workspaceId, viewerId);
-    const connector = await this.assertOwnedConnector(
-      input.workspaceId,
-      input.connectorId,
-      viewerId,
-    );
+    const connector = await this.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.
     await this.database.query(
       `DELETE FROM workspace_connections WHERE connector_id=$1::uuid`,

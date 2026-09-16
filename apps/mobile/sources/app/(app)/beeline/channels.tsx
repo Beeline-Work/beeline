@@ -1076,6 +1076,11 @@ export default function BuzzChannels() {
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
+  // The corner status tray's backdrop, light mode only: one darker bone step
+  // so the tray reads as its own bar against the cream canvas instead of
+  // blending into it. The obsidian slab keeps its no-second-surface rule and
+  // stays unfilled.
+  const trayBackdrop = hull.dark ? 'transparent' : hull.bgRaised;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     center: {
@@ -1258,10 +1263,12 @@ const styles = StyleSheet.create((theme) => {
     },
     // Indented to the parent Room's text edge, not past it: the tray is the
     // Room's own continuation, so it starts where the Room's name starts.
+    // The backdrop bar (light mode only) grounds the tray against the canvas.
     cornerDropdown: {
       paddingLeft: ROW_TEXT_INSET,
       paddingRight: 16,
       paddingBottom: 8,
+      backgroundColor: trayBackdrop,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },

@@ -145,8 +145,8 @@ export function useScrollFollowOnLayoutChange({
 export type TailLandingDecision = {
   /** Re-land the viewport on the measured tail with this content change. */
   land: boolean;
-  /** Measured re-landings left after this decision. */
-  remainingAfter: number;
+  /** The follow is finished — clear the armed landing state. */
+  disarm: boolean;
 };
 
 /**
@@ -154,20 +154,28 @@ export type TailLandingDecision = {
  * metrics are stale the moment a row appends — React Native Web's FlatList
  * estimates unmeasured frames, so `scrollToEnd` lands mid-list and strands
  * the reader above the row they asked to follow (proof/desktop-append-
- * overlap). The measured content size is the landing authority: scrolling
- * past it clamps to the exact bottom, and each content change re-lands while
- * the budget lasts. A reader mid-drag keeps their place; the pinned verdict
- * cannot be consulted here because the arrival scroll itself moved the
- * offset before the tail window measured.
+ * overlap). The landing converges on the measured condition instead of a
+ * fixed count: each provisional content height only advances about one
+ * render batch, so a longer transcript simply needs more landings — re-land
+ * while the tail gap is still above the pin threshold, and disarm the
+ * moment the tail is reached so a leftover can never move a reader who has
+ * since paged into history. A fresh wheel or touch scroll vetoes and
+ * disarms the follow too: React Native Web never fires the drag callbacks,
+ * so wheel/touch activity is the only honest user signal on the one
+ * platform that runs this code. The cap is a backstop against a landing
+ * that stops advancing, not the termination condition.
  */
 export function desktopTailLanding({
+  tailGapAboveThreshold,
+  isUserScrolling,
   landingsRemaining,
-  isUserDragging,
 }: {
+  tailGapAboveThreshold: boolean;
+  isUserScrolling: boolean;
   landingsRemaining: number;
-  isUserDragging: boolean;
 }): TailLandingDecision {
-  if (isUserDragging) return { land: false, remainingAfter: landingsRemaining };
-  if (landingsRemaining <= 0) return { land: false, remainingAfter: 0 };
-  return { land: true, remainingAfter: landingsRemaining - 1 };
+  if (!tailGapAboveThreshold) return { land: false, disarm: true };
+  if (isUserScrolling) return { land: false, disarm: true };
+  if (landingsRemaining <= 0) return { land: false, disarm: true };
+  return { land: true, disarm: false };
 }

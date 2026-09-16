@@ -1,9 +1,16 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FlatList, View, Text, StyleSheet } from 'react-native';
+// The real decision under test, exactly as the app imports it.
+import { desktopTailLanding } from '../../apps/mobile/sources/buzz/room-scroll-follow';
 
 // Deterministic variable-height rows, like real ledger entries.
 const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42, 66];
+// Mirrors of the production constants in [channelId].tsx.
+const TAIL_PIN_THRESHOLD = 50;
+const DESKTOP_TAIL_LANDING_CAP = 24;
+const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
+const NOFIX = new URLSearchParams(location.search).has('nofix');
 
 type Msg = { id: string; h: number };
 
@@ -41,45 +48,46 @@ function HistoryLine() {
 }
 
 function App() {
-  const [messages, setMessages] = useState<Msg[]>(makeMessages(60));
+  const [messages, setMessages] = useState<Msg[]>(
+    makeMessages(Number(new URLSearchParams(location.search).get('count') ?? 60)),
+  );
   const listRef = useRef<FlatList<Msg>>(null);
   const logRef = useRef<string[]>([]);
   const appendedRef = useRef(false);
+  // The production landing state, mirrored one-for-one.
+  const landingsRef = useRef(0);
+  const userScrolledAtRef = useRef(0);
+  const offsetRef = useRef(0);
+  const viewportRef = useRef(0);
 
   // The app's tail follow: decide during render, scroll in a layout effect.
-  const pinnedRef = useRef(true);
   useLayoutEffect(() => {
     if (!appendedRef.current) return;
+    landingsRef.current = NOFIX ? 0 : DESKTOP_TAIL_LANDING_CAP;
     listRef.current?.scrollToEnd({ animated: false });
   }, [messages]);
 
   useEffect(() => {
     const measure = (label: string) => {
-      const scroller = document.querySelector('[data-testid="chat-messages"]');
-      const rows = Array.from(document.querySelectorAll('[data-row]'));
-      const rects = rows.map((r) => {
-        const rect = (r as HTMLElement).getBoundingClientRect();
-        return { id: r.getAttribute('data-row'), top: rect.top, bottom: rect.bottom };
-      });
+      const scroller = document.querySelector('[data-testid="chat-messages"]') as HTMLElement | null;
+      const rows = Array.from(document.querySelectorAll('[data-row]')) as HTMLElement[];
+      const rects = rows.map((r) => r.getBoundingClientRect());
       let overlaps = 0;
-      const details: string[] = [];
       for (let i = 1; i < rects.length; i++) {
-        if (rects[i].top < rects[i - 1].bottom - 0.5) {
-          overlaps++;
-          details.push(
-            `${rects[i].id}.top=${rects[i].top.toFixed(1)} < ${rects[i - 1].id}.bottom=${rects[i - 1].bottom.toFixed(1)}`,
-          );
-        }
+        if (rects[i].top < rects[i - 1].bottom - 0.5) overlaps++;
       }
-      const sc = scroller as HTMLElement | null;
+      const tailGap = scroller ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop : null;
+      const newestRowVisible = rects.length > 0 ? rects[rects.length - 1].bottom <= window.innerHeight : null;
       const verdict = {
         label,
-        scrollTop: sc ? Math.round(sc.scrollTop) : null,
-        scrollHeight: sc ? sc.scrollHeight : null,
-        clientHeight: sc ? sc.clientHeight : null,
-        renderedRows: rows.length,
+        nofix: NOFIX,
+        rows: rows.length,
+        tailGap: tailGap === null ? null : Math.round(tailGap),
+        newestRowVisible,
         overlaps,
-        details: details.slice(0, 6),
+        budgetLeft: landingsRef.current,
+        scrollTop: scroller ? Math.round(scroller.scrollTop) : null,
+        scrollHeight: scroller ? scroller.scrollHeight : null,
       };
       logRef.current.push(JSON.stringify(verdict));
       document.getElementById('log').textContent = logRef.current.join('\n');
@@ -118,7 +126,41 @@ function App() {
         style={styles.messageList}
         contentContainerStyle={[styles.messageListContent, styles.messageListContentDesktop]}
         scrollEventThrottle={100}
-        onScroll={() => {}}
+        onScroll={(e: any) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          offsetRef.current = contentOffset.y;
+          viewportRef.current = layoutMeasurement.height;
+          if (
+            landingsRef.current > 0 &&
+            contentSize.height - layoutMeasurement.height - contentOffset.y <= TAIL_PIN_THRESHOLD
+          ) {
+            landingsRef.current = 0;
+          }
+        }}
+        onWheel={() => {
+          userScrolledAtRef.current = Date.now();
+        }}
+        onTouchMove={() => {
+          userScrolledAtRef.current = Date.now();
+        }}
+        onContentSizeChange={(_w: number, h: number) => {
+          if (NOFIX) return;
+          // Mirrors the desktop branch of [channelId].tsx onContentSizeChange.
+          const landing = desktopTailLanding({
+            tailGapAboveThreshold:
+              h - viewportRef.current - offsetRef.current > TAIL_PIN_THRESHOLD,
+            isUserScrolling:
+              userScrolledAtRef.current > 0 &&
+              Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+            landingsRemaining: landingsRef.current,
+          });
+          landingsRef.current = landing.disarm
+            ? 0
+            : Math.max(0, landingsRef.current - (landing.land ? 1 : 0));
+          if (landing.land) {
+            listRef.current?.scrollToOffset({ offset: h, animated: false });
+          }
+        }}
         ListHeaderComponent={HistoryLine}
         renderItem={({ item }: { item: Msg }) => (
           <View dataSet={{ row: item.id }}>

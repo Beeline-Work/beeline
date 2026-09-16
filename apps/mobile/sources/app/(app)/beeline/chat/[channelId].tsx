@@ -319,9 +319,14 @@ const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // or content height minus viewport height on the ordinary desktop list.
 const TAIL_PIN_THRESHOLD = 50;
 // The desktop arrival follow's own metrics are stale the moment a row
-// appends (RN Web estimates unmeasured frames), so each content change
-// re-lands from the measured height while this budget lasts.
-const DESKTOP_TAIL_LANDINGS = 3;
+// appends (RN Web estimates unmeasured frames), so content changes re-land
+// while the measured tail gap is still above the pin threshold. The cap is
+// a backstop against a landing that stops advancing, not the goal.
+const DESKTOP_TAIL_LANDING_CAP = 24;
+// A wheel or touch scroll this recent vetoes the landing follow: React
+// Native Web never fires the drag callbacks, so this is the one honest
+// user-scroll signal on the one platform that runs this code.
+const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1727,10 +1732,14 @@ export default function BuzzChat() {
   const preserveReaderOffsetUntilRef = useRef(0);
   const preservedTailGrowthRef = useRef(0);
   const nativeContentHeightRef = useRef<number | null>(null);
-  // Remaining measured-content landings that put the desktop arrival follow
-  // on the tail; the arrival scroll's estimated metrics land short the
-  // moment the row appends, so the measured content size re-lands it.
+  // Remaining backstop landings for the desktop arrival follow; the arrival
+  // scroll's estimated metrics land short the moment the row appends, so
+  // content changes re-land while the measured tail gap is open.
   const desktopTailLandingsRef = useRef(0);
+  // Last wheel/touch scroll activity — the web drag guard.
+  const userScrolledAtRef = useRef(0);
+  // Viewport height from the last scroll event, for the tail-gap verdict.
+  const viewportHeightRef = useRef(0);
   // Updated on every onScroll; native's inverted list uses offset 0, while
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
@@ -1778,7 +1787,7 @@ export default function BuzzChat() {
     if (desktopTranscript) {
       // The arrival scroll may land short while the appended row's window is
       // still unmeasured; the measured content size re-lands it.
-      desktopTailLandingsRef.current = DESKTOP_TAIL_LANDINGS;
+      desktopTailLandingsRef.current = DESKTOP_TAIL_LANDING_CAP;
     }
     scrollToNewestMessage();
   }, [newestMessageId, scrollToNewestMessage]);
@@ -4021,6 +4030,16 @@ export default function BuzzChat() {
             onScroll={(event) => {
               const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
               currentScrollOffsetRef.current = contentOffset.y;
+              viewportHeightRef.current = layoutMeasurement.height;
+              if (
+                desktopTailLandingsRef.current > 0 &&
+                contentSize.height - layoutMeasurement.height - contentOffset.y <=
+                  TAIL_PIN_THRESHOLD
+              ) {
+                // Convergence disarm: the follow ends on arrival at the tail,
+                // so no leftover survives into an unrelated content change.
+                desktopTailLandingsRef.current = 0;
+              }
               isPinnedToTailRef.current = desktopTranscript
                 ? contentOffset.y + layoutMeasurement.height >=
                   contentSize.height - TAIL_PIN_THRESHOLD
@@ -4038,6 +4057,12 @@ export default function BuzzChat() {
               }
             }}
             scrollEventThrottle={100}
+            onWheel={() => {
+              userScrolledAtRef.current = Date.now();
+            }}
+            onTouchMove={() => {
+              userScrolledAtRef.current = Date.now();
+            }}
             onScrollBeginDrag={() => {
               userDraggingRef.current = true;
             }}
@@ -4060,18 +4085,25 @@ export default function BuzzChat() {
               const previousHeight = nativeContentHeightRef.current;
               nativeContentHeightRef.current = height;
               if (desktopTranscript) {
-                // The measured content height is the desktop landing
-                // authority on append: scrollToEnd's estimated metrics land
-                // mid-list the moment the row appends, and scrolling past
-                // the measured height clamps to the exact bottom. Only a
-                // reader mid-drag keeps their place — the pinned verdict
-                // cannot be consulted because the arrival scroll itself
-                // moved the offset before the tail window measured.
+                // The measured tail gap is the landing authority on append:
+                // scrollToEnd's estimated metrics land mid-list the moment
+                // the row appends, and each provisional content height only
+                // advances about one render batch, so re-land while the gap
+                // is still above the pin threshold. Disarm the moment the
+                // tail is reached or the reader scrolls — a leftover must
+                // never move a reader paging into history.
                 const landing = desktopTailLanding({
+                  tailGapAboveThreshold:
+                    height - viewportHeightRef.current - currentScrollOffsetRef.current >
+                    TAIL_PIN_THRESHOLD,
+                  isUserScrolling:
+                    userScrolledAtRef.current > 0 &&
+                    Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
                   landingsRemaining: desktopTailLandingsRef.current,
-                  isUserDragging: userDraggingRef.current,
                 });
-                desktopTailLandingsRef.current = landing.remainingAfter;
+                desktopTailLandingsRef.current = landing.disarm
+                  ? 0
+                  : Math.max(0, desktopTailLandingsRef.current - (landing.land ? 1 : 0));
                 if (landing.land) {
                   flatListRef.current?.scrollToOffset({ offset: height, animated: false });
                 }

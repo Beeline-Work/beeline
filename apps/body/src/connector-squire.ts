@@ -2,14 +2,15 @@
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
  * One helper carries ONE Squire account (captain decision 2026-09-14). The
- * install runs Squire's own `connect` command through a STREAMING runner that
- * captures the noVNC sign-in URL from live stdout as soon as it appears (the
- * machine token and sign-in surface print before connect blocks waiting for
- * the human). The URL is surfaced as a `streamed-page` signIn immediately;
- * the connect process stays alive in the background while the human completes
- * sign-in on that page. On a headless host the remote-login prerequisites
- * (Xvfb, x11vnc, websockify, cloudflared) are checked first and a missing
- * binary is a NAMED failed step, not a generic install error.
+ * install runs Squire's own `connect --skip-browser` command through a
+ * STREAMING runner that captures the hosted sign-in URL from live stdout as
+ * soon as it appears (the machine token and sign-in surface print before
+ * connect blocks waiting for the human). `--skip-browser` means connect never
+ * launches its own Chrome — it prints a hosted sign-in page for the human's
+ * own browser, so the install works on a headless helper with no local
+ * display or tunnel binaries. The URL is surfaced as a `streamed-page` signIn
+ * immediately; the connect process stays alive in the background while the
+ * human completes sign-in on that page.
  *
  * The old exit-only `ShellRunner` (defaultShellRunner) remains for the
  * version probe and other quick commands. A new `StreamedShellRunner`
@@ -30,7 +31,6 @@ import type {
   ConnectionLedgerEntry,
   ConnectorSignIn,
   ConnectorStep,
-  LoginPrerequisiteCheck,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
 
@@ -38,9 +38,6 @@ import type {
 export interface SquireMcpClient {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
 }
-
-/** The binaries the noVNC remote sign-in surface needs on a headless host. */
-export const REMOTE_LOGIN_BINARIES = ['xvfb-run', 'Xvfb', 'x11vnc', 'websockify', 'cloudflared'] as const;
 
 /** Where Squire installs the agent's own sign-in surface. */
 export const SQUIRE_CONNECT_PACKAGE = '@trusty-squire/mcp';
@@ -161,32 +158,6 @@ const step = (label: string, status: ConnectorStep['status'], reason?: string): 
   ...(reason ? { reason } : {}),
 });
 
-function binaryExists(binary: string): Promise<LoginPrerequisiteCheck> {
-  return new Promise((resolve) => {
-    execFile('sh', ['-c', `command -v ${JSON.stringify(binary)}`], (error, stdout) => {
-      const path = String(stdout ?? '').trim();
-      resolve({ binary, found: !error && path.length > 0, ...(path ? { path } : {}) });
-    });
-  });
-}
-
-/** Check every remote-login prerequisite; one bounded parallel sweep. */
-export async function checkRemoteLoginPrerequisites(
-  probe: (binary: string) => Promise<LoginPrerequisiteCheck> = binaryExists,
-): Promise<LoginPrerequisiteCheck[]> {
-  return Promise.all(REMOTE_LOGIN_BINARIES.map(probe));
-}
-
-/** The named failed step a missing prerequisite produces. */
-export function missingPrerequisiteStep(checks: readonly LoginPrerequisiteCheck[]): ConnectorStep {
-  const missing = checks.filter((check) => !check.found).map((check) => check.binary);
-  return step(
-    'remote sign-in prerequisites',
-    'failed',
-    `missing on this helper: ${missing.join(', ')}`,
-  );
-}
-
 /**
  * Read the sign-in surface out of Squire's own connect output. Squire prints
  * a banner carrying the URL and names the surface; the method follows the
@@ -208,7 +179,7 @@ export function parseConnectOutput(output: string): ConnectorSignIn | undefined 
 
 export type InstallSquireOptions = {
   readonly workspaceId: string;
-  /** Runs short-lived commands (version probe, remote-login prerequisites). */
+  /** Runs short-lived commands (the trusty-squire version probe). */
   readonly run?: ShellRunner;
   /**
    * Streamed runner for Squire's `connect` command. Captures the sign-in URL
@@ -219,7 +190,6 @@ export type InstallSquireOptions = {
   readonly streamRun?: StreamedShellRunner;
   /** The Squire MCP used for the post-install pairing probe. */
   readonly mcp?: SquireMcpClient;
-  readonly probeBinary?: (binary: string) => Promise<LoginPrerequisiteCheck>;
   /**
    * Called after every step settles with the steps so far — the helper
    * forwards each snapshot to the server so the phone paints progress live.
@@ -253,12 +223,12 @@ export function parseSignedInAs(output: string): string | undefined {
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
- * Order: helper reached → remote-login prerequisites → trusty-squire installed
- * → waiting for sign-in → paired to the workspace. The connect command runs
- * through a STREAMING runner that captures the noVNC sign-in URL from live
- * stdout as soon as it is printed (before the process exits). The connect
- * process stays alive in the background for the human to complete sign-in.
- * The post-install `pairSquire` probe confirms the account is live.
+ * Order: helper reached → trusty-squire installed → waiting for sign-in →
+ * paired to the workspace. The connect command runs through a STREAMING
+ * runner that captures the hosted sign-in URL from live stdout as soon as it
+ * is printed (before the process exits). The connect process stays alive in
+ * the background for the human to complete sign-in. The post-install
+ * `pairSquire` probe confirms the account is live.
  *
  * A failed step ends the report with a clear reason and everything after it
  * stays pending.
@@ -279,24 +249,18 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
   emit();
 
-  const checks = await checkRemoteLoginPrerequisites(options.probeBinary);
-  if (checks.some((check) => !check.found)) {
-    push(missingPrerequisiteStep(checks));
-    return fail('this helper cannot host the remote sign-in surface');
-  }
-  push(step('remote sign-in prerequisites', 'done'));
-
-  // Squire's `connect --force-relogin=google` prints the noVNC URL and then
-  // blocks waiting for sign-in. The streaming runner captures the URL from
-  // live stdout and resolves immediately — keeping the process alive.
-  const install = await streamRun('xvfb-run', [
-    '-a',
-    'npx',
+  // Squire's `connect --skip-browser` prints a hosted sign-in URL for the
+  // human's own browser and then blocks waiting for sign-in. It never launches
+  // its own Chrome, so no local display or tunnel binaries are needed on a
+  // headless helper. The streaming runner captures the URL from live stdout
+  // and resolves immediately — keeping the process alive.
+  const install = await streamRun('npx', [
     '-y',
     SQUIRE_CONNECT_PACKAGE,
     'connect',
     '--force-relogin=google',
     '--target=codex',
+    '--skip-browser',
   ]);
   if (!install.signIn) {
     const stderr = install.stderr.trim();

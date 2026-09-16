@@ -39,6 +39,16 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
   };
 });
 
+vi.mock('@/components/buzz/MonoHull', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    HullSurface: host('HullSurface'),
+    PixelLoader: host('PixelLoader'),
+  };
+});
+
 import ConnectTrustySquireScreen from './connect';
 import { getWorkbenchSource, setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';

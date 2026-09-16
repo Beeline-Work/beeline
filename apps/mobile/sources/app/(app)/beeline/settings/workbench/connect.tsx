@@ -3,6 +3,7 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
+import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import {
@@ -124,13 +125,41 @@ export default function ConnectTrustySquireScreen() {
     if (helperId) void pair(helperId);
   }, [pair]);
 
+  const connectorName = connectorId === 'trusty-squire' ? 'Trusty Squire' : connectorId;
+
   const noHelpers = helpers !== null && helpers.length === 0;
   const oneHelper = helpers !== null && helpers.length === 1;
   const manyHelpers = helpers !== null && helpers.length > 1;
 
   return (
     <View style={styles.container}>
+      <HullSurface strength="quiet" style={styles.header}>
+        <TouchableOpacity
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          onPress={() => router.back()}
+          style={styles.backButton}
+          testID="connect-back"
+        >
+          <Text style={styles.backButtonText}>‹</Text>
+        </TouchableOpacity>
+        <View style={styles.headerCopy}>
+          <Text style={styles.title}>Connect {connectorName}</Text>
+        </View>
+      </HullSurface>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+        {helpers === null ? (
+          <View style={styles.loading} testID="connect-loading">
+            <PixelLoader />
+            <Text style={styles.note}>Looking for your machine…</Text>
+          </View>
+        ) : null}
+        {oneHelper && install === null && helpers?.[0] ? (
+          <View style={styles.loading} testID="connect-pairing">
+            <PixelLoader />
+            <Text style={styles.note}>Pairing with {helpers[0].name}…</Text>
+          </View>
+        ) : null}
         {noHelpers ? (
           <View testID="connect-no-helper">
             <Text style={styles.note}>
@@ -244,8 +273,21 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
+    header: {
+      minHeight: 66,
+      paddingHorizontal: hull.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
+    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    headerCopy: { flex: 1, minWidth: 0 },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
+    loading: { alignItems: 'center', gap: hull.space.sm, paddingVertical: hull.space.xl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     note: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     command: { ...Typography.mono(), ...hull.type.body, color: hull.textPrimary },

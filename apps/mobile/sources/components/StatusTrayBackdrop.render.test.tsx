@@ -1,5 +1,6 @@
 import React from 'react';
-import TestRenderer, { act } from 'react-test-renderer';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { boneTheme, obsidianTheme } from '@/theme';
@@ -25,9 +26,9 @@ vi.mock('react-native', async () => {
 
 function renderBackdrop(themeName: 'bone' | 'obsidian') {
   themeRef.current = themeName === 'bone' ? boneTheme : obsidianTheme;
-  let tree!: TestRenderer.ReactTestRenderer;
+  let tree!: ReactTestRenderer;
   act(() => {
-    tree = TestRenderer.create(<StatusTrayBackdrop />);
+    tree = create(<StatusTrayBackdrop />);
   });
   return tree;
 }

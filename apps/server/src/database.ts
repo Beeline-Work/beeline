@@ -1094,7 +1094,8 @@ ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 
 -- Wallet connector: the binding row (this account owns that wallet), never a
 -- secret. The one app-wide Coinbase credential lives in server secrets, and
--- cdp_user_id is the CDP end-user the binding points at.
+-- cdp_user_id holds the deterministic CDP account name (server-wallet model, not
+-- an end-user id). The name is stable per identity so recreate is idempotent.
 CREATE TABLE IF NOT EXISTS wallet_bindings (
   identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

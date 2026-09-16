@@ -3,6 +3,9 @@
  * this. Isolated per instance (call `fakeCdpWalletSource()` fresh per test),
  * never touches the network, and invents NO credential — a test that wants
  * "the real Coinbase" must inject a stub, not read a key.
+ *
+ * Updated for server-wallet API (no end-user model): accounts are keyed by
+ * their deterministic name, and wallets are identified by address.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -14,7 +17,11 @@ import {
 } from '@beeline/api-contract/wallet';
 import type { CdpWalletSource } from './cdp-client.js';
 
-type FakeAccount = { userId: string; eoa: string; solana: string | null };
+type FakeAccount = {
+  name: string;
+  eoaAddress: string | null;
+  solanaAddress: string | null;
+};
 type FakeTx = {
   txId: string;
   direction: 'in' | 'out';
@@ -27,9 +34,11 @@ type FakeTx = {
 };
 
 export type FakeWalletState = {
+  /** Accounts keyed by deterministic name. */
   accounts: Map<string, FakeAccount>;
-  holdings: Map<string, Map<string, number>>; // userId -> symbol -> units
-  prices: Map<string, number>; // symbol -> USD per unit
+  /** Holdings keyed by EOA address -> symbol -> units. */
+  holdings: Map<string, Map<string, number>>;
+  prices: Map<string, number>;
   transactions: Map<string, FakeTx[]>;
 };
 
@@ -46,60 +55,62 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
     transactions: new Map(),
   };
 
-  const holdingsFor = (userId: string): Map<string, number> => {
-    let holdings = state.holdings.get(userId);
-    if (!holdings) {
-      holdings = new Map([['usdc', 0], ['eth', 0]]);
-      state.holdings.set(userId, holdings);
+  const holdingsFor = (address: string): Map<string, number> => {
+    let h = state.holdings.get(address);
+    if (!h) {
+      h = new Map([['usdc', 0], ['eth', 0]]);
+      state.holdings.set(address, h);
     }
-    return holdings;
+    return h;
   };
 
   const unitPrice = (symbol: string): number =>
     state.prices.get(symbol.toLowerCase()) ?? 1;
 
-  const record = (userId: string, tx: FakeTx): void => {
-    let list = state.transactions.get(userId);
+  const record = (address: string, tx: FakeTx): void => {
+    let list = state.transactions.get(address);
     if (!list) {
       list = [];
-      state.transactions.set(userId, list);
+      state.transactions.set(address, list);
     }
     list.push(tx);
   };
 
   return {
     state,
-    async createUser() {
-      return { userId: `fake-user-${randomUUID()}` };
-    },
-    async getOrCreateEvmAccount(userId: string) {
-      let account = state.accounts.get(userId);
+    async createEvmAccount(name: string) {
+      let account = state.accounts.get(name);
       if (!account) {
         account = {
-          userId,
-          eoa: `0x${randomUUID().replaceAll('-', '').slice(0, 40)}`,
-          solana: null,
+          name,
+          eoaAddress: `0x${randomUUID().replaceAll('-', '').slice(0, 40)}`,
+          solanaAddress: null,
         };
-        state.accounts.set(userId, account);
+        state.accounts.set(name, account);
       }
-      return { address: account.eoa };
+      if (!account.eoaAddress) {
+        account.eoaAddress = `0x${randomUUID().replaceAll('-', '').slice(0, 40)}`;
+      }
+      return { address: account.eoaAddress };
     },
-    async getOrCreateSolanaAccount(userId: string) {
-      let account = state.accounts.get(userId);
+    async createSolanaAccount(name: string) {
+      let account = state.accounts.get(name);
       if (!account) {
         account = {
-          userId,
-          eoa: `0x${randomUUID().replaceAll('-', '').slice(0, 40)}`,
-          solana: null,
+          name,
+          eoaAddress: null,
+          solanaAddress: `Sol${randomUUID().replaceAll('-', '').slice(0, 40)}`,
         };
-        state.accounts.set(userId, account);
+        state.accounts.set(name, account);
       }
-      if (!account.solana) account.solana = `Sol${randomUUID().replaceAll('-', '').slice(0, 40)}`;
-      return { address: account.solana };
+      if (!account.solanaAddress) {
+        account.solanaAddress = `Sol${randomUUID().replaceAll('-', '').slice(0, 40)}`;
+      }
+      return { address: account.solanaAddress };
     },
-    async balances(userId: string): Promise<WalletCoinView[]> {
-      return [...holdingsFor(userId).entries()]
-        .filter(([, units]) => units > 0 || ['usdc', 'eth'].includes(userId === '' ? '' : holdingsFor(userId).size ? '' : 'usdc'))
+    async balances(network: string, address: string): Promise<WalletCoinView[]> {
+      return [...holdingsFor(address).entries()]
+        .filter(([, units]) => units > 0)
         .map(([symbol, units]) => ({
           symbol,
           name: symbol === 'usdc' ? 'USD Coin' : symbol.toUpperCase(),
@@ -117,8 +128,8 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
     async sponsorshipAllowance() {
       return { usedUsd: 1.24, limitUsd: 25 };
     },
-    async sendTransaction(userId: string, input: WalletSendInput) {
-      const holdings = holdingsFor(userId);
+    async sendTransaction(address: string, input: WalletSendInput) {
+      const holdings = holdingsFor(address);
       const symbol = input.asset.toLowerCase();
       const available = holdings.get(symbol) ?? 0;
       const needed = Number(input.amount);
@@ -127,7 +138,7 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       }
       holdings.set(symbol, available - needed);
       const txId = `fake-tx-${randomUUID()}`;
-      record(userId, {
+      record(address, {
         txId,
         direction: 'out',
         asset: symbol,
@@ -139,8 +150,8 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       });
       return { txId };
     },
-    async swap(userId: string, input: { fromAsset: string; toAsset: string; amount: string }) {
-      const holdings = holdingsFor(userId);
+    async swap(address: string, input: { fromAsset: string; toAsset: string; amount: string }) {
+      const holdings = holdingsFor(address);
       const from = input.fromAsset.toLowerCase();
       const to = input.toAsset.toLowerCase();
       const available = holdings.get(from) ?? 0;
@@ -148,11 +159,11 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       if (Number.isNaN(needed) || needed <= 0 || needed > available) {
         throw new FakeInsufficientFundsError(needed, available, from);
       }
-      const toAmount = ((needed * unitPrice(from)) / unitPrice(to)) * 0.995; // 0.5% fee
+      const toAmount = ((needed * unitPrice(from)) / unitPrice(to)) * 0.995;
       holdings.set(from, available - needed);
       holdings.set(to, (holdings.get(to) ?? 0) + toAmount);
       const txId = `fake-swap-${randomUUID()}`;
-      record(userId, {
+      record(address, {
         txId,
         direction: 'out',
         asset: from,
@@ -164,8 +175,8 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       });
       return { txId, toAmount: toAmount.toFixed(6) };
     },
-    async history(userId: string, limit: number): Promise<WalletLedgerEntry[]> {
-      return (state.transactions.get(userId) ?? [])
+    async history(address: string, limit: number): Promise<WalletLedgerEntry[]> {
+      return (state.transactions.get(address) ?? [])
         .slice(-limit)
         .reverse()
         .map((tx) => ({

@@ -37,6 +37,30 @@ describe('scrollFollowOnArrival', () => {
     ).toBe('hold');
   });
 
+  it('scrolls a chronological cold open (the desktop list starts at its top)', () => {
+    expect(
+      scrollFollowOnArrival({
+        previousNewestId: null,
+        nextNewestId: 'msg-1',
+        isPinnedToTail: true,
+        isUserDragging: false,
+        openLandsOnTail: false,
+      }),
+    ).toBe('scroll');
+  });
+
+  it('holds a chronological cold open that lands on the tail by itself', () => {
+    expect(
+      scrollFollowOnArrival({
+        previousNewestId: null,
+        nextNewestId: 'msg-1',
+        isPinnedToTail: true,
+        isUserDragging: false,
+        openLandsOnTail: true,
+      }),
+    ).toBe('hold');
+  });
+
   it('holds when no new row arrived (stream tokens re-render, not arrive)', () => {
     expect(
       scrollFollowOnArrival({
@@ -179,6 +203,18 @@ describe('the chat screen wires the scroll rule', () => {
     ]) {
       expect(chatSource).toContain(handler);
     }
+  });
+
+  it('lands the desktop transcript on the newest message on open', () => {
+    // A chronological list starts at its top, so the open must scroll; an
+    // inverted native list already shows the tail.
+    expect(chatSource).toContain('openLandsOnTail: !desktopTranscript');
+    // The immediate scrollToEnd can land short while the tail window is
+    // unmeasured (RN Web estimates far frames), so the landing re-runs from
+    // measured content sizes until it settles.
+    expect(chatSource).toContain('desktopTailLandingsRef.current = DESKTOP_TAIL_LANDINGS');
+    expect(chatSource).toContain('desktopTailLandingsRef.current -= 1');
+    expect(chatSource).toMatch(/scrollToOffset\(\{\s*offset: height,/);
   });
 
   it('follows a composer/keyboard footprint drop while pinned to the tail', () => {

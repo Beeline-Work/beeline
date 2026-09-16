@@ -4,7 +4,10 @@ import { useLayoutEffect, useRef } from 'react';
  * The captain's scroll rule for the transcript (2026-09): whenever a new
  * message or live card mutation arrives for the open Room or corner, the
  * viewport follows only if the reader was already at the newest end. Reading
- * history is never interrupted.
+ * history is never interrupted. A cold open follows the same tail landing the
+ * platform's list already gives: `openLandsOnTail` is true where an inverted
+ * list puts the newest row in view by itself, and a chronological list (the
+ * desktop transcript) asks for one scroll call instead.
  *
  * C97: a send that collapses the composer (pending attach unmounts, field
  * snaps back to its minimum height, keyboard usually drops) makes the list
@@ -25,6 +28,7 @@ export function scrollFollowOnArrival({
   nextNewestId,
   isPinnedToTail,
   isUserDragging,
+  openLandsOnTail = true,
 }: {
   /** Newest row id seen before this commit; null on a cold open. */
   previousNewestId: string | null;
@@ -34,11 +38,17 @@ export function scrollFollowOnArrival({
   isPinnedToTail: boolean;
   /** A drag (or its momentum) is in progress right now. */
   isUserDragging: boolean;
+  /** Opening puts the newest row in view by itself (a native inverted list
+   *  starts at its bottom). A chronological desktop list starts at its top,
+   *  so its open must land on the tail through a scroll call. */
+  openLandsOnTail?: boolean;
 }): ScrollFollowDecision {
   // Nothing arrived (same newest row, or an emptied transcript).
   if (!nextNewestId || nextNewestId === previousNewestId) return 'hold';
-  // Cold open already lands on the tail; no scroll call.
-  if (previousNewestId === null) return 'hold';
+  // Cold open: an inverted list already shows the newest end at offset 0; a
+  // chronological list shows its oldest row there and must scroll to the
+  // tail to match the same landing.
+  if (previousNewestId === null) return openLandsOnTail ? 'hold' : 'scroll';
   if (!isPinnedToTail) return 'hold';
   // Never fight the user's finger mid-drag.
   if (isUserDragging) return 'hold';
@@ -53,10 +63,13 @@ export function useScrollFollowOnArrival({
   newestId,
   isPinnedToTail,
   isUserDragging,
+  openLandsOnTail = true,
 }: {
   newestId: string | null;
   isPinnedToTail: boolean;
   isUserDragging: boolean;
+  /** See `scrollFollowOnArrival`. */
+  openLandsOnTail?: boolean;
 }): ScrollFollowDecision {
   const previousNewestIdRef = useRef<string | null>(null);
   const decision = scrollFollowOnArrival({
@@ -64,6 +77,7 @@ export function useScrollFollowOnArrival({
     nextNewestId: newestId,
     isPinnedToTail,
     isUserDragging,
+    openLandsOnTail,
   });
   useLayoutEffect(() => {
     previousNewestIdRef.current = newestId;

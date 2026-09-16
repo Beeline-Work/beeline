@@ -314,6 +314,12 @@ const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
 const TAIL_PIN_THRESHOLD = 50;
+// The desktop chronological list lands on the tail through measured content
+// sizes, because RN Web's scrollToEnd estimates unmeasured far frames and can
+// land short on a cold open (the oldest window renders first). Each content
+// size change re-lands while this budget lasts; the tail window measuring
+// after the jump spends the rest.
+const DESKTOP_TAIL_LANDINGS = 3;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1719,6 +1725,10 @@ export default function BuzzChat() {
   const preserveReaderOffsetUntilRef = useRef(0);
   const preservedTailGrowthRef = useRef(0);
   const nativeContentHeightRef = useRef<number | null>(null);
+  // Remaining measured-content landings that put the desktop chronological
+  // list on its tail; `scrollFollowOnArrival` asks for one whenever a scroll
+  // is due and the list's own tail window may not have measured yet.
+  const desktopTailLandingsRef = useRef(0);
   // Updated on every onScroll; native's inverted list uses offset 0, while
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
@@ -1744,6 +1754,7 @@ export default function BuzzChat() {
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,
     isUserDragging: userDraggingRef.current,
+    openLandsOnTail: !desktopTranscript,
   });
   useLayoutEffect(() => {
     if (arrivalFollow === 'hold') {
@@ -1762,6 +1773,11 @@ export default function BuzzChat() {
         }, 320);
       }
       return;
+    }
+    if (desktopTranscript) {
+      // The immediate scroll may land short while the tail window is still
+      // unmeasured; re-land from measured content sizes until it settles.
+      desktopTailLandingsRef.current = DESKTOP_TAIL_LANDINGS;
     }
     scrollToNewestMessage();
   }, [newestMessageId, scrollToNewestMessage]);
@@ -4042,8 +4058,27 @@ export default function BuzzChat() {
             onContentSizeChange={(_width, height) => {
               const previousHeight = nativeContentHeightRef.current;
               nativeContentHeightRef.current = height;
+              if (desktopTranscript) {
+                // The measured content height is the landing authority here:
+                // scrolling past it clamps to the exact bottom, which
+                // scrollToEnd's estimated far frames cannot promise while the
+                // tail window is unmeasured. A pinned, undragging reader is
+                // the only one this may move — the open landing, or the same
+                // tail the arrival rule already sent them to.
+                if (
+                  desktopTailLandingsRef.current > 0 &&
+                  isPinnedToTailRef.current &&
+                  !userDraggingRef.current
+                ) {
+                  desktopTailLandingsRef.current -= 1;
+                  flatListRef.current?.scrollToOffset({
+                    offset: height,
+                    animated: false,
+                  });
+                }
+                return;
+              }
               if (
-                desktopTranscript ||
                 Date.now() > preserveReaderOffsetUntilRef.current ||
                 previousHeight === null
               ) {

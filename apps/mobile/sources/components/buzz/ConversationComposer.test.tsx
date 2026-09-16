@@ -223,6 +223,8 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(input.props.multiline).toBe(true);
     expect(input.props.numberOfLines).toBeUndefined();
     expect(input.props.style).toHaveLength(4);
+    expect(input.props.style[0]).not.toHaveProperty('flex');
+    expect(input.parent.parent.props.style).toMatchObject({ flex: 1, position: 'relative' });
     expect(input.props.style[1]).toBeUndefined();
     expect(input.props.style[2]).toBe(false);
     expect(input.props.style[3]).toBeUndefined();

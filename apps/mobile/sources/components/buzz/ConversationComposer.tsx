@@ -596,13 +596,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   input: {
     ...theme.buzz.type.body,
-    // Android sizes the field from its explicit `{ height, maxHeight }`.
-    // Yoga's column parent makes `flex: 1` a HEIGHT flex (flexBasis 0 wins
-    // over the explicit height), which pinned the field to one line and
-    // clipped every line above the caret; the width comes from the parent's
-    // default cross-axis stretch instead. iOS grows natively and web's flex
-    // axis is width, so both keep flex: 1.
-    ...Platform.select({ android: {}, default: { flex: 1 } }),
+    // The wrapper owns the row's flexible width. Its children sit in Yoga's
+    // default column axis, where flex growth would become a height constraint
+    // and suppress iOS TextInput's intrinsic multiline growth. Android gets
+    // its controlled height above; iOS remains intrinsic.
     minWidth: 0,
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
     color: theme.buzz.textSecondary,

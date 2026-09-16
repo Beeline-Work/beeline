@@ -62,11 +62,7 @@ describe('Room→repo header chip', () => {
 
 describe('Room→repo corner-open lazy prompt', () => {
   it('short-circuits message submission on a repo-less Room before the composer is cleared', () => {
-    const handleSend = blockFrom(
-      chatSource,
-      'const handleSend = useCallback(async (shortcut?: MessageShortcut) => {',
-      'handleSend',
-    );
+    const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
     const guardIndex = handleSend.indexOf('looksLikeCornerOpenIntent(rawText)');
     expect(guardIndex).toBeGreaterThanOrEqual(0);
     expect(handleSend).toContain('roomRepoAccessIssue');
@@ -79,11 +75,7 @@ describe('Room→repo corner-open lazy prompt', () => {
   });
 
   it('sends proposal shortcuts without consuming the composer draft or its attachments', () => {
-    const handleSend = blockFrom(
-      chatSource,
-      'const handleSend = useCallback(async (shortcut?: MessageShortcut) => {',
-      'handleSend',
-    );
+    const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
     expect(handleSend).toContain(
       'const activePendingAttachments = shortcut ? [] : pendingAttachments;',
     );

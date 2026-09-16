@@ -2,13 +2,20 @@
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
  * One helper carries ONE Squire account (captain decision 2026-09-14). The
- * install runs Squire's own `connect` command non-interactively with the
- * skip-browser flag: Squire prints its sign-in surface (the streamed noVNC
- * page URL or an OAuth URL) and this module reports exactly that method and
- * URL upward — the app opens what it is told (Q7). On a headless host the
- * remote-login prerequisites (Xvfb, x11vnc, websockify, cloudflared) are
- * checked first and a missing binary is a NAMED failed step, not a generic
- * install error.
+ * install runs Squire's own `connect` command through a STREAMING runner that
+ * captures the noVNC sign-in URL from live stdout as soon as it appears (the
+ * machine token and sign-in surface print before connect blocks waiting for
+ * the human). The URL is surfaced as a `streamed-page` signIn immediately;
+ * the connect process stays alive in the background while the human completes
+ * sign-in on that page. On a headless host the remote-login prerequisites
+ * (Xvfb, x11vnc, websockify, cloudflared) are checked first and a missing
+ * binary is a NAMED failed step, not a generic install error.
+ *
+ * The old exit-only `ShellRunner` (defaultShellRunner) remains for the
+ * version probe and other quick commands. A new `StreamedShellRunner`
+ * (`defaultStreamedRunner`) handles the connect command: it spawns the
+ * process, reads stdout line by line, and resolves the promise as soon as the
+ * sign-in URL is found (or the process exits without one).
  *
  * Vault reads, ledger reads, and grant revocation go through the Squire MCP
  * tools (`list_credentials`, `audit_log`, `list_app_access`,
@@ -16,7 +23,7 @@
  * expressed against the `SquireMcpClient` interface so tests drive a mocked
  * Squire and no test touches a real Squire account.
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import type {
   ConnectionDetail,
   ConnectionGrant,
@@ -59,6 +66,93 @@ export const defaultShellRunner: ShellRunner = (command, args) =>
         });
       },
     );
+  });
+
+/**
+ * The result of a streamed shell command that resolves when a sign-in URL
+ * appears in the output (not when the process exits). The process stays alive
+ * so the human can complete sign-in; call `abort()` to kill it.
+ */
+export type StreamedCommandResult = {
+  readonly stdout: string;
+  readonly stderr: string;
+  /** The sign-in surface, captured from live output. Undefined when the process
+   * exited or errored before printing a URL. */
+  readonly signIn?: ConnectorSignIn;
+  /** Kill the background process and clean up. Safe to call even if the
+   * process has already exited. */
+  readonly abort: () => void;
+};
+
+export type StreamedShellRunner = (
+  command: string,
+  args: readonly string[],
+) => Promise<StreamedCommandResult>;
+
+const CONNECT_TIMEOUT_MS = 300_000; // 5-minute safety bound for the connect process
+
+/**
+ * Default streamed runner: spawns the process, reads stdout line by line,
+ * resolves as soon as `parseConnectOutput` finds a sign-in URL (or when the
+ * process exits without one). Keeps the process alive until the safety
+ * timeout or an explicit `abort()`.
+ */
+export const defaultStreamedRunner: StreamedShellRunner = (command, args) =>
+  new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+
+    const safetyTimer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve({ stdout, stderr, signIn: undefined, abort: () => {} });
+      }
+      child.kill();
+    }, CONNECT_TIMEOUT_MS);
+
+    const abort = () => {
+      clearTimeout(safetyTimer);
+      child.kill();
+    };
+
+    const finish = (result: StreamedCommandResult) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(safetyTimer);
+        resolve(result);
+      }
+    };
+
+    const checkOutput = () => {
+      const combined = `${stdout}\n${stderr}`;
+      const signIn = parseConnectOutput(combined);
+      if (signIn) {
+        finish({ stdout, stderr, signIn, abort });
+      }
+    };
+
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += String(chunk);
+      checkOutput();
+    });
+
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr += String(chunk);
+      checkOutput();
+    });
+
+    child.on('close', () => {
+      finish({ stdout, stderr, signIn: undefined, abort: () => {} });
+    });
+
+    child.on('error', () => {
+      finish({ stdout, stderr, signIn: undefined, abort: () => {} });
+    });
   });
 
 const step = (label: string, status: ConnectorStep['status'], reason?: string): ConnectorStep => ({
@@ -114,8 +208,15 @@ export function parseConnectOutput(output: string): ConnectorSignIn | undefined 
 
 export type InstallSquireOptions = {
   readonly workspaceId: string;
-  /** Runs the connect command; the default spawns it for real. */
+  /** Runs short-lived commands (version probe, remote-login prerequisites). */
   readonly run?: ShellRunner;
+  /**
+   * Streamed runner for Squire's `connect` command. Captures the sign-in URL
+   * from live stdout as soon as it is printed (before the process exits).
+   * The connect process stays alive in the background for the human to
+   * complete sign-in.
+   */
+  readonly streamRun?: StreamedShellRunner;
   /** The Squire MCP used for the post-install pairing probe. */
   readonly mcp?: SquireMcpClient;
   readonly probeBinary?: (binary: string) => Promise<LoginPrerequisiteCheck>;
@@ -151,12 +252,20 @@ export function parseSignedInAs(output: string): string | undefined {
 
 /**
  * Install and pair Squire on this helper, reporting every step in order.
- * Order: helper reached → remote-login prerequisites → package install →
- * waiting for sign-in → paired to the workspace. A failed step ends the
- * report with a clear reason and everything after it stays pending.
+ *
+ * Order: helper reached → remote-login prerequisites → trusty-squire installed
+ * → waiting for sign-in → paired to the workspace. The connect command runs
+ * through a STREAMING runner that captures the noVNC sign-in URL from live
+ * stdout as soon as it is printed (before the process exits). The connect
+ * process stays alive in the background for the human to complete sign-in.
+ * The post-install `pairSquire` probe confirms the account is live.
+ *
+ * A failed step ends the report with a clear reason and everything after it
+ * stays pending.
  */
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
   const run = options.run ?? defaultShellRunner;
+  const streamRun = options.streamRun ?? defaultStreamedRunner;
   const steps: ConnectorStep[] = [step('helper reached', 'done')];
   const emit = () => options.onProgress?.([...steps]);
   const push = (next: ConnectorStep) => {
@@ -177,28 +286,32 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   }
   push(step('remote sign-in prerequisites', 'done'));
 
-  const install = await run('npx', [
+  // Squire's `connect --force-relogin=google` prints the noVNC URL and then
+  // blocks waiting for sign-in. The streaming runner captures the URL from
+  // live stdout and resolves immediately — keeping the process alive.
+  const install = await streamRun('npx', [
     '-y',
     SQUIRE_CONNECT_PACKAGE,
     'connect',
-    '--target=pi',
-    '--skip-browser',
+    '--force-relogin=google',
+    '--target=codex',
   ]);
-  if (install.code !== 0) {
-    push(step('trusty-squire installed', 'failed', install.stderr.trim() || 'connect failed'));
-    return fail('the trusty-squire install command failed');
+  if (!install.signIn) {
+    const stderr = install.stderr.trim();
+    push(step('trusty-squire installed', 'failed', stderr || 'connect printed no sign-in URL'));
+    return fail(stderr || 'the trusty-squire connect command printed no sign-in surface');
   }
+  // The connect process stays alive in the background for the human to sign in.
+  // `install.abort()` can kill it (safety timeout also fires after 5 min).
+
   const version = await installedSquireVersion(run);
   push(step(`trusty-squire${version ? ` ${version}` : ''} installed`, 'done'));
 
-  const output = `${install.stdout}\n${install.stderr}`;
-  const signIn = parseConnectOutput(output);
-  if (!signIn) {
-    push(step('waiting for sign-in', 'failed', 'connect printed no sign-in URL'));
-    return fail('the trusty-squire connect command printed no sign-in surface');
-  }
+  const signIn = install.signIn;
+  const signedInAs = parseSignedInAs(`${install.stdout}\n${install.stderr}`);
+
+  // Surface the sign-in URL immediately so the phone paints the noVNC page.
   push(step('waiting for sign-in', 'done'));
-  const signedInAs = parseSignedInAs(output);
 
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {

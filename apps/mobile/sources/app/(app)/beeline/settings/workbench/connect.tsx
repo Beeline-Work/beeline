@@ -17,6 +17,19 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** User-visible connector names, one row per id the build knows. */
+const CONNECTOR_NAMES: Record<string, string> = {
+  'trusty-squire': 'Trusty Squire',
+  'google-gmail': 'Gmail',
+  'google-calendar': 'Google Calendar',
+  'google-drive': 'Google Drive',
+  'google-youtube': 'YouTube',
+};
+
+function connectorNameFor(connectorId: string): string {
+  return CONNECTOR_NAMES[connectorId] ?? connectorId;
+}
+
 const INSTALL_POLL_MS = 700;
 
 /**
@@ -122,7 +135,7 @@ export default function ConnectTrustySquireScreen() {
     if (helperId) void pair(helperId);
   }, [pair]);
 
-  const connectorName = connectorId === 'trusty-squire' ? 'Trusty Squire' : connectorId;
+  const connectorName = connectorNameFor(connectorId);
 
   const noHelpers = helpers !== null && helpers.length === 0;
   // The machine selector is explicit BEFORE any install: the user targets

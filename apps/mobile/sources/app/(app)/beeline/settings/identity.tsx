@@ -56,7 +56,8 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
 import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
-import { setAppAppearance } from '@/unistyles';
+import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
+import { setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { authSessionOptions } from '@/auth/auth-session';
@@ -525,12 +526,20 @@ export default function BuzzIdentitySettings() {
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const githubCanLink = linkedAccount === 'not-linked' && Platform.OS !== 'web';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
+  const [uiSize, setUiSize] = useLocalSettingMutable('uiSize');
   const changeAppearance = useCallback(
     (next: typeof appearance) => {
       setAppearance(next);
-      setAppAppearance(next);
+      setAppDisplay(next, uiSize);
     },
-    [setAppearance],
+    [setAppearance, uiSize],
+  );
+  const changeUiSize = useCallback(
+    (next: typeof uiSize) => {
+      setUiSize(next);
+      setAppDisplay(appearance, next);
+    },
+    [appearance, setUiSize],
   );
 
   const commitName = () => {
@@ -557,6 +566,7 @@ export default function BuzzIdentitySettings() {
         <View style={styles.section} testID="appearance-section">
           <Text style={styles.sectionLabel}>Display</Text>
           <AppearanceSetting onChange={changeAppearance} value={appearance} />
+          <UiSizeSetting onChange={changeUiSize} value={uiSize} />
         </View>
 
         {profilePubkey && (
@@ -777,7 +787,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
     backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },

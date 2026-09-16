@@ -78,7 +78,9 @@ function toConnection(dto: ConnectionViewDto, viewerId: string): WorkbenchView['
   };
 }
 
-function toSteps(steps: readonly { label: string; status: string; reason?: string; command?: string; output?: string }[]): readonly ConnectorInstallStep[] {
+function toSteps(
+  steps: readonly { label: string; status: string; reason?: string; command?: string; output?: string }[],
+): readonly ConnectorInstallStep[] {
   return steps.map((step) => ({
     label: step.label,
     status:

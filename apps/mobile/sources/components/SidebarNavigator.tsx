@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { isTauri } from '@/utils/isTauri';
-import { DEFAULT_APP_ZOOM } from '@/hooks/useTauriZoom';
+import { APP_UI_SIZE_SCALE } from '@/ui-size';
 import {
   canRouteForward,
   canUseRouteBack,
@@ -34,8 +34,6 @@ import {
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
-
-const TAURI_HEADER_CONTROL_LEFT = Math.ceil(92 / DEFAULT_APP_ZOOM);
 
 export const SidebarNavigator = React.memo(() => {
   const isTablet = useIsTablet();
@@ -204,6 +202,7 @@ const PersistentHeader = React.memo(() => {
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
   const router = useRouter();
+  const uiSize = useLocalSetting('uiSize');
   const [zenMode, setZenMode] = useLocalSettingMutable('zenMode');
   const inTauri = isTauri();
   const isDesktop = useIsDesktop();
@@ -246,7 +245,7 @@ const PersistentHeader = React.memo(() => {
         left: 0,
         right: 0,
         paddingTop: safeArea.top,
-        paddingLeft: isMacTauri ? TAURI_HEADER_CONTROL_LEFT : 16,
+        paddingLeft: isMacTauri ? Math.ceil(92 / APP_UI_SIZE_SCALE[uiSize]) : 16,
         paddingRight: 16,
         height: safeArea.top + headerHeight,
         flexDirection: 'row',

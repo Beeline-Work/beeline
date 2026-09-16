@@ -12,6 +12,7 @@ import {
   readVault,
   revokeGrants,
   vaultConnectionMeta,
+  type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
 import type { LoginPrerequisiteCheck } from '@beeline/api-contract/daemon';
@@ -38,6 +39,20 @@ const allPrerequisitesFound = async (binary: string) => ({
 });
 
 const okRunner = () => async () => ({ code: 0, stdout: '', stderr: '' });
+
+/** A fake streaming runner that resolves immediately with a given result. */
+function fakeStreamRunner(result: {
+  stdout?: string;
+  stderr?: string;
+  signIn?: { method: 'streamed-page' | 'oauth'; url: string };
+}): StreamedShellRunner {
+  return async () => ({
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    signIn: result.signIn,
+    abort: () => {},
+  });
+}
 
 describe('parseConnectOutput', () => {
   it('reports a streamed noVNC page when Squire prints one', () => {
@@ -94,10 +109,10 @@ describe('installSquire', () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
-      run: async () => ({
-        code: 0,
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
         stdout: 'noVNC sign-in: https://tunnel.example/vnc.html#p=secret\n',
-        stderr: '',
+        signIn: { method: 'streamed-page', url: 'https://tunnel.example/vnc.html#p=secret' },
       }),
       mcp: client,
     });
@@ -120,23 +135,31 @@ describe('installSquire', () => {
     });
   });
 
-  it('runs connect non-interactively with the skip-browser flag, then probes the version', async () => {
-    const invocations: string[][] = [];
+  it('runs connect --force-relogin=google --target=codex via streaming runner, then probes the version', async () => {
+    const streamInvocations: string[][] = [];
+    const runInvocations: string[][] = [];
     await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
-      run: async (_command, args) => {
-        invocations.push([...args]);
+      streamRun: async (_cmd, args) => {
+        streamInvocations.push([...args]);
         return {
-          code: 0,
           stdout: 'https://squire.example/oauth/authorize?x=1',
           stderr: '',
+          signIn: { method: 'oauth', url: 'https://squire.example/oauth/authorize?x=1' },
+          abort: () => {},
         };
+      },
+      run: async (_cmd, args) => {
+        runInvocations.push([...args]);
+        return { code: 0, stdout: '1.1.13', stderr: '' };
       },
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(invocations).toEqual([
-      ['-y', '@trusty-squire/mcp', 'connect', '--target=pi', '--skip-browser'],
+    expect(streamInvocations).toEqual([
+      ['-y', '@trusty-squire/mcp', 'connect', '--force-relogin=google', '--target=codex'],
+    ]);
+    expect(runInvocations).toEqual([
       ['-y', '@trusty-squire/mcp', '--version'],
     ]);
   });
@@ -153,31 +176,36 @@ describe('installSquire', () => {
     expect(result.errorMessage).toContain('remote sign-in surface');
   });
 
-  it('fails with a clear reason when the connect command fails', async () => {
+  it('fails with a clear reason when the streamed connect command errors with no URL', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
-      run: async () => ({ code: 1, stdout: '', stderr: 'npm 404' }),
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        stderr: 'some connect error',
+        signIn: undefined,
+      }),
     });
     expect(result.status).toBe('error');
     expect(result.steps.find((step) => step.label === 'trusty-squire installed')?.reason).toContain(
-      'npm 404',
+      'some connect error',
     );
   });
 
-  it('fails the sign-in step when connect prints no URL', async () => {
+  it('fails the sign-in step when streamed connect prints no URL', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
-      run: async () => ({ code: 0, stdout: '', stderr: '' }),
+      run: okRunner(),
+      streamRun: fakeStreamRunner({ signIn: undefined }),
     });
     expect(result.status).toBe('error');
     expect(
-      result.steps.find((step) => step.label === 'waiting for sign-in')?.reason,
+      result.steps.find((step) => step.label === 'trusty-squire installed')?.reason,
     ).toContain('no sign-in URL');
   });
 
-  it('stays installing when the pairing probe cannot reach the vault', async () => {
+  it('surfaces the signIn URL on the installing result before the pairing probe', async () => {
     const failing: SquireMcpClient = {
       async call() {
         throw new Error('squire unreachable');
@@ -186,14 +214,53 @@ describe('installSquire', () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       probeBinary: allPrerequisitesFound,
-      run: async () => ({ code: 0, stdout: 'https://tunnel.example/vnc.html#p=x', stderr: '' }),
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        stdout: 'https://tunnel.example/vnc.html#p=x\n',
+        signIn: { method: 'streamed-page', url: 'https://tunnel.example/vnc.html#p=x' },
+      }),
       mcp: failing,
     });
     expect(result.status).toBe('installing');
     expect(result.signIn).toBeDefined();
+    expect(result.signIn!.url).toBe('https://tunnel.example/vnc.html#p=x');
+    expect(result.signIn!.method).toBe('streamed-page');
     expect(
       result.steps.find((step) => step.label === 'paired to workspace')?.reason,
     ).toContain('squire unreachable');
+  });
+
+  it('emits the waiting-for-sign-in step via onProgress before the connect process would exit', async () => {
+    const progressSteps: string[][] = [];
+    let capturedSignIn: { method: string; url: string } | undefined;
+    const { client } = mockSquire({
+      list_credentials: () => ({ credentials: [] }),
+    });
+    await installSquire({
+      workspaceId: 'ws-1',
+      probeBinary: allPrerequisitesFound,
+      run: okRunner(),
+      streamRun: async () => ({
+        stdout: 'https://vnc.trustysquire.ai/#p=secret\n',
+        stderr: '',
+        signIn: { method: 'streamed-page', url: 'https://vnc.trustysquire.ai/#p=secret' },
+        abort: () => {},
+      }),
+      onProgress(steps) {
+        progressSteps.push(steps.map((s) => s.label));
+        const last = steps[steps.length - 1];
+        if (last?.label === 'waiting for sign-in' && last.status === 'done') {
+          capturedSignIn = { method: 'streamed-page', url: 'https://vnc.trustysquire.ai/#p=secret' };
+        }
+      },
+      mcp: client,
+    });
+    // The waiting-for-sign-in step must appear before the final connected result.
+    expect(capturedSignIn).toBeDefined();
+    // The progress must have emitted the sign-in step label.
+    expect(
+      progressSteps.some((labels) => labels.includes('waiting for sign-in')),
+    ).toBe(true);
   });
 });
 

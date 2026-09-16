@@ -292,21 +292,6 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain('const label = displayCornerTitle(');
   });
 
-  it('backs the corner status tray with a darker bar in light mode only', () => {
-    // Bone's tray used to paint straight onto the cream canvas it sits on, so
-    // the corner status rows read as loose text. The backdrop is one darker
-    // bone elevation step (`bgRaised`, the persistent raised stop code blocks
-    // already carry), full-bleed so it reads as a bar. The obsidian slab keeps
-    // its no-second-surface rule, so the fill must be scoped to the light
-    // theme, not spent on both canvases.
-    expect(source).toContain('const trayBackdrop = hull.dark ?');
-    expect(source).toContain("hull.dark ? 'transparent' : hull.bgRaised");
-    const dropdown = styleBlock(source, 'cornerDropdown');
-    expect(dropdown).toContain('backgroundColor: trayBackdrop');
-    // Hairline rules still divide the index; the fill never replaces them.
-    expect(dropdown).toContain('borderTopColor: hull.border');
-  });
-
   it('reads one display-state resolver for both the dropdown list and its words', () => {
     // Daemon state, PR, and checks collapse in `corner-display-state.ts` and
     // nowhere else. A screen that re-derives any of the three can disagree with

@@ -154,7 +154,7 @@ export default function RootLayout() {
             stack header would double it. */}
         <Stack.Screen
           name="beeline/settings/workbench/connect"
-          options={{ headerTitle: 'Connect Trusty Squire', statusBarStyle: 'light' }}
+          options={{ headerShown: false, statusBarStyle: 'light' }}
         />
         <Stack.Screen
           name="beeline/chat/[channelId]"

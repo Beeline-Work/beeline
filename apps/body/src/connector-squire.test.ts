@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  checkRemoteLoginPrerequisites,
   connectionGrant,
   connectionLedgerEntry,
   installSquire,
-  missingPrerequisiteStep,
   parseConnectOutput,
   readConnectionDetail,
   readConnectionLedger,
@@ -15,7 +13,6 @@ import {
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
-import type { LoginPrerequisiteCheck } from '@beeline/api-contract/daemon';
 
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
 function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {
@@ -30,13 +27,6 @@ function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) =>
   };
   return { client, calls };
 }
-
-/** A probe that finds every prerequisite: the hermetic default for install tests. */
-const allPrerequisitesFound = async (binary: string) => ({
-  binary,
-  found: true,
-  path: `/usr/bin/${binary}`,
-});
 
 const okRunner = () => async () => ({ code: 0, stdout: '', stderr: '' });
 
@@ -75,29 +65,15 @@ describe('parseConnectOutput', () => {
   it('is undefined when connect printed no URL', () => {
     expect(parseConnectOutput('nothing useful here')).toBeUndefined();
   });
-});
 
-describe('remote-login prerequisites', () => {
-  it('checks the four headless binaries', async () => {
-    const seen: string[] = [];
-    const checks = await checkRemoteLoginPrerequisites(async (binary) => {
-      seen.push(binary);
-      return { binary, found: true, path: `/usr/bin/${binary}` };
+  it('reports the hosted --skip-browser install page as a streamed page', () => {
+    const signIn = parseConnectOutput(
+      'Open this in your browser to finish: https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqmXeQUojqvHNwnpta3vv5p\n',
+    );
+    expect(signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqmXeQUojqvHNwnpta3vv5p',
     });
-    expect(seen).toEqual(['xvfb-run', 'Xvfb', 'x11vnc', 'websockify', 'cloudflared']);
-    expect(checks.every((check) => check.found)).toBe(true);
-  });
-
-  it('names the missing binaries in the failed step', () => {
-    const checks: LoginPrerequisiteCheck[] = [
-      { binary: 'Xvfb', found: true, path: '/usr/bin/Xvfb' },
-      { binary: 'x11vnc', found: false },
-      { binary: 'websockify', found: false },
-      { binary: 'cloudflared', found: true, path: '/usr/bin/cloudflared' },
-    ];
-    const step = missingPrerequisiteStep(checks);
-    expect(step.status).toBe('failed');
-    expect(step.reason).toContain('x11vnc, websockify');
   });
 });
 
@@ -108,22 +84,20 @@ describe('installSquire', () => {
     });
     const result = await installSquire({
       workspaceId: 'ws-1',
-      probeBinary: allPrerequisitesFound,
       run: okRunner(),
       streamRun: fakeStreamRunner({
-        stdout: 'noVNC sign-in: https://tunnel.example/vnc.html#p=secret\n',
-        signIn: { method: 'streamed-page', url: 'https://tunnel.example/vnc.html#p=secret' },
+        stdout: 'Open this in your browser: https://trustysquire.ai/install?token=secret\n',
+        signIn: { method: 'streamed-page', url: 'https://trustysquire.ai/install?token=secret' },
       }),
       mcp: client,
     });
     expect(result.status).toBe('connected');
     expect(result.signIn).toEqual({
       method: 'streamed-page',
-      url: 'https://tunnel.example/vnc.html#p=secret',
+      url: 'https://trustysquire.ai/install?token=secret',
     });
     expect(result.steps.map((step) => step.label)).toEqual([
       'helper reached',
-      'remote sign-in prerequisites',
       'trusty-squire installed',
       'waiting for sign-in',
       'paired to workspace',
@@ -135,12 +109,11 @@ describe('installSquire', () => {
     });
   });
 
-  it('runs connect --force-relogin=google --target=codex via streaming runner, then probes the version', async () => {
+  it('runs connect --force-relogin=google --target=codex --skip-browser via streaming runner, then probes the version', async () => {
     const streamInvocations: string[][] = [];
     const runInvocations: string[][] = [];
     await installSquire({
       workspaceId: 'ws-1',
-      probeBinary: allPrerequisitesFound,
       streamRun: async (cmd, args) => {
         streamInvocations.push([cmd, ...args]);
         return {
@@ -157,29 +130,16 @@ describe('installSquire', () => {
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
     expect(streamInvocations).toEqual([
-      ['xvfb-run', '-a', 'npx', '-y', '@trusty-squire/mcp', 'connect', '--force-relogin=google', '--target=codex'],
+      ['npx', '-y', '@trusty-squire/mcp', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
     ]);
     expect(runInvocations).toEqual([
       ['-y', '@trusty-squire/mcp', '--version'],
     ]);
   });
 
-  it('produces a named failed step when a prerequisite is missing', async () => {
-    const result = await installSquire({
-      workspaceId: 'ws-1',
-      probeBinary: async (binary) => ({ binary, found: binary !== 'websockify' }),
-      run: okRunner(),
-    });
-    expect(result.status).toBe('error');
-    const failed = result.steps.find((step) => step.status === 'failed');
-    expect(failed?.reason).toContain('websockify');
-    expect(result.errorMessage).toContain('remote sign-in surface');
-  });
-
   it('fails with a clear reason when the streamed connect command errors with no URL', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
-      probeBinary: allPrerequisitesFound,
       run: okRunner(),
       streamRun: fakeStreamRunner({
         stderr: 'some connect error',
@@ -195,7 +155,6 @@ describe('installSquire', () => {
   it('fails the sign-in step when streamed connect prints no URL', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
-      probeBinary: allPrerequisitesFound,
       run: okRunner(),
       streamRun: fakeStreamRunner({ signIn: undefined }),
     });
@@ -213,7 +172,6 @@ describe('installSquire', () => {
     };
     const result = await installSquire({
       workspaceId: 'ws-1',
-      probeBinary: allPrerequisitesFound,
       run: okRunner(),
       streamRun: fakeStreamRunner({
         stdout: 'https://tunnel.example/vnc.html#p=x\n',
@@ -238,7 +196,6 @@ describe('installSquire', () => {
     });
     await installSquire({
       workspaceId: 'ws-1',
-      probeBinary: allPrerequisitesFound,
       run: okRunner(),
       streamRun: async () => ({
         stdout: 'https://vnc.trustysquire.ai/#p=secret\n',

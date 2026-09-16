@@ -704,13 +704,6 @@ export type PostConnectionUsageInput = {
   readonly usage: readonly ConnectionUsageRecord[];
 };
 
-/** Prerequisite check result for headless remote-login display. */
-export type LoginPrerequisiteCheck = {
-  readonly binary: string;
-  readonly found: boolean;
-  readonly path?: string;
-};
-
 // ── Connector operations ───────────────────────────────────────────
 
 export type InstallConnectorInput = AgentInput & {

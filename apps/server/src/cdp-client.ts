@@ -8,21 +8,31 @@
  * configured as SERVER env — never in code, tests, or a user vault:
  *   COINBASE_CDP_API_KEY_ID       the key id (uuid form from the portal)
  *   COINBASE_CDP_API_KEY_SECRET   the Ed25519 PRIVATE KEY (PEM or base64)
- *   COINBASE_CDP_WALLET_SECRET    the Wallet Secret for signing user ops
+ *   COINBASE_CDP_WALLET_SECRET    the P-256 Wallet Secret for signing user ops
  *
  * NON-CUSTODIAL embedded user wallets ONLY: custodial and agentic wallet
  * products are locked behind US/Singapore business verification this UAE
  * entity cannot obtain, so nothing here may depend on them. End users are
- * CDP "users" minted under the app credential; their EVM account IS the EOA
- * the receive screen shows, and their Solana account is a separate account
- * on the same user.
+ * created under the app credential; their EVM account IS the EOA (identical
+ * on every EVM chain), and their Solana account is a separate account on the
+ * same end-user.
  *
- * CDP auth: an EdDSA (Ed25519) JWT per request, header `kid` = API key id,
- * `nonce` = random uuid, claims {sub, iss, aud, nbf, exp, uris}. Signed with
- * the private key. The Wallet Secret rides the `X-Wallet-Auth` header on
- * wallet-scoped calls.
+ * CDP auth: TWO layers.
+ *   1. Developer auth: an EdDSA (Ed25519) JWT per request, header `kid` = API
+ *      key id, `nonce` = random uuid, claims {sub, iss, aud, nbf, exp, uris}.
+ *      Signed with the Ed25519 private key.
+ *   2. Wallet-secret auth: an ES256 (ECDSA P-256) JWT in the `X-Wallet-Auth`
+ *      header on wallet-scoped calls, with a sorted-body SHA-256 `reqHash`.
+ *      The project's ONE Wallet Secret (COINBASE_CDP_WALLET_SECRET) signs
+ *      every user operation — never a per-person secret.
+ *
+ * Endpoint paths follow the probe-proven structure:
+ *   POST /platform/v2/embedded-wallet-api/projects/{projectId}/end-users
+ *   PUT  /platform/v2/embedded-wallet-api/end-users/{userId}/wallet-secrets
+ *   POST /platform/v2/embedded-wallet-api/end-users/{userId}/evm
+ *   GET  /platform/v2/embedded-wallet-api/end-users/{userId}?projectId=...
  */
-import { createPrivateKey, randomUUID, sign, type KeyObject } from 'node:crypto';
+import { createPrivateKey, createPublicKey, randomUUID, sign, type KeyObject, createSign, createHash } from 'node:crypto';
 import {
   walletAssetName,
   walletExplorerTxUrl,
@@ -31,6 +41,26 @@ import {
   type WalletLedgerEntry,
   type WalletSendInput,
 } from '@beeline/api-contract/wallet';
+
+// ---------------------------------------------------------------------------
+// Credential parsing
+// ---------------------------------------------------------------------------
+
+export type CdpCredentials = {
+  keyId: string;
+  keySecret: string;
+  /** The ONE project-wide P-256 wallet secret, PEM or base64 PKCS8 DER. */
+  walletSecret?: string;
+  /** The CDP project id. Defaults to the Beeline project. */
+  projectId?: string;
+};
+
+/** The Beeline CDP project id. */
+const BEELINE_PROJECT_ID = '6fdaf9eb-9935-49fc-be84-047a324bf275';
+
+// ---------------------------------------------------------------------------
+// CdpWalletSource interface
+// ---------------------------------------------------------------------------
 
 /** Everything the wallet module needs from Coinbase, and nothing else. */
 export interface CdpWalletSource {
@@ -57,24 +87,29 @@ export interface CdpWalletSource {
   history(userId: string, limit: number): Promise<WalletLedgerEntry[]>;
 }
 
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
 const CDP_HOST = 'api.cdp.coinbase.com';
-const CDP_BASE = `https://${CDP_HOST}`;
 
 export function realCdpWalletSource(): CdpWalletSource | null {
   const keyId = process.env.COINBASE_CDP_API_KEY_ID?.trim();
   const keySecret = process.env.COINBASE_CDP_API_KEY_SECRET?.trim();
   const walletSecret = process.env.COINBASE_CDP_WALLET_SECRET?.trim();
   if (!keyId || !keySecret) return null;
-  return new CdpWalletClient({ keyId, keySecret, ...(walletSecret ? { walletSecret } : {}) });
+  return new CdpWalletClient({
+    keyId,
+    keySecret,
+    ...(walletSecret ? { walletSecret } : {}),
+  });
 }
 
-export type CdpCredentials = {
-  keyId: string;
-  keySecret: string;
-  walletSecret?: string;
-};
+// ---------------------------------------------------------------------------
+// Developer Ed25519 JWT
+// ---------------------------------------------------------------------------
 
-/** Build the EdDSA JWT CDP expects on every request. */
+/** Build the EdDSA JWT CDP expects on every developer-authenticated request. */
 export function cdpJwt(credentials: CdpCredentials, method: string, pathname: string): string {
   const header = Buffer.from(
     JSON.stringify({ alg: 'EdDSA', kid: credentials.keyId, nonce: randomUUID(), typ: 'JWT' }),
@@ -98,85 +133,309 @@ export function cdpJwt(credentials: CdpCredentials, method: string, pathname: st
   return `${header}.${payload}.${signature.toString('base64url')}`;
 }
 
-export class CdpWalletClient implements CdpWalletSource {
-  constructor(private readonly credentials: CdpCredentials) {}
+/** Accept the PEM form CDP shows, or the raw base64 Ed25519 seed. */
+function cdpPrivateKey(secret: string): KeyObject {
+  const trimmed = secret.trim();
+  if (trimmed.includes('-----BEGIN')) return createPrivateKey(trimmed);
+  const raw = Buffer.from(trimmed.replace(/\s+/g, ''), 'base64');
+  if (raw.length === 32 || raw.length === 64) {
+    const pkcs8 = Buffer.concat([
+      Buffer.from('302e020100300506032b657004220420', 'hex'),
+      raw.subarray(0, 32),
+    ]);
+    return createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+  }
+  return createPrivateKey({ key: raw, format: 'der', type: 'pkcs8' });
+}
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const jwt = cdpJwt(this.credentials, method, new URL(path, CDP_BASE).pathname);
-    const response = await fetch(`${CDP_BASE}${path}`, {
+// ---------------------------------------------------------------------------
+// Wallet-secret ES256 auth (X-Wallet-Auth header)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the app-wide P-256 wallet secret into a `KeyObject`.
+ *
+ * Accepts PEM or DER PKCS8 format. CDP provides the Wallet Secret as a P-256
+ * key (not a raw seed); the vault is configured as PEM or base64 DER.
+ */
+function walletSecretKey(secret: string): KeyObject {
+  const trimmed = secret.trim();
+  if (trimmed.includes('-----BEGIN')) return createPrivateKey(trimmed);
+  const raw = Buffer.from(trimmed.replace(/\s+/g, ''), 'base64');
+  return createPrivateKey({ key: raw, format: 'der', type: 'pkcs8' });
+}
+
+/**
+ * Convert a DER-encoded ECDSA signature (ASN.1 SEQUENCE of two INTEGERs)
+ * to the raw r||s format JWT ES256 expects (64 bytes: two 32-byte big-endian
+ * values concatenated).
+ */
+function derToRawSignature(der: Buffer): Buffer {
+  // DER: 30 <len> 02 <rlen> <r> 02 <slen> <s>
+  let offset = 0;
+  if (der[offset] !== 0x30) throw new Error('not a DER SEQUENCE');
+  const firstLen: number = der[offset + 1]!;
+  if (firstLen & 0x80) {
+    const nBytes = firstLen & 0x7f;
+    offset = 2;
+    for (let i = 0; i < nBytes; i++) offset += der[offset]!;
+    offset = 2 + nBytes;
+  } else {
+    offset = 2;
+  }
+  const readInteger = (): Buffer => {
+    if (der[offset] !== 0x02) throw new Error('expected INTEGER');
+    const len: number = der[offset + 1]!;
+    offset += 2;
+    const value = der.subarray(offset, offset + len);
+    offset += len;
+    // Strip leading 0x00 padding byte (added for positive sign) but keep the
+    // rest. Pad left to 32 bytes if shorter.
+    let start = 0;
+    if (value.length > 32 && value[0] === 0x00) start = 1;
+    const trimmed = value.subarray(start);
+    if (trimmed.length > 32) throw new Error(`INTEGER too long: ${trimmed.length}`);
+    return trimmed.length < 32
+      ? Buffer.concat([Buffer.alloc(32 - trimmed.length), trimmed])
+      : trimmed;
+  };
+  const r = readInteger();
+  const s = readInteger();
+  return Buffer.concat([r, s]);
+}
+
+/**
+ * Build the ES256 JWT for the X-Wallet-Auth header.
+ *
+ * Structure (from the live probe):
+ *   Header:  {"alg":"ES256","typ":"JWT"}
+ *   Payload: {
+ *     uris: ["POST api.cdp.coinbase.com/platform/v2/..."],
+ *     reqHash: hex(sha256(sortKeys(body)))  // absent when body is empty
+ *   }
+ *   Signed with the app's P-256 Wallet Secret.
+ *
+ * `sortKeys` recursively sorts object keys for a deterministic hash, matching
+ * the CDP server's own canonical form.
+ */
+function sortKeys(obj: unknown): unknown {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sortKeys);
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) sorted[key] = sortKeys((obj as Record<string, unknown>)[key]);
+  return sorted;
+}
+
+function walletAuthJwt(
+  walletKey: KeyObject,
+  method: string,
+  path: string,
+  body?: Record<string, unknown>,
+): string {
+  const header = { alg: 'ES256' as const, typ: 'JWT' as const };
+  const payload: Record<string, unknown> = {
+    uris: [`${method} ${CDP_HOST}${path}`],
+  };
+  if (body && Object.keys(body).length > 0) {
+    payload.reqHash = createHash('sha256')
+      .update(JSON.stringify(sortKeys(body)))
+      .digest('hex');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  payload.iat = now;
+  payload.nbf = now;
+  payload.jti = randomUUID();
+
+  const enc = (input: Record<string, unknown>): string =>
+    Buffer.from(JSON.stringify(input)).toString('base64url');
+  const signingInput = `${enc(header)}.${enc(payload)}`;
+  const derSig = createSign('sha256').update(signingInput).sign(walletKey);
+  const rawSig = derToRawSignature(derSig);
+  return `${signingInput}.${rawSig.toString('base64url')}`;
+}
+
+// ---------------------------------------------------------------------------
+// CdpWalletClient — the real implementation
+// ---------------------------------------------------------------------------
+
+const API_BASE = '/platform/v2/embedded-wallet-api';
+
+export class CdpWalletClient implements CdpWalletSource {
+  private readonly projectId: string;
+  private readonly walletKey: KeyObject | null;
+
+  constructor(private readonly credentials: CdpCredentials) {
+    this.projectId = credentials.projectId ?? BEELINE_PROJECT_ID;
+    this.walletKey = credentials.walletSecret
+      ? walletSecretKey(credentials.walletSecret)
+      : null;
+  }
+
+  /**
+   * Fire a developer-authenticated request (Ed25519 dev JWT only).
+   * Used for end-user management and read operations that don't need wallet
+   * secret auth (X-Wallet-Auth).
+   */
+  private async devRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const fullPath = `${API_BASE}${path}`;
+    const jwt = cdpJwt(this.credentials, method, fullPath);
+    const response = await fetch(`https://${CDP_HOST}${fullPath}`, {
+      method,
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`CDP ${method} ${fullPath} failed (${response.status}): ${text.slice(0, 300)}`);
+    }
+    return (await response.json()) as T;
+  }
+
+  /**
+   * Fire a wallet-authenticated request (dev JWT + X-Wallet-Auth ES256 JWT).
+   * Used for user-specific operations like creating accounts, sending, etc.
+   * Requires the wallet secret to be configured.
+   */
+  private async walletRequest<T>(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<T> {
+    const fullPath = `${API_BASE}${path}`;
+    const jwt = cdpJwt(this.credentials, method, fullPath);
+    if (!this.walletKey) {
+      throw new Error('CDP wallet secret not configured: COINBASE_CDP_WALLET_SECRET is required for user operations');
+    }
+    const walletJwt = walletAuthJwt(this.walletKey, method, fullPath, body);
+    const response = await fetch(`https://${CDP_HOST}${fullPath}`, {
       method,
       headers: {
         authorization: `Bearer ${jwt}`,
+        'x-wallet-auth': walletJwt,
         'content-type': 'application/json',
-        ...(this.credentials.walletSecret
-          ? { 'X-Wallet-Auth': `Bearer ${this.credentials.walletSecret}` }
-          : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`CDP ${method} ${path} failed (${response.status}): ${text.slice(0, 300)}`);
+      throw new Error(`CDP ${method} ${fullPath} failed (${response.status}): ${text.slice(0, 300)}`);
     }
     return (await response.json()) as T;
   }
 
+  // -----------------------------------------------------------------------
+  // CdpWalletSource implementation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Create an end-user under the app credential. No email OTP needed for the
+   * server-side Embedded Wallets API — the developer JWT authorizes end-user
+   * creation directly (captain verified: "CDP accepts a JWT from our own
+   * auth"). The wallet secret is then registered on this end-user so wallet
+   * operations are authenticated through the project's P-256 keypair.
+   */
   async createUser(): Promise<{ userId: string }> {
-    const result = await this.request<{ id: string }>('POST', '/platform/v2/users', {
-      name: `beeline-${randomUUID().slice(0, 8)}`,
-    });
-    return { userId: result.id };
+    const result = await this.devRequest<{ userId: string }>(
+      'POST',
+      `/projects/${this.projectId}/end-users`,
+      {},
+    );
+    const userId = result.userId;
+    // Register the app's wallet secret on this end-user so we can sign
+    // subsequent wallet operations.
+    if (this.walletKey) {
+      const pubKey = this.walletKeyToSpki();
+      const walletSecretId = createHash('sha256')
+        .update(pubKey + userId)
+        .digest('hex')
+        .slice(0, 36); // UUID-like format, unique per user
+      const validUntil = new Date(Date.now() + 365 * 24 * 3600_000).toISOString(); // 1 year
+      await this.walletRequest(
+        'PUT',
+        `/end-users/${userId}/wallet-secrets`,
+        { walletSecretId, publicKey: pubKey, validUntil },
+      );
+    }
+    return { userId };
+  }
+
+  /** Get the SPKI (SubjectPublicKeyInfo) of the wallet secret, base64-encoded. */
+  private walletKeyToSpki(): string {
+    if (!this.walletKey) throw new Error('no wallet secret configured');
+    // Node v24 does not allow export({type:'spki'}) directly from a private
+    // KeyObject. Wrap the key as a public key first.
+    return createPublicKey(this.walletKey).export({ type: 'spki', format: 'der' }).toString('base64');
   }
 
   async getOrCreateEvmAccount(userId: string): Promise<{ address: string }> {
-    const existing = await this.findAccount(userId, 'evm');
-    if (existing) return existing;
-    const created = await this.request<{ address: string }>(
+    if (!this.walletKey) {
+      throw new Error('Wallet secret required for EVM account creation');
+    }
+    const pubKey = this.walletKeyToSpki();
+    const walletSecretId = createHash('sha256')
+      .update(pubKey + userId)
+      .digest('hex')
+      .slice(0, 36);
+    const result = await this.walletRequest<{ address: string }>(
       'POST',
-      `/platform/v2/users/${encodeURIComponent(userId)}/accounts`,
-      { type: 'evm' },
+      `/end-users/${userId}/evm`,
+      { walletSecretId },
     );
-    return { address: created.address };
+    return { address: result.address };
   }
 
   async getOrCreateSolanaAccount(userId: string): Promise<{ address: string }> {
-    const existing = await this.findAccount(userId, 'solana');
-    if (existing) return existing;
-    const created = await this.request<{ address: string }>(
+    if (!this.walletKey) {
+      throw new Error('Wallet secret required for Solana account creation');
+    }
+    const pubKey = this.walletKeyToSpki();
+    const walletSecretId = createHash('sha256')
+      .update(pubKey + userId)
+      .digest('hex')
+      .slice(0, 36);
+    const result = await this.walletRequest<{ address: string }>(
       'POST',
-      `/platform/v2/users/${encodeURIComponent(userId)}/accounts`,
-      { type: 'solana' },
+      `/end-users/${userId}/solana`,
+      { walletSecretId },
     );
-    return { address: created.address };
-  }
-
-  private async findAccount(
-    userId: string,
-    type: 'evm' | 'solana',
-  ): Promise<{ address: string } | null> {
-    const accounts = await this.request<{
-      accounts: Array<{ address: string; type: string }>;
-    }>('GET', `/platform/v2/users/${encodeURIComponent(userId)}/accounts?type=${type}`);
-    const match = accounts.accounts.find((account) => account.type === type);
-    return match ? { address: match.address } : null;
+    return { address: result.address };
   }
 
   async balances(userId: string): Promise<WalletCoinView[]> {
-    const result = await this.request<{
-      balances: Array<{ asset: string; amount: string; usd_value: string }>;
-    }>('GET', `/platform/v2/users/${encodeURIComponent(userId)}/balances`);
-    return result.balances.map((row) => ({
-      symbol: row.asset.toLowerCase(),
-      name: walletAssetName(row.asset),
-      amount: row.amount,
-      usd: formatUsd(Number(row.usd_value)),
-    }));
+    // The end-user resource carries holdings when queried with the project id.
+    const result = await this.devRequest<{
+      userId: string;
+      accounts?: Array<{ type: string; address: string; balances: Array<{ asset: string; amount: string }> }>;
+      holdings?: Array<{ asset: string; amount: string; usd_value: string }>;
+    }>('GET', `/end-users/${userId}?projectId=${this.projectId}`);
+    // CDP may return holdings as a flat list or nested under accounts.
+    const holdings = result.holdings ?? [];
+    if (holdings.length) {
+      return holdings.map((row) => ({
+        symbol: assetSymbol(row.asset),
+        name: walletAssetName(assetSymbol(row.asset)),
+        amount: row.amount,
+        usd: formatUsd(Number(row.usd_value)),
+      }));
+    }
+    // Fallback: extract from accounts if holdings not present.
+    const accounts = result.accounts ?? [];
+    const coins: WalletCoinView[] = [];
+    for (const account of accounts) {
+      for (const bal of account.balances ?? []) {
+        const symbol = assetSymbol(bal.asset);
+        coins.push({
+          symbol,
+          name: walletAssetName(symbol),
+          amount: bal.amount,
+          usd: formatUsd(0),
+        });
+      }
+    }
+    return coins;
   }
 
   async feeEstimate(chain: WalletChainId): Promise<{ feeUsd: number | null; sponsored: boolean }> {
-    // Base gas is covered by the paymaster's free monthly allowance, so the
-    // send screen shows SPONSORED there. Other chains cost the wallet gas;
-    // the estimate is a conservative static table, not a per-send round trip.
     if (chain === 'base') return { feeUsd: null, sponsored: true };
     const table: Partial<Record<WalletChainId, number>> = {
       arbitrum: 0.04,
@@ -192,9 +451,9 @@ export class CdpWalletClient implements CdpWalletSource {
 
   async sponsorshipAllowance(): Promise<{ usedUsd: number; limitUsd: number } | null> {
     try {
-      const result = await this.request<{ used_usd: number; limit_usd: number }>(
+      const result = await this.devRequest<{ used_usd: number; limit_usd: number }>(
         'GET',
-        '/platform/v2/paymaster/allowance',
+        `/projects/${this.projectId}/paymaster/allowance`,
       );
       return { usedUsd: result.used_usd, limitUsd: result.limit_usd };
     } catch {
@@ -203,9 +462,10 @@ export class CdpWalletClient implements CdpWalletSource {
   }
 
   async sendTransaction(userId: string, input: WalletSendInput): Promise<{ txId: string }> {
-    const result = await this.request<{ transaction_id: string }>(
+    if (!this.walletKey) throw new Error('Wallet secret required for sends');
+    const result = await this.walletRequest<{ transaction_id?: string; txId?: string }>(
       'POST',
-      `/platform/v2/users/${encodeURIComponent(userId)}/transactions`,
+      `/end-users/${userId}/send`,
       {
         chain: input.chain,
         asset: input.asset.toLowerCase(),
@@ -213,27 +473,40 @@ export class CdpWalletClient implements CdpWalletSource {
         destination: input.to,
       },
     );
-    return { txId: result.transaction_id };
+    return { txId: result.transaction_id ?? result.txId ?? 'unknown' };
   }
 
-  async swap(userId: string, input: { fromAsset: string; toAsset: string; amount: string }) {
-    const result = await this.request<{ transaction_id: string; to_amount: string }>(
+  async swap(
+    userId: string,
+    input: { fromAsset: string; toAsset: string; amount: string },
+  ): Promise<{ txId: string; toAmount: string }> {
+    if (!this.walletKey) throw new Error('Wallet secret required for swaps');
+    const result = await this.walletRequest<{
+      transaction_id?: string;
+      to_amount?: string;
+      txId?: string;
+      toAmount?: string;
+    }>(
       'POST',
-      `/platform/v2/users/${encodeURIComponent(userId)}/trades`,
+      `/end-users/${userId}/swap`,
       {
         from_asset: input.fromAsset.toLowerCase(),
         to_asset: input.toAsset.toLowerCase(),
         amount: input.amount,
       },
     );
-    return { txId: result.transaction_id, toAmount: result.to_amount };
+    return {
+      txId: result.transaction_id ?? result.txId ?? 'unknown',
+      toAmount: result.to_amount ?? result.toAmount ?? '0',
+    };
   }
 
   async history(userId: string, limit: number): Promise<WalletLedgerEntry[]> {
-    const result = await this.request<{
-      transactions: Array<{
+    const n = Math.min(Math.max(limit, 1), 100);
+    const result = await this.devRequest<{
+      transactions?: Array<{
         transaction_id: string;
-        direction: 'in' | 'out';
+        direction: string;
         asset: string;
         amount: string;
         counterparty: string;
@@ -241,53 +514,71 @@ export class CdpWalletClient implements CdpWalletSource {
         usd_value: string;
         block_time: string;
       }>;
-    }>('GET', `/platform/v2/users/${encodeURIComponent(userId)}/transactions?limit=${limit}`);
-    return result.transactions.map((row) => {
-      const chain = (isChainId(row.chain) ? row.chain : 'base') as WalletChainId;
+      events?: Array<{
+        id: string;
+        direction: string;
+        asset: string;
+        amount: string;
+        counterparty: string;
+        chain: string;
+        usdValue: string;
+        createdAt: string;
+      }>;
+    }>('GET', `/end-users/${userId}/transactions?limit=${n}&projectId=${this.projectId}`);
+    const txs = result.transactions ?? result.events ?? [];
+    return txs.slice(0, n).map((row: Record<string, unknown>) => {
+      const chain = guessChain(String(row.chain ?? 'base'));
       return {
-        direction: row.direction,
+        direction: String(row.direction ?? 'in') === 'in' ? ('in' as const) : ('out' as const),
         agentName: null,
-        amountText: `${row.direction === 'in' ? '+' : '−'}${row.amount} ${row.asset.toUpperCase()}`,
-        counterparty: row.counterparty,
+        amountText: formatAmountText(String(row.direction ?? 'in'), String(row.amount ?? '0'), String(row.asset ?? 'usdc')),
+        counterparty: String(row.counterparty ?? ''),
         chain,
-        balanceAfterUsd: formatUsd(Number(row.usd_value)),
-        txUrl: walletExplorerTxUrl(chain, row.transaction_id),
-        createdAt: new Date(row.block_time).getTime(),
+        balanceAfterUsd: formatUsd(Number(row.usd_value ?? row.usdValue ?? 0)),
+        txUrl: walletExplorerTxUrl(chain, String(row.transaction_id ?? row.id ?? '')),
+        createdAt: new Date(String(row.block_time ?? row.createdAt ?? Date.now())).getTime(),
       };
     });
   }
 }
 
-function isChainId(value: string): boolean {
-  return ['base', 'arbitrum', 'optimism', 'polygon', 'zora', 'bnb', 'avalanche', 'ethereum'].includes(
-    value,
-  );
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Map a CDP asset id to a standard symbol. */
+function assetSymbol(asset: string): string {
+  const symbols: Record<string, string> = {
+    'usdc': 'usdc',
+    'eth': 'eth',
+    'cbbtc': 'cbbtc',
+    'sol': 'sol',
+    'usd-coin': 'usdc',
+    'ethereum': 'eth',
+    'coinbase-wrapped-btc': 'cbbtc',
+  };
+  return symbols[asset.toLowerCase()] ?? asset.toLowerCase();
+}
+
+function formatAmountText(direction: string, amount: string, asset: string): string {
+  const prefix = direction === 'in' ? '+' : '−';
+  return `${prefix}${amount} ${asset.toUpperCase()}`;
+}
+
+function guessChain(value: string): WalletChainId {
+  const map: Record<string, WalletChainId> = {
+    base: 'base',
+    arbitrum: 'arbitrum',
+    optimism: 'optimism',
+    polygon: 'polygon',
+    zora: 'zora',
+    bnb: 'bnb',
+    avalanche: 'avalanche',
+    ethereum: 'ethereum',
+  };
+  return map[value.toLowerCase()] ?? 'base';
 }
 
 function formatUsd(value: number): string {
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** Accept the PEM form CDP shows, or the raw base64 Ed25519 seed. */
-/**
- * Coinbase CDP's Ed25519 API key secret is the RAW key bytes (a 32-byte seed,
- * or a 64-byte seed+public value), base64-encoded. Node's createPrivateKey
- * cannot ingest those raw bytes: it needs a PKCS8 wrapper around the 32-byte
- * seed. Wrapping the raw bytes in a generic PEM (the previous behaviour) made
- * createPrivateKey throw `DECODER routines::unsupported`, so every signed CDP
- * request 503'd and the wallet could never create or read. Build the PKCS8 the
- * seed needs; also accept a PEM the caller pasted, or an already-DER PKCS8.
- */
-function cdpPrivateKey(secret: string): KeyObject {
-  const trimmed = secret.trim();
-  if (trimmed.includes('-----BEGIN')) return createPrivateKey(trimmed);
-  const raw = Buffer.from(trimmed.replace(/\s+/g, ''), 'base64');
-  if (raw.length === 32 || raw.length === 64) {
-    const pkcs8 = Buffer.concat([
-      Buffer.from('302e020100300506032b657004220420', 'hex'),
-      raw.subarray(0, 32),
-    ]);
-    return createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
-  }
-  return createPrivateKey({ key: raw, format: 'der', type: 'pkcs8' });
 }

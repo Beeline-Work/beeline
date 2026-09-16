@@ -85,6 +85,11 @@ import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
+import {
+  subscribeDesktopArtifact,
+  type DesktopArtifactSelection,
+} from '@/buzz/desktop-artifact-pane';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
@@ -807,6 +812,26 @@ export default function BuzzChat() {
       openDesktopCorner(roomId, cornerId);
     });
   }, [desktopExperience, desktopWorkRoomId, openDesktopCorner]);
+  // The work pane and the Room route are siblings, so an artifact Open press
+  // arrives as a module event. A dismissed pane re-presents around it; the
+  // pane then shows the artifact from its own module read. A suppressed pane
+  // cannot host the artifact at all, so the press hands off to the browser —
+  // the same boundary the pane uses for formats it cannot sandbox.
+  const openDesktopArtifact = useCallback(
+    (selection: DesktopArtifactSelection) => {
+      const transition = commitDesktopWorkPane({ type: 'open-artifact' });
+      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+      if (transition.placement === 'main')
+        void openArtifactInBrowserOrExplain(selection.attachment);
+    },
+    [commitDesktopWorkPane, workPaneWindowClass],
+  );
+  useEffect(() => {
+    if (!desktopExperience) return;
+    return subscribeDesktopArtifact((selection) => {
+      if (selection) openDesktopArtifact(selection);
+    });
+  }, [desktopExperience, openDesktopArtifact]);
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
   const handleOpenChannelReference = useCallback(

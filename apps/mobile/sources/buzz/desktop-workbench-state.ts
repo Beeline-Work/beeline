@@ -37,6 +37,7 @@ export type DesktopWorkPaneEvent =
   | { type: 'toggle' }
   | { type: 'open-overview' }
   | { type: 'open-corner'; cornerId: string }
+  | { type: 'open-artifact' }
   | { type: 'drop-corner'; cornerId: string }
   | { type: 'open-corner-in-main' };
 
@@ -100,6 +101,15 @@ export function transitionDesktopWorkPane(
       return desktopWorkPaneMode(state) === 'present'
         ? { state: { ...state, selectedCornerId: event.cornerId }, placement: 'work' }
         : { state, placement: 'main' };
+    // An artifact opened from the transcript must never land silently: a
+    // dismissed pane re-presents around it, a suppressed pane cannot host it
+    // at all so the caller falls back, and a present pane already shows it.
+    case 'open-artifact':
+      if (desktopWorkPaneMode(state) === 'suppressed') return { state, placement: 'main' };
+      return {
+        state: state.preference === 'present' ? state : { ...state, preference: 'present' },
+        placement: 'work',
+      };
     case 'open-corner-in-main':
       return {
         state: { ...state, preference: 'present', selectedCornerId: null },

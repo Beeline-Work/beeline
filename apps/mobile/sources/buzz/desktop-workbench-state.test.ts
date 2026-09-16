@@ -69,6 +69,26 @@ describe('desktop workbench state', () => {
     ).toBe('main');
   });
 
+  it('re-presents the pane around an artifact and hands a suppressed pane to the caller', () => {
+    const wide = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD + 100);
+    expect(transitionDesktopWorkPane(wide, { type: 'open-artifact' })).toEqual({
+      state: wide,
+      placement: 'work',
+    });
+    const dismissed = transitionDesktopWorkPane(wide, { type: 'dismiss' }).state;
+    const rePresented = transitionDesktopWorkPane(dismissed, { type: 'open-artifact' });
+    expect(rePresented).toMatchObject({ placement: 'work', state: { preference: 'present' } });
+    expect(desktopWorkPaneMode(rePresented.state)).toBe('present');
+    const suppressed = transitionDesktopWorkPane(wide, {
+      type: 'resize',
+      width: DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS - 1,
+    }).state;
+    expect(transitionDesktopWorkPane(suppressed, { type: 'open-artifact' })).toEqual({
+      state: suppressed,
+      placement: 'main',
+    });
+  });
+
   it('keeps responsive suppression separate from present and dismissed memory', () => {
     const wide = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD + 100);
     const narrowWidth = DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS - 1;

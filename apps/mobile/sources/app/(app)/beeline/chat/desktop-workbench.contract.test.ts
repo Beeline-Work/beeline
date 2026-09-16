@@ -45,6 +45,14 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner', cornerId: opened })");
   });
 
+  it('re-presents the work pane when an artifact opens while it is dismissed', () => {
+    expect(room).toContain('subscribeDesktopArtifact');
+    expect(room).toContain("commitDesktopWorkPane({ type: 'open-artifact' })");
+    // A suppressed pane cannot host the artifact, so the press must still land:
+    // the same browser handoff the pane itself uses for unsandboxable formats.
+    expect(room).toContain('openArtifactInBrowserOrExplain(selection.attachment)');
+  });
+
   it('renders dispatchable workflows as ordinary overview rows behind confirmation', () => {
     expect(inspector).toContain('<SectionHeader title="WORKFLOWS" />');
     expect(inspector).toContain("monolithPhoneOperation('listRoomWorkflows'");

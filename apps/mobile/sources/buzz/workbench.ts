@@ -68,6 +68,10 @@ export type ConnectorInstallStep = {
   status: ConnectorInstallStepStatus;
   /** The helper's own reason, shown in red under a failed step. */
   reason?: string;
+  /** The CLI command this step runs, when the helper reports one. */
+  command?: string;
+  /** The command's live output so far, shown under the step in mono. */
+  output?: string;
 };
 
 export type ConnectorSignInMethod = 'streamed' | 'oauth';

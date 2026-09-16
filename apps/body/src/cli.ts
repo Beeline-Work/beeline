@@ -44,6 +44,7 @@ import { retireRemovedAgent } from './agent-retirement.js';
 import { runStartCommand } from './start-command.js';
 import {
   parseConnectSubscriptions,
+  readMachineId,
   runConnectCommand,
   runConnectFinishCommand,
 } from './connect-command.js';
@@ -397,6 +398,13 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             ? { startupUnavailable: config.modelUnavailable.unavailable.label }
             : {}),
         });
+        // Report the machine identity once per activation so the server can
+        // collapse multiple agents on one physical host into one machine row
+        // in readWorkbench. Best-effort: a failed report does not block
+        // readiness or the Room loop.
+        void readMachineId(process.env).then(({ machineId, machineName }) =>
+          daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
+        );
         // The connector work queue (pair/revoke/sync) drains on the same
         // cadence; one loop per daemon process, started idempotently so a
         // reconnect never stacks a second timer.

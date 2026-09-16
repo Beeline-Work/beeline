@@ -5,6 +5,7 @@ import { createHeader } from '@/components/navigation/Header';
 import { Platform, View } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
+import { StatusTrayBackdrop } from '@/components/StatusTrayBackdrop';
 import { t } from '@/text';
 import { useIsDesktop } from '@/utils/responsive';
 
@@ -214,6 +215,8 @@ export default function RootLayout() {
           }}
         />
       </Stack>
+      {/* Painted after the Stack so it sits over the tray inset strip. */}
+      <StatusTrayBackdrop />
     </View>
   );
 }

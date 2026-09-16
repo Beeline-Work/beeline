@@ -161,7 +161,11 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { useScrollFollowOnArrival, useScrollFollowOnLayoutChange } from '@/buzz/room-scroll-follow';
+import {
+  desktopOpenLandingOnContentSizeChange,
+  useScrollFollowOnArrival,
+  useScrollFollowOnLayoutChange,
+} from '@/buzz/room-scroll-follow';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -314,6 +318,11 @@ const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
 const TAIL_PIN_THRESHOLD = 50;
+// The desktop chronological list lands on the tail through measured content
+// sizes, because RN Web's scrollToEnd estimates unmeasured far frames and can
+// land short on a cold open (the oldest window renders first). Settle only
+// after measured growth has stopped long enough for the next window to mount.
+const DESKTOP_OPEN_LANDING_SETTLE_MS = 250;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1719,6 +1728,20 @@ export default function BuzzChat() {
   const preserveReaderOffsetUntilRef = useRef(0);
   const preservedTailGrowthRef = useRef(0);
   const nativeContentHeightRef = useRef<number | null>(null);
+  // A cold-open landing is distinct from ordinary tail following: its own
+  // programmatic jumps may report the partially measured list as unpinned.
+  // Keep landing through measured growth until it settles or the reader acts.
+  const desktopOpenLandingRef = useRef(false);
+  const desktopOpenLandingStartedRef = useRef(false);
+  const desktopOpenLandingSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelDesktopOpenLanding = useCallback(() => {
+    desktopOpenLandingRef.current = false;
+    if (desktopOpenLandingSettleTimerRef.current !== null) {
+      clearTimeout(desktopOpenLandingSettleTimerRef.current);
+      desktopOpenLandingSettleTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => cancelDesktopOpenLanding, [cancelDesktopOpenLanding]);
   // Updated on every onScroll; native's inverted list uses offset 0, while
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
@@ -1744,6 +1767,7 @@ export default function BuzzChat() {
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,
     isUserDragging: userDraggingRef.current,
+    openLandsOnTail: !desktopTranscript,
   });
   useLayoutEffect(() => {
     if (arrivalFollow === 'hold') {
@@ -1763,6 +1787,15 @@ export default function BuzzChat() {
       }
       return;
     }
+    if (desktopTranscript) {
+      const isColdOpen = !desktopOpenLandingStartedRef.current;
+      desktopOpenLandingStartedRef.current = true;
+      if (isColdOpen) {
+        // The immediate scroll may land short while the tail window is still
+        // unmeasured; measured content growth owns the landing from here.
+        desktopOpenLandingRef.current = true;
+      }
+    }
     scrollToNewestMessage();
   }, [newestMessageId, scrollToNewestMessage]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
@@ -1779,6 +1812,7 @@ export default function BuzzChat() {
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
+      cancelDesktopOpenLanding();
       requestAnimationFrame(() =>
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
@@ -1802,6 +1836,7 @@ export default function BuzzChat() {
     notificationMessageId,
     notificationResponseId,
     notificationTarget,
+    cancelDesktopOpenLanding,
     revealTranscriptThrough,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
@@ -3920,6 +3955,7 @@ export default function BuzzChat() {
           )}
 
           <FlatList
+            {...(desktopTranscript ? { onWheel: cancelDesktopOpenLanding } : {})}
             testID="chat-messages"
             ref={flatListRef}
             inverted={!desktopTranscript && transcriptMessages.length > 0}
@@ -3967,6 +4003,7 @@ export default function BuzzChat() {
             }}
             scrollEventThrottle={100}
             onScrollBeginDrag={() => {
+              cancelDesktopOpenLanding();
               userDraggingRef.current = true;
             }}
             onScrollEndDrag={() => {
@@ -3976,6 +4013,7 @@ export default function BuzzChat() {
               }
             }}
             onMomentumScrollBegin={() => {
+              cancelDesktopOpenLanding();
               userDraggingRef.current = true;
             }}
             onMomentumScrollEnd={() => {
@@ -3987,8 +4025,37 @@ export default function BuzzChat() {
             onContentSizeChange={(_width, height) => {
               const previousHeight = nativeContentHeightRef.current;
               nativeContentHeightRef.current = height;
+              if (desktopTranscript) {
+                // The measured content height is the landing authority here:
+                // scrolling past it clamps to the exact bottom, which
+                // scrollToEnd's estimated far frames cannot promise while the
+                // tail window is unmeasured. The cold-open
+                // landing deliberately ignores the transient pin report made
+                // by its own jumps; real reader input cancels it separately.
+                const openLandingDecision = desktopOpenLandingOnContentSizeChange({
+                  active: desktopOpenLandingRef.current,
+                  previousHeight,
+                  nextHeight: height,
+                  isUserDragging: userDraggingRef.current,
+                });
+                if (openLandingDecision === 'settle') {
+                  cancelDesktopOpenLanding();
+                } else if (openLandingDecision === 'scroll') {
+                  flatListRef.current?.scrollToOffset({
+                    offset: height,
+                    animated: false,
+                  });
+                  if (desktopOpenLandingSettleTimerRef.current !== null) {
+                    clearTimeout(desktopOpenLandingSettleTimerRef.current);
+                  }
+                  desktopOpenLandingSettleTimerRef.current = setTimeout(
+                    cancelDesktopOpenLanding,
+                    DESKTOP_OPEN_LANDING_SETTLE_MS,
+                  );
+                }
+                return;
+              }
               if (
-                desktopTranscript ||
                 Date.now() > preserveReaderOffsetUntilRef.current ||
                 previousHeight === null
               ) {

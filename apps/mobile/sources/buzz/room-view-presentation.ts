@@ -111,7 +111,11 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
 /** Merge one server-projected committed message into the bounded Room window. */
 export function reconcileRoomMessageDelta(view: RoomView, message: RoomViewMessage): RoomView {
   const messages = [...view.messages.filter((candidate) => candidate.id !== message.id), message]
-    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    .sort(
+      (left, right) =>
+        (left.createdAtMs ?? left.createdAt * 1_000) -
+          (right.createdAtMs ?? right.createdAt * 1_000) || left.id.localeCompare(right.id),
+    )
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
   return reconcileRoomView(view, { ...view, messages });
 }
@@ -202,6 +206,8 @@ export type ChatDisplayMessage = {
   text: string;
   isUser: boolean;
   timestamp: number;
+  /** High-resolution causal ordering; `timestamp` remains the display clock. */
+  orderAtMs?: number;
   /** Current server-resolved identity for this row; never replace it with a local label cache. */
   authorIdentity?: RoomViewIdentity;
   pubkey?: string;
@@ -327,6 +333,7 @@ export function displayRoomMessage(
     relayId: message.id,
     text: message.text,
     timestamp: message.createdAt,
+    orderAtMs: message.createdAtMs ?? message.createdAt * 1_000,
     ...(githubEvent || daemonFact
       ? {
           isUser: false,
@@ -450,7 +457,9 @@ export function roomViewTranscriptMessages(
   const byId = new Map<string, RoomViewMessage>();
   for (const message of [...view.messages, ...(view.toolRows ?? [])]) byId.set(message.id, message);
   return [...byId.values()].sort(
-    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+    (left, right) =>
+      (left.createdAtMs ?? left.createdAt * 1_000) -
+        (right.createdAtMs ?? right.createdAt * 1_000) || left.id.localeCompare(right.id),
   );
 }
 
@@ -519,7 +528,9 @@ export function mergeDisplayPages(
   const byId = new Map<string, ChatDisplayMessage>();
   for (const page of pages) for (const message of page) byId.set(message.id, message);
   return [...byId.values()].sort(
-    (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
+    (left, right) =>
+      (left.orderAtMs ?? left.timestamp * 1_000) - (right.orderAtMs ?? right.timestamp * 1_000) ||
+      left.id.localeCompare(right.id),
   );
 }
 

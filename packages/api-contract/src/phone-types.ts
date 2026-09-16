@@ -184,6 +184,8 @@ export type RoomViewMessage = {
   readonly id: string;
   readonly text: string;
   readonly createdAt: number;
+  /** Millisecond creation stamp used only for stable transcript ordering. */
+  readonly createdAtMs?: number;
   readonly author: RoomViewIdentity;
   readonly presentation: 'message' | 'system' | 'activity' | 'card';
   /** The structured event behind a server-phrased system line or card header;

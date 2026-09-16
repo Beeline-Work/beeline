@@ -835,17 +835,22 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(promote, /wait_for_machine_ready "\$second"/);
   assert.match(
     promote,
-    /flyctl machine update "\$canary" --app beeline-server --image "\$image_ref" --wait-timeout 300 --yes\nwait_for_machine_ready "\$canary"/,
+    /retry_flyctl_update "\$canary" "\$image_ref" "canary"\nwait_for_machine_ready "\$canary"/,
   );
   assert.match(
     promote,
-    /flyctl machine update "\$second" --app beeline-server --image "\$image_ref" --wait-timeout 300 --yes\nwait_for_machine_ready "\$second"/,
+    /retry_flyctl_update "\$second" "\$image_ref" "second"\nwait_for_machine_ready "\$second"/,
   );
   assert.ok(promote.indexOf('wait_for_machine_ready "$canary"') < promote.indexOf('/v1/auth/review/exchange'));
   assert.match(promote, /v\.version === process\.argv\[2\]/);
   assert.match(promote, /for exchange_attempt in 1 2 3/);
-  assert.match(promote, /-H "fly-force-instance-id: \$second" -H 'Content-Type: application\/json'/);
+  assert.match(promote, /-H "fly-force-instance-id: \$canary" -H 'Content-Type: application\/json'/);
   assert.match(promote, /5\?\?\) ;;/);
+  // Verify the final convergence check polls for up to 180s before declaring a split.
+  assert.match(promote, /verify_machine_convergence "\$image_ref" 180/);
+  assert.match(promote, /max_wait="\$\{2:-0\}"/);
+  assert.match(promote, /deadline=\$[\(]\(SECONDS \+ max_wait\)\)/);
+  assert.match(promote, /Machines not yet converged, retrying in/);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);
@@ -878,18 +883,18 @@ test('the emulator release proof gates OTA promotion', () => {
   assert.deepEqual(proof['runs-on'], ['self-hosted', 'beeline-android']);
   const steps = proof.steps;
   const aab = steps.find((step) => step.name === 'Download the native AAB under proof');
-  const apk = steps.find((step) => step.name === 'Build the sideload APK under proof (OTA-only releases)');
+  const apk = steps.find((step) => step.name === 'Build the sideload APK under proof (no native build in this run)');
   const run = steps.find((step) => step.name === 'Run the emulator release proof');
   const evidence = steps.find((step) => step.name === 'Preserve release-proof evidence');
-  assert.equal(aab.if, "needs.initialize.outputs.native_android == 'true'");
+  assert.match(aab.if, /needs\.mobile_native_android\.result == 'success'/);
   assert.match(aab.with.name, /mobile-native-android-build-/);
-  assert.equal(apk.if, "needs.initialize.outputs.native_android != 'true'");
+  assert.match(apk.if, /needs\.mobile_native_android\.result != 'success'/);
   // The shared rig emulator must survive the OTA-only APK build's teardown.
   assert.equal(apk.env.BEELINE_ANDROID_KEEP_DEVICE, '1');
   assert.match(apk.env.ANDROID_SIDELOAD_KEYSTORE_B64, /secrets\./);
   assert.match(run.run, /release-proof\.mjs --aab "\$RUNNER_TEMP\/proof-binary\/beeline\.aab"/);
   assert.match(run.run, /release-proof\.mjs --apk apps\/mobile\/android\/app\/build\/outputs\/apk\/release\/app-release\.apk/);
-  assert.equal(evidence.if, 'always()');
+  assert.match(evidence.if, /always\(\) && steps\.proof\.conclusion != 'skipped'/);
   assert.match(evidence.with.path, /release-proof-out/);
 
   // Promotion itself is gated, not just the job: the built checkpoint still

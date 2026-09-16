@@ -81,15 +81,18 @@ describe('Workbench settings screen', () => {
     expect(squire.props.title).toBe('Trusty Squire');
     expect(squire.props.value).toBe('connect');
     expect(squire.props.disabled).toBe(false);
-    expect(renderer.root.findByProps({ testID: 'workbench-connector-wallet' }).props.value).toBe(
-      'soon',
-    );
+    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet' });
+    // The wallet is not a pairing flow: the row IS the intent (mock §Screens 1).
+    expect(wallet.props.value).toBeUndefined();
+    expect(wallet.props.action).toBe('create');
+    expect(wallet.props.disabled).toBe(false);
+    expect(wallet.props.onPress).toBeTypeOf('function');
     expect(
       renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.value,
     ).toBe('soon');
-    expect(renderer.root.findByProps({ testID: 'workbench-connector-wallet' }).props.disabled).toBe(
-      true,
-    );
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.disabled,
+    ).toBe(true);
   });
 
   it('heads the two lists Tools and Keys with their one-line descriptions', async () => {
@@ -97,14 +100,8 @@ describe('Workbench settings screen', () => {
     expect(renderer.root.findByProps({ testID: 'workbench-tools-head' }).props.children).toBe(
       'Tools',
     );
-    expect(renderer.root.findByProps({ testID: 'workbench-tools-desc' }).props.children).toBe(
-      'Something your agents can use. Pair it once.',
-    );
     expect(renderer.root.findByProps({ testID: 'workbench-keys-head' }).props.children).toBe(
       'Keys',
-    );
-    expect(renderer.root.findByProps({ testID: 'workbench-keys-desc' }).props.children).toBe(
-      'A credential that tool holds for you. Your agents spend it; they never see it.',
     );
   });
 
@@ -124,14 +121,7 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const empty = renderer.root.findByProps({ testID: 'workbench-connections-empty' });
     expect(empty.props.title).toBe('None yet');
-    // The sovereignty rule, folded to one short line (captain, 2026-09-15):
-    // other members’ keys are not listed and cannot be spent by your agents.
-    // The credential idea already lives in the Keys section description.
-    expect(empty.props.description).toBe(
-      'Other members’ keys are not listed and cannot be spent.',
-    );
-    expect(empty.props.description).toContain('not listed');
-    expect(empty.props.description).toContain('cannot be spent');
+    expect(empty.props.description).toBeUndefined();
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_google' })).toHaveLength(0);
   });

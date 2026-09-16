@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
@@ -53,6 +53,43 @@ export default function WorkbenchScreen() {
   const connections = view ? connectionsForViewer(view, viewerId) : [];
   const connectors = view?.connectors ?? [];
 
+  // The screen has three states, and they must not bleed into each other. A
+  // failed load used to still render the section chrome and the "None yet"
+  // empty state with a red banner pinned to the very bottom (behind the
+  // system nav bar), so an error read as a populated-but-empty page. Gate the
+  // sections on a real load; show a centered error or loader otherwise.
+  const loading = view === null && error === null;
+
+  if (error) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text accessibilityRole="alert" style={styles.centeredMessage} testID="workbench-error">
+          {error}
+        </Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => {
+            setError(null);
+            void load();
+          }}
+          testID="workbench-retry"
+        >
+          <Text style={styles.retry}>Tap to try again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text style={styles.centeredMessage} testID="workbench-loading">
+          Loading…
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
@@ -60,40 +97,51 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
             Tools
           </Text>
-          <Text style={styles.sectionDesc} testID="workbench-tools-desc">
-            Something your agents can use. Pair it once.
-          </Text>
-          {connectors.map((connector) => (
-            <SettingsRow
-              key={connector.id}
-              description={connectorDescription(connector)}
-              disabled={!connector.available || connector.status === 'connected'}
-              onPress={
-                connector.available && connector.status !== 'connected'
-                  ? () =>
-                      router.push({
-                        pathname: '/beeline/settings/workbench/connect',
-                        params: { workspaceId, viewerId, connectorId: connector.id },
-                      } as unknown as Href)
-                  : undefined
-              }
-              testID={`workbench-connector-${connector.id}`}
-              title={connector.name}
-              value={connectorRowValue(connector)}
-            />
-          ))}
+          {connectors.map((connector) => {
+            // The wallet is not a pairing flow: tapping it IS the intent, so
+            // the row opens the wallet screen itself (mock §Screens 1).
+            const isWallet = connector.id === 'wallet';
+            const walletOnPress = isWallet
+              ? () =>
+                  router.push({
+                    pathname: '/beeline/settings/workbench/wallet',
+                    params: { workspaceId },
+                  } as unknown as Href)
+              : undefined;
+            return (
+              <SettingsRow
+                key={connector.id}
+                action={isWallet ? 'create' : undefined}
+                description={connectorDescription(connector)}
+                disabled={
+                  !isWallet &&
+                  (!connector.available || connector.status === 'connected')
+                }
+                onPress={
+                  isWallet
+                    ? walletOnPress
+                    : connector.available && connector.status !== 'connected'
+                      ? () =>
+                          router.push({
+                            pathname: '/beeline/settings/workbench/connect',
+                            params: { workspaceId, viewerId, connectorId: connector.id },
+                          } as unknown as Href)
+                      : undefined
+                }
+                testID={`workbench-connector-${connector.id}`}
+                title={connector.name}
+                value={isWallet ? undefined : connectorRowValue(connector)}
+              />
+            );
+          })}
         </View>
         <View testID="workbench-connections">
           <Text style={styles.sectionLabel} testID="workbench-keys-head">
             Keys
           </Text>
-          <Text style={styles.sectionDesc} testID="workbench-keys-desc">
-            A credential that tool holds for you. Your agents spend it; they never see it.
-          </Text>
           {connections.length === 0 ? (
             <SettingsRow
               disabled
-              description="Other members’ keys are not listed and cannot be spent."
               testID="workbench-connections-empty"
               title="None yet"
               tone="quiet"
@@ -118,11 +166,6 @@ export default function WorkbenchScreen() {
           )}
         </View>
       </ScrollView>
-      {error ? (
-        <Text accessibilityRole="alert" style={styles.errorText} testID="workbench-error">
-          {error}
-        </Text>
-      ) : null}
     </View>
   );
 }
@@ -134,7 +177,13 @@ const styles = StyleSheet.create((theme) => {
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
-    sectionDesc: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger, padding: hull.space.md },
+    centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl, gap: hull.space.md },
+    centeredMessage: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      textAlign: 'center',
+    },
+    retry: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
   };
 });

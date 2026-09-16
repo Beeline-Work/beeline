@@ -326,6 +326,75 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   );
 });
 
+/**
+ * The @wallet thread's cards: every transaction, the one refusal, and the
+ * delegation grant. The @wallet line itself already carries the ledger
+ * prose; the card is the structured layer on top (mock §The @wallet thread).
+ */
+export const WalletCards = React.memo(function WalletCards({
+  message,
+  stamp,
+}: {
+  message: ChatDisplayMessage;
+  stamp: string;
+}) {
+  const tx = message.walletTx;
+  const refusal = message.walletInsufficient;
+  const delegation = message.walletDelegation;
+  if (tx) {
+    const actor = tx.agentName ? `@${tx.agentName.replace(/^@/, '')}` : 'You';
+    return (
+      <TranscriptCard
+        tier="record"
+        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        title={
+          tx.direction === 'out'
+            ? `${actor} sent ${tx.amountText}`
+            : `Received ${tx.amountText}`
+        }
+        subline={`${tx.counterparty} · ${tx.chain} · ${tx.balanceAfterUsd} left`}
+        sublineTestID="wallet-tx-subline"
+        stamp={stamp}
+        testID={`wallet-tx-${tx.direction}`}
+      />
+    );
+  }
+  if (refusal) {
+    const actor = refusal.agentName ? `@${refusal.agentName.replace(/^@/, '')}` : 'You';
+    return (
+      <TranscriptCard
+        tier="record"
+        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        title={
+          refusal.reason
+            ? `${actor} could not pay · ${refusal.reason}`
+            : `${actor} could not pay`
+        }
+        subline={`Needed ${refusal.needed} ${refusal.asset} on ${refusal.chain}${
+          refusal.available ? ` · ${refusal.available} available` : ''
+        }`}
+        sublineTestID="wallet-insufficient-subline"
+        stamp={stamp}
+        testID="wallet-insufficient"
+      />
+    );
+  }
+  if (delegation) {
+    return (
+      <TranscriptCard
+        tier="record"
+        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        title="Granted agents permission to sign"
+        subline={`Until ${new Date(delegation.expiresAt).toLocaleString()} · renews in the app`}
+        sublineTestID="wallet-delegation-subline"
+        stamp={stamp}
+        testID="wallet-delegation"
+      />
+    );
+  }
+  return null;
+});
+
 export interface TargetBranchProposalCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;

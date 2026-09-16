@@ -43,6 +43,11 @@
       "types": "./dist/workbench.d.ts",
       "import": "./dist/workbench.js",
       "default": "./dist/workbench.js"
+    },
+    "./wallet": {
+      "types": "./dist/wallet.d.ts",
+      "import": "./dist/wallet.js",
+      "default": "./dist/wallet.js"
     }
   },
   "scripts": {

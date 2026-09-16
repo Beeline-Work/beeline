@@ -217,6 +217,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  WalletCards,
   OrdinaryLedgerMessage,
   RelayHandOff,
   TargetBranchProposalCard,
@@ -3535,6 +3536,10 @@ export default function BuzzChat() {
             onDecision={handleGrantDecision}
           />
         );
+      }
+
+      if (item.walletTx || item.walletInsufficient || item.walletDelegation) {
+        return <WalletCards message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
 
       if (item.targetBranchProposal) {

@@ -150,6 +150,12 @@ export default function RootLayout() {
             statusBarStyle: 'light',
           }}
         />
+        {/* The connect flow draws its own header with the connector name, so the
+            stack header would double it. */}
+        <Stack.Screen
+          name="beeline/settings/workbench/connect"
+          options={{ headerShown: false, statusBarStyle: 'light' }}
+        />
         <Stack.Screen
           name="beeline/chat/[channelId]"
           options={{

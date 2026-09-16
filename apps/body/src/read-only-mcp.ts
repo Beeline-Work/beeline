@@ -246,6 +246,81 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
+    name: 'wallet_address',
+    description:
+      'Show your connected owner\'s wallet: the EVM address (and the Solana address when there is one) and whether a wallet is linked at all. Call this before wallet_pay when you need an address to receive funds.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'wallet_balance',
+    description:
+      'Read your connected owner\'s wallet balances: the total USD value and every holding. This is the wallet you spend from; there is no other limit on spending than what the balance holds.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'wallet_chains',
+    description:
+      'List the chains your owner\'s wallet can pay and swap on, with the network fee on each and whether the fee is sponsored (free to send).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'wallet_history',
+    description:
+      'Read your owner\'s wallet ledger, oldest first: every transaction in and out, who spent (agents are named), the counterparty, chain and the balance that remained.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'wallet_quote',
+    description:
+      'Quote one send before making it: the network fee (or that it is sponsored), whether the balance covers the amount, and what is available. Always quote when the amount is large or the balance looks tight.',
+    inputSchema: {
+      type: 'object',
+      required: ['asset', 'amount'],
+      properties: {
+        chain: { type: 'string', description: 'Defaults to base.' },
+        asset: { type: 'string', description: 'Asset symbol, e.g. usdc or eth.' },
+        amount: { type: 'string', description: 'Amount to send, in the asset.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'wallet_pay',
+    description:
+      'Send crypto from your connected owner\'s wallet to one address. Requires the owner\'s live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. The only other refusal is insufficient funds. Every send is written to the @wallet ledger.',
+    inputSchema: {
+      type: 'object',
+      required: ['asset', 'amount', 'to'],
+      properties: {
+        chain: { type: 'string', description: 'Defaults to base.' },
+        asset: { type: 'string', description: 'Asset symbol to send, e.g. usdc.' },
+        amount: { type: 'string', description: 'Amount to send, in the asset.' },
+        to: { type: 'string', description: 'The recipient address on that chain.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'wallet_swap',
+    description:
+      'Swap one asset for another inside your owner\'s wallet (e.g. usdc to eth). Same grant and ledger rules as wallet_pay.',
+    inputSchema: {
+      type: 'object',
+      required: ['fromAsset', 'toAsset', 'amount'],
+      properties: {
+        chain: { type: 'string', description: 'Defaults to base.' },
+        fromAsset: { type: 'string' },
+        toAsset: { type: 'string' },
+        amount: { type: 'string', description: 'Amount to swap, in fromAsset.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'steer_corner',
     description:
       'Pass a change in this Room down to work in a corner you belong to. The hand-off queues input for the corner opener.',
@@ -1972,6 +2047,48 @@ async function daemonUploadArtifact(
 
 async function callAgentTool(name: string, args: JsonObject): Promise<string> {
   switch (name) {
+    case 'wallet_address':
+      return JSON.stringify(await daemonExecute('getWalletToolState', { agentId: 'self' }));
+    case 'wallet_balance':
+      return JSON.stringify(await daemonExecute('getWalletToolBalance', { agentId: 'self' }));
+    case 'wallet_chains':
+      return JSON.stringify(await daemonExecute('getWalletToolChains', { agentId: 'self' }));
+    case 'wallet_history':
+      return JSON.stringify(
+        await daemonExecute('getWalletToolHistory', {
+          agentId: 'self',
+          ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
+        }),
+      );
+    case 'wallet_quote':
+      return JSON.stringify(
+        await daemonExecute('getWalletToolQuote', {
+          agentId: 'self',
+          ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
+          asset: String(args.asset ?? 'usdc'),
+          amount: String(args.amount ?? ''),
+        }),
+      );
+    case 'wallet_pay':
+      return JSON.stringify(
+        await daemonExecute('walletPay', {
+          agentId: 'self',
+          ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
+          asset: String(args.asset ?? 'usdc'),
+          amount: String(args.amount ?? ''),
+          to: String(args.to ?? ''),
+        }),
+      );
+    case 'wallet_swap':
+      return JSON.stringify(
+        await daemonExecute('walletSwap', {
+          agentId: 'self',
+          ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
+          fromAsset: String(args.fromAsset ?? 'usdc'),
+          toAsset: String(args.toAsset ?? 'eth'),
+          amount: String(args.amount ?? ''),
+        }),
+      );
     case 'open_corner':
       return openCorner(args);
     case 'steer_corner':

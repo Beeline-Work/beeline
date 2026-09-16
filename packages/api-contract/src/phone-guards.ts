@@ -414,6 +414,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     HEX.test(item.id) &&
     typeof item.text === 'string' &&
     integer(item.createdAt) &&
+    (item.createdAtMs === undefined || integer(item.createdAtMs)) &&
     identity(item.author) &&
     (item.presentation === 'message' ||
       item.presentation === 'system' ||

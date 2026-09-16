@@ -265,6 +265,26 @@ describe('Room view presentation', () => {
     ).toEqual(['older-page', 'stale-outbox', 'live-overlay', 'server-tail']);
   });
 
+  it('keeps an earlier live row ahead of messages finalized later in the same second', () => {
+    const row = (
+      id: string,
+      timestamp: number,
+      orderAtMs: number,
+      overrides: Partial<ChatDisplayMessage> = {},
+    ): ChatDisplayMessage => ({ id, text: id, isUser: false, timestamp, orderAtMs, ...overrides });
+
+    const ordered = mergeDisplayPages(
+      [row('live-progress', 100.9, 100_900, { isAgentDraft: true })],
+      [row('final-one', 100, 100_950), row('final-two', 100, 100_990)],
+    );
+
+    expect(ordered.map((message) => message.id)).toEqual([
+      'live-progress',
+      'final-one',
+      'final-two',
+    ]);
+  });
+
   it('feeds additive corner toolRows to the collapsed activity renderer without expanding messages', () => {
     const agent = 'b'.repeat(64);
     const toolRow: RoomViewMessage = {

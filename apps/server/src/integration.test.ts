@@ -316,6 +316,11 @@ describe('monolith integration', () => {
       });
       await phone.markRead(id, read, HUMAN);
       const view = await phone.readRoom(id, HUMAN);
+      expect(view?.messages.map((message) => message.id)).toEqual([read, unread]);
+      expect(view?.messages.map((message) => message.createdAtMs)).toEqual([
+        Date.parse('2026-09-12T01:00:00.100Z'),
+        Date.parse('2026-09-12T01:00:00.900Z'),
+      ]);
       expect(view?.viewer.readCursor).toEqual({ messageId: read, firstUnreadMessageId: unread });
       expect(isRoomView(view)).toBe(true);
       expect(isRoomView({ ...view, viewer: { ...view!.viewer, readCursor: undefined } })).toBe(

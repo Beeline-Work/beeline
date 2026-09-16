@@ -6,7 +6,7 @@ import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FontAwesome } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import {
@@ -34,7 +34,10 @@ import {
   type TappedNotificationResponse,
 } from '@/push/notification-response';
 import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
-import { whenInitialLandingResolved } from '@/navigation/initial-landing';
+import {
+  markInitialLandingResolved,
+  whenInitialLandingResolved,
+} from '@/navigation/initial-landing';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
@@ -269,6 +272,13 @@ export default function RootLayout() {
   useTauriZoom();
   useTauriDrag();
   const router = useRouter();
+  const pathname = usePathname();
+  React.useEffect(() => {
+    // `router.replace` only schedules the landing transition. Resolve the
+    // notification gate after Expo Router reports the committed destination,
+    // so a cold-start replace cannot overwrite the notification navigation.
+    if (pathname !== '/') markInitialLandingResolved();
+  }, [pathname]);
   const { theme } = useUnistyles();
   const navigationTheme = React.useMemo(() => {
     if (theme.dark) {

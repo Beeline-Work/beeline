@@ -14,7 +14,9 @@ describe('initial landing gate', () => {
 
   it('holds a waiter until the app root has chosen its landing route', async () => {
     let landed = false;
-    const waiting = whenInitialLandingResolved().then(() => {
+    let result: string | undefined;
+    const waiting = whenInitialLandingResolved().then((value) => {
+      result = value;
       landed = true;
     });
 
@@ -24,6 +26,7 @@ describe('initial landing gate', () => {
 
     markInitialLandingResolved();
     await waiting;
+    expect(result).toBe('committed');
     expect(landed).toBe(true);
     expect(isInitialLandingResolved()).toBe(true);
   });
@@ -41,7 +44,7 @@ describe('initial landing gate', () => {
   it('is idempotent, so a re-rendered app root cannot re-open the gate', async () => {
     markInitialLandingResolved();
     markInitialLandingResolved();
-    await expect(whenInitialLandingResolved()).resolves.toBeUndefined();
+    await expect(whenInitialLandingResolved()).resolves.toBe('committed');
   });
 
   // A landing that never lands must not swallow the tap: the app is unusable
@@ -50,13 +53,16 @@ describe('initial landing gate', () => {
     vi.useFakeTimers();
     try {
       let landed = false;
-      const waiting = whenInitialLandingResolved().then(() => {
+      let result: string | undefined;
+      const waiting = whenInitialLandingResolved().then((value) => {
+        result = value;
         landed = true;
       });
       await vi.advanceTimersByTimeAsync(INITIAL_LANDING_TIMEOUT_MS - 1);
       expect(landed).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       await waiting;
+      expect(result).toBe('timeout');
       expect(landed).toBe(true);
     } finally {
       vi.useRealTimers();

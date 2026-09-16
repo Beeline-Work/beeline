@@ -30,7 +30,7 @@ function routing(overrides: Partial<NotificationResponseRouting> = {}) {
     router: { navigate },
     handled: new Set<string>(),
     defaultActionIdentifier: DEFAULT_ACTION,
-    waitForInitialLanding: () => Promise.resolve(),
+    waitForInitialLanding: () => Promise.resolve('committed'),
     clearLastResponse: () => Promise.resolve(),
     resolveTarget: async (target) => target,
     log: () => {},
@@ -77,8 +77,8 @@ describe('routeBuzzNotificationResponse', () => {
   // so the tap waits for the landing instead of racing it.
   it('waits for the app root landing before opening the Room', async () => {
     let releaseLanding = () => {};
-    const landing = new Promise<void>((resolve) => {
-      releaseLanding = resolve;
+    const landing = new Promise<'committed'>((resolve) => {
+      releaseLanding = () => resolve('committed');
     });
     const { navigate, routing: deps } = routing({ waitForInitialLanding: () => landing });
 
@@ -90,6 +90,22 @@ describe('routeBuzzNotificationResponse', () => {
     await routed;
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate.mock.calls[0][0].params.channelId).toBe('room-c');
+  });
+
+  it('routes directly when the initial landing commit times out', async () => {
+    const log = vi.fn();
+    const { navigate, routing: deps } = routing({
+      waitForInitialLanding: async () => 'timeout',
+      log,
+    });
+
+    await routeBuzzNotificationResponse(tap('msg-timeout', 'room-timeout'), deps);
+
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate.mock.calls[0][0].params.channelId).toBe('room-timeout');
+    expect(log).toHaveBeenCalledWith(
+      '[PUSH ROUTING] Initial landing did not commit before timeout; routing directly',
+    );
   });
 
   it('routes one response once, however many times it is delivered', async () => {
@@ -173,9 +189,9 @@ describe('notification response wiring', () => {
   });
 
   it('settles the landing gate on every branch the app root can take', () => {
-    expect(appRootSource).toContain('markInitialLandingResolved');
-    // Both the redirecting branches and the storage-error screen must settle it,
-    // or a tapped push waits out the timeout for a landing that never comes.
-    expect(appRootSource.match(/markInitialLandingResolved\(\)/g)).toHaveLength(2);
+    expect(appLayoutSource).toContain("if (pathname !== '/') markInitialLandingResolved()");
+    // A storage error stays on `/`, so it remains the one branch that settles
+    // without a committed destination route.
+    expect(appRootSource.match(/markInitialLandingResolved\(\)/g)).toHaveLength(1);
   });
 });

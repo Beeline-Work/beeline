@@ -307,6 +307,12 @@ function messageId(): string {
 function unix(date: Date): number {
   return Math.floor(date.getTime() / 1_000);
 }
+function messageOrder(left: RoomViewMessage, right: RoomViewMessage): number {
+  return (
+    (left.createdAtMs ?? left.createdAt * 1_000) - (right.createdAtMs ?? right.createdAt * 1_000) ||
+    left.id.localeCompare(right.id)
+  );
+}
 function reviveDates<Row extends object>(row: Row, fields: readonly string[]): Row {
   const mutable = row as Record<string, unknown>;
   for (const field of fields) {
@@ -434,6 +440,7 @@ function projectedMessage(
     id: row.id,
     text: row.text,
     createdAt: unix(row.created_at),
+    createdAtMs: row.created_at.getTime(),
     author,
     presentation: row.presentation,
     ...(row.presentation === 'message'
@@ -1253,7 +1260,7 @@ export class PhoneService {
     const briefing = collapsePermissionCards(
       briefingRows
         .map((row) => projectedMessage(row, this.publicOrigin))
-        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)),
+        .sort(messageOrder),
     );
     const attachmentFacts = await measured(
       'media',
@@ -5966,9 +5973,7 @@ export class PhoneService {
         (message) => [message.id, message],
       ),
     );
-    const merged = [...byId.values()].sort(
-      (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
-    );
+    const merged = [...byId.values()].sort(messageOrder);
     if (!isCorner) return { messages: merged.slice(-ROOM_VIEW_MESSAGE_LIMIT), toolRows: [] };
     // Every Room response stays inside the shared phone message cap. Settled
     // corner tool rows are additive and independently bounded.

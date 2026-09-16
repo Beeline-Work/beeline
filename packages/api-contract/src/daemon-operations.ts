@@ -598,6 +598,10 @@ export type ConnectorStep = {
   readonly status: 'pending' | 'running' | 'done' | 'failed';
   /** Human-readable failure reason, present only when status === 'failed'. */
   readonly reason?: string;
+  /** The CLI command this step runs, when the helper reports one. */
+  readonly command?: string;
+  /** The command's captured output so far (truncated by the helper). */
+  readonly output?: string;
 };
 
 /** Status of one connector on this helper. */

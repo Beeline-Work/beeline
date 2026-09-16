@@ -150,6 +150,13 @@ export default function RootLayout() {
           name="beeline/settings/workbench/connect"
           options={{ headerShown: false }}
         />
+        {/* The Squire sign-in browser renders as an overlay card over the
+            connect screen — most of the screen, never full-bleed, with the
+            underlying screen frosted behind it. */}
+        <Stack.Screen
+          name="beeline/settings/workbench/connect-signin"
+          options={{ headerShown: false, presentation: 'transparentModal' }}
+        />
         <Stack.Screen
           name="beeline/chat/[channelId]"
           options={{

@@ -26,6 +26,8 @@ export type ToolDetailsCellProps = {
   /** Affordances under the facts (a Connect button, a link row). */
   children?: React.ReactNode;
   value?: string;
+  /** Tone for the trailing value (an erroring tool reads danger). */
+  valueTone?: 'danger';
   description?: string;
   expanded?: boolean;
   leading?: React.ReactNode;
@@ -37,6 +39,7 @@ export type ToolDetailsCellProps = {
 export function ToolDetailsCell({
   children,
   value,
+  valueTone,
   description,
   details,
   expanded: expandedProp,
@@ -61,6 +64,7 @@ export function ToolDetailsCell({
         testID={`${testID}-head`}
         title={title}
         value={value}
+        valueTone={valueTone}
       />
       {expanded ? (
         <View style={styles.body} testID={`${testID}-details`}>

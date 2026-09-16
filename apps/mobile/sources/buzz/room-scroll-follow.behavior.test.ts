@@ -11,16 +11,19 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 function ArrivalTranscript({
   newestId,
   pinnedRef,
+  openLandsOnTail = true,
   nativeLayoutMovedOffTail,
 }: {
-  newestId: string;
+  newestId: string | null;
   pinnedRef: MutableRefObject<boolean>;
+  openLandsOnTail?: boolean;
   nativeLayoutMovedOffTail?: () => void;
 }) {
   const followDecision = useScrollFollowOnArrival({
     newestId,
     isPinnedToTail: pinnedRef.current,
     isUserDragging: false,
+    openLandsOnTail,
   });
 
   useLayoutEffect(() => {
@@ -54,6 +57,59 @@ describe('desktop transcript arrival', () => {
 
     expect(pinnedRef.current).toBe(false);
     expect(renderer!.root.findByType('Transcript').props.followDecision).toBe('scroll');
+  });
+
+  it('asks for a tail landing when a chronological list gains its first newest row', () => {
+    let renderer: ReactTestRenderer;
+    const pinnedRef = { current: true };
+    act(() => {
+      renderer = create(React.createElement(ArrivalTranscript, { newestId: null, pinnedRef }));
+    });
+    expect(renderer!.root.findByType('Transcript').props.followDecision).toBe('hold');
+
+    act(() => {
+      renderer!.update(
+        React.createElement(ArrivalTranscript, {
+          newestId: 'message-1',
+          pinnedRef,
+          openLandsOnTail: false,
+        }),
+      );
+    });
+
+    expect(renderer!.root.findByType('Transcript').props.followDecision).toBe('scroll');
+  });
+
+  it('holds the same cold open when the transcript lands on the tail by itself', () => {
+    let renderer: ReactTestRenderer;
+    const pinnedRef = { current: true };
+    act(() => {
+      renderer = create(React.createElement(ArrivalTranscript, { newestId: null, pinnedRef }));
+    });
+
+    act(() => {
+      renderer!.update(
+        React.createElement(ArrivalTranscript, {
+          newestId: 'message-1',
+          pinnedRef,
+          openLandsOnTail: true,
+        }),
+      );
+    });
+
+    expect(renderer!.root.findByType('Transcript').props.followDecision).toBe('hold');
+  });
+
+  it('holds a chronological transcript that opened empty', () => {
+    let renderer: ReactTestRenderer;
+    const pinnedRef = { current: true };
+    act(() => {
+      renderer = create(
+        React.createElement(ArrivalTranscript, { newestId: null, pinnedRef, openLandsOnTail: false }),
+      );
+    });
+
+    expect(renderer!.root.findByType('Transcript').props.followDecision).toBe('hold');
   });
 });
 

@@ -84,7 +84,7 @@ describe('remote-login prerequisites', () => {
       seen.push(binary);
       return { binary, found: true, path: `/usr/bin/${binary}` };
     });
-    expect(seen).toEqual(['Xvfb', 'x11vnc', 'websockify', 'cloudflared']);
+    expect(seen).toEqual(['xvfb-run', 'Xvfb', 'x11vnc', 'websockify', 'cloudflared']);
     expect(checks.every((check) => check.found)).toBe(true);
   });
 

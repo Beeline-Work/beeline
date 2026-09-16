@@ -1452,6 +1452,57 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
   });
 
+  it('renders a complete agent JSON object as a fenced JSON block', () => {
+    const json = '{\n    "answer": {\n        "value": 42\n    }\n}';
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'agent-json',
+          text: json,
+          pubkey: 'agent',
+          isAgentAuthor: true,
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].bodyText).toBe(`\`\`\`json\n${json}\n\`\`\``);
+  });
+
+  it('does not change a human-authored JSON object', () => {
+    const json = '{"answer":42}';
+    render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'human-json', text: json, pubkey: 'human' })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].bodyText).toBe(json);
+  });
+
   it('highlights every person an agent tagged, exactly as it does a human-authored tag', () => {
     const rowProps = {
       agent: { pubkey: 'agent', displayName: 'GREETER' },

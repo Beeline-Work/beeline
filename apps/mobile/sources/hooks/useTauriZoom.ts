@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { isTauri } from '@/utils/isTauri';
+import { useLocalSetting } from '@/sync/storage';
+import { APP_UI_SIZE_SCALE } from '@/ui-size';
 
-export const DEFAULT_APP_ZOOM = 1.0;
 export const BROWSER_APP_ZOOM = 1.0;
 
 const MIN_APP_ZOOM = 0.5;
@@ -20,14 +21,17 @@ export function getBrowserAppZoomValue(): string {
 // layout viewport so matchMedia / window.innerWidth change and responsive
 // breakpoints (unistyles etc.) react correctly.
 export function useTauriZoom() {
+    const uiSize = useLocalSetting('uiSize');
+
     useEffect(() => {
         if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof document === 'undefined') return;
 
         const inTauri = isTauri();
         const root = document.documentElement;
+        const preferredZoom = APP_UI_SIZE_SCALE[uiSize];
 
         if (!inTauri) {
-            root.style.setProperty('--happy-app-zoom', getBrowserAppZoomValue());
+            root.style.setProperty('--happy-app-zoom', String(preferredZoom));
             root.classList.add(WEB_ZOOM_CLASS);
             return () => {
                 root.classList.remove(WEB_ZOOM_CLASS);
@@ -38,7 +42,8 @@ export function useTauriZoom() {
         root.classList.remove(WEB_ZOOM_CLASS);
         root.style.removeProperty('--happy-app-zoom');
 
-        let zoom = DEFAULT_APP_ZOOM;
+        let active = true;
+        let zoom = preferredZoom;
         let webview: { setZoom: (z: number) => Promise<void> } | null = null;
 
         const apply = (z: number) => {
@@ -48,6 +53,7 @@ export function useTauriZoom() {
 
         (async () => {
             const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+            if (!active) return;
             webview = getCurrentWebview();
             apply(zoom);
         })();
@@ -62,11 +68,14 @@ export function useTauriZoom() {
                 apply(zoom - 0.1);
             } else if (e.key === '0') {
                 e.preventDefault();
-                apply(DEFAULT_APP_ZOOM);
+                apply(preferredZoom);
             }
         };
 
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, []);
+        return () => {
+            active = false;
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [uiSize]);
 }

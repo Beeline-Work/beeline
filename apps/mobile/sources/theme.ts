@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { beelineThemes, type BeelineThemeTokens } from './buzz/groknight';
+import { APP_UI_SIZE_SCALE, type AppUiSize } from './ui-size';
 
 // Shared spacing, sizing constants (DRY - used by both themes)
 const sharedSpacing = {
@@ -568,6 +569,49 @@ function createBeelineAppTheme(buzz: BeelineThemeTokens) {
     };
 }
 
-export const obsidianTheme = createBeelineAppTheme(beelineThemes.obsidian);
-export const boneTheme = createBeelineAppTheme(beelineThemes.bone);
+function scaleTypeRole<T extends BeelineThemeTokens['type'][keyof BeelineThemeTokens['type']]>(
+    role: T,
+    scale: number,
+): T {
+    return {
+        ...role,
+        fontSize: role.fontSize * scale,
+        lineHeight: role.lineHeight * scale,
+    } as T;
+}
+
+function scaleBeelineTypography(theme: BeelineThemeTokens, uiSize: AppUiSize): BeelineThemeTokens {
+    const scale = APP_UI_SIZE_SCALE[uiSize];
+    if (scale === 1) return theme;
+    return {
+        ...theme,
+        type: Object.fromEntries(
+            Object.entries(theme.type).map(([name, role]) => [name, scaleTypeRole(role, scale)]),
+        ) as unknown as BeelineThemeTokens['type'],
+        transcriptCard: {
+            ...theme.transcriptCard,
+            bodySize: theme.transcriptCard.bodySize * scale,
+            bodyLineHeight: theme.transcriptCard.bodyLineHeight * scale,
+            codePathSize: theme.transcriptCard.codePathSize * scale,
+            rowTitleSize: theme.transcriptCard.rowTitleSize * scale,
+            rowKindSize: theme.transcriptCard.rowKindSize * scale,
+            actionSize: theme.transcriptCard.actionSize * scale,
+        },
+        proseSize: theme.proseSize * scale,
+        proseLineHeight: theme.proseLineHeight * scale,
+        leadSize: theme.leadSize * scale,
+        leadLineHeight: theme.leadLineHeight * scale,
+    } as BeelineThemeTokens;
+}
+
+export function createSizedBeelineTheme(theme: BeelineThemeTokens, uiSize: AppUiSize) {
+    return createBeelineAppTheme(scaleBeelineTypography(theme, uiSize));
+}
+
+export const obsidianTheme = createSizedBeelineTheme(beelineThemes.obsidian, 'medium');
+export const obsidianSmallTheme = createSizedBeelineTheme(beelineThemes.obsidian, 'small');
+export const obsidianLargeTheme = createSizedBeelineTheme(beelineThemes.obsidian, 'large');
+export const boneTheme = createSizedBeelineTheme(beelineThemes.bone, 'medium');
+export const boneSmallTheme = createSizedBeelineTheme(beelineThemes.bone, 'small');
+export const boneLargeTheme = createSizedBeelineTheme(beelineThemes.bone, 'large');
 export type BeelineAppTheme = typeof obsidianTheme;

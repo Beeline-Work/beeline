@@ -4,6 +4,7 @@ export const LocalSettingsSchema = z.object({
     appearance: z.enum(['light', 'dark']),
     commandPaletteEnabled: z.boolean(),
     consoleLoggingEnabled: z.boolean(),
+    uiSize: z.enum(['small', 'medium', 'large']),
     zenMode: z.boolean(),
 });
 
@@ -13,6 +14,7 @@ export const localSettingsDefaults: LocalSettings = Object.freeze({
     appearance: 'dark',
     commandPaletteEnabled: false,
     consoleLoggingEnabled: false,
+    uiSize: 'medium',
     zenMode: false,
 });
 

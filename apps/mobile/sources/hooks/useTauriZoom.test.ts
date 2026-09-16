@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
     Platform: { OS: 'web' },
 }));
+vi.mock('@/sync/storage', () => ({ useLocalSetting: () => 'medium' }));
 
 import { BROWSER_APP_ZOOM, getBrowserAppZoomValue } from './useTauriZoom';
 

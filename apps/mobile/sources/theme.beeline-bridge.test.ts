@@ -6,7 +6,12 @@ vi.mock('react-native', () => ({
 }));
 
 import { beelineThemes } from './buzz/groknight';
-import { boneTheme, obsidianTheme } from './theme';
+import {
+  boneTheme,
+  obsidianLargeTheme,
+  obsidianSmallTheme,
+  obsidianTheme,
+} from './theme';
 
 const bridged = [obsidianTheme, boneTheme];
 
@@ -56,5 +61,19 @@ describe('the legacy-theme bridge carries the Speakeasy language to lesser scree
     // what the lesser screens now read instead of hardwired Plex Sans.
     expect(beelineThemes.obsidian.proseRegular).toBe('SpaceGrotesk-Regular');
     expect(beelineThemes.obsidian.proseSemibold).toBe('SpaceGrotesk-SemiBold');
+  });
+
+  it('scales native type without scaling geometry', () => {
+    expect(obsidianSmallTheme.buzz.type.body.fontSize).toBeCloseTo(13.76);
+    expect(obsidianLargeTheme.buzz.type.body.fontSize).toBeCloseTo(19.2);
+    expect(obsidianSmallTheme.buzz.proseSize).toBeCloseTo(13.76);
+    expect(obsidianLargeTheme.buzz.proseSize).toBeCloseTo(19.2);
+    expect(obsidianSmallTheme.buzz.type.sectionHead.letterSpacing).toBe(2);
+    expect(obsidianLargeTheme.buzz.type.hero.letterSpacing).toBe(-0.3);
+    expect(obsidianSmallTheme.buzz.layout).toEqual(obsidianTheme.buzz.layout);
+    expect(obsidianLargeTheme.buzz.space).toEqual(obsidianTheme.buzz.space);
+    expect(obsidianSmallTheme.buzz.transcriptCard.identitySize).toBe(
+      obsidianTheme.buzz.transcriptCard.identitySize,
+    );
   });
 });

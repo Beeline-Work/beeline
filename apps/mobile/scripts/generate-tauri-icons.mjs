@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 // Regenerates apps/mobile/src-tauri/icons from the one source of app identity,
-// sources/assets/images/icon.png. Linux and Windows keep that square treatment;
-// macOS gets its own Big Sur-style transparent canvas before the .icns is
-// encoded. `tauri icon` would do the same reshaping, but it needs the Rust
-// toolchain installed; this uses nothing but node's zlib so the desktop icons
-// can be refreshed from any checkout.
+// sources/assets/images/icon.png. Every platform now ships the picked variant
+// B tile: the committed brass loop is lifted off its aubergine ground by a
+// channel projection (no redrawing — the exact vector shape and its
+// antialiasing survive), then composited onto a rounded aubergine plate with a
+// subtle diagonal gradient on a transparent canvas.
 //
-// Outputs the six files tauri.conf.json's bundle.icon names: three PNGs for
-// Linux, an .ico for Windows and an .icns for macOS, plus the 1024px master.
+// macOS previously drew its own rounded plate with exactly this geometry
+// (824px plate, 185px radius, 100px inset, 528px mark), so the tile replaces
+// it one-for-one: macOS's only change is the plate's fill, flat aubergine to
+// the gradient. Linux PNGs and the Windows ICO gain the rounded plate together
+// with the gradient. Browser shortcut art reads icon.png directly via
+// app.config.js and keeps the committed square, untouched.
 //
 //   node scripts/generate-tauri-icons.mjs [--check]
 //
@@ -23,12 +27,21 @@ const SOURCE = join(here, '..', 'sources', 'assets', 'images', 'icon.png');
 const ICONS = join(here, '..', 'src-tauri', 'icons');
 const EVIDENCE = join(here, '..', 'evidence', 'macos-app-icon');
 
-const MAC_CANVAS_SIZE = 1024;
-const MAC_PLATE_INSET = 100;
-const MAC_PLATE_SIZE = 824;
-const MAC_CORNER_RADIUS = 185;
-const MAC_MARK_WIDTH = 528;
+const CANVAS_SIZE = 1024;
+const PLATE_INSET = 100;
+const PLATE_SIZE = 824;
+const CORNER_RADIUS = 185;
+const MARK_WIDTH = 528;
 const MARK_THRESHOLD = 8;
+
+// The committed vector's two inks (icon.svg: aubergine ground rect + brass loop).
+const GROUND = [0x14, 0x09, 0x1a];
+const BRASS = [0xe5, 0xa6, 0x45];
+
+// Picked variant B gradient, the subtle (faint) pass: diagonal top-left to
+// bottom-right over the plate. The strong pass is a one-value swap here.
+const GRADIENT_TOP = [0x1e, 0x0d, 0x26];
+const GRADIENT_BOTTOM = [0x10, 0x07, 0x15];
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n;
@@ -171,6 +184,29 @@ function markBounds(image) {
     return { left, top, right, bottom, width: right - left + 1, height: bottom - top + 1 };
 }
 
+// Lift the committed loop off its aubergine ground without re-tracing it: every
+// source pixel is brass*a + ground*(1-a), so a comes back from the channels
+// weighted by each channel's brass-ground span. The loop stays the exact
+// committed shape, its antialiasing intact.
+function markMask(source) {
+    const spans = BRASS.map((b, c) => b - GROUND[c]);
+    const spanSq = spans.reduce((sum, span) => sum + span * span, 0);
+    const out = new Float32Array(source.width * source.height * 4);
+    for (let i = 0; i < source.width * source.height; i += 1) {
+        const at = i * 4;
+        let dot = 0;
+        for (let c = 0; c < 3; c += 1) {
+            dot += spans[c] * (source.pixels[at + c] - GROUND[c]);
+        }
+        const alpha = Math.max(0, Math.min(1, dot / spanSq));
+        out[at] = (BRASS[0] / 255) * alpha;
+        out[at + 1] = (BRASS[1] / 255) * alpha;
+        out[at + 2] = (BRASS[2] / 255) * alpha;
+        out[at + 3] = alpha;
+    }
+    return { width: source.width, height: source.height, pixels: out };
+}
+
 function sampleBilinear(image, x, y, channel) {
     const x0 = Math.max(0, Math.min(image.width - 1, Math.floor(x)));
     const y0 = Math.max(0, Math.min(image.height - 1, Math.floor(y)));
@@ -181,37 +217,36 @@ function sampleBilinear(image, x, y, channel) {
     const pixel = (px, py) => image.pixels[(py * image.width + px) * 4 + channel];
     const top = pixel(x0, y0) * (1 - tx) + pixel(x1, y0) * tx;
     const bottom = pixel(x0, y1) * (1 - tx) + pixel(x1, y1) * tx;
-    return Math.round(top * (1 - ty) + bottom * ty);
+    return top * (1 - ty) + bottom * ty;
 }
 
 function insideRoundedPlate(x, y) {
     const nearX = Math.max(
-        MAC_PLATE_INSET + MAC_CORNER_RADIUS,
-        Math.min(x, MAC_PLATE_INSET + MAC_PLATE_SIZE - MAC_CORNER_RADIUS),
+        PLATE_INSET + CORNER_RADIUS,
+        Math.min(x, PLATE_INSET + PLATE_SIZE - CORNER_RADIUS),
     );
     const nearY = Math.max(
-        MAC_PLATE_INSET + MAC_CORNER_RADIUS,
-        Math.min(y, MAC_PLATE_INSET + MAC_PLATE_SIZE - MAC_CORNER_RADIUS),
+        PLATE_INSET + CORNER_RADIUS,
+        Math.min(y, PLATE_INSET + PLATE_SIZE - CORNER_RADIUS),
     );
-    return (x - nearX) ** 2 + (y - nearY) ** 2 <= MAC_CORNER_RADIUS ** 2;
+    return (x - nearX) ** 2 + (y - nearY) ** 2 <= CORNER_RADIUS ** 2;
 }
 
-// Apple's icon grid leaves 100px around the 824px plate. Four-by-four coverage
-// sampling keeps the 185px rounded edge clean in the 1024px master; the normal
-// box filter then carries that antialiasing into every smaller .icns payload.
-function macSource(source) {
-    if (source.width !== MAC_CANVAS_SIZE || source.height !== MAC_CANVAS_SIZE) {
-        throw new Error(`macOS source must be ${MAC_CANVAS_SIZE}x${MAC_CANVAS_SIZE}`);
-    }
-    const bounds = markBounds(source);
-    const scale = MAC_MARK_WIDTH / bounds.width;
+// The picked variant B master: the lifted loop composited over a rounded
+// aubergine plate with a diagonal top-left to bottom-right gradient. Apple's
+// icon grid leaves 100px around the 824px plate; four-by-four coverage
+// sampling keeps the 185px rounded edge clean in the 1024px master, and the
+// box filter carries that antialiasing into every smaller payload.
+function tileSource(source, mask, bounds) {
+    const canvasCenter = CANVAS_SIZE / 2;
+    const scale = MARK_WIDTH / bounds.width;
     const markCenterX = (bounds.left + bounds.right) / 2;
     const markCenterY = (bounds.top + bounds.bottom) / 2;
-    const canvasCenter = MAC_CANVAS_SIZE / 2;
-    const pixels = Buffer.alloc(MAC_CANVAS_SIZE * MAC_CANVAS_SIZE * 4);
+    const pixels = Buffer.alloc(CANVAS_SIZE * CANVAS_SIZE * 4);
+    const gradientSpan = PLATE_SIZE + PLATE_SIZE;
 
-    for (let y = MAC_PLATE_INSET; y < MAC_PLATE_INSET + MAC_PLATE_SIZE; y += 1) {
-        for (let x = MAC_PLATE_INSET; x < MAC_PLATE_INSET + MAC_PLATE_SIZE; x += 1) {
+    for (let y = PLATE_INSET; y < PLATE_INSET + PLATE_SIZE; y += 1) {
+        for (let x = PLATE_INSET; x < PLATE_INSET + PLATE_SIZE; x += 1) {
             let covered = 0;
             for (let sy = 0; sy < 4; sy += 1) {
                 for (let sx = 0; sx < 4; sx += 1) {
@@ -220,16 +255,20 @@ function macSource(source) {
             }
             if (covered === 0) continue;
 
+            const t = Math.max(0, Math.min(1, (x + y - PLATE_INSET * 2) / gradientSpan));
             const sourceX = (x + 0.5 - canvasCenter) / scale + markCenterX - 0.5;
             const sourceY = (y + 0.5 - canvasCenter) / scale + markCenterY - 0.5;
-            const to = (y * MAC_CANVAS_SIZE + x) * 4;
-            for (let channel = 0; channel < 3; channel += 1) {
-                pixels[to + channel] = sampleBilinear(source, sourceX, sourceY, channel);
+            const markA = sampleBilinear(mask, sourceX, sourceY, 3);
+            const to = (y * CANVAS_SIZE + x) * 4;
+            for (let c = 0; c < 3; c += 1) {
+                const plate = GRADIENT_TOP[c] + (GRADIENT_BOTTOM[c] - GRADIENT_TOP[c]) * t;
+                const mark = sampleBilinear(mask, sourceX, sourceY, c);
+                pixels[to + c] = Math.round(mark * 255 + plate * (1 - markA));
             }
             pixels[to + 3] = Math.round((covered / 16) * 255);
         }
     }
-    return { width: MAC_CANVAS_SIZE, height: MAC_CANVAS_SIZE, pixels };
+    return { width: CANVAS_SIZE, height: CANVAS_SIZE, pixels };
 }
 
 function encodePng(image) {
@@ -340,26 +379,18 @@ function encodeIcns(pngFor) {
 }
 
 const source = decodePng(readFileSync(SOURCE));
-const mac = macSource(source);
+const bounds = markBounds(source);
+const mask = markMask(source);
+const tile = tileSource(source, mask, bounds);
 const scaled = new Map();
 const at = (size) => {
-    if (!scaled.has(size)) scaled.set(size, size === source.width ? source : resize(source, size));
+    if (!scaled.has(size)) scaled.set(size, size === tile.width ? tile : resize(tile, size));
     return scaled.get(size);
 };
 const pngCache = new Map();
 const pngAt = (size) => {
     if (!pngCache.has(size)) pngCache.set(size, encodePng(at(size)));
     return pngCache.get(size);
-};
-const macScaled = new Map();
-const macPngCache = new Map();
-const macAt = (size) => {
-    if (!macScaled.has(size)) macScaled.set(size, size === mac.width ? mac : resize(mac, size));
-    return macScaled.get(size);
-};
-const macPngAt = (size) => {
-    if (!macPngCache.has(size)) macPngCache.set(size, encodePng(macAt(size)));
-    return macPngCache.get(size);
 };
 
 const outputs = new Map([
@@ -378,13 +409,15 @@ const outputs = new Map([
             { size: 256, data: pngAt(256) },
         ]),
     ],
-    ['icon.icns', encodeIcns(macPngAt)],
+    ['icon.icns', encodeIcns(pngAt)],
 ]);
 
 const evidence = new Map([
-    ['reproduced-square-128.png', pngAt(128)],
-    ['demonstrated-rounded-1024.png', macPngAt(1024)],
-    ['demonstrated-rounded-128.png', macPngAt(128)],
+    // The previous shared desktop treatment, kept for comparison: the square
+    // full-bleed source is what browser shortcut art still ships.
+    ['reproduced-square-128.png', encodePng(resize(source, 128))],
+    ['demonstrated-rounded-1024.png', pngAt(1024)],
+    ['demonstrated-rounded-128.png', pngAt(128)],
 ]);
 
 const check = process.argv.includes('--check');

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
@@ -447,6 +447,83 @@ describe('workbench connectors', () => {
       [connectorId],
     );
     expect(gone.rows[0]!.count).toBe('0');
+  });
+
+  it('re-pairs a stale disconnected row as a fresh install instead of leaving it dead', async () => {
+    // A previous pairing attempt left a stale row (the helper never acked the
+    // uninstall, so the reap never ran): disconnected, no steps, an error
+    // line, a leftover sync op, and a connected_at timestamp. Re-pairing must
+    // re-arm it exactly like a fresh insert — the connect screen's only path
+    // back, since a disconnected row has no unpair UI.
+    const staleId = randomUUID();
+    await database.query(
+      `INSERT INTO workspace_connectors(
+         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+         status,status_steps,status_error,pending_ops,connected_at
+       ) VALUES ($1,$2,$3,'trusty-squire',$4,$5,'disconnected','[]'::jsonb,
+                 'last install failed','["sync"]'::jsonb,now())`,
+      [staleId, WORKSPACE, HUMAN, HELPER, HELPER],
+    );
+    const repaired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as {
+      connectorId: string;
+      status: { status: string; steps: { label: string; status: string }[]; errorMessage?: string };
+    };
+    expect(repaired.connectorId).toBe(staleId);
+    expect(repaired.status.status).toBe('installing');
+    expect(repaired.status.steps).toEqual([
+      { label: 'Install on helper', status: 'pending' },
+      { label: 'Connect provider account', status: 'pending' },
+    ]);
+    expect(repaired.status.errorMessage).toBeUndefined();
+
+    const row = await database.query<{
+      status_error: string | null;
+      connected_at: Date | null;
+      pending_ops: string[];
+      helper_agent_id: string;
+    }>(
+      `SELECT status_error,connected_at,pending_ops,helper_agent_id
+       FROM workspace_connectors WHERE id=$1::uuid`,
+      [staleId],
+    );
+    expect(row.rows[0]!.status_error).toBeNull();
+    expect(row.rows[0]!.connected_at).toBeNull();
+    expect(row.rows[0]!.pending_ops).toEqual([]);
+    expect(row.rows[0]!.helper_agent_id).toBe(HELPER);
+
+    // The helper daemon derives its assignments from the re-armed row: the
+    // install assignment arrives on its next poll.
+    const queue = await daemonOperation('getConnectorAssignments', {});
+    expect(
+      (queue.body as { assignments?: { kind: string; connectorId: string }[] }).assignments,
+    ).toContainEqual({ kind: 'install', connectorId: staleId, connectorType: 'trusty-squire' });
+  });
+
+  it('re-pairing a connected connector starts a fresh install again', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await daemonOperation('installConnector', { connectorId: paired.connectorId });
+    const connected = await database.query<{ status: string }>(
+      `SELECT status FROM workspace_connectors WHERE id=$1::uuid`,
+      [paired.connectorId],
+    );
+    expect(connected.rows[0]!.status).toBe('connected');
+
+    const again = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string; status: { status: string; steps: unknown[] } };
+    expect(again.connectorId).toBe(paired.connectorId);
+    expect(again.status.status).toBe('installing');
+    expect(again.status.steps.length).toBeGreaterThan(0);
   });
 
   it('keeps the connector receipt DM read-only for everyone but the connector identity', async () => {

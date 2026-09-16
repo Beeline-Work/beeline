@@ -2072,6 +2072,10 @@ export class PhoneService {
       avatarSeed?: string;
       eventSubscriptions?: readonly string[];
       deferJoin?: boolean;
+      /** Stable machine identifier for the host running this agent. */
+      machineId?: string;
+      /** Human-readable machine name (e.g. hostname). */
+      machineName?: string;
     },
     createDaemonExchange: (
       agentId: string,
@@ -2100,6 +2104,8 @@ export class PhoneService {
       avatarSeed?: string;
       eventSubscriptions?: readonly string[];
       deferJoin?: boolean;
+      machineId?: string;
+      machineName?: string;
     },
     createDaemonExchange?: (
       agentId: string,
@@ -2173,14 +2179,15 @@ export class PhoneService {
       );
       if (!identityRow.rowCount) throw new Error('pairing key belongs to a person');
       await database.query(
-        `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort)
-         VALUES($1,$2,$3::jsonb,$4,$5)
+        `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,machine_id,machine_name)
+         VALUES($1,$2,$3::jsonb,$4,$5,$6,$7)
          ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
            selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,
            model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
            schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
-           access_policy='{"type":"everyone"}'::jsonb,updated_at=now()`,
+           access_policy='{"type":"everyone"}'::jsonb,machine_id=EXCLUDED.machine_id,
+           machine_name=EXCLUDED.machine_name,updated_at=now()`,
         [
           input.agentPubkey,
           pairing.created_by,
@@ -2191,6 +2198,8 @@ export class PhoneService {
           }),
           input.model,
           input.effort || null,
+          input.machineId || null,
+          input.machineName || null,
         ],
       );
       await database.query(
@@ -5275,31 +5284,38 @@ export class PhoneService {
     ).rows;
     const helpers = (
       await this.database.query<{
-        agent_id: string;
+        id: string;
         name: string;
         online: boolean;
       }>(
-        // A helper is a machine the VIEWER connected: an agent whose owner is
-        // this viewer and which is still a current Workspace member. The
-        // Workbench is human-scoped, not workspace-scoped, so this is NOT
-        // filtered by a workspace id (there is none in the request), only by
-        // owner and current-member status; DISTINCT collapses a helper that
-        // belongs to more than one Workspace. Online reads the same durable
-        // presence evidence readers age out after 90s.
-        `SELECT DISTINCT a.agent_id,i.name,
-           EXISTS(SELECT 1 FROM live_outputs p
-             WHERE p.agent_id=a.agent_id AND p.kind='presence'
-               AND p.body->>'status'='online'
-               AND p.updated_at > now() - interval '90 seconds') online
+        // A helper is a MACHINE, not an individual agent: agents sharing a
+        // machine_id are grouped into one row. An agent without a machine_id
+        // (pre-migration legacy) is its own machine. Online is true when ANY
+        // agent on that machine has recent durable presence evidence (the
+        // same 90-second window readers use). Name is the machine_name if set,
+        // falling back to the first agent's identity name.
+        `SELECT COALESCE(a.machine_id,a.agent_id) id,
+                COALESCE(a.machine_name,i.name) name,
+                bool_or(p.online) online
          FROM agents a
          JOIN identities i ON i.id=a.agent_id
          JOIN memberships m ON m.identity_id=a.agent_id
            AND m.room_id IS NULL AND m.removed_at IS NULL
+         LEFT JOIN LATERAL(
+           SELECT EXISTS(
+             SELECT 1 FROM live_outputs p
+             WHERE p.agent_id=a.agent_id AND p.kind='presence'
+               AND p.body->>'status'='online'
+               AND p.updated_at>now()-interval '90 seconds'
+           ) online
+         ) p ON true
          WHERE a.owner_id=$1
-         ORDER BY i.name`,
+         GROUP BY COALESCE(a.machine_id,a.agent_id),COALESCE(a.machine_name,i.name)
+         ORDER BY COALESCE(a.machine_name,i.name)`,
         [viewerId],
       )
     ).rows;
+
     const walletRow = (
       await this.database.query<{ created_at: Date; delegation_expires_at: Date | null }>(
         `SELECT created_at,delegation_expires_at FROM wallet_bindings WHERE identity_id=$1`,
@@ -5323,7 +5339,7 @@ export class PhoneService {
           }
         : {}),
       helpers: helpers.map((row) => ({
-        agentId: row.agent_id,
+        id: row.id,
         name: row.name,
         online: row.online,
       })),
@@ -5369,36 +5385,59 @@ export class PhoneService {
   ): Promise<Output<'pairConnector'>> {
     if (!isConnectableConnector(input.connectorType))
       throw new Error(`${connectorDisplayName(input.connectorType)} is not connectable yet`);
-    // Human-scoped: derive the Workspace to anchor the connector row in from a
-    // Workspace the viewer shares with the chosen helper, rather than a
-    // client-supplied id (the screen sends none). This both authorizes the pair
-    // and satisfies workspace_connectors.workspace_id without a uuid cast on ''.
-    const helper = await this.database.query<{ workspace_id: string }>(
-      `SELECT mv.workspace_id
-         FROM memberships mv
-         JOIN memberships mh
-           ON mh.workspace_id=mv.workspace_id AND mh.room_id IS NULL
-          AND mh.removed_at IS NULL AND mh.identity_id=$2
-         JOIN identities i ON i.id=mh.identity_id AND i.kind='agent'
-        WHERE mv.room_id IS NULL AND mv.removed_at IS NULL AND mv.identity_id=$1
-        ORDER BY mv.joined_at, mv.workspace_id LIMIT 1`,
+    // The input helperAgentId may be a machine_id (from a new client) or an
+    // agent_id (back-compat from an older client). Resolve it to a machine:
+    // if it matches an agent's machine_id, use that machine; otherwise treat
+    // it as an agent_id and find its machine (for legacy agents, machine_id
+    // IS the agent_id).
+    // The input helperAgentId may be a machine_id or an agent_id.
+    // Find any agent owned by this viewer that matches either, then find a
+    // Workspace the viewer shares with that agent.
+    const candidate = await this.database.query<{
+      agent_id: string;
+      machine_id: string | null;
+    }>(
+      `SELECT a.agent_id,a.machine_id
+         FROM agents a
+         JOIN memberships m ON m.identity_id=a.agent_id
+           AND m.room_id IS NULL AND m.removed_at IS NULL
+        WHERE a.owner_id=$1 AND (a.machine_id=$2 OR a.agent_id=$2)
+        LIMIT 1`,
       [viewerId, input.helperAgentId],
     );
-    const workspaceId = helper.rows[0]?.workspace_id;
-    if (!workspaceId)
+    const matched = candidate.rows[0];
+    if (!matched)
+      throw new Error('the connector helper must be a current agent you share a Workspace with');
+    const machineId = matched.machine_id ?? matched.agent_id;
+    const machine = await this.database.query<{ workspace_id: string }>(
+      `SELECT mv.workspace_id
+         FROM memberships mv
+        WHERE mv.room_id IS NULL AND mv.removed_at IS NULL AND mv.identity_id=$1
+          AND EXISTS(
+            SELECT 1 FROM memberships mh
+            WHERE mh.workspace_id=mv.workspace_id AND mh.room_id IS NULL
+              AND mh.removed_at IS NULL AND mh.identity_id=$2
+          )
+        ORDER BY mv.joined_at, mv.workspace_id LIMIT 1`,
+      [viewerId, matched.agent_id],
+    );
+    const ws = machine.rows[0];
+    if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
     const id = randomUUID();
     await this.database.query(
       `INSERT INTO workspace_connectors(
-         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,status,status_steps
-       ) VALUES ($1,$2,$3,$4,$5,'installing',$6::jsonb)
-       ON CONFLICT (workspace_id,owner_identity_id,connector_type) DO NOTHING`,
+         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+         status,status_steps
+       ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO NOTHING`,
       [
         id,
-        workspaceId,
+        ws.workspace_id,
         viewerId,
         input.connectorType,
-        input.helperAgentId,
+        matched.agent_id,
+        machineId,
         JSON.stringify(defaultConnectorSteps()),
       ],
     );
@@ -5411,8 +5450,9 @@ export class PhoneService {
           status_error: string | null;
         }>(
           `SELECT id,status,status_steps,status_error FROM workspace_connectors
-           WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3`,
-          [workspaceId, viewerId, input.connectorType],
+           WHERE workspace_id=$1 AND owner_identity_id=$2
+             AND connector_type=$3 AND machine_id=$4`,
+          [ws.workspace_id, viewerId, input.connectorType, machineId],
         )
       ).rows[0] ?? {
         id,
@@ -5423,7 +5463,7 @@ export class PhoneService {
     // The helper sees the install assignment on its next poll.
     await ensureConnectorDirectMessageRoom(
       this.database,
-      workspaceId,
+      ws.workspace_id,
       input.connectorType,
       viewerId,
     );

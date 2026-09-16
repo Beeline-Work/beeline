@@ -40,7 +40,7 @@ export type ConnectorCatalogEntry = WorkbenchCatalogEntry;
 
 const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
   { connectorType: 'trusty-squire', name: 'Trusty Squire', available: true },
-  { connectorType: 'wallet', name: 'Wallet', available: false },
+  { connectorType: 'wallet', name: 'Wallet', available: true },
   { connectorType: 'tailscale', name: 'Tailscale', available: false },
 ];
 

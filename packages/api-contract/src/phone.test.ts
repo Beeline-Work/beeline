@@ -51,6 +51,8 @@ describe('phone contract', () => {
       relay,
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
+    expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
+    expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })).toBe(false);
     for (const invalid of [
       { direction: 'sideways' },
       { received: 'yes' },

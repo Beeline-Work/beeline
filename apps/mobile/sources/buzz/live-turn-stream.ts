@@ -37,6 +37,7 @@ export function liveDraftMessages(
         text: '',
         isUser: false,
         timestamp: overlay.createdAt,
+        orderAtMs: overlay.createdAt * 1_000,
         pubkey: overlay.agentPubkey,
         isAgentAuthor: true,
         isAgentActivity: true,
@@ -110,6 +111,9 @@ export function projectActiveTurnStream(
       // stamp, which walked the lane to the tail on every beat and let a
       // second agent's lane leapfrog it.
       timestamp: Math.min(...sources.map((message) => message.timestamp)),
+      orderAtMs: Math.min(
+        ...sources.map((message) => message.orderAtMs ?? message.timestamp * 1_000),
+      ),
       pubkey: turn.agentPubkey,
       isAgentAuthor: true,
       isAgentActivity: true,
@@ -121,6 +125,8 @@ export function projectActiveTurnStream(
   if (!consumed.size) return messages;
 
   return [...messages.filter((message) => !consumed.has(message.id)), ...lanes].sort(
-    (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
+    (left, right) =>
+      (left.orderAtMs ?? left.timestamp * 1_000) - (right.orderAtMs ?? right.timestamp * 1_000) ||
+      left.id.localeCompare(right.id),
   );
 }

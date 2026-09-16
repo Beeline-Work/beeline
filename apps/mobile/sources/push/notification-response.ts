@@ -4,6 +4,7 @@ import {
   navigateToBuzzTargetFromNotification,
   type BuzzNotificationTarget,
 } from '@/utils/notificationRouting';
+import type { InitialLandingResult } from '@/navigation/initial-landing';
 
 /**
  * Routing a tapped push, independent of React so the whole rule is testable.
@@ -58,8 +59,8 @@ export type NotificationResponseRouting = {
   handled: Set<string>;
   /** expo-notifications' identifier for a tap on the notification body. */
   defaultActionIdentifier: string;
-  /** Resolves once the app root has chosen its landing route. */
-  waitForInitialLanding: () => Promise<void>;
+  /** Resolves once the landing route has committed, or reports a timeout. */
+  waitForInitialLanding: () => Promise<InitialLandingResult>;
   /** Clears the retained native "last response" once it has been routed. */
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
@@ -119,7 +120,10 @@ export async function routeBuzzNotificationResponse(
     // The app root replaces whatever route is current when its landing check
     // finishes, so opening the Room before then loses it. On a running app
     // this is already settled and the tap navigates in the same tick.
-    await routing.waitForInitialLanding();
+    const landing = await routing.waitForInitialLanding();
+    if (landing === 'timeout') {
+      log('[PUSH ROUTING] Initial landing did not commit before timeout; routing directly');
+    }
 
     const buzzTarget = getBuzzNotificationTargetFromData(
       response.notification?.request?.content?.data,

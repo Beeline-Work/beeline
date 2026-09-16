@@ -20,35 +20,37 @@
 export const INITIAL_LANDING_TIMEOUT_MS = 8000;
 
 let resolved = false;
-let waiters: Array<() => void> = [];
+let waiters: Array<(result: InitialLandingResult) => void> = [];
 
-/** Called by the app root once it has issued its landing navigation. */
+export type InitialLandingResult = 'committed' | 'timeout';
+
+/** Called after Expo Router reports the landing destination as committed. */
 export function markInitialLandingResolved(): void {
   if (resolved) return;
   resolved = true;
   const pending = waiters;
   waiters = [];
-  for (const wake of pending) wake();
+  for (const wake of pending) wake('committed');
 }
 
 export function isInitialLandingResolved(): boolean {
   return resolved;
 }
 
-/** Resolves once the app root has chosen its landing route, or on timeout. */
+/** Resolves once the landing route has committed, or on timeout. */
 export function whenInitialLandingResolved(
   timeoutMs: number = INITIAL_LANDING_TIMEOUT_MS,
-): Promise<void> {
-  if (resolved) return Promise.resolve();
-  return new Promise<void>((resolve) => {
+): Promise<InitialLandingResult> {
+  if (resolved) return Promise.resolve('committed');
+  return new Promise<InitialLandingResult>((resolve) => {
     let done = false;
-    const finish = () => {
+    const finish = (result: InitialLandingResult) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      resolve();
+      resolve(result);
     };
-    const timer = setTimeout(finish, timeoutMs);
+    const timer = setTimeout(() => finish('timeout'), timeoutMs);
     waiters.push(finish);
   });
 }

@@ -72,7 +72,6 @@ export default function Home() {
     } else {
       router.replace('/beeline/onboarding');
     }
-    markInitialLandingResolved();
   }, [
     buzzCheckDone,
     buzzStorageError,

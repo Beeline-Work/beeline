@@ -33,6 +33,10 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // runtime. Turning it off removes only the iOS@23 compatibility target.
 export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 
+// Publish android@23 alongside android@24 until the captain's runtime-23
+// device adopts a newer store binary. Mirror of the iOS@23 compat target.
+export const PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
+
 function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
 }
@@ -43,6 +47,7 @@ function targetKey(target) {
 export function releaseUpdateTargets(
   projectDir = process.cwd(),
   publishIosRuntime23 = PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
+  publishAndroidRuntime23 = PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT,
 ) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
@@ -50,6 +55,7 @@ export function releaseUpdateTargets(
   const pins = readPinnedRuntimeVersion(projectDir);
   const targets = [
     { platform: 'android', runtimeVersion: pins.android },
+    ...(publishAndroidRuntime23 ? [{ platform: 'android', runtimeVersion: '23' }] : []),
     ...(publishIosRuntime23 ? [{ platform: 'ios', runtimeVersion: '23' }] : []),
     { platform: 'ios', runtimeVersion: pins.ios },
   ];

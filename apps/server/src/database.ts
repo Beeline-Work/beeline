@@ -463,6 +463,8 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT t
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
 ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
 ALTER TABLE agents ADD CONSTRAINT agents_model_unavailable_check
   CHECK (model_unavailable IN ('model','effort','selection'));
@@ -1005,14 +1007,16 @@ CREATE TABLE IF NOT EXISTS import_items (
 );
 
 -- Workbench: per-human connector provisioning. One row per (Workspace,
--- owner, connector type): a connection belongs to whoever provisioned it, so
--- sovereignty is this row's owner_identity_id, re-checked on every read.
+-- owner, connector type, machine): a connection belongs to whoever
+-- provisioned it, so sovereignty is this row's owner_identity_id,
+-- re-checked on every read. One machine = one connector.
 CREATE TABLE IF NOT EXISTS workspace_connectors (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   connector_type text NOT NULL,
   helper_agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  machine_id text,
   status text NOT NULL DEFAULT 'installing'
     CHECK (status IN ('installing','connected','error','disconnected')),
   status_steps jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -1023,8 +1027,12 @@ CREATE TABLE IF NOT EXISTS workspace_connectors (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_owner_unique
-  ON workspace_connectors(workspace_id, owner_identity_id, connector_type);
+-- Per-machine unique: one connector per (workspace, owner, type, machine).
+-- NULL machine_id (legacy agents before this migration) are each their own
+-- machine; PostgreSQL treats NULL as distinct in unique indexes.
+DROP INDEX IF EXISTS workspace_connectors_owner_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connectors_machine_unique
+  ON workspace_connectors(workspace_id, owner_identity_id, connector_type, machine_id);
 CREATE INDEX IF NOT EXISTS workspace_connectors_helper_idx
   ON workspace_connectors(helper_agent_id);
 
@@ -1053,6 +1061,7 @@ CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
 -- The helper's incremental install report: the sign-in surface it printed
 -- (the app opens exactly that URL), the installed trusty-squire version, and
 -- the account it is signed in as, once the human completes it.
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
@@ -1151,6 +1160,20 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await seedDefaultWorkspace(database);
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
+  await backfillConnectorMachineId(database);
+}
+
+/** Backfill machine_id on legacy workspace_connectors rows. */
+export async function backfillConnectorMachineId(database: SqlDatabase): Promise<number> {
+  const result = await database.query(
+    `UPDATE workspace_connectors c SET machine_id=COALESCE(
+       (SELECT a.machine_id FROM agents a WHERE a.agent_id=c.helper_agent_id),
+       c.helper_agent_id
+     ) WHERE c.machine_id IS NULL`,
+  );
+  if (result.rowCount > 0)
+    console.log(`backfillConnectorMachineId: set ${result.rowCount} connector machine_id(s)`);
+  return result.rowCount;
 }
 
 /**

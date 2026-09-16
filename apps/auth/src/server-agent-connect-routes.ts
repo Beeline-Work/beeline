@@ -111,6 +111,10 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
     // sends nothing — both leave the agent on the harness's own effort.
     const effort = typeof body.effort === 'string' ? body.effort.trim().slice(0, 100) : '';
     const avatarSeed = normalizeAvatarSeed(body.avatar_seed);
+    // Machine identity: a stable per-machine id persisted by the CLI and
+    // reused across reconnects and multiple agents on the same host.
+    const machineId = typeof body.machine_id === 'string' ? body.machine_id.trim() : '';
+    const machineName = typeof body.machine_name === 'string' ? body.machine_name.trim().slice(0, 200) : '';
     // A two-step CLI (this one) sets this to say it will call
     // `/auth/agent/connect/finish` itself once its rename decision settles.
     // An already-installed CLI built before that flow never sends it, so the
@@ -163,6 +167,8 @@ export function registerServerAgentConnectRoutes(context: AuthRouteContext): voi
       ...(avatarSeed ? { avatarSeed } : {}),
       ...(eventSubscriptions.length ? { eventSubscriptions } : {}),
       ...(deferJoin ? { deferJoin } : {}),
+      ...(machineId ? { machineId } : {}),
+      ...(machineName ? { machineName } : {}),
     });
     if (claim.status === 'not_found') {
       throw new ProtocolError(404, 'pairing_code_not_found', 'pairing code was not found');

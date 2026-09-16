@@ -66,7 +66,8 @@ export type WorkbenchCatalogEntry = {
 
 /** One machine the viewer connected that can serve as a connector helper. */
 export type WorkbenchHelperView = {
-  readonly agentId: string;
+  /** The machine id (or agent id for legacy pre-machine agents). */
+  readonly id: string;
   readonly name: string;
   /** Live durable presence evidence (the same 90-second window readers use). */
   readonly online: boolean;
@@ -95,6 +96,7 @@ export type ReadWorkbenchInput = { readonly workspaceId: string };
 export type PairConnectorInput = {
   readonly workspaceId: string;
   readonly connectorType: ConnectorKind;
+  /** A machine id (preferred) or an agent id (back-compat for clients that still send one). */
   readonly helperAgentId: string;
 };
 export type PairConnectorResult = {

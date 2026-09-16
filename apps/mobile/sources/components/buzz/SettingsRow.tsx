@@ -238,7 +238,7 @@ const styles = StyleSheet.create((theme) => {
     },
     // The one word that acts. Brass, because acting is what brass marks — and
     // redundant with the verb itself, never the only signal.
-    action: { ...Typography.default(), ...hull.type.body, textAlign: 'right', color: hull.accent },
+    action: { ...Typography.default(), ...hull.type.meta, textAlign: 'right', color: hull.accent },
     // The trailing column reserves its width the way the index's does, so the
     // values read down one edge and the copy beside them ends on one edge too.
     trailingSlot: {

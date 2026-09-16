@@ -124,26 +124,12 @@ export default function ConnectTrustySquireScreen() {
     if (helperId) void pair(helperId);
   }, [pair]);
 
-  const connectorName = connectorId === 'trusty-squire' ? 'Trusty Squire' : connectorId;
-
   const noHelpers = helpers !== null && helpers.length === 0;
   const oneHelper = helpers !== null && helpers.length === 1;
   const manyHelpers = helpers !== null && helpers.length > 1;
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="connect-back"
-        >
-          <Text style={styles.backButtonText}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Connect {connectorName}</Text>
-      </View>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         {noHelpers ? (
           <View testID="connect-no-helper">
@@ -258,17 +244,6 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    header: {
-      minHeight: 66,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary, flex: 1 },
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },

@@ -570,6 +570,24 @@ async function main() {
     const artifactKind = installArtifact(device, args);
     const artifactPath = args.apk ?? args.aab;
 
+    // Sign in through the review bypass when its secret is available, so the
+    // proof no longer depends on a persisted GitHub session that a fresh
+    // install wipes. `/review/<secret>` lands the fixed review identity in the
+    // welcome workspace exactly like a real sign-in (apps/server/src/review-access.ts);
+    // its room and corner carry the room/corner flows. Grant notifications
+    // first so the runtime permission prompt cannot cover the deck.
+    const reviewSecret = process.env.BEELINE_REVIEW_SECRET?.trim();
+    if (reviewSecret) {
+      adbShell(device, `pm grant ${APP_ID} android.permission.POST_NOTIFICATIONS`, { allowFailure: true });
+      adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
+      await sleep(1500);
+      adbShell(device, `am start -a android.intent.action.VIEW -d 'beeline://review/${reviewSecret}'`, { allowFailure: true });
+      const signIn = await waitForAnyResource(device, outDir, 'review-signin', ['room-list', 'chat-messages'], 120 * 1000);
+      console.log(signIn.found
+        ? 'release-proof: signed in through the review bypass'
+        : 'release-proof: review bypass did not reach a signed-in surface; falling back to any persisted session');
+    }
+
     // Preflight: the rig session must be signed in for the room flows.
     adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
     await sleep(2000);
@@ -581,9 +599,8 @@ async function main() {
       if (signedOut) {
         console.error(
           'release-proof: PREFLIGHT FAILURE — the app started signed out on this rig.\n' +
-          'The room/corner/settings proofs need the persisted signed-in session\n' +
-          '(GitHub user methoxine-debug on emulator-5554). Sign in once on the\n' +
-          'emulator (never scripted), then re-run this proof.',
+          'Set BEELINE_REVIEW_SECRET so the proof can sign in through the review\n' +
+          'bypass, or sign in once on the emulator (never scripted) and re-run.',
         );
       } else {
         console.error('release-proof: PREFLIGHT FAILURE — the app never reached the room list. See preflight.png and dump-preflight.xml in ' + outDir);

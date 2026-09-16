@@ -571,6 +571,11 @@ export class DaemonService {
           input as Input<'postAgentModelCatalog'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postAgentMachineReport':
+        return (await this.machineReport(
+          input as Input<'postAgentMachineReport'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
       case 'installConnector':
@@ -2831,6 +2836,13 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  private async machineReport(input: Input<'postAgentMachineReport'>, agentId: string) {
+    await this.database.query(
+      `UPDATE agents SET machine_id=$2,machine_name=$3,updated_at=now() WHERE agent_id=$1`,
+      [agentId, input.machineId, input.machineName],
+    );
+    return this.writeResult();
+  }
   private async cornerLifecycle(input: Input<'postCornerLifecycle'>, agentId: string) {
     await this.access(input.cornerId, agentId);
     await this.database.query(
@@ -3547,6 +3559,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentToolMandate: true,
   postAgentCommands: true,
   postAgentModelCatalog: true,
+  postAgentMachineReport: true,
   getConnectorAssignments: true,
   installConnector: true,
   postConnectorStatus: true,

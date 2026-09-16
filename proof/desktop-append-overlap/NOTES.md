@@ -116,33 +116,31 @@ machine speed; the ~620px residual gap is one fill batch short of done, and
 the appended row is not even mounted mid-walk. (Flow layout reserves no
 trailing extent — `scrollHeight` is the mounted rows only.)
 
-Fix, still at the list layout layer: the desktop transcript passes
-`maxToRenderPerBatch = 100` (`DESKTOP_MAX_TO_RENDER_PER_BATCH` in
-`[channelId].tsx`; native keeps the default — the prop is desktop-gated).
-The walk is now a handful of commits instead of ~50. Both drivers now FAIL
+Fix, still at the list layout layer: the desktop transcript passes its loaded
+message count as both `initialNumToRender` and `maxToRenderPerBatch` (native
+keeps the defaults — both props are desktop-gated). The loaded transcript
+stays in one render region, so an append mounts its row in the same list update
+instead of requiring a machine-speed-sensitive sequence of fixed-size commits.
+Both drivers now FAIL
 (exit 1) when the verdict is false — newest row off screen or overlapping
 rects — and `run.mjs` takes a reps argument; `run-throttled.mjs` runs the
 same protocol under Chrome CPU throttling:
 
 ```text
-count=500  appends=1 FIX   reps=2       -> tailGap 0  visible true  PASS (unthrottled)
+count=500  appends=1 FIX   reps=10      -> tailGap 33 visible true  PASS (unthrottled)
 count=30   appends=1 FIX               -> tailGap 0  visible true  PASS
 count=60   appends=3 FIX               -> tailGap 0  visible true  PASS
-count=500  rate=6x  reps=6 -> 6/6 PASS -> tailGap 0  visible true   (was 6/6 FAIL, gap 645, budget 24)
-count=500  rate=10x reps=4 -> 4/4 PASS -> tailGap 0  visible true
-count=500  rate=12x reps=3 -> FAIL, exit 1 (12x is an absurd box; the failure path is the point)
+count=500  rate=6x  reps=6 -> 6/6 PASS -> tailGap 33 visible true
+count=500  rate=12x reps=6 -> 6/6 PASS -> tailGap 33 visible true
 count=60   appends=1 NOFIX             -> tailGap 3115 visible false FAIL, exit 1
 escape 30/60/500 x early/late          -> reader stays at scrollTop 0, follow drained
 ```
 
-The residual 0px gap replaces the old 47–49px band: with the fill no longer
-starved, the measured bottom is the real bottom. The reader-escape guard
-still holds at 500 rows: an escape without wheel/touch leaves the reader at
-scrollTop 0 with the follow drained (`run-escape.mjs 500 early` → scrollTop
-0). The walk now finishes inside the settle window on any realistic machine;
-the 12x-throttled failure is a machine several times slower than the loaded
-box that reproduced the original bug, and it fails loudly instead of
-printing a false verdict.
+The remaining 33px is container padding below a fully visible newest row, not
+an unrendered tail window. The reader-escape guard still holds at 500 rows: an
+escape without wheel/touch leaves the reader at scrollTop 0 with the follow
+drained (`run-escape.mjs 500 early`). The loaded render region also passes the
+same protocol at 12x CPU throttling, where the fixed batch failed intermittently.
 
 Sibling note: `feature/corner-dda5e1cca0e8` (cold-open landing, 6d726691)
 uses the same measured-landing technique for cold open and touches the same

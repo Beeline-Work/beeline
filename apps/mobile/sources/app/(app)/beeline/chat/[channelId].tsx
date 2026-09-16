@@ -344,13 +344,10 @@ const DESKTOP_READER_MOTION_EPS = 1;
 const DESKTOP_TAIL_STALL_EPS = 1;
 // RN Web's windowed fill adds at most `maxToRenderPerBatch` new cells per
 // render commit (default 10), and every tail landing scrolls the viewport
-// past the mounted end, so a fresh high-priority fill would walk a long
-// transcript toward its newest row ten rows per commit — a convergence time
-// that scales with transcript length and machine speed (measured: still
-// mid-walk five seconds after one append on a 500-row transcript). The
-// desktop transcript raises the per-commit fill so the walk finishes in a
-// few commits; web renders a few hundred simple rows per commit fine.
-const DESKTOP_MAX_TO_RENDER_PER_BATCH = 100;
+// past the mounted end. Keep the complete loaded desktop transcript in the
+// initial render region and let one fill cover it, so an appended row mounts
+// in the same list update instead of after a machine-speed-sensitive sequence
+// of estimated windows. Native keeps its virtualized defaults.
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -1826,6 +1823,19 @@ export default function BuzzChat() {
     requestAnimationFrame(() => {
       if (desktopTranscript) {
         flatListRef.current?.scrollToEnd({ animated: false });
+        // Record the position after scrollToEnd clamps against the current
+        // extent. When the complete desktop render region makes that first
+        // landing sufficient, onContentSizeChange has no reason to re-land
+        // and therefore cannot provide this reader-escape baseline for us.
+        const landedNode = flatListRef.current?.getScrollableNode() as
+          { scrollHeight: number; clientHeight: number; scrollTop: number } | null | undefined;
+        if (desktopTailLandingsRef.current > 0 && landedNode) {
+          desktopTailHeldOffsetRef.current = landedNode.scrollTop;
+          desktopTailLastLandRef.current = {
+            scrollHeight: landedNode.scrollHeight,
+            scrollTop: landedNode.scrollTop,
+          };
+        }
         return;
       }
       flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -1872,9 +1882,7 @@ export default function BuzzChat() {
       // The follow holds the reader where they were pinned on arrival; any
       // later drop from this offset is the reader leaving, not growth.
       const armNode = flatListRef.current?.getScrollableNode() as
-        | { scrollHeight: number; clientHeight: number; scrollTop: number }
-        | null
-        | undefined;
+        { scrollHeight: number; clientHeight: number; scrollTop: number } | null | undefined;
       desktopTailHeldOffsetRef.current = armNode
         ? armNode.scrollTop
         : currentScrollOffsetRef.current;
@@ -4127,7 +4135,10 @@ export default function BuzzChat() {
                   }
             }
             maxToRenderPerBatch={
-              desktopTranscript ? DESKTOP_MAX_TO_RENDER_PER_BATCH : undefined
+              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
+            }
+            initialNumToRender={
+              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
             }
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
@@ -4225,10 +4236,7 @@ export default function BuzzChat() {
                 } else if (landing.land) {
                   desktopTailLandingsRef.current = stalled
                     ? Math.max(0, desktopTailLandingsRef.current - 1)
-                    : Math.min(
-                        DESKTOP_TAIL_LANDING_CAP,
-                        desktopTailLandingsRef.current + 1,
-                      );
+                    : Math.min(DESKTOP_TAIL_LANDING_CAP, desktopTailLandingsRef.current + 1);
                 }
                 if (landing.disarm) {
                   desktopTailHeldOffsetRef.current = null;
@@ -4297,10 +4305,7 @@ export default function BuzzChat() {
                     } else if (settledDecision.land) {
                       desktopTailLandingsRef.current = settledStalled
                         ? Math.max(0, desktopTailLandingsRef.current - 1)
-                        : Math.min(
-                            DESKTOP_TAIL_LANDING_CAP,
-                            desktopTailLandingsRef.current + 1,
-                          );
+                        : Math.min(DESKTOP_TAIL_LANDING_CAP, desktopTailLandingsRef.current + 1);
                     }
                     if (settledDecision.disarm) {
                       desktopTailHeldOffsetRef.current = null;

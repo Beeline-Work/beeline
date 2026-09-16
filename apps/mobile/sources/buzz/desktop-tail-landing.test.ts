@@ -186,6 +186,7 @@ describe('desktop tail landing wiring', () => {
     expect(chatSource.match(/desktopTailHeldOffsetRef\.current =/g)?.length).toBeGreaterThanOrEqual(
       6,
     );
+    expect(chatSource).toContain('desktopTailHeldOffsetRef.current = landedNode.scrollTop;');
   });
 
   it('charges the budget only for a stalled landing, at both decision sites', () => {
@@ -200,21 +201,23 @@ describe('desktop tail landing wiring', () => {
     expect(chatSource).toContain('desktopTailLastLandRef.current = null');
   });
 
-  it('raises the desktop fill batch so tail reveal is not an O(rows/10)-commit walk', () => {
+  it('keeps the loaded desktop transcript in one render region', () => {
     // RN Web's windowed fill adds at most `maxToRenderPerBatch` new cells
     // per render commit (default 10) and every landing scroll triggers a
-    // high-priority fill, so revealing the appended row walked the whole
-    // remaining transcript ten rows per commit — measured still mid-walk
-    // five seconds after one append on a 500-row transcript under load,
-    // with the landing budget untouched. The prop is desktop-only so the
-    // native fill pacing is untouched.
+    // high-priority fill, so a fixed batch still makes revealing the appended
+    // row depend on a machine-speed-sensitive sequence of commits. Keep every
+    // loaded desktop row in the initial region and cover it in one fill; both
+    // props remain desktop-only so native virtualization is untouched.
     const flatListProps = chatSource.slice(
       chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
       chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
     );
     expect(flatListProps).toContain(
-      'maxToRenderPerBatch={\n              desktopTranscript ? DESKTOP_MAX_TO_RENDER_PER_BATCH : undefined\n            }',
+      'maxToRenderPerBatch={\n              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined\n            }',
     );
-    expect(chatSource).toContain('const DESKTOP_MAX_TO_RENDER_PER_BATCH = 100;');
+    expect(flatListProps).toContain(
+      'initialNumToRender={\n              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined\n            }',
+    );
+    expect(chatSource).not.toContain('DESKTOP_MAX_TO_RENDER_PER_BATCH');
   });
 });

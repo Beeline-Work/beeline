@@ -2,7 +2,10 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FlatList, View, Text, StyleSheet } from 'react-native';
 // The real decision under test, exactly as the app imports it.
-import { desktopTailLanding, tailFollowStalled } from '../../apps/mobile/sources/buzz/room-scroll-follow';
+import {
+  desktopTailLanding,
+  tailFollowStalled,
+} from '../../apps/mobile/sources/buzz/room-scroll-follow';
 
 // Deterministic variable-height rows, like real ledger entries.
 const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42, 66];
@@ -13,10 +16,6 @@ const DESKTOP_TAIL_SETTLE_MS = 1_000;
 const DESKTOP_TAIL_POLL_MS = 50;
 const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
 const DESKTOP_TAIL_STALL_EPS = 1;
-// Mirrors the desktop fill prop: RN Web's windowed fill walks
-// `maxToRenderPerBatch` new cells per commit, so the default 10 turns tail
-// reveal on a long transcript into an O(rows/10)-commit walk.
-const DESKTOP_MAX_TO_RENDER_PER_BATCH = 100;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
 // `noguard` reproduces the settle-window shape WITHOUT the reader-motion
 // disarm — exactly the code the escape scenario below convicts.
@@ -95,6 +94,14 @@ function App() {
     landedOffsetRef.current = armNode ? armNode.scrollTop : offsetRef.current;
     if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
     listRef.current?.scrollToEnd({ animated: false });
+    const landedNode = listRef.current?.getScrollableNode() as HTMLElement | null | undefined;
+    if (landingsRef.current > 0 && landedNode) {
+      landedOffsetRef.current = landedNode.scrollTop;
+      lastLandRef.current = {
+        scrollHeight: landedNode.scrollHeight,
+        scrollTop: landedNode.scrollTop,
+      };
+    }
   }, [newestId]);
 
   useEffect(() => {
@@ -209,7 +216,8 @@ function App() {
         style={styles.messageList}
         contentContainerStyle={[styles.messageListContent, styles.messageListContentDesktop]}
         scrollEventThrottle={100}
-        maxToRenderPerBatch={NOFIX ? undefined : DESKTOP_MAX_TO_RENDER_PER_BATCH}
+        maxToRenderPerBatch={NOFIX ? undefined : Math.max(1, messages.length)}
+        initialNumToRender={NOFIX ? undefined : Math.max(1, messages.length)}
         onScroll={(e: any) => {
           const { contentOffset, layoutMeasurement } = e.nativeEvent;
           offsetRef.current = contentOffset.y;

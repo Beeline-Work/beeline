@@ -107,7 +107,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
         {
           id: 'trusty-squire',
           name: 'Trusty Squire',
-          description: 'vault · sign-ups · payments for your agents',
+          description: 'vault, sign-ups, payments',
           available: true,
           ...(connected
             ? {
@@ -129,7 +129,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
         {
           id: 'tailscale',
           name: 'Tailscale',
-          description: 'private network for your helpers',
+          description: 'private network for helpers',
           available: false,
         },
       ],

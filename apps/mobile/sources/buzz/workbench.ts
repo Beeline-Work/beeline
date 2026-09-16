@@ -56,9 +56,9 @@ export type WorkbenchHelper = {
 
 /** The quiet line under each catalog row before anything is paired. */
 export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
-  'trusty-squire': 'vault · sign-ups · payments for your agents',
+  'trusty-squire': 'vault, sign-ups, payments',
   wallet: 'your agents can spend',
-  tailscale: 'private network for your helpers',
+  tailscale: 'private network for helpers',
 };
 
 export type ConnectorInstallStepStatus = 'done' | 'active' | 'pending' | 'failed';

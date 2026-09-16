@@ -126,7 +126,18 @@ describe('Workbench settings screen', () => {
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_google' })).toHaveLength(0);
   });
 
+  it('renders the error tone for a connector in error state', async () => {
+    const source = new MockWorkbenchSource();
+    source.failNextPair('trusty-squire');
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire' });
+    expect(squire.props.value).toBe('error');
+    expect(squire.props.valueTone).toBe('danger');
+  });
+
   it('opens the connect flow on the Trusty Squire row', async () => {
+
     const renderer = await render();
     act(() => {
       renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire' }).props.onPress();

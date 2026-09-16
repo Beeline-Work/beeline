@@ -131,6 +131,7 @@ export default function WorkbenchScreen() {
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}
                 value={isWallet ? undefined : connectorRowValue(connector)}
+                valueTone={connector.status === 'error' ? 'danger' : undefined}
               />
             );
           })}

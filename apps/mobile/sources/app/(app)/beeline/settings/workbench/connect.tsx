@@ -169,7 +169,8 @@ export default function ConnectTrustySquireScreen() {
                 onPress={() => void pair(helper.id)}
                 testID={`connect-machine-${helper.id}`}
                 title={helper.name}
-                value={helper.online ? 'pair' : 'offline'}
+                action={helper.online ? 'pair' : undefined}
+                value={helper.online ? undefined : 'offline'}
               />
             ))}
             <Text style={styles.note}>Pair a helper, not an agent. Offline machines cannot be paired.</Text>
@@ -237,7 +238,7 @@ export default function ConnectTrustySquireScreen() {
                 testID="connect-sign-in"
               >
                 <Text style={styles.signInText}>
-                  Sign in to Squire · {install.signIn.method === 'oauth' ? 'OAuth' : 'streamed page'}
+                  Sign in to Squire
                 </Text>
               </TouchableOpacity>
             ) : null}

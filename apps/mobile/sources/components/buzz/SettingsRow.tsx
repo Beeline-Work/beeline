@@ -45,6 +45,11 @@ type SettingsRowProps = {
   trailingPress?: SettingsRowTrailingPress;
   /** The row's current state, on the trailing axis. Never in the title. */
   value?: string;
+  /**
+   * Tone for the trailing value. Danger renders an error/breakage distinctly
+   * from a neutral state, without adding a box.
+   */
+  valueTone?: 'danger';
 };
 
 /**
@@ -79,6 +84,7 @@ export function SettingsRow({
   tone,
   trailingPress,
   value,
+  valueTone,
 }: SettingsRowProps) {
   const spoken = [value ?? action, description].filter(Boolean).join('. ');
   const trailingMark =
@@ -87,7 +93,7 @@ export function SettingsRow({
         {action}
       </Text>
     ) : value !== undefined ? (
-      <Text numberOfLines={1} style={styles.value}>
+      <Text numberOfLines={1} style={[styles.value, valueTone === 'danger' && styles.valueDanger]}>
         {value}
       </Text>
     ) : null;
@@ -130,7 +136,7 @@ export function SettingsRow({
         </Text>
         {description ? (
           <View style={styles.descriptionRow}>
-            <Text numberOfLines={descriptionAction ? 1 : undefined} style={styles.description}>
+            <Text numberOfLines={1} style={styles.description}>
               {description}
             </Text>
             {descriptionAction ? (
@@ -223,6 +229,12 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       textAlign: 'right',
       color: hull.textMuted,
+    },
+    valueDanger: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      textAlign: 'right',
+      color: hull.dialogDanger,
     },
     // The one word that acts. Brass, because acting is what brass marks — and
     // redundant with the verb itself, never the only signal.

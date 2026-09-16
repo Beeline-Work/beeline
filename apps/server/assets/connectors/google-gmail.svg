@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Gmail connector">
+  <rect x="6" y="14" width="52" height="36" rx="4" fill="#1c1c1e" stroke="#3a3a3d" stroke-width="2"/>
+  <path d="M8 18 L32 36 L56 18" fill="none" stroke="#d7af5f" stroke-width="3"/>
+  <path d="M8 18 V50 M56 18 V50" stroke="#d7af5f" stroke-width="3"/>
+</svg>

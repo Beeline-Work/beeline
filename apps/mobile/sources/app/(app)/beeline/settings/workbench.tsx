@@ -6,11 +6,13 @@ import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { GoogleToolRow } from './workbench/GoogleToolRow';
 import {
   connectionHostsLine,
   connectionsForViewer,
   connectorDescription,
   connectorRowValue,
+  isGoogleToolConnectorId,
   type WorkbenchView,
 } from '@/buzz/workbench';
 
@@ -132,42 +134,7 @@ export default function WorkbenchScreen() {
             // blindly from the collapsed row). The wallet opens its own
             // dashboard; Trusty Squire opens the connect pipeline.
             const isWallet = connector.id === 'wallet';
-            const isSquire = connector.id === 'trusty-squire';
-            if (isWallet || isSquire) {
-              if (isSquire) {
-                const canConnect =
-                  connector.available &&
-                  connector.status !== 'connected' &&
-                  connector.status !== 'installing';
-                return (
-                  <ToolDetailsCell
-                    key={connector.id}
-                    description={connectorDescription(connector)}
-                    details={SQUIRE_DETAILS}
-                    testID={`workbench-connector-${connector.id}`}
-                    title={connector.name}
-                    value={connectorRowValue(connector)}
-                    valueTone={connector.status === 'error' ? 'danger' : undefined}
-                  >
-                    <SettingsRow
-                      action="Connect"
-                      disabled={!canConnect}
-                      onPress={
-                        canConnect
-                          ? () =>
-                              router.push({
-                                pathname: '/beeline/settings/workbench/connect',
-                                params: { workspaceId, viewerId, connectorId: connector.id },
-                              } as unknown as Href)
-                          : undefined
-                      }
-                      testID={`workbench-connector-${connector.id}-connect`}
-                      title={`Connect ${connector.name}`}
-                      tone="action"
-                    />
-                  </ToolDetailsCell>
-                );
-              }
+            if (isWallet) {
               return (
                 <ToolDetailsCell
                   key={connector.id}
@@ -190,6 +157,57 @@ export default function WorkbenchScreen() {
                     }
                     testID="workbench-connector-wallet-connect"
                     title="Connect Coinbase Wallet"
+                    tone="action"
+                  />
+                </ToolDetailsCell>
+              );
+            }
+            // Google Workspace tools use the account-backed tool pattern:
+            // collapsed row expands; the connect action lives in the pane.
+            if (isGoogleToolConnectorId(connector.id)) {
+              return (
+                <GoogleToolRow
+                  key={connector.id}
+                  connector={connector}
+                  onPressConnect={() =>
+                    router.push({
+                      pathname: '/beeline/settings/workbench/connect',
+                      params: { workspaceId, viewerId, connectorId: connector.id },
+                    } as unknown as Href)
+                  }
+                />
+              );
+            }
+            const isSquire = connector.id === 'trusty-squire';
+            if (isSquire) {
+              const canConnect =
+                connector.available &&
+                connector.status !== 'connected' &&
+                connector.status !== 'installing';
+              return (
+                <ToolDetailsCell
+                  key={connector.id}
+                  description={connectorDescription(connector)}
+                  details={SQUIRE_DETAILS}
+                  testID={`workbench-connector-${connector.id}`}
+                  title={connector.name}
+                  value={connectorRowValue(connector)}
+                  valueTone={connector.status === 'error' ? 'danger' : undefined}
+                >
+                  <SettingsRow
+                    action="Connect"
+                    disabled={!canConnect}
+                    onPress={
+                      canConnect
+                        ? () =>
+                            router.push({
+                              pathname: '/beeline/settings/workbench/connect',
+                              params: { workspaceId, viewerId, connectorId: connector.id },
+                            } as unknown as Href)
+                        : undefined
+                    }
+                    testID={`workbench-connector-${connector.id}-connect`}
+                    title={`Connect ${connector.name}`}
                     tone="action"
                   />
                 </ToolDetailsCell>

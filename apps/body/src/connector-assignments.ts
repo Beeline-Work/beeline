@@ -18,9 +18,11 @@
  */
 import type {
   ConnectorAssignment,
+  ConnectorKind,
   ConnectorStep,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
+import { installGoogleTool, isGoogleToolConnectorType, type InstallGoogleToolResult } from './connector-google.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   installSquire,
@@ -43,8 +45,15 @@ export type ConnectorAssignmentLoopOptions = {
   readonly log?: (message: string) => void;
   /** Override the Squire MCP (tests never spawn the real one). */
   readonly mcp?: SquireMcpClient;
-  /** Override the install routine. */
+  /** Override the Squire install routine. */
   readonly install?: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
+  /** Override the Google tool install routine. */
+  readonly installGoogle?: (
+    connectorType: ConnectorKind,
+    onProgress: (steps: readonly ConnectorStep[]) => void,
+  ) => Promise<InstallGoogleToolResult>;
+  /** Where manual google-credentials.json lives (defaults to the runtime home). */
+  readonly googleHome?: string;
   /** Override the vault reader. */
   readonly readVault?: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   /** Override the grant revoker. */
@@ -63,6 +72,11 @@ export class ConnectorAssignmentLoop {
   private readonly intervalMs: number;
   private readonly log: (message: string) => void;
   private readonly install: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
+  private readonly installGoogle: (
+    connectorType: ConnectorKind,
+    onProgress: (steps: readonly ConnectorStep[]) => void,
+  ) => Promise<InstallGoogleToolResult>;
+  private readonly googleHomeDir: string;
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   private readonly revokeGrantsFn: (
     mcp: SquireMcpClient,
@@ -83,6 +97,9 @@ export class ConnectorAssignmentLoop {
     this.intervalMs = options.intervalMs ?? CONNECTOR_POLL_INTERVAL_MS;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
+    this.installGoogle = options.installGoogle ?? ((connectorType, onProgress) =>
+      installGoogleTool({ connectorType, home: this.googleHome(), onProgress }));
+    this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
     this.schedule =
@@ -144,10 +161,49 @@ export class ConnectorAssignmentLoop {
   }
 
   private async handle(assignment: ConnectorAssignment): Promise<void> {
-    if (assignment.kind === 'install') await this.runInstall(assignment.connectorId);
-    else if (assignment.kind === 'sync') await this.runSync();
+    if (assignment.kind === 'install') {
+      if (isGoogleToolConnectorType(assignment.connectorType)) {
+        await this.runGoogleInstall(assignment.connectorId, assignment.connectorType);
+      } else {
+        await this.runInstall(assignment.connectorId);
+      }
+    } else if (assignment.kind === 'sync') await this.runSync();
     else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
+  }
+
+  /** Google tool connectors keep their manual credentials next to the runtime. */
+  private googleHome(): string {
+    return this.googleHomeDir;
+  }
+
+  /** Install one Google tool connector (Gmail/Calendar/Drive/YouTube). */
+  private async runGoogleInstall(
+    connectorId: string,
+    connectorType: ConnectorKind,
+  ): Promise<void> {
+    const report = async (steps: readonly ConnectorStep[]) => {
+      try {
+        await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });
+      } catch (error) {
+        this.log(`step report failed: ${describe(error)}`);
+      }
+    };
+    const result = await this.installGoogle(connectorType, report);
+    if (result.status === 'error') {
+      await this.api.execute('postConnectorStatus', {
+        agentId: this.agentId,
+        connectorId,
+        steps: result.steps,
+        errorMessage: result.errorMessage,
+      });
+      return;
+    }
+    await this.api.execute('installConnector', {
+      agentId: this.agentId,
+      connectorId,
+      ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
+    });
   }
 
   /** Install Trusty Squire, reporting every step as it settles. */

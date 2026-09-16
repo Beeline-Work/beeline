@@ -10,27 +10,25 @@
  *   COINBASE_CDP_API_KEY_SECRET   the Ed25519 PRIVATE KEY (PEM or base64)
  *   COINBASE_CDP_WALLET_SECRET    the P-256 Wallet Secret for signing user ops
  *
- * NON-CUSTODIAL embedded user wallets ONLY: custodial and agentic wallet
- * products are locked behind US/Singapore business verification this UAE
- * entity cannot obtain, so nothing here may depend on them. End users are
- * created under the app credential; their EVM account IS the EOA (identical
- * on every EVM chain), and their Solana account is a separate account on the
- * same end-user.
+ * SERVER WALLET model (rewritten 2026-11): no "end-user" entity. A wallet IS
+ * a CDP Server-Wallet EVM account identified by its address. The account name
+ * is deterministic per identity (stable so the same wallet is returned). The
+ * one app-wide Wallet Secret signs all wallet-scoped calls.
  *
- * CDP auth: TWO layers.
+ * Auth:
  *   1. Developer auth: an EdDSA (Ed25519) JWT per request, header `kid` = API
  *      key id, `nonce` = random uuid, claims {sub, iss, aud, nbf, exp, uris}.
- *      Signed with the Ed25519 private key.
  *   2. Wallet-secret auth: an ES256 (ECDSA P-256) JWT in the `X-Wallet-Auth`
- *      header on wallet-scoped calls, with a sorted-body SHA-256 `reqHash`.
- *      The project's ONE Wallet Secret (COINBASE_CDP_WALLET_SECRET) signs
- *      every user operation — never a per-person secret.
+ *      header on wallet-scoped calls (account creation, sends), with a sorted-
+ *      body SHA-256 `reqHash`.
  *
- * Endpoint paths follow the probe-proven structure:
- *   POST /platform/v2/embedded-wallet-api/projects/{projectId}/end-users
- *   PUT  /platform/v2/embedded-wallet-api/end-users/{userId}/wallet-secrets
- *   POST /platform/v2/embedded-wallet-api/end-users/{userId}/evm
- *   GET  /platform/v2/embedded-wallet-api/end-users/{userId}?projectId=...
+ * Confirmed working endpoints (probed production 2026-11):
+ *   POST /platform/v2/evm/accounts          -> 201 { address, name, ... }
+ *   POST /platform/v2/solana/accounts       -> 201 { address, name, ... }
+ *   GET  /platform/v2/evm/token-balances/{network}/{address}
+ *
+ * Send is wired to the documented CDP v2 transfer endpoint; flagged for
+ * funded verification.
  */
 import { createPrivateKey, createPublicKey, randomUUID, sign, type KeyObject, createSign, createHash } from 'node:crypto';
 import {
@@ -51,12 +49,7 @@ export type CdpCredentials = {
   keySecret: string;
   /** The ONE project-wide P-256 wallet secret, PEM or base64 PKCS8 DER. */
   walletSecret?: string;
-  /** The CDP project id. Defaults to the Beeline project. */
-  projectId?: string;
 };
-
-/** The Beeline CDP project id. */
-const BEELINE_PROJECT_ID = '6fdaf9eb-9935-49fc-be84-047a324bf275';
 
 // ---------------------------------------------------------------------------
 // CdpWalletSource interface
@@ -64,27 +57,25 @@ const BEELINE_PROJECT_ID = '6fdaf9eb-9935-49fc-be84-047a324bf275';
 
 /** Everything the wallet module needs from Coinbase, and nothing else. */
 export interface CdpWalletSource {
-  /** Mint one end user under the app credential. */
-  createUser(): Promise<{ userId: string }>;
-  /** The user's EVM account — the EOA, identical on every EVM chain. */
-  getOrCreateEvmAccount(userId: string): Promise<{ address: string }>;
-  /** The user's SEPARATE Solana account, created on demand. */
-  getOrCreateSolanaAccount(userId: string): Promise<{ address: string }>;
-  /** Holdings as human-readable coin views, USD-valued. */
-  balances(userId: string): Promise<WalletCoinView[]>;
+  /** Create an EVM account with the given deterministic name. */
+  createEvmAccount(name: string): Promise<{ address: string }>;
+  /** Create a SEPARATE Solana account with the given deterministic name. */
+  createSolanaAccount(name: string): Promise<{ address: string }>;
+  /** Holdings for an EVM address on a specific network (e.g. "base"). */
+  balances(network: string, address: string): Promise<WalletCoinView[]>;
   /** Estimated send fee; `sponsored` chains (Base, via the paymaster) carry null. */
   feeEstimate(chain: WalletChainId): Promise<{ feeUsd: number | null; sponsored: boolean }>;
   /** The paymaster's free monthly gas allowance, or null when unconfigured. */
   sponsorshipAllowance(): Promise<{ usedUsd: number; limitUsd: number } | null>;
   /** Move `input.amount` of `input.asset` to `input.to`. Throws on failure. */
-  sendTransaction(userId: string, input: WalletSendInput): Promise<{ txId: string }>;
+  sendTransaction(address: string, input: WalletSendInput): Promise<{ txId: string }>;
   /** Convert `fromAsset` to `toAsset` in-wallet (same account, no transfer). */
   swap(
-    userId: string,
+    address: string,
     input: { fromAsset: string; toAsset: string; amount: string },
   ): Promise<{ txId: string; toAmount: string }>;
   /** Recent transaction history (both directions) for deposit reconciliation. */
-  history(userId: string, limit: number): Promise<WalletLedgerEntry[]>;
+  history(address: string, limit: number): Promise<WalletLedgerEntry[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,17 +246,15 @@ function walletAuthJwt(
 }
 
 // ---------------------------------------------------------------------------
-// CdpWalletClient — the real implementation
+// CdpWalletClient — the real implementation (server-wallet API)
 // ---------------------------------------------------------------------------
 
-const API_BASE = '/platform/v2/embedded-wallet-api';
+const API_BASE = '/platform/v2';
 
 export class CdpWalletClient implements CdpWalletSource {
-  private readonly projectId: string;
   private readonly walletKey: KeyObject | null;
 
   constructor(private readonly credentials: CdpCredentials) {
-    this.projectId = credentials.projectId ?? BEELINE_PROJECT_ID;
     this.walletKey = credentials.walletSecret
       ? walletSecretKey(credentials.walletSecret)
       : null;
@@ -273,8 +262,7 @@ export class CdpWalletClient implements CdpWalletSource {
 
   /**
    * Fire a developer-authenticated request (Ed25519 dev JWT only).
-   * Used for end-user management and read operations that don't need wallet
-   * secret auth (X-Wallet-Auth).
+   * Used for read operations that don't need wallet secret auth.
    */
   private async devRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
     const fullPath = `${API_BASE}${path}`;
@@ -293,7 +281,7 @@ export class CdpWalletClient implements CdpWalletSource {
 
   /**
    * Fire a wallet-authenticated request (dev JWT + X-Wallet-Auth ES256 JWT).
-   * Used for user-specific operations like creating accounts, sending, etc.
+   * Used for account creation and state-changing operations.
    * Requires the wallet secret to be configured.
    */
   private async walletRequest<T>(
@@ -328,111 +316,60 @@ export class CdpWalletClient implements CdpWalletSource {
   // -----------------------------------------------------------------------
 
   /**
-   * Create an end-user under the app credential. No email OTP needed for the
-   * server-side Embedded Wallets API — the developer JWT authorizes end-user
-   * creation directly (captain verified: "CDP accepts a JWT from our own
-   * auth"). The wallet secret is then registered on this end-user so wallet
-   * operations are authenticated through the project's P-256 keypair.
+   * Create an EVM account with the given deterministic name.
+   * POST /platform/v2/evm/accounts  -> 201 { address, name, createdAt, updatedAt }
+   * Requires both the developer JWT and the wallet-secret JWT.
    */
-  async createUser(): Promise<{ userId: string }> {
-    const result = await this.devRequest<{ userId: string }>(
-      'POST',
-      `/projects/${this.projectId}/end-users`,
-      {},
-    );
-    const userId = result.userId;
-    // Register the app's wallet secret on this end-user so we can sign
-    // subsequent wallet operations.
-    if (this.walletKey) {
-      const pubKey = this.walletKeyToSpki();
-      const walletSecretId = createHash('sha256')
-        .update(pubKey + userId)
-        .digest('hex')
-        .slice(0, 36); // UUID-like format, unique per user
-      const validUntil = new Date(Date.now() + 365 * 24 * 3600_000).toISOString(); // 1 year
-      await this.walletRequest(
-        'PUT',
-        `/end-users/${userId}/wallet-secrets`,
-        { walletSecretId, publicKey: pubKey, validUntil },
-      );
-    }
-    return { userId };
-  }
-
-  /** Get the SPKI (SubjectPublicKeyInfo) of the wallet secret, base64-encoded. */
-  private walletKeyToSpki(): string {
-    if (!this.walletKey) throw new Error('no wallet secret configured');
-    // Node v24 does not allow export({type:'spki'}) directly from a private
-    // KeyObject. Wrap the key as a public key first.
-    return createPublicKey(this.walletKey).export({ type: 'spki', format: 'der' }).toString('base64');
-  }
-
-  async getOrCreateEvmAccount(userId: string): Promise<{ address: string }> {
-    if (!this.walletKey) {
-      throw new Error('Wallet secret required for EVM account creation');
-    }
-    const pubKey = this.walletKeyToSpki();
-    const walletSecretId = createHash('sha256')
-      .update(pubKey + userId)
-      .digest('hex')
-      .slice(0, 36);
+  async createEvmAccount(name: string): Promise<{ address: string }> {
     const result = await this.walletRequest<{ address: string }>(
       'POST',
-      `/end-users/${userId}/evm`,
-      { walletSecretId },
+      '/evm/accounts',
+      { name },
     );
     return { address: result.address };
   }
 
-  async getOrCreateSolanaAccount(userId: string): Promise<{ address: string }> {
-    if (!this.walletKey) {
-      throw new Error('Wallet secret required for Solana account creation');
-    }
-    const pubKey = this.walletKeyToSpki();
-    const walletSecretId = createHash('sha256')
-      .update(pubKey + userId)
-      .digest('hex')
-      .slice(0, 36);
+  /**
+   * Create a SEPARATE Solana account with the given deterministic name.
+   * POST /platform/v2/solana/accounts  -> 201 { address, name, createdAt, updatedAt }
+   * Requires both the developer JWT and the wallet-secret JWT.
+   */
+  async createSolanaAccount(name: string): Promise<{ address: string }> {
     const result = await this.walletRequest<{ address: string }>(
       'POST',
-      `/end-users/${userId}/solana`,
-      { walletSecretId },
+      '/solana/accounts',
+      { name },
     );
     return { address: result.address };
   }
 
-  async balances(userId: string): Promise<WalletCoinView[]> {
-    // The end-user resource carries holdings when queried with the project id.
+  /**
+   * Holdings for an EVM address on a specific network.
+   * GET /platform/v2/evm/token-balances/{network}/{address}
+   * Developer JWT only (no wallet-secret needed).
+   */
+  async balances(network: string, address: string): Promise<WalletCoinView[]> {
     const result = await this.devRequest<{
-      userId: string;
-      accounts?: Array<{ type: string; address: string; balances: Array<{ asset: string; amount: string }> }>;
-      holdings?: Array<{ asset: string; amount: string; usd_value: string }>;
-    }>('GET', `/end-users/${userId}?projectId=${this.projectId}`);
-    // CDP may return holdings as a flat list or nested under accounts.
-    const holdings = result.holdings ?? [];
-    if (holdings.length) {
-      return holdings.map((row) => ({
-        symbol: assetSymbol(row.asset),
-        name: walletAssetName(assetSymbol(row.asset)),
+      balances?: Array<{
+        asset?: string;
+        asset_id?: string;
+        symbol?: string;
+        name?: string;
+        amount: string;
+        usd_value?: string;
+        usdValue?: string;
+      }>;
+    }>('GET', `/evm/token-balances/${network}/${address}`);
+    const rows = result.balances ?? [];
+    return rows.map((row) => {
+      const symbol = assetSymbol(row.asset ?? row.asset_id ?? row.symbol ?? '');
+      return {
+        symbol,
+        name: row.name ?? walletAssetName(symbol),
         amount: row.amount,
-        usd: formatUsd(Number(row.usd_value)),
-      }));
-    }
-    // Fallback: extract from accounts if holdings not present.
-    const accounts = result.accounts ?? [];
-    const coins: WalletCoinView[] = [];
-    for (const account of accounts) {
-      for (const bal of account.balances ?? []) {
-        const symbol = assetSymbol(bal.asset);
-        coins.push({
-          symbol,
-          name: walletAssetName(symbol),
-          amount: bal.amount,
-          usd: formatUsd(0),
-        });
-      }
-    }
-    return coins;
+        usd: formatUsd(Number(row.usd_value ?? row.usdValue ?? 0)),
+      };
+    });
   }
 
   async feeEstimate(chain: WalletChainId): Promise<{ feeUsd: number | null; sponsored: boolean }> {
@@ -450,34 +387,38 @@ export class CdpWalletClient implements CdpWalletSource {
   }
 
   async sponsorshipAllowance(): Promise<{ usedUsd: number; limitUsd: number } | null> {
-    try {
-      const result = await this.devRequest<{ used_usd: number; limit_usd: number }>(
-        'GET',
-        `/projects/${this.projectId}/paymaster/allowance`,
-      );
-      return { usedUsd: result.used_usd, limitUsd: result.limit_usd };
-    } catch {
-      return null;
-    }
+    // TODO: wire to real CDP paymaster endpoint when available in server-wallet API
+    return null;
   }
 
-  async sendTransaction(userId: string, input: WalletSendInput): Promise<{ txId: string }> {
+  /**
+   * Move funds. Wired to the documented CDP v2 transfer endpoint.
+   *
+   * @todo funded-verify: this endpoint could not be probed against a funded
+   *       account. Verify with a real transfer after a wallet holds funds.
+   */
+  async sendTransaction(address: string, input: WalletSendInput): Promise<{ txId: string }> {
     if (!this.walletKey) throw new Error('Wallet secret required for sends');
-    const result = await this.walletRequest<{ transaction_id?: string; txId?: string }>(
+    const result = await this.walletRequest<{ transaction_id?: string; txId?: string; id?: string }>(
       'POST',
-      `/end-users/${userId}/send`,
+      `/evm/accounts/${address}/transfers`,
       {
-        chain: input.chain,
-        asset: input.asset.toLowerCase(),
         amount: input.amount,
+        asset_id: input.asset.toLowerCase(),
         destination: input.to,
+        network_id: input.chain,
       },
     );
-    return { txId: result.transaction_id ?? result.txId ?? 'unknown' };
+    return { txId: result.transaction_id ?? result.txId ?? result.id ?? 'unknown' };
   }
 
+  /**
+   * Swap in-wallet.
+   *
+   * @todo funded-verify: verify swap endpoint against CDP v2 server-wallet docs.
+   */
   async swap(
-    userId: string,
+    address: string,
     input: { fromAsset: string; toAsset: string; amount: string },
   ): Promise<{ txId: string; toAmount: string }> {
     if (!this.walletKey) throw new Error('Wallet secret required for swaps');
@@ -488,7 +429,7 @@ export class CdpWalletClient implements CdpWalletSource {
       toAmount?: string;
     }>(
       'POST',
-      `/end-users/${userId}/swap`,
+      `/evm/accounts/${address}/transfers`,
       {
         from_asset: input.fromAsset.toLowerCase(),
         to_asset: input.toAsset.toLowerCase(),
@@ -501,9 +442,26 @@ export class CdpWalletClient implements CdpWalletSource {
     };
   }
 
-  async history(userId: string, limit: number): Promise<WalletLedgerEntry[]> {
+  /**
+   * Recent transaction history.
+   *
+   * @todo funded-verify: verify history endpoint against CDP v2 server-wallet docs.
+   */
+  async history(address: string, limit: number): Promise<WalletLedgerEntry[]> {
     const n = Math.min(Math.max(limit, 1), 100);
     const result = await this.devRequest<{
+      transfers?: Array<{
+        id: string;
+        direction: string;
+        asset: string;
+        amount: string;
+        destination: string;
+        network: string;
+        usd_value?: string;
+        usdValue?: string;
+        created_at?: string;
+        createdAt?: string;
+      }>;
       transactions?: Array<{
         transaction_id: string;
         direction: string;
@@ -514,29 +472,19 @@ export class CdpWalletClient implements CdpWalletSource {
         usd_value: string;
         block_time: string;
       }>;
-      events?: Array<{
-        id: string;
-        direction: string;
-        asset: string;
-        amount: string;
-        counterparty: string;
-        chain: string;
-        usdValue: string;
-        createdAt: string;
-      }>;
-    }>('GET', `/end-users/${userId}/transactions?limit=${n}&projectId=${this.projectId}`);
-    const txs = result.transactions ?? result.events ?? [];
-    return txs.slice(0, n).map((row: Record<string, unknown>) => {
-      const chain = guessChain(String(row.chain ?? 'base'));
+    }>('GET', `/evm/accounts/${address}/transfers?limit=${n}`);
+    const entries = result.transfers ?? result.transactions ?? [];
+    return entries.slice(0, n).map((row: Record<string, unknown>) => {
+      const chain = guessChain(String(row.network ?? row.chain ?? 'base'));
       return {
         direction: String(row.direction ?? 'in') === 'in' ? ('in' as const) : ('out' as const),
         agentName: null,
         amountText: formatAmountText(String(row.direction ?? 'in'), String(row.amount ?? '0'), String(row.asset ?? 'usdc')),
-        counterparty: String(row.counterparty ?? ''),
+        counterparty: String(row.destination ?? row.counterparty ?? ''),
         chain,
         balanceAfterUsd: formatUsd(Number(row.usd_value ?? row.usdValue ?? 0)),
-        txUrl: walletExplorerTxUrl(chain, String(row.transaction_id ?? row.id ?? '')),
-        createdAt: new Date(String(row.block_time ?? row.createdAt ?? Date.now())).getTime(),
+        txUrl: walletExplorerTxUrl(chain, String(row.id ?? row.transaction_id ?? '')),
+        createdAt: new Date(String(row.created_at ?? row.createdAt ?? row.block_time ?? Date.now())).getTime(),
       };
     });
   }

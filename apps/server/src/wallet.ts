@@ -1,5 +1,5 @@
 /**
- * Wallet connector — the server authority over Coinbase CDP Embedded Wallets.
+ * Wallet connector — the server authority over Coinbase CDP Server Wallets.
  *
  * Invariants (captain, 2026-09):
  *  - ONE app-wide Coinbase credential, held by the Beeline SERVER. No end
@@ -19,6 +19,10 @@
  * The real client is used when the CDP env secrets exist; tests and
  * unconfigured servers use the fake (`cdp-fake.ts`), which never touches the
  * network and invents no credential.
+ *
+ * CDP Server-Wallet model: no "end-user" entity. A wallet IS an EVM account
+ * identified by its address. The account name is deterministic per identity
+ * (stable so the same wallet is returned).
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
@@ -46,6 +50,22 @@ import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
 export { fakeCdpWalletSource } from './cdp-fake.js';
 export type { CdpWalletSource } from './cdp-client.js';
 
+/**
+ * Derive a deterministic EVM account name from an identity id.
+ * Must match CDP name pattern: ^[A-Za-z0-9][A-Za-z0-9-]{1,35}$ (2-36 chars).
+ * Stable per identity so the same wallet is returned.
+ */
+function walletAccountName(identityId: string): string {
+  const digest = createHash('sha256').update(identityId).digest('hex');
+  return `bl${digest.slice(0, 32)}`;
+}
+
+/** Derive a deterministic Solana account name (distinct from the EVM one). */
+function walletSolanaAccountName(identityId: string): string {
+  const digest = createHash('sha256').update(identityId).digest('hex');
+  return `bls${digest.slice(0, 32)}`;
+}
+
 let fakeSource: CdpWalletSource | null = null;
 
 /** The ONE wallet source for this server process. */
@@ -59,7 +79,7 @@ export function walletSource(): CdpWalletSource {
 }
 
 export type WalletBinding = {
-  cdpUserId: string;
+  accountName: string;
   eoaAddress: string;
   solanaAddress: string | null;
 };
@@ -81,16 +101,17 @@ export async function walletBinding(
   ).rows[0];
   if (!row) return null;
   return {
-    cdpUserId: row.cdp_user_id,
+    accountName: row.cdp_user_id,
     eoaAddress: row.eoa_address,
     solanaAddress: row.solana_address,
   };
 }
 
 /**
- * One tap creates the wallet: a CDP end user is minted under the app
- * credential and bound to the signed-in Beeline identity. No Coinbase
- * account, no key of their own.
+ * One tap creates the wallet: a CDP Server-Wallet EVM account is created
+ * under the app credential and bound to the signed-in Beeline identity.
+ * The account name is deterministic per identity so the same wallet is
+ * returned on re-create. No Coinbase account, no key of their own.
  */
 export async function createWallet(
   database: SqlDatabase,
@@ -100,12 +121,12 @@ export async function createWallet(
 ): Promise<WalletView> {
   const existing = await walletBinding(database, identityId);
   if (!existing) {
-    const user = await source.createUser();
-    const account = await source.getOrCreateEvmAccount(user.userId);
+    const name = walletAccountName(identityId);
+    const account = await source.createEvmAccount(name);
     await database.query(
       `INSERT INTO wallet_bindings(identity_id,workspace_id,cdp_user_id,eoa_address)
        VALUES ($1,$2,$3,$4) ON CONFLICT(identity_id) DO NOTHING`,
-      [identityId, workspaceId, user.userId, account.address],
+      [identityId, workspaceId, name, account.address],
     );
     // The @wallet thread exists from the moment the wallet does.
     await ensureConnectorDirectMessageRoom(database, workspaceId, 'wallet', identityId);
@@ -129,8 +150,8 @@ export async function readWallet(
 }
 
 /**
- * Solana is a SEPARATE account attached to the same CDP user — created on
- * demand, because the receive screen is the only place it appears.
+ * Solana is a SEPARATE CDP Wallet account — created on demand, because the
+ * receive screen is the only place it appears.
  */
 export async function ensureSolanaAddress(
   database: SqlDatabase,
@@ -140,7 +161,8 @@ export async function ensureSolanaAddress(
   const binding = await walletBinding(database, identityId);
   if (!binding) throw new Error('wallet not created');
   if (binding.solanaAddress) return binding.solanaAddress;
-  const account = await source.getOrCreateSolanaAccount(binding.cdpUserId);
+  const name = walletSolanaAccountName(identityId);
+  const account = await source.createSolanaAccount(name);
   await database.query(
     `UPDATE wallet_bindings SET solana_address=$2,updated_at=now() WHERE identity_id=$1`,
     [identityId, account.address],
@@ -156,8 +178,8 @@ export async function readWalletView(
 ): Promise<WalletView> {
   const binding = await walletBinding(database, identityId);
   if (!binding) throw new Error('wallet not created');
-  await reconcileInbound(database, identityId, workspaceId, source, binding.cdpUserId);
-  const coins = await source.balances(binding.cdpUserId);
+  await reconcileInbound(database, identityId, workspaceId, source, binding.eoaAddress);
+  const coins = await source.balances('base', binding.eoaAddress);
   const chains = [];
   for (const chain of ['base', 'arbitrum', 'optimism', 'polygon', 'zora', 'bnb', 'avalanche', 'ethereum'] as const) {
     const fee = await source.feeEstimate(chain);
@@ -283,7 +305,7 @@ export async function sendFromWallet(
     return { outcome: 'delegation-expired' };
   }
   const source = walletSource();
-  const coins = await source.balances(binding.cdpUserId);
+  const coins = await source.balances('base', binding.eoaAddress);
   const holding = coins.find((coin) => coin.symbol.toLowerCase() === input.asset.toLowerCase());
   const needed = Number(input.amount);
   const available = Number(holding?.amount ?? '0');
@@ -303,7 +325,7 @@ export async function sendFromWallet(
     };
   }
 
-  const sent = await source.sendTransaction(binding.cdpUserId, input);
+  const sent = await source.sendTransaction(binding.eoaAddress, input);
   // Balance after: the same holdings with what moved subtracted, in USD —
   // the line carries what it left behind, not what it spent.
   const balanceAfterUsd = formatUsd(
@@ -400,7 +422,7 @@ export async function reconcileInbound(
   identityId: string,
   workspaceId: string,
   source: CdpWalletSource = walletSource(),
-  cdpUserId: string,
+  address: string,
 ): Promise<number> {
   const known = new Set(
     (
@@ -410,7 +432,7 @@ export async function reconcileInbound(
       )
     ).rows.map((row) => row.tx_id),
   );
-  const history = await source.history(cdpUserId, 50);
+  const history = await source.history(address, 50);
   let added = 0;
   for (const entry of history) {
     if (entry.direction !== 'in' || !entry.txUrl) continue;
@@ -640,10 +662,10 @@ export async function agentWalletTool(
     };
   }
   if (!ctx) throw new Error('no wallet: the agent has no connected owner with a wallet');
-  const userId = ctx.binding.cdpUserId;
+  const address = ctx.binding.eoaAddress;
   switch (op) {
     case 'balance': {
-      const coins = await source.balances(userId);
+      const coins = await source.balances('base', address);
       return {
         totalUsd: formatUsd(coins.reduce((sum, coin) => sum + usdValue(coin), 0)),
         coins,
@@ -667,7 +689,7 @@ export async function agentWalletTool(
       return { entries: await walletHistory(database, ctx.ownerIdentityId, input?.limit ?? 20) };
     case 'quote': {
       const fee = await source.feeEstimate((input?.chain ?? 'base') as WalletChainId);
-      const coins = await source.balances(userId);
+      const coins = await source.balances('base', address);
       const symbol = (input?.asset ?? 'usdc').toLowerCase();
       const available = coins.find((coin) => coin.symbol === symbol)?.amount ?? '0';
       return {
@@ -691,12 +713,12 @@ export async function agentWalletTool(
         return { outcome: 'delegation-expired' };
       }
       try {
-        const swapped = await source.swap(userId, {
+        const swapped = await source.swap(address, {
           fromAsset: input?.fromAsset ?? 'usdc',
           toAsset: input?.toAsset ?? 'eth',
           amount: input?.amount ?? '',
         });
-        const coins = await source.balances(userId);
+        const coins = await source.balances('base', address);
         const totalUsd = coins.reduce((sum, coin) => sum + usdValue(coin), 0);
         const fromAmountText = `−${input?.amount} ${(input?.fromAsset ?? 'usdc').toUpperCase()}`;
         const toAmountText = `+${swapped.toAmount} ${(input?.toAsset ?? 'eth').toUpperCase()}`;
@@ -747,7 +769,7 @@ async function agentSend(
     return { outcome: 'delegation-expired' };
   }
   const source = walletSource();
-  const coins = await source.balances(ctx.binding.cdpUserId);
+  const coins = await source.balances('base', ctx.binding.eoaAddress);
   const symbol = input.asset.toLowerCase();
   const available = coins.find((coin) => coin.symbol === symbol)?.amount ?? '0';
   if (Number(input.amount) > Number(available)) {
@@ -761,8 +783,8 @@ async function agentSend(
     return { outcome: 'insufficient', asset: symbol, needed: input.amount, available };
   }
   try {
-    const sent = await source.sendTransaction(ctx.binding.cdpUserId, input);
-    const after = await source.balances(ctx.binding.cdpUserId);
+    const sent = await source.sendTransaction(ctx.binding.eoaAddress, input);
+    const after = await source.balances('base', ctx.binding.eoaAddress);
     const totalUsd = after.reduce((sum, coin) => sum + usdValue(coin), 0);
     const txUrl = walletExplorerTxUrl(input.chain, sent.txId);
     await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
@@ -837,4 +859,3 @@ async function handleSendFailure(
   });
   return { outcome: 'failed', reason };
 }
-

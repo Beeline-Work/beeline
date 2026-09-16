@@ -5,7 +5,8 @@ import { writeFile } from 'node:fs/promises';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mobileRoot = path.resolve(here, '../../apps/mobile');
-const nodePaths = [path.join(mobileRoot, 'node_modules')];
+const mobileNodeModules = process.env.MOBILE_NODE_MODULES ?? path.join(mobileRoot, 'node_modules');
+const nodePaths = [mobileNodeModules];
 
 await build({
   entryPoints: [path.join(here, 'app.tsx')],
@@ -15,7 +16,17 @@ await build({
   platform: 'browser',
   conditions: ['browser', 'import', 'default'],
   mainFields: ['browser', 'module', 'main'],
-  resolveExtensions: ['.web.tsx', '.web.ts', '.web.jsx', '.web.js', '.tsx', '.ts', '.jsx', '.js', '.json'],
+  resolveExtensions: [
+    '.web.tsx',
+    '.web.ts',
+    '.web.jsx',
+    '.web.js',
+    '.tsx',
+    '.ts',
+    '.jsx',
+    '.js',
+    '.json',
+  ],
   format: 'iife',
   nodePaths,
   jsx: 'automatic',
@@ -25,10 +36,10 @@ await build({
       name: 'rnw-shim',
       setup(buildApi) {
         buildApi.onResolve({ filter: /^react-native$/ }, () => ({
-          path: path.join(mobileRoot, 'node_modules/react-native-web/dist/index.js'),
+          path: path.join(mobileNodeModules, 'react-native-web/dist/index.js'),
         }));
         buildApi.onResolve({ filter: /^react-native-svg$/ }, () => ({
-          path: path.join(mobileRoot, 'node_modules/react-native-svg/lib/module/ReactNativeSVG.web.js'),
+          path: path.join(mobileNodeModules, 'react-native-svg/lib/module/ReactNativeSVG.web.js'),
         }));
       },
     },

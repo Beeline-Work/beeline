@@ -16,26 +16,10 @@ Objective: reproduce + fix the desktop transcript row overlap when a message app
   CellRenderer cellStyle is null when not inverted. Spacers are flow Views with explicit height.
 - Every RN Web View: flex column, flexShrink 0, position relative — so pure flow rows cannot overlap unless something else intervenes.
 
-## In flight
-
-- Browser reproduction harness in `proof/desktop-append-overlap/` (app.tsx + build.mjs + index.html + bundle.js).
-  Mirrors the app's exact list props; measures pairwise row-rect overlap before/after an append + scrollToEnd.
-- Headless Chrome SIGTRAPs inside the corner bwrap sandbox, so a host command grant was requested:
-  grant 05c48e65-14fc-4914-993a-e8f6a264f167, `google-chrome --headless=new ... --dump-dom file://$PWD/proof/desktop-append-overlap/index.html`.
-
-## Resume plan
-
-1. Run the granted command; read `#log` verdict (JSON lines with overlaps count/details) from the DOM dump.
-2. If overlaps reproduce: bisect which prop combination causes them (flexGrow+flex-end? scrollToEnd timing? spacer estimate?).
-3. Fix at list layout layer in [channelId].tsx; keep desktop bottom-pinned behavior; adjust `keyboardAvoidance.test.ts`-style source assertions + `room-scroll-follow.behavior.test.ts` if needed.
-4. Rebuild harness with the fix to prove no overlap; screenshot artifact; evidence dir.
-5. Commit (plain voice), push, `gh pr create`, print URL.
-
 ## Measured verdict (playwright headless shell, in-sandbox)
 
 - Google Chrome was never granted; playwright-core + the host's cached
-  chromium_headless_shell-1243 run inside the sandbox. Driver:
-  `run.mjs`/`run2.mjs` (`node proof/desktop-append-overlap/run2.mjs`).
+  chromium_headless_shell-1243 run inside the sandbox. Driver: `run.mjs`.
 - Harness fix: RN Web forwards `data-*` only through the `dataSet` prop
   (arbitrary `data-row` attrs are dropped — first run measured 0 rows).
 - Cold open: only the oldest window renders (scrollHeight 666, 10 rows).
@@ -49,14 +33,21 @@ Objective: reproduce + fix the desktop transcript row overlap when a message app
 
 ## Fix (this branch)
 
-`desktopTailLanding` (pure, in `room-scroll-follow.ts`): the desktop
-arrival follow arms a 3-change measured-landing budget; `onContentSizeChange`
-re-lands `scrollToOffset({offset: height})` (clamps to the exact bottom)
-while the budget lasts, refusing only a reader mid-drag. The pinned verdict
-cannot be consulted — the arrival scroll itself moved the offset before the
-tail window measured. Tests: `sources/buzz/desktop-tail-landing.test.ts`
-(6 pass). Typecheck: 388 pre-existing SDK-dist errors before and after the
-change (no new errors from this branch).
+`desktopTailLanding` (pure, in `room-scroll-follow.ts`) converges on the
+real DOM tail gap rather than a fixed landing count or RN Web's provisional
+event metrics. The list polls through the settling render window, re-lands on
+renewed growth, and disarms after the real gap stays closed for one second.
+Wheel, touch, or pointer activity disarms immediately so no stale follow
+survives into history paging. A 24-landing cap is only the non-progress
+backstop. The harness imports the production decision and offers `nofix` for
+the before case. One-append results:
+
+```text
+count=30 FIX   -> tailGap 0 newestRowVisible true  overlaps 0 budgetLeft 0
+count=60 FIX   -> tailGap 0 newestRowVisible true  overlaps 0 budgetLeft 0
+count=30 NOFIX -> tailGap 1261 newestRowVisible false overlaps 0 budgetLeft 0
+count=60 NOFIX -> tailGap 3115 newestRowVisible false overlaps 0 budgetLeft 0
+```
 
 Sibling note: `feature/corner-dda5e1cca0e8` (cold-open landing, 6d726691)
 uses the same measured-landing technique for cold open and touches the same

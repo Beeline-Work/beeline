@@ -9,6 +9,8 @@ const ROW_HEIGHTS = [34, 52, 44, 70, 38, 58, 46, 84, 40, 62, 36, 55, 48, 76, 42,
 // Mirrors of the production constants in [channelId].tsx.
 const TAIL_PIN_THRESHOLD = 50;
 const DESKTOP_TAIL_LANDING_CAP = 24;
+const DESKTOP_TAIL_SETTLE_MS = 1_000;
+const DESKTOP_TAIL_POLL_MS = 50;
 const DESKTOP_USER_SCROLL_WINDOW_MS = 500;
 const NOFIX = new URLSearchParams(location.search).has('nofix');
 
@@ -34,7 +36,9 @@ function Row({ msg }: { msg: Msg }) {
         backgroundColor: '#16161c',
       }}
     >
-      <Text style={{ color: '#d7d7df', fontSize: 13 }}>{`message ${msg.id} · height ${msg.h}`}</Text>
+      <Text
+        style={{ color: '#d7d7df', fontSize: 13 }}
+      >{`message ${msg.id} · height ${msg.h}`}</Text>
     </View>
   );
 }
@@ -56,6 +60,8 @@ function App() {
   const appendedRef = useRef(false);
   // The production landing state, mirrored one-for-one.
   const landingsRef = useRef(0);
+  const disarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stableSinceRef = useRef<number | null>(null);
   const userScrolledAtRef = useRef(0);
   const offsetRef = useRef(0);
   const viewportRef = useRef(0);
@@ -64,20 +70,27 @@ function App() {
   useLayoutEffect(() => {
     if (!appendedRef.current) return;
     landingsRef.current = NOFIX ? 0 : DESKTOP_TAIL_LANDING_CAP;
+    stableSinceRef.current = null;
+    if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
     listRef.current?.scrollToEnd({ animated: false });
   }, [messages]);
 
   useEffect(() => {
     const measure = (label: string) => {
-      const scroller = document.querySelector('[data-testid="chat-messages"]') as HTMLElement | null;
+      const scroller = document.querySelector(
+        '[data-testid="chat-messages"]',
+      ) as HTMLElement | null;
       const rows = Array.from(document.querySelectorAll('[data-row]')) as HTMLElement[];
       const rects = rows.map((r) => r.getBoundingClientRect());
       let overlaps = 0;
       for (let i = 1; i < rects.length; i++) {
         if (rects[i].top < rects[i - 1].bottom - 0.5) overlaps++;
       }
-      const tailGap = scroller ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop : null;
-      const newestRowVisible = rects.length > 0 ? rects[rects.length - 1].bottom <= window.innerHeight : null;
+      const tailGap = scroller
+        ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+        : null;
+      const newestRowVisible =
+        rects.length > 0 ? rects[rects.length - 1].bottom <= window.innerHeight : null;
       const verdict = {
         label,
         nofix: NOFIX,
@@ -116,7 +129,9 @@ function App() {
   }, []);
 
   return (
-    <View style={{ flex: 1, height: 520, flexDirection: 'column', borderWidth: 2, borderColor: '#555' }}>
+    <View
+      style={{ flex: 1, height: 520, flexDirection: 'column', borderWidth: 2, borderColor: '#555' }}
+    >
       <FlatList
         testID="chat-messages"
         ref={listRef}
@@ -127,28 +142,44 @@ function App() {
         contentContainerStyle={[styles.messageListContent, styles.messageListContentDesktop]}
         scrollEventThrottle={100}
         onScroll={(e: any) => {
-          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          const { contentOffset, layoutMeasurement } = e.nativeEvent;
           offsetRef.current = contentOffset.y;
           viewportRef.current = layoutMeasurement.height;
-          if (
-            landingsRef.current > 0 &&
-            contentSize.height - layoutMeasurement.height - contentOffset.y <= TAIL_PIN_THRESHOLD
-          ) {
-            landingsRef.current = 0;
-          }
         }}
         onWheel={() => {
           userScrolledAtRef.current = Date.now();
+          landingsRef.current = 0;
+          stableSinceRef.current = null;
+          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
+          disarmTimerRef.current = null;
         }}
         onTouchMove={() => {
           userScrolledAtRef.current = Date.now();
+          landingsRef.current = 0;
+          stableSinceRef.current = null;
+          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
+          disarmTimerRef.current = null;
+        }}
+        onPointerDown={() => {
+          userScrolledAtRef.current = Date.now();
+          landingsRef.current = 0;
+          stableSinceRef.current = null;
+          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
+          disarmTimerRef.current = null;
         }}
         onContentSizeChange={(_w: number, h: number) => {
           if (NOFIX) return;
+          if (disarmTimerRef.current !== null) clearTimeout(disarmTimerRef.current);
+          disarmTimerRef.current = null;
+          stableSinceRef.current = null;
           // Mirrors the desktop branch of [channelId].tsx onContentSizeChange.
+          const scrollNode = listRef.current?.getScrollableNode() as HTMLElement | null | undefined;
+          const tailGap = scrollNode
+            ? scrollNode.scrollHeight - scrollNode.clientHeight - scrollNode.scrollTop
+            : h - viewportRef.current - offsetRef.current;
           const landing = desktopTailLanding({
-            tailGapAboveThreshold:
-              h - viewportRef.current - offsetRef.current > TAIL_PIN_THRESHOLD,
+            tailGapAboveThreshold: tailGap > TAIL_PIN_THRESHOLD,
+            tailStable: false,
             isUserScrolling:
               userScrolledAtRef.current > 0 &&
               Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
@@ -158,7 +189,50 @@ function App() {
             ? 0
             : Math.max(0, landingsRef.current - (landing.land ? 1 : 0));
           if (landing.land) {
-            listRef.current?.scrollToOffset({ offset: h, animated: false });
+            listRef.current?.scrollToOffset({
+              offset: scrollNode?.scrollHeight ?? h,
+              animated: false,
+            });
+          }
+          if (!landing.disarm && landingsRef.current > 0) {
+            const settleDesktopTail = () => {
+              const settledNode = listRef.current?.getScrollableNode() as
+                HTMLElement | null | undefined;
+              const settledGap = settledNode
+                ? settledNode.scrollHeight - settledNode.clientHeight - settledNode.scrollTop
+                : Number.POSITIVE_INFINITY;
+              if (settledGap > TAIL_PIN_THRESHOLD) {
+                stableSinceRef.current = null;
+              } else if (stableSinceRef.current === null) {
+                stableSinceRef.current = Date.now();
+              }
+              const settledDecision = desktopTailLanding({
+                tailGapAboveThreshold: settledGap > TAIL_PIN_THRESHOLD,
+                tailStable:
+                  stableSinceRef.current !== null &&
+                  Date.now() - stableSinceRef.current >= DESKTOP_TAIL_SETTLE_MS,
+                isUserScrolling:
+                  userScrolledAtRef.current > 0 &&
+                  Date.now() - userScrolledAtRef.current < DESKTOP_USER_SCROLL_WINDOW_MS,
+                landingsRemaining: landingsRef.current,
+              });
+              landingsRef.current = settledDecision.disarm
+                ? 0
+                : Math.max(0, landingsRef.current - (settledDecision.land ? 1 : 0));
+              if (settledDecision.land && settledNode) {
+                listRef.current?.scrollToOffset({
+                  offset: settledNode.scrollHeight,
+                  animated: false,
+                });
+              }
+              if (settledDecision.disarm || landingsRef.current <= 0) {
+                landingsRef.current = 0;
+                disarmTimerRef.current = null;
+                return;
+              }
+              disarmTimerRef.current = setTimeout(settleDesktopTail, DESKTOP_TAIL_POLL_MS);
+            };
+            disarmTimerRef.current = setTimeout(settleDesktopTail, DESKTOP_TAIL_POLL_MS);
           }
         }}
         ListHeaderComponent={HistoryLine}

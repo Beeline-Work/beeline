@@ -157,25 +157,27 @@ export type TailLandingDecision = {
  * overlap). The landing converges on the measured condition instead of a
  * fixed count: each provisional content height only advances about one
  * render batch, so a longer transcript simply needs more landings — re-land
- * while the tail gap is still above the pin threshold, and disarm the
- * moment the tail is reached so a leftover can never move a reader who has
- * since paged into history. A fresh wheel or touch scroll vetoes and
- * disarms the follow too: React Native Web never fires the drag callbacks,
- * so wheel/touch activity is the only honest user signal on the one
- * platform that runs this code. The cap is a backstop against a landing
- * that stops advancing, not the termination condition.
+ * while the tail gap is still above the pin threshold, then disarm after it
+ * remains closed across the settle window so a leftover can never move a
+ * reader who has since paged into history. Fresh wheel, touch, or pointer
+ * activity vetoes and disarms the follow too: React Native Web never fires
+ * the drag callbacks on the platform that runs this code. The cap is a
+ * backstop against a landing that stops advancing, not the termination
+ * condition.
  */
 export function desktopTailLanding({
   tailGapAboveThreshold,
+  tailStable,
   isUserScrolling,
   landingsRemaining,
 }: {
   tailGapAboveThreshold: boolean;
+  tailStable: boolean;
   isUserScrolling: boolean;
   landingsRemaining: number;
 }): TailLandingDecision {
-  if (!tailGapAboveThreshold) return { land: false, disarm: true };
   if (isUserScrolling) return { land: false, disarm: true };
   if (landingsRemaining <= 0) return { land: false, disarm: true };
-  return { land: true, disarm: false };
+  if (tailGapAboveThreshold) return { land: true, disarm: false };
+  return { land: false, disarm: tailStable };
 }

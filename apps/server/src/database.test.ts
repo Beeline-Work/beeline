@@ -495,3 +495,66 @@ describe('the top-level shared Room role migration', () => {
     database.close();
   });
 });
+
+describe('the workspace_connectors machine_id migration ordering', () => {
+  let database: PgliteDatabase;
+
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+  });
+
+  afterEach(() => database.close());
+
+  it('adds machine_id before the unique index when the table already exists without it', async () => {
+    // Simulate the pre-migration production shape: a workspace_connectors
+    // table that already exists WITHOUT the machine_id column. This is what
+    // happens when migrate() runs against a database created by an older
+    // release: the CREATE TABLE IF NOT EXISTS is a no-op.
+    await database.query(`DROP TABLE IF EXISTS connection_receipts CASCADE`);
+    await database.query(`DROP TABLE IF EXISTS workspace_connections CASCADE`);
+    await database.query(`DROP TABLE IF EXISTS workspace_connectors CASCADE`);
+
+    // Recreate the old schema: same columns but no machine_id / sign_in / etc.
+    await database.query(`
+      CREATE TABLE workspace_connectors (
+        id uuid PRIMARY KEY,
+        workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+        connector_type text NOT NULL,
+        helper_agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+        status text NOT NULL DEFAULT 'installing'
+          CHECK (status IN ('installing','connected','error','disconnected')),
+        status_steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+        status_error text,
+        pending_ops jsonb NOT NULL DEFAULT '[]'::jsonb,
+        connected_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    // Recreate the old unique index that the migration will replace
+    await database.query(`
+      CREATE UNIQUE INDEX workspace_connectors_owner_unique
+        ON workspace_connectors(workspace_id, owner_identity_id, connector_type)
+    `);
+
+    // This must NOT throw: after the fix, ADD COLUMN IF NOT EXISTS machine_id
+    // runs before the unique index that references it.
+    await expect(migrate(database)).resolves.toBeUndefined();
+
+    // Verify machine_id column exists
+    const columns = await database.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name='workspace_connectors' AND column_name='machine_id'`,
+    );
+    expect(columns.rows.length).toBe(1);
+
+    // Verify the unique index on machine_id exists
+    const indexes = await database.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+       WHERE tablename='workspace_connectors' AND indexname='workspace_connectors_machine_unique'`,
+    );
+    expect(indexes.rows.length).toBe(1);
+  });
+});

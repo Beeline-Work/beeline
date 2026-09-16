@@ -1,4 +1,5 @@
 import {
+  CONNECTOR_DESCRIPTIONS,
   type ConnectionDetailView,
   type ConnectorInstallState,
   type WorkbenchHelper,
@@ -149,6 +150,30 @@ export class MockWorkbenchSource implements WorkbenchSource {
           name: 'Tailscale',
           description: 'private network for helpers',
           available: false,
+        },
+        {
+          id: 'google-gmail',
+          name: 'Gmail',
+          description: CONNECTOR_DESCRIPTIONS['google-gmail'],
+          available: true,
+        },
+        {
+          id: 'google-calendar',
+          name: 'Google Calendar',
+          description: CONNECTOR_DESCRIPTIONS['google-calendar'],
+          available: true,
+        },
+        {
+          id: 'google-drive',
+          name: 'Google Drive',
+          description: CONNECTOR_DESCRIPTIONS['google-drive'],
+          available: true,
+        },
+        {
+          id: 'google-youtube',
+          name: 'YouTube',
+          description: CONNECTOR_DESCRIPTIONS['google-youtube'],
+          available: true,
         },
       ],
       connections: viewer ? viewer.connections.map((detail) => detail.connection) : [],

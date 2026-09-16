@@ -49,6 +49,17 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   };
 });
 
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+
+vi.mock('@/components/buzz/PulsingText', async () => {
+  const ReactModule = await import('react');
+  return {
+    PulsingText: (props: any) => ReactModule.createElement('PulsingText', props),
+  };
+});
+
 import ConnectTrustySquireScreen from './connect';
 import { getWorkbenchSource, setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -136,7 +147,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findAllByProps({ testID: 'connect-machine-helper-squire-box' })).toHaveLength(0);
   });
 
-  it('with exactly one machine, pairs immediately without asking', async () => {
+  it('with exactly one machine, still shows the explicit machine selector first', async () => {
     setWorkbenchSource(
       Object.assign(new MockWorkbenchSource(), {
         listHelpers: async () => [{ id: 'helper-squire-box', name: 'squire-box', online: true }],
@@ -144,9 +155,10 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     );
     const renderer = await render();
     expect(navigation.push).not.toHaveBeenCalled();
-    await advancePolls(2);
-    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'connect-machine-picker' })).toHaveLength(0);
+    // No install starts until the user picks the machine: the selector is
+    // explicit even for a single-helper workspace.
+    expect(renderer.root.findByProps({ testID: 'connect-machine-picker' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'connect-install-progress' })).toHaveLength(0);
   });
 
   it('with more than one machine, asks once with a single machine list', async () => {
@@ -154,7 +166,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     const online = renderer.root.findByProps({ testID: 'connect-machine-helper-squire-box' });
     expect(online.props.title).toBe('squire-box');
     expect(online.props.description).toBe('online');
-    expect(online.props.action).toBe('pair');
+    expect(online.props.action).toBe('install');
     expect(online.props.value).toBeUndefined();
     expect(online.props.disabled).toBe(false);
     const offline = renderer.root.findByProps({ testID: 'connect-machine-helper-office-mini' });
@@ -194,6 +206,24 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(route.params.url).toContain('https://');
   });
 
+  it('streams each step’s CLI command and captured output under the checklist', async () => {
+    const renderer = await render();
+    await pair(renderer);
+    await advancePolls(2);
+    const text = (n: any) => [n.props.children].flat().join('');
+    expect(text(renderer.root.findByProps({ testID: 'connect-step-0-command' }))).toContain('squire status');
+    expect(text(renderer.root.findByProps({ testID: 'connect-step-0-output' }))).toContain('ok');
+    expect(text(renderer.root.findByProps({ testID: 'connect-step-1-command' }))).toContain('npm install');
+  });
+
+  it('the running step renders as a pulsing gold marker', async () => {
+    const renderer = await render();
+    await pair(renderer);
+    await advancePolls(2);
+    const pulsing = renderer.root.findAll((node: any) => node.props?.testID === undefined && node.type === 'PulsingText');
+    expect(pulsing.length).toBeGreaterThan(0);
+  });
+
   it('reports a failed step in red with the helper’s reason and Retry re-pairs', async () => {
     (getWorkbenchSource() as MockWorkbenchSource).failNextPair('trusty-squire');
     const renderer = await render();
@@ -209,6 +239,9 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       renderer.root.findByProps({ testID: 'connect-step-2-reason' }).props.children,
     ).toContain('helper');
     expect(renderer.root.findAllByProps({ testID: 'connect-sign-in' })).toHaveLength(0);
+    // The failed step carries its own captured output, so a failure never
+    // hangs silently without something to debug.
+    expect(renderer.root.findByProps({ testID: 'connect-step-2-output' }).props.children).toContain('npm ERR!');
     await act(async () => {
       renderer.root.findByProps({ testID: 'connect-retry' }).props.onPress();
       await Promise.resolve();

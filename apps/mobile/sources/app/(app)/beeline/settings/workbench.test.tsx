@@ -42,13 +42,6 @@ vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => undefined),
 }));
 
-vi.mock('@/components/buzz/ToolDetailsCell', async () => {
-  const ReactModule = await import('react');
-  return {
-    ToolDetailsCell: (props: any) => ReactModule.createElement('ToolDetailsCell', props, props.children),
-  };
-});
-
 import WorkbenchScreen from './workbench';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -88,15 +81,16 @@ async function render(): Promise<ReactTestRenderer> {
 describe('Workbench settings screen', () => {
   it('renders the connector rows: Trusty Squire to connect, Wallet and Tailscale as soon', async () => {
     const renderer = await render();
-    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire' });
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
     expect(squire.props.title).toBe('Trusty Squire');
     expect(squire.props.value).toBe('connect');
-    expect(squire.props.disabled).toBe(false);
-    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet' });
     // The wallet row is the one EXPANDABLE tool cell: the value column stays
     // the row's state, and the Connect affordance lives inside the expansion.
+    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.value).toBe('soon');
-    expect(wallet.props.children).toBeTruthy();
+    act(() => {
+      wallet.props.onPress();
+    });
     const connect = renderer.root.findByProps({
       testID: 'workbench-connector-wallet-connect',
     });
@@ -106,9 +100,43 @@ describe('Workbench settings screen', () => {
     expect(
       renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.value,
     ).toBe('soon');
+  });
+
+  it('expands a tool cell to reveal details and the Connect button inside', async () => {
+    const renderer = await render();
+    // Nothing expanded yet, no connect button on the collapsed row.
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-trusty-squire-connect' })).toHaveLength(0);
+    act(() => {
+      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' }).props.onPress();
+    });
+    const details = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-details' });
+    const texts = details.findAll((node: any) => typeof node.props?.children === 'string');
+    const prose = texts.map((node: any) => node.props.children);
+    expect(prose).toContain('Authentication');
+    expect(prose).toContain('Payments');
     expect(
-      renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.disabled,
+      prose.some((line: string) => /sign in once with Google/.test(line)),
     ).toBe(true);
+    expect(
+      prose.some((line: string) => /card is stored or uploaded/.test(line)),
+    ).toBe(true);
+    // Collapsed rows carry no action word: Connect lives INSIDE the details.
+    expect(renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' }).props.action).toBeUndefined();
+    act(() => {
+      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-connect' }).props.onPress();
+    });
+    expect(navigation.push).toHaveBeenCalledTimes(1);
+    expect(navigation.push.mock.calls[0][0].pathname).toBe('/beeline/settings/workbench/connect');
+    expect(navigation.push.mock.calls[0][0].params.connectorId).toBe('trusty-squire');
+  });
+
+  it('collapses an expanded cell on a second tap', async () => {
+    const renderer = await render();
+    const row = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
+    act(() => row.props.onPress());
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-trusty-squire-details' }).length).toBeGreaterThan(0);
+    act(() => renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' }).props.onPress());
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-trusty-squire-details' })).toHaveLength(0);
   });
 
   it('heads the two lists Tools and Keys with their one-line descriptions', async () => {
@@ -147,22 +175,12 @@ describe('Workbench settings screen', () => {
     source.failNextPair('trusty-squire');
     setWorkbenchSource(source);
     const renderer = await render();
-    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire' });
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
     expect(squire.props.value).toBe('error');
     expect(squire.props.valueTone).toBe('danger');
   });
 
-  it('opens the connect flow on the Trusty Squire row', async () => {
 
-    const renderer = await render();
-    act(() => {
-      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire' }).props.onPress();
-    });
-    expect(navigation.push).toHaveBeenCalledTimes(1);
-    expect(navigation.push.mock.calls[0][0].pathname).toBe(
-      '/beeline/settings/workbench/connect',
-    );
-  });
 
   it('opens a connection detail on a connection row', async () => {
     const renderer = await render();

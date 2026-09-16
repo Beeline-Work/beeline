@@ -83,7 +83,6 @@
     "exports:scripts/app-associations.mjs:repositoryPath",
     "file:.verification/provision-tool-ledger.ts",
     "file:apps/body/src/fixtures/claude-agent-acp-permissions.ts",
-    "file:apps/mobile/sources/components/AnimatedOverlay.tsx",
     "file:apps/mobile/sources/components/navigation/MobileHeaderScrim.tsx",
     "file:apps/mobile/sources/components/navigation/headerMetrics.ts",
     "file:apps/mobile/sources/dev/testRunner.ts",

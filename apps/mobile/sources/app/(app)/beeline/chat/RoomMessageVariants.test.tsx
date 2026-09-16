@@ -1857,12 +1857,14 @@ describe('Room message variant components', () => {
     expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
   });
 
-  it('leaves compact-row long press to native text selection while retaining tap dismissal', () => {
-    // A parent Pressable claiming long press wins over selectable Text on
-    // device. The compact row observes touch end without becoming that
-    // competing responder; its nested MonoMarkdown text owns selection.
+  it('opens the message actions sheet on long press while retaining tap dismissal', () => {
+    // The row's long press is the message actions sheet — reactions, copy,
+    // reply, forward — which deliberately claims what native text selection
+    // once held here; Copy on the sheet is the way to the full text now.
+    // The compact row still observes touch end for composer dismissal.
     const onTapOutsideComposer = vi.fn();
     const onCopy = vi.fn();
+    const onMessageActions = vi.fn();
     const renderer = render(
       <OrdinaryLedgerMessage
         message={message({ id: 'tapped', text: 'a settled line' })}
@@ -1877,16 +1879,48 @@ describe('Room message variant components', () => {
         onTapOutsideComposer={onTapOutsideComposer}
         onReply={vi.fn()}
         onCopy={onCopy}
+        onMessageActions={onMessageActions}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
       />,
     );
     const row = renderer.root.findByProps({ testID: 'copy-message-tapped' });
-    expect(row.props.onLongPress).toBeUndefined();
     expect(row.props.onTouchEnd).toBeTypeOf('function');
+    expect(row.props.onLongPress).toBeTypeOf('function');
     act(() => row.props.onTouchEnd());
     expect(onTapOutsideComposer).toHaveBeenCalledTimes(1);
+    act(() => row.props.onLongPress());
+    expect(onMessageActions).toHaveBeenCalledTimes(1);
+    expect(onMessageActions.mock.calls[0][0].id).toBe('tapped');
     expect(onCopy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the desktop long press as the copy shortcut', () => {
+    const onCopy = vi.fn();
+    const onMessageActions = vi.fn();
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'dsk', text: 'a settled line' })}
+        desktopLayout
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={onCopy}
+        onMessageActions={onMessageActions}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const row = renderer.root.findByProps({ testID: 'copy-message-dsk' });
+    act(() => row.props.onLongPress());
+    expect(onCopy).toHaveBeenCalledWith('a settled line');
+    expect(onMessageActions).not.toHaveBeenCalled();
   });
 });
 

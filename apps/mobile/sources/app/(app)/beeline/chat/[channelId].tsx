@@ -41,6 +41,7 @@ import {
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
+  MESSAGE_REACTION_EMOJIS,
   type MessageReactionEmoji,
   type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
@@ -203,6 +204,7 @@ import {
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
   activityMessageReplyTarget,
+  agentActivityReplyExcerpt,
   prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
@@ -513,6 +515,8 @@ export default function BuzzChat() {
   const failedOutboxIds = outbox.failedIds;
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
+  const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
+  const [messageReactionsOpen, setMessageReactionsOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
     null,
@@ -2227,9 +2231,21 @@ export default function BuzzChat() {
     [decodedId, refreshSignal],
   );
 
+  const openMessageActions = useCallback((message: ChatDisplayMessage) => {
+    // A live draft is the turn still writing — it settles into the reply the
+    // actions would target, so it offers none.
+    if (message.isAgentDraft) return;
+    void Haptics.selectionAsync();
+    setMessageReactionsOpen(false);
+    setMessageActionsTarget(message);
+  }, []);
+
   const beginForward = useCallback(
     async (message: ChatDisplayMessage) => {
-      if (!desktopExperience || message.isAgentDraft || !roomClient || !activeCommunityId) return;
+      // Forward works wherever a transcript renders — the picker sheet and
+      // the send operation are not desktop-bound; the guard is only the
+      // message itself and the Room client.
+      if (message.isAgentDraft || !roomClient || !activeCommunityId) return;
       setForwardTarget(message);
       setForwardRooms(null);
       setForwardError(null);
@@ -2251,7 +2267,7 @@ export default function BuzzChat() {
         setForwardRooms([]);
       }
     },
-    [activeCommunityId, decodedId, desktopExperience, roomClient],
+    [activeCommunityId, decodedId, roomClient],
   );
 
   const forwardToRoom = useCallback(
@@ -3644,6 +3660,7 @@ export default function BuzzChat() {
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
+          onMessageActions={openMessageActions}
           onReact={handleReactToMessage}
           onForward={beginForward}
           {...(!isCorner &&
@@ -3697,6 +3714,7 @@ export default function BuzzChat() {
       handleOpenMention,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
+      openMessageActions,
       isReadOnlyDirectMessage,
       isArchived,
       isCorner,
@@ -4509,6 +4527,92 @@ export default function BuzzChat() {
       />
 
       <HullActionSheetModal
+        accessibilityLabel="Close message actions"
+        onClose={() => setMessageActionsTarget(null)}
+        testID="message-actions-sheet"
+        title="Message"
+        visible={Boolean(messageActionsTarget)}
+      >
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <>
+            <HullActionSheetRow
+              accessibilityLabel="React to message"
+              chevron={messageReactionsOpen ? 'down' : 'right'}
+              label="React"
+              onPress={() => setMessageReactionsOpen((open) => !open)}
+              testID="message-react-action"
+            />
+            {messageReactionsOpen ? (
+              <View style={styles.messageReactionStrip} testID="message-reaction-strip">
+                {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+                  <Pressable
+                    accessibilityLabel={`React with ${emoji}`}
+                    accessibilityRole="button"
+                    key={emoji}
+                    onPress={() => {
+                      const target = messageActionsTarget;
+                      setMessageActionsTarget(null);
+                      if (target) void handleReactToMessage(target, emoji);
+                    }}
+                    style={({ pressed }) => [
+                      styles.messageReactionChoice,
+                      pressed && styles.messageReactionPressed,
+                    ]}
+                    testID={`message-reaction-${emoji}`}
+                  >
+                    <Text style={styles.messageReactionEmoji}>{emoji}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : null}
+        {messageActionsTarget ? (
+          <HullActionSheetRow
+            accessibilityLabel="Copy message text"
+            label="Copy"
+            onPress={() => {
+              handleCopyLedgerMessage(
+                messageActionsTarget.isAgentActivity
+                  ? agentActivityReplyExcerpt(messageActionsTarget)
+                  : messageActionsTarget.text,
+              );
+              setMessageActionsTarget(null);
+            }}
+            testID="message-copy-action"
+          />
+        ) : null}
+        {messageActionsTarget ? (
+          <HullActionSheetRow
+            accessibilityLabel="Reply to message"
+            label="Reply"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) beginReply(target);
+            }}
+            testID="message-reply-action"
+          />
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel="Forward message"
+            label="Forward"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void beginForward(target);
+            }}
+            testID="message-forward-action"
+          />
+        ) : null}
+        <HullActionSheetCancel
+          onPress={() => setMessageActionsTarget(null)}
+          testID="message-actions-close"
+        />
+      </HullActionSheetModal>
+
+      <HullActionSheetModal
         accessibilityLabel="Close forward picker"
         onClose={() => {
           if (forwardBusyRoomId) return;
@@ -5051,6 +5155,30 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.meta,
       color: groknight.textSecondary,
+    },
+    // The message actions sheet's one between-rows surface: the reaction
+    // strip the React row expands, held to the sheet's own inset like the
+    // rename editor and the picker above.
+    messageReactionStrip: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: groknight.space.sm,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingVertical: groknight.space.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.border,
+    },
+    messageReactionChoice: {
+      minWidth: 44,
+      minHeight: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    messageReactionPressed: { backgroundColor: groknight.bgHighlight },
+    messageReactionEmoji: {
+      ...Typography.default(),
+      ...groknight.type.body,
+      lineHeight: 22,
     },
 
     // ── Message blocks ──────────────────────────────────────────────

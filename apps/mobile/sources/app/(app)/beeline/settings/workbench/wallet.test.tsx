@@ -26,6 +26,7 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TextInput: host('TextInput'),
     Pressable: host('Pressable'),
+    TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
     Image: host('Image'),
   };
@@ -51,6 +52,17 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
 vi.mock('qrcode', () => ({
   default: { create: () => ({ modules: { size: 0, get: () => 0 } }) },
 }));
+
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/components/buzz/WalletQr', async () => {
+  const ReactModule = await import('react');
+  return {
+    WalletQr: (props: any) => ReactModule.createElement('WalletQr', props),
+  };
+});
 
 import WalletScreen from './wallet';
 import WalletSendScreen from './wallet-send';
@@ -91,9 +103,46 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
 
   it('paints a total, then coins with their marks, and no chains', async () => {
     const renderer = await render(WalletScreen);
-    expect(renderer.root.findByProps({ testID: 'wallet-balance' }).props.children.props.children).toBe('$412.60');
+    expect(renderer.root.findByProps({ testID: 'wallet-balance-value' }).props.children).toBe('$412.60');
     expect(renderer.root.findByProps({ testID: 'wallet-coin-USDC' })).toBeTruthy();
-    expect(() => renderer.root.findByProps({ testID: 'wallet-chain-base' })).toThrow();
+    expect(
+      renderer.root.findAllByProps({ testID: 'wallet-coin-chain-base' }).length,
+    ).toBeGreaterThan(0);
+    // The dashboard carries the address with copy and QR affordances.
+    expect(renderer.root.findByProps({ testID: 'wallet-address-copy' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'wallet-address-qr-toggle' })).toBeTruthy();
+  });
+
+  it('copies the address through expo-clipboard', async () => {
+    const renderer = await render(WalletScreen);
+    const copy = renderer.root.findByProps({ testID: 'wallet-address-copy' });
+    const clipboard = await import('expo-clipboard');
+    await act(async () => {
+      copy.props.onPress();
+      await Promise.resolve();
+    });
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith(
+      '0x8f2c41B9Ea52d3aB7f0cCd4911E6D6b7B0a19d77',
+    );
+  });
+
+  it('switches the Send and Receive action tabs', async () => {
+    const renderer = await render(WalletScreen);
+    expect(renderer.root.findByProps({ testID: 'wallet-send-panel' })).toBeTruthy();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'wallet-tab-receive' }).props.onPress();
+    });
+    expect(renderer.root.findByProps({ testID: 'wallet-receive-panel' })).toBeTruthy();
+    expect(() => renderer.root.findByProps({ testID: 'wallet-send-panel' })).toThrow();
+  });
+
+  it('paints the transaction history feed newest first', async () => {
+    const renderer = await render(WalletScreen);
+    const first = renderer.root.findByProps({ testID: 'wallet-activity-0' });
+    expect(first).toBeTruthy();
+    expect(
+      renderer.root.findAllByProps({ testID: 'wallet-activity-1' }).length,
+    ).toBeGreaterThan(0);
   });
 
   it('the send screen refuses with the only named refusal: not enough of the asset', async () => {

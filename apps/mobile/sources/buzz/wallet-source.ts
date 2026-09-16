@@ -1,5 +1,6 @@
 import type {
   WalletChainView,
+  WalletHistoryResult,
   WalletSendOutcome,
   WalletView,
 } from '@beeline/api-contract/wallet';
@@ -26,6 +27,9 @@ export interface WalletSource {
   }): Promise<WalletSendOutcome>;
   /** Re-grant delegated signing; renewal is USER-ONLY (C: delegation ladder probe). */
   grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number }>;
+  /** The viewer's own transaction history. Oldest first, as the server
+   *  stores it; screens render newest first by reversing. */
+  readHistory(input: { workspaceId: string; limit?: number }): Promise<WalletHistoryResult>;
 }
 
 type WalletViewDto = WalletView;
@@ -54,6 +58,16 @@ export class MonolithWalletSource implements WalletSource {
   async grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number }> {
     return monolithPhoneOperation('grantWalletDelegation', {
       workspaceId: input.workspaceId,
+    });
+  }
+
+  async readHistory(input: {
+    workspaceId: string;
+    limit?: number;
+  }): Promise<WalletHistoryResult> {
+    return monolithPhoneOperation('readWalletHistory', {
+      workspaceId: input.workspaceId,
+      limit: input.limit,
     });
   }
 }

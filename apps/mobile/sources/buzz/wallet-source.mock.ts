@@ -1,4 +1,10 @@
-import type { WalletChainId, WalletSendOutcome, WalletView } from '@beeline/api-contract/wallet';
+import type {
+  WalletChainId,
+  WalletHistoryResult,
+  WalletLedgerEntry,
+  WalletSendOutcome,
+  WalletView,
+} from '@beeline/api-contract/wallet';
 import type { WalletSource } from './wallet-source';
 
 /**
@@ -11,9 +17,9 @@ const MOCK_WALLET: WalletView = {
   solanaAddress: null,
   totalUsd: '$412.60',
   coins: [
-    { symbol: 'USDC', name: 'USD Coin', amount: '392.60', usd: '$392.60' },
-    { symbol: 'ETH', name: 'Ethereum', amount: '0.0061', usd: '$18.00' },
-    { symbol: 'cbBTC', name: 'Coinbase BTC', amount: '0.00002', usd: '$2.00' },
+    { symbol: 'USDC', name: 'USD Coin', amount: '392.60', usd: '$392.60', chain: 'base' },
+    { symbol: 'ETH', name: 'Ethereum', amount: '0.0061', usd: '$18.00', chain: 'base' },
+    { symbol: 'cbBTC', name: 'Coinbase BTC', amount: '0.00002', usd: '$2.00', chain: 'base' },
   ],
   chains: [
     { id: 'base', name: 'Base', feeUsd: null, sponsored: true, hasBalance: true },
@@ -82,4 +88,32 @@ export class MockWalletSource implements WalletSource {
     this.wallet = { ...this.wallet, delegation: { active: true, expiresAt } };
     return { expiresAt };
   }
+
+  async readHistory(): Promise<WalletHistoryResult> {
+    return { entries: this.history };
+  }
+
+  /** The mock ledger: a settled, paint-ready feed the mock send appends to. */
+  private history: WalletLedgerEntry[] = [
+    {
+      direction: 'in',
+      agentName: null,
+      amountText: '+392.60 USDC',
+      counterparty: '0x4d17…9c02',
+      chain: 'base',
+      balanceAfterUsd: '$412.60',
+      txUrl: 'https://basescan.org/tx/0xmock-in',
+      createdAt: Date.now() - 3 * 3_600_000,
+    },
+    {
+      direction: 'out',
+      agentName: '@hoots',
+      amountText: '−12.00 USDC',
+      counterparty: '0x8f2c…9d77',
+      chain: 'base',
+      balanceAfterUsd: '$400.60',
+      txUrl: 'https://basescan.org/tx/0xmock-out',
+      createdAt: Date.now() - 26 * 3_600_000,
+    },
+  ];
 }

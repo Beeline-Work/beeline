@@ -445,11 +445,20 @@ export class CdpWalletClient implements CdpWalletSource {
   /**
    * Recent transaction history.
    *
-   * @todo funded-verify: verify history endpoint against CDP v2 server-wallet docs.
+   * Resilient by design: the `/evm/accounts/{address}/transfers` path is
+   * CONFIRMED WRONG (401 with dev-JWT and X-Wallet-Auth; 404 without the
+   * query) — the correct CDP v2 server-wallet history endpoint is still
+   * unknown and must be confirmed against CDP docs before any real
+   * reconciliation can run. Until then any non-2xx response (or parse
+   * failure) returns [] rather than throwing, so nothing downstream —
+   * `readWalletView`/`createWallet` above all — can break on it.
+   *
+   * @todo funded-verify: the correct CDP v2 history endpoint is still
+   *       UNKNOWN and must be confirmed against CDP v2 server-wallet docs.
    */
   async history(address: string, limit: number): Promise<WalletLedgerEntry[]> {
     const n = Math.min(Math.max(limit, 1), 100);
-    const result = await this.devRequest<{
+    let result: {
       transfers?: Array<{
         id: string;
         direction: string;
@@ -472,7 +481,16 @@ export class CdpWalletClient implements CdpWalletSource {
         usd_value: string;
         block_time: string;
       }>;
-    }>('GET', `/evm/accounts/${address}/transfers?limit=${n}`);
+    };
+    try {
+      result = await this.devRequest<NonNullable<typeof result>>('GET', `/evm/accounts/${address}/transfers?limit=${n}`);
+    } catch (error) {
+      console.error(
+        `[cdp] history read failed for ${address} (endpoint unconfirmed, returning []):`,
+        error instanceof Error ? error.message : error,
+      );
+      return [];
+    }
     const entries = result.transfers ?? result.transactions ?? [];
     return entries.slice(0, n).map((row: Record<string, unknown>) => {
       const chain = guessChain(String(row.network ?? row.chain ?? 'base'));

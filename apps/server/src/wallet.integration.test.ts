@@ -117,6 +117,31 @@ describe('wallet over the fake CDP seam', () => {
     expect(again.address).toBe(view.address);
   });
 
+  it('a failing history read does not break createWallet or readWallet', async () => {
+    // The real CDP v2 history endpoint is unconfirmed (it 401s/404s); the
+    // wallet must be fully usable — address + balances — regardless.
+    const source = walletSource() as CdpWalletSourceLike & {
+      history: (address: string, limit: number) => Promise<never>;
+    };
+    const originalHistory = source.history.bind(source);
+    source.history = () => Promise.reject(new Error('CDP GET .../transfers failed (401)'));
+    try {
+      const view = (await phoneOperation('createWallet', { workspaceId: WORKSPACE })) as {
+        address: string;
+        totalUsd: string;
+      };
+      expect(view.address).toMatch(/^0x/);
+      const read = (await phoneOperation('readWallet', { workspaceId: WORKSPACE })) as {
+        address: string;
+        totalUsd: string;
+      };
+      expect(read.address).toBe(view.address);
+      expect(typeof read.totalUsd).toBe('string');
+    } finally {
+      source.history = originalHistory;
+    }
+  });
+
   it('an agent pay is refused without a live delegation, then lands and posts one ledger card', async () => {
     const view = await createdWallet();
     // Fund the fake: 500 USDC.

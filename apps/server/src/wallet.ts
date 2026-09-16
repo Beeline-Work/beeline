@@ -432,7 +432,19 @@ export async function reconcileInbound(
       )
     ).rows.map((row) => row.tx_id),
   );
-  const history = await source.history(address, 50);
+  // History is enrichment: a wallet must be fully usable (address + balances)
+  // even when the transaction history read fails (it currently 401s — the
+  // CDP v2 history endpoint is unconfirmed). Log once and skip reconciliation.
+  let history: WalletLedgerEntry[];
+  try {
+    history = await source.history(address, 50);
+  } catch (error) {
+    console.error(
+      `[wallet] history read failed for ${address}; skipping inbound reconciliation:`,
+      error instanceof Error ? error.message : error,
+    );
+    return 0;
+  }
   let added = 0;
   for (const entry of history) {
     if (entry.direction !== 'in' || !entry.txUrl) continue;

@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { scrollFollowOnArrival, scrollFollowOnLayoutChange } from './room-scroll-follow';
+import {
+  desktopOpenLandingOnContentSizeChange,
+  scrollFollowOnArrival,
+  scrollFollowOnLayoutChange,
+} from './room-scroll-follow';
 
 const chatSource = readFileSync(
   path.join(__dirname, '..', 'app', '(app)', 'beeline', 'chat', '[channelId].tsx'),
@@ -97,6 +101,57 @@ describe('scrollFollowOnArrival', () => {
         previousNewestId: 'msg-1',
         nextNewestId: 'msg-2',
         isPinnedToTail: false,
+        isUserDragging: false,
+      }),
+    ).toBe('hold');
+  });
+});
+
+describe('desktopOpenLandingOnContentSizeChange', () => {
+  it('keeps landing through measured growth without consulting the transient tail pin', () => {
+    expect(
+      desktopOpenLandingOnContentSizeChange({
+        active: true,
+        previousHeight: 1_000,
+        nextHeight: 2_225,
+        isUserDragging: false,
+      }),
+    ).toBe('scroll');
+    expect(
+      desktopOpenLandingOnContentSizeChange({
+        active: true,
+        previousHeight: 2_225,
+        nextHeight: 3_325,
+        isUserDragging: false,
+      }),
+    ).toBe('scroll');
+  });
+
+  it('settles when measurement stops growing or the reader takes control', () => {
+    expect(
+      desktopOpenLandingOnContentSizeChange({
+        active: true,
+        previousHeight: 3_325,
+        nextHeight: 3_325,
+        isUserDragging: false,
+      }),
+    ).toBe('settle');
+    expect(
+      desktopOpenLandingOnContentSizeChange({
+        active: true,
+        previousHeight: 2_225,
+        nextHeight: 3_325,
+        isUserDragging: true,
+      }),
+    ).toBe('settle');
+  });
+
+  it('holds once the open landing has settled', () => {
+    expect(
+      desktopOpenLandingOnContentSizeChange({
+        active: false,
+        previousHeight: 2_225,
+        nextHeight: 3_325,
         isUserDragging: false,
       }),
     ).toBe('hold');
@@ -212,8 +267,9 @@ describe('the chat screen wires the scroll rule', () => {
     // The immediate scrollToEnd can land short while the tail window is
     // unmeasured (RN Web estimates far frames), so the landing re-runs from
     // measured content sizes until it settles.
-    expect(chatSource).toContain('desktopTailLandingsRef.current = DESKTOP_TAIL_LANDINGS');
-    expect(chatSource).toContain('desktopTailLandingsRef.current -= 1');
+    expect(chatSource).toContain('desktopOpenLandingRef.current = true');
+    expect(chatSource).toContain('desktopOpenLandingOnContentSizeChange({');
+    expect(chatSource).toContain('onWheel: cancelDesktopOpenLanding');
     expect(chatSource).toMatch(/scrollToOffset\(\{\s*offset: height,/);
   });
 

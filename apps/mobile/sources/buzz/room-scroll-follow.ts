@@ -23,6 +23,30 @@ import { useLayoutEffect, useRef } from 'react';
  */
 export type ScrollFollowDecision = 'scroll' | 'hold';
 
+export type DesktopOpenLandingDecision = 'scroll' | 'settle' | 'hold';
+
+/**
+ * A chronological virtualized list may reveal more measured content after
+ * each cold-open jump. Keep landing through that growth even though each
+ * programmatic jump can temporarily report the viewport as unpinned.
+ */
+export function desktopOpenLandingOnContentSizeChange({
+  active,
+  previousHeight,
+  nextHeight,
+  isUserDragging,
+}: {
+  active: boolean;
+  previousHeight: number | null;
+  nextHeight: number;
+  isUserDragging: boolean;
+}): DesktopOpenLandingDecision {
+  if (!active) return 'hold';
+  if (isUserDragging) return 'settle';
+  if (previousHeight !== null && nextHeight <= previousHeight) return 'settle';
+  return 'scroll';
+}
+
 export function scrollFollowOnArrival({
   previousNewestId,
   nextNewestId,

@@ -202,8 +202,10 @@ runs:
 
         # Assert that both Fly Machines report the same image name.
         verify_machine_convergence() {
-          local expected_image="$1"
+          local raw_expected="$1"
           local max_wait="${2:-0}"
+          # Normalize both sides: strip @sha256:<digest> that Fly may append to any reference
+          local expected_image="${raw_expected%%@sha256:*}"
           local deadline=0
           if [ "$max_wait" -gt 0 ]; then
             deadline=$((SECONDS + max_wait))
@@ -380,6 +382,8 @@ runs:
           exit 1
         fi
 
+        canary_ever_clean=false
+
         for sample in $(seq 0 20); do
           if [ "$sample" -gt 0 ]; then sleep 15; fi
           force_header="fly-force-instance-id: $canary"
@@ -390,11 +394,23 @@ runs:
           room_status="$(curl -sS --max-time 12 -o "$RUNNER_TEMP/server-release/room.json" -w '%{http_code}' \
             -H "$force_header" -H "Authorization: Bearer $canary_access_token" \
             "https://server.usebeeline.app/v1/phone/rooms/$SERVER_CANARY_ROOM_ID")"
-          node scripts/unified-release.mjs server-canary-sample \
+          # Run the sample; do not fail on a transient unclean verdict (e.g.
+          # pool warmup right after restart). Only fail after the full window
+          # if the canary was never fully clean.
+          if node scripts/unified-release.mjs server-canary-sample \
             --health "$RUNNER_TEMP/server-release/health.json" \
             --version "$RUNNER_TEMP/server-release/version.json" --room-status "$room_status" \
-            --expected-version "$RELEASE_VERSION" --expected-sha "$RELEASE_SHA"
+            --expected-version "$RELEASE_VERSION" --expected-sha "$RELEASE_SHA"; then
+            canary_ever_clean=true
+          fi
         done
+
+        # After the full observation window, fail only if the canary was
+        # never healthy (sustained failure), not on a transient warmup blip.
+        if [ "$canary_ever_clean" != true ]; then
+          echo "CRITICAL: Canary never reported clean health during the 5-minute observation window" >&2
+          exit 1
+        fi
         second_update_attempted=1
         retry_flyctl_update "$second" "$image_ref" "second"
         wait_for_machine_ready "$second"

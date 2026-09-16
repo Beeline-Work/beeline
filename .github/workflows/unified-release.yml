@@ -516,6 +516,9 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
+          # Metro resolves @beeline/* to their built dist/; build them like
+          # the OTA leg's eas-build-post-install does.
+          npm run eas-build-post-install
           bash scripts/android-build.sh
       - name: Run the emulator release proof
         id: proof

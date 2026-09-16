@@ -525,3 +525,133 @@ describe('PhoneService agent connect pairing claim', () => {
     });
   });
 });
+
+describe('PhoneService machine grouping in readWorkbench', () => {
+  let database: PgliteDatabase;
+  let phone: PhoneService;
+  const OWNER = 'a'.repeat(64);
+  const AGENT_A = 'c'.repeat(64);
+  const AGENT_B = 'd'.repeat(64);
+  const AGENT_C = 'e'.repeat(64);
+  const WORKSPACE = '33333333-3333-4333-8333-333333333333';
+  const MACHINE_X = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const MACHINE_Y = 'ffffffff-gggg-4hhh-8iii-jjjjjjjjjjjj';
+
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner')`,
+      [OWNER],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'MachineTest')`, [WORKSPACE]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'owner')`,
+      [WORKSPACE, OWNER],
+    );
+    phone = new PhoneService(database, 'https://server.example');
+  });
+
+  afterEach(async () => database.close());
+
+  /** Register an agent identity and agent row in the given workspace. */
+  async function registerAgent(
+    agentPubkey: string,
+    agentName: string,
+    machineId?: string,
+    machineName?: string,
+  ): Promise<void> {
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent',$2,$3)`,
+      [agentPubkey, agentName, agentName.toLowerCase()],
+    );
+    await database.query(
+      `INSERT INTO agents(agent_id,owner_id,machine_id,machine_name) VALUES($1,$2,$3,$4)`,
+      [agentPubkey, OWNER, machineId ?? null, machineName ?? null],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, agentPubkey],
+    );
+  }
+
+  it('two agents sharing a machine_id collapse to one machine in readWorkbench', async () => {
+    await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
+    await registerAgent(AGENT_B, 'Codex', MACHINE_X, 'squire-box');
+
+    const result = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(result.helpers).toHaveLength(1);
+    expect(result.helpers[0]!.id).toBe(MACHINE_X);
+    expect(result.helpers[0]!.name).toBe('squire-box');
+  });
+
+  it('two agents on different machines show two rows in readWorkbench', async () => {
+    await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
+    await registerAgent(AGENT_C, 'Fathom', MACHINE_Y, 'workstation');
+
+    const result = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(result.helpers).toHaveLength(2);
+    const ids = result.helpers.map((h) => h.id).sort();
+    expect(ids).toEqual([MACHINE_X, MACHINE_Y]);
+  });
+
+  it('a legacy agent without machine_id appears as its own machine', async () => {
+    await registerAgent(AGENT_A, 'Charles');
+
+    const result = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(result.helpers).toHaveLength(1);
+    expect(result.helpers[0]!.id).toBe(AGENT_A); // falls back to agent_id
+  });
+
+  it('pairing by machine_id creates one connector shared by both agents on that machine', async () => {
+    await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
+    await registerAgent(AGENT_B, 'Codex', MACHINE_X, 'squire-box');
+
+    // Pair using the machine_id (what the new mobile client sends)
+    const paired = await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
+      OWNER,
+    );
+
+    expect(paired.connectorId).toBeTruthy();
+    expect(paired.status.status).toBe('installing');
+
+    // Verify the connector is stored with the machine_id and references
+    // one of the agents on that machine.
+    const connector = await database.query<{
+      id: string;
+      helper_agent_id: string;
+      machine_id: string;
+    }>(
+      `SELECT id,helper_agent_id,machine_id FROM workspace_connectors WHERE id=$1`,
+      [paired.connectorId],
+    );
+    expect(connector.rows[0]!.machine_id).toBe(MACHINE_X);
+    expect([AGENT_A, AGENT_B]).toContain(connector.rows[0]!.helper_agent_id);
+
+    // Pairing again with the same machine_id returns the existing connector
+    const pairedAgain = await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
+      OWNER,
+    );
+    expect(pairedAgain.connectorId).toBe(paired.connectorId);
+  });
+
+  it('pairing by agent_id (back-compat) still works for legacy agents', async () => {
+    await registerAgent(AGENT_A, 'Charles');
+
+    // Legacy: no machine_id, so the agent IS its own machine.
+    // Send the agent_id as helperAgentId (old client behavior).
+    const paired = await phone.execute(
+      'pairConnector',
+      { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: AGENT_A },
+      OWNER,
+    );
+    expect(paired.connectorId).toBeTruthy();
+    expect(paired.status.status).toBe('installing');
+  });
+});

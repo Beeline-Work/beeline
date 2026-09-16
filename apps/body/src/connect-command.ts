@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { homedir, hostname } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
@@ -659,11 +660,47 @@ export function parseConnectSubscriptions(value: string | undefined): string[] {
   ];
 }
 
+/**
+ * Resolve a stable MACHINE identifier for this host. Uses a persisted UUID in
+ * `~/.config/beeline/machine-id` (created once), so every agent connected from
+ * the same machine shares one machine_id — even across reconnects and OS
+ * reinstalls that reuse the home directory. Falls back to a hash of the
+ * hostname only when no persisted id exists AND the config dir is unwritable.
+ */
+export async function readMachineId(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ machineId: string; machineName: string }> {
+  const configDir = resolve(env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'beeline');
+  const machineIdPath = resolve(configDir, 'machine-id');
+  let machineId: string;
+  let machineName = hostname();
+  try {
+    const existing = await readFile(machineIdPath, 'utf8');
+    machineId = existing.trim();
+    if (!/^[0-9a-f-]{32,}$/.test(machineId)) throw new Error('invalid persisted machine id');
+  } catch {
+    machineId = randomUUID();
+    try {
+      await mkdir(configDir, { recursive: true, mode: 0o700 });
+      await writeFile(machineIdPath, `${machineId}\n`, { mode: 0o600 });
+    } catch {
+      // Home directory is unwritable; fall back to a hash of the hostname so
+      // every agent on this host at least shares one id for the session.
+      machineId = createHash('sha256')
+        .update(machineName)
+        .digest('hex')
+        .slice(0, 36);
+    }
+  }
+  return { machineId, machineName };
+}
+
 export function requestConnectGrant(
   baseUrl: string,
   pairingCode: string,
   selection: ConnectWizardResult,
   fetchImpl: typeof fetch,
+  machineInfo?: { machineId: string; machineName: string },
 ): Promise<DeviceGrantResponse> {
   const normalizedPairingCode = normalizeAgentPairingCode(pairingCode);
   if (!normalizedPairingCode) throw new Error('invalid pairing code');
@@ -687,6 +724,7 @@ export function requestConnectGrant(
       // called once the rename prompt below settles), so the claim must not
       // join Rooms or announce yet.
       defer_join: true,
+      ...(machineInfo ? { machine_id: machineInfo.machineId, machine_name: machineInfo.machineName } : {}),
     },
     fetchImpl,
   );
@@ -906,9 +944,10 @@ async function runConnectWizard(
     /\/$/,
     '',
   );
+  const machineInfo = await readMachineId(process.env);
   const claimed = await brassSpinner(
     'Connecting to your Beeline Workspace…',
-    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl),
+    () => requestConnectGrant(baseUrl, pairingCode, selection, fetchImpl, machineInfo),
     (connectedGrant) => `Connected to ${connectedGrant.workspace_name}`,
   );
   // The server seeded this agent's animal, name and soul from its Workspace

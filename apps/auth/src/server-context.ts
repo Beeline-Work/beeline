@@ -159,6 +159,10 @@ export interface AuthServerOptions {
      * flow existed, which gets the original immediate join instead.
      */
     deferJoin?: boolean;
+    /** Stable machine identifier for the host running this agent. */
+    machineId?: string;
+    /** Human-readable machine name (e.g. hostname). */
+    machineName?: string;
   }) => Promise<
     | {
         status: 'claimed';

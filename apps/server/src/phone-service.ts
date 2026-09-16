@@ -107,6 +107,7 @@ import {
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
+  ReadWalletHistoryInput,
 } from '@beeline/api-contract/wallet';
 import {
   createWallet,
@@ -114,6 +115,7 @@ import {
   sendFromWallet,
   grantWalletDelegation,
   walletBinding,
+  walletHistory,
 } from './wallet.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { closeCornerState } from './corner-close.js';
@@ -2641,6 +2643,18 @@ export class PhoneService {
           viewerId,
           (input as Input<'grantWalletDelegation'>).workspaceId,
         )) as Output<Name>;
+      case 'readWalletHistory': {
+        // The ledger is keyed on the viewer's identity alone, so the viewer
+        // scope IS the authorization — no workspace parameter to project.
+        const historyInput = input as unknown as Input<'readWalletHistory'>;
+        return {
+          entries: await walletHistory(
+            this.database,
+            viewerId,
+            (historyInput as ReadWalletHistoryInput).limit ?? 20,
+          ),
+        } as Output<Name>;
+      }
       case 'readConnectionDetail':
         return (await this.readConnectionDetail(
           input as Input<'readConnectionDetail'>,
@@ -6178,5 +6192,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWallet',
   'sendFromWallet',
   'grantWalletDelegation',
+  'readWalletHistory',
   'deleteAccount',
 ]);

@@ -14,8 +14,10 @@ import type {
 } from './phone-types.js';
 import type {
   CreateWalletInput,
+  ReadWalletHistoryInput,
   ReadWalletInput,
   SendFromWalletInput,
+  WalletHistoryResult,
   WalletSendOutcome,
   WalletView,
 } from './wallet.js';
@@ -116,12 +118,16 @@ export type PhoneOperationMap = {
   readWallet: { input: ReadWalletInput; output: WalletView };
   sendFromWallet: { input: SendFromWalletInput; output: WalletSendOutcome };
   grantWalletDelegation: { input: GrantWalletDelegationInput; output: GrantWalletDelegationResult };
+  /** The viewer's own wallet transaction history (oldest first, as stored). */
+  readWalletHistory: { input: ReadWalletHistoryInput; output: WalletHistoryResult };
 };
 
 export type {
   CreateWalletInput,
+  ReadWalletHistoryInput,
   ReadWalletInput,
   SendFromWalletInput,
+  WalletHistoryResult,
   WalletSendOutcome,
   WalletView,
 } from './wallet.js';

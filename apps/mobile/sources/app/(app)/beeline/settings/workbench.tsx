@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import {
   connectionHostsLine,
@@ -16,6 +17,19 @@ import {
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
+
+/** The expanded value proposition of the Coinbase Wallet tool (captain copy,
+ *  2026-09): what it subsidizes and what it reaches. */
+const WALLET_DETAILS = [
+  {
+    name: 'Gas Subsidies',
+    line: 'USDC transactions are subsidized on Base L2.',
+  },
+  {
+    name: 'Multi-Chain Support',
+    line: '16 EVM-compatible chains (Base, Arbitrum, Avalanche, Robinhood Chain, and more) plus Solana.',
+  },
+] as const;
 
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
@@ -98,39 +112,56 @@ export default function WorkbenchScreen() {
             Tools
           </Text>
           {connectors.map((connector) => {
-            // The wallet is not a pairing flow: tapping it IS the intent, so
-            // the row opens the wallet screen itself (mock §Screens 1).
+            // The wallet (Coinbase Wallet) is the one tool whose row expands:
+            // the shared ToolDetailsCell carries its value proposition (gas
+            // subsidies on Base, multi-chain support) and the Connect action
+            // that opens the wallet dashboard itself (mock §Screens 1).
             const isWallet = connector.id === 'wallet';
-            const walletOnPress = isWallet
-              ? () =>
-                  router.push({
-                    pathname: '/beeline/settings/workbench/wallet',
-                    params: { workspaceId },
-                  } as unknown as Href)
-              : undefined;
+            if (isWallet) {
+              return (
+                <ToolDetailsCell
+                  key={connector.id}
+                  description={connectorDescription(connector)}
+                  details={WALLET_DETAILS}
+                  testID={`workbench-connector-${connector.id}`}
+                  title={connector.name}
+                  value={connectorRowValue(connector)}
+                >
+                  <SettingsRow
+                    action="Connect"
+                    onPress={
+                      connector.available
+                        ? () =>
+                            router.push({
+                              pathname: '/beeline/settings/workbench/wallet',
+                              params: { workspaceId },
+                            } as unknown as Href)
+                        : undefined
+                    }
+                    testID="workbench-connector-wallet-connect"
+                    title="Connect Coinbase Wallet"
+                    tone="action"
+                  />
+                </ToolDetailsCell>
+              );
+            }
             return (
               <SettingsRow
                 key={connector.id}
-                action={isWallet ? 'create' : undefined}
                 description={connectorDescription(connector)}
-                disabled={
-                  !isWallet &&
-                  (!connector.available || connector.status === 'connected')
-                }
+                disabled={!connector.available || connector.status === 'connected'}
                 onPress={
-                  isWallet
-                    ? walletOnPress
-                    : connector.available && connector.status !== 'connected'
-                      ? () =>
-                          router.push({
-                            pathname: '/beeline/settings/workbench/connect',
-                            params: { workspaceId, viewerId, connectorId: connector.id },
-                          } as unknown as Href)
-                      : undefined
+                  connector.available && connector.status !== 'connected'
+                    ? () =>
+                        router.push({
+                          pathname: '/beeline/settings/workbench/connect',
+                          params: { workspaceId, viewerId, connectorId: connector.id },
+                        } as unknown as Href)
+                    : undefined
                 }
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}
-                value={isWallet ? undefined : connectorRowValue(connector)}
+                value={connectorRowValue(connector)}
                 valueTone={connector.status === 'error' ? 'danger' : undefined}
               />
             );

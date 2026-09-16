@@ -114,6 +114,7 @@ runs:
         RELEASE_VERSION: ${{ inputs.release_version }}
 
     - name: Run schema migrations and backfills once before Machine updates
+      id: migrate
       if: inputs.phase == 'promote'
       shell: bash
       env:
@@ -165,6 +166,17 @@ runs:
         NODE
 
         npm run migrate -w @beeline/server
+
+    # Retry-gate evidence: the unified-release workflow's retry job must never
+    # re-dispatch a release identity whose release migration failed (a failed
+    # migration is permanent for the identity). This file exists only when the
+    # migrate step above failed.
+    - name: Record a failed release migration for retry gating
+      if: inputs.phase == 'promote' && always() && steps.migrate.outcome == 'failure'
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/server-release"
+        printf '{"failed":true,"outcome":"%s"}\n' "${{ steps.migrate.outcome }}" > "$RUNNER_TEMP/server-release/migration-failed.json"
 
     - name: Canary one Machine, observe for five minutes, then update its peer
       if: inputs.phase == 'promote'
@@ -325,6 +337,12 @@ runs:
         }
         trap rollback_canary ERR
 
+        # Retry-gate evidence: the moment this attempt is about to update (or
+        # restart) any Fly Machine, the release identity becomes terminal on a
+        # later failure — the unified-release retry job must never follow a
+        # machines-touched attempt (a just-updated machine runs its own startup
+        # migrations that can deadlock the next attempt's release migration).
+        printf '{"touchedAt":"%s"}\n' "$(date -u +%FT%TZ)" > "$RUNNER_TEMP/server-release/machines-touched.json"
         canary_updated=1
         retry_flyctl_update "$canary" "$image_ref" "canary"
         wait_for_machine_ready "$canary"

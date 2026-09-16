@@ -183,6 +183,17 @@ jobs:
             fi
           fi
           release_id="${release_version}-${release_sha}"
+          # A terminated identity (machines touched, failed release migration,
+          # or a cancelled attempt) never resumes — not even via a manual run
+          # of the same release identity. The release_result job stamps the
+          # attempt state with `terminated: true` before publishing it.
+          if [ -f "$retry" ]; then
+            terminated=$(node -e 'const s=require(process.argv[1]);process.stdout.write(String(s.terminated===true))' "$retry")
+            if [ "$terminated" = "true" ]; then
+              echo "release identity $release_id was terminated; a terminated identity never retries" >&2
+              exit 1
+            fi
+          fi
           if [ -f "$previous" ]; then
             node scripts/unified-release.mjs component-paths \
               --previous "$previous" --sha "$release_sha" \
@@ -296,6 +307,7 @@ jobs:
           path: checkpoint-server-built.json
           if-no-files-found: error
       - uses: ./.github/actions/server-leg
+        id: promote
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
@@ -306,6 +318,38 @@ jobs:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+      # Retry gates for the server component: whether this attempt touched
+      # (updated/restarted) any Fly Machine and whether the release migration
+      # failed. The server-leg action writes the marker files; this step folds
+      # them into one inspectable artifact the release_result/retry jobs read.
+      # A just-updated machine runs its own startup migrations that can
+      # deadlock the next attempt's release migration, so a machines-touched
+      # attempt is terminal on failure.
+      - name: Collect the server retry gates
+        id: retry_gates
+        if: >-
+          always() && contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server) &&
+          steps.promote.conclusion != 'skipped'
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/server-release" > "$RUNNER_TEMP/server-retry-gates.json" <<'NODE'
+          const fs = require('node:fs');
+          const dir = process.argv[2];
+          const exists = (name) => { try { fs.statSync(`${dir}/${name}`); return true; } catch { return false; } };
+          let migrationFailed = false;
+          if (exists('migration-failed.json')) {
+            migrationFailed = JSON.parse(fs.readFileSync(`${dir}/migration-failed.json`)).failed === true;
+          }
+          process.stdout.write(`${JSON.stringify({ machinesTouched: exists('machines-touched.json'), migrationFailed })}\n`);
+          NODE
+          mkdir -p "$RUNNER_TEMP/server-gates"
+          mv "$RUNNER_TEMP/server-retry-gates.json" "$RUNNER_TEMP/server-gates/gates.json"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.retry_gates.conclusion == 'success'
+        with:
+          name: server-retry-gates-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/server-gates/gates.json
+          retention-days: 90
       - name: Preserve server image rollback ledger
         if: always() && contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         uses: actions/upload-artifact@v4
@@ -964,6 +1008,11 @@ jobs:
       actions: write
       contents: write
       issues: write
+    outputs:
+      outcome: ${{ steps.result.outputs.outcome }}
+      failure_class: ${{ steps.result.outputs.failure_class }}
+      terminated: ${{ steps.result.outputs.terminated }}
+      terminated_reason: ${{ steps.result.outputs.terminated_reason }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -973,6 +1022,13 @@ jobs:
         with:
           name: unified-release-plan-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/release
+      - name: Download the server retry gates
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: server-retry-gates-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/server-gates
       - uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -1056,6 +1112,28 @@ jobs:
           if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
             budget_seconds=3600
           fi
+          # Termination rules for the retry loop: a cancelled attempt (including
+          # cancel-in-progress), a failed release migration, and any attempt
+          # whose server leg touched a Fly Machine are all PERMANENT for this
+          # release identity — the retry job must never re-dispatch them.
+          cancelled=false
+          for need_result in "$SERVER_RESULT" "$HELPER_RESULT" "$MOBILE_OTA_RESULT" "$RELEASE_PROOF_RESULT" "$MOBILE_NATIVE_ANDROID_RESULT" "$MOBILE_NATIVE_IOS_RESULT" "$DESKTOP_RESULT" "$WEBSITE_RESULT"; do
+            if [ "$need_result" = cancelled ]; then cancelled=true; fi
+          done
+          machines_touched=false
+          migration_failed=false
+          gates="$RUNNER_TEMP/server-gates/gates.json"
+          if [ -f "$gates" ]; then
+            machines_touched=$(node -e 'process.stdout.write(String(require(process.argv[1]).machinesTouched===true))' "$gates")
+            migration_failed=$(node -e 'process.stdout.write(String(require(process.argv[1]).migrationFailed===true))' "$gates")
+          fi
+          terminated_reason=''
+          if [ "$cancelled" = true ]; then terminated_reason=cancelled
+          elif [ "$migration_failed" = true ]; then terminated_reason=migration-failed
+          elif [ "$machines_touched" = true ]; then terminated_reason=machines-touched
+          fi
+          terminated=false
+          if [ -n "$terminated_reason" ]; then terminated=true; fi
           if [ "$elapsed" -ge "$budget_seconds" ]; then
             failure_class=budget
           elif [ -n "$incomplete" ]; then
@@ -1079,6 +1157,12 @@ jobs:
               echo "no_op=$no_op"
             } >> "$GITHUB_OUTPUT"
           fi
+          {
+            echo "machines_touched=$machines_touched"
+            echo "migration_failed=$migration_failed"
+            echo "terminated=$terminated"
+            echo "terminated_reason=$terminated_reason"
+          } >> "$GITHUB_OUTPUT"
           cp "$state" "$RUNNER_TEMP/release-attempt.json"
       - name: Publish immutable attempt state for component-local retry
         if: steps.result.outputs.no_op != 'true'
@@ -1087,6 +1171,28 @@ jobs:
           name: unified-release-state-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/release-attempt.json
           retention-days: 90
+      - name: Stamp the terminated identity into the published attempt state
+        # A terminated identity must be recorded as terminated (never merely
+        # out-of-attempts): the initialize plan step refuses any later run
+        # whose retry state carries `terminated: true`.
+        if: steps.result.outputs.terminated == 'true' && steps.result.outputs.no_op != 'true'
+        env:
+          TERMINATED_REASON: ${{ steps.result.outputs.terminated_reason }}
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/release-attempt.json" "$TERMINATED_REASON" <<'NODE'
+          const fs = require('node:fs');
+          const [path, reason] = process.argv.slice(2);
+          const state = JSON.parse(fs.readFileSync(path));
+          state.terminated = true;
+          state.delivery = { ...state.delivery, terminated: true, terminatedReason: reason };
+          fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
+          NODE
+          node - "$RUNNER_TEMP/release-attempt.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+          const state = require(process.argv[2]);
+          console.log(`## Release identity TERMINATED (${state.delivery.terminatedReason})`);
+          console.log('- No retry of this identity may run: not the retry job, and not a manual run of the same identity.');
+          NODE
       - name: Download newly built stable desktop installers
         if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
         uses: actions/download-artifact@v4
@@ -1303,13 +1409,33 @@ jobs:
           exit 1
 
   retry:
+    # Retry rules (all terminal = no re-dispatch, ever):
+    # - a cancelled attempt (including cancel-in-progress) never re-dispatches;
+    # - a failed release migration never re-dispatches;
+    # - an attempt whose server leg touched a Fly Machine never re-dispatches
+    #   (the just-updated machine's startup migrations deadlock the next
+    #   attempt's release migration — the 15:19→19:11Z 7-attempt churn chain).
+    # release_result.outputs.terminated carries all three; the retry job also
+    # re-checks its own run conclusion as belt-and-suspenders.
     if: >-
-      !cancelled() && inputs.plan_only != true && needs.release_result.result == 'failure' &&
+      !cancelled() && inputs.plan_only != true &&
+      needs.release_result.result == 'failure' &&
+      needs.release_result.outputs.terminated != 'true' &&
       fromJSON(inputs.retry_attempt || '1') < 3
     needs: [initialize, release_result]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
     steps:
+      - name: Refuse to re-dispatch a cancelled run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
+            });
+            if (run.data.conclusion === 'cancelled') {
+              core.setFailed('this run was cancelled; cancellation is terminal for the release identity and never re-dispatches');
+            }
       - name: Redispatch the same release identity; successful checkpoints stay complete
         uses: actions/github-script@v7
         env:

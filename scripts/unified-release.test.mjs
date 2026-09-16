@@ -776,6 +776,38 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.equal(genuineFailure.if, "steps.result.outputs.outcome != 'success'");
   assert.match(genuineFailure.run, /exit 1/);
   assert.match(workflow.jobs.retry.if, /needs\.release_result\.result == 'failure'/);
+  // A cancelled run (including cancel-in-progress) is terminal for the
+  // identity: the retry job must never fire for it.
+  assert.match(workflow.jobs.retry.steps.find((step) => step.name?.startsWith('Refuse to re-dispatch a cancelled run')).uses, /actions\/github-script@v7/);
+  assert.match(release, /this run was cancelled; cancellation is terminal for the release identity/);
+  // Termination gates: machines touched / failed release migration /
+  // cancelled attempt are recorded by release_result and stamped into the
+  // published attempt state; the initialize plan step refuses a terminated
+  // identity, and the retry job refuses to fire on it.
+  assert.match(release, /needs\.release_result\.outputs\.terminated != 'true'/);
+  const resultStep = workflow.jobs.release_result.steps.find((step) => step.name === 'Merge checkpoints and classify the final attempt');
+  assert.match(resultStep.run, /machinesTouched/);
+  assert.match(resultStep.run, /migrationFailed/);
+  assert.match(resultStep.run, /server-gates\/gates\.json/);
+  assert.match(resultStep.run, /terminated_reason=cancelled/);
+  assert.match(release, /Stamp the terminated identity into the published attempt state/);
+  const stampStep = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Stamp the terminated identity'));
+  assert.match(stampStep.if, /steps\.result\.outputs\.terminated == 'true'/);
+  assert.match(stampStep.run, /state\.terminated = true/);
+  const planStep = workflow.jobs.initialize.steps.find((step) => step.name?.includes('release plan'));
+  assert.match(planStep.run, /was terminated; a terminated identity never retries/);
+  assert.equal(workflow.jobs.release_result.outputs.terminated, "${{ steps.result.outputs.terminated }}");
+  const gatesStep = workflow.jobs.server.steps.find((step) => step.name === 'Collect the server retry gates');
+  assert.match(gatesStep.if, /steps\.promote\.conclusion != 'skipped'/);
+  assert.match(release, /server-retry-gates-\$\{\{ needs\.initialize\.outputs\.release_id \}\}/);
+  const serverLegActionSteps = serverLegAction.runs.steps;
+  const migrationIndex = serverLegActionSteps.findIndex((step) => step.name === 'Run schema migrations and backfills once before Machine updates');
+  const canaryIndex = serverLegActionSteps.findIndex((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer');
+  assert.ok(migrationIndex < canaryIndex);
+  assert.match(serverLegActionSteps[canaryIndex].run, /machines-touched\.json/);
+  assert.ok(serverLegActionSteps[canaryIndex].run.indexOf('machines-touched.json') < serverLegActionSteps[canaryIndex].run.indexOf('retry_flyctl_update "$canary" "$image_ref" "canary"'));
+  const migrationFailedStep = serverLegActionSteps.find((step) => step.name === 'Record a failed release migration for retry gating');
+  assert.equal(migrationFailedStep.if, "inputs.phase == 'promote' && always() && steps.migrate.outcome == 'failure'");
   assert.match(release, /unified-release-index/);
   assert.match(release, /store_track:/);
   assert.match(rollback, /mobile-ota-rollback-/);

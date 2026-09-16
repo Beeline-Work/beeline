@@ -181,23 +181,95 @@ runs:
         canary_updated=0
         second_update_attempted=0
         fleet_updated=0
+
+        # Retry a flyctl machine update up to 3 times on transient failure.
+        retry_flyctl_update() {
+          local machine="$1" image="$2" desc="$3"
+          local attempt=0
+          while [ "$attempt" -lt 3 ]; do
+            if flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1; then
+              return 0
+            fi
+            attempt=$((attempt + 1))
+            if [ "$attempt" -lt 3 ]; then
+              echo "retry_flyctl_update($desc): attempt $attempt failed, sleeping 10s" >&2
+              sleep 10
+            fi
+          done
+          echo "retry_flyctl_update($desc): all 3 attempts failed for machine $machine -> $image" >&2
+          return 1
+        }
+
+        # Assert that both Fly Machines report the same image name.
+        verify_machine_convergence() {
+          local expected_image="$1"
+          local machines_json="$RUNNER_TEMP/server-release/machines-verify.json"
+          flyctl machine list --app beeline-server --json > "$machines_json"
+          local images
+          images="$(node -e '
+            const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            for (const m of machines) {
+              const image = m.imageRef || m.config?.image || "unknown";
+              process.stdout.write(m.id + "=" + image + "\n");
+            }
+          ' "$machines_json")"
+          echo "Current machine images:"
+          echo "$images"
+          local divergent=false
+          while IFS='=' read -r mid mimage; do
+            if [ "$mimage" != "$expected_image" ]; then
+              echo "Machine $mid: expected $expected_image, found $mimage" >&2
+              divergent=true
+            fi
+          done <<< "$images"
+          if [ "$divergent" = true ]; then
+            echo "FLEET SPLIT: machines are not all on the expected image $expected_image" >&2
+            return 1
+          fi
+          echo "Fleet converged on $expected_image"
+        }
+
         rollback_canary() {
           status=$?
           if [ "$canary_updated" = 1 ] && [ "$fleet_updated" = 0 ]; then
             echo "Server promotion failed; restoring attempted Machines to $previous_ref" >&2
-            flyctl machine update "$canary" --app beeline-server --image "$previous_ref" --wait-timeout 300 --yes
+            retry_flyctl_update "$canary" "$previous_ref" "rollback-canary" || true
             if [ "$second_update_attempted" = 1 ]; then
-              flyctl machine update "$second" --app beeline-server --image "$previous_ref" --wait-timeout 300 --yes
+              retry_flyctl_update "$second" "$previous_ref" "rollback-second" || true
+            fi
+            # Verify both machines actually converged on previous_ref; retry rollback if split.
+            local rollback_attempt=0
+            while [ "$rollback_attempt" -lt 3 ]; do
+              if verify_machine_convergence "$previous_ref" 2>/dev/null; then
+                echo "Rollback confirmed: all machines on $previous_ref"
+                break
+              fi
+              rollback_attempt=$((rollback_attempt + 1))
+              if [ "$rollback_attempt" -lt 3 ]; then
+                echo "Rollback attempt $rollback_attempt did not converge; re-applying rollback" >&2
+                retry_flyctl_update "$canary" "$previous_ref" "rollback-canary-reverify" || true
+                if [ "$second_update_attempted" = 1 ]; then
+                  retry_flyctl_update "$second" "$previous_ref" "rollback-second-reverify" || true
+                fi
+                sleep 15
+              fi
+            done
+            # Final assertion: if still split, fail loudly.
+            if ! verify_machine_convergence "$previous_ref"; then
+              echo "CRITICAL: Rollback exhausted all retries but fleet remains split!" >&2
+              echo "Manual reconciliation required: ensure both machines on $previous_ref" >&2
             fi
             node scripts/unified-release.mjs server-ledger --plan "$plan" \
               --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state rolled-back --output "$ledger"
           fi
           exit "$status"
         }
+
         wait_for_machine_ready() {
           machine="$1"
           force_header="fly-force-instance-id: $machine"
           ready_response="$RUNNER_TEMP/server-release/ready-$machine.json"
+          health_response="$RUNNER_TEMP/server-release/ready-health-$machine.json"
           version_response="$RUNNER_TEMP/server-release/ready-version-$machine.json"
           deadline=$((SECONDS + 180))
           while [ "$SECONDS" -lt "$deadline" ]; do
@@ -209,11 +281,18 @@ runs:
               remaining=$((deadline - SECONDS))
               if [ "$remaining" -gt 0 ]; then
                 curl_timeout=$((remaining < 10 ? remaining : 10))
+                # Check version match
                 if curl -fsS --max-time "$curl_timeout" -H "$force_header" \
                   https://server.usebeeline.app/version -o "$version_response" && \
                   node -e 'const v=require(process.argv[1]);process.exit(v.version === process.argv[2] ? 0 : 1)' \
                     "$version_response" "$RELEASE_VERSION"; then
-                  return 0
+                  # Also check /health returns ok:true (database pool ready)
+                  if curl -fsS --max-time "$curl_timeout" -H "$force_header" \
+                    https://server.usebeeline.app/health -o "$health_response" && \
+                    node -e 'const h=require(process.argv[1]);process.exit(h.ok === true ? 0 : 1)' \
+                      "$health_response"; then
+                    return 0
+                  fi
                 fi
               fi
             fi
@@ -228,7 +307,7 @@ runs:
         trap rollback_canary ERR
 
         canary_updated=1
-        flyctl machine update "$canary" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+        retry_flyctl_update "$canary" "$image_ref" "canary"
         wait_for_machine_ready "$canary"
 
         if [ -n "${SERVER_CANARY_REVIEW_SECRET:-}" ]; then
@@ -242,7 +321,7 @@ runs:
           exchange_status='000'
           for exchange_attempt in 1 2 3; do
             if exchange_status="$(curl -sS --max-time 12 -o "$exchange_response" -w '%{http_code}' \
-              -H "fly-force-instance-id: $second" -H 'Content-Type: application/json' \
+              -H "fly-force-instance-id: $canary" -H 'Content-Type: application/json' \
               --data-binary "@$exchange_request" \
               https://server.usebeeline.app/v1/auth/review/exchange)"; then
               case "$exchange_status" in
@@ -300,10 +379,12 @@ runs:
             --expected-version "$RELEASE_VERSION" --expected-sha "$RELEASE_SHA"
         done
         second_update_attempted=1
-        flyctl machine update "$second" --app beeline-server --image "$image_ref" --wait-timeout 300 --yes
+        retry_flyctl_update "$second" "$image_ref" "second"
         wait_for_machine_ready "$second"
         fleet_updated=1
         trap - ERR
+        # Final assertion: prove both machines are on the target image.
+        verify_machine_convergence "$image_ref"
         node scripts/unified-release.mjs server-ledger --plan "$plan" \
           --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state deployed --output "$ledger"
       env:

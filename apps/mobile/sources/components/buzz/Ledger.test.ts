@@ -198,7 +198,7 @@ describe('the ledger — an agent turn', () => {
     expect(renderedText(renderer).join(' ')).toContain('And rebuilt the index afterwards.');
   });
 
-  it('separates turns with a hairline divider, and continuations flow with none', () => {
+  it('keeps opening and continued messages on one compact divider-free rhythm', () => {
     const opens = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
@@ -210,10 +210,6 @@ describe('the ledger — an agent turn', () => {
     const opensRow = opens.root
       .findByProps({ testID: 'chat-message-a' })
       .props.style.filter(Boolean);
-    expect(opensRow.some((style: Record<string, unknown>) => style.borderBottomWidth === 1)).toBe(
-      true,
-    );
-
     const continued = render(
       React.createElement(LedgerEntry, {
         itemId: 'b',
@@ -226,16 +222,18 @@ describe('the ledger — an agent turn', () => {
     const continuedRow = continued.root
       .findByProps({ testID: 'chat-message-b' })
       .props.style.filter(Boolean);
-    expect(continuedRow.every((style: Record<string, unknown>) => !style.borderBottomWidth)).toBe(
-      true,
-    );
+    const resolved = (row: Record<string, unknown>[]) => Object.assign({}, ...row);
+    expect(resolved(opensRow)).toMatchObject({ paddingVertical: 6, marginBottom: 0 });
+    expect(resolved(continuedRow)).toMatchObject({ paddingVertical: 6, marginBottom: 0 });
 
-    // Still boxless: no frame, no fill, no radius on the repeating row.
+    // The sender header carries the run boundary; no message row adds another
+    // rule, frame, fill, or opener-only gap.
     for (const style of [...opensRow, ...continuedRow]) {
       expect(style).not.toHaveProperty('borderRadius');
       expect(style).not.toHaveProperty('backgroundColor');
       expect(style).not.toHaveProperty('borderLeftWidth');
       expect(style).not.toHaveProperty('borderTopWidth');
+      expect(style).not.toHaveProperty('borderBottomWidth');
     }
   });
 });
@@ -383,58 +381,16 @@ describe('the ledger — a human turn is plain body text', () => {
       return Object.assign({}, ...styles) as Record<string, number | undefined>;
     };
 
-    // The opener's generous padding is ONE-SIDED: the side facing the run's
-    // own continuation carries the continuation padding, so the gap between
-    // two consecutive same-voice messages is the continuation gap whether or
-    // not the upper row opened the run. Separation between different runs
-    // stays generous on the outward side, beside the divider.
+    // The sender byline opens the run. Its first message and every continuation
+    // use the same compact row spacing, without a divider or opener-only gap.
     const opener = rowStyle(opens, 'b1');
     const follower = rowStyle(continued, 'b2');
     expect(follower.paddingVertical).toBe(6);
     expect(follower.marginBottom).toBe(0);
-    expect(opener.paddingTop).toBe(follower.paddingVertical);
-    expect(opener.paddingBottom).toBe(18);
-    expect(opener.marginBottom).toBe(4);
-    // The phone list is inverted: a cell's layout-top is its visual bottom, so
-    // the same-voice gap between an upper and a lower row is the upper row's
-    // layout-top padding plus the lower row's layout-bottom padding and margin.
-    const sides = (row: Record<string, number | undefined>) => ({
-      top: row.paddingTop ?? row.paddingVertical ?? 0,
-      bottom: row.paddingBottom ?? row.paddingVertical ?? 0,
-    });
-    const sameVoiceGap = (upper: Record<string, number | undefined>, lower: typeof follower) =>
-      sides(upper).top + sides(lower).bottom + (lower.marginBottom ?? 0);
-    expect(sameVoiceGap(opener, follower)).toBe(sameVoiceGap(follower, follower));
-    // The outward side of a run (previous row above, opener below) keeps the
-    // divider and the generous padding: wider than the same-voice flow.
-    expect(sameVoiceGap(follower, opener)).toBeGreaterThan(sameVoiceGap(opener, follower));
+    expect(opener).toMatchObject(follower);
+    expect(opener.borderTopWidth).toBeUndefined();
+    expect(opener.borderBottomWidth).toBeUndefined();
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
-  });
-
-  it('mirrors the one-sided run opening for a chronological transcript', () => {
-    // Desktop lays rows out upright, so a cell's layout-top is its visual top:
-    // the divider and the generous padding move to the other layout edge, and
-    // the run-facing side still carries the continuation padding.
-    const opens = render(
-      React.createElement(LedgerSteer, {
-        itemId: 'c1',
-        chronological: true,
-        byline: { name: 'You', stamp: '10:00', isViewer: true },
-        bodyText: 'Do the thing.',
-        bodyTestID: 'steer-body',
-      }),
-    );
-    const row = Object.assign(
-      {},
-      ...opens.root
-        .findByProps({ testID: 'chat-message-c1' })
-        .props.style.filter(Boolean),
-    ) as Record<string, number | undefined>;
-    expect(row.paddingTop).toBe(18);
-    expect(row.paddingBottom).toBe(6);
-    expect(row.marginTop).toBe(4);
-    expect(row.borderTopWidth).toBeTruthy();
-    expect(row.borderBottomWidth).toBeUndefined();
   });
 });
 

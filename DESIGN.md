@@ -73,11 +73,11 @@ settled asks, ask tier only while a response is needed. Its head, body, rows,
 code block, and footer share one spacing and type system on phone and desktop.
 
 A rule is not a box: one edge, no fill, no radius. It divides an _index_ — the
-Room list, the member list — and nothing else. **Turns separate by one hairline
-divider** (`turnDivider`, `#0e0e12`) at the top of each opening turn, plus
-generous vertical padding; continuations of the same voice flow with no divider.
-The only other edges in the transcript are the quiet 2px left rules shared by
-code blocks, tool readouts, and system lines. No speaker rails anywhere.
+Room list, the member list — and nothing else. Transcript messages use one
+compact vertical rhythm beneath the sender byline, including the first message
+in a run; there are no turn dividers or opener-only gaps. The only edges in the
+transcript are the quiet 2px left rules shared by code blocks, tool readouts,
+and system lines. No speaker rails anywhere.
 
 ## The ledger
 

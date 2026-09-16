@@ -24,7 +24,7 @@ const view: WorkbenchView = {
     {
       id: 'trusty-squire',
       name: 'Trusty Squire',
-      description: 'vault · sign-ups · payments for your agents',
+      description: 'vault, sign-ups, payments',
       available: true,
     },
     { id: 'wallet', name: 'Wallet', description: 'crypto wallet for agents', available: false },
@@ -100,7 +100,7 @@ describe('connector row copy', () => {
 
   it('keeps the plain description while disconnected', () => {
     expect(connectorDescription(view.connectors[0])).toBe(
-      'vault · sign-ups · payments for your agents',
+      'vault, sign-ups, payments',
     );
   });
 });

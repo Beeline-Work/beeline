@@ -31,6 +31,20 @@ const WALLET_DETAILS = [
   },
 ] as const;
 
+/** The expanded value proposition of the Trusty Squire tool (PR 1338):
+ *  what sign-in covers and what spending it enables. Same vocabulary as
+ *  `WALLET_DETAILS` — the one `ToolDetailsCell` detail shape. */
+const SQUIRE_DETAILS = [
+  {
+    name: 'Authentication',
+    line: 'Handles auth for your agents: you sign in once with Google and Trusty Squire grants access to your other services on their behalf.',
+  },
+  {
+    name: 'Payments',
+    line: 'Enables payments when a card is stored or uploaded to Trusty Squire. Agents can only spend within the grants you set.',
+  },
+] as const;
+
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
  * lists of `SettingsRow`s under small-caps heads: the tools this build knows
@@ -50,7 +64,6 @@ export default function WorkbenchScreen() {
   const viewerId = firstParam(params.viewerId) ?? '';
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   const load = useCallback(async () => {
     try {
       setView(await getWorkbenchSource().readWorkbench({ workspaceId, viewerId }));
@@ -112,12 +125,49 @@ export default function WorkbenchScreen() {
             Tools
           </Text>
           {connectors.map((connector) => {
-            // The wallet (Coinbase Wallet) is the one tool whose row expands:
-            // the shared ToolDetailsCell carries its value proposition (gas
-            // subsidies on Base, multi-chain support) and the Connect action
-            // that opens the wallet dashboard itself (mock §Screens 1).
+            // Expandable tools (wallet, Trusty Squire) render through the ONE
+            // shared ToolDetailsCell: the collapsed row is a fact, the
+            // expanded section carries the tool's value proposition and the
+            // Connect action (steer: the Connect button never triggers
+            // blindly from the collapsed row). The wallet opens its own
+            // dashboard; Trusty Squire opens the connect pipeline.
             const isWallet = connector.id === 'wallet';
-            if (isWallet) {
+            const isSquire = connector.id === 'trusty-squire';
+            if (isWallet || isSquire) {
+              if (isSquire) {
+                const canConnect =
+                  connector.available &&
+                  connector.status !== 'connected' &&
+                  connector.status !== 'installing';
+                return (
+                  <ToolDetailsCell
+                    key={connector.id}
+                    description={connectorDescription(connector)}
+                    details={SQUIRE_DETAILS}
+                    testID={`workbench-connector-${connector.id}`}
+                    title={connector.name}
+                    value={connectorRowValue(connector)}
+                    valueTone={connector.status === 'error' ? 'danger' : undefined}
+                  >
+                    <SettingsRow
+                      action="Connect"
+                      disabled={!canConnect}
+                      onPress={
+                        canConnect
+                          ? () =>
+                              router.push({
+                                pathname: '/beeline/settings/workbench/connect',
+                                params: { workspaceId, viewerId, connectorId: connector.id },
+                              } as unknown as Href)
+                          : undefined
+                      }
+                      testID={`workbench-connector-${connector.id}-connect`}
+                      title={`Connect ${connector.name}`}
+                      tone="action"
+                    />
+                  </ToolDetailsCell>
+                );
+              }
               return (
                 <ToolDetailsCell
                   key={connector.id}
@@ -149,7 +199,7 @@ export default function WorkbenchScreen() {
               <SettingsRow
                 key={connector.id}
                 description={connectorDescription(connector)}
-                disabled={!connector.available || connector.status === 'connected'}
+                disabled={!connector.available || connector.status === 'connected' || connector.status === 'installing'}
                 onPress={
                   connector.available && connector.status !== 'connected'
                     ? () =>

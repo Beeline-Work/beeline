@@ -1745,6 +1745,36 @@ export default function BuzzChat() {
   const userScrolledAtRef = useRef(0);
   // Viewport height from the last scroll event, for the tail-gap verdict.
   const viewportHeightRef = useRef(0);
+  useEffect(() => {
+    if (!desktopTranscript) return;
+    const scrollNode = flatListRef.current?.getScrollableNode() as
+      | {
+          addEventListener?: (
+            type: string,
+            listener: () => void,
+            options?: { passive?: boolean },
+          ) => void;
+          removeEventListener?: (type: string, listener: () => void) => void;
+        }
+      | null
+      | undefined;
+    if (!scrollNode?.addEventListener || !scrollNode.removeEventListener) return;
+    const disarmDesktopTailFollow = () => {
+      userScrolledAtRef.current = Date.now();
+      desktopTailLandingsRef.current = 0;
+      desktopTailStableSinceRef.current = null;
+      if (desktopTailDisarmTimerRef.current !== null) {
+        clearTimeout(desktopTailDisarmTimerRef.current);
+        desktopTailDisarmTimerRef.current = null;
+      }
+    };
+    scrollNode.addEventListener('wheel', disarmDesktopTailFollow, { passive: true });
+    scrollNode.addEventListener('touchmove', disarmDesktopTailFollow, { passive: true });
+    return () => {
+      scrollNode.removeEventListener?.('wheel', disarmDesktopTailFollow);
+      scrollNode.removeEventListener?.('touchmove', disarmDesktopTailFollow);
+    };
+  }, [desktopTranscript]);
   useEffect(
     () => () => {
       if (desktopTailDisarmTimerRef.current !== null) {
@@ -4073,24 +4103,6 @@ export default function BuzzChat() {
               }
             }}
             scrollEventThrottle={100}
-            onWheel={() => {
-              userScrolledAtRef.current = Date.now();
-              desktopTailLandingsRef.current = 0;
-              desktopTailStableSinceRef.current = null;
-              if (desktopTailDisarmTimerRef.current !== null) {
-                clearTimeout(desktopTailDisarmTimerRef.current);
-                desktopTailDisarmTimerRef.current = null;
-              }
-            }}
-            onTouchMove={() => {
-              userScrolledAtRef.current = Date.now();
-              desktopTailLandingsRef.current = 0;
-              desktopTailStableSinceRef.current = null;
-              if (desktopTailDisarmTimerRef.current !== null) {
-                clearTimeout(desktopTailDisarmTimerRef.current);
-                desktopTailDisarmTimerRef.current = null;
-              }
-            }}
             onScrollBeginDrag={() => {
               userDraggingRef.current = true;
             }}

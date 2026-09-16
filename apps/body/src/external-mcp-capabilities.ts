@@ -6,7 +6,10 @@ import type { AgentAccessPolicy } from './access-policy.js';
 export type ExternalMcpCapability = 'squire-credential-use' | 'squire-app-access';
 
 export const EXTERNAL_MCP_CAPABILITIES = ['squire-credential-use', 'squire-app-access'] as const;
-export const SQUIRE_MCP_VERSION = '1.1.12';
+// `@next` RC line: only the RC coordinates with a running Trusty Squire broker
+// for concurrent sessions; stable `latest` cannot share its browser (captain,
+// 2026-09-16). The vault MCP server an agent spawns must match the broker too.
+export const SQUIRE_MCP_VERSION = 'next';
 export const SQUIRE_MCP_PACKAGE = `@trusty-squire/mcp@${SQUIRE_MCP_VERSION}`;
 
 export function isTrustySquireMcpLaunch(command: string, args: readonly string[] = []): boolean {

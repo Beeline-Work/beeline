@@ -1,5 +1,13 @@
+import { Platform } from 'react-native';
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
-import { boneTheme, obsidianTheme } from './theme';
+import {
+    boneLargeTheme,
+    boneSmallTheme,
+    boneTheme,
+    obsidianLargeTheme,
+    obsidianSmallTheme,
+    obsidianTheme,
+} from './theme';
 import * as SystemUI from 'expo-system-ui';
 import { LAYOUT_BREAKPOINTS } from './utils/layoutClass';
 import type { LocalSettings } from './sync/localSettings';
@@ -7,7 +15,11 @@ import { loadLocalSettings } from './sync/persistence';
 
 const appThemes = {
     obsidian: obsidianTheme,
+    obsidianSmall: obsidianSmallTheme,
+    obsidianLarge: obsidianLargeTheme,
     bone: boneTheme,
+    boneSmall: boneSmallTheme,
+    boneLarge: boneLargeTheme,
 };
 
 const breakpoints = LAYOUT_BREAKPOINTS;
@@ -28,7 +40,18 @@ export function themeNameForAppearance(appearance: LocalSettings['appearance']):
     return appearance === 'light' ? 'bone' : 'obsidian';
 }
 
-const initialThemeName = themeNameForAppearance(loadLocalSettings().appearance);
+export function themeNameForDisplay(
+    appearance: LocalSettings['appearance'],
+    uiSize: LocalSettings['uiSize'],
+    platform: typeof Platform.OS = Platform.OS,
+): AppThemeName {
+    const base = themeNameForAppearance(appearance);
+    if (platform === 'web' || uiSize === 'medium') return base;
+    return `${base}${uiSize === 'small' ? 'Small' : 'Large'}` as AppThemeName;
+}
+
+const initialSettings = loadLocalSettings();
+const initialThemeName = themeNameForDisplay(initialSettings.appearance, initialSettings.uiSize);
 
 StyleSheet.configure({
     settings: {
@@ -50,8 +73,18 @@ applyRootBackground(initialThemeName);
 /** The Settings → Appearance toggle's write path: switches the live Unistyles
  *  theme and carries the native root/system chrome along with it, the same
  *  way cold start does. */
-export function setAppAppearance(appearance: LocalSettings['appearance']): void {
-    const themeName = themeNameForAppearance(appearance);
+export function setAppDisplay(
+    appearance: LocalSettings['appearance'],
+    uiSize: LocalSettings['uiSize'],
+): void {
+    const themeName = themeNameForDisplay(appearance, uiSize);
     UnistylesRuntime.setTheme(themeName);
     applyRootBackground(themeName);
+}
+
+export function setAppAppearance(
+    appearance: LocalSettings['appearance'],
+    uiSize: LocalSettings['uiSize'] = loadLocalSettings().uiSize,
+): void {
+    setAppDisplay(appearance, uiSize);
 }

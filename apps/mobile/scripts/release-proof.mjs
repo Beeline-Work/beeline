@@ -135,9 +135,18 @@ async function acquireLock(device, waitMs = 10 * 60 * 1000) {
     }
     const stale =
       !holder ||
+      // Empty lock file, non-numeric pid, or pid ≤ 0 (impossible for a real process)
+      !Number.isFinite(holder.pid) || holder.pid <= 0 ||
+      // Holder process is provably dead (not EPERM = not alive)
       (!pidAlive(holder.pid) && holder.pid !== process.pid) ||
+      // Lock expired and not held by us
       (holder.ts > 0 && Date.now() - holder.ts > LOCK_STALE_AFTER_MS && holder.pid !== process.pid);
     if (stale) {
+      if (holder && holder.pid && holder.pid > 0 && holder.pid !== process.pid) {
+        console.log(`release-proof: stealing ${path} — previous holder pid ${holder.pid} is dead`);
+      } else {
+        console.log(`release-proof: stealing ${path} — ${!holder ? 'no lock file' : 'invalid or zero pid'}`);
+      }
       writeFileSync(path, `${process.pid} ${Date.now()}\n`);
       return path;
     }
@@ -274,8 +283,10 @@ function ensureBundletool() {
 }
 
 function installArtifact(device, args) {
-  const installed = adbShell(device, 'pm path ' + APP_ID, { allowFailure: true });
-  const alreadyInstalled = installed.ok && installed.stdout.trim().length > 0;
+  // Remove any existing package first so a signature mismatch from a
+  // different keystore does not block a clean install.
+  console.log(`release-proof: removing existing ${APP_ID} (if any)`);
+  adb(device, ['uninstall', APP_ID], { allowFailure: true });
   if (args.apk) {
     console.log(`release-proof: installing ${args.apk}`);
     adb(device, ['install', '-r', '-d', args.apk], { timeout: 10 * 60 * 1000 });

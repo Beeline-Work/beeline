@@ -174,6 +174,10 @@ export type DaemonOperationMap = {
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
   postAgentCommands: Operation<PostAgentCommandsInput, WriteResult>;
   postAgentModelCatalog: Operation<PostAgentModelCatalogInput, WriteResult>;
+  postAgentMachineReport: Operation<
+    { readonly machineId: string; readonly machineName: string },
+    WriteResult
+  >;
   postCornerLifecycle: Operation<PostCornerLifecycleInput, WriteResult>;
   postCornerRemoteState: Operation<PostCornerRemoteStateInput, WriteResult>;
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;

@@ -654,4 +654,31 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     expect(paired.connectorId).toBeTruthy();
     expect(paired.status.status).toBe('installing');
   });
+
+  it('daemon machine report updates a legacy agent and collapses into one machine row', async () => {
+    // Register two legacy agents without machine_id — they appear as two machines.
+    await registerAgent(AGENT_A, 'Charles');
+    await registerAgent(AGENT_B, 'Codex');
+
+    let result = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(result.helpers).toHaveLength(2);
+    expect(result.helpers[0]!.id).toBe(AGENT_A);
+    expect(result.helpers[1]!.id).toBe(AGENT_B);
+
+    // Simulate the daemon reporting machine_id for both agents (same machine).
+    await database.query(
+      `UPDATE agents SET machine_id=$2,machine_name=$3,updated_at=now() WHERE agent_id=$1`,
+      [AGENT_A, MACHINE_X, 'squire-box'],
+    );
+    await database.query(
+      `UPDATE agents SET machine_id=$2,machine_name=$3,updated_at=now() WHERE agent_id=$1`,
+      [AGENT_B, MACHINE_X, 'squire-box'],
+    );
+
+    // After the report, both agents collapse into one machine row.
+    result = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(result.helpers).toHaveLength(1);
+    expect(result.helpers[0]!.id).toBe(MACHINE_X);
+    expect(result.helpers[0]!.name).toBe('squire-box');
+  });
 });

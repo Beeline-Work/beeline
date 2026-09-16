@@ -203,30 +203,44 @@ runs:
         # Assert that both Fly Machines report the same image name.
         verify_machine_convergence() {
           local expected_image="$1"
-          local machines_json="$RUNNER_TEMP/server-release/machines-verify.json"
-          flyctl machine list --app beeline-server --json > "$machines_json"
-          local images
-          images="$(node -e '
-            const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-            for (const m of machines) {
-              const image = m.imageRef || m.config?.image || "unknown";
-              process.stdout.write(m.id + "=" + image + "\n");
-            }
-          ' "$machines_json")"
-          echo "Current machine images:"
-          echo "$images"
-          local divergent=false
-          while IFS='=' read -r mid mimage; do
-            if [ "$mimage" != "$expected_image" ]; then
-              echo "Machine $mid: expected $expected_image, found $mimage" >&2
-              divergent=true
-            fi
-          done <<< "$images"
-          if [ "$divergent" = true ]; then
-            echo "FLEET SPLIT: machines are not all on the expected image $expected_image" >&2
-            return 1
+          local max_wait="${2:-0}"
+          local deadline=0
+          if [ "$max_wait" -gt 0 ]; then
+            deadline=$((SECONDS + max_wait))
           fi
-          echo "Fleet converged on $expected_image"
+          while true; do
+            local machines_json="$RUNNER_TEMP/server-release/machines-verify.json"
+            flyctl machine list --app beeline-server --json > "$machines_json"
+            local images
+            images="$(node -e '
+              const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+              for (const m of machines) {
+                const image = m.imageRef || m.config?.image || "unknown";
+                process.stdout.write(m.id + "=" + image + "\n");
+              }
+            ' "$machines_json")"
+            echo "Current machine images:"
+            echo "$images"
+            local divergent=false
+            while IFS='=' read -r mid mimage; do
+              if [ "$mimage" != "$expected_image" ]; then
+                echo "Machine $mid: expected $expected_image, found $mimage" >&2
+                divergent=true
+              fi
+            done <<< "$images"
+            if [ "$divergent" != true ]; then
+              echo "Fleet converged on $expected_image"
+              return 0
+            fi
+            if [ "$deadline" -eq 0 ] || [ "$SECONDS" -ge "$deadline" ]; then
+              echo "FLEET SPLIT: machines are not all on the expected image $expected_image" >&2
+              return 1
+            fi
+            local remaining=$((deadline - SECONDS))
+            local sleep_for=$((remaining < 10 ? remaining : 10))
+            echo "Machines not yet converged, retrying in ${sleep_for}s (up to ${remaining}s left)" >&2
+            sleep "$sleep_for"
+          done
         }
 
         rollback_canary() {
@@ -384,7 +398,8 @@ runs:
         fleet_updated=1
         trap - ERR
         # Final assertion: prove both machines are on the target image.
-        verify_machine_convergence "$image_ref"
+        # Poll for up to 180s to let a mid-update machine finish converging.
+        verify_machine_convergence "$image_ref" 180
         node scripts/unified-release.mjs server-ledger --plan "$plan" \
           --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state deployed --output "$ledger"
       env:

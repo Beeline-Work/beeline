@@ -5,11 +5,25 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   platformOS: { value: 'android' as string },
+  safeAreaTop: { value: 42 },
   fetchArtifactBytes: vi.fn(),
   fetchArtifactText: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
   artifactPdfLocalUri: vi.fn(),
   onClose: vi.fn(),
+}));
+
+// Shared between the StyleSheet.create factory and useUnistyles so the test
+// can assert against the same spacing the header reads.
+const theme = vi.hoisted(() => ({
+  buzz: {
+    border: '#333',
+    bgBase: '#111',
+    textPrimary: '#eee',
+    ledgerQuiet: '#777',
+    space: { sm: 8, md: 12 },
+    type: { body: {}, bodyStrong: {}, meta: {} },
+  },
 }));
 
 vi.mock('react-native', async () => {
@@ -35,18 +49,12 @@ vi.mock('react-native-webview', () => ({
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: (theme: unknown) => unknown) =>
-      factory({
-        buzz: {
-          border: '#333',
-          bgBase: '#111',
-          textPrimary: '#eee',
-          ledgerQuiet: '#777',
-          space: { sm: 8, md: 12 },
-          type: { body: {}, bodyStrong: {}, meta: {} },
-        },
-      }),
+    create: (factory: (theme: unknown) => unknown) => factory({ buzz: theme.buzz }),
   },
+  useUnistyles: () => ({ theme }),
+}));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: mocks.safeAreaTop.value, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock('@/buzz/artifact-link', () => ({
   artifactPdfLocalUri: mocks.artifactPdfLocalUri,
@@ -58,6 +66,7 @@ vi.mock('@/components/buzz/MonoMarkdown', () => ({
   MonoMarkdown: (props: Record<string, unknown>) => React.createElement('MonoMarkdown', props, null),
 }));
 
+import { ARTIFACT_DEFAULT_CANVAS } from '@/buzz/artifact';
 import { ArtifactViewerSandbox, ArtifactViewerScreen } from './ArtifactViewer';
 
 const originalConsoleError = console.error;
@@ -121,6 +130,38 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
       renderer.root.findByProps({ testID: 'artifact-viewer-close' }).props.onPress();
     });
     expect(mocks.onClose).toHaveBeenCalled();
+  });
+
+  it('the header clears the Android status tray: top inset over its own spacing', async () => {
+    mocks.safeAreaTop.value = 42;
+    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html><body></body></html>'));
+    const renderer = render(<ArtifactViewerScreen attachment={attachment()} onClose={mocks.onClose} />);
+    await flush();
+    // The header row is the parent of the ✕ control that closes the viewer.
+    const header = renderer.root.findByProps({ testID: 'artifact-viewer-close' }).parent;
+    const resolved = Object.assign(
+      {},
+      ...[header.props.style].flat(Infinity).filter(Boolean),
+    ) as Record<string, unknown>;
+    expect(resolved.paddingTop).toBe(mocks.safeAreaTop.value + theme.buzz.space.md);
+    mocks.safeAreaTop.value = 0;
+  });
+
+  it('renders an SVG attachment on the browser-default canvas in the sandbox', async () => {
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>'),
+    );
+    const renderer = render(
+      <ArtifactViewerScreen
+        attachment={attachment({ mimeType: 'image/svg+xml', name: 'mark.svg' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    const html = (renderer.root.findByType('WebView').props.source as { html: string }).html;
+    expect(html).toContain(ARTIFACT_DEFAULT_CANVAS);
+    // The transparent-page regression painted the SVG over the app ink plate.
+    expect(html.includes('background:transparent')).toBe(false);
   });
 
   it('every navigation after the initial load is denied', async () => {

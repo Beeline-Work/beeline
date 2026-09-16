@@ -34,13 +34,22 @@ export const ARTIFACT_MAX_PREVIEW_HEIGHT = 220;
  */
 export const ARTIFACT_DEFAULT_CANVAS = '<style>html{background:#ffffff}body{color:#111111}</style>';
 
-/** SVG bytes are wrapped in a minimal HTML document so the same sandbox renders them. */
+/**
+ * SVG bytes are wrapped in a minimal HTML document so the same sandbox
+ * renders them. The wrapper carries the browser-default canvas exactly like
+ * the HTML branch does: an SVG's default paint is black, and on a transparent
+ * page that black lands on the app's ink plate — invisible in Obsidian, so
+ * the whole viewer reads as a blank page. White canvas, then the centered
+ * fit; the sheet comes after the canvas, and an SVG's own painted background
+ * covers both.
+ */
 export function wrapArtifactMarkup(documentText: string, format: 'html' | 'svg'): string {
   if (format === 'html') return injectDefaultCanvas(injectCspMeta(documentText));
   return [
     '<!doctype html><html><head>',
     `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`,
-    '<style>html,body{margin:0;padding:0;background:transparent;display:flex;align-items:center;justify-content:center;height:100%}svg{max-width:100%;max-height:100%}</style>',
+    ARTIFACT_DEFAULT_CANVAS,
+    '<style>html,body{margin:0;padding:0;height:100%}body{display:flex;align-items:center;justify-content:center;background:#ffffff}svg{max-width:100%;max-height:100%}</style>',
     '</head><body>',
     documentText,
     '</body></html>',

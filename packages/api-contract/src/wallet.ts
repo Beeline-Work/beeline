@@ -72,6 +72,10 @@ export function walletExplorerTxUrl(chain: WalletChainId, txId: string): string 
 export type WalletCoinView = {
   readonly symbol: string;
   readonly name: string;
+  /** The chain this holding lives on. Optional: the server's balance read
+   *  does not yet attribute holdings to chains, so the wallet dashboard
+   *  renders the chain badge only when the source supplies it. */
+  readonly chain?: WalletChainId;
   /** Human-readable decimal amount, e.g. "392.60". */
   readonly amount: string;
   /** Human-readable USD value of the holding, e.g. "$392.60". */
@@ -187,6 +191,14 @@ export type WalletWorkspaceInput = { readonly workspaceId: string };
 export type ReadWalletInput = WalletWorkspaceInput;
 export type CreateWalletInput = WalletWorkspaceInput;
 export type SendFromWalletInput = WalletWorkspaceInput & WalletSendInput;
+
+export type ReadWalletHistoryInput = WalletWorkspaceInput & {
+  /** Max entries returned, 1–100, default 20. */
+  readonly limit?: number;
+};
+export type WalletHistoryResult = {
+  readonly entries: readonly WalletLedgerEntry[];
+};
 
 // --- Daemon operations (the agent's tools) ---------------------------------------
 

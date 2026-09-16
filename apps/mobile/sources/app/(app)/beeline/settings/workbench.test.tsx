@@ -38,6 +38,17 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
   };
 });
 
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/components/buzz/ToolDetailsCell', async () => {
+  const ReactModule = await import('react');
+  return {
+    ToolDetailsCell: (props: any) => ReactModule.createElement('ToolDetailsCell', props, props.children),
+  };
+});
+
 import WorkbenchScreen from './workbench';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -82,11 +93,16 @@ describe('Workbench settings screen', () => {
     expect(squire.props.value).toBe('connect');
     expect(squire.props.disabled).toBe(false);
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet' });
-    // The wallet is not a pairing flow: the row IS the intent (mock §Screens 1).
-    expect(wallet.props.value).toBeUndefined();
-    expect(wallet.props.action).toBe('create');
-    expect(wallet.props.disabled).toBe(false);
-    expect(wallet.props.onPress).toBeTypeOf('function');
+    // The wallet row is the one EXPANDABLE tool cell: the value column stays
+    // the row's state, and the Connect affordance lives inside the expansion.
+    expect(wallet.props.value).toBe('soon');
+    expect(wallet.props.children).toBeTruthy();
+    const connect = renderer.root.findByProps({
+      testID: 'workbench-connector-wallet-connect',
+    });
+    expect(connect.props.title).toBe('Connect Coinbase Wallet');
+    // A `soon` connector does not act yet: the affordance is present, inert.
+    expect(connect.props.onPress).toBeUndefined();
     expect(
       renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.value,
     ).toBe('soon');

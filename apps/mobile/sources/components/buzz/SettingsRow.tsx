@@ -25,7 +25,7 @@ type SettingsRowProps = {
   /** A single action word on the trailing axis. Excludes `value`. */
   action?: string;
   /** The trailing chevron of a row that opens something. */
-  chevron?: 'right' | 'down';
+  chevron?: 'right' | 'down' | 'up';
   /** The quiet line under the title. A full sentence wraps here rather than
    *  ellipsizing beside the title, exactly as the sheet row's does. */
   description?: string;
@@ -156,7 +156,7 @@ export function SettingsRow({
       {trailing}
       {chevron ? (
         <Text accessibilityElementsHidden style={styles.chevron}>
-          {chevron === 'down' ? '⌄' : '›'}
+          {chevron === 'down' ? '⌄' : chevron === 'up' ? '⌃' : '›'}
         </Text>
       ) : null}
     </>

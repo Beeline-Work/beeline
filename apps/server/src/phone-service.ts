@@ -5451,7 +5451,14 @@ export class PhoneService {
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps
        ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
-       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO NOTHING`,
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+       SET helper_agent_id=EXCLUDED.helper_agent_id,
+           status='installing',
+           status_steps=EXCLUDED.status_steps,
+           status_error=NULL,
+           pending_ops='[]'::jsonb,
+           connected_at=NULL,
+           updated_at=now()`,
       [
         id,
         ws.workspace_id,
@@ -5462,6 +5469,13 @@ export class PhoneService {
         JSON.stringify(defaultConnectorSteps()),
       ],
     );
+    // A conflicting row (a previous pairing of the same connector on the same
+    // machine — a stale disconnected row, or a connected one being re-paired)
+    // is re-armed above exactly like a fresh insert: the mobile poll sees
+    // `installing` with default steps again, and the helper daemon — which
+    // derives its assignments from `status` AND `helper_agent_id` — receives
+    // the install on its next poll even when the conflict row carried a
+    // different agent of the same machine or a leftover `uninstall` op.
     const existing =
       (
         await this.database.query<{

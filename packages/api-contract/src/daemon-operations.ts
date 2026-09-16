@@ -600,7 +600,8 @@ export type ConnectorStep = {
   readonly reason?: string;
   /** The CLI command this step runs, when the helper reports one. */
   readonly command?: string;
-  /** The command's captured output so far (truncated by the helper). */
+  /** Bounded tail of the step's captured output (CLI/tool logs), streamed
+   *  while the step runs so a hang is visible on the phone. */
   readonly output?: string;
 };
 
@@ -749,11 +750,15 @@ export type ConnectionGrantRevokeResult = {
   readonly failed: number;
 };
 
-/** Connector types the Workbench can provision (phase 1: Trusty Squire). */
+/** Connector types the Workbench can provision. */
 export type ConnectorKind =
   | 'trusty-squire'
   | 'wallet'
-  | 'tailscale';
+  | 'tailscale'
+  | 'google-gmail'
+  | 'google-calendar'
+  | 'google-drive'
+  | 'google-youtube';
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =

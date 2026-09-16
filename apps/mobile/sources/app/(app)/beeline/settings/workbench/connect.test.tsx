@@ -29,6 +29,22 @@ vi.mock('react-native', async () => {
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
     ActivityIndicator: host('ActivityIndicator'),
+    Animated: {
+      View: host('Animated.View'),
+      Text: host('Animated.Text'),
+      Value: class {
+        value = 1;
+        setValue(v: number) {
+          this.value = v;
+        }
+        interpolate() {
+          return {};
+        }
+      },
+      loop: () => ({ start: () => {}, stop: () => {} }),
+      sequence: (...args: unknown[]) => args,
+      timing: () => ({ start: () => {}, stop: () => {} }),
+    },
   };
 });
 

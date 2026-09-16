@@ -33,6 +33,10 @@ describe('mock Workbench source', () => {
       ['trusty-squire', true],
       ['wallet', false],
       ['tailscale', false],
+      ['google-gmail', true],
+      ['google-calendar', true],
+      ['google-drive', true],
+      ['google-youtube', true],
     ]);
   });
 

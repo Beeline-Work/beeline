@@ -159,10 +159,19 @@ vi.mock('@/components/buzz/AppearanceSetting', async () => {
       }),
   };
 });
+vi.mock('@/components/buzz/UiSizeSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    UiSizeSetting: (props: unknown) =>
+      ReactModule.createElement('UiSizeSetting', { ...(props as object), testID: 'ui-size-setting' }),
+  };
+});
 // Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
 // which this screen's own tests exercise or mock elsewhere.
-vi.mock('@/unistyles', () => ({ setAppAppearance: vi.fn() }));
-vi.mock('@/sync/storage', () => ({ useLocalSettingMutable: () => ['dark', vi.fn()] }));
+vi.mock('@/unistyles', () => ({ setAppDisplay: vi.fn() }));
+vi.mock('@/sync/storage', () => ({
+  useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
+}));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
 vi.mock('@/push/push-level-storage', () => ({
   saveStoredPushLevel: vi.fn(async () => undefined),

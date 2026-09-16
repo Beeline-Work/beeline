@@ -156,10 +156,16 @@ vi.mock('@/components/buzz/AppearanceSetting', async () => {
     AppearanceSetting: (props: unknown) => ReactModule.createElement('AppearanceSetting', props),
   };
 });
+vi.mock('@/components/buzz/UiSizeSetting', async () => {
+  const ReactModule = await import('react');
+  return { UiSizeSetting: (props: unknown) => ReactModule.createElement('UiSizeSetting', props) };
+});
 // Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
 // which this screen's own tests exercise or mock elsewhere.
-vi.mock('@/unistyles', () => ({ setAppAppearance: vi.fn() }));
-vi.mock('@/sync/storage', () => ({ useLocalSettingMutable: () => ['dark', vi.fn()] }));
+vi.mock('@/unistyles', () => ({ setAppDisplay: vi.fn() }));
+vi.mock('@/sync/storage', () => ({
+  useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
+}));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);

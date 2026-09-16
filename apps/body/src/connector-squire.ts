@@ -39,8 +39,14 @@ export interface SquireMcpClient {
   call(tool: string, args?: Record<string, unknown>): Promise<unknown>;
 }
 
-/** Where Squire installs the agent's own sign-in surface. */
-export const SQUIRE_CONNECT_PACKAGE = '@trusty-squire/mcp';
+/**
+ * Where Squire installs the agent's own sign-in surface. Pinned to the `@next`
+ * RC line: only the RC coordinates with a running Trusty Squire broker for
+ * CONCURRENT sessions (captain, 2026-09-16). Stable `latest` cannot share the
+ * broker's browser, so `connect` dies with "another session is already using
+ * the browser" on any helper that already runs a broker.
+ */
+export const SQUIRE_CONNECT_PACKAGE = '@trusty-squire/mcp@next';
 
 export type ShellRunner = (
   command: string,

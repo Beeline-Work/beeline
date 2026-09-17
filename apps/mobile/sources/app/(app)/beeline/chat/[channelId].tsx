@@ -2604,238 +2604,92 @@ export default function BuzzChat() {
       await activeOutbox.attempted(preparedEvent.id);
       const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
       if (
-        sendInFlightRef.current ||
-        (!rawText && activePendingAttachments.length === 0) ||
-        isArchived
-      )
-        return;
-      // The daemon already refuses corner-open on a repo-less Room; this is the
-      // friendly client-side path — catch the common phrasing before the
-      // message is sent (and the composer text lost) rather than after a
-      // doomed round-trip.
-      if (
-        !isCorner &&
-        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
-        looksLikeCornerOpenIntent(rawText)
+        isCorner &&
+        activeAgentTurn &&
+        writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
       ) {
-        setCornerOpenRepoPrompt(true);
-        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
-          void transport
-            .workspaceGitHubAccess({ refresh: true })
-            .then((access) => {
-              setRoomRepoCandidates(access.candidates);
-              setGitHubInstallations(access.installations);
-            })
-            .catch(() => undefined);
-        }
-        return;
-      }
-      const preparedReply = activeReplyTarget
-        ? prepareMessageReply(rawText, activeReplyTarget)
-        : undefined;
-      const text = preparedReply?.text ?? rawText;
-      const mentionedPubkeys = resolveComposerMentions(
-        text,
-        roomParticipants,
-        shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
-      ).pubkeys;
-      const selectedMentionedAgent = shortcut
-        ? undefined
-        : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
-      const mentionedAgent =
-        selectedMentionedAgent ??
-        preparedReply?.agentPubkey ??
-        mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
-        mentionedAgentPubkey(text, roomAgents);
-      // Resolve before attachment upload or cold transport creation so the ack
-      // cannot wait on either. A corner (one agent, always addressed) or a
-      // two-party Room (the sole other participant may speak naturally, per the
-      // addressing rule) counts too.
-      const addressesAgent =
-        isCorner ||
-        Boolean(mentionedAgent) ||
-        (roomAgents.length === 1 && roomParticipants.length <= 2);
-      setReceivedSteer(null);
-      setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
-
-      sendInFlightRef.current = true;
-      setSending(true);
-      if (desktopExperience) setDesktopDeliveryState('sending');
-      let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
-      let preparedTransport: BuzzRigTransport | undefined;
-      try {
-        // A warm/partial snapshot can paint before the hydration effect has
-        // published its transport state. Sending is still a valid operation:
-        // construct the monolith transport on demand rather than
-        // leaving the enabled send control as a silent no-op.
-        let sendTransport = transport;
-        if (!sendTransport) {
-          const identity = await loadBuzzIdentity();
-          if (!identity) throw new Error('Beeline identity is unavailable');
-          sendTransport = new BuzzRigTransport(identity);
-        }
-        if (!transport) setSessionTransport(sendTransport);
-        preparedTransport = sendTransport;
-        const attachments = await uploadChatAttachments(
-          await sendTransport.ensureClient(),
-          activePendingAttachments,
-        );
-        // Sign before append. The authoritative event id is the optimistic row
-        // identity and the durable outbox key from its first frame onward.
-        preparedEvent = preparedReply?.reference
-          ? await sendTransport.composeReplyMessage(
-              text,
-              preparedReply.reference,
-              mentionedAgent,
-              attachments,
-              mentionedPubkeys,
-            )
-          : await sendTransport.composeMessage(
-              { sessionId: decodedId, text, attachments },
-              mentionedAgent || mentionedPubkeys.length
-                ? {
-                    ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
-                    ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-                  }
-                : undefined,
-            );
-        if (addressesAgent) {
-          setPendingAck((current) =>
-            current ? { ...current, requestId: preparedEvent!.id } : current,
-          );
-        }
-        const optimistic = {
-          id: preparedEvent.id,
-          text,
-          isUser: true,
-          timestamp: preparedEvent.created_at,
-          authorIdentity: roomSurface?.viewer.identity ?? {
-            pubkey: userPubkey,
-            kind: 'human',
-            name: 'You',
-          },
-          pubkey: userPubkey,
-          reference: undefined,
-          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-          ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
-          ...(attachments.length ? { attachments } : {}),
-        } satisfies ChatDisplayMessage;
-        const activeOutbox = outbox.current();
-        if (!activeOutbox) throw new Error('Message outbox is unavailable');
-        await activeOutbox.enqueue(preparedEvent, {
-          id: preparedEvent.id,
-          text,
-          createdAt: preparedEvent.created_at,
-          author: roomSurface?.viewer.identity ?? {
-            pubkey: userPubkey,
-            kind: 'human',
-            name: 'You',
-          },
-          presentation: 'message',
-          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-          ...(attachments.length ? { attachments } : {}),
+        setReceivedSteer({
+          agentPubkey: activeAgentTurn.agentPubkey,
+          turnRequestId: activeAgentTurn.requestId,
+          receivedAt: Date.now(),
         });
-        addMessages([optimistic]);
-        if (!shortcut) {
-          inputTextRef.current = '';
-          setInputText('');
-          setComposerHeight(COMPOSER_MIN_HEIGHT);
-          setInputSelection({ start: 0, end: 0 });
-          setPendingAttachments([]);
-          setReplyTarget(null);
-          if (desktopExperience) void saveDesktopDraft(decodedId, '');
-        }
-        await activeOutbox.attempted(preparedEvent.id);
-        const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
-        if (
-          isCorner &&
-          activeAgentTurn &&
-          writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
-        ) {
-          setReceivedSteer({
-            agentPubkey: activeAgentTurn.agentPubkey,
-            turnRequestId: activeAgentTurn.requestId,
-            receivedAt: Date.now(),
-          });
-        }
-        if (desktopExperience) setDesktopDeliveryState('delivered');
-        // The write ack retires the local bridge: the server has STORED the
-        // message, so "sending…" has nothing left to bridge. It used to outlive
-        // the write by up to the whole first-token wait (tens of seconds) or
-        // its own 15s bound, whichever was longer. The claimed turn's WORKING
-        // receipt lights `thinking` on its own, and this ack must not sit
-        // between them.
-        const ackedRequestId = preparedEvent.id;
-        setPendingAck((current) =>
-          current && (current.requestId === undefined || current.requestId === ackedRequestId)
-            ? null
-            : current,
-        );
-        // Advance the read mark to our own message immediately: a message we
-        // wrote must never gold the Room list while the deck's working
-        // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
-        void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
-        refreshSignal.signal();
-        scheduleOutboxConfirmation(preparedEvent.id);
-      } catch (err) {
-        console.warn('Send failed:', err);
-        if (desktopExperience) setDesktopDeliveryState('failed');
-        // A publish failure already gets its own explicit modal below; the
-        // local ack has nothing left to guess at and must not keep buzzing.
-        setPendingAck(null);
-        if (preparedEvent) await markOutboxFailed(preparedEvent.id);
-        const failure = publishFailurePresentation(err);
-        Modal.alert(
-          'Message not sent',
-          failure.message,
-          failure.retryable
-            ? [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Retry',
-                  onPress: () => {
-                    if (!preparedEvent || !preparedTransport) return;
-                    retryOutboxMessage(preparedEvent.id, preparedTransport);
-                  },
-                },
-              ]
-            : [{ text: 'OK' }],
-        );
-      } finally {
-        sendInFlightRef.current = false;
-        setSending(false);
       }
-    },
-    [
-      activeCommunityId,
-      pendingAttachments,
-      transport,
-      decodedId,
-      addMessages,
-      isArchived,
-      isCorner,
-      activeAgentTurn,
-      userPubkey,
-      parentChannelId,
-      roomParticipants,
-      roomAgents,
-      cacheViewerPubkey,
-      replyTarget,
-      agentsOffline,
-      roomRepoCandidates.length,
-      roomRepository,
-      cornerAgentPubkey,
-      agentPresences,
-      presenceNow,
-      presenceResolved,
-      presenceReconnectGrace,
-      agentByPubkey,
-      roomRepositoryResolved,
-      roomRepoAccessIssue,
-      roomSurface,
-      desktopExperience,
-    ],
-  );
+      if (desktopExperience) setDesktopDeliveryState('delivered');
+      // The write ack retires the local bridge: the server has STORED the
+      // message, so "sending…" has nothing left to bridge. It used to outlive
+      // the write by up to the whole first-token wait (tens of seconds) or
+      // its own 15s bound, whichever was longer. The claimed turn's WORKING
+      // receipt lights `thinking` on its own, and this ack must not sit
+      // between them.
+      const ackedRequestId = preparedEvent.id;
+      setPendingAck((current) =>
+        current && (current.requestId === undefined || current.requestId === ackedRequestId)
+          ? null
+          : current,
+      );
+      // Advance the read mark to our own message immediately: a message we
+      // wrote must never gold the Room list while the deck's working
+      // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
+      void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
+      refreshSignal.signal();
+      scheduleOutboxConfirmation(preparedEvent.id);
+    } catch (err) {
+      console.warn('Send failed:', err);
+      if (desktopExperience) setDesktopDeliveryState('failed');
+      // A publish failure already gets its own explicit modal below; the
+      // local ack has nothing left to guess at and must not keep buzzing.
+      setPendingAck(null);
+      if (preparedEvent) await markOutboxFailed(preparedEvent.id);
+      const failure = publishFailurePresentation(err);
+      Modal.alert(
+        'Message not sent',
+        failure.message,
+        failure.retryable
+          ? [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Retry',
+                onPress: () => {
+                  if (!preparedEvent || !preparedTransport) return;
+                  retryOutboxMessage(preparedEvent.id, preparedTransport);
+                },
+              },
+            ]
+          : [{ text: 'OK' }],
+      );
+    } finally {
+      sendInFlightRef.current = false;
+      setSending(false);
+    }
+  }, [
+    activeCommunityId,
+    pendingAttachments,
+    transport,
+    decodedId,
+    addMessages,
+    isArchived,
+    isCorner,
+    activeAgentTurn,
+    userPubkey,
+    parentChannelId,
+    roomParticipants,
+    roomAgents,
+    cacheViewerPubkey,
+    replyTarget,
+    agentsOffline,
+    roomRepoCandidates.length,
+    roomRepository,
+    cornerAgentPubkey,
+    agentPresences,
+    presenceNow,
+    presenceResolved,
+    presenceReconnectGrace,
+    agentByPubkey,
+    roomRepositoryResolved,
+    roomRepoAccessIssue,
+    roomSurface,
+    desktopExperience,
+  ]);
 
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {

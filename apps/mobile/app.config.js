@@ -67,7 +67,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "26",
+            runtimeVersion: runtimeVersionOverride || "25",
             icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -98,7 +98,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "25",
+            runtimeVersion: runtimeVersionOverride || "24",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",

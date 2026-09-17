@@ -33,15 +33,7 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // runtime. Turning it off removes only the iOS@23 compatibility target.
 export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 
-// Publish android@24 alongside android@25: the current Google Play store
-// binary pins runtime 24, and #1228 moved the android pin 24→25 with no
-// compatibility target, silently stranding every runtime-24 Play install
-// (no OTA update has reached them since). Captain-directed temporary
-// coverage (2026-09-17); retire it when the Play track ships a runtime-25
-// binary.
-export const PUBLISH_ANDROID_RUNTIME_24_DURING_PUSH_ROLLOUT = true;
-
-// Publish android@23 alongside android@25 until the captain's runtime-23
+// Publish android@23 alongside android@24 until the captain's runtime-23
 // device adopts a newer store binary. Mirror of the iOS@23 compat target.
 export const PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 
@@ -52,17 +44,13 @@ function targetKey(target) {
 // Current runtimes come from the same resolved Expo config that EAS reads.
 // The compatibility runtimes are the exceptional, explicitly temporary
 // targets. Keep this list ordered so the release log is deterministic.
-export function releaseUpdateTargets(
-  projectDir = process.cwd(),
-  publishAndroidRuntime24 = PUBLISH_ANDROID_RUNTIME_24_DURING_PUSH_ROLLOUT,
-) {
+export function releaseUpdateTargets(projectDir = process.cwd()) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
   }
   const pins = readPinnedRuntimeVersion(projectDir);
   const targets = [
     { platform: 'android', runtimeVersion: pins.android },
-    ...(publishAndroidRuntime24 ? [{ platform: 'android', runtimeVersion: '24' }] : []),
     ...(PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT
       ? [{ platform: 'android', runtimeVersion: '23' }]
       : []),

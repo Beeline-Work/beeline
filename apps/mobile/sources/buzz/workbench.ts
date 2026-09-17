@@ -22,11 +22,9 @@ export type WorkbenchConnectorId =
 
 /** True for the Google Workspace tool connectors — the four tools behind the
  * ONE Google connect entry (`googleEntryConnector`). */
-export function isGoogleToolConnectorId(id: string): id is
-  | 'google-gmail'
-  | 'google-calendar'
-  | 'google-drive'
-  | 'google-youtube' {
+export function isGoogleToolConnectorId(
+  id: string,
+): id is 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' {
   return id.startsWith('google-');
 }
 
@@ -39,6 +37,8 @@ export type WorkbenchConnector = {
   /** `soon` connectors are listed for the section's shape and never act. */
   available: boolean;
   status?: WorkbenchConnectorStatus;
+  /** The helper's exact failure text. Recovery reuses Connect. */
+  errorMessage?: string;
   /** When connected: helper name, agent count and sign-in email. */
   helperName?: string;
   agentCount?: number;
@@ -78,8 +78,9 @@ export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
   'trusty-squire':
     'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
   wallet:
-    'With Coinbase\'s non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana—with free transaction fees on Base.',
-  tailscale: 'Allows the machines in your B-Line network to connect to each other to form a tailnet.',
+    "With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana—with free transaction fees on Base.",
+  tailscale:
+    'Allows the machines in your B-Line network to connect to each other to form a tailnet.',
   'google-gmail': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
   'google-calendar': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
   'google-drive': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
@@ -96,7 +97,7 @@ export type ConnectorInstrument = {
   /** The state dot beside the word, when the state has one. */
   glyph?: 'live' | 'pulse' | 'failed';
   valueTone?: 'danger' | 'accent';
-  /** The row carries its one compact Connect button. */
+  /** The row carries its one Connect action. */
   connect: boolean;
 };
 
@@ -111,7 +112,7 @@ export function connectorInstrument(
     case 'installing':
       return { value: 'installing', glyph: 'pulse', valueTone: 'accent', connect: false };
     case 'error':
-      return { value: 'error', glyph: 'failed', valueTone: 'danger', connect: false };
+      return { connect: true };
     case 'soon':
       return { value: 'soon', connect: false };
     default:
@@ -130,10 +131,7 @@ export const GOOGLE_ENTRY_ID = 'google';
 
 /** Canonical order of the tool entries the single Google entry folds. */
 export const GOOGLE_CONNECTOR_ORDER: readonly (
-  | 'google-gmail'
-  | 'google-calendar'
-  | 'google-drive'
-  | 'google-youtube'
+  'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube'
 )[] = ['google-gmail', 'google-calendar', 'google-drive', 'google-youtube'];
 
 type GoogleToolId = (typeof GOOGLE_CONNECTOR_ORDER)[number];
@@ -152,9 +150,7 @@ function googleEntryTools(
  * none connected → `connect`. */
 export type GoogleEntryState = 'connected' | 'installing' | 'error' | 'repair' | 'connect';
 
-export function googleEntryState(
-  connectors: readonly WorkbenchConnector[],
-): GoogleEntryState {
+export function googleEntryState(connectors: readonly WorkbenchConnector[]): GoogleEntryState {
   const tools = googleEntryTools(connectors);
   if (tools.length && tools.every((tool) => tool.status === 'connected')) return 'connected';
   if (tools.some((tool) => tool.status === 'installing')) return 'installing';
@@ -173,6 +169,7 @@ export function googleEntryConnector(
   if (!tools.length) return undefined;
   const state = googleEntryState(connectors);
   const connected = tools.find((tool) => tool.status === 'connected');
+  const failed = tools.find((tool) => tool.status === 'error');
   return {
     id: GOOGLE_ENTRY_ID,
     name: 'Google Workspace',
@@ -189,6 +186,7 @@ export function googleEntryConnector(
     helperName: connected?.helperName,
     agentCount: connected?.agentCount,
     signedInAs: connected?.signedInAs,
+    ...(failed?.errorMessage ? { errorMessage: failed.errorMessage } : {}),
   };
 }
 

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getWorkbenchSource, setWorkbenchSource, MonolithWorkbenchSource } from './workbench-source';
+import {
+  getWorkbenchSource,
+  setWorkbenchSource,
+  MonolithWorkbenchSource,
+} from './workbench-source';
 import { MockWorkbenchSource } from './workbench-source.mock';
 import { connectionsForViewer } from './workbench';
 
@@ -18,10 +22,12 @@ const fakeServer = vi.hoisted(() => {
         connectorId: string;
         status: string;
         helperName: string;
+        errorMessage?: string;
         steps: { label: string; status: string }[];
         signIn: { method: string; url: string } | null;
       };
     }>,
+    wallet: false,
   };
   return state;
 });
@@ -32,15 +38,23 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
       return {
         workspaceId: input.workspaceId,
         helpers: [],
-        catalog: [],
+        catalog: [
+          { connectorType: 'wallet', name: 'Coinbase Wallet', available: false },
+          ...fakeServer.rows.map((row) => ({
+            connectorType: row.connectorType,
+            name: row.connectorType,
+            available: true,
+          })),
+        ],
         connectors: fakeServer.rows,
         connections: [],
+        ...(fakeServer.wallet
+          ? { wallet: { createdAt: 1, delegationActive: true, delegationExpiresAt: null } }
+          : {}),
       };
     }
     if (name === 'pairConnector') {
-      fakeServer.rows = fakeServer.rows.filter(
-        (row) => row.connectorType !== input.connectorType,
-      );
+      fakeServer.rows = fakeServer.rows.filter((row) => row.connectorType !== input.connectorType);
       const row = {
         connectorId: 'row-uuid-1',
         connectorType: String(input.connectorType),
@@ -74,6 +88,7 @@ const MEMBER_B = 'human-terra';
 describe('real monolith Workbench source — install-state row resolution', () => {
   beforeEach(() => {
     fakeServer.rows = [];
+    fakeServer.wallet = false;
   });
 
   it('follows the row id pairConnector returned (the connect-screen stall regression)', async () => {
@@ -112,6 +127,36 @@ describe('real monolith Workbench source — install-state row resolution', () =
       await source.readInstallState({ connectorId: 'row-unknown', workspaceId: 'ws' }),
     ).toBeNull();
   });
+
+  it('projects exact connector errors and direct wallet state', async () => {
+    fakeServer.rows = [
+      {
+        connectorId: 'row-error',
+        connectorType: 'trusty-squire',
+        status: {
+          connectorId: 'row-error',
+          status: 'error',
+          helperName: 'squire-box',
+          errorMessage:
+            'another Trusty Squire session is already using the browser — close it first',
+          steps: [],
+          signIn: null,
+        },
+      },
+    ];
+    const source = new MonolithWorkbenchSource();
+    let view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
+    expect(view.connectors.find((entry) => entry.id === 'trusty-squire')?.errorMessage).toBe(
+      'another Trusty Squire session is already using the browser — close it first',
+    );
+    expect(view.connectors.find((entry) => entry.id === 'wallet')).toMatchObject({
+      available: true,
+      status: 'disconnected',
+    });
+    fakeServer.wallet = true;
+    view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
+    expect(view.connectors.find((entry) => entry.id === 'wallet')?.status).toBe('connected');
+  });
 });
 
 describe('mock Workbench source', () => {
@@ -123,14 +168,14 @@ describe('mock Workbench source', () => {
     setWorkbenchSource();
   });
 
-  it('lists Trusty Squire live and Wallet/Tailscale as soon', async () => {
+  it('lists direct wallet creation separately from helper connector availability', async () => {
     const view = await getWorkbenchSource().readWorkbench({
       workspaceId: 'ws',
       viewerId: MEMBER_A,
     });
     expect(view.connectors.map((connector) => [connector.id, connector.available])).toEqual([
       ['trusty-squire', true],
-      ['wallet', false],
+      ['wallet', true],
       ['tailscale', false],
       ['google-gmail', true],
       ['google-calendar', true],
@@ -245,6 +290,8 @@ describe('mock Workbench source', () => {
     const helpers = await source.listHelpers({ workspaceId: 'ws' });
     expect(helpers.length).toBeGreaterThan(0);
     const view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
-    expect(view.connectors.find((connector) => connector.id === 'trusty-squire')?.status).toBeUndefined();
+    expect(
+      view.connectors.find((connector) => connector.id === 'trusty-squire')?.status,
+    ).toBeUndefined();
   });
 });

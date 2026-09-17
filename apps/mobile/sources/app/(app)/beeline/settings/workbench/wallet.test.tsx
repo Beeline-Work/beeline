@@ -44,8 +44,7 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
   return {
     HullActionSheetModal: (props: any) =>
       ReactModule.createElement('HullActionSheetModal', props, props.children),
-    HullActionSheetRow: (props: any) =>
-      ReactModule.createElement('HullActionSheetRow', props),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
   };
 });
 
@@ -103,7 +102,9 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
 
   it('paints a total, then coins with their marks, and no chains', async () => {
     const renderer = await render(WalletScreen);
-    expect(renderer.root.findByProps({ testID: 'wallet-balance-value' }).props.children).toBe('$412.60');
+    expect(renderer.root.findByProps({ testID: 'wallet-balance-value' }).props.children).toBe(
+      '$412.60',
+    );
     expect(renderer.root.findByProps({ testID: 'wallet-coin-USDC' })).toBeTruthy();
     expect(
       renderer.root.findAllByProps({ testID: 'wallet-coin-chain-base' }).length,
@@ -126,23 +127,22 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     );
   });
 
-  it('switches the Send and Receive action tabs', async () => {
+  it('opens the existing Send and Receive flows from the centered balance', async () => {
     const renderer = await render(WalletScreen);
-    expect(renderer.root.findByProps({ testID: 'wallet-send-panel' })).toBeTruthy();
     await act(async () => {
-      renderer.root.findByProps({ testID: 'wallet-tab-receive' }).props.onPress();
+      renderer.root.findByProps({ testID: 'wallet-action-receive' }).props.onPress();
     });
-    expect(renderer.root.findByProps({ testID: 'wallet-receive-panel' })).toBeTruthy();
-    expect(() => renderer.root.findByProps({ testID: 'wallet-send-panel' })).toThrow();
+    expect(navigation.push.mock.calls.at(-1)![0]).toEqual({
+      pathname: '/beeline/settings/workbench/wallet-receive',
+      params: { workspaceId: 'workspace-1' },
+    });
   });
 
   it('paints the transaction history feed newest first', async () => {
     const renderer = await render(WalletScreen);
     const first = renderer.root.findByProps({ testID: 'wallet-activity-0' });
     expect(first).toBeTruthy();
-    expect(
-      renderer.root.findAllByProps({ testID: 'wallet-activity-1' }).length,
-    ).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'wallet-activity-1' }).length).toBeGreaterThan(0);
   });
 
   it('the send screen refuses with the only named refusal: not enough of the asset', async () => {
@@ -161,5 +161,4 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     const outcome = renderer.root.findByProps({ testID: 'wallet-send-outcome' });
     expect(String(outcome.props.children)).toContain('Not enough');
   });
-
 });

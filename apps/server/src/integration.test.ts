@@ -7688,12 +7688,14 @@ describe('monolith integration', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('does not wake public Room subscribers for a Workspace-scoped arrival', async () => {
+  it('wakes a subscribed Room agent exactly once for a Workspace-scoped arrival', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
-    // Workspace membership projects into #welcome, but that projection does
-    // not become a Room-scoped join event.
+    // The greeter subscribed to `joined` in #welcome. System events are
+    // subscribable per Room, so the Workspace arrival's public-Room projection
+    // emits its `joined` event exactly where someone subscribed — no
+    // workspace special case — and the subscriber wakes exactly once.
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
        VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
@@ -7715,7 +7717,15 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
-    expect(joined.rows).toEqual([]);
+    expect(joined.rows).toEqual([
+      expect.objectContaining({
+        tagged_ids: [],
+        text: '@play-review joined',
+        system_event: expect.objectContaining({ kind: 'joined' }),
+        event_woken: 1,
+        woke: [WELCOME_AGENT],
+      }),
+    ]);
 
     const workspaceDms = await database.query<{
       text: string;
@@ -7749,7 +7759,63 @@ describe('monolith integration', () => {
        FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
       [ROOM],
     );
-    expect(otherRoom.rows.every((row) => row.tagged_ids.length === 0)).toBe(true);
+    // No agent subscribed to `joined` in the ordinary Room, so the projection
+    // is silent there: the join event is emitted only where someone listens.
+    expect(otherRoom.rows).toEqual([]);
+  });
+
+  it('wakes an ordinary Workspace Room subscriber for a Workspace-scoped arrival', async () => {
+    // The same mechanism in a Workspace that is not the Beeline Welcome
+    // workspace: subscription, not workspace identity, is what surfaces a
+    // join event.
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Finch')`, [
+      WELCOME_AGENT,
+    ]);
+    const publicRoom = 'dddddddd-dddd-4ddd-8ddd-dddddddddd01';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,'Open Room','public')`,
+      [publicRoom, WORKSPACE, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+       VALUES($1,$2,$3,'member','["joined"]'::jsonb)`,
+      [WORKSPACE, publicRoom, WELCOME_AGENT],
+    );
+
+    const newcomer = await phoneToken('arrival-newcomer');
+    const newcomerId = createHash('sha256').update('github:arrival-newcomer').digest('hex');
+    expect(
+      (
+        await operation('addWorkspaceMember', {
+          workspaceId: WORKSPACE,
+          memberId: newcomerId,
+          role: 'member',
+        })
+      ).status,
+    ).toBe(200);
+    expect(newcomer).toBeTruthy();
+
+    const joined = await database.query<{
+      tagged_ids: string[];
+      text: string;
+      system_event: { kind?: string };
+      event_woken: number | null;
+      woke: string[];
+    }>(
+      `SELECT ${taggedIdentityIdsSql('messages')} tagged_ids,text,system_event,event_woken,
+              ARRAY(SELECT agent_id FROM agent_commands
+                    WHERE source_message_id=messages.id ORDER BY agent_id) woke
+       FROM messages WHERE room_id=$1 AND card_type='member-joined'`,
+      [publicRoom],
+    );
+    expect(joined.rows).toEqual([
+      expect.objectContaining({
+        tagged_ids: [],
+        system_event: expect.objectContaining({ kind: 'joined' }),
+        event_woken: 1,
+        woke: [WELCOME_AGENT],
+      }),
+    ]);
   });
 
   it('lets an agent subscribe itself, and wakes it on the next arrival', async () => {

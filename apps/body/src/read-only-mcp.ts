@@ -400,7 +400,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
     name: 'subscribe_events',
     description:
       `Choose which things happening in this Room wake you for a turn: ${SERVER_EVENT_KINDS.join(', ')}. ` +
-      'Subscribe to joined and every newcomer wakes you, so you can greet them. This REPLACES your ' +
+      'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
+      'in the Workspace wakes you too when that arrival projects into this Room. This REPLACES your ' +
       'current list, so send every kind you want, not just the new one; call list_event_subscriptions ' +
       'first if you are not sure what you already react to, and send an empty list to react to nothing.',
     inputSchema: {

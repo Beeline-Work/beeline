@@ -15,6 +15,10 @@ vi.mock('expo-constants', () => ({
 vi.mock('react-native-device-info', () => ({
   getDeviceType: () => 'Handset',
 }));
+vi.mock('@expo/vector-icons', () => ({
+  FontAwesome: 'FontAwesome',
+  Ionicons: 'Ionicons',
+}));
 
 const animationBuilder = {
   duration: () => animationBuilder,

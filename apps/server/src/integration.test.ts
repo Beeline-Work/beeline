@@ -1518,6 +1518,48 @@ describe('monolith integration', () => {
     expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
   });
 
+  it('keeps private bookmarks in the Workspace index and projects their message marker', async () => {
+    const messageId = '8'.repeat(64);
+    expect(
+      (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'Return here' })).status,
+    ).toBe(200);
+    expect(
+      (
+        await operation('setMessageBookmark', {
+          roomId: ROOM,
+          messageId,
+          bookmarked: true,
+        })
+      ).status,
+    ).toBe(200);
+
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
+    expect(room.messages.find((message) => message.id === messageId)?.bookmarked).toBe(true);
+    const listed = (await (
+      await operation('listMessageBookmarks', { workspaceId: WORKSPACE })
+    ).json()) as {
+      bookmarks: Array<{ messageId: string; roomId: string; text?: string; available: boolean }>;
+    };
+    expect(listed.bookmarks).toContainEqual(
+      expect.objectContaining({ messageId, roomId: ROOM, text: 'Return here', available: true }),
+    );
+
+    expect(
+      (
+        await operation('setMessageBookmark', {
+          roomId: ROOM,
+          messageId,
+          bookmarked: false,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await (
+        await operation('listMessageBookmarks', { workspaceId: WORKSPACE })
+      ).json()) as { bookmarks: unknown[] },
+    ).toEqual({ bookmarks: [] });
+  });
+
   it('refuses a direct message with an agent outside the Workspace', async () => {
     const outsider = 'd'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Outsider')`, [

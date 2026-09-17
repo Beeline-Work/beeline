@@ -10,6 +10,7 @@ import type {
   AgentPairingClaimView,
   AttachmentReference,
   InviteView,
+  MessageBookmarkView,
   MessageReactionEmoji,
 } from './phone-types.js';
 import type {
@@ -37,6 +38,8 @@ export type PhoneOperationMap = {
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   reactToMessage: { input: ReactToMessageInput; output: void };
+  setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
+  listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
@@ -200,6 +203,12 @@ export type ReactToMessageInput = RoomInput & {
   readonly messageId: string;
   readonly emoji: MessageReactionEmoji;
 };
+export type SetMessageBookmarkInput = RoomInput & {
+  readonly messageId: string;
+  readonly bookmarked: boolean;
+};
+export type SetMessageBookmarkResult = { readonly bookmarked: boolean };
+export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
 /**
  * Stop one turn in progress.
  *

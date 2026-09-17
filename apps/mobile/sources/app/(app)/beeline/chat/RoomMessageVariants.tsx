@@ -1821,7 +1821,9 @@ const styles = StyleSheet.create((theme) => ({
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {
     ...Typography.mono(),
-    color: theme.buzz.ledgerGhost,
+    // The quoted reply excerpt is provenance a reader actually reads, so it
+    // takes the lifted quiet tier, not the gutter's ghost tier.
+    color: theme.buzz.ledgerQuiet,
     fontSize: 11,
     lineHeight: 17,
   },

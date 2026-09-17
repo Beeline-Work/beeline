@@ -9,10 +9,17 @@ import {
   connectorIdentityHandle,
   connectorIdentityId,
   connectorRowValue,
+  googleEntryDescription,
+  googleEntryState,
   isConnectorIdentityId,
+  isGoogleToolConnectorId,
   ledgerBytes,
   ledgerStamp,
+  resolveGoogleConnectTarget,
   type ConnectionDetailView,
+  type WorkbenchConnector,
+  type WorkbenchConnectorId,
+  type WorkbenchConnectorStatus,
   type WorkbenchView,
 } from './workbench';
 
@@ -159,5 +166,73 @@ describe('connector identity', () => {
   it('does not mistake ordinary identities for connectors', () => {
     expect(isConnectorIdentityId('agent-123')).toBe(false);
     expect(isConnectorIdentityId(undefined)).toBe(false);
+  });
+});
+
+describe('the ONE Google entry', () => {
+  const tool = (id: WorkbenchConnectorId, status?: WorkbenchConnectorStatus): WorkbenchConnector => ({
+    id,
+    name: id,
+    description: 'one Google OAuth grant for your agents',
+    available: true,
+    ...(status ? { status } : {}),
+  });
+  const catalog = [
+    tool('trusty-squire'),
+    tool('google-gmail'),
+    tool('google-calendar'),
+    tool('google-drive'),
+    tool('google-youtube'),
+  ];
+
+  it('folds the four tools into one row that reports the worst severity across them', () => {
+    expect(googleEntryState(catalog)).toBe('connect');
+    expect(googleEntryState(catalog.map((c) => (c.id === 'google-gmail' ? tool('google-gmail', 'connected') : c)))).toBe('repair');
+    expect(
+      googleEntryState([
+        tool('google-gmail', 'connected'),
+        tool('google-calendar', 'error'),
+        tool('google-drive'),
+        tool('google-youtube'),
+      ]),
+    ).toBe('error');
+    expect(
+      googleEntryState([
+        tool('google-gmail', 'installing'),
+        tool('google-calendar', 'error'),
+        tool('google-drive'),
+        tool('google-youtube'),
+      ]),
+    ).toBe('installing');
+    expect(
+      googleEntryState(catalog.map((c) => (isGoogleToolConnectorId(c.id) ? { ...c, status: 'connected' as const } : c))),
+    ).toBe('connected');
+  });
+
+  it('describes a repair as how much of the one grant is live', () => {
+    const repaired = catalog.map((c) =>
+      c.id === 'google-gmail' || c.id === 'google-calendar' ? tool(c.id, 'connected') : c,
+    );
+    expect(googleEntryDescription(repaired, googleEntryState(repaired))).toBe(
+      '2 of 4 tools connected',
+    );
+    expect(googleEntryDescription(catalog, 'connect')).toBe('one Google OAuth grant for your agents');
+  });
+
+  it('resolves the connect target to the first unconnected tool in canonical order', () => {
+    expect(resolveGoogleConnectTarget(catalog)).toBe('google-gmail');
+    expect(
+      resolveGoogleConnectTarget([
+        tool('google-gmail', 'connected'),
+        tool('google-calendar', 'connected'),
+        tool('google-drive'),
+        tool('google-youtube'),
+      ]),
+    ).toBe('google-drive');
+    // Everything connected re-arms the first tool; the server keeps the
+    // connected siblings' live grants.
+    expect(resolveGoogleConnectTarget(catalog.map((c) => ({ ...c, status: 'connected' as const })))).toBe(
+      'google-gmail',
+    );
   });
 });

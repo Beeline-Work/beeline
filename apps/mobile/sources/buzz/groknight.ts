@@ -168,7 +168,11 @@ export const beelineThemes = {
     diffRemoved: '#F85149',
     ledgerBright: '#f0f0f3',
     ledgerBody: '#c9c9d1',
-    ledgerQuiet: '#83838d',
+    // The quiet tier carries the ledger's own reading matter — previews,
+    // stamps, system lines, quoted reply/forward excerpts — so it holds a
+    // WCAG-AA floor on every resting ground (bgBase, bgRaised/bgCode,
+    // bgUnread). Pinned in groknight.test.ts; do not re-dim it.
+    ledgerQuiet: '#90909B',
     ledgerGhost: '#6c6c76',
     ledgerGlow: 'transparent',
     avatarGround: '#14091A',
@@ -263,7 +267,11 @@ export const beelineThemes = {
     diffRemoved: '#cf222e',
     ledgerBright: '#171310',
     ledgerBody: '#4A4038',
-    ledgerQuiet: '#8B7F6E',
+    // Darkened from #8B7F6E the way brass and diff text are: the gray shared
+    // with chrome was tuned for near-black and fell below AA on the bone
+    // canvas (3.4:1). The quiet tier holds the AA floor instead
+    // (groknight.test.ts), so it no longer shares chrome's value.
+    ledgerQuiet: '#6F6455',
     ledgerGhost: '#A79C89',
     ledgerGlow: 'transparent',
     avatarGround: '#F3EEE4',

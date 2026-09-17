@@ -241,4 +241,31 @@ describe('DaemonApiClient', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
+
+  it('delivers a config-changed push to the one registered listener', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const configChanged = vi.fn();
+    client.setConfigChangedListener(configChanged);
+    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.message({ type: 'subscribed', roomId: 'room-1' });
+
+    // Agent-wide: the event names no Room and the listener needs none.
+    socket.message({ type: 'config-changed', roomId: 'somewhere-else' });
+    expect(configChanged).toHaveBeenCalledOnce();
+    // The listener is a wake, never a per-Room stream.
+    socket.message({ type: 'inbox', roomId: 'room-1', cursor: '1,a', items: [] });
+    expect(configChanged).toHaveBeenCalledOnce();
+    release();
+    vi.useRealTimers();
+  });
 });

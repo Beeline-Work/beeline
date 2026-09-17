@@ -96,6 +96,18 @@ describe('desktop layout mode', () => {
     expect(room).toContain('const desktopTranscript = isDesktop;');
   });
 
+  it('shares the Ledger turn rhythm between mobile and desktop transcripts', () => {
+    const messages = source('app/(app)/beeline/chat/RoomMessageVariants.tsx');
+    const room = source('app/(app)/beeline/chat/[channelId].tsx');
+    const inspector = source('components/DesktopRoomInspector.tsx');
+
+    expect(messages).toContain('<LedgerEntry');
+    expect(messages).toContain('<LedgerSteer');
+    expect(room).toContain('<OrdinaryLedgerMessage');
+    expect(inspector).toContain('<OrdinaryLedgerMessage');
+    expect(inspector).toContain('desktopLayout');
+  });
+
   it('keeps decorative compose glyph props out of the browser DOM', () => {
     const composeMenu = source('components/buzz/RoomDeckComposeMenu.tsx');
     const identityMark = source('components/buzz/IdentityMark.tsx');

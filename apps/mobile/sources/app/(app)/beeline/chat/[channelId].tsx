@@ -240,7 +240,11 @@ import {
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { forwardMessageToRoom } from '@/buzz/message-forward';
+import {
+  forwardMessageToRoom,
+  forwardTargets,
+  type ForwardTarget,
+} from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
 import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
@@ -562,7 +566,7 @@ export default function BuzzChat() {
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
   const [messageReactionsOpen, setMessageReactionsOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
-  const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
+  const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(
     null,
   );
   const [forwardBusyRoomId, setForwardBusyRoomId] = useState<string | null>(null);
@@ -2505,17 +2509,7 @@ export default function BuzzChat() {
       setForwardError(null);
       try {
         const list = await roomClient.chats(activeCommunityId);
-        setForwardRooms(
-          list.chats
-            .filter(
-              (chat) =>
-                chat.room.id !== decodedId &&
-                !chat.room.parentId &&
-                !chat.room.archived &&
-                !chat.directMessage,
-            )
-            .map((chat) => ({ id: chat.room.id, name: chat.room.name })),
-        );
+        setForwardRooms(forwardTargets(list.chats, decodedId));
       } catch (error) {
         setForwardError(error instanceof Error ? error.message : String(error));
         setForwardRooms([]);
@@ -2525,7 +2519,7 @@ export default function BuzzChat() {
   );
 
   const forwardToRoom = useCallback(
-    async (room: { id: string; name: string }) => {
+    async (room: { id: string; label: string }) => {
       if (!forwardTarget || forwardBusyRoomId) return;
       setForwardBusyRoomId(room.id);
       setForwardError(null);
@@ -2533,7 +2527,7 @@ export default function BuzzChat() {
         await forwardMessageToRoom(
           (input) => monolithPhoneOperation('sendRoomMessage', input),
           room.id,
-          forwardTarget.text,
+          { text: forwardTarget.text, attachments: forwardTarget.attachments },
           displayRoomName,
         );
         setForwardTarget(null);
@@ -5116,7 +5110,7 @@ export default function BuzzChat() {
                 chevron="right"
                 disabled={Boolean(forwardBusyRoomId)}
                 key={room.id}
-                label={`#${room.name}`}
+                label={room.label}
                 metadata={forwardBusyRoomId === room.id ? 'SENDING' : undefined}
                 onPress={() => void forwardToRoom(room)}
                 testID={`forward-room-${room.id}`}

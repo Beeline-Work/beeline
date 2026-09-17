@@ -87,9 +87,10 @@ export class StdioSquireMcpClient {
 
   private initialize(): Promise<void> {
     const child = (this.options.spawn ?? spawn)(this.options.command ?? 'npx', [
-      // `@next` RC: only the RC coordinates with a running Trusty Squire broker
-      // for concurrent sessions; stable `latest` cannot share its browser.
-      ...(this.options.args ?? ['-y', '@trusty-squire/mcp@next']),
+      // `@latest`: the current release, never a source-level version pin
+      // (captain). Only the vault MCP server the agent spawns; the connect
+      // install path verifies freshness itself (connector-squire.ts).
+      ...(this.options.args ?? ['-y', '@trusty-squire/mcp@latest']),
     ]) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

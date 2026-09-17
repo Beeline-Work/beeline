@@ -163,6 +163,13 @@ describe('composer trailing control is mic XOR send', () => {
     expect(hosts(root, 'chat-send')).toHaveLength(1);
   });
 
+  it('never hides the send control while an agent is working', () => {
+    // PR #1340 removed the send button whenever a turn was active; it is
+    // restored unconditionally. The composer takes no `running` prop at all,
+    // so no turn state can remove the control — a tap queues the message.
+    expect(hosts(render({ value: 'next instruction' }), 'chat-send')).toHaveLength(1);
+  });
+
   it('shows only the send control when an attachment is staged via canSend', () => {
     // The chat screen computes canSend from text OR staged attachments; the
     // composer must reuse that same verdict, not a second predicate.

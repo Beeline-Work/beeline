@@ -774,9 +774,6 @@ function CornerCockpit({
           )}
           <ConversationComposer
             onStop={ack?.stop ? stop : undefined}
-            running={Boolean(turn)}
-            stopKey={ack?.turnKey}
-            stopping={stopping}
             value={input}
             height={height}
             maxHeight={COMPOSER_MAX_HEIGHT}

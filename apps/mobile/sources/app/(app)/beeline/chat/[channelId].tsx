@@ -2514,6 +2514,7 @@ export default function BuzzChat() {
       });
       addMessages([optimistic]);
       if (!shortcut) {
+        composerRef.current?.clear();
         inputTextRef.current = '';
         setInputText('');
         setComposerHeight(COMPOSER_MIN_HEIGHT);
@@ -4456,9 +4457,6 @@ export default function BuzzChat() {
               )}
               <ConversationComposer
                 onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
-                running={Boolean(activeAgentTurn)}
-                stopKey={composerAck?.turnKey}
-                stopping={stoppingThisTurn}
                 inputRef={composerRef}
                 reply={
                   replyTarget

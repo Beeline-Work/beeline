@@ -27,10 +27,6 @@ vi.mock('react-native', () => {
     StyleSheet: { create: (styles: any) => styles },
   } as any;
 });
-vi.mock('expo-haptics', () => ({
-  impactAsync: vi.fn(),
-  ImpactFeedbackStyle: { Medium: 'medium' },
-}));
 // react-native-svg imports from react-native deeply. An ESM import of the
 // real module triggers vitest to parse react-native's Flow-typed source.
 vi.mock('react-native-svg', () => {
@@ -84,7 +80,7 @@ function visibleInset(rowStyle: any, inputStyle: any, androidStyle: any, boxHeig
   };
 }
 const renderers: any[] = [];
-function render(value: string, onStop?: () => Promise<boolean>) {
+function render(value: string) {
   const onSend = vi.fn();
   const onKeyPress = vi.fn();
   let renderer: any;
@@ -92,9 +88,6 @@ function render(value: string, onStop?: () => Promise<boolean>) {
     renderer = create(
       <ConversationComposer
         value={value}
-        onStop={onStop}
-        running
-        stopKey="turn-one"
         height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
         maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
         focused={false}
@@ -112,10 +105,6 @@ function render(value: string, onStop?: () => Promise<boolean>) {
   renderers.push(renderer);
   return { renderer, onSend, onKeyPress, button: () => renderer.root.findByType('Pressable') };
 }
-async function release(fixture: ReturnType<typeof render>) {
-  act(() => fixture.button().props.onPressOut({ nativeEvent: { type: 'mouseup' } }));
-  await act(async () => fixture.button().props.onPress());
-}
 beforeEach(() => {
   platform.OS = 'web';
   vi.useFakeTimers();
@@ -125,7 +114,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('one composer: send on tap, deliberate stop on hold', () => {
+describe('one composer', () => {
   it('uses the same empty placeholder on every surface', () => {
     const f = render('');
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
@@ -265,99 +254,20 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     expect(f.button().findByType('Text').props.children).toBe('↑');
     expect(f.button().props.disabled).toBe(!value);
   });
-  it('taps while running queue text without stopping or changing the arrow', async () => {
-    const stop = vi.fn(async () => true);
-    const f = render('next instruction', stop);
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(100));
+  it('keeps the send control present and a tap queues the message while an agent works', async () => {
+    // The composer carries no `running` prop: the send control never leaves,
+    // and a plain tap sends exactly as it does when the Room is idle. The
+    // stop lives on `TurnProgressLine`, not here.
+    const f = render('next instruction');
+    expect(f.renderer.root.findAllByProps({ testID: 'chat-send' }).filter((n: any) => typeof n.type === 'string')).toHaveLength(1);
+    expect(f.button().props.accessibilityLabel).toBe('Send message');
     expect(f.button().findByType('Text').props.children).toBe('↑');
-    await release(f);
+    await act(async () => f.button().props.onPress());
     expect(f.onSend).toHaveBeenCalledOnce();
-    expect(stop).not.toHaveBeenCalled();
   });
-  it('an empty tap during work does nothing but keeps hold available', async () => {
-    const stop = vi.fn(async () => true);
-    const f = render('', stop);
-    expect(f.button().props.disabled).toBe(false);
-    act(() => f.button().props.onPressIn());
-    await release(f);
-    expect(stop).not.toHaveBeenCalled();
-    expect(f.onSend).not.toHaveBeenCalled();
-  });
-  it.each(['', 'next instruction'])('authorized hold %j cancels before any send', async (value) => {
-    const order: string[] = [];
-    let settle!: (ok: boolean) => void;
-    const stop = vi.fn(() => {
-      order.push('cancel');
-      return new Promise<boolean>((resolve) => {
-        settle = resolve;
-      });
-    });
-    const f = render(value, stop);
-    f.onSend.mockImplementation(() => order.push('send'));
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(500));
-    expect(f.button().props.accessibilityLabel).toBe('Release to stop this turn');
-    expect(stop).not.toHaveBeenCalled();
-    await release(f);
-    expect(order).toEqual(['cancel']);
-    await act(async () => settle(true));
-    expect(order).toEqual(value ? ['cancel', 'send'] : ['cancel']);
-  });
-  it('a refused cancellation preserves the unsent draft', async () => {
-    const f = render(
-      'keep this',
-      vi.fn(async () => false),
-    );
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(500));
-    await release(f);
-    expect(f.onSend).not.toHaveBeenCalled();
-    expect(f.renderer.root.findByType('TextInput').props.value).toBe('keep this');
-  });
-  it('unauthorized hold does nothing and never arms brass', async () => {
-    const f = render('queued later');
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(500));
-    expect(f.button().props.accessibilityLabel).toBe('Send message');
-    expect(f.button().findByType('Text').props.children).toBe('↑');
-    await release(f);
-    expect(f.onSend).not.toHaveBeenCalled();
-  });
-  it('dragging out aborts the hold; returning needs a new hold', () => {
-    const stop = vi.fn(async () => true);
-    const f = render('steer', stop);
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(500));
-    act(() => f.button().props.onPressOut({ nativeEvent: { type: 'mousemove', touches: [{}] } }));
-    expect(f.button().props.accessibilityLabel).toBe('Send message');
-    expect(stop).not.toHaveBeenCalled();
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(499));
-    expect(f.button().props.accessibilityLabel).toBe('Send message');
-  });
-  it('does not send or cancel when stop authority disappears during a hold', async () => {
-    const stop = vi.fn(async () => true);
-    const f = render('keep this draft', stop);
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(500));
-    const props = f.renderer.root.findByType(ConversationComposer).props;
-    act(() => f.renderer.update(<ConversationComposer {...props} onStop={undefined} />));
-    await release(f);
-    expect(stop).not.toHaveBeenCalled();
-    expect(f.onSend).not.toHaveBeenCalled();
-  });
-
-  it('a new turn invalidates an in-progress hold', async () => {
-    const stop = vi.fn(async () => true);
-    const f = render('keep this draft', stop);
-    act(() => f.button().props.onPressIn());
-    act(() => vi.advanceTimersByTime(500));
-    const props = f.renderer.root.findByType(ConversationComposer).props;
-    act(() => f.renderer.update(<ConversationComposer {...props} stopKey="turn-two" />));
-    await release(f);
-    expect(stop).not.toHaveBeenCalled();
-    expect(f.onSend).not.toHaveBeenCalled();
+  it('an empty composer disables the send control', () => {
+    const f = render('');
+    expect(f.button().props.disabled).toBe(true);
   });
 
   it('shares one row across Room and corner with unchanged desktop keyboard dispatch', () => {
@@ -377,7 +287,6 @@ describe('one composer: send on tap, deliberate stop on hold', () => {
     ]) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');
       expect(source).toContain('<ConversationComposer');
-      expect(source).toContain('stopKey={');
       expect(source).toContain('desktopComposerKeyAction(');
     }
   });

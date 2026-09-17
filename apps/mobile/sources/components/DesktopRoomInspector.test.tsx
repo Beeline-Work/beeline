@@ -381,7 +381,6 @@ describe('DesktopRoomInspector work pane', () => {
       const progress = tree.root.findByType('TurnProgressLine' as any);
       expect(Boolean(composer.props.onStop)).toBe(role !== 'member');
       expect(Boolean(progress.props.onStop)).toBe(role !== 'member');
-      expect(composer.props.running).toBe(true);
       if (role !== 'member') {
         await act(async () => {
           await composer.props.onStop();

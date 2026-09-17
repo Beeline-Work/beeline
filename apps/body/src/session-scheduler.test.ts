@@ -47,6 +47,63 @@ describe('Workspace session scheduler', () => {
     await scheduler.dispose();
   });
 
+  it('suspendIdle retires warm sessions and leaves busy, draining, and queued ones alone', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 10, idleMs: 60_000 });
+    try {
+      const busySuspend = vi.fn().mockResolvedValue(undefined);
+      const release = deferred();
+      const busy = scheduler.run(
+        'busy',
+        { activate: async () => 'busy-physical', suspend: busySuspend },
+        async () => release.promise,
+      );
+
+      const queuedSuspend = vi.fn().mockResolvedValue(undefined);
+      const queueDrain = deferred();
+      const queued = scheduler.run(
+        'queued',
+        { activate: async () => 'queued-physical', suspend: queuedSuspend },
+        async () => queueDrain.promise,
+      );
+      const queuedSecond = scheduler.run(
+        'queued',
+        { activate: async () => 'queued-second', suspend: vi.fn().mockResolvedValue(undefined) },
+        async () => undefined,
+      );
+
+      await scheduler.run(
+        'warm',
+        { activate: async () => 'warm-physical', suspend: vi.fn().mockResolvedValue(undefined) },
+        async () => undefined,
+      );
+      expect(scheduler.generations('warm')).toEqual(['warm-physical']);
+
+      await scheduler.suspendIdle();
+
+      // The warm session is gone; a next turn cold-activates against the
+      // changed configuration. The two working channels remain live by
+      // design (nothing was interrupted), but nothing of theirs is warm.
+      expect(scheduler.snapshot().live).toBe(2);
+      expect(scheduler.snapshot().warm).toBe(0);
+      // Busy and queued work keeps its session — the ordinary next-hand-back
+      // currency check owns the restart for a turn already running.
+      expect(busySuspend).not.toHaveBeenCalled();
+      expect(queuedSuspend).not.toHaveBeenCalled();
+      expect(scheduler.generations('busy')).toEqual(['busy-physical']);
+      expect(scheduler.generations('queued')).toEqual(['queued-physical']);
+
+      release.resolve();
+      queueDrain.resolve();
+      await Promise.all([busy, queued, queuedSecond]);
+      // A second pass over the now-idle channels retires them.
+      await scheduler.suspendIdle();
+      expect(scheduler.snapshot().live).toBe(0);
+      expect(scheduler.snapshot().warm).toBe(0);
+    } finally {
+      await scheduler.dispose();
+    }
+  });
+
   it('honors a harness-specific idle window without weakening capacity eviction', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

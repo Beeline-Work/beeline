@@ -123,6 +123,7 @@ export class DaemonApiClient {
     }
   >();
   private roomsChangedListener?: () => void;
+  private configChangedListener?: () => void;
 
   constructor(
     readonly baseUrl: string,
@@ -190,6 +191,13 @@ export class DaemonApiClient {
     this.roomsChangedListener = listener;
   }
 
+  /** Register the one listener invoked when the server reports the agent's
+   * model/effort selection changed — the wake that hot-restarts every
+   * retained session (agent-wide; the event names no single Room). */
+  setConfigChangedListener(listener: () => void): void {
+    this.configChangedListener = listener;
+  }
+
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
     const room = this.liveRooms.get(roomId);
     if (room && cursor) room.cursor = cursor;
@@ -244,6 +252,10 @@ export class DaemonApiClient {
       const event = value as Record<string, unknown>;
       if (event.type === 'rooms-changed') {
         this.roomsChangedListener?.();
+        return;
+      }
+      if (event.type === 'config-changed') {
+        this.configChangedListener?.();
         return;
       }
       if (event.type === 'subscribed' && typeof event.roomId === 'string') {

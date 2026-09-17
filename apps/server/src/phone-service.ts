@@ -71,6 +71,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -4414,6 +4415,25 @@ export class PhoneService {
         name: context.actor_name,
         handle: context.actor_handle,
       };
+      // Hot-restart wake: every daemon live subscription of these Rooms filters
+      // on the target agent, so its retained sessions retire at once and the
+      // next turn cold-activates against the saved selection — exactly what
+      // session start reads. A change that wrote nothing sends no wake, and a
+      // plain reconnect never sees one. The direct pg_notify rides this same
+      // transaction (delivered on commit, dropped on rollback) to every server
+      // machine's live listener, since the agents table carries no Room for a
+      // row trigger to name.
+      for (const room of rooms.rows) {
+        await database.query(`SELECT pg_notify($1, $2)`, [
+          POSTGRES_LIVE_CHANNEL,
+          JSON.stringify({
+            table: 'agent_config',
+            operation: 'UPDATE',
+            roomId: room.room_id,
+            agentId: input.agentId,
+          }),
+        ]);
+      }
       const agentMention = systemIdentityMention({
         id: context.agent_id,
         kind: context.agent_kind,

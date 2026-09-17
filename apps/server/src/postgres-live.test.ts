@@ -227,6 +227,37 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('delivers a phone-side model/effort change as an agent-config invalidation', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    // PhoneService.updateAgentModel writes this synthetic payload directly
+    // inside the selection transaction — the agents table has no Room for a
+    // row trigger, so the wake rides the same pg_notify channel.
+    await database.query(`SELECT pg_notify($1, $2)`, [
+      POSTGRES_LIVE_CHANNEL,
+      JSON.stringify({ table: 'agent_config', operation: 'UPDATE', roomId: ROOM, agentId: AUTHOR }),
+    ]);
+
+    await eventually(
+      () =>
+        received.some(
+          (event) =>
+            event.type === 'invalidate' &&
+            event.reason === 'agent-config' &&
+            event.targetAgentId === AUTHOR &&
+            event.roomId === ROOM,
+        ),
+    );
+  });
+
   it('fans an agent presence fact to every joined Room on another server', async () => {
     const otherRoom = '33333333-3333-4333-8333-333333333333';
     const agent = 'b'.repeat(64);

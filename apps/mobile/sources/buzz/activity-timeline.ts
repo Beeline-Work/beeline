@@ -586,8 +586,6 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   let thoughtMs = 0;
   let anonymousIndex = 0;
   let observedIndex = 0;
-  let thoughtIndex = 0;
-  let pendingThought: TurnActivityAction | undefined;
 
   for (const item of items) {
     if (item.plan) plan = item.plan;
@@ -597,30 +595,8 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
       continue;
     }
     if (item.kind === 'thinking') {
-      const previous = ordered.at(-1);
-      if (
-        previous?.kind === 'projected' &&
-        previous.step.kind === 'thought' &&
-        !previous.step.durationMs
-      ) {
-        previous.step.output = appendDistinctDetail(previous.step.output, item.text);
-        pendingThought = previous.step;
-      } else {
-        const thought: TurnActivityAction = {
-          id: `thought-${thoughtIndex++}`,
-          kind: 'thought',
-          weight: 'observation',
-          title: 'Thought',
-          label: 'thought',
-          outcome: 'success',
-          ...(item.text ? { output: item.text } : {}),
-        };
-        ordered.push({
-          kind: 'projected',
-          step: thought,
-        });
-        pendingThought = thought;
-      }
+      // ACP thought receipts are transport state, not transcript content.
+      // Authored live output has its own provisional draft lane below.
       continue;
     }
     if (item.kind === 'summary') {
@@ -629,23 +605,6 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
       }
       if (item.thoughtMs && item.thoughtMs > 0) {
         thoughtMs += item.thoughtMs;
-        if (pendingThought) {
-          pendingThought.durationMs = (pendingThought.durationMs ?? 0) + item.thoughtMs;
-          pendingThought = undefined;
-        } else {
-          ordered.push({
-            kind: 'projected',
-            step: {
-              id: `thought-${thoughtIndex++}`,
-              kind: 'thought',
-              weight: 'observation',
-              title: 'Thought',
-              label: 'thought',
-              outcome: 'success',
-              durationMs: item.thoughtMs,
-            },
-          });
-        }
       }
       for (const call of item.observed ?? []) {
         const title = observedCallTitle(call.verb, call.target);

@@ -144,14 +144,18 @@ describe('one-line tool ledger', () => {
             node.type === 'Text' && node.props.ellipsizeMode === 'middle',
         ),
     ).toHaveLength(1);
-    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress,
+    ).toBeUndefined();
   });
 
   it('spends colour in exactly two places: the brass cross, the dim tick (design 2026-08-24)', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
     const passed = renderer.root.findByProps({ testID: 'activity-verdict-read' });
     expect(passed.props.children).toBe('✓');
-    expect(passed.props.style).toContainEqual(expect.objectContaining({ color: groknight.ledgerGhost }));
+    expect(passed.props.style).toContainEqual(
+      expect.objectContaining({ color: groknight.ledgerGhost }),
+    );
     const failed = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
     expect(failed.props.children).toBe('✗');
     expect(failed.props.style).toContainEqual(expect.objectContaining({ color: groknight.accent }));
@@ -197,27 +201,23 @@ describe('one-line tool ledger', () => {
     expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).props.onPress).toBeTypeOf(
       'function',
     );
-    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress,
+    ).toBeUndefined();
     expect(renderedText(renderer)).toContain('project task');
   });
 
-  it('shows a duration only when a receipt carried one above the floor', () => {
-    // Wire receipts carry spans only as summary `thoughtMs`; a step under the
-    // floor earns no gutter at all.
+  it('does not synthesize ledger rows from thought receipts', () => {
     const renderer = render(
       <ActivityTimeline
         active={false}
         items={[
-          { kind: 'summary', title: 'thinking 0.4', thoughtMs: 400 },
-          { kind: 'summary', title: 'thinking 2.1', thoughtMs: 2100 },
+          { kind: 'thinking', title: 'Thinking', text: 'private reasoning' },
           { kind: 'summary', title: 'thinking 51', thoughtMs: 51_000 },
         ]}
       />,
     );
-    const text = renderedText(renderer);
-    expect(text).toContain('2.1s');
-    expect(text).toContain('51.0s');
-    expect(text).not.toContain('0.4s');
+    expect(renderer.toJSON()).toBeNull();
   });
 });
 
@@ -282,7 +282,7 @@ describe('grouping consecutive steps', () => {
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
   });
 
-  it('sums the durations the receipts carried into the group summary', () => {
+  it('thought timing does not change tool grouping', () => {
     const renderer = render(
       <ActivityTimeline
         active={false}
@@ -295,9 +295,9 @@ describe('grouping consecutive steps', () => {
         ]}
       />,
     );
-    expect(
-      renderer.root.findByProps({ testID: 'tool-run-group-thought-0' }).props.accessibilityLabel,
-    ).toBe('5 steps · 48.0s, expandable');
+    expect(renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.accessibilityLabel).toBe(
+      '4 steps, expandable',
+    );
   });
 });
 
@@ -366,34 +366,25 @@ describe('the output sheet', () => {
     expect(renderedText(renderer)).toContain('sh: 1: pnpm: not found');
   });
 
-  it('a thought opens its own text; a summary-only thought is not pressable', () => {
+  it('keeps tool activity and italic live ACP prose while omitting thought rows', () => {
     const renderer = render(
       <ActivityTimeline
-        active={false}
+        active
         items={[
           { kind: 'thinking', title: 'Thinking', text: 'weighing the two layouts' },
           { kind: 'summary', title: 'thinking 12', thoughtMs: 12_000 },
+          { kind: 'tool', id: 'read', title: 'Read file', toolKind: 'read', input: 'src/app.ts' },
         ]}
+        messageDraft="The reply is taking shape."
       />,
     );
-    const text = renderedText(renderer);
-    // Not in the transcript; available through the sheet.
-    expect(text).not.toContain('weighing the two layouts');
-    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-thought-0' }).props.onPress());
-    expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.visible).toBe(true);
-    expect(renderedText(renderer)).toContain('weighing the two layouts');
-    act(() => renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.onClose());
-    // A summary-only thought carries a span but no text — nothing to open.
-    const bare = render(
-      <ActivityTimeline
-        active={false}
-        items={[{ kind: 'summary', title: 'thinking 5', thoughtMs: 5_000 }]}
-      />,
-    );
-    expect(renderedText(bare)).toContain('5.0s');
-    expect(
-      bare.root.findByProps({ testID: 'tool-ledger-line-thought-0' }).props.onPress,
-    ).toBeUndefined();
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(1);
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' })).toBeTruthy();
+    expect(hostNodes(renderer, /thought/)).toHaveLength(0);
+    const draft = renderer.root.findByProps({ testID: 'activity-message-draft' });
+    expect(draft.props.markdown).toBe('The reply is taking shape.');
+    expect(draft.props.textStyle.fontFamily).toBe(groknight.proseItalic);
+    expect(draft.props.textStyle.color).toBe(groknight.ledgerQuiet);
   });
 
   it('prints who asked, in the sheet, not the transcript', () => {
@@ -553,7 +544,7 @@ describe('folded historical transcripts', () => {
     activity,
   });
 
-  it('folds thinking-only rows into ledger lines with the summaries', () => {
+  it('drops thinking-only rows while retaining summary tool lines', () => {
     const [group, ...rest] = foldSettledActivityRuns([
       row('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),
       row('thought-2', [{ kind: 'thinking', title: 'Thinking', text: 'Checking.' }]),
@@ -561,7 +552,7 @@ describe('folded historical transcripts', () => {
     ]);
     expect(rest).toHaveLength(0);
     const renderer = render(<ActivityTimeline items={group.activity!} />);
-    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(3);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
     expect(hostNodes(renderer, /^corner-tool-summary$/)).toHaveLength(0);
   });
 

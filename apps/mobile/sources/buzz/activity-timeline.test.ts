@@ -571,19 +571,12 @@ describe('one-line ledger projection', () => {
     expect(turn.steps[0]?.label.length).toBeLessThanOrEqual(40);
   });
 
-  it('projects historical thought receipts as normal timed ledger steps', () => {
+  it('keeps thought timing as metadata without synthesizing ledger steps', () => {
     const turn = buildTurnActivity([
       { kind: 'thinking', title: 'Thinking', text: 'Reasoning text when available' },
       { kind: 'summary', title: 'Summary', thoughtMs: 51_000 },
     ]);
-    expect(turn.steps).toMatchObject([
-      {
-        kind: 'thought',
-        label: 'thought',
-        outcome: 'success',
-        durationMs: 51_000,
-        output: 'Reasoning text when available',
-      },
-    ]);
+    expect(turn.steps).toEqual([]);
+    expect(turn.thoughtMs).toBe(51_000);
   });
 });

@@ -28,14 +28,14 @@ const EAS_CLI_VERSION = '22.2.0';
 // During a compatibility rollout the production branch carries more than one
 // runtime. Read enough history to resolve every current release target.
 const PRODUCTION_LOOKUP_LIMIT = '10';
-// Keep this committed rollout switch on until runtime-24 adoption is high
-// enough that operators intentionally stop serving the App Store build-8
-// runtime. Turning it off removes only the iOS@23 compatibility target.
-export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
-
-// Publish android@23 alongside android@24 until the captain's runtime-23
-// device adopts a newer store binary. Mirror of the iOS@23 compat target.
-export const PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
+// Compatibility runtime targets: OTA updates published alongside the current
+// store pins for as long as live installs still run those older store
+// binaries. Keep this list ordered so the release log is deterministic, and
+// remove an entry once no live install carries that runtime.
+export const COMPAT_RUNTIMES = [
+  { platform: 'android', runtimeVersion: '23' },
+  { platform: 'ios', runtimeVersion: '23' },
+];
 
 function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
@@ -51,12 +51,7 @@ export function releaseUpdateTargets(projectDir = process.cwd()) {
   const pins = readPinnedRuntimeVersion(projectDir);
   const targets = [
     { platform: 'android', runtimeVersion: pins.android },
-    ...(PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT
-      ? [{ platform: 'android', runtimeVersion: '23' }]
-      : []),
-    ...(PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT
-      ? [{ platform: 'ios', runtimeVersion: '23' }]
-      : []),
+    ...COMPAT_RUNTIMES,
     { platform: 'ios', runtimeVersion: pins.ios },
   ];
   return targets.filter(
@@ -420,11 +415,9 @@ function publish(options) {
     { dryRun: options.dryRun },
   );
   const previousProductionTargets = options.dryRun ? [] : newestTargets(previous, targets);
+  const compatKeys = new Set(COMPAT_RUNTIMES.map(targetKey));
   const requiredRollbackTargets = targets.filter(
-    (target) =>
-      target.platform === 'android' ||
-      !PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT ||
-      target.runtimeVersion === '23',
+    (target) => target.platform === 'android' || compatKeys.has(targetKey(target)),
   );
   const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
   // A runtime's FIRST production release has no earlier update to roll back to,

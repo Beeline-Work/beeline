@@ -11,8 +11,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
-  PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT,
-  PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
+  COMPAT_RUNTIMES,
   releaseUpdateTargets,
 } from '../../scripts/ota-release.mjs';
 
@@ -62,9 +61,11 @@ function runRelease(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('mobile OTA release governor', () => {
-  it('makes the temporary compatibility targets committed removable flags', () => {
-    expect(PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT).toBe(true);
-    expect(PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT).toBe(true);
+  it('publishes the committed compatibility runtime targets alongside the store pins', () => {
+    expect(COMPAT_RUNTIMES).toEqual([
+      { platform: 'android', runtimeVersion: '23' },
+      { platform: 'ios', runtimeVersion: '23' },
+    ]);
     expect(releaseUpdateTargets(mobileRoot)).toEqual([
       { platform: 'android', runtimeVersion: '24' },
       { platform: 'android', runtimeVersion: '23' },
@@ -117,10 +118,10 @@ describe('mobile OTA release governor', () => {
     expect(targetPublishes[2]).toContain('--platform ios');
     expect(targetPublishes[3]).toContain('EXPO_RUNTIME_OVERRIDE=25');
     expect(targetPublishes[3]).toContain('--platform ios');
-    expect(releaseSource).toContain('PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true');
-    expect(releaseSource).toContain('PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true');
-    expect(releaseSource).not.toContain('PUBLISH_IOS_RUNTIME_25');
-    expect(releaseSource).not.toContain('PUBLISH_ANDROID_RUNTIME_24');
+    expect(releaseSource).toContain("{ platform: 'android', runtimeVersion: '23' }");
+    expect(releaseSource).toContain("{ platform: 'ios', runtimeVersion: '23' }");
+    expect(releaseSource).toContain('export const COMPAT_RUNTIMES = [');
+    expect(releaseSource).not.toContain('PUBLISH_');
     expect(workflow).not.toContain('EXPO_RUNTIME_OVERRIDE');
 
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-dry-run-'));

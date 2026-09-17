@@ -54,9 +54,12 @@ type WorkbenchDto = PhoneOperationMap['readWorkbench']['output'];
 type ConnectorViewDto = WorkbenchDto['connectors'][number];
 type ConnectionViewDto = WorkbenchDto['connections'][number];
 
-function toConnector(
-  entry: { connectorType: string; name: string; available: boolean; row?: ConnectorViewDto },
-): WorkbenchConnector {
+function toConnector(entry: {
+  connectorType: string;
+  name: string;
+  available: boolean;
+  row?: ConnectorViewDto;
+}): WorkbenchConnector {
   const id = entry.connectorType as WorkbenchConnectorId;
   return {
     id,
@@ -69,12 +72,16 @@ function toConnector(
           helperName: entry.row.status.helperName,
           agentCount: entry.row.status.agentCount,
           signedInAs: entry.row.status.signedInAs,
+          ...(entry.row.status.errorMessage ? { errorMessage: entry.row.status.errorMessage } : {}),
         }
       : {}),
   };
 }
 
-function toConnection(dto: ConnectionViewDto, viewerId: string): WorkbenchView['connections'][number] {
+function toConnection(
+  dto: ConnectionViewDto,
+  viewerId: string,
+): WorkbenchView['connections'][number] {
   return {
     ref: dto.reference,
     name: dto.label,
@@ -86,7 +93,13 @@ function toConnection(dto: ConnectionViewDto, viewerId: string): WorkbenchView['
 }
 
 function toSteps(
-  steps: readonly { label: string; status: string; reason?: string; command?: string; output?: string }[],
+  steps: readonly {
+    label: string;
+    status: string;
+    reason?: string;
+    command?: string;
+    output?: string;
+  }[],
 ): readonly ConnectorInstallStep[] {
   return steps.map((step) => ({
     label: step.label,
@@ -109,23 +122,34 @@ function toSteps(
  * through the session's own viewer on the server.
  */
 export class MonolithWorkbenchSource implements WorkbenchSource {
-  async readWorkbench(input: {
-    workspaceId: string;
-    viewerId: string;
-  }): Promise<WorkbenchView> {
+  async readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView> {
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
     return {
-      helpers: dto.helpers.map(
-        (helper): WorkbenchHelper => ({ id: helper.id, name: helper.name, online: helper.online }),
-      ),
-      connectors: dto.catalog.map((entry) =>
-        toConnector({
+      helpers: dto.helpers.map((helper): WorkbenchHelper => ({
+        id: helper.id,
+        name: helper.name,
+        online: helper.online,
+      })),
+      connectors: dto.catalog.map((entry) => {
+        // Wallet creation is a direct human operation, not a helper
+        // connector install. The server catalog's helper availability does
+        // not govern whether this row can act.
+        if (entry.connectorType === 'wallet') {
+          return {
+            id: 'wallet' as const,
+            name: entry.name,
+            description: CONNECTOR_DESCRIPTIONS.wallet,
+            available: true,
+            status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
+          };
+        }
+        return toConnector({
           connectorType: entry.connectorType,
           name: entry.name,
           available: entry.available,
           row: dto.connectors.find((candidate) => candidate.connectorType === entry.connectorType),
-        }),
-      ),
+        });
+      }),
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
   }
@@ -176,7 +200,8 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       steps: toSteps(row.status.steps),
       signIn: row.status.signIn
         ? {
-            method: row.status.signIn.method === 'oauth' ? ('oauth' as const) : ('streamed' as const),
+            method:
+              row.status.signIn.method === 'oauth' ? ('oauth' as const) : ('streamed' as const),
             url: row.status.signIn.url,
           }
         : null,
@@ -227,10 +252,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     return { revoked: result.revoked };
   }
 
-  async disconnectConnector(input: {
-    workspaceId: string;
-    connectorId: string;
-  }): Promise<void> {
+  async disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void> {
     await monolithPhoneOperation('unpairConnector', {
       workspaceId: input.workspaceId,
       connectorId: input.connectorId,

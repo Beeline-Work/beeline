@@ -4,9 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import {
   googleEntryConnector,
-  googleEntryDescription,
-  googleEntryState,
-  googleToolStates,
   connectorInstrument,
   type WorkbenchConnector,
 } from '@/buzz/workbench';
@@ -17,13 +14,8 @@ import {
  * flow covers every tool with one Google grant. The server keeps four
  * connector kinds/rows; only consent and connect UX fold.
  *
- * Board revision 2 (PR #1351): while the entry is not fully connected its
- * row carries the ONE compact side Connect button — repair (a partially
- * live grant) connects exactly like a first connect, topping up the tools
- * still missing. The accordion keeps the per-tool state lines so a reader
- * can see what of the one grant is live; connection progress itself is the
- * shared connect checklist screen, reached with the logical `google` id
- * that the source resolves to the first not-yet-connected tool.
+ * The row has one state and one valid action. Its disclosure has no glyph and
+ * contains only the catalog's existing one-line capability copy.
  */
 export function GoogleEntryRow({
   connectors,
@@ -35,34 +27,35 @@ export function GoogleEntryRow({
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
-  const state = googleEntryState(connectors);
-  const tools = googleToolStates(connectors);
   const instrument = connectorInstrument(entry.status);
+  const canConnect = instrument.connect && entry.available;
 
   return (
     <View testID="google-entry">
       <SettingsRow
-        actionControl={
-          instrument.connect
-            ? { label: 'Connect', onPress: onPressConnect, testID: 'google-entry-connect' }
-            : undefined
+        action={canConnect ? 'Connect' : undefined}
+        description={
+          entry.status === 'error' ? (entry.errorMessage ?? 'Connection failed') : undefined
         }
-        chevron="down"
-        description={googleEntryDescription(connectors, state)}
+        descriptionTone={entry.status === 'error' ? 'danger' : undefined}
         onPress={() => setExpanded((value) => !value)}
-        statusGlyph={instrument.glyph}
         testID="google-entry-row"
         title={entry.name}
         value={instrument.value}
         valueTone={instrument.valueTone}
+        trailingPress={
+          canConnect
+            ? {
+                accessibilityLabel: 'Connect Google Workspace',
+                onPress: onPressConnect,
+                testID: 'google-entry-connect',
+              }
+            : undefined
+        }
       />
       {expanded ? (
         <View style={styles.details} testID="google-entry-details">
-          {tools.map((tool) => (
-            <Text key={tool.id} style={styles.tool} testID={`google-entry-tool-${tool.id}`}>
-              {`· ${tool.name} · ${tool.value}`}
-            </Text>
-          ))}
+          <Text style={styles.tool}>{entry.description}</Text>
         </View>
       ) : null}
     </View>
@@ -75,9 +68,7 @@ const styles = StyleSheet.create((theme) => {
     details: {
       paddingLeft: hull.space.md,
       paddingBottom: hull.space.sm,
-      gap: hull.space.xs,
-      borderLeftWidth: StyleSheet.hairlineWidth,
-      borderLeftColor: hull.border,
+      paddingRight: hull.space.sm,
     },
     tool: { ...hull.type.meta, color: hull.textSecondary },
   };

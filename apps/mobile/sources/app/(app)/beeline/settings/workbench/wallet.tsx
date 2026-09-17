@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
-import { WalletSendForm } from '@/buzz/wallet-send-form';
 import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -24,8 +24,6 @@ function activityStamp(createdAt: number, now: number = Date.now()): string {
   }
   return `${date.getDate()} ${date.toLocaleString('en', { month: 'short' })}`;
 }
-
-type ActivityTab = 'send' | 'receive';
 
 /**
  * Wallet dashboard (post-connect overview): the address with copy and QR,
@@ -45,8 +43,6 @@ export default function WalletScreen() {
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [granting, setGranting] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [tab, setTab] = useState<ActivityTab>('send');
   const [qrOpen, setQrOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -77,21 +73,10 @@ export default function WalletScreen() {
     try {
       await getWalletSource().grantDelegation({ workspaceId });
       await load();
+    } catch {
+      setError('network');
     } finally {
       setGranting(false);
-    }
-  }, [workspaceId, load]);
-
-  const create = useCallback(async () => {
-    setCreating(true);
-    try {
-      setWallet(await getWalletSource().createWallet({ workspaceId }));
-      setError(null);
-      await load();
-    } catch {
-      setError('Could not create the wallet. Try again.');
-    } finally {
-      setCreating(false);
     }
   }, [workspaceId, load]);
 
@@ -106,191 +91,208 @@ export default function WalletScreen() {
   const address = wallet?.address ?? '';
   const coins = wallet?.coins ?? [];
 
+  if (error && wallet === null) {
+    return (
+      <NetworkUnavailableState onRetry={() => void load()} testID="wallet-network-unavailable" />
+    );
+  }
+
+  if (wallet === null) {
+    return (
+      <View style={[styles.container, styles.centered]} testID="wallet-loading">
+        <Text style={styles.quietLine}>Loading wallet…</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.contentInner} style={styles.content}>
         <View testID="wallet-screen">
-          {error && wallet === null ? (
-            <SettingsRow
-              action="create"
-              description="A wallet only you control. Your agents spend it; they never see the key."
-              onPress={creating ? undefined : create}
-              testID="wallet-create"
-              title="Create wallet"
-              tone="action"
-            />
-          ) : (
-            <>
-              {needsGrant ? (
-                <SettingsRow
-                  action="grant"
-                  description="Your agents need permission again to spend."
-                  onPress={granting ? undefined : grant}
-                  testID="wallet-delegation-banner"
-                  title="Permission expired"
-                  tone="action"
-                />
-              ) : null}
+          <>
+            {needsGrant ? (
+              <SettingsRow
+                action="grant"
+                description="Your agents need permission again to spend."
+                onPress={granting ? undefined : grant}
+                testID="wallet-delegation-banner"
+                title="Permission expired"
+                tone="action"
+              />
+            ) : null}
 
-              {/* Address: one row, copy on the trailing axis, QR on demand. */}
-              <View style={styles.addressBlock} testID="wallet-address">
-                <View style={styles.addressCopy}>
-                  <Text style={styles.sectionLabel}>Address</Text>
-                  <Text numberOfLines={1} selectable style={styles.address} testID="wallet-address-value">
-                    {address || '—'}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  accessibilityLabel="Copy address"
-                  accessibilityRole="button"
-                  onPress={copyAddress}
-                  style={styles.addressAction}
-                  testID="wallet-address-copy"
+            {/* Address: one row, copy on the trailing axis, QR on demand. */}
+            <View style={styles.addressBlock} testID="wallet-address">
+              <View style={styles.addressCopy}>
+                <Text style={styles.sectionLabel}>Address</Text>
+                <Text
+                  numberOfLines={1}
+                  selectable
+                  style={styles.address}
+                  testID="wallet-address-value"
                 >
-                  <Text style={styles.addressActionText}>{copied ? 'Copied' : 'Copy'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel="Show address QR code"
-                  accessibilityRole="button"
-                  onPress={() => setQrOpen((open) => !open)}
-                  style={styles.addressAction}
-                  testID="wallet-address-qr-toggle"
-                >
-                  <Text style={styles.addressActionText}>QR</Text>
-                </TouchableOpacity>
-              </View>
-              {qrOpen ? (
-                <View style={styles.qrBlock} testID="wallet-address-qr">
-                  <WalletQr payload={address} size={160} />
-                </View>
-              ) : null}
-
-              <View style={styles.balanceBlock} testID="wallet-balance">
-                <Text style={styles.balance} testID="wallet-balance-value">{wallet?.totalUsd ?? '—'}</Text>
-                <Text style={styles.balanceLabel}>Total balance</Text>
-              </View>
-
-              <Text style={styles.sectionLabel} testID="wallet-assets-head">
-                Assets
-              </Text>
-              {coins.length === 0 ? (
-                <Text style={styles.quietLine} testID="wallet-assets-empty">
-                  No assets yet. Receive funds to get started.
+                  {address || '—'}
                 </Text>
-              ) : (
-                coins.map((coin) => {
-                  const mark = tokenIcon(coin.symbol);
-                  const badge = coin.chain ? chainIcon(coin.chain) : undefined;
-                  return (
-                    <View key={coin.symbol} style={styles.coinRow} testID={`wallet-coin-${coin.symbol}`}>
-                      <View style={styles.coinLeading}>
-                        {mark ? (
-                          <Image source={mark} style={styles.tokenIcon} />
-                        ) : (
-                          <View style={[styles.tokenIcon, styles.tokenMonogram]}>
-                            <Text style={styles.monogramText}>{coin.symbol.slice(0, 1)}</Text>
-                          </View>
-                        )}
-                        <View style={styles.coinCopy}>
-                          <Text style={styles.coinName}>{coin.name}</Text>
-                          <View style={styles.coinChainLine}>
-                            <Text style={styles.coinSymbol}>{coin.symbol}</Text>
-                            {badge && coin.chain ? (
-                              <View style={styles.chainBadge} testID={`wallet-coin-chain-${coin.chain}`}>
-                                <Image source={badge} style={styles.chainIcon} />
-                                <Text style={styles.chainName}>{coin.chain}</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                        </View>
-                      </View>
-                      <View style={styles.coinRight}>
-                        <Text style={styles.coinUsd}>{coin.usd}</Text>
-                        <Text style={styles.coinAmount}>{coin.amount}</Text>
-                      </View>
-                    </View>
-                  );
-                })
-              )}
+              </View>
+              <TouchableOpacity
+                accessibilityLabel="Copy address"
+                accessibilityRole="button"
+                onPress={copyAddress}
+                style={styles.addressAction}
+                testID="wallet-address-copy"
+              >
+                <Text style={styles.addressActionText}>{copied ? 'Copied' : 'Copy'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityLabel="Show address QR code"
+                accessibilityRole="button"
+                onPress={() => setQrOpen((open) => !open)}
+                style={styles.addressAction}
+                testID="wallet-address-qr-toggle"
+              >
+                <Text style={styles.addressActionText}>QR</Text>
+              </TouchableOpacity>
+            </View>
+            {qrOpen ? (
+              <View style={styles.qrBlock} testID="wallet-address-qr">
+                <WalletQr payload={address} size={160} />
+              </View>
+            ) : null}
 
-              <View style={styles.tabs} testID="wallet-actions">
-                {(['send', 'receive'] as const).map((candidate) => (
-                  <Pressable
-                    key={candidate}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: tab === candidate }}
-                    onPress={() => setTab(candidate)}
-                    style={[styles.tab, tab === candidate && styles.tabActive]}
-                    testID={`wallet-tab-${candidate}`}
+            <View style={styles.balanceBlock} testID="wallet-balance">
+              <Text style={styles.balance} testID="wallet-balance-value">
+                {wallet?.totalUsd ?? '—'}
+              </Text>
+              <Text style={styles.balanceLabel}>Total balance</Text>
+              <View style={styles.balanceActions} testID="wallet-actions">
+                {(['send', 'receive'] as const).map((action) => (
+                  <TouchableOpacity
+                    key={action}
+                    accessibilityRole="button"
+                    onPress={() =>
+                      router.push({
+                        pathname: `/beeline/settings/workbench/wallet-${action}`,
+                        params: { workspaceId },
+                      } as unknown as Href)
+                    }
+                    style={styles.balanceAction}
+                    testID={`wallet-action-${action}`}
                   >
-                    <Text style={[styles.tabText, tab === candidate && styles.tabTextActive]}>
-                      {candidate === 'send' ? 'Send' : 'Receive'}
+                    <Text style={styles.balanceActionText}>
+                      {action === 'send' ? 'Send' : 'Receive'}
                     </Text>
-                  </Pressable>
+                  </TouchableOpacity>
                 ))}
               </View>
-              {tab === 'send' ? (
-                <View testID="wallet-send-panel">
-                  <WalletSendForm workspaceId={workspaceId} />
-                </View>
-              ) : (
-                <View style={styles.receivePanel} testID="wallet-receive-panel">
-                  <WalletQr payload={address} size={160} />
-                  <Text numberOfLines={1} selectable style={styles.receiveAddress} testID="wallet-receive-address">
-                    {address || '—'}
-                  </Text>
-                  <Text style={styles.quietLine}>Same address on every EVM chain.</Text>
-                </View>
-              )}
+            </View>
 
-              <Text style={styles.sectionLabel} testID="wallet-activity-head">
-                Activity
+            <Text style={styles.sectionLabel} testID="wallet-assets-head">
+              Assets
+            </Text>
+            {coins.length === 0 ? (
+              <Text style={styles.quietLine} testID="wallet-assets-empty">
+                No assets yet. Receive funds to get started.
               </Text>
-              {historyUnavailable ? (
-                <Text style={styles.quietLine} testID="wallet-activity-unavailable">
-                  Activity is unavailable right now.
-                </Text>
-              ) : history === null ? (
-                <Text style={styles.quietLine} testID="wallet-activity-loading">
-                  Loading activity…
-                </Text>
-              ) : history.length === 0 ? (
-                <Text style={styles.quietLine} testID="wallet-activity-empty">
-                  No transactions yet.
-                </Text>
-              ) : (
-                history.map((entry, index) => (
+            ) : (
+              coins.map((coin) => {
+                const mark = tokenIcon(coin.symbol);
+                const badge = coin.chain ? chainIcon(coin.chain) : undefined;
+                return (
                   <View
-                    key={`${entry.createdAt}-${index}`}
-                    style={styles.activityRow}
-                    testID={`wallet-activity-${index}`}
+                    key={coin.symbol}
+                    style={styles.coinRow}
+                    testID={`wallet-coin-${coin.symbol}`}
                   >
-                    <View
-                      style={[styles.directionMark, entry.direction === 'in' ? styles.directionIn : styles.directionOut]}
-                    >
-                      <Text style={styles.directionText}>{entry.direction === 'in' ? '↓' : '↑'}</Text>
+                    <View style={styles.coinLeading}>
+                      {mark ? (
+                        <Image source={mark} style={styles.tokenIcon} />
+                      ) : (
+                        <View style={[styles.tokenIcon, styles.tokenMonogram]}>
+                          <Text style={styles.monogramText}>{coin.symbol.slice(0, 1)}</Text>
+                        </View>
+                      )}
+                      <View style={styles.coinCopy}>
+                        <Text style={styles.coinName}>{coin.name}</Text>
+                        <View style={styles.coinChainLine}>
+                          <Text style={styles.coinSymbol}>{coin.symbol}</Text>
+                          {badge && coin.chain ? (
+                            <View
+                              style={styles.chainBadge}
+                              testID={`wallet-coin-chain-${coin.chain}`}
+                            >
+                              <Image source={badge} style={styles.chainIcon} />
+                              <Text style={styles.chainName}>{coin.chain}</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
                     </View>
-                    <View style={styles.activityCopy}>
-                      <Text style={styles.activityTitle}>
-                        {entry.direction === 'in' ? 'Received' : entry.agentName ? `Sent by ${entry.agentName}` : 'Sent'}
-                      </Text>
-                      <Text numberOfLines={1} style={styles.activitySub}>
-                        {entry.counterparty} · {entry.chain}
-                      </Text>
-                    </View>
-                    <View style={styles.activityRight}>
-                      <Text
-                        style={[styles.activityAmount, entry.direction === 'in' && styles.activityAmountIn]}
-                      >
-                        {entry.amountText}
-                      </Text>
-                      <Text style={styles.activityStamp}>{activityStamp(entry.createdAt)}</Text>
+                    <View style={styles.coinRight}>
+                      <Text style={styles.coinUsd}>{coin.usd}</Text>
+                      <Text style={styles.coinAmount}>{coin.amount}</Text>
                     </View>
                   </View>
-                ))
-              )}
-            </>
-          )}
+                );
+              })
+            )}
+
+            <Text style={styles.sectionLabel} testID="wallet-activity-head">
+              Activity
+            </Text>
+            {historyUnavailable ? (
+              <Text style={styles.quietLine} testID="wallet-activity-unavailable">
+                Activity is unavailable right now.
+              </Text>
+            ) : history === null ? (
+              <Text style={styles.quietLine} testID="wallet-activity-loading">
+                Loading activity…
+              </Text>
+            ) : history.length === 0 ? (
+              <Text style={styles.quietLine} testID="wallet-activity-empty">
+                No transactions yet.
+              </Text>
+            ) : (
+              history.map((entry, index) => (
+                <View
+                  key={`${entry.createdAt}-${index}`}
+                  style={styles.activityRow}
+                  testID={`wallet-activity-${index}`}
+                >
+                  <View
+                    style={[
+                      styles.directionMark,
+                      entry.direction === 'in' ? styles.directionIn : styles.directionOut,
+                    ]}
+                  >
+                    <Text style={styles.directionText}>{entry.direction === 'in' ? '↓' : '↑'}</Text>
+                  </View>
+                  <View style={styles.activityCopy}>
+                    <Text style={styles.activityTitle}>
+                      {entry.direction === 'in'
+                        ? 'Received'
+                        : entry.agentName
+                          ? `Sent by ${entry.agentName}`
+                          : 'Sent'}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.activitySub}>
+                      {entry.counterparty} · {entry.chain}
+                    </Text>
+                  </View>
+                  <View style={styles.activityRight}>
+                    <Text
+                      style={[
+                        styles.activityAmount,
+                        entry.direction === 'in' && styles.activityAmountIn,
+                      ]}
+                    >
+                      {entry.amountText}
+                    </Text>
+                    <Text style={styles.activityStamp}>{activityStamp(entry.createdAt)}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </>
         </View>
       </ScrollView>
     </View>
@@ -301,6 +303,7 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1 },
+    centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl },
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.space.xs, paddingBottom: hull.space.xxl },
     addressBlock: {
@@ -322,10 +325,23 @@ const styles = StyleSheet.create((theme) => {
     },
     addressActionText: { ...hull.type.meta, color: hull.textSecondary },
     qrBlock: { alignItems: 'center', paddingBottom: hull.space.sm },
-    balanceBlock: { paddingVertical: hull.space.sm, gap: 2 },
-    balance: { ...hull.type.hero, color: hull.textPrimary },
-    balanceLabel: { ...hull.type.meta, color: hull.textMuted },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted, paddingTop: hull.space.sm },
+    balanceBlock: { alignItems: 'center', paddingVertical: hull.space.xl, gap: 2 },
+    balance: { ...hull.type.hero, color: hull.textPrimary, textAlign: 'center' },
+    balanceLabel: { ...hull.type.meta, color: hull.textMuted, textAlign: 'center' },
+    balanceActions: { flexDirection: 'row', gap: hull.space.lg, marginTop: hull.space.md },
+    balanceAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.md },
+    balanceActionText: {
+      ...Typography.default(),
+      ...Typography.ledger('medium'),
+      ...hull.type.body,
+      color: hull.accent,
+    },
+    sectionLabel: {
+      ...Typography.default(),
+      ...hull.type.sectionHead,
+      color: hull.textMuted,
+      paddingTop: hull.space.sm,
+    },
     quietLine: { ...hull.type.meta, color: hull.textMuted, paddingVertical: hull.space.sm },
     coinRow: {
       alignItems: 'center',
@@ -336,7 +352,13 @@ const styles = StyleSheet.create((theme) => {
       minHeight: 56,
       paddingVertical: hull.space.sm,
     },
-    coinLeading: { alignItems: 'center', flexDirection: 'row', flex: 1, gap: hull.space.sm, minWidth: 0 },
+    coinLeading: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flex: 1,
+      gap: hull.space.sm,
+      minWidth: 0,
+    },
     tokenIcon: { borderRadius: 18, height: 36, width: 36 },
     tokenMonogram: {
       alignItems: 'center',
@@ -354,19 +376,6 @@ const styles = StyleSheet.create((theme) => {
     coinRight: { alignItems: 'flex-end', gap: 2 },
     coinUsd: { ...hull.type.body, color: hull.textPrimary },
     coinAmount: { ...hull.type.meta, color: hull.textSecondary },
-    tabs: {
-      borderColor: hull.border,
-      borderRadius: hull.radius,
-      borderWidth: StyleSheet.hairlineWidth,
-      flexDirection: 'row',
-      marginTop: hull.space.md,
-    },
-    tab: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: 44 },
-    tabActive: { backgroundColor: hull.border },
-    tabText: { ...hull.type.body, color: hull.textMuted },
-    tabTextActive: { color: hull.textPrimary },
-    receivePanel: { alignItems: 'center', gap: hull.space.sm, padding: hull.space.md },
-    receiveAddress: { ...hull.type.machine, color: hull.textPrimary, maxWidth: '100%' },
     activityRow: {
       alignItems: 'center',
       borderBottomColor: hull.border,

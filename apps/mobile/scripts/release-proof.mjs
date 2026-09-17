@@ -422,6 +422,31 @@ function listAndroidUsers(device) {
   return users;
 }
 
+// Package versioning is shared across every Android user of a device, so a
+// stale install carrying a HIGHER versionCode than the artifact under proof
+// (e.g. a native APK an earlier proof sideloaded, or orphaned state from a
+// since-removed user) fails even a fresh secondary user's `pm install` with
+// INSTALL_FAILED_VERSION_DOWNGRADE (run 35274684695). Remove any existing
+// install of the package before the per-user install; `io` injects the adb
+// calls for tests.
+export function removeExistingAppInstall(
+  device,
+  io = {
+    shell: (d, command, opts) => adbShell(d, command, opts),
+    exec: (d, args, opts) => adb(d, args, opts),
+  },
+) {
+  const existing = io.shell(device, `pm path ${APP_ID}`, { allowFailure: true });
+  if (!existing.ok || !/package:/.test(existing.stdout)) return false;
+  const removed = io.exec(device, ['uninstall', APP_ID], { allowFailure: true });
+  if (removed.ok) {
+    console.log(`release-proof: removed existing ${APP_ID} install so a stale higher versionCode cannot block the signed-out proof`);
+  } else {
+    console.log(`release-proof: could not remove the existing ${APP_ID} install:\n${removed.stdout}\n${removed.stderr}`);
+  }
+  return removed.ok;
+}
+
 async function runSignedOutFlow(device, args, outDir) {
   const usersBefore = listAndroidUsers(device);
   const leftover = [...usersBefore.entries()].find(([, name]) => name === 'beeline-proof');
@@ -441,7 +466,10 @@ async function runSignedOutFlow(device, args, outDir) {
   try {
     const install = adbShell(device, `pm install-existing --user ${userId} ${APP_ID}`, { allowFailure: true });
     if (!install.ok || !/Success/.test(install.stdout)) {
-      // Fall back to a full install for that user.
+      // Fall back to a full install for that user. A stale install with a
+      // HIGHER versionCode blocks this install device-wide (versioning is
+      // shared across users), so remove any existing install first.
+      removeExistingAppInstall(device);
       const push = adb(device, ['push', args.apk ?? '/dev/null', '/data/local/tmp/release-proof.apk'], { allowFailure: true });
       if (!push.ok) {
         return { ok: false, output: `could not provision the app for secondary user ${userId}:\n${install.stdout}` };
@@ -721,7 +749,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e?.stack ?? e);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  main().catch((e) => {
+    console.error(e?.stack ?? e);
+    process.exit(1);
+  });
+}

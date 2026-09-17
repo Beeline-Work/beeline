@@ -3,8 +3,8 @@ import type { TurnActivityAction } from './activity-timeline';
 import {
   formatToolCallDuration,
   middleTruncate,
+  toolCallLabel,
   toolCallOutput,
-  toolCallRow,
   TOOL_CALL_OBJECT_MAX,
 } from './tool-call-row';
 
@@ -64,90 +64,76 @@ describe('formatToolCallDuration', () => {
   });
 });
 
-describe('toolCallRow', () => {
-  it('leads a shell call with `ran` and the command itself', () => {
-    const row = toolCallRow(step({ id: 'a', toolKind: 'execute', command: 'npm test', title: 'Bash' }));
-    expect([row.verb, row.object]).toEqual(['ran', 'npm test']);
+describe('toolCallLabel', () => {
+  it('a shell call is the command itself — the glyph carries the family', () => {
+    expect(toolCallLabel(step({ id: 'a', toolKind: 'execute', command: 'npm test', title: 'Bash' }))).toBe(
+      'npm test',
+    );
   });
 
-  it('gives git its own verb and keeps only the subcommand as the object', () => {
-    const row = toolCallRow(
-      step({ id: 'g', toolKind: 'execute', command: 'git status --short', title: 'Bash' }),
-    );
-    expect([row.verb, row.object]).toEqual(['git', 'status --short']);
+  it('keeps only the subcommand for git', () => {
+    expect(
+      toolCallLabel(step({ id: 'g', toolKind: 'execute', command: 'git status --short', title: 'Bash' })),
+    ).toBe('status --short');
   });
 
   it('prefers the command over the harness title, which describes another call', () => {
-    const row = toolCallRow(
-      step({ id: 'l', toolKind: 'execute', command: 'ls -la sources', title: 'Reviewed the current changes' }),
-    );
-    expect(row.object).toBe('ls -la sources');
+    expect(
+      toolCallLabel(
+        step({ id: 'l', toolKind: 'execute', command: 'ls -la sources', title: 'Reviewed the current changes' }),
+      ),
+    ).toBe('ls -la sources');
   });
 
   it('names a read by its basename', () => {
-    const row = toolCallRow(
-      step({ id: 'r', toolKind: 'read', title: 'Read', files: [{ path: 'apps/mobile/Ledger.tsx' }] }),
-    );
-    expect([row.verb, row.object]).toEqual(['read', 'Ledger.tsx']);
+    expect(
+      toolCallLabel(step({ id: 'r', toolKind: 'read', title: 'Read', files: [{ path: 'apps/mobile/Ledger.tsx' }] })),
+    ).toBe('Ledger.tsx');
   });
 
   it('names a write by its basename', () => {
-    const row = toolCallRow(
-      step({ id: 'w', toolKind: 'edit', title: 'Edit files', files: [{ path: 'sources/buzz/tool-call-row.ts' }] }),
+    expect(
+      toolCallLabel(
+        step({ id: 'w', toolKind: 'edit', title: 'Edit files', files: [{ path: 'sources/buzz/tool-call-row.ts' }] }),
+      ),
+    ).toBe('tool-call-row.ts');
+  });
+
+  it('carries the search pattern and the tool’s own hit count', () => {
+    expect(
+      toolCallLabel(
+        step({
+          id: 's',
+          toolKind: 'search',
+          title: 'Grep',
+          input: '{"pattern":"toolCallRow","path":"sources"}',
+          output: '12 matches across 3 files',
+        }),
+      ),
+    ).toBe('toolCallRow · 12 hits');
+  });
+
+  it('leads an MCP call with the tool’s own short name — a verb that IS information stays', () => {
+    expect(toolCallLabel(step({ id: 'm', toolKind: 'other', title: 'mcp__squire__list_credentials' }))).toBe(
+      'list_credentials squire',
     );
-    expect([row.verb, row.object]).toEqual(['wrote', 'tool-call-row.ts']);
-  });
-
-  it('carries a search pattern and the tool’s own hit count', () => {
-    const row = toolCallRow(
-      step({
-        id: 's',
-        toolKind: 'search',
-        title: 'Grep',
-        input: '{"pattern":"toolCallRow","path":"sources"}',
-        output: '12 matches across 3 files',
-      }),
-    );
-    expect([row.verb, row.object]).toEqual(['found', 'toolCallRow · 12 hits']);
-  });
-
-  it('leads an MCP call with the tool’s own short name', () => {
-    const row = toolCallRow(step({ id: 'm', toolKind: 'other', title: 'mcp__squire__list_credentials' }));
-    expect([row.verb, row.object]).toEqual(['list_credentials', 'squire']);
-  });
-
-  it('keeps the failure reason and drops the transport envelope from the output', () => {
-    const row = toolCallRow(
-      step({
-        id: 'f',
-        toolKind: 'execute',
-        command: 'pnpm fast-gate',
-        outcome: 'failure',
-        weight: 'failure',
-        reason: 'command not found: pnpm',
-        output: '[{"type":"terminal","terminalId":"exec-1"}]',
-        status: 'error',
-      }),
-    );
-    expect(row.outcome).toBe('failure');
-    expect(row.reason).toBe('command not found: pnpm');
-    expect(row.output).toEqual([]);
-  });
-
-  it('calls the last unsettled call of a running group in flight, and nothing else', () => {
-    const pending = step({ id: 'p', toolKind: 'execute', command: 'npm run build' });
-    expect(toolCallRow(pending, true).outcome).toBe('running');
-    expect(toolCallRow(pending, false).outcome).toBe('success');
-    expect(toolCallRow({ ...pending, status: 'exit 0' }, true).outcome).toBe('success');
   });
 
   it('reads an older transcript’s folded rollup row as the calls it counts', () => {
-    const row = toolCallRow(step({ id: 'sum', toolKind: 'read', title: 'reading 8' }));
-    expect([row.verb, row.object]).toEqual(['read', '8 calls']);
+    expect(toolCallLabel(step({ id: 'sum', toolKind: 'read', title: 'reading 8' }))).toBe('8 calls');
   });
 
-  it('strips the verb the column already carries off a title-only call', () => {
-    const row = toolCallRow(step({ id: 'o', toolKind: 'read', title: 'Read Ledger.tsx' }));
-    expect([row.verb, row.object]).toEqual(['read', 'Ledger.tsx']);
+  it('truncates in the middle at the label cap — the tail flags carry the meaning', () => {
+    const label = toolCallLabel(
+      step({
+        id: 't',
+        toolKind: 'execute',
+        command: 'npm run test --workspace apps/mobile -- --coverage --reporter=json',
+        title: 'Bash',
+      }),
+    );
+    expect(label.length).toBeLessThanOrEqual(40);
+    expect(label).toContain('…');
+    expect(label).toContain('--reporter=json');
   });
 });

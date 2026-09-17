@@ -26,10 +26,23 @@ vi.mock('./MonoMarkdown', () => ({
 vi.mock('./IdentityMark', () => ({
   IdentityMark: (props: any) => React.createElement('IdentityMark', props),
 }));
+vi.mock('./BeelineMarkSpinner', () => ({
+  BeelineMarkSpinner: (props: any) => React.createElement('BeelineMarkSpinner', props),
+}));
+vi.mock('./HullActionSheet', () => ({
+  HULL_SHEET_INSET: 22,
+  HullActionSheetModal: (props: any) =>
+    React.createElement('HullActionSheetModal', props, props.children),
+  HullActionSheetRow: (props: any) => React.createElement('HullActionSheetRow', props, props.label),
+}));
 vi.mock('react-native-reanimated', () => ({
   useReducedMotion: () => false,
 }));
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn().mockResolvedValue(undefined),
+}));
 
+import * as Clipboard from 'expo-clipboard';
 import { groknight } from '@/buzz/groknight';
 import { ActivityTimeline } from './ActivityTimeline';
 import { foldSettledActivityRuns } from '@/buzz/room-view-presentation';
@@ -55,6 +68,15 @@ function render(element: React.ReactElement): ReactTestRenderer {
   return renderer;
 }
 
+function hostNodes(renderer: ReactTestRenderer, pattern: RegExp) {
+  return renderer.root.findAll(
+    (node: { type: unknown; props: { testID?: string } }) =>
+      typeof node.type === 'string' && pattern.test(node.props.testID ?? ''),
+  );
+}
+
+const renderedText = (renderer: ReactTestRenderer) => JSON.stringify(renderer.toJSON());
+
 const TOOLS = [
   {
     kind: 'tool' as const,
@@ -62,6 +84,7 @@ const TOOLS = [
     title: 'read',
     toolKind: 'read',
     input: 'sources/gateway.ts',
+    files: [{ path: 'sources/gateway.ts' }],
     status: 'completed',
   },
   {
@@ -75,272 +98,69 @@ const TOOLS = [
   },
 ];
 
-describe('live streaming turn', () => {
-  it('adds adjacent collapsed summary counts across thinking-only rows', () => {
-    const agent = 'b'.repeat(64);
-    const row = (
-      id: string,
-      activity: Array<NonNullable<Parameters<typeof ActivityTimeline>[0]['items']>[number]>,
-    ) => ({
-      id,
-      text: '',
-      isUser: false,
-      timestamp: Number(id.replace(/\D/g, '')),
-      pubkey: agent,
-      isAgentAuthor: true,
-      isAgentActivity: true,
-      activity,
-    });
-    const [group, ...rest] = foldSettledActivityRuns([
-      row('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),
-      row('thought-2', [{ kind: 'thinking', title: 'Thinking', text: 'Checking.' }]),
-      row('note-3', [{ kind: 'summary', title: 'Summary', rollup: { searched: 2 } }]),
-    ]);
-    expect(rest).toHaveLength(0);
-    const renderer = render(<ActivityTimeline items={group.activity!} />);
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children,
-    ).toBe('3 TOOL CALLS');
-  });
-
-  it('renders a folded run of per-call rows as one chevron over all six calls (C55)', () => {
-    const agent = 'b'.repeat(64);
-    const call = (id: string, status: 'completed' | 'failed') => ({
-      id,
-      text: '',
-      isUser: false,
-      timestamp: Number(id.slice(1)),
-      pubkey: agent,
-      isAgentAuthor: true,
-      isAgentActivity: true,
-      activity: [
-        { kind: 'tool' as const, title: 'Bash', toolKind: 'execute', command: id, status },
-      ],
-    });
-    const [group, ...rest] = foldSettledActivityRuns([
-      call('t1', 'completed'),
-      call('t2', 'completed'),
-      call('t3', 'failed'),
-      call('t4', 'failed'),
-      call('t5', 'failed'),
-      call('t6', 'failed'),
-    ]);
-    expect(rest).toHaveLength(0);
-    const renderer = render(<ActivityTimeline active={false} items={group.activity!} />);
-    const hostNodes = (pattern: RegExp) =>
-      renderer.root.findAll(
-        (node: { type: unknown; props: { testID?: string } }) =>
-          typeof node.type === 'string' && pattern.test(node.props.testID ?? ''),
-      );
-    // One collapsed note, one chevron.
-    expect(hostNodes(/^corner-tool-summary$/)).toHaveLength(1);
-    const summary = renderer.root.findByProps({ testID: 'corner-tool-summary' });
-    expect(summary.props.children[0].props.children).toBe('6 TOOL CALLS · 4 FAILED');
-    expect(hostNodes(/^corner-tool-row-anonymous-\d+$/)).toHaveLength(0);
-    act(() => summary.props.onPress());
-    expect(hostNodes(/^corner-tool-row-anonymous-\d+$/)).toHaveLength(6);
-  });
-
-  it('keeps settled tool rows collapsed and expandable after the turn completes (#804)', () => {
+describe('one-line tool ledger', () => {
+  it('renders one collapsed ledger line per step — no summary row, no cards', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
-    // Collapsed by default: one compact activity row, no individual calls.
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children,
-    ).toBe('2 TOOL CALLS · 1 FAILED');
-    expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-read' })).toHaveLength(0);
-    expect(
-      renderer.root.findAll((node: { props: { testID?: string } }) =>
-        node.props.testID?.startsWith('corner-tool-row-detail-'),
-      ),
-    ).toHaveLength(0);
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    expect(renderer.root.findByProps({ testID: 'corner-tool-row-read' })).toBeTruthy();
-    // A call with real output opens and closes; the failed one arrives open.
-    const row = renderer.root.findByProps({ testID: 'corner-tool-row-failure' });
-    expect(
-      new Set(
-        renderer.root
-          .findAll((node: { props: { testID?: string } }) =>
-            node.props.testID?.startsWith('corner-tool-row-detail-'),
-          )
-          .map((node: { props: { testID?: string } }) => node.props.testID),
-      ).size,
-    ).toBe(1);
-    act(() => row.props.onPress());
-    expect(
-      renderer.root.findAll((node: { props: { testID?: string } }) =>
-        node.props.testID?.startsWith('corner-tool-row-detail-'),
-      ),
-    ).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-failure' })).toBeTruthy();
+    expect(hostNodes(renderer, /^corner-tool-summary$/)).toHaveLength(0);
+    expect(renderedText(renderer)).not.toContain('TOOL CALLS');
+    expect(renderedText(renderer)).not.toContain('FAILED');
   });
 
-  it('renders durable corner narration after the live draft is gone', () => {
+  it('a failed step carries its distilled reason inline, a success stays quiet', () => {
+    const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
+    const text = renderedText(renderer);
+    // The distilled reason rides the line; the raw envelope waits in the sheet.
+    expect(text).toContain('command not found: pnpm');
+    expect(text).not.toContain('pnpm: not found');
+  });
+
+  it('a transport envelope is not output: the line has nothing to open onto', () => {
     const renderer = render(
       <ActivityTimeline
-        active={false}
-        items={[{ kind: 'output', title: 'Update', text: 'Found the boundary.' }]}
-      />,
-    );
-    expect(renderer.root.findByProps({ testID: 'activity-narration-0' }).props.markdown).toBe(
-      'Found the boundary.',
-    );
-  });
-
-  it('renders one collapsed row per tool and the accumulating conversational draft', () => {
-    const renderer = render(
-      <ActivityTimeline
-        active
-        handle="Clara"
-        items={TOOLS}
-        messageDraft="The answer is arriving."
-        stamp="now"
-      />,
-    );
-    expect(renderer.root.findByProps({ testID: 'activity-message-draft' }).props.markdown).toBe(
-      'The answer is arriving.',
-    );
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.accessibilityState,
-    ).toEqual({
-      busy: true,
-      expanded: false,
-    });
-    expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-read' })).toHaveLength(0);
-    expect(renderer.root.findAllByType('Pressable')).toHaveLength(1);
-    expect(
-      renderer.root.findAll((node: { props: { testID?: string } }) =>
-        node.props.testID?.startsWith('corner-tool-row-detail-'),
-      ),
-    ).toHaveLength(0);
-  });
-
-  it('keeps old detail-free activity rows collapsed and non-interactive', () => {
-    const renderer = render(
-      <ActivityTimeline
-        active
-        items={[{ kind: 'tool', id: 'old', title: 'Ran project task', toolKind: 'execute' }]}
-      />,
-    );
-
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    expect(JSON.stringify(renderer.toJSON())).toContain('project task');
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-row-old' }).props.onPress,
-    ).toBeUndefined();
-    expect(
-      renderer.root.findAll((node: { props: { testID?: string } }) =>
-        node.props.testID?.startsWith('corner-tool-row-detail-'),
-      ),
-    ).toHaveLength(0);
-  });
-
-  it('keeps prose tight to the tool line it follows', () => {
-    const renderer = render(
-      <ActivityTimeline active items={[TOOLS[0]!]} messageDraft="The result follows the call." />,
-    );
-
-    expect(
-      renderer.root.findByProps({ testID: 'activity-message-draft' }).props.textStyle.marginTop,
-    ).toBeLessThanOrEqual(3);
-  });
-
-  it('routes streamed prose through the Room-style Markdown renderer', () => {
-    const renderer = render(
-      <ActivityTimeline
-        active
         items={[
           {
-            kind: 'thinking',
-            title: 'Thinking',
-            text: '**PRIVATE REASONING MUST NOT RENDER**',
+            kind: 'tool',
+            id: 'shell',
+            title: 'Bash',
+            toolKind: 'execute',
+            command: 'ls -la node_modules/.bin',
+            status: 'exit 0',
+            output: '[{"type":"terminal","terminalId":"exec-994c47ee"}]',
           },
         ]}
-        messageDraft="**The reply is ready**"
       />,
     );
-
+    const text = renderedText(renderer);
+    expect(text).toContain('ls -la node_modules/.bin');
+    expect(text).not.toContain('terminalId');
+    // A narrow screen cuts where the data cap does: the middle.
     expect(
       renderer.root
-        .findAllByType('MonoMarkdown')
-        .map((node: { props: { markdown: string; testID?: string } }) => ({
-          markdown: node.props.markdown,
-          testID: node.props.testID,
-        })),
-    ).toEqual([{ markdown: '**The reply is ready**', testID: 'activity-message-draft' }]);
-  });
-
-  it('labels a tool row and reveals the bounded command, result, and files on press', () => {
-    const renderer = render(
-      <ActivityTimeline
-        active
-        items={[
-          {
-            kind: 'thinking',
-            title: 'Thinking',
-            text: 'PRIVATE THOUGHT SENTINEL',
-          },
-          {
-            kind: 'tool',
-            id: 'edit',
-            title: 'Edit files',
-            toolKind: 'edit',
-            status: 'completed',
-            output: 'first result line\nlast result line',
-            files: [{ path: 'apps/mobile/Ledger.tsx' }],
-          },
-          {
-            kind: 'tool',
-            id: 'execute',
-            title: 'Tool',
-            toolKind: 'execute',
-            command: 'npm test -- ActivityTimeline',
-            output: 'tests passed',
-            status: 'exit 0',
-          },
-          {
-            kind: 'summary',
-            title: 'read receipts',
-            observed: [{ verb: 'read', target: 'Ledger.tsx', result: 'OBSERVED RESULT SENTINEL' }],
-          },
-        ]}
-        messageDraft="Conversational answer"
-      />,
-    );
-
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-row-edit' }).props.onPress());
-    const rendered = JSON.stringify(renderer.toJSON());
-    expect(rendered).toContain('Conversational answer');
-    expect(rendered).toContain('Ledger.tsx');
-    expect(rendered).toContain('first result line');
-    expect(rendered).toContain('last result line');
-    // The command belongs to the row, and is printed exactly once.
-    expect(
-      renderer.root.findAll(
-        (node: { type: unknown; props: { children?: unknown } }) =>
-          node.type === 'Text' && node.props.children === 'npm test -- ActivityTimeline',
-      ),
+        .findByProps({ testID: 'tool-ledger-line-shell' })
+        .findAll(
+          (node: { type: unknown; props: { ellipsizeMode?: string } }) =>
+            node.type === 'Text' && node.props.ellipsizeMode === 'middle',
+        ),
     ).toHaveLength(1);
-    expect(rendered).not.toContain('PRIVATE THOUGHT SENTINEL');
-    expect(rendered).not.toContain('OBSERVED RESULT SENTINEL');
-    expect(renderer.root.findByProps({ testID: 'corner-tool-row-detail-edit' })).toBeTruthy();
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-row-edit' }).props.accessibilityState,
-    ).toEqual({ busy: false, expanded: true });
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-shell' }).props.onPress).toBeUndefined();
   });
 
-  it('says nothing on success, `failed` in the diff red, `running` in brass (C88)', () => {
-    const renderer = render(<ActivityTimeline active items={TOOLS} />);
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    // A successful call carries no outcome word at all — absence reads faster.
-    expect(renderer.root.findAllByProps({ testID: 'activity-verdict-read' })).toHaveLength(0);
+  it('spends colour in exactly two places: the brass cross, the dim tick (design 2026-08-24)', () => {
+    const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
+    const passed = renderer.root.findByProps({ testID: 'activity-verdict-read' });
+    expect(passed.props.children).toBe('✓');
+    expect(passed.props.style).toContainEqual(expect.objectContaining({ color: groknight.ledgerGhost }));
     const failed = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
-    expect(failed.props.children).toBe('failed');
-    expect(failed.props.style).toContainEqual(
-      expect.objectContaining({ color: groknight.diffRemoved }),
-    );
+    expect(failed.props.children).toBe('✗');
+    expect(failed.props.style).toContainEqual(expect.objectContaining({ color: groknight.accent }));
+    // No red in the new rendering — the design's brass supersedes C88's diff red.
+    expect(renderedText(renderer)).not.toContain(groknight.diffRemoved);
+  });
 
-    const live = render(
+  it('the live turn’s last step carries the spinner, not a verdict glyph', () => {
+    const renderer = render(
       <ActivityTimeline
         active
         items={[
@@ -350,70 +170,139 @@ describe('live streaming turn', () => {
             title: 'Bash',
             toolKind: 'execute',
             command: 'npm run build',
+            status: 'exit 0',
           },
         ]}
       />,
     );
-    act(() => live.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    const running = live.root.findByProps({ testID: 'activity-verdict-live' });
-    expect(running.props.children).toBe('running');
-    expect(running.props.style).toContainEqual(
-      expect.objectContaining({ color: groknight.accent }),
-    );
+    const spinner = renderer.root.findByProps({ testID: 'activity-verdict-live' });
+    expect(spinner.props.children.type).toBeTypeOf('function');
+    expect(spinner.props.children.props.live).toBe(true);
   });
 
-  it('prints one line per call — a verb, the command, and no restatement (C88)', () => {
+  it('every line is a 44-minimum tap target, and pressable only when it has output', () => {
     const renderer = render(
       <ActivityTimeline
+        active={false}
         items={[
-          {
-            kind: 'tool',
-            id: 'shell',
-            title: 'Reviewed the current changes',
-            toolKind: 'execute',
-            command: 'ls -la node_modules/.bin',
-            status: 'exit 0',
-            output: '[{"type":"terminal","terminalId":"exec-994c47ee"}]',
-          },
+          TOOLS[0]!,
+          { kind: 'tool', id: 'bare', title: 'Ran project task', toolKind: 'execute' },
         ]}
       />,
     );
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    const rendered = JSON.stringify(renderer.toJSON());
-    expect(rendered).toContain('ls -la node_modules/.bin');
-    // A narrow screen cuts where the data cap does: the middle.
-    expect(
-      renderer.root
-        .findByProps({ testID: 'corner-tool-row-shell' })
-        .findAll(
-          (node: { type: unknown; props: { ellipsizeMode?: string } }) =>
-            node.type === 'Text' && node.props.ellipsizeMode === 'middle',
-        ),
-    ).toHaveLength(1);
-    // No `Tool:` / `Result:` / `Command:` stack, and the harness title never
-    // stands over a command it does not describe.
-    expect(rendered).not.toContain('Reviewed the current changes');
-    expect(rendered).not.toContain('Result:');
-    expect(rendered).not.toContain('Command:');
-    // A transport envelope is not output: the row has nothing to open onto.
-    expect(rendered).not.toContain('terminalId');
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-row-shell' }).props.onPress,
-    ).toBeUndefined();
+    for (const id of ['read', 'bare']) {
+      const [row] = hostNodes(renderer, new RegExp(`^tool-ledger-line-${id}$`));
+      expect(row.props.style).toEqual(expect.objectContaining({ minHeight: 44 }));
+    }
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).props.onPress).toBeTypeOf(
+      'function',
+    );
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress).toBeUndefined();
+    expect(renderedText(renderer)).toContain('project task');
   });
 
-  it('opens a failed call by itself and counts it in the fold (C88)', () => {
-    const renderer = render(<ActivityTimeline items={TOOLS} />);
-    expect(
-      renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.children[0].props.children,
-    ).toBe('2 TOOL CALLS · 1 FAILED');
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    expect(renderer.root.findByProps({ testID: 'corner-tool-row-detail-failure' })).toBeTruthy();
-    expect(renderer.root.findAllByProps({ testID: 'corner-tool-row-detail-read' })).toHaveLength(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('command not found: pnpm');
+  it('shows a duration only when a receipt carried one above the floor', () => {
+    // Wire receipts carry spans only as summary `thoughtMs`; a step under the
+    // floor earns no gutter at all.
+    const renderer = render(
+      <ActivityTimeline
+        active={false}
+        items={[
+          { kind: 'summary', title: 'thinking 0.4', thoughtMs: 400 },
+          { kind: 'summary', title: 'thinking 2.1', thoughtMs: 2100 },
+          { kind: 'summary', title: 'thinking 51', thoughtMs: 51_000 },
+        ]}
+      />,
+    );
+    const text = renderedText(renderer);
+    expect(text).toContain('2.1s');
+    expect(text).toContain('51.0s');
+    expect(text).not.toContain('0.4s');
+  });
+});
+
+describe('grouping consecutive steps', () => {
+  const call = (id: string, status: 'completed' | 'failed' = 'completed') => ({
+    kind: 'tool' as const,
+    id,
+    title: 'Bash',
+    toolKind: 'execute',
+    command: id,
+    status,
   });
 
-  it("caps an opened call's output and keeps the rest one tap away (C88)", () => {
+  it('runs at or under three steps render as individual lines', () => {
+    const renderer = render(
+      <ActivityTimeline active={false} items={[call('a'), call('b'), call('c')]} />,
+    );
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(3);
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(0);
+  });
+
+  it('an unbroken run over three folds into one summary line (design 2026-08-24)', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active={false}
+        items={[
+          call('a'),
+          call('b'),
+          call('c', 'failed'),
+          call('d', 'failed'),
+          call('e', 'failed'),
+          call('f', 'failed'),
+        ]}
+      />,
+    );
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+    const group = renderer.root.findByProps({ testID: 'tool-run-group-a' });
+    expect(group.props.accessibilityLabel).toBe('6 steps · 4 failed, expandable');
+    expect(group.props.accessibilityState).toEqual({ expanded: false });
+    // The failure count is brass — the group's second place colour is spent.
+    expect(renderedText(renderer)).toContain('4 failed');
+    expect(
+      renderer.root.findAll(
+        (node: { type: unknown; props: { style?: unknown } }) =>
+          node.type === 'Text' &&
+          Array.isArray(node.props.style) &&
+          node.props.style.includes(groknight.accent) === false,
+      ),
+    ).toBeTruthy();
+  });
+
+  it('a group expands in place into the same ledger lines, and collapses again', () => {
+    const renderer = render(
+      <ActivityTimeline active={false} items={[call('a'), call('b'), call('c'), call('d')]} />,
+    );
+    act(() => renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.onPress());
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(4);
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.accessibilityState,
+    ).toEqual({ expanded: true });
+    act(() => renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.onPress());
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+  });
+
+  it('sums the durations the receipts carried into the group summary', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active={false}
+        items={[
+          { kind: 'summary', title: 'thinking 48', thoughtMs: 48_000 },
+          call('a'),
+          call('b'),
+          call('c'),
+          call('d'),
+        ]}
+      />,
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-thought-0' }).props.accessibilityLabel,
+    ).toBe('5 steps · 48.0s, expandable');
+  });
+});
+
+describe('the output sheet', () => {
+  it('a tap opens the full raw output — flat, mono, no inline expansion in the transcript', () => {
     const renderer = render(
       <ActivityTimeline
         items={[
@@ -429,11 +318,171 @@ describe('live streaming turn', () => {
         ]}
       />,
     );
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-row-long' }).props.onPress());
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('line 7');
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-row-more-long' }).props.onPress());
-    expect(JSON.stringify(renderer.toJSON())).toContain('line 9');
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-long' }).props.onPress());
+    const sheet = renderer.root.findByProps({ testID: 'tool-output-sheet' });
+    expect(sheet.props.visible).toBe(true);
+    expect(sheet.props.title).toBe('npm test');
+    // The WHOLE output, not a six-line slice with a more-tap.
+    const text = renderedText(renderer);
+    for (const line of ['line 1', 'line 7', 'line 9']) expect(text).toContain(line);
+    expect(hostNodes(renderer, /^corner-tool-row-more-/)).toHaveLength(0);
+    act(() => sheet.props.onClose());
+    expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.visible).toBe(false);
+  });
+
+  it('the sheet body is selectable, and copy hands the raw detail to the clipboard', async () => {
+    const renderer = render(
+      <ActivityTimeline
+        items={[
+          {
+            kind: 'tool',
+            id: 'out',
+            title: 'Bash',
+            toolKind: 'execute',
+            command: 'npm test',
+            status: 'exit 0',
+            output: 'tests passed',
+          },
+        ]}
+      />,
+    );
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-out' }).props.onPress());
+    const body = renderer.root.findByProps({ testID: 'tool-output-text' });
+    expect(body.props.selectable).toBe(true);
+    expect(body.props.children).toContain('tests passed');
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'tool-output-copy' }).props.onPress();
+    });
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('tests passed'));
+    expect(renderer.root.findByProps({ testID: 'tool-output-copy' }).props.metadata).toBe('Copied');
+  });
+
+  it('a failed call’s sheet leads with the distilled reason as the subtitle', () => {
+    const renderer = render(<ActivityTimeline items={TOOLS} />);
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-failure' }).props.onPress());
+    const sheet = renderer.root.findByProps({ testID: 'tool-output-sheet' });
+    expect(sheet.props.subtitle).toBe('command not found: pnpm');
+    expect(renderedText(renderer)).toContain('sh: 1: pnpm: not found');
+  });
+
+  it('a thought opens its own text; a summary-only thought is not pressable', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active={false}
+        items={[
+          { kind: 'thinking', title: 'Thinking', text: 'weighing the two layouts' },
+          { kind: 'summary', title: 'thinking 12', thoughtMs: 12_000 },
+        ]}
+      />,
+    );
+    const text = renderedText(renderer);
+    // Not in the transcript; available through the sheet.
+    expect(text).not.toContain('weighing the two layouts');
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-thought-0' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.visible).toBe(true);
+    expect(renderedText(renderer)).toContain('weighing the two layouts');
+    act(() => renderer.root.findByProps({ testID: 'tool-output-sheet' }).props.onClose());
+    // A summary-only thought carries a span but no text — nothing to open.
+    const bare = render(
+      <ActivityTimeline
+        active={false}
+        items={[{ kind: 'summary', title: 'thinking 5', thoughtMs: 5_000 }]}
+      />,
+    );
+    expect(renderedText(bare)).toContain('5.0s');
+    expect(
+      bare.root.findByProps({ testID: 'tool-ledger-line-thought-0' }).props.onPress,
+    ).toBeUndefined();
+  });
+
+  it('prints who asked, in the sheet, not the transcript', () => {
+    const renderer = render(
+      <ActivityTimeline
+        items={[
+          {
+            kind: 'tool',
+            id: 'deploy',
+            title: 'ran fly deploy -a preview under grant g-1 · asked by Alex',
+            toolKind: 'execute',
+            command: 'fly deploy -a preview',
+            output: 'deployed',
+            status: 'exit 0',
+            requestedBy: { pubkey: 'b'.repeat(64), name: 'Alex' },
+          },
+        ]}
+      />,
+    );
+    expect(renderedText(renderer)).not.toContain("at Alex's request");
+    act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-deploy' }).props.onPress());
+    expect(renderedText(renderer)).toContain("at Alex's request");
+  });
+});
+
+describe('agent prose and drafts', () => {
+  it('renders durable corner narration after the live draft is gone', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active={false}
+        items={[{ kind: 'output', title: 'Update', text: 'Found the boundary.' }]}
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'activity-narration-0' }).props.markdown).toBe(
+      'Found the boundary.',
+    );
+  });
+
+  it('renders the accumulating conversational draft beside the ledger lines', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active
+        handle="Clara"
+        items={TOOLS}
+        messageDraft="The answer is arriving."
+        stamp="now"
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'activity-message-draft' }).props.markdown).toBe(
+      'The answer is arriving.',
+    );
+    // The draft lane is untouched by the ledger: prose stays prose, and the
+    // tool lines do not borrow the draft's own tap budget.
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
+  });
+
+  it('keeps prose tight to the tool line it follows', () => {
+    const renderer = render(
+      <ActivityTimeline active items={[TOOLS[0]!]} messageDraft="The result follows the call." />,
+    );
+
+    expect(
+      renderer.root.findByProps({ testID: 'activity-message-draft' }).props.textStyle.marginTop,
+    ).toBeLessThanOrEqual(3);
+  });
+
+  it('routes streamed prose through the Room-style Markdown renderer, never the thought lane', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active
+        items={[
+          {
+            kind: 'thinking',
+            title: 'Thinking',
+            text: '**PRIVATE REASONING MUST NOT RENDER AS PROSE**',
+          },
+        ]}
+        messageDraft="**The reply is ready**"
+      />,
+    );
+
+    expect(
+      renderer.root
+        .findAllByType('MonoMarkdown')
+        .map((node: { props: { markdown: string; testID?: string } }) => ({
+          markdown: node.props.markdown,
+          testID: node.props.testID,
+        })),
+    ).toEqual([{ markdown: '**The reply is ready**', testID: 'activity-message-draft' }]);
   });
 
   it("renders the settled row's byline — IdentityMark + name + model + stamp — on the live draft", () => {
@@ -486,26 +535,63 @@ describe('live streaming turn', () => {
     );
     expect(renderer.root.findAllByProps({ testID: 'chat-byline-mark' })).toHaveLength(0);
   });
-  it('prints who asked, in quiet text, inside the expanded tool row', () => {
-    const renderer = render(
-      <ActivityTimeline
-        items={[
-          {
-            kind: 'tool',
-            id: 'deploy',
-            title: 'ran fly deploy -a preview under grant g-1 · asked by Alex',
-            toolKind: 'execute',
-            command: 'fly deploy -a preview',
-            output: 'deployed',
-            status: 'exit 0',
-            requestedBy: { pubkey: 'b'.repeat(64), name: 'Alex' },
-          },
-        ]}
-      />,
-    );
-    expect(JSON.stringify(renderer.toJSON())).not.toContain("at Alex's request");
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-summary' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'corner-tool-row-deploy' }).props.onPress());
-    expect(JSON.stringify(renderer.toJSON())).toContain("at Alex's request");
+});
+
+describe('folded historical transcripts', () => {
+  const agent = 'b'.repeat(64);
+  const row = (
+    id: string,
+    activity: Array<NonNullable<Parameters<typeof ActivityTimeline>[0]['items']>[number]>,
+  ) => ({
+    id,
+    text: '',
+    isUser: false,
+    timestamp: Number(id.replace(/\D/g, '')),
+    pubkey: agent,
+    isAgentAuthor: true,
+    isAgentActivity: true,
+    activity,
+  });
+
+  it('folds thinking-only rows into ledger lines with the summaries', () => {
+    const [group, ...rest] = foldSettledActivityRuns([
+      row('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),
+      row('thought-2', [{ kind: 'thinking', title: 'Thinking', text: 'Checking.' }]),
+      row('note-3', [{ kind: 'summary', title: 'Summary', rollup: { searched: 2 } }]),
+    ]);
+    expect(rest).toHaveLength(0);
+    const renderer = render(<ActivityTimeline items={group.activity!} />);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(3);
+    expect(hostNodes(renderer, /^corner-tool-summary$/)).toHaveLength(0);
+  });
+
+  it('renders a folded run of per-call rows as one group over all six calls (C55)', () => {
+    const call = (id: string, status: 'completed' | 'failed') => ({
+      id,
+      text: '',
+      isUser: false,
+      timestamp: Number(id.slice(1)),
+      pubkey: agent,
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      activity: [
+        { kind: 'tool' as const, title: 'Bash', toolKind: 'execute', command: id, status },
+      ],
+    });
+    const [group, ...rest] = foldSettledActivityRuns([
+      call('t1', 'completed'),
+      call('t2', 'completed'),
+      call('t3', 'failed'),
+      call('t4', 'failed'),
+      call('t5', 'failed'),
+      call('t6', 'failed'),
+    ]);
+    expect(rest).toHaveLength(0);
+    const renderer = render(<ActivityTimeline active={false} items={group.activity!} />);
+    expect(hostNodes(renderer, /^corner-tool-summary$/)).toHaveLength(0);
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(1);
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-anonymous-0' }).props.accessibilityLabel,
+    ).toBe('6 steps · 4 failed, expandable');
   });
 });

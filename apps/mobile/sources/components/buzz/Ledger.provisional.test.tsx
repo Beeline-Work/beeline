@@ -26,6 +26,18 @@ vi.mock('./IdentityMark', () => ({
 vi.mock('./MonoMarkdown', () => ({
   MonoMarkdown: (props: any) => React.createElement('MonoMarkdown', props, props.markdown),
 }));
+vi.mock('./BeelineMarkSpinner', () => ({
+  BeelineMarkSpinner: (props: any) => React.createElement('BeelineMarkSpinner', props),
+}));
+vi.mock('./HullActionSheet', () => ({
+  HULL_SHEET_INSET: 22,
+  HullActionSheetModal: (props: any) =>
+    React.createElement('HullActionSheetModal', props, props.children),
+  HullActionSheetRow: (props: any) => React.createElement('HullActionSheetRow', props, props.label),
+}));
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { groknight } from '@/buzz/groknight';
 import { ActivityTimeline } from './ActivityTimeline';

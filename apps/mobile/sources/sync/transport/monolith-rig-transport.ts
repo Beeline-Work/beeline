@@ -482,6 +482,10 @@ export class MonolithRigTransport {
   roomGitHubEventsSet(roomId: string, enabled: boolean): Promise<RoomRepository> {
     return this.operation('setRoomGitHubEvents', { roomId, enabled }) as Promise<RoomRepository>;
   }
+  /** Sever the Room→repository binding; the Room becomes chat-only. Idempotent. */
+  roomRepositoryRemove(roomId: string): Promise<void> {
+    return this.operation('removeRoomRepository', { roomId }).then(() => undefined);
+  }
   async workspaceGitHubAccess(options: { refresh?: boolean } = {}) {
     const value = (await this.operation('listGitHubRepositories', options)) as {
       installed: boolean;

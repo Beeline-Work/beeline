@@ -1181,9 +1181,9 @@ const styles = StyleSheet.create((theme) => {
     bookmarksCellPressed: { backgroundColor: theme.buzz.bgHighlight },
     bookmarksGlyph: { color: theme.buzz.accent },
     bookmarksCopy: { flex: 1, minWidth: 0 },
-    bookmarksTitle: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 15 },
-    bookmarksMeta: { ...Typography.default(), color: theme.buzz.textSecondary, fontSize: 13, marginTop: 2 },
-    bookmarksOpen: { ...Typography.mono('semiBold'), color: theme.buzz.accent, fontSize: 10 },
+    bookmarksTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+    bookmarksMeta: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, marginTop: 2 },
+    bookmarksOpen: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

@@ -14,7 +14,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { MessageBookmarkView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { Typography } from '@/constants/Typography';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
 
@@ -297,8 +296,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerCopy: { flex: 1, minWidth: 0 },
-  headerTitle: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 16 },
-  headerMeta: { ...Typography.mono(), color: theme.buzz.ledgerQuiet, fontSize: 10, marginTop: 2 },
+  headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
   body: { flex: 1, flexDirection: 'row' },
   list: { flex: 1 },
   desktopList: {
@@ -316,45 +315,38 @@ const styles = StyleSheet.create((theme) => ({
   rowSelected: { backgroundColor: theme.buzz.bgHighlight },
   rowUnavailable: { opacity: 0.68 },
   originLine: { flexDirection: 'row', alignItems: 'baseline', gap: 12 },
-  origin: { ...Typography.mono('semiBold'), flex: 1, color: theme.buzz.textPrimary, fontSize: 11 },
-  time: { ...Typography.mono(), color: theme.buzz.ledgerQuiet, fontSize: 10 },
+  origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
+  time: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   author: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.meta,
     color: theme.buzz.accent,
-    fontSize: 14,
     marginTop: 12,
   },
   excerpt: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
-    fontSize: 15,
-    lineHeight: 22,
     marginTop: 5,
   },
   unavailable: {
-    ...Typography.default(),
+    ...theme.buzz.type.meta,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 14,
     marginTop: 5,
   },
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
-  saved: { ...Typography.mono(), color: theme.buzz.ledgerGhost, fontSize: 9, letterSpacing: 0.5 },
-  open: { ...Typography.mono('semiBold'), color: theme.buzz.accent, fontSize: 10 },
+  saved: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerGhost },
+  open: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center', marginTop: 4 },
-  removeText: { ...Typography.mono('semiBold'), color: theme.buzz.textSecondary, fontSize: 10 },
+  removeText: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },
   preview: { flex: 1, padding: 32, justifyContent: 'center' },
-  previewPath: { ...Typography.mono('semiBold'), color: theme.buzz.ledgerQuiet, fontSize: 11 },
+  previewPath: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   previewAuthor: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.bodyStrong,
     color: theme.buzz.accent,
-    fontSize: 16,
     marginTop: 22,
   },
   previewText: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     color: theme.buzz.textPrimary,
-    fontSize: 18,
-    lineHeight: 28,
     marginTop: 10,
     maxWidth: 720,
   },
@@ -369,24 +361,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   previewAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 },
   previewActionText: {
-    ...Typography.mono('semiBold'),
+    ...theme.buzz.type.sectionHead,
     color: theme.buzz.textSecondary,
-    fontSize: 10,
   },
-  previewOpen: { ...Typography.mono('semiBold'), color: theme.buzz.accent, fontSize: 10 },
+  previewOpen: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   emptyBlock: { padding: 28, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },
   emptyTitle: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.bodyStrong,
     color: theme.buzz.textPrimary,
-    fontSize: 16,
     marginTop: 10,
   },
   empty: {
-    ...Typography.default(),
+    ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,
-    fontSize: 14,
-    lineHeight: 21,
     marginTop: 6,
   },
   error: {
@@ -395,7 +383,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 16,
     backgroundColor: theme.buzz.bgHighlight,
   },
-  errorText: { ...Typography.default('semiBold'), color: theme.buzz.textSecondary, fontSize: 13 },
+  errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
   undo: {
     position: 'absolute',
     left: 16,
@@ -411,11 +399,10 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.buzz.radius,
   },
   undoText: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.meta,
     flex: 1,
     color: theme.buzz.textPrimary,
-    fontSize: 14,
   },
   undoAction: { minWidth: 64, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  undoActionText: { ...Typography.mono('semiBold'), color: theme.buzz.accent, fontSize: 10 },
+  undoActionText: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
 }));

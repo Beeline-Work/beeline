@@ -50,11 +50,10 @@ describe('Option A composer chrome', () => {
     expect(focused).not.toMatch(/shadow|glow/i);
   });
 
-  it('uses muted chrome until text is present and removes send while work is active', () => {
+  it('uses muted chrome until text is present and preserves the brass held fill', () => {
     expect(composer).toContain('sendDisabled && styles.sendButtonTextDisabled');
     expect(composer).toContain('sendButtonTextDisabled: { color: theme.buzz.textMuted }');
-    expect(composer).toContain('const showSend = !showMic && !running');
-    expect(composer).not.toContain('sendButtonArmed');
+    expect(composer).toContain('sendButtonArmed: { backgroundColor: theme.buzz.accent');
     expect(composer).toContain(
       'attachButtonText: {\n    ...theme.buzz.type.body,\n    color: theme.buzz.textMuted',
     );

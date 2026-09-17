@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
+
+/** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
+const STOP_HIT_SLOP = 9;
 
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
@@ -36,13 +39,21 @@ import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
  * expires at its deadline; this component never presents an inferred waiting
  * state in the absence of a server receipt.
  *
- * The line has no controls and no destination. It reports work without
- * competing with the conversation for an action.
+ * The LINE still goes nowhere — it has no `onPress` and no destination, which
+ * is what keeps it from stranding a reader in a dead channel. `onStop` is a
+ * different thing in the trailing slot: not navigation but the one action a
+ * turn in progress admits, withdrawing the question. It is passed only to the
+ * requester or Room manager (`viewerMayStopTurn`), so for everyone else this component
+ * renders exactly what it rendered before. A press is acknowledged here —
+ * the control dims and the counter says `stopping` — before the cancelled
+ * receipt lands; a failed stop enables it again.
  */
 export function TurnProgressLine({
   label,
   startedAt,
   received = false,
+  onStop,
+  stopping = false,
   testID,
 }: {
   label: string;
@@ -50,6 +61,10 @@ export function TurnProgressLine({
   startedAt?: number;
   /** A new human steer was committed against this running turn. */
   received?: boolean;
+  /** Present only for a requester or Room manager; absent renders no control. */
+  onStop?: () => void;
+  /** The asker already pressed stop; the cancelled receipt has not landed yet. */
+  stopping?: boolean;
   testID?: string;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -59,8 +74,9 @@ export function TurnProgressLine({
     return () => clearInterval(timer);
   }, []);
 
+  const phase = stopping ? 'stopping' : 'thinking';
   const counter =
-    startedAt != null ? formatWorkingCounter(startedAt * 1_000, now, 'thinking') : undefined;
+    startedAt != null ? formatWorkingCounter(startedAt * 1_000, now, phase) : undefined;
   const stateLabel = [counter, received ? 'received' : undefined].filter(Boolean).join(' · ');
 
   return (
@@ -87,6 +103,24 @@ export function TurnProgressLine({
           <Text style={styles.counter} testID={testID ? `${testID}-received` : undefined}>
             · received
           </Text>
+        )}
+        {onStop && (
+          <Pressable
+            accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'}
+            accessibilityRole="button"
+            accessibilityState={{ busy: stopping, disabled: stopping }}
+            disabled={stopping}
+            hitSlop={STOP_HIT_SLOP}
+            onPress={stopping ? undefined : onStop}
+            style={({ pressed }) => [
+              styles.stop,
+              pressed && !stopping && styles.stopPressed,
+              stopping && styles.stopStopping,
+            ]}
+            testID={testID ? `${testID}-stop` : undefined}
+          >
+            <Text style={styles.stopLabel}>■ STOP</Text>
+          </Pressable>
         )}
       </HullLivePulse>
     </View>
@@ -157,6 +191,23 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.accent,
       fontSize: 12,
       lineHeight: 18,
+    },
+    // One discoverable stop action, shared by Room and corner working lines.
+    stop: {
+      minHeight: 26,
+      justifyContent: 'center',
+      marginLeft: 'auto',
+      flexShrink: 0,
+    },
+    stopLabel: {
+      ...groknight.type.sectionHead,
+      color: groknight.accent,
+    },
+    stopPressed: {
+      opacity: 0.6,
+    },
+    stopStopping: {
+      opacity: 0.45,
     },
   };
 });

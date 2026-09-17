@@ -92,6 +92,15 @@ function render(element: React.ReactElement): ReactTestRenderer {
   return renderer;
 }
 
+function pressableStyle(node: { props: { style?: unknown } }, pressed = false) {
+  const style = node.props.style;
+  const resolved =
+    typeof style === 'function'
+      ? (style as (state: { pressed: boolean }) => unknown)({ pressed })
+      : style;
+  return (Array.isArray(resolved) ? resolved : [resolved]).filter(Boolean);
+}
+
 describe('the per-turn progress indicator', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -116,18 +125,90 @@ describe('the per-turn progress indicator', () => {
     expect(renderer.root.findAllByType('View')[0].props.accessibilityRole).toBe('progressbar');
   });
 
-  it('never renders a stop control while the agent is working', () => {
-    const renderer = render(
+  it('offers the requester one stop, and everyone else the line unchanged', () => {
+    // No `onStop` is the ordinary case — a spectator's line is byte-for-byte
+    // what it was before the control existed.
+    const watching = render(
       React.createElement(TurnProgressLine, {
         label: 'beebee Thinking\u2026',
         startedAt: 10,
         testID: 'turn-progress-line',
       }),
     );
-    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
-    expect(renderer.root.findAllByType('Text').map((node) => node.props.children)).not.toContain(
-      '■ STOP',
+    expect(watching.root.findAllByType('Pressable')).toHaveLength(0);
+
+    const onStop = vi.fn();
+    const asking = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        onStop,
+        testID: 'turn-progress-line',
+      }),
     );
+    // Exactly one control, and it is the stop: the LINE still goes nowhere.
+    const [stop] = asking.root.findAllByType('Pressable');
+    expect(asking.root.findAllByType('Pressable')).toHaveLength(1);
+    expect(stop.props.testID).toBe('turn-progress-line-stop');
+    expect(stop.props.accessibilityRole).toBe('button');
+    expect(stop.props.accessibilityLabel).toBe('Stop this turn');
+    expect(stop.props.hitSlop).toBe(9);
+    expect(stop.props.disabled).toBe(false);
+    expect(pressableStyle(stop)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          minHeight: 26,
+          marginLeft: 'auto',
+        }),
+      ]),
+    );
+    expect(pressableStyle(stop, true)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ opacity: 0.6 })]),
+    );
+    expect(stop.findByType('Text').props.children).toBe('■ STOP');
+    act(() => stop.props.onPress());
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    // It sits at the right, after the elapsed counter, so the label's own
+    // left edge and the counter's place never move for anybody.
+    const row = stop.parent;
+    expect(row?.children.indexOf(stop)).toBe((row?.children.length ?? 0) - 1);
+  });
+
+  it('empties the square and says stopping the moment the asker has pressed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(12_500);
+    const onStop = vi.fn();
+    const renderer = render(
+      React.createElement(TurnProgressLine, {
+        label: 'beebee Thinking\u2026',
+        startedAt: 10,
+        onStop,
+        stopping: true,
+        testID: 'turn-progress-line',
+      }),
+    );
+    const [stop] = renderer.root.findAllByType('Pressable');
+    expect(stop.props.disabled).toBe(true);
+    expect(stop.props.accessibilityLabel).toBe('Stopping this turn');
+    expect(stop.props.accessibilityState).toEqual({ busy: true, disabled: true });
+    expect(renderer.root.findByProps({ testID: 'turn-progress-line-elapsed' }).props.children).toBe(
+      '2s \u00b7 stopping',
+    );
+    expect(renderer.root.findAllByType('View')[0].props.accessibilityLabel).toBe(
+      'beebee Thinking\u2026 (2s \u00b7 stopping)',
+    );
+    expect(pressableStyle(stop)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          opacity: 0.45,
+        }),
+      ]),
+    );
+    // Pressed must not layer on top of stopping: the empty square is the state.
+    expect(pressableStyle(stop, true)).toEqual(pressableStyle(stop, false));
+    expect(stop.props.onPress).toBeUndefined();
+    expect(onStop).not.toHaveBeenCalled();
   });
 
   it('breathes on the same live clock, in the same reserved gold', () => {

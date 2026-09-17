@@ -56,7 +56,7 @@ describe('Room composer status layout', () => {
   it('keeps the send arrow separated from the text field', () => {
     const sendButtonStyle = composerSource.slice(
       composerSource.indexOf('  sendButton: {'),
-      composerSource.indexOf('  sendButtonText: {'),
+      composerSource.indexOf('  sendButtonArmed: {'),
     );
     expect(sendButtonStyle).toContain('marginLeft: 8');
   });

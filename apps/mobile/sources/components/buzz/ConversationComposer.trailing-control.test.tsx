@@ -171,11 +171,6 @@ describe('composer trailing control is mic XOR send', () => {
     expect(hosts(root, 'chat-send')).toHaveLength(1);
   });
 
-  it('shows no send control while an agent is working', () => {
-    const root = render({ value: 'next instruction', running: true });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-  });
-
   it('a reply banner alone does not make something sendable: mic stays', () => {
     const root = render({ value: '', reply: { handle: '@cara', preview: 'earlier words' } });
     expect(hosts(root, 'chat-send')).toHaveLength(0);

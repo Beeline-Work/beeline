@@ -1,15 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   connectionGrant,
   connectionLedgerEntry,
+  defaultStreamedRunner,
   installSquire,
+  isProcessAlive,
   parseConnectOutput,
   readConnectionDetail,
   readConnectionLedger,
   readGrants,
   readVault,
+  releaseSquireConnectSession,
+  resolveSquireConnectSpec,
   revokeGrants,
+  squireConnectSession,
   vaultConnectionMeta,
+  type ShellRunner,
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
@@ -29,6 +35,34 @@ function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) =>
 }
 
 const okRunner = () => async () => ({ code: 0, stdout: '', stderr: '' });
+
+/** A runner whose stdout answers every invocation (scripted, in order). */
+function scriptedRunner(responses: { stdout: string; code?: number }[]): {
+  run: ShellRunner;
+  invocations: string[][];
+} {
+  const invocations: string[][] = [];
+  let index = 0;
+  return {
+    invocations,
+    run: async (_command, args) => {
+      invocations.push([_command, ...args]);
+      return { code: 0, stdout: '', ...(responses[Math.min(index++, responses.length - 1)] ?? {}) };
+    },
+  };
+}
+
+/** A live stand-in for the connect process the streamed runner would spawn. */
+function spawnLongLivedConnect() {
+  return defaultStreamedRunner(process.execPath, [
+    '-e',
+    'console.log("sign in: https://squire.test/vnc#p=1"); setInterval(() => {}, 30_000)',
+  ]);
+}
+
+async function until(predicate: () => boolean): Promise<void> {
+  await vi.waitFor(() => expect(predicate()).toBe(true), { timeout: 5_000 });
+}
 
 /** A fake streaming runner that resolves immediately with a given result. */
 function fakeStreamRunner(result: {
@@ -109,13 +143,13 @@ describe('installSquire', () => {
     });
   });
 
-  it('runs connect --force-relogin=google --target=codex --skip-browser via streaming runner, then probes the version', async () => {
+  it('verifies the resolved version, then runs connect on the @latest spec', async () => {
     const streamInvocations: string[][] = [];
-    const runInvocations: string[][] = [];
+    const { run, invocations } = scriptedRunner([{ stdout: '1.1.14' }, { stdout: '1.1.14' }]);
     await installSquire({
       workspaceId: 'ws-1',
-      streamRun: async (cmd, args) => {
-        streamInvocations.push([cmd, ...args]);
+      streamRun: async (_cmd, args) => {
+        streamInvocations.push(['npx', ...args]);
         return {
           stdout: 'https://squire.example/oauth/authorize?x=1',
           stderr: '',
@@ -123,17 +157,16 @@ describe('installSquire', () => {
           abort: () => {},
         };
       },
-      run: async (_cmd, args) => {
-        runInvocations.push([...args]);
-        return { code: 0, stdout: '1.1.13', stderr: '' };
-      },
+      run,
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(streamInvocations).toEqual([
-      ['npx', '-y', '@trusty-squire/mcp@next', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
+    // Verification (registry read + npx probe) happens BEFORE connect runs.
+    expect(invocations).toEqual([
+      ['npm', 'view', '@trusty-squire/mcp', 'version'],
+      ['npx', '-y', '@trusty-squire/mcp@latest', '--version'],
     ]);
-    expect(runInvocations).toEqual([
-      ['-y', '@trusty-squire/mcp@next', '--version'],
+    expect(streamInvocations).toEqual([
+      ['npx', '-y', '@trusty-squire/mcp@latest', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
     ]);
   });
 
@@ -218,6 +251,159 @@ describe('installSquire', () => {
     expect(
       progressSteps.some((labels) => labels.includes('waiting for sign-in')),
     ).toBe(true);
+  });
+});
+
+describe('version resolution', () => {
+  it('accepts the plain @latest spec when npx already resolves the current release', async () => {
+    const { run } = scriptedRunner([{ stdout: '1.1.14' }, { stdout: '1.1.14' }]);
+    const resolution = await resolveSquireConnectSpec(run);
+    expect(resolution).toEqual({
+      npxArgs: ['-y', '@trusty-squire/mcp@latest'],
+      resolvedVersion: '1.1.14',
+      currentRelease: '1.1.14',
+      reResolved: false,
+    });
+  });
+
+  it('detects a stale npx copy (rc vs current release) and re-resolves with --prefer-online', async () => {
+    // Probe 1: stale cached copy; probe 2 (cache busted): the current release.
+    const { run, invocations } = scriptedRunner([
+      { stdout: '1.1.14' },
+      { stdout: '1.1.14-rc.34' },
+      { stdout: '1.1.14' },
+    ]);
+    const resolution = await resolveSquireConnectSpec(run);
+    expect(resolution).toEqual({
+      npxArgs: ['--prefer-online', '-y', '@trusty-squire/mcp@latest'],
+      resolvedVersion: '1.1.14',
+      currentRelease: '1.1.14',
+      reResolved: true,
+    });
+    expect(invocations[2]).toEqual([
+      'npx',
+      '--prefer-online',
+      '-y',
+      '@trusty-squire/mcp@latest',
+      '--version',
+    ]);
+  });
+
+  it('runs the exact current release when the cache refuses to move', async () => {
+    const { run } = scriptedRunner([
+      { stdout: '1.1.14' },
+      { stdout: '1.1.14-rc.34' },
+      { stdout: '1.1.14-rc.34' },
+    ]);
+    const resolution = await resolveSquireConnectSpec(run);
+    // Resolved at runtime from the registry — never a source-level pin.
+    expect(resolution.npxArgs).toEqual(['-y', '@trusty-squire/mcp@1.1.14']);
+    expect(resolution.reResolved).toBe(true);
+  });
+
+  it('does not block connect when the registry is unreachable', async () => {
+    const { run, invocations } = scriptedRunner([
+      { code: 1, stdout: 'npm error network down' },
+      { stdout: '1.1.14-rc.34' },
+    ]);
+    const resolution = await resolveSquireConnectSpec(run);
+    expect(resolution).toEqual({
+      npxArgs: ['-y', '@trusty-squire/mcp@latest'],
+      resolvedVersion: '1.1.14-rc.34',
+      reResolved: false,
+    });
+    expect(invocations).toHaveLength(2);
+  });
+
+  it('carries the re-resolved spec into the connect invocation', async () => {
+    const streamInvocations: string[][] = [];
+    const { run } = scriptedRunner([
+      { stdout: '1.1.14' },
+      { stdout: '1.1.14-rc.34' },
+      { stdout: '1.1.14-rc.34' },
+    ]);
+    const logs: string[] = [];
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      streamRun: async (_cmd, args) => {
+        streamInvocations.push(['npx', ...args]);
+        return {
+          stdout: 'https://squire.example/install?token=x',
+          stderr: '',
+          signIn: { method: 'streamed-page', url: 'https://squire.example/install?token=x' },
+          abort: () => {},
+        };
+      },
+      run,
+      log: (message) => logs.push(message),
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(result.status).toBe('connected');
+    expect(streamInvocations[0]).toEqual([
+      'npx',
+      '-y',
+      '@trusty-squire/mcp@1.1.14',
+      'connect',
+      '--force-relogin=google',
+      '--target=codex',
+      '--skip-browser',
+    ]);
+    expect(result.steps.find((s) => s.label.startsWith('trusty-squire'))?.status).toBe('done');
+    expect(logs.join('\n')).toContain('stale copy');
+  });
+});
+
+describe('connect session claim', () => {
+  it('the streamed runner claims the session with the child pid, and abort kills it', async () => {
+    const result = await spawnLongLivedConnect();
+    expect(result.signIn).toBeDefined();
+    const claim = squireConnectSession();
+    expect(claim?.pid).toBeTypeOf('number');
+    expect(isProcessAlive(claim!.pid)).toBe(true);
+    claim!.abort();
+    await until(() => !isProcessAlive(claim!.pid));
+  });
+
+  it('releases a live claim by aborting its owner before a fresh connect', async () => {
+    await spawnLongLivedConnect();
+    const claim = squireConnectSession()!;
+    const logs: string[] = [];
+    releaseSquireConnectSession((message) => logs.push(message));
+    expect(squireConnectSession()).toBeUndefined();
+    expect(logs.join('\n')).toContain('still live');
+    await until(() => !isProcessAlive(claim.pid));
+  });
+
+  it('clears a dead claim (owner process gone) without touching anything', async () => {
+    await spawnLongLivedConnect();
+    const claim = squireConnectSession()!;
+    process.kill(claim.pid!, 'SIGKILL');
+    await until(() => !isProcessAlive(claim.pid));
+    // The claim intentionally outlives its owner; the next connect attempt is
+    // what detects the dead owner and clears it.
+    expect(squireConnectSession()).toBeDefined();
+    const logs: string[] = [];
+    releaseSquireConnectSession((message) => logs.push(message));
+    expect(squireConnectSession()).toBeUndefined();
+    expect(logs.join('\n')).toContain('dead');
+  });
+
+  it('installSquire releases a live previous claim before spawning connect', async () => {
+    await spawnLongLivedConnect();
+    const claim = squireConnectSession()!;
+    const { run } = scriptedRunner([{ stdout: '1.1.14' }, { stdout: '1.1.14' }]);
+    await installSquire({
+      workspaceId: 'ws-1',
+      streamRun: async () => ({
+        stdout: 'https://squire.example/install?token=x',
+        stderr: '',
+        signIn: { method: 'streamed-page', url: 'https://squire.example/install?token=x' },
+        abort: () => {},
+      }),
+      run,
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    await until(() => !isProcessAlive(claim.pid));
   });
 });
 

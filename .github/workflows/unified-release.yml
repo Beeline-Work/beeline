@@ -1200,15 +1200,59 @@ jobs:
           pattern: beeline-desktop-release-${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}-*
           path: ${{ runner.temp }}/desktop-release
           merge-multiple: true
+      # A desktop-carrying retry (desktop built+checked by an earlier attempt of
+      # this identity, run_desktop=false) must fetch THIS release's installers
+      # from the original attempt's artifacts — not from the previous release.
+      # Runs 34879012393/34879066960 (v0.0.100-82f1cfb1) failed here: the
+      # release-record step read components.desktop.version (= v0.0.100, the
+      # release being created) as the previous version and `gh release download`
+      # answered `release not found`.
+      - name: Locate the desktop installers built by the original attempt
+        id: desktop_retry_artifacts
+        if: >-
+          steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' &&
+          needs.initialize.outputs.run_desktop != 'true' && needs.initialize.outputs.stage_desktop == 'checked'
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}
+        with:
+          script: |
+            const prefix = `beeline-desktop-release-${process.env.RELEASE_ID}`;
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, per_page: 100,
+            });
+            const candidates = artifacts
+              .filter((candidate) => candidate.name.startsWith(prefix) && !candidate.expired && candidate.workflow_run?.id)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at));
+            if (candidates.length === 0) core.setFailed(`no ${prefix}-* artifacts remain; the original attempt's desktop installers expired — re-run the desktop leg for this identity`);
+            else core.setOutput('run_id', String(candidates[0].workflow_run.id));
+      - name: Download the desktop installers built by the original attempt
+        if: >-
+          steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' &&
+          needs.initialize.outputs.run_desktop != 'true' &&
+          needs.initialize.outputs.stage_desktop == 'checked' &&
+          steps.desktop_retry_artifacts.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: beeline-desktop-release-${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}-*
+          path: ${{ runner.temp }}/desktop-release
+          merge-multiple: true
+          run-id: ${{ steps.desktop_retry_artifacts.outputs.run_id }}
+          github-token: ${{ github.token }}
       - name: Preserve the previous updater manifest for publication rollback
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
+          STAGE_DESKTOP: ${{ needs.initialize.outputs.stage_desktop }}
         run: |
           state="$RUNNER_TEMP/release-attempt.json"
-          if [ "$RUN_DESKTOP" = true ]; then
+          # The last known-good desktop manifest is the one carried by the
+          # release this one supersedes — unless desktop is carried forward,
+          # in which case only the release that last BUILT desktop
+          # (components.desktop.version) is guaranteed to have it.
+          if [ "$RUN_DESKTOP" = true ] || [ "$STAGE_DESKTOP" = checked ]; then
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).supersedes?.version ?? "")' "$state")
           else
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
@@ -1218,7 +1262,9 @@ jobs:
             gh release download "$previous_version" --pattern 'Beeline-latest.json' --dir "$RUNNER_TEMP/desktop-rollback"
           fi
       - name: Build the signed desktop update manifest
-        if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
+        if: >-
+          steps.result.outputs.outcome == 'success' &&
+          (needs.initialize.outputs.run_desktop == 'true' || needs.initialize.outputs.stage_desktop == 'checked')
         env:
           DESKTOP_VERSION: ${{ needs.initialize.outputs.desktop_version }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
@@ -1237,12 +1283,17 @@ jobs:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
+          STAGE_DESKTOP: ${{ needs.initialize.outputs.stage_desktop }}
           RELEASE_PROOF_UNPROVEN: ${{ inputs.skip_release_proof == true && needs.release_proof.result != 'success' }}
         run: |
           set -euo pipefail
           state="$RUNNER_TEMP/release-attempt.json"
           mkdir -p "$RUNNER_TEMP/desktop-release"
-          if [ "$RUN_DESKTOP" != true ]; then
+          # Only a CARRIED desktop downloads the previous release's installers.
+          # A desktop already checked by an earlier attempt of this identity
+          # carries components.desktop.version = THIS release, and its
+          # installers were fetched from the original attempt's artifacts above.
+          if [ "$RUN_DESKTOP" != true ] && [ "$STAGE_DESKTOP" != checked ]; then
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
             gh release download "$previous_version" --pattern 'Beeline-*' --dir "$RUNNER_TEMP/desktop-release"
             if [ ! -f "$RUNNER_TEMP/desktop-rollback/Beeline-latest.json" ] && [ -f "$RUNNER_TEMP/desktop-release/Beeline-latest.json" ]; then
@@ -1257,7 +1308,7 @@ jobs:
           if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
             echo '- Promoted with skip_release_proof=true: the emulator release proof did not run (Android rig unavailable).' >> "$notes"
           fi
-          if [ "$RUN_DESKTOP" = true ]; then
+          if [ "$RUN_DESKTOP" = true ] || [ "$STAGE_DESKTOP" = checked ]; then
             manifest="$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
           else
             manifest="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"

@@ -891,6 +891,45 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   }
 });
 
+test('a desktop-carrying retry fetches this release\'s installers, never the previous release\'s', () => {
+  const release = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
+  const workflow = parse(release);
+  // Regression: on the v0.0.100-82f1cfb1 retry (runs 34879012393/34879066960)
+  // the release-record step read components.desktop.version (= the release
+  // being created, because desktop was already checked by an earlier attempt)
+  // as the previous version and `gh release download` answered `release not
+  // found`. A checked desktop carries THIS release's version, so the retry
+  // must fetch the original attempt's artifacts instead.
+  const locate = workflow.jobs.release_result.steps.find((step) => step.id === 'desktop_retry_artifacts');
+  assert.ok(locate, 'release_result must locate the original attempt\'s desktop installers');
+  assert.match(locate.if, /run_desktop != 'true'/);
+  assert.match(locate.if, /stage_desktop == 'checked'/);
+  assert.match(locate.if, /no_op != 'true'/);
+  assert.match(locate.uses, /actions\/github-script@v7/);
+  assert.match(locate.with.script, /beeline-desktop-release-/);
+  assert.match(locate.with.script, /listArtifactsForRepo/);
+  assert.match(locate.with.script, /core\.setFailed/);
+  const download = workflow.jobs.release_result.steps.find((step) => step.name === 'Download the desktop installers built by the original attempt');
+  assert.ok(download, 'release_result must download the original attempt\'s desktop installers');
+  assert.match(download.uses, /actions\/download-artifact@v4/);
+  assert.match(download.with['run-id'], /steps\.desktop_retry_artifacts\.outputs\.run_id/);
+  assert.ok(download.with['github-token']);
+  // Only a CARRIED desktop reads installers from the previous release.
+  const record = workflow.jobs.release_result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
+  assert.equal(record.env.STAGE_DESKTOP, "${{ needs.initialize.outputs.stage_desktop }}");
+  assert.match(record.run, /\[ "\$RUN_DESKTOP" != true \] && \[ "\$STAGE_DESKTOP" != checked \]/);
+  assert.match(record.run, /\[ "\$RUN_DESKTOP" = true \] \|\| \[ "\$STAGE_DESKTOP" = checked \]/);
+  // The fresh manifest is built whenever desktop installers belong to this
+  // release — a fresh build or a checked retry — and the rollback manifest
+  // reads the superseded release in both of those cases.
+  const manifest = workflow.jobs.release_result.steps.find((step) => step.name === 'Build the signed desktop update manifest');
+  assert.match(manifest.if, /needs\.initialize\.outputs\.run_desktop == 'true' \|\| needs\.initialize\.outputs\.stage_desktop == 'checked'/);
+  const preserve = workflow.jobs.release_result.steps.find((step) => step.name === 'Preserve the previous updater manifest for publication rollback');
+  assert.match(preserve.run, /\[ "\$RUN_DESKTOP" = true \] \|\| \[ "\$STAGE_DESKTOP" = checked \]/);
+  assert.match(preserve.run, /supersedes\?\.version/);
+  assert.match(preserve.run, /components\.desktop\.version/);
+});
+
 test('canonical routine release guidance is a single no-input dispatch', () => {
   const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
   const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');

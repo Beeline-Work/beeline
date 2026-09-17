@@ -33,7 +33,7 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // runtime. Turning it off removes only the iOS@23 compatibility target.
 export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 
-// Publish android@23 alongside android@24 until the captain's runtime-23
+// Publish android@23 alongside android@25 until the captain's runtime-23
 // device adopts a newer store binary. Mirror of the iOS@23 compat target.
 export const PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 

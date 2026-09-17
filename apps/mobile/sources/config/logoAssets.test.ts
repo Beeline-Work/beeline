@@ -9,6 +9,8 @@ import brand from '../buzz/brand.json';
 const appConfig = (await import('../../app.config.js')).default.expo;
 
 const LOCKED_LOOP_SHA256 = '819b2abe3c00a1704c0857e88be2468f840a7a8d353f0e482bab03671c1d19f7';
+const LIGHT_SPLASH_SHA256 = 'a2d224d4309181456f8ca6f1d777efd95abcdb78cb650e339baa6653f6df6992';
+const DARK_SPLASH_SHA256 = 'ee8fbf35ab77d06c6b11c48158056e094315ff50c558f4ea4062702394e02fcf';
 const vectorNames = [
   'icon.svg',
   'icon-adaptive.svg',
@@ -43,7 +45,7 @@ describe('Beeline continuous-line logo assets', () => {
     }
   });
 
-  it('keeps brass on aubergine across launcher, web, and splash surfaces', () => {
+  it('keeps brass on aubergine across launcher and web surfaces', () => {
     expect(brand.mark).toBe('#E5A645');
     expect(vectors[0]).toContain('rect width="240" height="240" fill="#14091A"');
     expect(vectors[0]).toContain('fill="#E5A645"');
@@ -76,11 +78,21 @@ describe('Beeline continuous-line logo assets', () => {
       (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen',
     );
     expect(splashPlugin?.[1]).toMatchObject({
+      ios: {
+        image: './sources/assets/images/splash-android-light.png',
+        imageWidth: 150,
+        resizeMode: 'contain',
+        backgroundColor: '#F3EEE4',
+        dark: {
+          image: './sources/assets/images/splash-android-dark.png',
+          backgroundColor: '#14091A',
+        },
+      },
       android: {
         image: './sources/assets/images/splash-android-light.png',
         imageWidth: 150,
         resizeMode: 'contain',
-        backgroundColor: '#14091A',
+        backgroundColor: '#F3EEE4',
         dark: {
           image: './sources/assets/images/splash-android-dark.png',
           backgroundColor: '#14091A',
@@ -88,6 +100,18 @@ describe('Beeline continuous-line logo assets', () => {
       },
     });
     expect(JSON.stringify(appConfig)).not.toContain('#090909');
+  });
+
+  it('uses the canonical swirl in ink on ivory for the light splash', () => {
+    const lightSplash = readFileSync(
+      new URL('../assets/images/splash-android-light.png', import.meta.url),
+    );
+    const darkSplash = readFileSync(
+      new URL('../assets/images/splash-android-dark.png', import.meta.url),
+    );
+
+    expect(createHash('sha256').update(lightSplash).digest('hex')).toBe(LIGHT_SPLASH_SHA256);
+    expect(createHash('sha256').update(darkSplash).digest('hex')).toBe(DARK_SPLASH_SHA256);
   });
 
   it('limits the owner-approved 26%-larger margin to home-screen marks', () => {

@@ -1,13 +1,13 @@
 {
   "note": "Runtime pin plus the Expo native fingerprint it belongs to. Regenerate with `npm run fingerprint:write --prefix apps/mobile`; the NATIVE FINGERPRINT gate compares this to the tree.",
   "android": {
-    "runtimeVersion": "24"
-  },
-  "ios": {
     "runtimeVersion": "25"
   },
+  "ios": {
+    "runtimeVersion": "26"
+  },
   "fingerprints": {
-    "android": "e245e4190b1c3c3fcd1292f301e7a21329bbe0cb",
-    "ios": "d78aba5813280e02a660a4761ff8f6b7eb89bda2"
+    "android": "a8faf3b8753b7146c1ac57e3095c9145f41177ce",
+    "ios": "632f723dd0930a8198a60681619bcb96292060bc"
   }
 }

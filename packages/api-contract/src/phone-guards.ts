@@ -968,11 +968,13 @@ export function isInviteView(value: unknown): value is InviteView {
     !item ||
     typeof item.name !== 'string' ||
     !integer(item.expiresAt) ||
-    !optionalString(item.avatar)
+    !optionalString(item.avatar) ||
+    !optionalString(item.joinedWorkspaceId)
   )
     return false;
   return Object.keys(item).every(
-    (key) => key === 'name' || key === 'avatar' || key === 'expiresAt',
+    (key) =>
+      key === 'name' || key === 'avatar' || key === 'expiresAt' || key === 'joinedWorkspaceId',
   );
 }
 

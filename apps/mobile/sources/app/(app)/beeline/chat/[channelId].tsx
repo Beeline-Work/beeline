@@ -562,6 +562,23 @@ export default function BuzzChat() {
   } | null>(null);
   const failedOutboxIds = outbox.failedIds;
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
+  // Paste/drop and Enter can land in one browser event batch. Keep the staged
+  // files current synchronously so dispatch does not read the previous render
+  // and then clear a screenshot it never uploaded.
+  const pendingAttachmentsRef = useRef<PickedChatAttachment[]>([]);
+  const replacePendingAttachments = useCallback(
+    (
+      update:
+        | PickedChatAttachment[]
+        | ((current: PickedChatAttachment[]) => PickedChatAttachment[]),
+    ) => {
+      const next =
+        typeof update === 'function' ? update(pendingAttachmentsRef.current) : update;
+      pendingAttachmentsRef.current = next;
+      setPendingAttachments(next);
+    },
+    [],
+  );
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
@@ -2585,7 +2602,7 @@ export default function BuzzChat() {
   const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
     const rawText = (shortcut?.text ?? inputTextRef.current).trim();
     const activeReplyTarget = shortcut?.replyTarget ?? replyTarget;
-    const activePendingAttachments = shortcut ? [] : pendingAttachments;
+    const activePendingAttachments = shortcut ? [] : pendingAttachmentsRef.current;
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
     if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
@@ -2729,7 +2746,9 @@ export default function BuzzChat() {
         setComposerInputRevision(nextInputRevision);
         setComposerHeight(COMPOSER_MIN_HEIGHT);
         setInputSelection({ start: 0, end: 0 });
-        setPendingAttachments([]);
+        replacePendingAttachments((current) =>
+          current.filter((attachment) => !activePendingAttachments.includes(attachment)),
+        );
         setReplyTarget(null);
         if (desktopExperience) void saveDesktopDraft(decodedId, '');
       }
@@ -2795,7 +2814,7 @@ export default function BuzzChat() {
     }
   }, [
     activeCommunityId,
-    pendingAttachments,
+    replacePendingAttachments,
     transport,
     decodedId,
     addMessages,
@@ -2867,11 +2886,11 @@ export default function BuzzChat() {
       exif: false,
     });
     if (result.canceled || result.assets.length === 0) return;
-    setPendingAttachments((current) => [
+    replacePendingAttachments((current) => [
       ...current,
       ...pickedPhotoAttachments(result.assets).slice(0, MAX_MESSAGE_ATTACHMENTS - current.length),
     ]);
-  }, [pendingAttachments.length]);
+  }, [pendingAttachments.length, replacePendingAttachments]);
 
   const pickDocument = useCallback(async () => {
     if (pendingAttachments.length >= MAX_MESSAGE_ATTACHMENTS) {
@@ -2888,7 +2907,7 @@ export default function BuzzChat() {
     });
     const asset = result.canceled ? undefined : result.assets[0];
     if (!asset) return;
-    setPendingAttachments((current) => [
+    replacePendingAttachments((current) => [
       ...current,
       {
         uri: asset.uri,
@@ -2897,7 +2916,7 @@ export default function BuzzChat() {
         size: asset.size ?? 0,
       },
     ]);
-  }, [pendingAttachments.length]);
+  }, [pendingAttachments.length, replacePendingAttachments]);
 
   const pasteImage = useCallback(async () => {
     if (pendingAttachments.length >= MAX_MESSAGE_ATTACHMENTS) {
@@ -2914,8 +2933,8 @@ export default function BuzzChat() {
     const image = await Clipboard.getImageAsync({ format: 'png' });
     if (!image) return;
     const attachment = await pastedImageAttachment(image);
-    setPendingAttachments((current) => [...current, attachment]);
-  }, [pendingAttachments.length]);
+    replacePendingAttachments((current) => [...current, attachment]);
+  }, [pendingAttachments.length, replacePendingAttachments]);
 
   const chooseAttachment = useCallback(() => {
     setAttachmentPickerVisible(true);
@@ -3644,7 +3663,7 @@ export default function BuzzChat() {
         MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length,
       );
       if (!files.length) return;
-      setPendingAttachments((current) => [
+      replacePendingAttachments((current) => [
         ...current,
         ...files.map((file) => ({
           uri: URL.createObjectURL(file),
@@ -3654,7 +3673,7 @@ export default function BuzzChat() {
         })),
       ]);
     },
-    [desktopExperience, pendingAttachments.length, sending],
+    [desktopExperience, pendingAttachments.length, replacePendingAttachments, sending],
   );
 
   const handleDesktopPaste = useCallback(
@@ -3666,7 +3685,7 @@ export default function BuzzChat() {
       );
       if (!files.length) return;
       event.preventDefault();
-      setPendingAttachments((current) => [
+      replacePendingAttachments((current) => [
         ...current,
         ...files.map((file) => ({
           uri: URL.createObjectURL(file),
@@ -3676,7 +3695,7 @@ export default function BuzzChat() {
         })),
       ]);
     },
-    [desktopExperience, pendingAttachments.length, sending],
+    [desktopExperience, pendingAttachments.length, replacePendingAttachments, sending],
   );
 
   const clearSlashComposer = useCallback(() => {
@@ -4880,7 +4899,7 @@ export default function BuzzChat() {
                 }))}
                 attachmentsUploading={sending}
                 onRemoveAttachment={(index) =>
-                  setPendingAttachments((current) =>
+                  replacePendingAttachments((current) =>
                     current.filter((_, attachmentIndex) => attachmentIndex !== index),
                   )
                 }

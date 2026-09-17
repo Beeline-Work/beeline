@@ -34,7 +34,9 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // remove an entry once no live install carries that runtime.
 export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '23' },
+  { platform: 'android', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '23' },
+  { platform: 'ios', runtimeVersion: '26' },
 ];
 
 function targetKey(target) {
@@ -388,6 +390,9 @@ function publish(options) {
   if (!options.sha || !options.ref) fail('publish requires --sha and --ref');
   const configuredPins = readPinnedRuntimeVersion(process.cwd());
   const targets = releaseUpdateTargets(process.cwd());
+  // Requirement: the release plan always states the exact platform/runtime
+  // target set it will publish, so a stranded runtime is visible in logs.
+  console.log(`ota_plan_targets=${targets.map(targetKey).join(',')}`);
 
   const channel = runEas(['channel:view', 'beta', '--json', '--non-interactive'], {
     allowFailure: true,
@@ -420,6 +425,24 @@ function publish(options) {
     (target) => target.platform === 'android' || compatKeys.has(targetKey(target)),
   );
   const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
+  // Strand guard: every runtime that already has a production update (i.e. a
+  // runtime live installs may carry) must remain in the target set. Publishing
+  // a target list that drops a shipped runtime strands those installs forever.
+  {
+    const shippedKeys = new Set(
+      collectUpdates(previous).updates
+        .filter((u) => u.platform && u.runtimeVersion)
+        .map(targetKey),
+    );
+    const stranded = [...shippedKeys].filter((k) => !targets.some((t) => targetKey(t) === k));
+    if (stranded.length > 0) {
+      fail(
+        'OTA target set does not cover previously shipped runtime(s): ' +
+          stranded.join(', ') +
+          '; refusing to publish. Add them to COMPAT_RUNTIMES or record an explicit, evidence-backed retirement.',
+      );
+    }
+  }
   // A runtime's FIRST production release has no earlier update to roll back to,
   // but the store binary built for it in this same release carries an embedded
   // bundle, and `rollback` already falls back to update:roll-back-to-embedded

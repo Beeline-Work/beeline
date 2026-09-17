@@ -891,6 +891,45 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   }
 });
 
+test('a desktop-carrying retry fetches this release\'s installers, never the previous release\'s', () => {
+  const release = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
+  const workflow = parse(release);
+  // Regression: on the v0.0.100-82f1cfb1 retry (runs 34879012393/34879066960)
+  // the release-record step read components.desktop.version (= the release
+  // being created, because desktop was already checked by an earlier attempt)
+  // as the previous version and `gh release download` answered `release not
+  // found`. A checked desktop carries THIS release's version, so the retry
+  // must fetch the original attempt's artifacts instead.
+  const locate = workflow.jobs.release_result.steps.find((step) => step.id === 'desktop_retry_artifacts');
+  assert.ok(locate, 'release_result must locate the original attempt\'s desktop installers');
+  assert.match(locate.if, /run_desktop != 'true'/);
+  assert.match(locate.if, /stage_desktop == 'checked'/);
+  assert.match(locate.if, /no_op != 'true'/);
+  assert.match(locate.uses, /actions\/github-script@v7/);
+  assert.match(locate.with.script, /beeline-desktop-release-/);
+  assert.match(locate.with.script, /listArtifactsForRepo/);
+  assert.match(locate.with.script, /core\.setFailed/);
+  const download = workflow.jobs.release_result.steps.find((step) => step.name === 'Download the desktop installers built by the original attempt');
+  assert.ok(download, 'release_result must download the original attempt\'s desktop installers');
+  assert.match(download.uses, /actions\/download-artifact@v4/);
+  assert.match(download.with['run-id'], /steps\.desktop_retry_artifacts\.outputs\.run_id/);
+  assert.ok(download.with['github-token']);
+  // Only a CARRIED desktop reads installers from the previous release.
+  const record = workflow.jobs.release_result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
+  assert.equal(record.env.STAGE_DESKTOP, "${{ needs.initialize.outputs.stage_desktop }}");
+  assert.match(record.run, /\[ "\$RUN_DESKTOP" != true \] && \[ "\$STAGE_DESKTOP" != checked \]/);
+  assert.match(record.run, /\[ "\$RUN_DESKTOP" = true \] \|\| \[ "\$STAGE_DESKTOP" = checked \]/);
+  // The fresh manifest is built whenever desktop installers belong to this
+  // release — a fresh build or a checked retry — and the rollback manifest
+  // reads the superseded release in both of those cases.
+  const manifest = workflow.jobs.release_result.steps.find((step) => step.name === 'Build the signed desktop update manifest');
+  assert.match(manifest.if, /needs\.initialize\.outputs\.run_desktop == 'true' \|\| needs\.initialize\.outputs\.stage_desktop == 'checked'/);
+  const preserve = workflow.jobs.release_result.steps.find((step) => step.name === 'Preserve the previous updater manifest for publication rollback');
+  assert.match(preserve.run, /\[ "\$RUN_DESKTOP" = true \] \|\| \[ "\$STAGE_DESKTOP" = checked \]/);
+  assert.match(preserve.run, /supersedes\?\.version/);
+  assert.match(preserve.run, /components\.desktop\.version/);
+});
+
 test('canonical routine release guidance is a single no-input dispatch', () => {
   const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
   const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
@@ -921,6 +960,24 @@ test('the emulator release proof gates OTA promotion', () => {
   assert.match(aab.if, /needs\.mobile_native_android\.result == 'success'/);
   assert.match(aab.with.name, /mobile-native-android-build-/);
   assert.match(apk.if, /needs\.mobile_native_android\.result != 'success'/);
+  // The sideload build IS the carried-build proof path: npm ci installs
+  // @beeline/* as unbuilt file: symlinks whose package `main` is dist/index.js
+  // (gitignored), so Metro dies in createBundleReleaseJsAndAssets with
+  // "this package itself specifies a `main` module field that could not be
+  // resolved" and no commit whose Android build was carried can ever be
+  // proven (run 35041737312). The step must build the SDK dist exactly the
+  // way the native leg's eas-build-post-install does, after npm ci.
+  assert.match(apk.run, /npm ci/);
+  assert.match(apk.run, /npm run eas-build-post-install/);
+  assert.ok(
+    apk.run.indexOf('npm ci') < apk.run.indexOf('npm run eas-build-post-install'),
+    'eas-build-post-install must run after npm ci',
+  );
+  // The runner's system node is older than metro-config's use of
+  // Array.prototype.toReversed, so the proof job must pin the same node
+  // version the native build bundles on.
+  const proofNode = steps.find((step) => step.uses === 'actions/setup-node@v4');
+  assert.equal(String(proofNode.with['node-version']), '22');
   // The shared rig emulator must survive the OTA-only APK build's teardown.
   assert.equal(apk.env.BEELINE_ANDROID_KEEP_DEVICE, '1');
   assert.match(apk.env.ANDROID_SIDELOAD_KEYSTORE_B64, /secrets\./);
@@ -961,6 +1018,29 @@ test('the emulator release proof gates OTA promotion', () => {
   const record = result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
   assert.match(record.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
   assert.match(record.run, /Promoted with skip_release_proof=true/);
+});
+
+test('the proof reinstalls over a foreign signature and signs in through the review bypass', () => {
+  const proof = readFileSync(
+    new URL('../apps/mobile/scripts/release-proof.mjs', import.meta.url),
+    'utf8',
+  );
+  // A rig whose last installed app.usebeeline was signed with a different
+  // keystore refuses a clean install with INSTALL_FAILED_UPDATE_INCOMPATIBLE
+  // (run 35051048162), so installArtifact must uninstall the existing package
+  // before every install attempt, APK and AAB alike.
+  const installFn = proof.indexOf('function installArtifact');
+  const uninstall = proof.indexOf("adb(device, ['uninstall', APP_ID]");
+  const install = proof.indexOf("adb(device, ['install'");
+  assert.ok(installFn >= 0, 'installArtifact must exist');
+  assert.ok(uninstall > installFn, 'uninstall must run inside installArtifact');
+  assert.ok(install > uninstall, 'install must follow the uninstall');
+  // The rig session cannot be assumed: a preflight that finds the app signed
+  // out fails the whole proof (run 35055087014). The review bypass
+  // (BEELINE_REVIEW_SECRET -> beeline://review/<secret>) re-establishes a
+  // signed-in session the same way a real sign-in lands.
+  assert.match(proof, /BEELINE_REVIEW_SECRET/);
+  assert.match(proof, /beeline:\/\/review\//);
 });
 
 // Evaluates the subset of GitHub workflow expressions the release gates use:

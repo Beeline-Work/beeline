@@ -199,8 +199,13 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
       && !selection.split(',').map((value) => value.trim()).includes('mobile-native')) {
     fail(runtimePinChangeMessage(runtimePin, 'mobile-native (store binaries) must ship in this release; add it or revert the pin'));
   }
+  // RELEASE POLICY: OTA is the default delivery and never publishes to a
+  // store by itself. A runtime-pin change is the one case the planner treats
+  // as store-necessary (a new runtime needs a new store binary as its anchor),
+  // and that store submission is a deliberate operator choice via --store-track
+  // that requires the project owner's explicit consent. It is never inferred.
   if (runtimePin?.changed && storeTrack === 'none') {
-    fail(runtimePinChangeMessage(runtimePin, '--store-track must name the store submission track; set internal, beta, or production'));
+    fail(runtimePinChangeMessage(runtimePin, '--store-track must name the store submission track; set internal, beta, or production (store publishing is explicit, consent-gated: a pin change is the one release that requires it)'));
   }
   let selected;
   if (selection === 'all') selected = new Set(RELEASE_COMPONENTS);

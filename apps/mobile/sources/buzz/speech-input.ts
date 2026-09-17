@@ -7,13 +7,13 @@
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { getRecognitionModule, type SpeechRecognitionInterface } from './speech-recognition-adapter';
+import {
+  getRecognitionModule,
+  type SpeechRecognitionInterface,
+} from './speech-recognition-adapter';
+import { getDeviceSpeechLocale } from './speech-locale';
 
-export type SpeechInputState =
-  | 'idle'
-  | 'listening'
-  | 'nothing-recognised'
-  | 'permission-denied';
+export type SpeechInputState = 'idle' | 'listening' | 'nothing-recognised' | 'permission-denied';
 
 export type SpeechInputCapability = 'available' | 'unavailable';
 
@@ -21,7 +21,8 @@ export interface SpeechInputValue {
   capability: SpeechInputCapability;
   state: SpeechInputState;
   partialText: string;
-  start(): void;
+  volumeLevel: number;
+  start(): Promise<void>;
   stop(): void;
 }
 
@@ -33,14 +34,10 @@ const MAX_RESTARTS = 10;
  *
  * @param onResult  Called when a FINAL transcript is committed.
  */
-export function useSpeechInput(
-  onResult: (transcript: string) => void,
-): SpeechInputValue {
-  const capability: SpeechInputCapability =
-    Platform.OS === 'ios' || Platform.OS === 'android' ? 'available' : 'unavailable';
-
+export function useSpeechInput(onResult: (transcript: string) => void): SpeechInputValue {
   const [state, setState] = React.useState<SpeechInputState>('idle');
   const [partialText, setPartialText] = React.useState('');
+  const [volumeLevel, setVolumeLevel] = React.useState(0);
 
   const onResultRef = React.useRef(onResult);
   onResultRef.current = onResult;
@@ -49,7 +46,11 @@ export function useSpeechInput(
   const restartCountRef = React.useRef(0);
   const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const modRef = React.useRef<SpeechRecognitionInterface | null>(getRecognitionModule());
-  const eventsRegistered = React.useRef(false);
+  const startAttemptRef = React.useRef(0);
+  const capability: SpeechInputCapability =
+    (Platform.OS === 'ios' || Platform.OS === 'android') && modRef.current
+      ? 'available'
+      : 'unavailable';
 
   const clearSilenceTimer = React.useCallback(() => {
     if (silenceTimerRef.current !== null) {
@@ -62,30 +63,51 @@ export function useSpeechInput(
     clearSilenceTimer();
     listeningRef.current = false;
     restartCountRef.current = 0;
-    try { modRef.current?.stop(); } catch { /* ignore */ }
+    setVolumeLevel(0);
+    try {
+      modRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
   }, [clearSilenceTimer]);
 
   // Prefer the free on-device recogniser where the platform reports it; the
   // platform default (still free) is the fallback.
   const startOptions = React.useMemo(() => {
-    const onDevice = modRef.current?.supportsOnDeviceRecognition?.() ?? false;
+    let onDevice = false;
+    try {
+      onDevice = modRef.current?.supportsOnDeviceRecognition?.() ?? false;
+    } catch {
+      // A capability probe is advisory; the platform recognizer still works.
+    }
     return {
-      lang: 'en-US',
+      lang: getDeviceSpeechLocale(),
       interimResults: true,
       continuous: true,
-      requiresOnDeviceRecognition: onDevice,
+      // Android reports that an on-device recognizer exists even when the
+      // selected locale model is not installed. The library recommends the
+      // platform recognizer there unless installed locales were queried.
+      requiresOnDeviceRecognition: Platform.OS === 'ios' && onDevice,
       addsPunctuation: true,
       iosTaskHint: 'dictation' as const,
+      volumeChangeEventOptions: { enabled: true, intervalMillis: 160 },
     };
   }, []);
 
   const restartIfStillListening = React.useCallback(() => {
     if (!listeningRef.current) return;
-    if (restartCountRef.current >= MAX_RESTARTS) { doStop(); return; }
+    if (restartCountRef.current >= MAX_RESTARTS) {
+      doStop();
+      setState(sessionGotResultRef.current ? 'idle' : 'nothing-recognised');
+      return;
+    }
     restartCountRef.current += 1;
+    setVolumeLevel(0);
     try {
       modRef.current?.start(startOptions);
-    } catch { doStop(); }
+    } catch {
+      doStop();
+    }
   }, [doStop, startOptions]);
 
   const armSilenceTimer = React.useCallback(() => {
@@ -101,19 +123,20 @@ export function useSpeechInput(
     }, SILENCE_TIMEOUT_MS);
   }, [clearSilenceTimer, doStop]);
 
-  // Register event listeners once.
+  // Register one listener set per effect lifetime. In React Strict Mode an
+  // effect is mounted, cleaned up, and mounted again; a sticky "registered"
+  // flag leaves that second lifetime deaf to every native event.
   React.useEffect(() => {
     const m = modRef.current;
     if (!m?.addListener) return;
-    if (eventsRegistered.current) return;
-    eventsRegistered.current = true;
 
     const subs: Array<{ remove(): void }> = [];
 
     const onResult = (event: any) => {
       if (!event.results?.length) return;
       const best = event.results[0];
-      const transcript = best.transcript;
+      const transcript = typeof best.transcript === 'string' ? best.transcript : '';
+      if (!transcript) return;
 
       // Any result — interim or final — counts as recent speech.
       sessionGotResultRef.current = true;
@@ -133,17 +156,23 @@ export function useSpeechInput(
         setState('permission-denied');
         listeningRef.current = false;
         clearSilenceTimer();
+        setVolumeLevel(0);
         return;
       }
-      if (listeningRef.current) restartIfStillListening();
+      // The library guarantees `end` after an error. Restart there so one
+      // native failure cannot trigger duplicate recognizers from error+end.
     };
 
-    const onNoMatch = () => {
-      if (listeningRef.current) restartIfStillListening();
-    };
+    const onNoMatch = () => {};
 
     const onEnd = () => {
       if (listeningRef.current) restartIfStillListening();
+    };
+
+    const onVolumeChange = (event: any) => {
+      if (!listeningRef.current || typeof event?.value !== 'number') return;
+      // Native values span roughly -2 (silent) through 10 (loud).
+      setVolumeLevel(Math.max(0, Math.min(1, (event.value + 2) / 12)));
     };
 
     try {
@@ -155,11 +184,19 @@ export function useSpeechInput(
       if (r3) subs.push(r3);
       const r4 = m.addListener('end', onEnd);
       if (r4) subs.push(r4);
-    } catch { /* ignore */ }
+      const r5 = m.addListener('volumechange', onVolumeChange);
+      if (r5) subs.push(r5);
+    } catch {
+      /* ignore */
+    }
 
     return () => {
       for (const s of subs) {
-        try { s.remove(); } catch { /* ignore */ }
+        try {
+          s.remove();
+        } catch {
+          /* ignore */
+        }
       }
     };
   }, [armSilenceTimer, clearSilenceTimer, doStop, restartIfStillListening]);
@@ -168,32 +205,38 @@ export function useSpeechInput(
     if (capability !== 'available') return;
     const m = modRef.current;
     if (!m) return;
-
-    const perm = await m.getPermissionsAsync();
-    if (perm.status !== 'granted') {
-      const result = await m.requestPermissionsAsync();
-      if (result.status !== 'granted') {
-        setState('permission-denied');
-        return;
-      }
-    }
-
-    setPartialText('');
-    sessionGotResultRef.current = false;
-    restartCountRef.current = 0;
-    listeningRef.current = true;
-    setState('listening');
-    armSilenceTimer();
+    const attempt = ++startAttemptRef.current;
 
     try {
+      const perm = await m.getPermissionsAsync();
+      if (attempt !== startAttemptRef.current) return;
+      if (perm.status !== 'granted') {
+        const result = await m.requestPermissionsAsync();
+        if (attempt !== startAttemptRef.current) return;
+        if (result.status !== 'granted') {
+          setState('permission-denied');
+          return;
+        }
+      }
+
+      setPartialText('');
+      setVolumeLevel(0);
+      sessionGotResultRef.current = false;
+      restartCountRef.current = 0;
+      listeningRef.current = true;
+      setState('listening');
+      armSilenceTimer();
+
       m.start(startOptions);
     } catch {
       setState('idle');
       listeningRef.current = false;
+      clearSilenceTimer();
     }
-  }, [armSilenceTimer, capability, startOptions]);
+  }, [armSilenceTimer, capability, clearSilenceTimer, startOptions]);
 
   const stop = React.useCallback(() => {
+    startAttemptRef.current += 1;
     clearSilenceTimer();
     listeningRef.current = false;
     restartCountRef.current = 0;
@@ -205,16 +248,26 @@ export function useSpeechInput(
     }
 
     setPartialText('');
-    try { modRef.current?.stop(); } catch { /* ignore */ }
+    setVolumeLevel(0);
+    try {
+      modRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
   }, [clearSilenceTimer]);
 
   React.useEffect(() => {
     return () => {
       clearSilenceTimer();
+      startAttemptRef.current += 1;
       listeningRef.current = false;
-      try { modRef.current?.abort(); } catch { /* ignore */ }
+      try {
+        modRef.current?.abort();
+      } catch {
+        /* ignore */
+      }
     };
   }, [clearSilenceTimer]);
 
-  return { capability, state, partialText, start, stop };
+  return { capability, state, partialText, volumeLevel, start, stop };
 }

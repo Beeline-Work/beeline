@@ -322,6 +322,19 @@ export class PostgresLiveListener {
       }
       return;
     }
+    if (payload.table === 'agent_config' && payload.agentId) {
+      // A phone-side model/effort selection change. The synthetic payload is
+      // written by PhoneService with a direct pg_notify inside the selection
+      // transaction (the agents table carries no Room, so it has no trigger);
+      // every daemon subscription of that Room filters on the target agent.
+      this.live.publish({
+        type: 'invalidate',
+        roomId: payload.roomId,
+        reason: 'agent-config',
+        targetAgentId: payload.agentId,
+      });
+      return;
+    }
     const event: LiveEvent = {
       type: 'invalidate',
       roomId: payload.roomId,

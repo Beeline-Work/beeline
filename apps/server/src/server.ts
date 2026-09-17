@@ -451,6 +451,19 @@ export function createBeelineServer(options: ServerOptions): Server {
                   const trigger = event.trace
                     ? { reason: event.reason, trace: event.trace }
                     : undefined;
+                  if (event.reason === 'agent-config') {
+                    // A phone-side model/effort selection change for this
+                    // agent. No inbox replay: the durable fact is the
+                    // agent-model system line, and the daemon needs only the
+                    // wake to hot-restart its retained sessions.
+                    if (
+                      event.targetAgentId === principal.identityId &&
+                      client.readyState === client.OPEN
+                    ) {
+                      client.send(JSON.stringify({ type: 'config-changed', roomId }));
+                    }
+                    return;
+                  }
                   if (event.reason === 'postgres:agent_commands') {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
                     return;

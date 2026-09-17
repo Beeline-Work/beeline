@@ -409,6 +409,17 @@ export class RoomRuntimeCoordinator {
     this.options.daemonApi.setRoomsChangedListener?.(() => {
       this.discoveryWakes.wake();
     });
+    // Hot-restart on a phone-side model/effort selection change: retire every
+    // retained session now so the next turn cold-activates against the saved
+    // selection, exactly as session start reads it. A busy session is left to
+    // finish and re-checked at its next hand-back; plain reconnects never fire
+    // this. Optional like the wake above: a stub API without the listener
+    // still reconciles, and the per-turn currency check remains the net.
+    this.options.daemonApi.setConfigChangedListener?.(() => {
+      void this.scheduler.suspendIdle().catch((error) =>
+        console.error('[body] config-change session restart failed', error),
+      );
+    });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;

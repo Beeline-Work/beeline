@@ -448,10 +448,6 @@ export default function BuzzChat() {
   // immediately taps send. Keep the authoritative in-flight draft beside the
   // native TextInput so an @mention never drops trailing text.
   const inputTextRef = useRef('');
-  // A successful send replaces the native input. Advance this ref before any
-  // asynchronous React update so an event already queued by the consumed
-  // native field cannot put its text back into the next draft.
-  const composerInputRevisionRef = useRef(0);
   // The picker knows the exact agent key, whereas text-only lookup is a
   // fallback for manually typed mentions. Keep that identity through trailing
   // typing so an async roster refresh cannot turn a selected agent into an
@@ -526,7 +522,6 @@ export default function BuzzChat() {
     bindingsRef: roomSurfaceBindingsRef,
   });
   const [inputText, setInputText] = useState('');
-  const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
@@ -2230,6 +2225,61 @@ export default function BuzzChat() {
     scrollToNewestMessage();
   }, [bottomChromeLayoutKey, composerFootprint, composerLayoutFollow, scrollToNewestMessage]);
 
+  /**
+   * Withdraw the question this turn is answering.
+   *
+   * The control is offered to the requester or Room manager (`viewerMayStopTurn`), and the
+   * server refuses anyone else, so the two agree on one rule rather than the
+   * phone guessing at it. The press is acknowledged on this line immediately
+   * (`stoppingTurn`); the cancelled receipt is still what settles the durable
+   * "stopped" line and retires the control.
+   */
+  const [stoppingTurn, setStoppingTurn] = useState<{
+    agentPubkey: string;
+    requestId: string;
+  } | null>(null);
+  const handleStopTurn = useCallback(
+    async (stop: { agentPubkey: string; requestId: string }) => {
+      setStoppingTurn(stop);
+      try {
+        await monolithPhoneOperation('cancelAgentTurn', {
+          roomId: decodedId,
+          requestId: stop.requestId,
+          agentId: stop.agentPubkey,
+        });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return true;
+      } catch (err) {
+        setStoppingTurn((current) =>
+          current?.requestId === stop.requestId && current.agentPubkey === stop.agentPubkey
+            ? null
+            : current,
+        );
+        // A turn that settled while the press was in the air is the ordinary
+        // race, not a failure worth a dialog: the line is already gone.
+        console.warn('Stopping the turn failed:', err);
+        return false;
+      }
+    },
+    [decodedId],
+  );
+  useEffect(() => {
+    if (!stoppingTurn) return;
+    if (
+      !activeAgentTurn ||
+      activeAgentTurn.requestId !== stoppingTurn.requestId ||
+      activeAgentTurn.agentPubkey !== stoppingTurn.agentPubkey
+    ) {
+      setStoppingTurn(null);
+    }
+  }, [activeAgentTurn, stoppingTurn]);
+  const stoppingThisTurn = Boolean(
+    stoppingTurn &&
+    composerAck?.stop &&
+    stoppingTurn.requestId === composerAck.stop.requestId &&
+    stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
+  );
+
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
   const [settledTurn, setSettledTurn] = useState<{
     line: string;
@@ -2586,15 +2636,9 @@ export default function BuzzChat() {
       });
       addMessages([optimistic]);
       if (!shortcut) {
-        const nextInputRevision = composerInputRevisionRef.current + 1;
-        composerInputRevisionRef.current = nextInputRevision;
-        // Clear both owners of the controlled field. `clear()` removes the
-        // platform value immediately; the revision remount below guarantees
-        // the replacement starts empty even if native reconciliation lags.
         composerRef.current?.clear();
         inputTextRef.current = '';
         setInputText('');
-        setComposerInputRevision(nextInputRevision);
         setComposerHeight(COMPOSER_MIN_HEIGHT);
         setInputSelection({ start: 0, end: 0 });
         setPendingAttachments([]);
@@ -4653,6 +4697,10 @@ export default function BuzzChat() {
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
                       received={composerAck.received}
+                      stopping={stoppingThisTurn}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
                       testID="turn-progress-line"
                     />
                   ) : desktopDeliveryState ? (
@@ -4677,6 +4725,10 @@ export default function BuzzChat() {
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
                       received={composerAck.received}
+                      stopping={stoppingThisTurn}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
                       testID="turn-progress-line"
                     />
                   )}
@@ -4686,7 +4738,7 @@ export default function BuzzChat() {
                 </>
               )}
               <ConversationComposer
-                running={Boolean(activeAgentTurn)}
+                onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
                 inputRef={composerRef}
                 reply={
                   replyTarget
@@ -4710,10 +4762,6 @@ export default function BuzzChat() {
                   )
                 }
                 value={inputText}
-                inputRevision={composerInputRevision}
-                isInputRevisionCurrent={(inputRevision) =>
-                  inputRevision === composerInputRevisionRef.current
-                }
                 height={composerHeight}
                 maxHeight={COMPOSER_MAX_HEIGHT}
                 focused={composerFocused}

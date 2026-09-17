@@ -356,7 +356,7 @@ describe('DesktopRoomInspector work pane', () => {
   });
 
   it.each(['member', 'owner', 'admin'] as const)(
-    'removes working controls from the corner cockpit for a %s',
+    'shares corner stop authority for a %s',
     async (role) => {
       const detail = {
         ...room(),
@@ -379,9 +379,18 @@ describe('DesktopRoomInspector work pane', () => {
       });
       const composer = tree.root.findByType('ConversationComposer' as any);
       const progress = tree.root.findByType('TurnProgressLine' as any);
-      expect(composer.props.onStop).toBeUndefined();
-      expect(progress.props.onStop).toBeUndefined();
-      expect(composer.props.running).toBe(true);
+      expect(Boolean(composer.props.onStop)).toBe(role !== 'member');
+      expect(Boolean(progress.props.onStop)).toBe(role !== 'member');
+      if (role !== 'member') {
+        await act(async () => {
+          await composer.props.onStop();
+        });
+        expect(phoneOperation).toHaveBeenCalledWith('cancelAgentTurn', {
+          roomId: 'working',
+          requestId: 'turn-1',
+          agentId: agent.pubkey,
+        });
+      }
       act(() => tree.unmount());
     },
   );

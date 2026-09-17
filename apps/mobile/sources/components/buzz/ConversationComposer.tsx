@@ -47,15 +47,14 @@ type Props = {
    * environment already tested availability).
    */
   speechEnabled?: boolean;
-  running?: boolean;
-  inputRef?: React.Ref<TextInput>;
   /**
-   * Changes when the parent consumes the current draft. The native input is
-   * replaced so platform-owned text cannot survive a successful send, and
-   * change callbacks identify the input generation that emitted them.
+   * Only supplied for a server-authorized, current working turn. The plain
+   * tap-to-send composer takes no stop gesture of its own — the stop control
+   * lives on `TurnProgressLine` — so this stays an accepted no-op kept for
+   * the shared Room/corner call-site shape.
    */
-  inputRevision?: number;
-  isInputRevisionCurrent?(inputRevision: number): boolean;
+  onStop?(): Promise<boolean>;
+  inputRef?: React.Ref<TextInput>;
   testIDPrefix?: string;
   reply?: {
     handle: string;
@@ -95,10 +94,7 @@ export function ConversationComposer({
   onSelectionChange,
   onSend,
   speechEnabled = true,
-  running = false,
   inputRef,
-  inputRevision = 0,
-  isInputRevisionCurrent,
   testIDPrefix = 'chat',
   reply,
   onCancelReply,
@@ -109,15 +105,11 @@ export function ConversationComposer({
   const { theme } = useUnistyles();
   const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
   const containerRef = React.useRef<HTMLElement | null>(null);
-  const commitInputChange = (nextValue: string) => {
-    if (isInputRevisionCurrent?.(inputRevision) === false) return;
-    onChangeText(nextValue);
-  };
 
   // Speech recognition — internal hook, scoped to the composer.
   const speech = useSpeechInput((transcript) => {
     const separator = value && transcript ? ' ' : '';
-    commitInputChange(value + separator + transcript);
+    onChangeText(value + separator + transcript);
   });
   const isListening = speech.state === 'listening';
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
@@ -126,10 +118,11 @@ export function ConversationComposer({
   // The trailing control is mic XOR send, in one slot: while dictation is live
   // the control stays the listening/stop control even as partial transcript
   // fills the input; without speech, or once there is something to send, the
-  // send control shows (disabled when nothing is sendable). While an agent is
-  // working, the explicit send control stays out of the composer.
+  // send control shows (disabled when nothing is sendable), so the corner is
+  // never empty — including while an agent is working, when a tap queues the
+  // next instruction.
   const showMic = speechAvailable && (isListening || !hasSomethingToSend);
-  const showSend = !showMic && !running;
+  const showSend = !showMic;
 
   // When listening, show the status line with optional partial text.
   const statusLine: string =
@@ -236,7 +229,6 @@ export function ConversationComposer({
         </TouchableOpacity>
         <View style={styles.inputWrapper}>
           <TextInput
-            key={inputRevision}
             ref={inputRef}
             style={[
               styles.input,
@@ -245,7 +237,7 @@ export function ConversationComposer({
               isListening && speech.partialText ? styles.inputTransparent : undefined,
             ]}
             value={value}
-            onChangeText={commitInputChange}
+            onChangeText={onChangeText}
             onContentSizeChange={onContentSizeChange}
             onFocus={onFocus}
             onBlur={onBlur}

@@ -27,10 +27,6 @@ vi.mock('react-native', () => {
     StyleSheet: { create: (styles: any) => styles },
   } as any;
 });
-vi.mock('expo-haptics', () => ({
-  impactAsync: vi.fn(),
-  ImpactFeedbackStyle: { Medium: 'medium' },
-}));
 // react-native-svg imports from react-native deeply. An ESM import of the
 // real module triggers vitest to parse react-native's Flow-typed source.
 vi.mock('react-native-svg', () => {
@@ -84,7 +80,7 @@ function visibleInset(rowStyle: any, inputStyle: any, androidStyle: any, boxHeig
   };
 }
 const renderers: any[] = [];
-function render(value: string, running = false) {
+function render(value: string) {
   const onSend = vi.fn();
   const onKeyPress = vi.fn();
   let renderer: any;
@@ -92,7 +88,6 @@ function render(value: string, running = false) {
     renderer = create(
       <ConversationComposer
         value={value}
-        running={running}
         height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
         maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
         focused={false}
@@ -108,12 +103,7 @@ function render(value: string, running = false) {
     );
   });
   renderers.push(renderer);
-  return {
-    renderer,
-    onSend,
-    onKeyPress,
-    button: () => renderer.root.findByProps({ testID: 'chat-send' }),
-  };
+  return { renderer, onSend, onKeyPress, button: () => renderer.root.findByType('Pressable') };
 }
 beforeEach(() => {
   platform.OS = 'web';
@@ -229,46 +219,6 @@ describe('one composer', () => {
     expect(input.props.style[3]).toBeUndefined();
   });
 
-  it('rejects changes from a consumed input revision and replaces the native field', () => {
-    const onChangeText = vi.fn();
-    let activeInputRevision = 4;
-    const f = render('sent text');
-    const props = f.renderer.root.findByType(ConversationComposer).props;
-    act(() =>
-      f.renderer.update(
-        <ConversationComposer
-          {...props}
-          inputRevision={4}
-          isInputRevisionCurrent={(revision) => revision === activeInputRevision}
-          onChangeText={onChangeText}
-        />,
-      ),
-    );
-    const consumedInput = f.renderer.root.findByType('TextInput');
-    const consumedOnChangeText = consumedInput.props.onChangeText;
-
-    activeInputRevision = 5;
-    act(() =>
-      f.renderer.update(
-        <ConversationComposer
-          {...props}
-          value=""
-          inputRevision={5}
-          isInputRevisionCurrent={(revision) => revision === activeInputRevision}
-          onChangeText={onChangeText}
-        />,
-      ),
-    );
-    const replacementInput = f.renderer.root.findByType('TextInput');
-
-    act(() => consumedOnChangeText('sent text'));
-    act(() => replacementInput.props.onChangeText('next draft'));
-    expect(onChangeText).toHaveBeenCalledOnce();
-    expect(onChangeText).toHaveBeenCalledWith('next draft');
-    expect(replacementInput).not.toBe(consumedInput);
-    expect(replacementInput.props.value).toBe('');
-  });
-
   it('keeps measured multiline sizing on web', () => {
     const f = render('first line\nsecond line\nthird line');
     // Read the numbers from the constants the harness passes in. Spelling them
@@ -304,10 +254,20 @@ describe('one composer', () => {
     expect(f.button().findByType('Text').props.children).toBe('↑');
     expect(f.button().props.disabled).toBe(!value);
   });
-  it('removes the send control while an agent is working', () => {
-    const f = render('next instruction', true);
-    expect(f.renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
-    expect(f.renderer.root.findByType('TextInput').props.value).toBe('next instruction');
+  it('keeps the send control present and a tap queues the message while an agent works', async () => {
+    // The composer carries no `running` prop: the send control never leaves,
+    // and a plain tap sends exactly as it does when the Room is idle. The
+    // stop lives on `TurnProgressLine`, not here.
+    const f = render('next instruction');
+    expect(f.renderer.root.findAllByProps({ testID: 'chat-send' }).filter((n: any) => typeof n.type === 'string')).toHaveLength(1);
+    expect(f.button().props.accessibilityLabel).toBe('Send message');
+    expect(f.button().findByType('Text').props.children).toBe('↑');
+    await act(async () => f.button().props.onPress());
+    expect(f.onSend).toHaveBeenCalledOnce();
+  });
+  it('an empty composer disables the send control', () => {
+    const f = render('');
+    expect(f.button().props.disabled).toBe(true);
   });
 
   it('shares one row across Room and corner with unchanged desktop keyboard dispatch', () => {
@@ -327,7 +287,6 @@ describe('one composer', () => {
     ]) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');
       expect(source).toContain('<ConversationComposer');
-      expect(source).toContain('running={');
       expect(source).toContain('desktopComposerKeyAction(');
     }
   });

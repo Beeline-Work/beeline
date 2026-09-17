@@ -79,6 +79,8 @@ export type PhoneOperationMap = {
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
   setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
+  /** Sever the Room→repository binding; the Room becomes chat-only. Idempotent. */
+  removeRoomRepository: { input: RoomInput; output: void };
   listRoomWorkflows: { input: RoomInput; output: RoomWorkflowListResult };
   dispatchRoomWorkflow: { input: DispatchRoomWorkflowInput; output: void };
   approveCornerMerge: { input: ApproveCornerMergeInput; output: ApproveCornerMergeResult };

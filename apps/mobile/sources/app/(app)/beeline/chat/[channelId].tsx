@@ -448,6 +448,10 @@ export default function BuzzChat() {
   // immediately taps send. Keep the authoritative in-flight draft beside the
   // native TextInput so an @mention never drops trailing text.
   const inputTextRef = useRef('');
+  // A successful send replaces the native input. Advance this ref before any
+  // asynchronous React update so an event already queued by the consumed
+  // native field cannot put its text back into the next draft.
+  const composerInputRevisionRef = useRef(0);
   // The picker knows the exact agent key, whereas text-only lookup is a
   // fallback for manually typed mentions. Keep that identity through trailing
   // typing so an async roster refresh cannot turn a selected agent into an
@@ -522,6 +526,7 @@ export default function BuzzChat() {
     bindingsRef: roomSurfaceBindingsRef,
   });
   const [inputText, setInputText] = useState('');
+  const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
@@ -2207,7 +2212,7 @@ export default function BuzzChat() {
   // runs, preserving the old offset as an empty gap. Capture the verdict in
   // render, including the two independently mounted status lines.
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const composerBottomInset = composerBottomPadding(insets.bottom, keyboardHeight);
+  const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
     cornerLiveBar ? 'corner' : 'no-corner',
@@ -2636,9 +2641,15 @@ export default function BuzzChat() {
       });
       addMessages([optimistic]);
       if (!shortcut) {
+        const nextInputRevision = composerInputRevisionRef.current + 1;
+        composerInputRevisionRef.current = nextInputRevision;
+        // Clear both owners of the controlled field. `clear()` removes the
+        // platform value immediately; the revision remount below guarantees
+        // the replacement starts empty even if native reconciliation lags.
         composerRef.current?.clear();
         inputTextRef.current = '';
         setInputText('');
+        setComposerInputRevision(nextInputRevision);
         setComposerHeight(COMPOSER_MIN_HEIGHT);
         setInputSelection({ start: 0, end: 0 });
         setPendingAttachments([]);
@@ -3356,6 +3367,34 @@ export default function BuzzChat() {
       setRoomRepoBusy(false);
     }
   }, [decodedId, roomRepoBusy, roomRepository, transport]);
+
+  // Unassigning the repo is the inverse of linking it: the Room becomes
+  // chat-only. It is confirmed like the other destructive Room actions, and
+  // the confirm text carries the one room-side consequence that matters —
+  // open corners keep their own repo copies, nothing else moves.
+  const handleUnlinkRoomRepository = useCallback(async () => {
+    if (!transport || !roomRepository || roomRepoBusy) return;
+    const hasOpenCorners = roomListCorners(cornerLifecycle).length > 0;
+    const confirmed = await Modal.confirm(
+      `Unlink ${roomRepository.binding.name}?`,
+      hasOpenCorners
+        ? `This ${ROOM_LABEL} becomes chat-only. Open ${CORNER_LABEL}s keep their copies of the repo; messages and history are untouched.`
+        : `This ${ROOM_LABEL} becomes chat-only. Messages and history are untouched.`,
+      { cancelText: 'Cancel', confirmText: 'Unlink repo', destructive: true },
+    );
+    if (!confirmed) return;
+    setRoomRepoBusy(true);
+    setRoomRepoError(null);
+    try {
+      await transport.roomRepositoryRemove(decodedId);
+      refreshSignal.force();
+      setShowRoomRepoPicker(false);
+    } catch {
+      setRoomRepoError('Could not unlink the repository.');
+    } finally {
+      setRoomRepoBusy(false);
+    }
+  }, [cornerLifecycle, decodedId, roomRepoBusy, roomRepository, transport]);
 
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
@@ -4762,6 +4801,10 @@ export default function BuzzChat() {
                   )
                 }
                 value={inputText}
+                inputRevision={composerInputRevision}
+                isInputRevisionCurrent={(inputRevision) =>
+                  inputRevision === composerInputRevisionRef.current
+                }
                 height={composerHeight}
                 maxHeight={COMPOSER_MAX_HEIGHT}
                 focused={composerFocused}
@@ -5173,6 +5216,7 @@ export default function BuzzChat() {
             ) : null
           }
           onToggle={() => void handleToggleRoomRepoPicker()}
+          onUnlink={roomRepository ? () => void handleUnlinkRoomRepository() : undefined}
           picker={
             <View style={styles.roomSheetInset}>
               <RepoPicker

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -29,6 +29,7 @@ export default function CommunityInviteJoin() {
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const joinInFlight = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,13 +50,23 @@ export default function CommunityInviteJoin() {
           return;
         }
         const view = new RoomViewClient({ baseUrl: url, identity: currentIdentity });
-        const [nextPreview, available] = await Promise.all([
-          view.invite(token).then((value) => ({ name: value.name })),
-          view.workspaces().then((value) => value.workspaces.map(workspaceRailItem)),
-        ]);
+        const invite = await view.invite(token);
+        if (invite.joinedWorkspaceId) {
+          await saveActiveCommunityId(currentIdentity.publicKey, invite.joinedWorkspaceId);
+          if (!cancelled) {
+            router.replace({
+              pathname: '/beeline/channels',
+              params: { communityId: invite.joinedWorkspaceId },
+            });
+          }
+          return;
+        }
+        const available = await view
+          .workspaces()
+          .then((value) => value.workspaces.map(workspaceRailItem));
         if (!cancelled) {
           setIdentity(currentIdentity);
-          setPreview(nextPreview);
+          setPreview({ name: invite.name });
           setCommunities(available);
         }
       } catch (err) {
@@ -70,7 +81,8 @@ export default function CommunityInviteJoin() {
   }, [incomingUrl, token]);
 
   const handleJoin = useCallback(async () => {
-    if (!token || !preview || !identity) return;
+    if (!token || !preview || !identity || joinInFlight.current) return;
+    joinInFlight.current = true;
     setJoining(true);
     setError(null);
     try {
@@ -81,6 +93,7 @@ export default function CommunityInviteJoin() {
         params: { communityId: redemption.workspaceId },
       });
     } catch (err) {
+      joinInFlight.current = false;
       setError(`Could not join: ${String(err)}`);
     } finally {
       setJoining(false);

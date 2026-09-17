@@ -1,7 +1,11 @@
 import {
   CONNECTOR_DESCRIPTIONS,
+  GOOGLE_CONNECTOR_ORDER,
+  GOOGLE_ENTRY_ID,
+  resolveGoogleConnectTarget,
   type ConnectionDetailView,
   type ConnectorInstallState,
+  type WorkbenchConnector,
   type WorkbenchHelper,
   type WorkbenchView,
 } from './workbench';
@@ -180,6 +184,11 @@ export class MockWorkbenchSource implements WorkbenchSource {
     };
   }
 
+  /** The mock catalog rows, for the Google entry's connect-target resolution. */
+  private mockConnectors(): readonly WorkbenchConnector[] {
+    return GOOGLE_CONNECTOR_ORDER.map((id) => ({ id, name: '', description: '', available: true }));
+  }
+
   async listHelpers(): Promise<readonly WorkbenchHelper[]> {
     return MOCK_HELPERS;
   }
@@ -192,7 +201,13 @@ export class MockWorkbenchSource implements WorkbenchSource {
     if (!MOCK_HELPERS.some((helper) => helper.id === input.helperId && helper.online)) {
       throw new Error('Helper is offline');
     }
-    const connectorId = `${input.connectorId}:${input.helperId}-${this.installs.size + 1}`;
+    // The ONE Google entry resolves to the first not-yet-connected tool,
+    // exactly like the real source (the mock's tools are never connected).
+    const targetConnectorId =
+      input.connectorId === GOOGLE_ENTRY_ID
+        ? resolveGoogleConnectTarget(this.mockConnectors())
+        : input.connectorId;
+    const connectorId = `${targetConnectorId}:${input.helperId}-${this.installs.size + 1}`;
     this.installs.set(
       connectorId,
       {

@@ -48,6 +48,23 @@ export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'google-youtube',
 ];
 
+/**
+ * The four Google Workspace tool kinds ride ONE shared Google OAuth grant
+ * (the single Google connect entry): pairing any one provisions the whole
+ * set, in this canonical order. Tool identity stays per-kind — installs,
+ * receipts and grants remain separate connector rows.
+ */
+export const GOOGLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
+  'google-gmail',
+  'google-calendar',
+  'google-drive',
+  'google-youtube',
+];
+
+export function isGoogleToolConnectorKind(value: ConnectorKind): boolean {
+  return (GOOGLE_CONNECTOR_KINDS as readonly string[]).includes(value);
+}
+
 export type WorkbenchConnectorView = {
   readonly connectorId: string;
   readonly connectorType: ConnectorKind;

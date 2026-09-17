@@ -105,6 +105,10 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
+import {
+  GOOGLE_CONNECTOR_KINDS,
+  isGoogleToolConnectorKind,
+} from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -1892,19 +1896,24 @@ export class PhoneService {
   }
 
   async readInvite(rawToken: string, viewerId: string): Promise<InviteView | null> {
-    void viewerId;
     if (!isCommunityInviteToken(rawToken)) return null;
     const result = await this.database.query<{
       name: string;
       avatar: string | null;
       expires_at: Date;
+      workspace_id: string;
+      already_joined: boolean;
     }>(
-      `SELECT w.name,w.avatar,i.expires_at FROM invites i
+      `SELECT w.name,w.avatar,i.expires_at,i.workspace_id,
+         EXISTS(SELECT 1 FROM memberships joined
+           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+       FROM invites i
        JOIN workspaces w ON w.id=i.workspace_id
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
-      [hash(rawToken)],
+      [hash(rawToken), viewerId],
     );
     const row = result.rows[0];
     return row
@@ -1912,6 +1921,7 @@ export class PhoneService {
           name: row.name,
           ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
           expiresAt: unix(row.expires_at),
+          ...(row.already_joined ? { joinedWorkspaceId: row.workspace_id } : {}),
         }
       : null;
   }
@@ -2533,6 +2543,9 @@ export class PhoneService {
           input as Input<'setRoomGitHubEvents'>,
           viewerId,
         )) as Output<Name>;
+      case 'removeRoomRepository':
+        await this.removeRepositoryBinding(input as Input<'removeRoomRepository'>, viewerId);
+        return undefined as Output<Name>;
       case 'listRoomWorkflows':
         await this.requireHumanRoomWorkspaceManager(
           (input as Input<'listRoomWorkflows'>).roomId,
@@ -4106,15 +4119,24 @@ export class PhoneService {
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
     if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
-    const result = await this.database.query<{ workspace_id: string; created_by: string }>(
-      `SELECT i.workspace_id,i.created_by FROM invites i
+    const result = await this.database.query<{
+      workspace_id: string;
+      created_by: string;
+      already_joined: boolean;
+    }>(
+      `SELECT i.workspace_id,i.created_by,
+         EXISTS(SELECT 1 FROM memberships joined
+           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+       FROM invites i
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
-      [hash(input.token)],
+      [hash(input.token), viewerId],
     );
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
+    if (row.already_joined) return { joined: false, workspaceId: row.workspace_id };
     return this.database.transaction(async (database) => {
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
@@ -4958,6 +4980,28 @@ export class PhoneService {
     );
     return this.roomRepository(input.roomId);
   }
+  /**
+   * Sever the Room→repository association: the Room becomes chat-only.
+   *
+   * This clears only the binding columns on the Room row. The repository
+   * itself, the Room, its messages, and its history are untouched, and any
+   * corner already opened from this Room keeps its own copy of the binding
+   * (corners carry their repository columns independently of the parent).
+   * Deliberately idempotent: unassigning an already chat-only Room is a
+   * quiet no-op, so a retried call succeeds.
+   */
+  private async removeRepositoryBinding(input: Input<'removeRoomRepository'>, viewerId: string) {
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    await this.database.query(
+      `UPDATE rooms
+       SET repository_key=NULL,repository_name=NULL,repository_remote=NULL,
+           repository_target_branch='main',github_installation_id=NULL,
+           repository_resolution='none',github_events_enabled=true,
+           repository_updated_at=now(),updated_at=now()
+       WHERE id=$1`,
+      [input.roomId],
+    );
+  }
   private async roomRepository(roomId: string) {
     const row = (await this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [roomId]))
       .rows[0];
@@ -5476,6 +5520,40 @@ export class PhoneService {
     // derives its assignments from `status` AND `helper_agent_id` — receives
     // the install on its next poll even when the conflict row carried a
     // different agent of the same machine or a leftover `uninstall` op.
+    // ONE Google consent covers all four tool connectors: pairing any Google
+    // tool provisions the whole set on this machine, so the single Google
+    // connect entry tops up every missing tool. A sibling that is already
+    // connected keeps its live grant — only missing or broken siblings are
+    // (re-)armed.
+    if (isGoogleToolConnectorKind(input.connectorType)) {
+      for (const siblingType of GOOGLE_CONNECTOR_KINDS) {
+        if (siblingType === input.connectorType) continue;
+        await this.database.query(
+          `INSERT INTO workspace_connectors(
+             id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+             status,status_steps
+           ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
+           ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+           SET helper_agent_id=EXCLUDED.helper_agent_id,
+               status='installing',
+               status_steps=EXCLUDED.status_steps,
+               status_error=NULL,
+               pending_ops='[]'::jsonb,
+               connected_at=NULL,
+               updated_at=now()
+           WHERE workspace_connectors.status <> 'connected'`,
+          [
+            randomUUID(),
+            ws.workspace_id,
+            viewerId,
+            siblingType,
+            matched.agent_id,
+            machineId,
+            JSON.stringify(defaultConnectorSteps()),
+          ],
+        );
+      }
+    }
     const existing =
       (
         await this.database.query<{
@@ -6125,6 +6203,7 @@ export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;
 export const REVIEW_IDENTITY_MESSAGE = 'GitHub access denied for the review identity';
 export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'setRoomRepository',
+  'removeRoomRepository',
   'beginGitHubInstallation',
   'createGitHubRepository',
   'beginGitHubIdentityBind',
@@ -6177,6 +6256,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'setRoomRepository',
   'setRoomTargetBranch',
   'setRoomGitHubEvents',
+  'removeRoomRepository',
   'listRoomWorkflows',
   'dispatchRoomWorkflow',
   'approveCornerMerge',

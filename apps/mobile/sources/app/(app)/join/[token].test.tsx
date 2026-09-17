@@ -106,6 +106,7 @@ describe('CommunityInviteJoin', () => {
     controls.invite.mockResolvedValue({ name: 'Builders' });
     controls.workspaces.mockResolvedValue({ workspaces: [] });
     controls.redeemInvite.mockResolvedValue({ workspaceId: 'workspace-1' });
+    controls.saveActiveCommunityId.mockResolvedValue(undefined);
   });
 
   it('redeems through the monolith even with a stale false runtime config', async () => {
@@ -123,5 +124,44 @@ describe('CommunityInviteJoin', () => {
     });
     expect(controls.runtimeConfig).not.toHaveBeenCalled();
     expect(controls.createBuzzClient).not.toHaveBeenCalled();
+  });
+
+  it('leaves a resurfaced invite immediately when this identity already accepted it', async () => {
+    controls.invite.mockResolvedValue({
+      name: 'Builders',
+      joinedWorkspaceId: 'workspace-1',
+    });
+
+    await render();
+
+    expect(controls.invite).toHaveBeenCalledWith(TOKEN);
+    expect(controls.workspaces).not.toHaveBeenCalled();
+    expect(controls.redeemInvite).not.toHaveBeenCalled();
+    expect(controls.saveActiveCommunityId).toHaveBeenCalledWith('person-1', 'workspace-1');
+    expect(controls.replace).toHaveBeenCalledWith({
+      pathname: '/beeline/channels',
+      params: { communityId: 'workspace-1' },
+    });
+  });
+
+  it('starts only one redemption when acceptance is pressed repeatedly', async () => {
+    let finishRedemption!: (value: { workspaceId: string }) => void;
+    controls.redeemInvite.mockReturnValue(
+      new Promise((resolve) => {
+        finishRedemption = resolve;
+      }),
+    );
+    const renderer = await render();
+    const button = renderer.root.findByProps({ testID: 'confirm-community-join' });
+
+    act(() => {
+      button.props.onPress();
+      button.props.onPress();
+    });
+    expect(controls.redeemInvite).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishRedemption({ workspaceId: 'workspace-1' });
+    });
   });
 });

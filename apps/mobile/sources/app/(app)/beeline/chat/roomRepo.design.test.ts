@@ -84,6 +84,18 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(chatSource).toContain("text: decision === 'open' ? 'go' : 'cancel'");
   });
 
+  it('clears text, quoted replies, and attachments together after ordinary dispatch', () => {
+    const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
+    const clearBlock = blockFrom(handleSend, 'if (!shortcut) {', 'composer clear');
+    expect(clearBlock).toContain("inputTextRef.current = '';");
+    expect(clearBlock).toContain("setInputText('');");
+    expect(clearBlock).toContain('setPendingAttachments([]);');
+    expect(clearBlock).toContain('setReplyTarget(null);');
+    expect(handleSend.indexOf('if (!shortcut) {')).toBeGreaterThan(
+      handleSend.indexOf('addMessages([optimistic]);'),
+    );
+  });
+
   it('shows the repo access guidance in the prompt', () => {
     const banner = blockFrom(
       chatSource,
@@ -126,5 +138,25 @@ describe('Room→repo settings change', () => {
     expect(handler).toContain('roomListCorners(cornerLifecycle)');
     expect(handler).toContain('Modal.confirm');
     expect(handler).toContain('roomRepository && hasOpenCorners');
+  });
+
+  it('unassigns the repo only through the confirmed destructive path', () => {
+    const handler = blockFrom(
+      chatSource,
+      'const handleUnlinkRoomRepository = useCallback(',
+      'handleUnlinkRoomRepository',
+    );
+    expect(handler).toContain('Modal.confirm');
+    expect(handler).toContain("confirmText: 'Unlink repo'");
+    expect(handler).toContain('destructive: true');
+    // The write is the dedicated unassign operation, never a set with empty values.
+    expect(handler).toContain('transport.roomRepositoryRemove(decodedId)');
+    expect(handler).not.toContain('roomRepositorySet');
+    // Nothing room-side beyond the binding is claimed destroyed.
+    expect(handler).toContain('messages and history are untouched');
+    // The affordance is wired only when a repo is actually bound.
+    expect(chatSource).toContain(
+      'onUnlink={roomRepository ? () => void handleUnlinkRoomRepository() : undefined}',
+    );
   });
 });

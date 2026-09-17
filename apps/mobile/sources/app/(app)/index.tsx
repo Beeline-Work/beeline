@@ -8,7 +8,10 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { parseReviewSecret } from '@/buzz/review-link';
 import { isPersonNameOnboardingPending } from '@/buzz/person-name';
-import { markInitialLandingResolved } from '@/navigation/initial-landing';
+import {
+  isInitialLandingNavigationSuppressed,
+  markInitialLandingResolved,
+} from '@/navigation/initial-landing';
 import { initialAuthUrl } from '@/auth/desktop-auth-session';
 import { deliverDesktopDeepLink } from '@/auth/desktop-deep-link';
 
@@ -44,6 +47,13 @@ export default function Home() {
     // top of it instead of being replaced by this redirect.
     if (buzzStorageError) {
       markInitialLandingResolved();
+      return;
+    }
+
+    // A tapped push with a routable destination claimed the navigation while
+    // this decision was still pending (the slow-storage path whose wait timed
+    // out). Its replace below would overwrite the notification navigation.
+    if (isInitialLandingNavigationSuppressed()) {
       return;
     }
 

@@ -1,5 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  isInitialLandingNavigationSuppressed,
+  resetInitialLandingForTests,
+  suppressInitialLandingNavigation,
+} from '../navigation/initial-landing';
 import {
   routeBuzzNotificationResponse,
   startNotificationResponseEntries,
@@ -9,10 +14,18 @@ import {
 
 const DEFAULT_ACTION = 'expo.modules.notifications.actions.DEFAULT';
 
+beforeEach(() => {
+  resetInitialLandingForTests();
+});
+
 const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
 const appRootSource = readFileSync(new URL('../app/(app)/index.tsx', import.meta.url), 'utf8');
 
-function tap(id: string, channelId: string, extra: Record<string, string> = {}) {
+function tap(
+  id: string,
+  channelId: string,
+  extra: Record<string, string> = {},
+) {
   return {
     actionIdentifier: DEFAULT_ACTION,
     notification: {
@@ -26,17 +39,19 @@ function tap(id: string, channelId: string, extra: Record<string, string> = {}) 
 
 function routing(overrides: Partial<NotificationResponseRouting> = {}) {
   const navigate = vi.fn();
+  const suppressPendingInitialLanding = vi.fn();
   const base: NotificationResponseRouting = {
     router: { navigate },
     handled: new Set<string>(),
     defaultActionIdentifier: DEFAULT_ACTION,
     waitForInitialLanding: () => Promise.resolve('committed'),
+    suppressPendingInitialLanding,
     clearLastResponse: () => Promise.resolve(),
     resolveTarget: async (target) => target,
     log: () => {},
     ...overrides,
   };
-  return { navigate, routing: base };
+  return { navigate, suppressPendingInitialLanding, routing: base };
 }
 
 describe('routeBuzzNotificationResponse', () => {
@@ -105,6 +120,87 @@ describe('routeBuzzNotificationResponse', () => {
     expect(navigate.mock.calls[0][0].params.channelId).toBe('room-timeout');
     expect(log).toHaveBeenCalledWith(
       '[PUSH ROUTING] Initial landing did not commit before timeout; routing directly',
+    );
+  });
+
+  // The cold-start race behind the wrong-workspace deck: the landing decision
+  // is slow, the wait times out, the push routes directly — and the app root's
+  // landing replace, still pending, must then be suppressed or it lands the
+  // previously-active workspace's deck over the notification destination.
+  it('claims the destination on the timeout path before resolving and navigating', async () => {
+    const { navigate, routing: deps } = routing({
+      waitForInitialLanding: async () => 'timeout',
+      suppressPendingInitialLanding: suppressInitialLandingNavigation,
+      resolveTarget: async (target) => {
+        // The app root reads this flag before its landing replace; it must
+        // already see the push's claim here, or the replace would still run.
+        expect(isInitialLandingNavigationSuppressed()).toBe(true);
+        return target;
+      },
+    });
+
+    await routeBuzzNotificationResponse(tap('msg-cold-race', 'room-race'), deps);
+
+    expect(isInitialLandingNavigationSuppressed()).toBe(true);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate.mock.calls[0][0].params.channelId).toBe('room-race');
+  });
+
+  it('suppresses with the real gate state so the app root replace is refused', async () => {
+    const { suppressPendingInitialLanding, routing: deps } = routing({
+      suppressPendingInitialLanding: suppressInitialLandingNavigation,
+    });
+
+    await routeBuzzNotificationResponse(tap('msg-real-gate', 'room-gate'), deps);
+
+    expect(isInitialLandingNavigationSuppressed()).toBe(true);
+  });
+
+  it('does not suppress the landing when the payload carries no route', async () => {
+    const { suppressPendingInitialLanding, routing: deps } = routing();
+
+    await routeBuzzNotificationResponse(
+      {
+        actionIdentifier: DEFAULT_ACTION,
+        notification: { request: { identifier: 'msg-empty', content: { data: {} } } },
+      },
+      deps,
+    );
+
+    expect(suppressPendingInitialLanding).not.toHaveBeenCalled();
+  });
+
+  // A workspace-target push (e.g. a workspace join) must render the pushed
+  // workspace's deck, not the previously-active one: the Workspace selection
+  // commits in the resolver before the navigation names it via `communityId`.
+  it('commits the pushed workspace before navigating to its deck', async () => {
+    const { navigate, routing: deps } = routing({
+      resolveTarget: async (target) => target,
+    });
+
+    const routed = await routeBuzzNotificationResponse(
+      {
+        actionIdentifier: DEFAULT_ACTION,
+        notification: {
+          request: {
+            identifier: 'msg-ws',
+            content: {
+              data: { type: 'workspace-join', target: 'workspace', workspaceId: 'ws-burd' },
+            },
+          },
+        },
+      },
+      deps,
+    );
+
+    expect(routed?.target).toBe('workspace');
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/beeline/channels',
+        params: { communityId: 'ws-burd', notificationResponseId: 'msg-ws' },
+      },
+      { dangerouslySingular: true },
     );
   });
 
@@ -186,6 +282,9 @@ describe('notification response wiring', () => {
     expect(appLayoutSource).toContain('startNotificationResponseEntries({');
     expect(appLayoutSource).toContain('routeBuzzNotificationResponse(response, {');
     expect(appLayoutSource).toContain('waitForInitialLanding: whenInitialLandingResolved');
+    expect(appLayoutSource).toContain(
+      'suppressPendingInitialLanding: suppressInitialLandingNavigation',
+    );
   });
 
   it('settles the landing gate on every branch the app root can take', () => {
@@ -193,5 +292,17 @@ describe('notification response wiring', () => {
     // A storage error stays on `/`, so it remains the one branch that settles
     // without a committed destination route.
     expect(appRootSource.match(/markInitialLandingResolved\(\)/g)).toHaveLength(1);
+  });
+
+  // The cold-start regression behind the wrong-workspace deck: the landing
+  // decision is slow, the push's wait times out and routes directly, and the
+  // app root's replace — still pending — would land the previously-active
+  // workspace's deck over the notification destination. The replace must be
+  // refused once a push has claimed the destination.
+  it('refuses the app root landing replace once a push claimed the destination', () => {
+    const suppressCheck = appRootSource.indexOf('isInitialLandingNavigationSuppressed()');
+    const firstReplace = appRootSource.indexOf('router.replace');
+    expect(suppressCheck).toBeGreaterThan(-1);
+    expect(firstReplace).toBeGreaterThan(suppressCheck);
   });
 });

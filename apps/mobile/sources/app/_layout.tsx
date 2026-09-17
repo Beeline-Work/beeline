@@ -36,6 +36,7 @@ import {
 import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
 import {
   markInitialLandingResolved,
+  suppressInitialLandingNavigation,
   whenInitialLandingResolved,
 } from '@/navigation/initial-landing';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
@@ -330,6 +331,7 @@ export default function RootLayout() {
         handled: handledNotificationIds.current,
         defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
         waitForInitialLanding: whenInitialLandingResolved,
+        suppressPendingInitialLanding: suppressInitialLandingNavigation,
         clearLastResponse: Notifications.clearLastNotificationResponseAsync,
         resolveTarget: resolveBuzzNotificationDestination,
       });

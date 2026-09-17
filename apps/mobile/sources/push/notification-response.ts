@@ -14,7 +14,8 @@ import type { InitialLandingResult } from '@/navigation/initial-landing';
  * turn on lives here: the once-per-process guard, the default-action check,
  * the wait for the app root's landing decision (see
  * `navigation/initial-landing.ts` — a push routed before that decision lands
- * is overwritten by it), and the navigation itself.
+ * is overwritten by it), the suppression of a landing replace still pending
+ * after that wait times out, and the navigation itself.
  */
 
 export type TappedNotificationResponse = {
@@ -61,6 +62,8 @@ export type NotificationResponseRouting = {
   defaultActionIdentifier: string;
   /** Resolves once the landing route has committed, or reports a timeout. */
   waitForInitialLanding: () => Promise<InitialLandingResult>;
+  /** Claims the destination for this push: the app root's pending landing replace must not run. */
+  suppressPendingInitialLanding: () => void;
   /** Clears the retained native "last response" once it has been routed. */
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
@@ -129,6 +132,11 @@ export async function routeBuzzNotificationResponse(
       response.notification?.request?.content?.data,
     );
     if (buzzTarget) {
+      // This push now owns the destination — including on the timeout path,
+      // where the app root's landing replace may still be pending. Suppress it
+      // before resolving (which persists the Workspace selection and can take
+      // its own time), or a late replace would land the deck over the Room.
+      routing.suppressPendingInitialLanding();
       const resolvedTarget = await routing.resolveTarget(buzzTarget);
       navigateToBuzzTargetFromNotification(routing.router, resolvedTarget, responseId!);
       log(

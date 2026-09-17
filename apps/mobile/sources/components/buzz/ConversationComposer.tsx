@@ -49,13 +49,6 @@ type Props = {
   speechEnabled?: boolean;
   running?: boolean;
   inputRef?: React.Ref<TextInput>;
-  /**
-   * Changes when the parent consumes the current draft. The native input is
-   * replaced so platform-owned text cannot survive a successful send, and
-   * change callbacks identify the input generation that emitted them.
-   */
-  inputRevision?: number;
-  isInputRevisionCurrent?(inputRevision: number): boolean;
   testIDPrefix?: string;
   reply?: {
     handle: string;
@@ -97,8 +90,6 @@ export function ConversationComposer({
   speechEnabled = true,
   running = false,
   inputRef,
-  inputRevision = 0,
-  isInputRevisionCurrent,
   testIDPrefix = 'chat',
   reply,
   onCancelReply,
@@ -109,15 +100,11 @@ export function ConversationComposer({
   const { theme } = useUnistyles();
   const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
   const containerRef = React.useRef<HTMLElement | null>(null);
-  const commitInputChange = (nextValue: string) => {
-    if (isInputRevisionCurrent?.(inputRevision) === false) return;
-    onChangeText(nextValue);
-  };
 
   // Speech recognition — internal hook, scoped to the composer.
   const speech = useSpeechInput((transcript) => {
     const separator = value && transcript ? ' ' : '';
-    commitInputChange(value + separator + transcript);
+    onChangeText(value + separator + transcript);
   });
   const isListening = speech.state === 'listening';
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
@@ -236,7 +223,6 @@ export function ConversationComposer({
         </TouchableOpacity>
         <View style={styles.inputWrapper}>
           <TextInput
-            key={inputRevision}
             ref={inputRef}
             style={[
               styles.input,
@@ -245,7 +231,7 @@ export function ConversationComposer({
               isListening && speech.partialText ? styles.inputTransparent : undefined,
             ]}
             value={value}
-            onChangeText={commitInputChange}
+            onChangeText={onChangeText}
             onContentSizeChange={onContentSizeChange}
             onFocus={onFocus}
             onBlur={onBlur}

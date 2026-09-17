@@ -72,7 +72,7 @@ describe('streaming prose', () => {
     expect(mixHex('#000000', '#ffffff', 0)).toBe('#000000');
     expect(mixHex('#000000', '#ffffff', 1)).toBe('#ffffff');
     expect(mixHex('#000000', '#ffffff', 0.5)).toBe('#808080');
-    expect(mixHex('#14091a', '#83838d', -1)).toBe('#14091a');
-    expect(mixHex('#14091a', '#83838d', 2)).toBe('#83838d');
+    expect(mixHex('#14091a', '#90909b', -1)).toBe('#14091a');
+    expect(mixHex('#14091a', '#90909b', 2)).toBe('#90909b');
   });
 });

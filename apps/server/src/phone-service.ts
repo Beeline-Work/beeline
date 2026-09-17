@@ -105,6 +105,10 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
+import {
+  GOOGLE_CONNECTOR_KINDS,
+  isGoogleToolConnectorKind,
+} from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -207,6 +211,7 @@ interface MessageRow {
   author_id: string;
   text: string;
   presentation: RoomViewMessage['presentation'];
+  bookmarked?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
   /** Derived on read from the row's text and the Room's membership, not stored. */
@@ -445,6 +450,7 @@ function projectedMessage(
     createdAtMs: row.created_at.getTime(),
     author,
     presentation: row.presentation,
+    ...(row.bookmarked ? { bookmarked: true } : {}),
     ...(row.presentation === 'message'
       ? {
           reference: {
@@ -1359,6 +1365,7 @@ export class PhoneService {
     if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
     const rows = await this.messageRows(roomId, before, 31);
     const page = rows.slice(0, 30);
+    await this.enrichMessageBookmarks(page, viewerId);
     const tail = page.at(-1);
     const messages = page
       .reverse()
@@ -1493,6 +1500,8 @@ export class PhoneService {
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             EXISTS(SELECT 1 FROM message_bookmarks bookmark
+               WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -1506,6 +1515,8 @@ export class PhoneService {
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             EXISTS(SELECT 1 FROM message_bookmarks bookmark
+               WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -2388,6 +2399,16 @@ export class PhoneService {
       case 'reactToMessage':
         await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
         return undefined as Output<Name>;
+      case 'setMessageBookmark':
+        return (await this.setMessageBookmark(
+          input as Input<'setMessageBookmark'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'listMessageBookmarks':
+        return (await this.listMessageBookmarks(
+          input as Input<'listMessageBookmarks'>,
+          viewerId,
+        )) as Output<Name>;
       case 'createRoomSchedule':
         return (await this.createRoomSchedule(
           input as Input<'createRoomSchedule'>,
@@ -2989,6 +3010,135 @@ export class PhoneService {
         JSON.stringify(reactions),
       ]);
     });
+  }
+
+  private async setMessageBookmark(
+    input: Input<'setMessageBookmark'>,
+    viewerId: string,
+  ): Promise<Output<'setMessageBookmark'>> {
+    if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
+    if (!input.bookmarked) {
+      await this.database.query(
+        `DELETE FROM message_bookmarks WHERE identity_id=$1 AND message_id=$2`,
+        [viewerId, input.messageId],
+      );
+      return { bookmarked: false };
+    }
+    return this.database.transaction(async (database) => {
+      const source = (
+        await database.query<{
+          workspace_id: string;
+          room_name: string;
+          room_kind: 'room' | 'corner';
+          message_created_at: Date;
+        }>(
+          `SELECT room.workspace_id,room.name room_name,
+             CASE WHEN room.parent_id IS NULL THEN 'room' ELSE 'corner' END room_kind,
+             message.created_at message_created_at
+           FROM messages message
+           JOIN rooms room ON room.id=message.room_id
+           JOIN memberships membership ON membership.room_id=room.id
+             AND membership.identity_id=$3 AND membership.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+             AND workspace_member.removed_at IS NULL
+           WHERE message.id=$1 AND message.room_id=$2 AND message.presentation='message'`,
+          [input.messageId, input.roomId, viewerId],
+        )
+      ).rows[0];
+      if (!source) throw new Error('message is not available for bookmarking');
+      await database.query(
+        `INSERT INTO message_bookmarks(
+           identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,
+           message_created_at
+         ) VALUES($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT(identity_id,message_id) DO NOTHING`,
+        [
+          viewerId,
+          source.workspace_id,
+          input.roomId,
+          input.messageId,
+          source.room_name,
+          source.room_kind,
+          source.message_created_at,
+        ],
+      );
+      return { bookmarked: true };
+    });
+  }
+
+  private async listMessageBookmarks(
+    input: Input<'listMessageBookmarks'>,
+    viewerId: string,
+  ): Promise<Output<'listMessageBookmarks'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const result = await this.database.query<{
+      message_id: string;
+      workspace_id: string;
+      room_id: string;
+      room_name: string;
+      room_kind: 'room' | 'corner';
+      message_created_at: Date;
+      bookmarked_at: Date;
+      available: boolean;
+      text: string | null;
+      author_id: string | null;
+      author_kind: 'human' | 'agent' | null;
+      author_name: string | null;
+      author_handle: string | null;
+      author_avatar: string | null;
+      author_face: string | null;
+    }>(
+      `SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
+         COALESCE(room.name,bookmark.source_room_name) room_name,
+         bookmark.source_room_kind room_kind,
+         bookmark.message_created_at,bookmark.created_at bookmarked_at,
+         (message.id IS NOT NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN message.text END text,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN author.id END author_id,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN author.kind END author_kind,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN author.name END author_name,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN author.handle END author_handle,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN author.avatar END author_avatar,
+         CASE WHEN room_member.identity_id IS NOT NULL THEN author.face_id END author_face
+       FROM message_bookmarks bookmark
+       LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
+       LEFT JOIN memberships room_member ON room_member.room_id=room.id
+         AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+       LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
+       LEFT JOIN identities author ON author.id=message.author_id
+       WHERE bookmark.workspace_id=$1 AND bookmark.identity_id=$2
+       ORDER BY bookmark.created_at DESC,bookmark.message_id`,
+      [input.workspaceId, viewerId],
+    );
+    return {
+      bookmarks: result.rows.map((row) => ({
+        messageId: row.message_id,
+        workspaceId: row.workspace_id,
+        roomId: row.room_id,
+        roomName: row.room_name,
+        roomKind: row.room_kind,
+        messageCreatedAt: unix(row.message_created_at),
+        bookmarkedAt: unix(row.bookmarked_at),
+        available: row.available,
+        ...(row.available && row.text !== null ? { text: row.text } : {}),
+        ...(row.available && row.author_id && row.author_kind && row.author_name
+          ? {
+              author: identity(
+                {
+                  id: row.author_id,
+                  kind: row.author_kind,
+                  name: row.author_name,
+                  handle: row.author_handle,
+                  avatar: row.author_avatar,
+                  face_id: row.author_face,
+                },
+                this.publicOrigin,
+              ),
+            }
+          : {}),
+      })),
+    };
   }
 
   /**
@@ -5516,6 +5666,40 @@ export class PhoneService {
     // derives its assignments from `status` AND `helper_agent_id` — receives
     // the install on its next poll even when the conflict row carried a
     // different agent of the same machine or a leftover `uninstall` op.
+    // ONE Google consent covers all four tool connectors: pairing any Google
+    // tool provisions the whole set on this machine, so the single Google
+    // connect entry tops up every missing tool. A sibling that is already
+    // connected keeps its live grant — only missing or broken siblings are
+    // (re-)armed.
+    if (isGoogleToolConnectorKind(input.connectorType)) {
+      for (const siblingType of GOOGLE_CONNECTOR_KINDS) {
+        if (siblingType === input.connectorType) continue;
+        await this.database.query(
+          `INSERT INTO workspace_connectors(
+             id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+             status,status_steps
+           ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
+           ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+           SET helper_agent_id=EXCLUDED.helper_agent_id,
+               status='installing',
+               status_steps=EXCLUDED.status_steps,
+               status_error=NULL,
+               pending_ops='[]'::jsonb,
+               connected_at=NULL,
+               updated_at=now()
+           WHERE workspace_connectors.status <> 'connected'`,
+          [
+            randomUUID(),
+            ws.workspace_id,
+            viewerId,
+            siblingType,
+            matched.agent_id,
+            machineId,
+            JSON.stringify(defaultConnectorSteps()),
+          ],
+        );
+      }
+    }
     const existing =
       (
         await this.database.query<{
@@ -6054,6 +6238,12 @@ export class PhoneService {
       cornerActivityRowsPromise,
       latestAgentTurns,
     ]);
+    if (viewerId) {
+      await this.enrichMessageBookmarks(
+        [...transcriptRows.rows, ...liveRows.rows, ...cornerActivityRows.rows],
+        viewerId,
+      );
+    }
     await this.enrichMessageTags(transcriptRows.rows);
     return this.projectRoomMessages(
       transcriptRows.rows,
@@ -6063,6 +6253,19 @@ export class PhoneService {
       isCorner,
       viewerId,
     );
+  }
+  private async enrichMessageBookmarks(
+    rows: readonly MessageRow[],
+    viewerId: string,
+  ): Promise<void> {
+    if (!rows.length) return;
+    const result = await this.database.query<{ message_id: string }>(
+      `SELECT message_id FROM message_bookmarks
+       WHERE identity_id=$1 AND message_id=ANY($2::text[])`,
+      [viewerId, [...new Set(rows.map((row) => row.id))]],
+    );
+    const bookmarked = new Set(result.rows.map((row) => row.message_id));
+    for (const row of rows) row.bookmarked = bookmarked.has(row.id);
   }
   private projectRoomMessages(
     transcriptRows: readonly MessageRow[],
@@ -6179,6 +6382,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendRoomMessage',
   'sendRoomReply',
   'reactToMessage',
+  'setMessageBookmark',
+  'listMessageBookmarks',
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',

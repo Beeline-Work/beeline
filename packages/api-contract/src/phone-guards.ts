@@ -420,6 +420,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
       item.presentation === 'system' ||
       item.presentation === 'activity' ||
       item.presentation === 'card') &&
+    (item.bookmarked === undefined || typeof item.bookmarked === 'boolean') &&
     (reference === undefined ||
       (reference &&
         typeof reference.channelId === 'string' &&

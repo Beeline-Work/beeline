@@ -542,6 +542,22 @@ CREATE TABLE IF NOT EXISTS messages (
   system_event jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- Private message bookmarks deliberately keep their pointer after a source is
+-- deleted or becomes inaccessible. Reads never cache or reveal source text;
+-- they return an unavailable row that the viewer can remove.
+CREATE TABLE IF NOT EXISTS message_bookmarks (
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL,
+  message_id text NOT NULL,
+  source_room_name text NOT NULL,
+  source_room_kind text NOT NULL CHECK (source_room_kind IN ('room','corner')),
+  message_created_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(identity_id,message_id)
+);
+CREATE INDEX IF NOT EXISTS message_bookmarks_workspace_viewer_idx
+  ON message_bookmarks(workspace_id,identity_id,created_at DESC);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;

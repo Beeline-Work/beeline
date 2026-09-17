@@ -106,7 +106,7 @@ describe('the ledger — an agent turn', () => {
       fontFamily: 'SpaceGrotesk-Regular',
       transform: [{ skewX: '-8deg' }],
       fontSize: 12,
-      color: '#83838d',
+      color: '#90909B',
     });
     expect(line.props.style.fontStyle).toBeUndefined();
     expect(line.props.style.fontWeight).toBeUndefined();
@@ -794,8 +794,9 @@ describe('the ledger — the byline says who is talking', () => {
     const stamp = merged(renderer.root.findByProps({ testID: 'chat-byline-stamp' }));
     expect(stamp.fontFamily).toBe('IBMPlexMono-Regular');
     expect(stamp.fontSize).toBe(10);
-    expect(stamp.color).toBe('#83838d');
-    expect(stamp.marginLeft).toBe('auto');
+    expect(stamp.color).toBe('#90909B');
+    const status = merged(renderer.root.findByProps({ testID: 'chat-byline-status' }));
+    expect(status.marginLeft).toBe('auto');
   });
 
   it('keeps the viewer’s name brass, whatever their own hue is', () => {
@@ -835,10 +836,15 @@ describe('the ledger — the byline says who is talking', () => {
     // The name is 16px prose and the tag and stamp are 10px mono: centring
     // those against each other floats the small type off the name's feet, so
     // the three words share a baseline instead.
-    const words = renderer.root.findByProps({ testID: 'chat-byline-name' }).parent!;
-    for (const testID of ['chat-byline-role', 'chat-byline-stamp']) {
-      expect(renderer.root.findByProps({ testID }).parent).toBe(words);
-    }
+    const words = renderer.root.findByProps({ testID: 'chat-byline-words' });
+    expect(renderer.root.findByProps({ testID: 'chat-byline-role' }).parent?.props.testID).toBe(
+      'chat-byline-words',
+    );
+    const status = renderer.root.findByProps({ testID: 'chat-byline-status' });
+    expect(status.parent?.props.testID).toBe('chat-byline-words');
+    expect(renderer.root.findByProps({ testID: 'chat-byline-stamp' }).parent?.props.testID).toBe(
+      'chat-byline-status',
+    );
     expect(merged(words).alignItems).toBe('baseline');
 
     // The tile is a picture, not a word — it stays centred on the row, and it

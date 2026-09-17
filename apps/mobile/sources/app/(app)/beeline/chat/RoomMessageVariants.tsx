@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
+import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   MESSAGE_REACTION_EMOJIS,
@@ -1065,6 +1066,8 @@ function SwipeToReply({
   onReply,
   onReact,
   onForward,
+  onBookmark = () => undefined,
+  bookmarked = false,
   isDesktop,
   replyOnly = false,
 }: {
@@ -1078,6 +1081,8 @@ function SwipeToReply({
   onReply(): void;
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
+  onBookmark?(): void;
+  bookmarked?: boolean;
   isDesktop: boolean;
   replyOnly?: boolean;
 }) {
@@ -1172,6 +1177,25 @@ function SwipeToReply({
                 testID={`react-button-${messageId}`}
               >
                 <Text style={styles.replyDesktopGlyph}>☺</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel={bookmarked ? 'Remove bookmark' : 'Bookmark message'}
+                accessibilityRole="button"
+                accessibilityState={{ selected: bookmarked }}
+                onFocus={() => setDesktopActionsVisible(true)}
+                onBlur={() => setDesktopActionsVisible(false)}
+                onPress={onBookmark}
+                style={({ pressed }) => [
+                  styles.replyDesktopAction,
+                  pressed && styles.replyDesktopPressed,
+                ]}
+                testID={`bookmark-button-${messageId}`}
+              >
+                <Ionicons
+                  color={bookmarked ? styles.replyDesktopBookmark.color : styles.replyDesktopGlyph.color}
+                  name={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                  size={14}
+                />
               </Pressable>
               <Pressable
                 accessibilityLabel="Forward message"
@@ -1349,6 +1373,7 @@ export interface OrdinaryLedgerMessageProps {
   onMessageActions?(message: ChatDisplayMessage): void;
   onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
   onForward?(message: ChatDisplayMessage): void;
+  onBookmark?(message: ChatDisplayMessage): void;
   onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
   cornerProposalAction?: 'open' | 'cancel' | null;
   onRetry(eventId: string): void;
@@ -1441,6 +1466,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onMessageActions,
   onReact = () => undefined,
   onForward = () => undefined,
+  onBookmark = () => undefined,
   onCornerProposalDecision,
   cornerProposalAction = null,
   onRetry,
@@ -1491,13 +1517,14 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined =
-    continued && !isAgent && !announcementFeed
+    continued && !isAgent && !announcementFeed && !message.bookmarked
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp: ledgerStamp(message.timestamp),
           isViewer: isSelfSteer,
+          bookmarked: message.bookmarked,
           ...(announcementFeed
             ? {}
             : {
@@ -1775,6 +1802,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
+      onBookmark={() => onBookmark(message)}
+      bookmarked={message.bookmarked}
       isDesktop={desktopLayout}
     >
       {content}
@@ -1792,7 +1821,9 @@ const styles = StyleSheet.create((theme) => ({
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {
     ...Typography.mono(),
-    color: theme.buzz.ledgerGhost,
+    // The quoted reply excerpt is provenance a reader actually reads, so it
+    // takes the lifted quiet tier, not the gutter's ghost tier.
+    color: theme.buzz.ledgerQuiet,
     fontSize: 11,
     lineHeight: 17,
   },
@@ -1860,6 +1891,7 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 18,
     letterSpacing: 0,
   },
+  replyDesktopBookmark: { color: theme.buzz.accent },
   reactionPicker: {
     position: 'absolute',
     top: 46,

@@ -13,6 +13,7 @@ import {
   Platform,
   AppState,
   useWindowDimensions,
+  AccessibilityInfo,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -236,6 +237,7 @@ import {
   WritePermissionCard,
 } from './RoomMessageVariants';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { forwardMessageToRoom } from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
@@ -448,6 +450,10 @@ export default function BuzzChat() {
   // immediately taps send. Keep the authoritative in-flight draft beside the
   // native TextInput so an @mention never drops trailing text.
   const inputTextRef = useRef('');
+  // A successful send replaces the native input. Advance this ref before any
+  // asynchronous React update so an event already queued by the consumed
+  // native field cannot put its text back into the next draft.
+  const composerInputRevisionRef = useRef(0);
   // The picker knows the exact agent key, whereas text-only lookup is a
   // fallback for manually typed mentions. Keep that identity through trailing
   // typing so an async roster refresh cannot turn a selected agent into an
@@ -522,6 +528,7 @@ export default function BuzzChat() {
     bindingsRef: roomSurfaceBindingsRef,
   });
   const [inputText, setInputText] = useState('');
+  const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
@@ -552,6 +559,7 @@ export default function BuzzChat() {
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
+  const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
     null,
@@ -1979,7 +1987,12 @@ export default function BuzzChat() {
     if (residentIndex >= 0) {
       const rowsFromNewest = combinedMessages.length - residentIndex;
       revealTranscriptThrough(rowsFromNewest);
+      return;
     }
+    // Bookmark links may target any durable message, not only the cached
+    // tail. Walk bounded history pages until the exact id arrives or the
+    // server reports the beginning of the Room.
+    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
   }, [
     combinedMessages,
     transcriptMessages,
@@ -1988,6 +2001,8 @@ export default function BuzzChat() {
     notificationTarget,
     cancelDesktopOpenLanding,
     revealTranscriptThrough,
+    loadOlderTranscriptMessages,
+    transcriptHistoryStatus,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
@@ -2432,6 +2447,43 @@ export default function BuzzChat() {
     [decodedId, refreshSignal],
   );
 
+  const messageIsBookmarked = useCallback(
+    (message: ChatDisplayMessage) =>
+      optimisticBookmarks[message.relayId ?? message.id] ?? Boolean(message.bookmarked),
+    [optimisticBookmarks],
+  );
+
+  const handleBookmarkMessage = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (message.isAgentActivity || message.isAgentDraft) return;
+      const messageId = message.relayId ?? message.id;
+      const previous = messageIsBookmarked(message);
+      const bookmarked = !previous;
+      setOptimisticBookmarks((current) => ({ ...current, [messageId]: bookmarked }));
+      AccessibilityInfo.announceForAccessibility(
+        bookmarked ? 'Message bookmarked' : 'Bookmark removed',
+      );
+      try {
+        await monolithPhoneOperation('setMessageBookmark', {
+          roomId: decodedId,
+          messageId,
+          bookmarked,
+        });
+        if (activeCommunityId)
+          publishBookmarkChange({ workspaceId: activeCommunityId, bookmarked });
+        refreshSignal.force();
+      } catch (error) {
+        setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));
+        AccessibilityInfo.announceForAccessibility('Bookmark change failed');
+        Modal.alert(
+          bookmarked ? 'Could not bookmark message' : 'Could not remove bookmark',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
+  );
+
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {
     // A live draft is the turn still writing — it settles into the reply the
     // actions would target, so it offers none.
@@ -2634,9 +2686,15 @@ export default function BuzzChat() {
       });
       addMessages([optimistic]);
       if (!shortcut) {
+        const nextInputRevision = composerInputRevisionRef.current + 1;
+        composerInputRevisionRef.current = nextInputRevision;
+        // Clear both owners of the controlled field. `clear()` removes the
+        // platform value immediately; the revision remount below guarantees
+        // the replacement starts empty even if native reconciliation lags.
         composerRef.current?.clear();
         inputTextRef.current = '';
         setInputText('');
+        setComposerInputRevision(nextInputRevision);
         setComposerHeight(COMPOSER_MIN_HEIGHT);
         setInputSelection({ start: 0, end: 0 });
         setPendingAttachments([]);
@@ -3859,13 +3917,17 @@ export default function BuzzChat() {
       }
 
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
+      const renderedItem =
+        messageIsBookmarked(item) === Boolean(item.bookmarked)
+          ? item
+          : { ...item, bookmarked: messageIsBookmarked(item) };
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
       return (
         <OrdinaryLedgerMessage
-          message={item}
+          message={renderedItem}
           // The byline carries the model stamped on the message at
           // generation time (server-side from the producing turn); an agent
           // row with no stamp keeps the plain `AGENT` word — never a live
@@ -3892,6 +3954,7 @@ export default function BuzzChat() {
           onMessageActions={openMessageActions}
           onReact={handleReactToMessage}
           onForward={beginForward}
+          onBookmark={handleBookmarkMessage}
           {...(!isCorner &&
           !isArchived &&
           !viewerIsAgent &&
@@ -3915,6 +3978,8 @@ export default function BuzzChat() {
       handleGrantDecision,
       handleOpenSystemIdentity,
       handleReactToMessage,
+      handleBookmarkMessage,
+      messageIsBookmarked,
       handleCornerProposalDecision,
       cornerProposalAction,
       beginForward,
@@ -4788,6 +4853,10 @@ export default function BuzzChat() {
                   )
                 }
                 value={inputText}
+                inputRevision={composerInputRevision}
+                isInputRevisionCurrent={(inputRevision) =>
+                  inputRevision === composerInputRevisionRef.current
+                }
                 height={composerHeight}
                 maxHeight={COMPOSER_MAX_HEIGHT}
                 focused={composerFocused}
@@ -4939,6 +5008,20 @@ export default function BuzzChat() {
               setMessageActionsTarget(null);
               if (target) void handleReactToMessage(target, emoji);
             }}
+          />
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel={
+              messageIsBookmarked(messageActionsTarget) ? 'Remove bookmark' : 'Bookmark message'
+            }
+            label={messageIsBookmarked(messageActionsTarget) ? 'Remove bookmark' : 'Bookmark'}
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleBookmarkMessage(target);
+            }}
+            testID="message-bookmark-action"
           />
         ) : null}
         {messageActionsTarget ? (

@@ -6,6 +6,7 @@ import {
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { joinRooms } from './membership-join.js';
+import { ensureReviewProofFixture } from './review-proof-fixture.js';
 import {
   lockIdentityHandleWorkspaces,
   reassignCollidingAgentHandles,
@@ -189,6 +190,10 @@ export class TokenAuth {
         [REVIEW_IDENTITY_ID, REVIEW_IDENTITY_NAME, REVIEW_IDENTITY_HANDLE, this.now()],
       );
       await landInWelcomeWorkspace(database, REVIEW_IDENTITY_ID);
+      // The release proof's corner-opens flow needs one live corner on this
+      // identity's deck; borrowing a production corner left the proof at the
+      // mercy of when that corner's work merged. Seed the reviewer's own.
+      await ensureReviewProofFixture(database, REVIEW_IDENTITY_ID, WELCOME_WORKSPACE_ID);
     });
     return this.issuePhoneTokens(REVIEW_IDENTITY_ID, randomUUID());
   }

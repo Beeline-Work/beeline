@@ -3,9 +3,20 @@ import { describe, expect, it } from 'vitest';
 import {
   buildChannelReferenceIndex,
   findChannelReferences,
+  isUnavailableChannelReferenceError,
   type ChannelReferenceCornerInput,
   type ChannelReferenceRoomInput,
 } from './channel-reference';
+
+describe('isUnavailableChannelReferenceError', () => {
+  it('recognizes hidden and forbidden destinations without swallowing transient failures', () => {
+    expect(isUnavailableChannelReferenceError({ status: 403 })).toBe(true);
+    expect(isUnavailableChannelReferenceError({ status: 404 })).toBe(true);
+    expect(isUnavailableChannelReferenceError({ status: 401 })).toBe(false);
+    expect(isUnavailableChannelReferenceError({ status: 500 })).toBe(false);
+    expect(isUnavailableChannelReferenceError(new Error('offline'))).toBe(false);
+  });
+});
 
 const rooms: ChannelReferenceRoomInput[] = [
   { channelId: 'room-roadmap', name: 'Roadmap' },

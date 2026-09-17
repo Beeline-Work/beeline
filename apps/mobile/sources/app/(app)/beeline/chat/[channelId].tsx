@@ -61,6 +61,7 @@ import {
 } from '@/buzz/room-view-presentation';
 import {
   buildChannelReferenceIndex,
+  isUnavailableChannelReferenceError,
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
@@ -620,7 +621,7 @@ export default function BuzzChat() {
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
-  const [directMessageListItem, setDirectMessageListItem] = useState<ChatListItem | null>(null);
+  const [workspaceChats, setWorkspaceChats] = useState<readonly ChatListItem[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
@@ -812,6 +813,9 @@ export default function BuzzChat() {
   const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
     return buildChannelReferenceIndex(
       [
+        ...workspaceChats
+          .filter((item) => !item.directMessage)
+          .map((item) => ({ channelId: item.room.id, name: item.room.name })),
         ...(roomSurface?.parent
           ? [{ channelId: roomSurface.parent.id, name: roomSurface.parent.name }]
           : []),
@@ -843,6 +847,7 @@ export default function BuzzChat() {
     resolvedChannelName,
     roomSurface?.parent,
     routeChannelTitle,
+    workspaceChats,
   ]);
   const openDesktopCorner = useCallback(
     (roomId: string, cornerId: string) => {
@@ -880,13 +885,44 @@ export default function BuzzChat() {
   }, [desktopExperience, openDesktopArtifact]);
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
+  const openingChannelReferenceRef = useRef<string | null>(null);
   const handleOpenChannelReference = useCallback(
-    (target: ChannelReferenceTarget) => {
+    async (target: ChannelReferenceTarget, text?: string) => {
       if (!target.channelId || target.channelId === decodedId) return;
-      if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
-      else router.push(roomHref(target.channelId));
+      if (openingChannelReferenceRef.current) return;
+      const referenceLabel = text ?? 'this destination';
+      if (!roomClient) {
+        Modal.alert(
+          'Destination unavailable',
+          `Beeline is still connecting. Try ${referenceLabel} again in a moment.`,
+        );
+        return;
+      }
+      openingChannelReferenceRef.current = target.channelId;
+      try {
+        // The list that made this token linkable can be stale after a leave,
+        // removal, or deletion. The Room read is the current authorization
+        // verdict; only a successful read earns navigation.
+        await roomClient.room(target.channelId);
+        if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
+        else router.push(roomHref(target.channelId));
+      } catch (error) {
+        if (isUnavailableChannelReferenceError(error)) {
+          Modal.alert(
+            'Access denied',
+            `${referenceLabel} is unavailable or you no longer have access.`,
+          );
+        } else {
+          Modal.alert(
+            'Could not open destination',
+            `Beeline could not verify access to ${referenceLabel}. Check your connection and try again.`,
+          );
+        }
+      } finally {
+        openingChannelReferenceRef.current = null;
+      }
     },
-    [decodedId, openDesktopCorner],
+    [decodedId, openDesktopCorner, roomClient],
   );
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
@@ -1439,8 +1475,8 @@ export default function BuzzChat() {
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
   useEffect(() => {
-    if (!isDirectMessage || !roomClient || !activeCommunityId || !userPubkey) {
-      setDirectMessageListItem(null);
+    if (!roomClient || !activeCommunityId || !userPubkey) {
+      setWorkspaceChats([]);
       return;
     }
     let cancelled = false;
@@ -1455,9 +1491,7 @@ export default function BuzzChat() {
       const apply = (view: { readonly chats: readonly ChatListItem[] }) => {
         if (cancelled) return;
         painted = true;
-        setDirectMessageListItem(
-          view.chats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
-        );
+        setWorkspaceChats(view.chats);
       };
       const cached = await mobileSurfaceCache.read(address, isChatListView);
       if (cached) apply(cached);
@@ -1465,12 +1499,16 @@ export default function BuzzChat() {
       apply(fresh);
       void mobileSurfaceCache.write(address, fresh, isChatListView);
     })().catch(() => {
-      if (!cancelled && !painted) setDirectMessageListItem(null);
+      if (!cancelled && !painted) setWorkspaceChats([]);
     });
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, decodedId, isDirectMessage, roomClient, userPubkey]);
+  }, [activeCommunityId, roomClient, userPubkey]);
+  const directMessageListItem = useMemo(
+    () => workspaceChats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
+    [decodedId, workspaceChats],
+  );
   const memberManagement = roomMemberManagementState({
     isDirectMessage,
     participantsHydrated,

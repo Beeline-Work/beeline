@@ -62,7 +62,7 @@ export function releaseUpdateTargets(
     { platform: 'android', runtimeVersion: pins.android },
     ...(publishAndroidRuntime23 ? [{ platform: 'android', runtimeVersion: '23' }] : []),
     ...(publishIosRuntime23 ? [{ platform: 'ios', runtimeVersion: '23' }] : []),
-  ...(publishIosRuntime25 ? [{ platform: 'ios', runtimeVersion: '25' }] : []),
+    ...(publishIosRuntime25 ? [{ platform: 'ios', runtimeVersion: '25' }] : []),
     { platform: 'ios', runtimeVersion: pins.ios },
   ];
   return targets.filter(

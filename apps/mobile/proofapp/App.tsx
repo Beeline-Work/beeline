@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet as RNStyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet as RNStyleSheet, Text, View } from 'react-native';
 import { MESSAGE_REACTION_EMOJIS } from '@beeline/buzz-client';
 import { MessageReactionStrip } from '../sources/components/buzz/MessageReactionStrip';
 import { emojiTextStyle } from '../sources/buzz/emoji-text';
@@ -12,11 +12,19 @@ const emojiBeforeChips = { ...groknight.type.body, lineHeight: 19 };
 const emojiBeforeStrip = { ...groknight.type.body, lineHeight: 22 };
 const emojiAfter = emojiTextStyle(groknight.type.body);
 
-// Proof-local cells copy the shipped chip cell geometry (min 28) and the strip
-// choice cell look so the native capture matches the app surface.
+// Proof-local cells copy the shipped cell geometry so the native capture
+// matches the app surface: the reaction chip exactly as RoomMessageVariants
+// renders it (border, radius, mine colors, count Text) and the strip's choice
+// cells — the same values the committed web proof resolves.
 const styles = RNStyleSheet.create({
-  page: { backgroundColor: '#131316', paddingTop: 48, paddingHorizontal: 16, gap: 22 },
-  label: { color: '#9a9aa2', fontSize: 12, marginBottom: 8 },
+  // Below the status bar: the proof renders edge-to-edge on the emulator.
+  page: {
+    backgroundColor: groknight.bgVoid,
+    paddingTop: (StatusBar.currentHeight ?? 0) + 24,
+    paddingHorizontal: 16,
+    gap: 18,
+  },
+  label: { color: groknight.textSecondary, fontSize: 11, marginBottom: 6 },
   cell: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -27,16 +35,32 @@ const styles = RNStyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
   },
-  cellMine: { backgroundColor: '#3a3a40' },
   stripRow: { flexDirection: 'row', gap: 6 },
+  // The shipped reaction chip (RoomMessageVariants styles.reactionChip):
+  // gap 4, minHeight 28, hairline border, radius, and the count Text beside
+  // the emoji, styled like the real component's count.
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 28,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: groknight.border,
+    borderRadius: groknight.radius,
+    backgroundColor: groknight.bgBase,
+  },
+  chipMine: { borderColor: groknight.accent, backgroundColor: groknight.bgHighlight },
+  chipCount: { ...groknight.type.meta, color: groknight.textSecondary },
 });
 
 function Chips({ emojiStyle, mine }: { emojiStyle: object; mine?: boolean }) {
   return (
     <View style={styles.stripRow}>
-      {MESSAGE_REACTION_EMOJIS.slice(0, 4).map((emoji) => (
-        <View key={emoji} style={[styles.cell, mine && styles.cellMine]}>
+      {MESSAGE_REACTION_EMOJIS.slice(0, 4).map((emoji, index) => (
+        <View key={emoji} style={[styles.chip, mine && index === 0 && styles.chipMine]}>
           <Text style={emojiStyle}>{emoji}</Text>
+          <Text style={styles.chipCount}>{index + 1}</Text>
         </View>
       ))}
     </View>
@@ -49,7 +73,7 @@ function StripCells({ emojiStyle }: { emojiStyle: object }) {
       {MESSAGE_REACTION_EMOJIS.slice(0, 4).map((emoji) => (
         <Pressable key={emoji} style={({ pressed }) => [
           styles.cell,
-          { minHeight: 36, backgroundColor: pressed ? groknight.bgHighlight : '#232328' },
+          { minHeight: 36, minWidth: 44, backgroundColor: pressed ? groknight.bgHighlight : '#232328' },
         ]}>
           <Text style={emojiStyle}>{emoji}</Text>
         </Pressable>
@@ -60,7 +84,7 @@ function StripCells({ emojiStyle }: { emojiStyle: object }) {
 
 export default function App() {
   return (
-    <ScrollView style={{ backgroundColor: '#131316' }} contentContainerStyle={styles.page}>
+    <ScrollView style={{ backgroundColor: groknight.bgVoid }} contentContainerStyle={styles.page}>
       <View>
         <Text style={styles.label}>real MessageReactionStrip (shipped styles, after)</Text>
         <MessageReactionStrip onReact={() => undefined} />
@@ -77,8 +101,8 @@ export default function App() {
         <Text style={styles.label}>reaction chips — after (derived, no lineHeight)</Text>
         <Chips emojiStyle={emojiAfter} mine />
       </View>
-      <Text style={{ color: '#6a6a72', fontSize: 11 }}>
-        head 06d540928a59daaf6f7ed2836711ae6de9460196 · emoji font: system
+      <Text style={{ color: groknight.textSecondary, fontSize: 10 }}>
+        shipped styles, rendered natively · emoji font: system
       </Text>
     </ScrollView>
   );

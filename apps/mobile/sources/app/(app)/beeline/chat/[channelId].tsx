@@ -2207,7 +2207,7 @@ export default function BuzzChat() {
   // runs, preserving the old offset as an empty gap. Capture the verdict in
   // render, including the two independently mounted status lines.
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const composerBottomInset = composerBottomPadding(insets.bottom, keyboardHeight);
+  const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
     cornerLiveBar ? 'corner' : 'no-corner',

@@ -39,8 +39,16 @@ const COMPOSER_EDGE_GAP = 8;
 /**
  * The software keyboard already covers the device's bottom unsafe area. Keep
  * the home-indicator/navigation inset while the keyboard is closed, then use
- * only the ordinary composer gap while it is open.
+ * only the ordinary composer gap while it is open. Android also keeps that
+ * ordinary gap above its navigation inset so opening the keyboard does not
+ * change the composer's edge spacing.
  */
-export function composerBottomPadding(safeAreaBottom: number, keyboardHeight: number): number {
-  return keyboardHeight > 0 ? COMPOSER_EDGE_GAP : Math.max(safeAreaBottom, COMPOSER_EDGE_GAP);
+export function composerBottomPadding(
+  os: string,
+  safeAreaBottom: number,
+  keyboardHeight: number,
+): number {
+  if (keyboardHeight > 0) return COMPOSER_EDGE_GAP;
+  if (os === 'android') return safeAreaBottom + COMPOSER_EDGE_GAP;
+  return Math.max(safeAreaBottom, COMPOSER_EDGE_GAP);
 }

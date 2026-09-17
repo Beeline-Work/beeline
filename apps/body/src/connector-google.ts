@@ -181,6 +181,15 @@ export type InstallGoogleToolOptions = {
   readonly client?: ReturnType<typeof googleWorkspaceClient>;
   /** Override credential resolution (tests). */
   readonly resolveCredentials?: () => Promise<ResolvedGoogleCredentials>;
+  /**
+   * An already-resolved (or in-flight) grant shared across this drain's
+   * Google tool installs: the single Google consent resolves ONCE and every
+   * tool's install rides the same result. Takes precedence over
+   * `resolveCredentials` when both are given.
+   */
+  readonly resolvedCredentials?:
+    | ResolvedGoogleCredentials
+    | Promise<ResolvedGoogleCredentials>;
   readonly env?: NodeJS.ProcessEnv;
   readonly onProgress?: (steps: readonly ConnectorStep[]) => void;
 };
@@ -220,14 +229,16 @@ export async function installGoogleTool(
 
   // Credentials: one-click first, manual fallback.
   push(step('Google credentials resolved', 'running', { output: 'resolving…' }));
-  const resolved = options.resolveCredentials
-    ? await options.resolveCredentials()
-    : await (async () => {
-        const oneClick = await readGoogleCredentialsFromVault(options.squire);
-        return oneClick.source === 'squire'
-          ? { ...oneClick }
-          : { ...loadManualGoogleCredentials(options.home, options.env) };
-      })();
+  const resolved = options.resolvedCredentials
+    ? await options.resolvedCredentials
+    : options.resolveCredentials
+      ? await options.resolveCredentials()
+      : await (async () => {
+          const oneClick = await readGoogleCredentialsFromVault(options.squire);
+          return oneClick.source === 'squire'
+            ? { ...oneClick }
+            : { ...loadManualGoogleCredentials(options.home, options.env) };
+        })();
   if (!('credentials' in resolved)) {
     const reason = resolved.reason;
     steps[1] = step('Google credentials resolved', 'failed', { reason, output: outputTail(reason) });

@@ -17,9 +17,11 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** User-visible connector names, one row per id the build knows. */
+/** User-visible connector names, one row per id the build knows. `google` is
+ * the ONE logical Google entry — the four tool connectors behind one grant. */
 const CONNECTOR_NAMES: Record<string, string> = {
   'trusty-squire': 'Trusty Squire',
+  google: 'Google Workspace',
   'google-gmail': 'Gmail',
   'google-calendar': 'Google Calendar',
   'google-drive': 'Google Drive',

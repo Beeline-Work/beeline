@@ -97,6 +97,24 @@ describe('installGoogleTool', () => {
     expect(result.errorMessage).toContain('access token rejected');
   });
 
+  it('prefers the shared resolvedCredentials over its own resolution', async () => {
+    const squire = fakeSquire(() => {
+      throw new Error('must not consult Squire when credentials arrive resolved');
+    });
+    const result = await installGoogleTool({
+      connectorType: 'google-gmail',
+      home: '/tmp/home',
+      squire,
+      client: okClient,
+      resolvedCredentials: Promise.resolve({
+        source: 'manual',
+        credentials: { accessToken: 'ya29.shared' },
+      }),
+    });
+    expect(result.status).toBe('connected');
+    expect(result.steps[1]!.output).toContain('manual');
+  });
+
   it('refuses a non-Google connector type', async () => {
     const result = await installGoogleTool({
       connectorType: 'trusty-squire',

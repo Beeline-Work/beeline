@@ -108,10 +108,7 @@ describe('connector row copy', () => {
       connect: false,
     });
     expect(connectorInstrument('error')).toEqual({
-      value: 'error',
-      glyph: 'failed',
-      valueTone: 'danger',
-      connect: false,
+      connect: true,
     });
   });
 
@@ -192,7 +189,10 @@ describe('connector identity', () => {
 });
 
 describe('the ONE Google entry', () => {
-  const tool = (id: WorkbenchConnectorId, status?: WorkbenchConnectorStatus): WorkbenchConnector => ({
+  const tool = (
+    id: WorkbenchConnectorId,
+    status?: WorkbenchConnectorStatus,
+  ): WorkbenchConnector => ({
     id,
     name: id,
     description: 'one Google OAuth grant for your agents',
@@ -209,7 +209,11 @@ describe('the ONE Google entry', () => {
 
   it('folds the four tools into one row that reports the worst severity across them', () => {
     expect(googleEntryState(catalog)).toBe('connect');
-    expect(googleEntryState(catalog.map((c) => (c.id === 'google-gmail' ? tool('google-gmail', 'connected') : c)))).toBe('repair');
+    expect(
+      googleEntryState(
+        catalog.map((c) => (c.id === 'google-gmail' ? tool('google-gmail', 'connected') : c)),
+      ),
+    ).toBe('repair');
     expect(
       googleEntryState([
         tool('google-gmail', 'connected'),
@@ -227,7 +231,11 @@ describe('the ONE Google entry', () => {
       ]),
     ).toBe('installing');
     expect(
-      googleEntryState(catalog.map((c) => (isGoogleToolConnectorId(c.id) ? { ...c, status: 'connected' as const } : c))),
+      googleEntryState(
+        catalog.map((c) =>
+          isGoogleToolConnectorId(c.id) ? { ...c, status: 'connected' as const } : c,
+        ),
+      ),
     ).toBe('connected');
   });
 
@@ -255,8 +263,8 @@ describe('the ONE Google entry', () => {
     ).toBe('google-drive');
     // Everything connected re-arms the first tool; the server keeps the
     // connected siblings' live grants.
-    expect(resolveGoogleConnectTarget(catalog.map((c) => ({ ...c, status: 'connected' as const })))).toBe(
-      'google-gmail',
-    );
+    expect(
+      resolveGoogleConnectTarget(catalog.map((c) => ({ ...c, status: 'connected' as const }))),
+    ).toBe('google-gmail');
   });
 });

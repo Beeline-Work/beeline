@@ -45,6 +45,8 @@ type SettingsRowProps = {
   /** The quiet line under the title. A full sentence wraps here rather than
    *  ellipsizing beside the title, exactly as the sheet row's does. */
   description?: string;
+  /** A failed row may put its exact error in the subtitle. */
+  descriptionTone?: 'danger';
   descriptionAction?: SettingsRowDescriptionAction;
   disabled?: boolean;
   leading?: React.ReactNode;
@@ -101,6 +103,7 @@ export function SettingsRow({
   actionControl,
   chevron,
   description,
+  descriptionTone,
   descriptionAction,
   disabled = false,
   leading,
@@ -121,7 +124,9 @@ export function SettingsRow({
       </Text>
     ) : value !== undefined ? (
       <View style={styles.valueRow}>
-        {statusGlyph ? <StateDot kind={statusGlyph} testID={testID ? `${testID}-glyph` : undefined} /> : null}
+        {statusGlyph ? (
+          <StateDot kind={statusGlyph} testID={testID ? `${testID}-glyph` : undefined} />
+        ) : null}
         <Text
           numberOfLines={1}
           style={[
@@ -187,7 +192,10 @@ export function SettingsRow({
         </Text>
         {description ? (
           <View style={styles.descriptionRow}>
-            <Text numberOfLines={descriptionAction ? 1 : undefined} style={styles.description}>
+            <Text
+              numberOfLines={descriptionAction ? 1 : undefined}
+              style={[styles.description, descriptionTone === 'danger' && styles.descriptionDanger]}
+            >
               {description}
             </Text>
             {descriptionAction ? (
@@ -271,6 +279,7 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       color: hull.textMuted,
     },
+    descriptionDanger: { color: hull.dialogDanger },
     descriptionActionControl: { minHeight: 44, justifyContent: 'center' },
     descriptionAction: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
     // The state, on the trailing axis: quiet, whole, and capped so a long one

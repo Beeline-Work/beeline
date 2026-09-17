@@ -118,10 +118,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
   private failedConnectors = new Set<string>();
   private signInMethod: 'streamed' | 'oauth' | undefined;
 
-  async readWorkbench(input: {
-    workspaceId: string;
-    viewerId: string;
-  }): Promise<WorkbenchView> {
+  async readWorkbench(input: { workspaceId: string; viewerId: string }): Promise<WorkbenchView> {
     const viewer = this.viewer(input.viewerId);
     const connected = this.installs.size > 0 || this.failedConnectors.size > 0;
     return {
@@ -140,6 +137,12 @@ export class MockWorkbenchSource implements WorkbenchSource {
                 helperName: 'squire-box',
                 agentCount: 3,
                 signedInAs: viewer ? `${viewer.name}@…` : undefined,
+                ...(this.failedConnectors.has('trusty-squire')
+                  ? {
+                      errorMessage:
+                        'another Trusty Squire session is already using the browser — close it first',
+                    }
+                  : {}),
               }
             : {}),
         },
@@ -147,7 +150,8 @@ export class MockWorkbenchSource implements WorkbenchSource {
           id: 'wallet',
           name: 'Coinbase Wallet',
           description: CONNECTOR_DESCRIPTIONS['wallet'],
-          available: false,
+          available: true,
+          status: 'disconnected',
         },
         {
           id: 'tailscale',
@@ -208,15 +212,12 @@ export class MockWorkbenchSource implements WorkbenchSource {
         ? resolveGoogleConnectTarget(this.mockConnectors())
         : input.connectorId;
     const connectorId = `${targetConnectorId}:${input.helperId}-${this.installs.size + 1}`;
-    this.installs.set(
+    this.installs.set(connectorId, {
       connectorId,
-      {
-        connectorId,
-        helperId: input.helperId,
-        revealed: 0,
-        failAtStep: this.failedConnectors.has(input.connectorId) ? 2 : undefined,
-      },
-    );
+      helperId: input.helperId,
+      revealed: 0,
+      failAtStep: this.failedConnectors.has(input.connectorId) ? 2 : undefined,
+    });
     return { connectorId };
   }
 
@@ -231,8 +232,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
     const steps = INSTALL_STEP_LABELS.map((label, index) => {
       const helperLabel = label(helper?.name ?? 'the helper');
       const command = INSTALL_STEP_COMMANDS[index](helper?.name ?? 'the helper');
-      const failShown =
-        install.failAtStep !== undefined && install.revealed >= install.failAtStep;
+      const failShown = install.failAtStep !== undefined && install.revealed >= install.failAtStep;
       if (failShown && index === install.failAtStep) {
         return {
           label: helperLabel,
@@ -261,7 +261,8 @@ export class MockWorkbenchSource implements WorkbenchSource {
     });
     const reachedSignIn =
       install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length - 1;
-    const complete = install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length;
+    const complete =
+      install.failAtStep === undefined && install.revealed >= INSTALL_STEP_LABELS.length;
     return {
       connectorId: install.connectorId,
       helperName: helper?.name ?? 'the helper',

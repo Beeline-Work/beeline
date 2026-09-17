@@ -563,10 +563,13 @@ function publish(options) {
       target.runtimeVersion === pins[target.platform],
   );
   for (const target of embeddedAnchorTargets)
-    console.log(`${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`);
+    console.log(
+      `${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`,
+    );
   const embeddedAnchorKeys = new Set(embeddedAnchorTargets.map(targetKey));
   const missingRollbackTargets = requiredRollbackTargets.filter(
-    (target) => !previousTargetKeys.has(targetKey(target)) && !embeddedAnchorKeys.has(targetKey(target)),
+    (target) =>
+      !previousTargetKeys.has(targetKey(target)) && !embeddedAnchorKeys.has(targetKey(target)),
   );
   if (!options.dryRun && missingRollbackTargets.length > 0) {
     fail(

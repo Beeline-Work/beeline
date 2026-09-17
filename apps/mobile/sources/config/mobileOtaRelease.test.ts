@@ -90,8 +90,9 @@ describe('mobile OTA release governor', () => {
     // refuse any plan that does not cover every shipped or submitted runtime.
     const currentPins = { android: '24', ios: '25' };
     expect(planCoverageErrors(currentPins)).toEqual([]);
-    const targets = releaseUpdateTargets(mobileRoot, currentPins)
-      .map((target) => `${target.platform}@${target.runtimeVersion}`);
+    const targets = releaseUpdateTargets(mobileRoot, currentPins).map(
+      (target) => `${target.platform}@${target.runtimeVersion}`,
+    );
     expect(targets).toContain('android@25');
     expect(targets).toContain('ios@26');
     // The governor also catches the reverse pin move: planning with the
@@ -146,11 +147,7 @@ describe('mobile OTA release governor', () => {
     const patchedScript = join(directory, 'ota-release.mjs');
     writeFileSync(
       patchedScript,
-      releaseSource
-        .replace(
-          "  { platform: 'android', runtimeVersion: '25' },\n",
-          '',
-        ),
+      releaseSource.replace("  { platform: 'android', runtimeVersion: '25' },\n", ''),
     );
     for (const helper of ['ota-delivery-index.mjs', 'native-fingerprint.mjs']) {
       writeFileSync(
@@ -395,7 +392,8 @@ esac
       candidateGroupId:
         'candidate-android-24,candidate-android-23,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-26,candidate-ios-25',
       androidUpdateId: 'beta-android-24',
-      previousProductionGroupId: 'known-good-android-24,known-good-android-23,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-26,known-good-ios',
+      previousProductionGroupId:
+        'known-good-android-24,known-good-android-23,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-26,known-good-ios',
       canary: { status: 'passed' },
       production: {
         sourceGroupId:
@@ -481,7 +479,8 @@ esac
       candidateGroupId:
         'candidate-android-24,candidate-android-23,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-26,candidate-ios-25',
       previousProductionGroupIds: { android: 'known-good-android-24', ios: 'known-good-ios-25' },
-      previousProductionGroupId: 'known-good-android-24,known-good-android-23,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-26,known-good-ios-25',
+      previousProductionGroupId:
+        'known-good-android-24,known-good-android-23,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-26,known-good-ios-25',
       runtimeVersions: ['24', '23', '25', '26'],
     });
 
@@ -676,7 +675,9 @@ esac
       { EAS_CLI_PATH: fakeEas },
     );
     expect(incomplete.status).toBe(1);
-    expect(incomplete.stderr).toContain('no rollback anchor for android@23, android@25, ios@23, ios@24, ios@26');
+    expect(incomplete.stderr).toContain(
+      'no rollback anchor for android@23, android@25, ios@23, ios@24, ios@26',
+    );
     expect(existsSync(ledger)).toBe(false);
 
     // A platform whose store binary shipped in this release may use that
@@ -688,7 +689,9 @@ esac
       { EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: 'android,ios' },
     );
     expect(stillMissing.status).toBe(1);
-    expect(stillMissing.stderr).toContain('no rollback anchor for android@23, android@25, ios@23, ios@24, ios@26');
+    expect(stillMissing.stderr).toContain(
+      'no rollback anchor for android@23, android@25, ios@23, ios@24, ios@26',
+    );
 
     writeFileSync(
       fakeEas,
@@ -871,7 +874,8 @@ esac
         'known-good-ios-25',
       ],
       productionGroupIds: { android: 'restored-android', ios: 'restored-ios-25' },
-      productionGroupId: 'restored-android,restored-android-23,restored-android-25,restored-ios-23,restored-ios-24,restored-ios-26,restored-ios-25',
+      productionGroupId:
+        'restored-android,restored-android-23,restored-android-25,restored-ios-23,restored-ios-24,restored-ios-26,restored-ios-25',
     });
     const republished = readFileSync(callsPath, 'utf8')
       .split('\n')
@@ -1021,9 +1025,7 @@ esac
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain(
-      'update:roll-back-to-embedded --branch production',
-    );
+    expect(result.stdout).toContain('update:roll-back-to-embedded --branch production');
     expect(existsSync(ledgerPath)).toBe(false);
   }, 60_000);
 
@@ -1186,22 +1188,14 @@ esac
     expect(rollbackWorkflow).toContain(
       'ledger.previousProductionGroupId ?? ledger.previousProductionGroupIds',
     );
-    expect(rollbackWorkflow).toContain(
-      'ledger.production?.groupId ?? ledger.production?.groupIds',
-    );
-    expect(rollbackWorkflow).toContain(
-      '--expected-current-group "$EXPECTED_CURRENT_GROUP"',
-    );
+    expect(rollbackWorkflow).toContain('ledger.production?.groupId ?? ledger.production?.groupIds');
+    expect(rollbackWorkflow).toContain('--expected-current-group "$EXPECTED_CURRENT_GROUP"');
     // A missing predecessor is the embedded-anchor case, not a failure: the
     // workflow resolves embedded_only and the leg rolls every current target
     // back to the embedded update instead of a hand-supplied group.
-    expect(rollbackWorkflow).not.toContain(
-      'release ledger has no previousProductionGroupId',
-    );
+    expect(rollbackWorkflow).not.toContain('release ledger has no previousProductionGroupId');
     expect(rollbackWorkflow).toContain('embedded_only=" + embeddedOnly');
-    expect(rollbackWorkflow).toContain(
-      'if [ "$EMBEDDED_ONLY" = "true" ]; then',
-    );
+    expect(rollbackWorkflow).toContain('if [ "$EMBEDDED_ONLY" = "true" ]; then');
     expect(rollbackWorkflow).toContain(
       'rollback --embedded --expected-current-group "$EXPECTED_CURRENT_GROUP"',
     );
@@ -1933,14 +1927,18 @@ esac
       unifiedWorkflow.indexOf('release_result:'),
     );
     expect(unifiedWorkflow).toContain("needs.initialize.outputs.run_mobile_ota == 'true'");
-    expect(unifiedWorkflow).toContain('release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota');
+    expect(unifiedWorkflow).toContain(
+      'release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota',
+    );
     // The only sanctioned device work in the release workflow is the
     // `release_proof` component gate, which runs the rig's proof flows
     // BEFORE promotion and whose failure blocks the promote leg. The retired
     // shapes were a post-promote Actions device rehearsal of the promoted
     // rollout; nothing of that shape may return.
     expect(unifiedWorkflow).toContain('release_proof:');
-    expect(unifiedWorkflow.indexOf('release_proof:')).toBeLessThan(unifiedWorkflow.indexOf('mobile_ota:'));
+    expect(unifiedWorkflow.indexOf('release_proof:')).toBeLessThan(
+      unifiedWorkflow.indexOf('mobile_ota:'),
+    );
     expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal/);
     // The predecessor comes from the release run's promoted-ledger artifact.
     expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-promoted-')");
@@ -2730,7 +2728,9 @@ esac
     // check that touches a device; the retired post-promote rehearsal shapes
     // stay forbidden.
     expect(unifiedWorkflow).not.toMatch(/mobile-ota-post-promote|post_promote_rehearsal/);
-    expect(daemonWorkflow).toContain('Record asynchronous fleet uptake without blocking the release');
+    expect(daemonWorkflow).toContain(
+      'Record asynchronous fleet uptake without blocking the release',
+    );
     expect(unifiedWorkflow).toContain('- uses: ./.github/actions/server-leg');
     expect(serverWorkflow).toContain(
       'Build the exact Fly image and capture the two-Machine rollback plan',

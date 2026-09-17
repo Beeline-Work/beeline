@@ -2600,9 +2600,14 @@ export default function BuzzChat() {
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
   const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
-    const rawText = (shortcut?.text ?? inputTextRef.current).trim();
-    const activeReplyTarget = shortcut?.replyTarget ?? replyTarget;
-    const activePendingAttachments = shortcut ? [] : pendingAttachmentsRef.current;
+    // A leaked responder event must never read as a shortcut (#1340's
+    // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
+    // skipped the composer-clear block and the field kept its text after
+    // every send). Only a real shortcut — it always carries text — qualifies.
+    const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
+    const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
+    const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
+    const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
     if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
@@ -2635,9 +2640,9 @@ export default function BuzzChat() {
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
-      shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
+      sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
     ).pubkeys;
-    const selectedMentionedAgent = shortcut
+    const selectedMentionedAgent = sendShortcut
       ? undefined
       : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
     const mentionedAgent =
@@ -2734,7 +2739,7 @@ export default function BuzzChat() {
         ...(attachments.length ? { attachments } : {}),
       });
       addMessages([optimistic]);
-      if (!shortcut) {
+      if (!sendShortcut) {
         const nextInputRevision = composerInputRevisionRef.current + 1;
         composerInputRevisionRef.current = nextInputRevision;
         // Clear both owners of the controlled field. `clear()` removes the

@@ -76,24 +76,31 @@ describe('Room→repo corner-open lazy prompt', () => {
 
   it('sends proposal shortcuts without consuming the composer draft or its attachments', () => {
     const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
+    // A leaked responder event must never read as a shortcut: only an object
+    // carrying text qualifies, so a PressEvent cannot skip the clear block.
     expect(handleSend).toContain(
-      'const activePendingAttachments = shortcut ? [] : pendingAttachmentsRef.current;',
+      "const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;",
     );
-    expect(handleSend).toContain('shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current');
-    expect(handleSend).toMatch(/if \(!shortcut\) \{[\s\S]*setInputText\(''\)/);
+    expect(handleSend).toContain(
+      'const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;',
+    );
+    expect(handleSend).toContain(
+      'sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current',
+    );
+    expect(handleSend).toMatch(/if \(!sendShortcut\) \{[\s\S]*setInputText\(''\)/);
     expect(chatSource).toContain("text: decision === 'open' ? 'go' : 'cancel'");
   });
 
   it('clears text, quoted replies, and attachments together after ordinary dispatch', () => {
     const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
-    const clearBlock = blockFrom(handleSend, 'if (!shortcut) {', 'composer clear');
+    const clearBlock = blockFrom(handleSend, 'if (!sendShortcut) {', 'composer clear');
     expect(clearBlock).toContain("inputTextRef.current = '';");
     expect(clearBlock).toContain("setInputText('');");
     expect(clearBlock).toContain(
       'current.filter((attachment) => !activePendingAttachments.includes(attachment))',
     );
     expect(clearBlock).toContain('setReplyTarget(null);');
-    expect(handleSend.indexOf('if (!shortcut) {')).toBeGreaterThan(
+    expect(handleSend.indexOf('if (!sendShortcut) {')).toBeGreaterThan(
       handleSend.indexOf('addMessages([optimistic]);'),
     );
   });

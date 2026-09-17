@@ -336,7 +336,11 @@ export function ConversationComposer({
             accessibilityRole="button"
             disabled={sendDisabled}
             hitSlop={9}
-            onPress={onSend}
+            // Never pass the responder event itself: the Room's handleSend
+            // reads its first argument as a MessageShortcut, and a PressEvent
+            // (truthy, no `.text`) made it skip the composer-clear block so
+            // the field kept its text after every send.
+            onPress={() => onSend?.()}
             style={styles.sendButton}
             testID={`${testIDPrefix}-send`}
           >

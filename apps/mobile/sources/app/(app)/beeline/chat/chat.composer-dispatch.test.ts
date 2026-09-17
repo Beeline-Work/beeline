@@ -32,7 +32,7 @@ describe('composer dispatch transaction', () => {
     );
     expect(paste).toContain('replacePendingAttachments((current) => [');
     expect(send).toContain(
-      'const activePendingAttachments = shortcut ? [] : pendingAttachmentsRef.current;',
+      'const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;',
     );
     expect(send).toContain(
       'await sendTransport.ensureClient(),\n        activePendingAttachments,',

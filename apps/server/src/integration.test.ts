@@ -6159,6 +6159,51 @@ describe('monolith integration', () => {
     expect(await invalid.json()).toEqual({
       error: 'GitHub repository access denied',
     });
+
+    // Unassigning severs the binding and returns the Room to chat-only; the
+    // Room, its messages, and any corner copies of the repo are untouched.
+    // The authority axis mirrors assign: a plain member is refused.
+    const memberToken = await phoneToken('repo-member');
+    const memberId = createHash('sha256').update('github:repo-member').digest('hex');
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, memberId, ROOM],
+    );
+    const refusedUnassign = await operation('removeRoomRepository', { roomId: ROOM }, memberToken);
+    expect(refusedUnassign.status).toBe(400);
+
+    const unassigned = await request('/v1/phone/operations/removeRoomRepository', 'POST', {
+      roomId: ROOM,
+    });
+    expect(unassigned.status).toBe(204);
+    const chatOnly = await request(`/v1/phone/rooms/${ROOM}`);
+    const chatOnlyView = (await chatOnly.json()) as {
+      repository?: unknown;
+      repositoryResolution: string;
+    };
+    expect(chatOnlyView.repository).toBeUndefined();
+    expect(chatOnlyView.repositoryResolution).toBe('none');
+
+    // A double unassign is idempotent: a retried call still succeeds.
+    const again = await request('/v1/phone/operations/removeRoomRepository', 'POST', {
+      roomId: ROOM,
+    });
+    expect(again.status).toBe(204);
+
+    // Reassigning the same repository afterwards works.
+    const relinked = await request('/v1/phone/operations/setRoomRepository', 'POST', {
+      roomId: ROOM,
+      key: 'github:101',
+      name: 'owner/widgets',
+      remote: 'git://github.com/owner/widgets',
+      targetBranch: 'main',
+      githubInstallationId: 77,
+    });
+    expect(relinked.status).toBe(200);
+    expect((await relinked.json()).binding).toEqual(
+      expect.objectContaining({ key: 'github:101', name: 'owner/widgets' }),
+    );
   });
 
   it('completes the GitHub App callback on the monolith route', async () => {
@@ -7524,6 +7569,7 @@ describe('monolith integration', () => {
           targetBranch: 'main',
         },
       ],
+      ['removeRoomRepository', { roomId: ROOM }],
       ['beginGitHubIdentityBind', {}],
       ['completeGitHubIdentityBind', {}],
       ['recoverGitHubIdentity', {}],

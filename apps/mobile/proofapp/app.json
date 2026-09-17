@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Emoji clip proof",
+    "slug": "emoji-clip-proof",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#131316"
+  }
+}

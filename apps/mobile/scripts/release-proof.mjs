@@ -466,6 +466,11 @@ async function runSignedOutFlow(device, args, outDir) {
     if (!reinstalled.ok || reinstalled.status !== 0) {
       return { ok: false, output: `could not reinstall ${APP_ID} for user 0 before the signed-out proof:\n${reinstalled.stderr}` };
     }
+    // Run 35281590377: install-existing hit INSTALL_FAILED_VERSION_DOWNGRADE
+    // (v27 proof vs a stale v71 copy still visible to the fresh secondary
+    // user), and the fallback then reinstalled without -d so it failed the
+    // same way. Clear that user's copy explicitly and allow downgrades.
+    adbShell(device, `pm uninstall --user ${userId} ${APP_ID}`, { allowFailure: true });
     const install = adbShell(device, `pm install-existing --user ${userId} ${APP_ID}`, { allowFailure: true });
     if (!install.ok || !/Success/.test(install.stdout)) {
       // Fall back to a full install for that user.
@@ -473,8 +478,13 @@ async function runSignedOutFlow(device, args, outDir) {
       if (!push.ok) {
         return { ok: false, output: `could not provision the app for secondary user ${userId}:\n${install.stdout}` };
       }
-      const inst = adbShell(device, `pm install --user ${userId} -r /data/local/tmp/release-proof.apk`, { allowFailure: true });
-      if (!inst.ok) return { ok: false, output: `could not install the app for secondary user ${userId}:\n${inst.stdout}` };
+      const inst = adbShell(device, `pm install --user ${userId} -r -d /data/local/tmp/release-proof.apk`, { allowFailure: true });
+      if (!inst.ok) {
+        return {
+          ok: false,
+          output: `could not install the app for secondary user ${userId} (install-existing said: ${install.stdout} ${install.stderr}):\n${inst.stdout}\n${inst.stderr}`,
+        };
+      }
     }
     const switched = adbShell(device, `am switch-user ${userId}`, { allowFailure: true });
     if (!switched.ok) return { ok: false, output: `could not switch to secondary user ${userId}:\n${switched.stderr}` };

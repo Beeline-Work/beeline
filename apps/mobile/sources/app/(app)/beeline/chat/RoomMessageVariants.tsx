@@ -16,6 +16,7 @@ import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/
 import { fallbackMemberName } from '@/buzz/member-display';
 import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
+import { emojiTextStyle } from '@/buzz/emoji-text';
 import { grantAskLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
@@ -1932,7 +1933,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.accent,
     backgroundColor: theme.buzz.bgHighlight,
   },
-  reactionEmoji: { ...theme.buzz.type.body, lineHeight: 19 },
+  reactionEmoji: emojiTextStyle(theme.buzz.type.body),
   reactionCount: {
     ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,

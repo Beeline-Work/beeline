@@ -1,43 +1,24 @@
 import type { TurnActivityAction } from './activity-timeline';
 
 /**
- * One expanded tool call, one line (captain report C88).
+ * What a tool call *is*, for the one-line tool ledger (tool-ledger.ts).
  *
  * The old expansion printed the same call three times — a summary phrase, the
  * harness title, a `Result:` restatement, then the command again in full —
  * and put the transport envelope (`[{"type":"terminal","terminalId":…}]`)
  * where the output should be. This module is the one place that decides what a
- * call *is*: a verb, the object it acted on, and — only when it is not the
- * ordinary case — an outcome word and a duration.
- *
- * The command is the single source of truth for the object. The harness's own
- * title is a last resort, because a harness happily labels a directory listing
- * "Reviewed the current changes".
+ * call *is*: the object it acted on (the command is the single source of
+ * truth; the harness's own title is a last resort, because a harness happily
+ * labels a directory listing "Reviewed the current changes"), its distilled
+ * failure reason, and its cleaned output.
  */
 
 /** The object column truncates in the MIDDLE: the flags at the end carry the meaning. */
 export const TOOL_CALL_OBJECT_MAX = 56;
-/** How many output lines an opened call shows before the rest goes behind one tap. */
-export const TOOL_CALL_OUTPUT_LINES = 6;
+/** The ledger line's label cap (owner-approved tool-ledger design, 2026-08-24). */
+const TOOL_CALL_LABEL_MAX = 40;
 /** A duration is only worth a column when the call was slow enough to notice. */
 export const TOOL_CALL_DURATION_FLOOR_MS = 1000;
-
-export type ToolCallRow = {
-  id: string;
-  /** Fixed narrow column: `ran`, `read`, `wrote`, `found`, `git`, … */
-  verb: string;
-  /** The command, the file, the pattern — never a phrase the client invented. */
-  object: string;
-  outcome: 'running' | 'success' | 'failure';
-  /** Present only above `TOOL_CALL_DURATION_FLOOR_MS`. */
-  duration?: string;
-  /** Why it failed, one line, from the tool's own result. */
-  reason?: string;
-  /** The real output, envelope removed. Empty when all we had was transport. */
-  output: readonly string[];
-  files: readonly { path: string; status?: string }[];
-  requestedBy?: { pubkey: string; name?: string };
-};
 
 /** ACP tool kinds (and the folded-summary verbs) -> the one-word verb column. */
 const KIND_VERBS: Readonly<Record<string, string>> = {
@@ -237,29 +218,17 @@ function titleObject(step: TurnActivityAction): string {
 }
 
 /**
- * One tool call as one line.
- *
- * `live` says this is the last call of a group that is still running, which is
- * the only way a call with no settled status is known to be in flight.
+ * The ledger line's label (owner-approved tool-ledger design, 2026-08-24): the
+ * call's object — the command, the file, the search pattern with its hit
+ * count — cut to the label cap. The leading glyph carries the family
+ * (tool-ledger.ts), so a generic verb (`ran`, `read`, `wrote`) is dropped: the
+ * design's `>_ npm run typecheck`, not `ran npm run typecheck`. A verb that IS
+ * information (an MCP tool's own name, `git`) stays.
  */
-export function toolCallRow(step: TurnActivityAction, live = false): ToolCallRow {
+export function toolCallLabel(step: TurnActivityAction): string {
   const output = toolCallOutput(step.output);
   const { verb, object } = verbAndObject(step, output);
-  const outcome =
-    step.outcome === 'success' && live && !step.status ? 'running' : step.outcome;
-  const duration = formatToolCallDuration(step.durationMs);
-  return {
-    id: step.id,
-    verb,
-    object: middleTruncate(object || 'tool call'),
-    outcome,
-    ...(duration ? { duration } : {}),
-    ...(outcome === 'failure' && step.reason ? { reason: step.reason } : {}),
-    output,
-    files: (step.files ?? []).map((file) => ({
-      path: file.path,
-      ...(file.status ? { status: file.status } : {}),
-    })),
-    ...(step.requestedBy ? { requestedBy: { ...step.requestedBy } } : {}),
-  };
+  const generic = verb === 'git' || Object.values(KIND_VERBS).includes(verb);
+  const label = generic ? object : `${verb} ${object}`;
+  return middleTruncate(oneLine(label) || 'tool call', TOOL_CALL_LABEL_MAX);
 }

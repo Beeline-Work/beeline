@@ -11,8 +11,14 @@ async function main() {
     throw new Error('Set PROOF_AGENT_NSEC and PROOF_CORNER_ID from scripts/provision-smoke.ts.');
   }
 
+  // The local relay stack derives its NIP-98 audience from its configured
+  // public origin (ws -> http), so callers against 127.0.0.1:3010 must pass
+  // PROOF_PUBLIC_ORIGIN=http://10.0.2.2:3010 exactly like provision-smoke.
+  const publicOrigin = process.env.PROOF_PUBLIC_ORIGIN;
   const identity = loadIdentityFromNsec(agentNsec, 'tool-ledger-proof');
-  const client = createBuzzClient({ baseUrl: relay, identity });
+  const client = publicOrigin
+    ? createBuzzClient({ baseUrl: relay, publicOrigin, identity })
+    : createBuzzClient({ baseUrl: relay, identity });
   await client.connect();
 
   const sessionId = 'smoke-corner-session';

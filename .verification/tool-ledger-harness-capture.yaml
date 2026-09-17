@@ -1,0 +1,51 @@
+# Tool-ledger capture (harness): drives the temporary /harness route on the
+# local emulator build and screenshots the four ledger states rendered by the
+# REAL ActivityTimeline component. Run:
+#
+#   maestro test --device emulator-5556 --test-output-dir /tmp/maestro-out \
+#     .verification/tool-ledger-harness-capture.yaml
+appId: app.usebeeline
+name: Tool ledger capture
+# The harness screen must already be foregrounded before this flow runs:
+#
+#   adb -s emulator-5556 shell am start -n app.usebeeline/.MainActivity
+#   sleep 12
+#   adb -s emulator-5556 shell am start -a android.intent.action.VIEW -d "beeline://harness" app.usebeeline
+#   sleep 5
+#   maestro test --device emulator-5556 --test-output-dir /tmp/maestro-out \
+#     .verification/tool-ledger-harness-capture.yaml
+---
+- extendedWaitUntil:
+    visible:
+      id: tool-run-group-proof-types
+    timeout: 20000
+- takeScreenshot: tool-ledger-after-collapsed
+- tapOn:
+    id: tool-run-group-proof-types
+- extendedWaitUntil:
+    visible: "command not found: pnpm"
+    timeout: 10000
+- assertVisible: "^thought$"
+- takeScreenshot: tool-ledger-after-expanded
+# The failed call's raw output opens in the sheet, not inline.
+- tapOn:
+    id: tool-ledger-line-proof-failure
+- extendedWaitUntil:
+    visible:
+      id: tool-output-sheet
+    timeout: 10000
+- assertVisible:
+    id: tool-output-sheet
+- assertVisible:
+    id: tool-output-text
+- assertVisible: "pnpm fast-gate"
+- takeScreenshot: tool-ledger-after-raw-sheet
+- pressKey: back
+# Short runs stay individual lines: the landing session's three steps.
+- scrollUntilVisible:
+    element:
+      id: tool-ledger-line-landing-approval
+    timeout: 10000
+- assertVisible:
+    id: tool-ledger-line-landing-approval
+- takeScreenshot: tool-ledger-after-landing

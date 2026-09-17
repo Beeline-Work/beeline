@@ -1,10 +1,18 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
-import { buildTurnActivity, type TurnActivityAction } from '@/buzz/activity-timeline';
-import { toolCallRow, TOOL_CALL_OUTPUT_LINES, type ToolCallRow } from '@/buzz/tool-call-row';
-import { Typography } from '@/constants/Typography';
+import { buildTurnActivity } from '@/buzz/activity-timeline';
+import { formatToolCallDuration } from '@/buzz/tool-call-row';
+import {
+  groupToolLedgerRuns,
+  toolGroupSummary,
+  toolLedgerLines,
+  type ToolLedgerLine,
+  type ToolLedgerRun,
+} from '@/buzz/tool-ledger';
+import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
+import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import {
   LedgerBylineView,
   provisionalProseStyle,
@@ -31,117 +39,203 @@ type ActivityTimelineProps = {
   mark?: LedgerBylineMark;
 };
 
+const OUTCOME_WORDS = {
+  running: 'running',
+  success: 'succeeded',
+  failure: 'failed',
+} as const;
+
+function lineAccessibilityLabel(line: ToolLedgerLine): string {
+  const parts = [line.label];
+  if (line.kind !== 'thought') parts.push(OUTCOME_WORDS[line.outcome]);
+  if (line.reason) parts.push(line.reason);
+  return parts.join(', ');
+}
+
 /**
- * One expanded tool call, one line: verb, object, and — only when it is not the
- * ordinary case — a duration and an outcome word (C88).
- *
- * Success says nothing at all; absence reads faster than a tick. A failed call
- * arrives already open, because the one thing a reader expands this group for
- * is the call that did not work.
+ * One ledger line (owner-approved design, 2026-08-24): family glyph, the
+ * call's object, a quiet verdict, and a duration only when a receipt carried
+ * one. The whole line is the tap target — it opens the full output sheet —
+ * when the step has anything to show behind it.
  */
-function ToolCallLine({ row }: { row: ToolCallRow }) {
-  const [expanded, setExpanded] = useState(row.outcome === 'failure');
-  const [allLines, setAllLines] = useState(false);
-  const shown = allLines ? row.output : row.output.slice(0, TOOL_CALL_OUTPUT_LINES);
-  const hidden = row.output.length - shown.length;
-  const hasDetail = Boolean(row.output.length || row.reason || row.files.length || row.requestedBy);
-  const accessibilityLabel = [
-    `${row.verb} ${row.object}`,
-    row.outcome === 'failure' ? 'failed' : row.outcome === 'running' ? 'running' : 'succeeded',
-    row.reason,
-  ]
-    .filter(Boolean)
-    .join(', ');
-  const line = (
+function ToolLedgerLineRow({
+  line,
+  onPress,
+  testID,
+}: {
+  line: ToolLedgerLine;
+  onPress?: () => void;
+  testID?: string;
+}) {
+  const duration = formatToolCallDuration(line.durationMs);
+  const showVerdict = line.kind !== 'thought';
+  const accessibilityLabel = lineAccessibilityLabel(line);
+  const row = (
     <>
-      <View style={styles.callRow}>
-        <Text numberOfLines={1} style={styles.callVerb}>
-          {row.verb}
+      <Text accessibilityElementsHidden numberOfLines={1} style={styles.callGlyph}>
+        {line.glyph}
+      </Text>
+      {/* Middle, not tail: a command's flags are the half that identifies it,
+          and a narrow screen must cut the same place the data cap does. */}
+      <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>
+        {line.label}
+      </Text>
+      {line.reason ? (
+        <Text numberOfLines={1} style={styles.callReason}>
+          {line.reason}
         </Text>
-        {/* Middle, not tail: a command's flags are the half that identifies it,
-            and a narrow screen must cut the same place the data cap does. */}
-        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>
-          {row.object}
+      ) : null}
+      {duration ? (
+        <Text accessibilityElementsHidden style={styles.callDuration}>
+          {duration}
         </Text>
-        {row.duration ? (
-          <Text accessibilityElementsHidden style={styles.callDuration}>
-            {row.duration}
-          </Text>
-        ) : null}
-        {row.outcome === 'success' ? null : (
+      ) : null}
+      {showVerdict ? (
+        line.outcome === 'running' ? (
+          <View pointerEvents="none" style={styles.callVerdict} testID={`activity-verdict-${line.id}`}>
+            <BeelineMarkSpinner live />
+          </View>
+        ) : (
           <Text
             accessibilityElementsHidden
-            style={[
-              styles.callOutcome,
-              row.outcome === 'failure' ? styles.callFailed : styles.callRunning,
-            ]}
-            testID={`activity-verdict-${row.id}`}
+            style={[styles.callVerdictText, line.outcome === 'failure' ? styles.callFailed : styles.callPassed]}
+            testID={`activity-verdict-${line.id}`}
           >
-            {row.outcome === 'failure' ? 'failed' : 'running'}
+            {line.outcome === 'failure' ? '✗' : '✓'}
           </Text>
-        )}
-      </View>
-      {expanded && hasDetail ? (
-        <View style={styles.callDetail} testID={`corner-tool-row-detail-${row.id}`}>
-          {row.reason ? (
-            <Text style={[styles.detailLine, styles.detailFailed]}>{row.reason}</Text>
-          ) : null}
-          {row.files.map((file) => (
-            <Text key={`${row.id}:file:${file.path}`} style={styles.detailLine}>
-              {file.status ? `${file.status} ${file.path}` : file.path}
-            </Text>
-          ))}
-          {shown.map((output, index) => (
-            <Text key={`${row.id}:out:${index}`} style={styles.detailLine}>
-              {output}
-            </Text>
-          ))}
-          {hidden > 0 ? (
-            <Pressable
-              accessibilityLabel={`Show ${hidden} more output lines`}
-              accessibilityRole="button"
-              onPress={() => setAllLines(true)}
-              testID={`corner-tool-row-more-${row.id}`}
-            >
-              <Text style={styles.detailMore}>{`+${hidden} more lines`}</Text>
-            </Pressable>
-          ) : null}
-          {row.requestedBy ? (
-            <Text style={styles.detailLine}>
-              {`at ${row.requestedBy.name ?? row.requestedBy.pubkey.slice(0, 12)}'s request`}
-            </Text>
-          ) : null}
-        </View>
+        )
       ) : null}
     </>
   );
-  if (!hasDetail) return <View testID={`corner-tool-row-${row.id}`}>{line}</View>;
+  if (!onPress) {
+    return (
+      <View accessibilityLabel={accessibilityLabel} style={styles.ledgerRow} testID={testID}>
+        {row}
+      </View>
+    );
+  }
   return (
     <Pressable
-      accessibilityHint={expanded ? 'Collapses this call' : 'Shows this call’s output'}
+      accessibilityHint="Opens this call’s output"
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ busy: row.outcome === 'running', expanded }}
-      onPress={() => setExpanded((value) => !value)}
-      style={styles.callDisclosure}
-      testID={`corner-tool-row-${row.id}`}
+      accessibilityState={{ busy: line.outcome === 'running' }}
+      onPress={onPress}
+      style={styles.ledgerRow}
+      testID={testID}
     >
-      {line}
+      {row}
     </Pressable>
   );
 }
 
-function activitySummary(rows: readonly ToolCallRow[], active: boolean, count: number): string {
-  const failures = rows.filter((row) => row.outcome === 'failure').length;
-  const head = `${count} TOOL ${count === 1 ? 'CALL' : 'CALLS'}`;
-  if (failures) return `${head} · ${failures} FAILED`;
-  return active ? `${head} · WORKING` : head;
+/**
+ * A consecutive run longer than `TOOL_RUN_INLINE_MAX`: one collapsed summary
+ * line — `⌄ 6 steps · 2 failed · 48s` — that expands in place into the same
+ * ledger lines the short runs render.
+ */
+function ToolRunGroupRow({
+  run,
+  onPressLine,
+}: {
+  run: Extract<ToolLedgerRun, { kind: 'group' }>;
+  onPressLine?: (line: ToolLedgerLine) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const duration = formatToolCallDuration(run.durationMs);
+  const summary = toolGroupSummary(run.count, run.failed, run.durationMs);
+  return (
+    <View>
+      <Pressable
+        accessibilityHint={expanded ? 'Hides the steps' : 'Shows the steps'}
+        accessibilityLabel={`${summary}, expandable`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        style={styles.groupRow}
+        testID={`tool-run-group-${run.id}`}
+      >
+        <Text accessibilityElementsHidden style={styles.groupChevron}>
+          {expanded ? '⌃' : '⌄'}
+        </Text>
+        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.groupLabel}>
+          {`${run.count} ${run.count === 1 ? 'step' : 'steps'}`}
+          {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
+          {duration ? ` · ${duration}` : null}
+        </Text>
+      </Pressable>
+      {expanded
+        ? run.lines.map((line) => (
+            <ToolLedgerLineRow
+              key={line.id}
+              line={line}
+              onPress={line.detail ? () => onPressLine?.(line) : undefined}
+              testID={`tool-ledger-line-${line.id}`}
+            />
+          ))
+        : null}
+    </View>
+  );
 }
 
 /**
- * The live conversational turn. One compact mechanism row sits between prose
- * outputs; it expands on demand into one line per call, and each of those opens
- * onto its own real output. Three levels: fold, line, detail.
+ * The one output surface: the tapped call's label as the title, its distilled
+ * failure reason as the subtitle, and the full raw output in a scrollable,
+ * selectable, copyable mono body. Inline expansion in the transcript is gone.
+ */
+function ToolOutputSheet({
+  line,
+  onClose,
+}: {
+  line: ToolLedgerLine | null;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
+  const copy = React.useCallback(async () => {
+    if (!line?.detail) return;
+    try {
+      await (await import('expo-clipboard')).setStringAsync(line.detail);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 2000);
+  }, [line?.detail]);
+  return (
+    <HullActionSheetModal
+      onClose={onClose}
+      subtitle={line?.outcome === 'failure' ? line?.reason : undefined}
+      testID="tool-output-sheet"
+      title={line?.label ?? 'Output'}
+      visible={Boolean(line?.detail)}
+    >
+      <ScrollView contentContainerStyle={styles.sheetContent} style={styles.sheetScroll}>
+        <Text selectable style={styles.sheetOutput} testID="tool-output-text">
+          {line?.detail}
+        </Text>
+      </ScrollView>
+      <HullActionSheetRow
+        label="Copy output"
+        metadata={copied ? 'Copied' : undefined}
+        onPress={copy}
+        testID="tool-output-copy"
+      />
+    </HullActionSheetModal>
+  );
+}
+
+/**
+ * The live conversational turn: agent prose, and beneath it the one-line tool
+ * ledger — a line per step, long consecutive runs folded into one expandable
+ * group line, and every line that carries output opening the output sheet.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -154,26 +248,24 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   mark,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
-  const rows = useMemo(() => {
-    const steps = turn.steps.filter((step: TurnActivityAction) => step.kind === 'tool');
-    return steps.map((step, index) => toolCallRow(step, active && index === steps.length - 1));
-  }, [turn, active]);
-  const toolCallCount = turn.actions.length + turn.noteCount;
-  const [expanded, setExpanded] = useState(false);
+  const runs = useMemo(
+    () => groupToolLedgerRuns(toolLedgerLines(turn.steps, active)),
+    [turn, active],
+  );
+  const [sheetLine, setSheetLine] = useState<ToolLedgerLine | null>(null);
   // The provisional face and tone, plus this lane's own spacing. One object,
   // memoised, so the markdown renderer's identity check still bails out.
   const draftTextStyle = useMemo(
     () => ({ ...provisionalProseStyle(), ...styles.messageDraft }),
     [],
   );
-  // Settled turns keep their collapsed tool rows (#804); only a lane with
-  // nothing in it at all renders nothing.
+  // A lane with nothing in it at all renders nothing.
   //
   // A RETRACTED draft is deliberately included (C98). When a turn fails the
   // lane stops being live but the words the reader was reading stay on the
   // page, provisional, with the server's failure line beneath them — text a
   // person was mid-way through must never evaporate on its own.
-  if (!turn.narration.length && !rows.length && !messageDraft) return null;
+  if (!turn.narration.length && !runs.length && !messageDraft) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -188,27 +280,18 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           testID={`activity-narration-${index}`}
         />
       ))}
-      {rows.length ? (
-        <>
-          <Pressable
-            accessibilityHint={
-              expanded ? 'Hides individual tool calls' : 'Shows individual tool calls'
-            }
-            accessibilityLabel={activitySummary(rows, active, toolCallCount)}
-            accessibilityRole="button"
-            accessibilityState={{ busy: active, expanded }}
-            onPress={() => setExpanded((value) => !value)}
-            style={styles.summaryDisclosure}
-            testID="corner-tool-summary"
-          >
-            <Text style={styles.summaryLabel}>{activitySummary(rows, active, toolCallCount)}</Text>
-            <Text accessibilityElementsHidden style={styles.disclosureGlyph}>
-              {expanded ? '⌃' : '⌄'}
-            </Text>
-          </Pressable>
-          {expanded ? rows.map((row) => <ToolCallLine key={row.id} row={row} />) : null}
-        </>
-      ) : null}
+      {runs.map((run) =>
+        run.kind === 'line' ? (
+          <ToolLedgerLineRow
+            key={run.line.id}
+            line={run.line}
+            onPress={run.line.detail ? () => setSheetLine(run.line) : undefined}
+            testID={`tool-ledger-line-${run.line.id}`}
+          />
+        ) : (
+          <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
+        ),
+      )}
       {messageDraft ? (
         <StreamingProse
           markdown={messageDraft}
@@ -216,12 +299,10 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           testID="activity-message-draft"
         />
       ) : null}
+      <ToolOutputSheet line={sheetLine} onClose={() => setSheetLine(null)} />
     </View>
   );
 });
-
-/** Seven mono characters — `deleted`, `fetched` — and the object column is straight. */
-const VERB_COLUMN = 56;
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
@@ -231,95 +312,87 @@ const styles = StyleSheet.create((theme) => {
     // definition (`Ledger.provisionalProseStyle`), so a draft and the reply
     // that settles it are the same words in the same column (C98).
     messageDraft: { marginTop: 2 },
-    callDisclosure: {
+    // The whole line is the tap target; 44 keeps every ledger line inside the
+    // comfortable minimum touch size.
+    ledgerRow: {
+      minHeight: 44,
       minWidth: 0,
+      justifyContent: 'center',
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: groknight.borderQuiet,
-    },
-    summaryDisclosure: {
-      minHeight: 32,
-      paddingHorizontal: 4,
+      paddingHorizontal: groknight.space.xs,
       flexDirection: 'row',
       alignItems: 'center',
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
-    },
-    summaryLabel: {
-      ...Typography.mono('semiBold'),
-      flex: 1,
-      minWidth: 0,
-      color: groknight.ledgerQuiet,
-      fontSize: 11,
-      lineHeight: 18,
-    },
-    callRow: {
-      minWidth: 0,
-      paddingHorizontal: groknight.space.xs,
-      paddingVertical: groknight.space.xs,
-      flexDirection: 'row',
-      alignItems: 'baseline',
       gap: groknight.space.sm,
     },
-    // A fixed narrow column, so every object in the group starts on one line.
-    callVerb: {
-      ...Typography.mono(),
-      width: VERB_COLUMN,
+    // A fixed glyph column, so every label starts on one line even though
+    // `>_` is two characters wide and the rest are one.
+    callGlyph: {
+      ...groknight.type.machine,
+      width: 24,
       flexShrink: 0,
       color: groknight.ledgerGhost,
-      fontSize: groknight.type.machine.fontSize,
-      lineHeight: groknight.type.machine.lineHeight,
     },
     callObject: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       flex: 1,
       minWidth: 48,
       color: groknight.ledgerBody,
-      fontSize: groknight.type.machine.fontSize,
-      lineHeight: groknight.type.machine.lineHeight,
+    },
+    // The distilled failure reason, dimmer than the label — a quiet inline
+    // sentence, never a chip.
+    callReason: {
+      ...groknight.type.machine,
+      flexShrink: 1,
+      minWidth: 0,
+      color: groknight.ledgerQuiet,
     },
     callDuration: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       flexShrink: 0,
       color: groknight.ledgerGhost,
-      fontSize: groknight.type.machine.fontSize,
-      lineHeight: groknight.type.machine.lineHeight,
       fontVariant: ['tabular-nums'],
     },
-    callOutcome: {
-      ...Typography.mono(),
+    callVerdict: { width: 18, flexShrink: 0, alignItems: 'flex-end' },
+    callVerdictText: {
+      ...groknight.type.machine,
+      width: 18,
       flexShrink: 0,
-      fontSize: groknight.type.machine.fontSize,
-      lineHeight: groknight.type.machine.lineHeight,
+      textAlign: 'right',
     },
-    // The two places colour is spent here: red for a failure, brass in flight.
-    callFailed: { color: groknight.diffRemoved },
-    callRunning: { color: groknight.accent },
-    disclosureGlyph: {
-      ...Typography.mono(),
+    // The two places colour is spent here: brass for needs-attention (the
+    // failure cross), the dimmest chrome for the success tick.
+    callFailed: { color: groknight.accent },
+    callPassed: { color: groknight.ledgerGhost },
+    groupRow: {
+      minHeight: 44,
+      minWidth: 0,
+      justifyContent: 'center',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.borderQuiet,
+      paddingHorizontal: groknight.space.xs,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: groknight.space.sm,
+    },
+    groupChevron: {
+      ...groknight.type.machine,
+      width: 24,
       flexShrink: 0,
       color: groknight.ledgerGhost,
-      fontSize: 10,
-      lineHeight: 18,
     },
-    callDetail: {
-      paddingLeft: VERB_COLUMN + groknight.space.sm + groknight.space.xs,
-      paddingRight: groknight.space.xs,
-      paddingBottom: groknight.space.sm,
-    },
-    detailLine: {
-      ...Typography.mono(),
-      color: groknight.ledgerGhost,
-      fontSize: 10,
-      lineHeight: 15,
-      marginBottom: 2,
-    },
-    detailFailed: { color: groknight.diffRemoved },
-    detailMore: {
-      ...Typography.mono(),
+    groupLabel: {
+      ...groknight.type.machine,
+      flex: 1,
+      minWidth: 0,
       color: groknight.ledgerQuiet,
-      fontSize: 10,
-      lineHeight: 15,
-      marginBottom: 2,
+    },
+    groupFailed: { color: groknight.accent },
+    sheetScroll: { maxHeight: '45%' },
+    sheetContent: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: groknight.space.sm },
+    sheetOutput: {
+      ...groknight.type.machine,
+      color: groknight.ledgerBody,
     },
   };
 });

@@ -15,7 +15,8 @@ import { joinWorkspaceMembersToPublicRoom } from './membership-join.js';
  * and the Room's `about` is written once so a later edit survives a reboot.
  * The backfill is silent (no join line, no push); a new sign-in still joins
  * through `joinRooms`, which announces the Workspace arrival in each existing
- * person's read-only `@system` DM.
+ * person's read-only `@system` DM and — where an agent member of a projected
+ * Room subscribed to `joined` — as that Room's subscribable join event.
  * Workspace owners/admins manage `#welcome` with the same role.
  */
 export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void> {

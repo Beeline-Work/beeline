@@ -163,7 +163,34 @@ describe('default Workspace seed', () => {
       `SELECT text,presentation FROM messages WHERE room_id=$1`,
       [WELCOME_ROOM_ID],
     );
+    // No agent subscribed to `joined` in #welcome, so the Workspace arrival's
+    // public-Room projection is silent; the @system DM carries the fact.
     expect(lines.rows).toEqual([]);
+  });
+
+  it('wakes an agent subscribed to joined in #welcome on a new sign-in', async () => {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Greeter')`, [AGENT]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+       VALUES($1,$2,$3,'member','["joined"]'::jsonb)`,
+      [DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID, AGENT],
+    );
+    const auth = new TokenAuth(db, async () => ({ subject: 'new', login: 'newbie', name: 'New' }));
+    const tokens = await auth.exchangeGitHubOidc('proof');
+    const lines = await db.query<{
+      text: string;
+      presentation: string;
+      kind: string | null;
+      event_woken: number | null;
+    }>(
+      `SELECT text,presentation,system_event->>'kind' kind,event_woken
+       FROM messages WHERE room_id=$1`,
+      [WELCOME_ROOM_ID],
+    );
+    expect(lines.rows).toEqual([
+      { text: '@newbie joined', presentation: 'system', kind: 'joined', event_woken: 1 },
+    ]);
+    expect(tokens).toBeTruthy();
   });
 
   it('lets a person leave #welcome like any Room, and the deck lists Beeline Welcome', async () => {

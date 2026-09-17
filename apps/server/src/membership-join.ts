@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { SystemEventKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { systemIdentityMention, systemLine, workspaceSystemLine } from './system-line.js';
 
@@ -122,6 +123,36 @@ export async function backfillInheritedCornerMemberships(database: SqlDatabase):
     `backfillInheritedCornerMemberships: added ${result.rowCount} missing corner membership row(s)`,
   );
   return result.rowCount;
+}
+
+/**
+ * The Rooms among these whose current agent members subscribed to `kind`.
+ *
+ * A projected join emits its event only where someone listens; a Room nobody
+ * subscribed to stays silent, exactly as an unprojected join would leave it.
+ * Mirrors `system-line.ts`'s subscriber lookup and its failure stance: the
+ * join's membership writes are real, so a lookup failure logs and emits
+ * nowhere rather than failing the join.
+ */
+async function subscriberRooms(
+  database: SqlDatabase,
+  roomIds: readonly string[],
+  kind: SystemEventKind,
+): Promise<string[]> {
+  if (!roomIds.length) return [];
+  try {
+    const rows = await database.query<{ room_id: string }>(
+      `SELECT DISTINCT member.room_id FROM memberships member
+       JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+       WHERE member.room_id=ANY($1::uuid[]) AND member.removed_at IS NULL
+         AND member.event_subscriptions @> $2::jsonb`,
+      [roomIds, JSON.stringify([kind])],
+    );
+    return rows.rows.map((row) => row.room_id);
+  } catch (error) {
+    console.error('[membership-join] subscriber room lookup failed', error);
+    return [];
+  }
 }
 
 /**
@@ -253,16 +284,23 @@ export async function joinRooms(
       });
     }
     // Auto-joining public Rooms is only a membership projection of the
-    // Workspace arrival. Announce that arrival once per existing person in
-    // their @system DM, not again in every projected Room. An explicit Room
-    // join still belongs in that Room and keeps its subscribed `joined` event.
-    if (input.rooms.type !== 'all-live-top-level') {
-      for (const roomId of roomIds)
-        await systemLine(transaction, {
-          roomId,
-          ...line,
-        });
-    }
+    // Workspace arrival. In an ordinary Room that arrival stays silent: it is
+    // announced once per existing person in their @system DM, not again in
+    // every projected Room. System events are SUBSCRIBABLE per Room, so the
+    // projection emits its `joined` event exactly where someone subscribed:
+    // any agent member of a projected Room that subscribed to `joined` wakes
+    // on it, in any Workspace, with no workspace special case — that is how a
+    // greeter hears about every newcomer. An explicit Room join always belongs
+    // in that Room and keeps its subscribed `joined` event.
+    const announced =
+      input.rooms.type !== 'all-live-top-level'
+        ? roomIds
+        : await subscriberRooms(transaction, roomIds, 'joined');
+    for (const roomId of announced)
+      await systemLine(transaction, {
+        roomId,
+        ...line,
+      });
 
     const notificationId = `workspace-join:${randomUUID()}`;
     await transaction.query(

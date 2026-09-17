@@ -106,7 +106,7 @@ describe('the ledger — an agent turn', () => {
       fontFamily: 'SpaceGrotesk-Regular',
       transform: [{ skewX: '-8deg' }],
       fontSize: 12,
-      color: '#83838d',
+      color: '#90909B',
     });
     expect(line.props.style.fontStyle).toBeUndefined();
     expect(line.props.style.fontWeight).toBeUndefined();
@@ -794,7 +794,7 @@ describe('the ledger — the byline says who is talking', () => {
     const stamp = merged(renderer.root.findByProps({ testID: 'chat-byline-stamp' }));
     expect(stamp.fontFamily).toBe('IBMPlexMono-Regular');
     expect(stamp.fontSize).toBe(10);
-    expect(stamp.color).toBe('#83838d');
+    expect(stamp.color).toBe('#90909B');
     expect(stamp.marginLeft).toBe('auto');
   });
 

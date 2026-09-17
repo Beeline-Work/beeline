@@ -77,7 +77,7 @@ describe('write permission corner outcome', () => {
           }),
           {},
         );
-    expect(tone(status).color).toBe('#83838d');
+    expect(tone(status).color).toBe('#90909B');
   });
 
   it('mutates an approval into one corner link and keeps other outcomes inert', () => {

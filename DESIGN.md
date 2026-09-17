@@ -33,10 +33,15 @@ semantic token shape and two sets built from it: Obsidian Refined (dark) and
 Bone (light), picked from a Settings → Appearance toggle (the former Editorial
 Ink and Ledger sets are still retired — this is not their return, just a
 light/dark pair of the one Speakeasy language). Obsidian content runs
-`#f0f0f3` / `#c9c9d1`; `#83838d` and `#6c6c76` are reserved for chrome,
-labels, timestamps, and redundant machine noise. Brass is `#b08a4a` in
-Obsidian (the Editorial direction's single accent; the older gold `#c9a24b`
-is retired); diff green/red remains the one domain-color exception.
+`#f0f0f3` / `#c9c9d1`. The ledger's quiet tier (`ledgerQuiet`) carries the
+ledger's own reading matter — previews, stamps, system lines, quoted
+reply/forward excerpts — so it holds a WCAG-AA floor (≥4.5:1) on every resting
+ground: `#90909B` in Obsidian, `#6F6455` in Bone (pinned in
+`groknight.test.ts`; never re-dim it). `#83838d` and `#6c6c76` remain
+reserved for chrome, muted labels, and the gutter's ghost tier. Brass is
+`#b08a4a` in Obsidian (the Editorial direction's single accent; the older
+gold `#c9a24b` is retired); diff green/red remains the one domain-color
+exception.
 
 Bone is Obsidian's construction rules run in reverse: a warm bone canvas
 (`#F3EEE4`) instead of the warm-dark aubergine, "content near-black, chrome
@@ -48,7 +53,13 @@ the bone canvas. Diff green/red ships as text color, not a swatch, so it is
 tuned per canvas the same way brass is: Obsidian keeps `#3FB950`/`#F85149`,
 Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — the domain
 color is still the one exception (never a third hue), it is just no longer
-one literal hex shared by every canvas.
+one literal hex shared by every canvas. The ledger's quiet ink is tuned per
+canvas the same way: the gray bone shares with chrome (`#8B7F6E`) falls to
+3.4:1 on the bone canvas, so Bone darkens `ledgerQuiet` to `#6F6455` (5.0:1)
+while Obsidian lifts its own to `#90909B` (6.1:1). Both hold the AA floor
+pinned in `groknight.test.ts`, and Bone's quiet tier reads darker than
+chrome — content ink, tuned like brass and diff text rather than shared with
+the gutter.
 
 ## Shape
 
@@ -265,6 +276,14 @@ to the request that triggered it, so the quoted block was always the message
 directly above — pure noise on a linear log. A person's own reply is a
 deliberate reach back up the transcript, so it keeps its quote, on one dim line
 with no bar beside it.
+
+**A quoted excerpt is provenance a reader still reads.** Two lines carry the
+quote's provenance: the `↳` reply reference (`author · preview`) and the
+`FORWARDED FROM #room` caption under a forwarded body. Both read at the quiet
+tier — one tone below the body, never the gutter's ghost tier — and both
+clear the AA floor the quiet tier holds, because a provenance line too dim to
+read is a quote the reader cannot check
+(`chat.quoted-excerpt.design.test.ts`).
 
 **Text is decoded before it is inscribed.** Percent escapes (`%3F`) are
 transport, not content, and are resolved at the single projection funnel every

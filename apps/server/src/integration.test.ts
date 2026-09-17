@@ -7688,12 +7688,14 @@ describe('monolith integration', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('does not wake public Room subscribers for a Workspace-scoped arrival', async () => {
+  it('wakes a Welcome workspace Room subscriber exactly once for a Workspace-scoped arrival', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owl')`, [
       WELCOME_AGENT,
     ]);
-    // Workspace membership projects into #welcome, but that projection does
-    // not become a Room-scoped join event.
+    // The greeter subscribed to `joined` in #welcome; the join event is the
+    // onboarding surface, so the Workspace arrival must land there visibly —
+    // while the ordinary Room's agent subscribed to nothing and must not
+    // spend a turn on a join it never asked for.
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
        VALUES($1,NULL,$2,'member','[]'::jsonb),($1,$3,$2,'member','["joined"]'::jsonb)`,
@@ -7715,7 +7717,15 @@ describe('monolith integration', () => {
        WHERE room_id=$1 AND card_type='member-joined' AND author_id=$2`,
       [WELCOME_ROOM_ID, REVIEW_IDENTITY_ID],
     );
-    expect(joined.rows).toEqual([]);
+    expect(joined.rows).toEqual([
+      expect.objectContaining({
+        tagged_ids: [],
+        text: '@play-review joined',
+        system_event: expect.objectContaining({ kind: 'joined' }),
+        event_woken: 1,
+        woke: [WELCOME_AGENT],
+      }),
+    ]);
 
     const workspaceDms = await database.query<{
       text: string;

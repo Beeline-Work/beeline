@@ -31,6 +31,12 @@ function connectorNameFor(connectorId: string): string {
 }
 
 const INSTALL_POLL_MS = 700;
+/** Consecutive failed/missing install reads before the poll reports a loss
+ *  through `connect-error` instead of spinning silently on the picker. */
+const INSTALL_POLL_MISS_LIMIT = 8;
+/** Bounded feedback for a pair POST that never settles: the transport sets
+ *  no timeout of its own, so a hung await must still reach the user. */
+const PAIR_FEEDBACK_MS = 15_000;
 
 /**
  * Connect Trusty Squire — the pairing flow. ONE connect path (captain
@@ -82,51 +88,88 @@ export default function ConnectTrustySquireScreen() {
     [],
   );
 
-  const finishPolling = useCallback((state: ConnectorInstallState) => {
+  const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-    if (state.connected) {
-      router.replace('/beeline/settings/workbench' as unknown as Href);
-    }
   }, []);
+
+  const finishPolling = useCallback(
+    (state: ConnectorInstallState) => {
+      stopPolling();
+      if (state.connected) {
+        router.replace('/beeline/settings/workbench' as unknown as Href);
+      }
+    },
+    [stopPolling],
+  );
 
   const startPolling = useCallback(
     (pairedConnectorId: string) => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      stopPolling();
+      let misses = 0;
       pollRef.current = setInterval(() => {
         void getWorkbenchSource()
           .readInstallState({ connectorId: pairedConnectorId, workspaceId })
           .then((state) => {
-            if (!state) return;
+            if (!state) {
+              // The paired row vanished (unpaired/reset server-side): a
+              // bounded miss count surfaces it, never a silent stall.
+              misses += 1;
+              if (misses >= INSTALL_POLL_MISS_LIMIT) {
+                stopPolling();
+                setError('Lost track of the install — pair the machine again');
+              }
+              return;
+            }
+            misses = 0;
             setInstall(state);
             if (state.connected || state.steps.some((step) => step.status === 'failed')) {
               finishPolling(state);
             }
           })
-          .catch(() => undefined);
+          .catch(() => {
+            misses += 1;
+            if (misses >= INSTALL_POLL_MISS_LIMIT) {
+              stopPolling();
+              setError('Lost contact while installing — check the helper and pair again');
+            }
+          });
       }, INSTALL_POLL_MS);
     },
-    [finishPolling, workspaceId],
+    [finishPolling, stopPolling, workspaceId],
   );
 
   const pair = useCallback(
     async (helperId: string) => {
+      stopPolling();
       setError(null);
       pairedHelperRef.current = helperId;
+      // The pair POST has no transport timeout; if it never settles, say so
+      // while the await continues — a late resolve still starts the poll.
+      let feedbackShown = false;
+      const feedback = setTimeout(() => {
+        feedbackShown = true;
+        setError('Still pairing — the helper is not answering');
+      }, PAIR_FEEDBACK_MS);
       try {
         const { connectorId: pairedConnectorId } = await getWorkbenchSource().pairConnector({
           workspaceId,
           connectorId,
           helperId,
         });
+        if (feedbackShown) setError(null);
         startPolling(pairedConnectorId);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : 'Pairing failed');
+        if (!feedbackShown) {
+          setError(cause instanceof Error ? cause.message : 'Pairing failed');
+        }
+      } finally {
+        clearTimeout(feedback);
       }
     },
-    [connectorId, startPolling, workspaceId],
+    [connectorId, startPolling, stopPolling, workspaceId],
   );
 
   const retry = useCallback(() => {
@@ -264,7 +307,9 @@ export default function ConnectTrustySquireScreen() {
                     params: {
                       workspaceId,
                       viewerId,
-                      connectorId,
+                      // The paired ROW id, so the overlay polls this
+                      // machine's connector — not any row of the type.
+                      connectorId: install.connectorId,
                       url: signIn.url,
                       method: signIn.method,
                     },

@@ -1,7 +1,63 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getWorkbenchSource, setWorkbenchSource } from './workbench-source';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getWorkbenchSource, setWorkbenchSource, MonolithWorkbenchSource } from './workbench-source';
 import { MockWorkbenchSource } from './workbench-source.mock';
 import { connectionsForViewer } from './workbench';
+
+/**
+ * Fake of the monolith phone-operation transport for the REAL source tests
+ * below: shapes exactly as the server answers them — `pairConnector` returns
+ * the ROW's UUID id, while each `readWorkbench` connector row carries BOTH
+ * that id and its `connectorType`.
+ */
+const fakeServer = vi.hoisted(() => {
+  const state = {
+    rows: [] as Array<{
+      connectorId: string;
+      connectorType: string;
+      status: {
+        connectorId: string;
+        status: string;
+        helperName: string;
+        steps: { label: string; status: string }[];
+        signIn: { method: string; url: string } | null;
+      };
+    }>,
+  };
+  return state;
+});
+
+vi.mock('@/sync/transport/monolith-operation', () => ({
+  monolithPhoneOperation: async (name: string, input: Record<string, unknown>) => {
+    if (name === 'readWorkbench') {
+      return {
+        workspaceId: input.workspaceId,
+        helpers: [],
+        catalog: [],
+        connectors: fakeServer.rows,
+        connections: [],
+      };
+    }
+    if (name === 'pairConnector') {
+      fakeServer.rows = fakeServer.rows.filter(
+        (row) => row.connectorType !== input.connectorType,
+      );
+      const row = {
+        connectorId: 'row-uuid-1',
+        connectorType: String(input.connectorType),
+        status: {
+          connectorId: 'row-uuid-1',
+          status: 'installing',
+          helperName: 'squire-box',
+          steps: [{ label: 'install', status: 'running' }],
+          signIn: null,
+        },
+      };
+      fakeServer.rows.push(row);
+      return { connectorId: row.connectorId, status: row.status };
+    }
+    throw new Error(`unexpected operation ${name}`);
+  },
+}));
 
 const MEMBER_A = 'human-dani';
 const MEMBER_B = 'human-terra';
@@ -15,6 +71,49 @@ const MEMBER_B = 'human-terra';
  * default `getWorkbenchSource()`; screens never import either module
  * directly, so tests swap through the one seam.
  */
+describe('real monolith Workbench source — install-state row resolution', () => {
+  beforeEach(() => {
+    fakeServer.rows = [];
+  });
+
+  it('follows the row id pairConnector returned (the connect-screen stall regression)', async () => {
+    const source = new MonolithWorkbenchSource();
+    const { connectorId } = await source.pairConnector({
+      workspaceId: 'ws',
+      connectorId: 'trusty-squire',
+      helperId: 'helper-squire-box',
+    });
+    expect(connectorId).toBe('row-uuid-1');
+    const state = await source.readInstallState({ connectorId, workspaceId: 'ws' });
+    // The stalled screen read this as null forever and never left the picker.
+    expect(state).not.toBeNull();
+    expect(state?.connectorId).toBe('row-uuid-1');
+    expect(state?.helperName).toBe('squire-box');
+    expect(state?.steps.map((step) => step.status)).toEqual(['active']);
+  });
+
+  it('still resolves by connector type (the sign-in overlay back-compat)', async () => {
+    const source = new MonolithWorkbenchSource();
+    await source.pairConnector({
+      workspaceId: 'ws',
+      connectorId: 'trusty-squire',
+      helperId: 'helper-squire-box',
+    });
+    const state = await source.readInstallState({
+      connectorId: 'trusty-squire',
+      workspaceId: 'ws',
+    });
+    expect(state?.connectorId).toBe('row-uuid-1');
+  });
+
+  it('reports no install state for an unknown id', async () => {
+    const source = new MonolithWorkbenchSource();
+    expect(
+      await source.readInstallState({ connectorId: 'row-unknown', workspaceId: 'ws' }),
+    ).toBeNull();
+  });
+});
+
 describe('mock Workbench source', () => {
   beforeEach(() => {
     setWorkbenchSource(new MockWorkbenchSource());

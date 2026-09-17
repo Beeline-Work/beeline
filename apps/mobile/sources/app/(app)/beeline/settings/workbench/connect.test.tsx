@@ -278,4 +278,84 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     }
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
   });
+
+  describe('failure surfaces — never a silent stall', () => {
+    async function untilError(renderer: ReactTestRenderer): Promise<void> {
+      for (let tick = 0; tick < 24; tick += 1) {
+        if (renderer.root.findAllByProps({ testID: 'connect-error' }).length) return;
+        await advancePolls();
+      }
+      throw new Error('connect-error never appeared');
+    }
+
+    it('surfaces a pair POST that never settles, and still follows a late resolve', async () => {
+      let resolvePair: () => void = () => {};
+      const base = new MockWorkbenchSource();
+      const realPair = base.pairConnector.bind(base);
+      setWorkbenchSource(
+        Object.assign(base, {
+          pairConnector: (input: Parameters<typeof realPair>[0]) =>
+            new Promise<{ connectorId: string }>((resolve) => {
+              resolvePair = () => {
+                void realPair(input).then(resolve);
+              };
+            }),
+        }),
+      );
+      const renderer = await render();
+      await act(async () => {
+        renderer.root.findByProps({ testID: 'connect-machine-helper-squire-box' }).props.onPress();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(renderer.root.findAllByProps({ testID: 'connect-error' })).toHaveLength(0);
+      // The transport sets no timeout of its own: the hung await must reach
+      // the user through the one error channel, not sit on the picker.
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain(
+        'pairing',
+      );
+      // A late resolve still starts the poll and clears the stale notice.
+      await act(async () => {
+        resolvePair();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await advancePolls(2);
+      expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+      expect(renderer.root.findAllByProps({ testID: 'connect-error' })).toHaveLength(0);
+    });
+
+    it('surfaces an install row that never appears instead of polling null forever', async () => {
+      setWorkbenchSource(
+        Object.assign(new MockWorkbenchSource(), { readInstallState: async () => null }),
+      );
+      const renderer = await render();
+      await pair(renderer);
+      await untilError(renderer);
+      expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain(
+        'Lost track',
+      );
+    });
+
+    it('surfaces an install poll that keeps failing instead of swallowing errors', async () => {
+      setWorkbenchSource(
+        Object.assign(new MockWorkbenchSource(), {
+          readInstallState: async () => {
+            throw new Error('transport gone');
+          },
+        }),
+      );
+      const renderer = await render();
+      await pair(renderer);
+      await untilError(renderer);
+      expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain(
+        'Lost contact',
+      );
+    });
+  });
 });

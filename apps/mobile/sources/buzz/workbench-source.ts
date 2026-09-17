@@ -146,8 +146,13 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     connectorId: string;
   }): Promise<ConnectorInstallState | null> {
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+    // `pairConnector` returns the ROW's id, and the connect screen polls with
+    // exactly that; the sign-in overlay still polls by connector type. Match
+    // both — a row id alone must never read as "no install" (the silent stall).
     const row = dto.connectors.find(
-      (candidate) => candidate.connectorType === input.connectorId,
+      (candidate) =>
+        candidate.connectorId === input.connectorId ||
+        candidate.connectorType === input.connectorId,
     );
     if (!row) return null;
     return {

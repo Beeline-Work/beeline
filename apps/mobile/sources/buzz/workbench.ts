@@ -190,34 +190,6 @@ export function googleEntryConnector(
   };
 }
 
-export type GoogleToolState = {
-  id: GoogleToolId;
-  name: string;
-  status: WorkbenchConnectorStatus | undefined;
-  /** Trailing word the expanded entry's tool line carries. */
-  value: string;
-};
-
-/** Per-tool lines the expanded Google entry shows: what of the one grant is
- * already live, and what a connect/repair would top up. */
-export function googleToolStates(
-  connectors: readonly WorkbenchConnector[],
-): readonly GoogleToolState[] {
-  return googleEntryTools(connectors).map((tool) => ({
-    id: tool.id as GoogleToolId,
-    name: tool.name,
-    status: tool.status,
-    value:
-      tool.status === 'connected'
-        ? 'connected'
-        : tool.status === 'installing'
-          ? 'installing'
-          : tool.status === 'error'
-            ? 'error'
-            : 'connect',
-  }));
-}
-
 /** The quiet line under the single Google entry row. A partially connected
  * set names how much of the one grant is live; otherwise the connected
  * helper/sign-in facts, or the catalog description before anything pairs. */

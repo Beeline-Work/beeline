@@ -687,6 +687,96 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  it('suppresses the expected PR-open push after a corner-open push', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        corner = '33333333-3333-4333-8333-333333333333',
+        token = 'owner-device-token-12345678901234567890';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
+         ($1,$3,'Room',NULL),($2,$3,'Corner',$1)`,
+        [room, corner, workspace],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$4,'owner'),($1,$2,$5,'member'),
+         ($1,$3,$4,'owner'),($1,$3,$5,'member')`,
+        [workspace, room, corner, human, agent],
+      );
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective)
+         VALUES($1,$2,$3,'Ship push policy')`,
+        [corner, agent, human],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES($1,$2,'android','physical')`,
+        [token, human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+
+      await db.query(
+        `INSERT INTO messages
+           (id,room_id,author_id,text,presentation,card_type,card,system_event)
+         VALUES
+           ($1,$4,$6,'@bee opened a corner Ship push policy','card','daemon-fact',$7::jsonb,NULL),
+           ($2,$5,$6,'@GitHub opened a pull request Ship push policy','system',
+             'github-corner-note',$8::jsonb,$9::jsonb),
+           ($3,$4,$6,'@bee merged Ship push policy','card','daemon-fact',$10::jsonb,NULL)`,
+        [
+          '1'.repeat(64),
+          '2'.repeat(64),
+          '3'.repeat(64),
+          room,
+          corner,
+          agent,
+          JSON.stringify({ type: 'corner-open', cornerId: corner, objective: 'Ship push policy' }),
+          JSON.stringify({ source: 'github' }),
+          JSON.stringify({ verb: 'opened a pull request' }),
+          JSON.stringify({
+            type: 'corner-complete',
+            cornerId: corner,
+            objective: 'Ship push policy',
+            outcome: 'landed',
+          }),
+        ],
+      );
+
+      expect(await loop.runOnce()).toBe(2);
+      expect(send.mock.calls.map(([, message]) => message.messageId)).toEqual([
+        '1'.repeat(64),
+        '3'.repeat(64),
+      ]);
+      expect(
+        (
+          await db.query<{ message_id: string; status: string }>(
+            `SELECT message_id,status FROM push_delivery_claims ORDER BY message_id`,
+          )
+        ).rows,
+      ).toEqual([
+        { message_id: '1'.repeat(64), status: 'delivered' },
+        { message_id: '2'.repeat(64), status: 'suppressed' },
+        { message_id: '3'.repeat(64), status: 'delivered' },
+      ]);
+      expect(await loop.runOnce()).toBe(0);
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      await db.close();
+    }
+  });
   it.each([
     ['off', []],
     ['direct', ['dm', 'mention', 'reply', 'implicit', 'ask']],

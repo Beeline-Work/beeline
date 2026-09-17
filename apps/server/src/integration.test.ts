@@ -885,6 +885,9 @@ describe('monolith integration', () => {
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: true, workspaceId });
     expect(
+      await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
+    ).toEqual(expect.objectContaining({ name: 'Invites', joinedWorkspaceId: workspaceId }));
+    expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: false, workspaceId });
     expect(

@@ -1892,19 +1892,24 @@ export class PhoneService {
   }
 
   async readInvite(rawToken: string, viewerId: string): Promise<InviteView | null> {
-    void viewerId;
     if (!isCommunityInviteToken(rawToken)) return null;
     const result = await this.database.query<{
       name: string;
       avatar: string | null;
       expires_at: Date;
+      workspace_id: string;
+      already_joined: boolean;
     }>(
-      `SELECT w.name,w.avatar,i.expires_at FROM invites i
+      `SELECT w.name,w.avatar,i.expires_at,i.workspace_id,
+         EXISTS(SELECT 1 FROM memberships joined
+           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+       FROM invites i
        JOIN workspaces w ON w.id=i.workspace_id
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
-      [hash(rawToken)],
+      [hash(rawToken), viewerId],
     );
     const row = result.rows[0];
     return row
@@ -1912,6 +1917,7 @@ export class PhoneService {
           name: row.name,
           ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
           expiresAt: unix(row.expires_at),
+          ...(row.already_joined ? { joinedWorkspaceId: row.workspace_id } : {}),
         }
       : null;
   }
@@ -4106,15 +4112,24 @@ export class PhoneService {
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
     if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
-    const result = await this.database.query<{ workspace_id: string; created_by: string }>(
-      `SELECT i.workspace_id,i.created_by FROM invites i
+    const result = await this.database.query<{
+      workspace_id: string;
+      created_by: string;
+      already_joined: boolean;
+    }>(
+      `SELECT i.workspace_id,i.created_by,
+         EXISTS(SELECT 1 FROM memberships joined
+           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+       FROM invites i
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        WHERE i.token_hash=$1 AND i.expires_at>now()`,
-      [hash(input.token)],
+      [hash(input.token), viewerId],
     );
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
+    if (row.already_joined) return { joined: false, workspaceId: row.workspace_id };
     return this.database.transaction(async (database) => {
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,

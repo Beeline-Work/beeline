@@ -611,6 +611,8 @@ export type InviteView = {
   readonly avatar?: string;
   /** Absolute Unix timestamp in seconds. */
   readonly expiresAt: number;
+  /** Present when the authenticated viewer has already accepted this invite. */
+  readonly joinedWorkspaceId?: string;
 };
 
 /** Result of the server-authorized Workspace pairing bootstrap. */

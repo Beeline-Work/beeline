@@ -6,6 +6,7 @@ import {
   isCommunityInviteToken,
   normalizeAgentPairingCode,
   isCornerListView,
+  isInviteView,
   isRoomView,
   isWorkspaceListView,
   isPushLevel,
@@ -145,6 +146,18 @@ describe('phone contract', () => {
     expect(isCommunityInviteToken(`bzi_${'a'.repeat(64)}`)).toBe(true);
     expect(isCommunityInviteToken(`bzi_${'A'.repeat(42)}_`)).toBe(true);
     expect(isCommunityInviteToken(`bzi_${'a'.repeat(63)}`)).toBe(false);
+  });
+
+  it('accepts the authenticated membership hint on invite previews', () => {
+    const invite = { name: 'Builders', expiresAt: 2_000_000_000 };
+    expect(isInviteView(invite)).toBe(true);
+    expect(
+      isInviteView({
+        ...invite,
+        joinedWorkspaceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      }),
+    ).toBe(true);
+    expect(isInviteView({ ...invite, joinedWorkspaceId: false })).toBe(false);
   });
 
   it('owns the prefix-free agent pairing-code format while accepting unexpired legacy codes', () => {

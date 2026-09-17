@@ -191,6 +191,19 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findAllByProps({ testID: 'connect-helper-picker' })).toHaveLength(0);
   });
 
+  it('the ONE Google entry pairs as Google Workspace and lands on the first tool', async () => {
+    searchParams.params.connectorId = 'google';
+    const renderer = await render();
+    expect(
+      renderer.root.findAllByProps({ testID: 'connect-machine-picker' }).length,
+    ).toBeGreaterThan(0);
+    // Install state polls through the resolved tool connector: the mock's
+    // pair of `google` targets google-gmail, so its steps/sign-in arrive.
+    await pair(renderer);
+    await advancePolls(2);
+    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+  });
+
   it('shows the machine’s step-by-step install progress and then the sign-in button', async () => {
     const renderer = await render();
     await pair(renderer);

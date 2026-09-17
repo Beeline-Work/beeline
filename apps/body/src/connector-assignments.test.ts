@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import type {
@@ -228,6 +228,90 @@ describe('ConnectorAssignmentLoop', () => {
     expect(install.input.connectorId).toBe('conn-g');
     expect(install.input.signedInAs).toBe('dana@gmail.test');
     expect(api.calls.some((call) => call.op === 'postConnectorVault')).toBe(false);
+    loop.stop();
+  });
+
+  it('runs Google tool installs as ONE sequential batch sharing ONE grant resolution', async () => {
+    const api = apiMock([
+      { kind: 'install', connectorId: 'g1', connectorType: 'google-gmail' },
+      { kind: 'install', connectorId: 'g2', connectorType: 'google-calendar' },
+    ]);
+    const events: string[] = [];
+    const sharedFactories: (() => Promise<unknown>)[] = [];
+    const resolveSpy = vi.fn(() =>
+      Promise.resolve({ source: 'manual', credentials: { accessToken: 't' } }),
+    );
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      installGoogle: async (connectorType, _onProgress, shared) => {
+        if (shared) sharedFactories.push(shared);
+        events.push(`start:${connectorType}`);
+        if (shared) await shared();
+        events.push(`end:${connectorType}`);
+        return { status: 'connected', steps: [], signedInAs: 'dana@gmail.test' };
+      },
+      googleHome: '/tmp/google-home',
+    });
+    (
+      loop as unknown as { resolveGoogleCredentials: () => Promise<unknown> }
+    ).resolveGoogleCredentials = resolveSpy;
+    await loop.runOnce();
+    await settle();
+    // Sequential: the second tool starts only after the first finished.
+    expect(events).toEqual([
+      'start:google-gmail',
+      'end:google-gmail',
+      'start:google-calendar',
+      'end:google-calendar',
+    ]);
+    // ONE grant resolution: every tool of the drain rode the same promise.
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(sharedFactories).toHaveLength(2);
+    expect(sharedFactories[0]()).toBe(sharedFactories[1]());
+    loop.stop();
+  });
+
+  it('reports a failed Google tool install and continues with its siblings', async () => {
+    const api = apiMock([
+      { kind: 'install', connectorId: 'g1', connectorType: 'google-gmail' },
+      { kind: 'install', connectorId: 'g2', connectorType: 'google-drive' },
+    ]);
+    const installed: string[] = [];
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      installGoogle: async (connectorType) => {
+        if (connectorType === 'google-gmail') {
+          return {
+            status: 'error' as const,
+            steps: [{ label: 'authorized with Google', status: 'failed' as const, reason: 'scope refused' }],
+            errorMessage: 'scope refused',
+          };
+        }
+        installed.push(connectorType);
+        return { status: 'connected' as const, steps: [], signedInAs: 'dana@gmail.test' };
+      },
+      googleHome: '/tmp/google-home',
+    });
+    await loop.runOnce();
+    await settle();
+    expect(installed).toEqual(['google-drive']);
+    expect(
+      api.calls.some(
+        (call) => call.op === 'installConnector' && call.input.connectorId === 'g2',
+      ),
+    ).toBe(true);
+    expect(
+      api.calls.some(
+        (call) =>
+          call.op === 'postConnectorStatus' &&
+          call.input.connectorId === 'g1' &&
+          call.input.errorMessage === 'scope refused',
+      ),
+    ).toBe(true);
     loop.stop();
   });
 

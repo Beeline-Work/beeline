@@ -13,6 +13,8 @@
  * One helper carries ONE Squire account (captain decision 2026-09-14), so
  * after an install or a `sync` assignment the vault list is reported once
  * through `postConnectorVault` and covers every connector this helper serves.
+ * The four Google tool connectors ride ONE grant: their installs share a
+ * single credential resolution per drain and run one at a time.
  * One assignment at a time per connector; failures are logged, never raised —
  * the next poll retries.
  */
@@ -22,7 +24,14 @@ import type {
   ConnectorStep,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
-import { installGoogleTool, isGoogleToolConnectorType, type InstallGoogleToolResult } from './connector-google.js';
+import {
+  installGoogleTool,
+  isGoogleToolConnectorType,
+  loadManualGoogleCredentials,
+  readGoogleCredentialsFromVault,
+  type InstallGoogleToolResult,
+  type ResolvedGoogleCredentials,
+} from './connector-google.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   installSquire,
@@ -47,10 +56,13 @@ export type ConnectorAssignmentLoopOptions = {
   readonly mcp?: SquireMcpClient;
   /** Override the Squire install routine. */
   readonly install?: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
-  /** Override the Google tool install routine. */
+  /** Override the Google tool install routine. The third argument is the
+   * drain's SHARED grant-resolution factory: the single Google consent is
+   * resolved once and every Google tool install in the batch rides it. */
   readonly installGoogle?: (
     connectorType: ConnectorKind,
     onProgress: (steps: readonly ConnectorStep[]) => void,
+    sharedCredentials?: () => Promise<ResolvedGoogleCredentials>,
   ) => Promise<InstallGoogleToolResult>;
   /** Where manual google-credentials.json lives (defaults to the runtime home). */
   readonly googleHome?: string;
@@ -75,6 +87,7 @@ export class ConnectorAssignmentLoop {
   private readonly installGoogle: (
     connectorType: ConnectorKind,
     onProgress: (steps: readonly ConnectorStep[]) => void,
+    sharedCredentials?: () => Promise<ResolvedGoogleCredentials>,
   ) => Promise<InstallGoogleToolResult>;
   private readonly googleHomeDir: string;
   private readonly readVaultFn: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
@@ -97,8 +110,15 @@ export class ConnectorAssignmentLoop {
     this.intervalMs = options.intervalMs ?? CONNECTOR_POLL_INTERVAL_MS;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
-    this.installGoogle = options.installGoogle ?? ((connectorType, onProgress) =>
-      installGoogleTool({ connectorType, home: this.googleHome(), onProgress }));
+    this.installGoogle = options.installGoogle ?? ((connectorType, onProgress, sharedCredentials) =>
+      installGoogleTool({
+        connectorType,
+        home: this.googleHome(),
+        onProgress,
+        resolvedCredentials: sharedCredentials
+          ? sharedCredentials()
+          : this.resolveGoogleCredentials(),
+      }));
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
@@ -144,15 +164,70 @@ export class ConnectorAssignmentLoop {
       this.log(`connector assignments unavailable: ${describe(error)}`);
       return;
     }
+    let googleBatch: ConnectorAssignment[] | undefined;
     for (const assignment of assignments) {
       const key = `${assignment.kind}:${assignment.connectorId}`;
       if (assignment.kind === 'uninstall') continue; // the server reaps disconnected rows
+      // Google tool installs do not race each other or their siblings: one
+      // drain runs them as ONE sequential batch behind ONE shared grant
+      // resolution — the single Google consent — instead of four parallel
+      // install processes on the machine (one-connector-per-machine pairing
+      // is preserved; each tool still fails independently).
+      if (assignment.kind === 'install' && isGoogleToolConnectorType(assignment.connectorType)) {
+        if (this.inFlight.has(key)) continue;
+        this.inFlight.add(key);
+        (googleBatch ??= []).push(assignment);
+        continue;
+      }
       if (this.inFlight.has(key)) continue;
       this.inFlight.add(key);
       void this.handle(assignment)
         .catch((error) => this.log(`connector assignment ${key} failed: ${describe(error)}`))
         .finally(() => this.inFlight.delete(key));
     }
+    if (googleBatch) this.flushGoogleBatch(googleBatch);
+  }
+
+  private flushGoogleBatch(batch: readonly ConnectorAssignment[]): void {
+    const keys = batch.map((a) => `${a.kind}:${a.connectorId}`);
+    void this.runGoogleBatch(batch)
+      .catch((error) => this.log(`google connector installs failed: ${describe(error)}`))
+      .finally(() => {
+        for (const key of keys) this.inFlight.delete(key);
+      });
+  }
+
+  /** The Google tool connectors ride ONE grant: every install in the batch
+   * shares one credential resolution (the single Google consent) and the
+   * installs run one at a time. Each tool still verifies and fails
+   * independently — a grant that cannot serve one tool's scope refuses that
+   * tool alone, never its siblings. */
+  private async runGoogleBatch(batch: readonly ConnectorAssignment[]): Promise<void> {
+    let shared: Promise<ResolvedGoogleCredentials> | undefined;
+    const sharedCredentials = () => (shared ??= this.resolveGoogleCredentials());
+    for (const assignment of batch) {
+      await this.runGoogleInstall(
+        assignment.connectorId,
+        assignment.connectorType,
+        sharedCredentials,
+      );
+    }
+  }
+
+  /** The ONE grant resolution shared by every Google tool install of a
+   * drain: the Squire one-click vault path first, then the manual
+   * credentials path. Never rejects — a failure resolves as an unusable
+   * grant each install reports through its own steps. */
+  private resolveGoogleCredentials(): Promise<ResolvedGoogleCredentials> {
+    return (async () => {
+      try {
+        const oneClick = await readGoogleCredentialsFromVault(this.squire());
+        if (oneClick.source === 'squire') return oneClick;
+      } catch (error) {
+        this.log(`google one-click grant lookup failed: ${describe(error)}`);
+      }
+      return loadManualGoogleCredentials(this.googleHome(), process.env);
+    })();
   }
 
   private squire(): SquireMcpClient {
@@ -162,11 +237,7 @@ export class ConnectorAssignmentLoop {
 
   private async handle(assignment: ConnectorAssignment): Promise<void> {
     if (assignment.kind === 'install') {
-      if (isGoogleToolConnectorType(assignment.connectorType)) {
-        await this.runGoogleInstall(assignment.connectorId, assignment.connectorType);
-      } else {
-        await this.runInstall(assignment.connectorId);
-      }
+      await this.runInstall(assignment.connectorId);
     } else if (assignment.kind === 'sync') await this.runSync();
     else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
@@ -177,10 +248,12 @@ export class ConnectorAssignmentLoop {
     return this.googleHomeDir;
   }
 
-  /** Install one Google tool connector (Gmail/Calendar/Drive/YouTube). */
+  /** Install one Google tool connector (Gmail/Calendar/Drive/YouTube),
+   * riding the drain's shared grant resolution. */
   private async runGoogleInstall(
     connectorId: string,
     connectorType: ConnectorKind,
+    sharedCredentials: () => Promise<ResolvedGoogleCredentials>,
   ): Promise<void> {
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
@@ -189,7 +262,7 @@ export class ConnectorAssignmentLoop {
         this.log(`step report failed: ${describe(error)}`);
       }
     };
-    const result = await this.installGoogle(connectorType, report);
+    const result = await this.installGoogle(connectorType, report, sharedCredentials);
     if (result.status === 'error') {
       await this.api.execute('postConnectorStatus', {
         agentId: this.agentId,

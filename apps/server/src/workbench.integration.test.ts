@@ -526,6 +526,82 @@ describe('workbench connectors', () => {
     expect(again.status.steps.length).toBeGreaterThan(0);
   });
 
+  it('pairing ONE Google tool provisions all four tool connectors on the machine', async () => {
+    // The single Google connect entry pairs the whole set: one grant, four
+    // server-side tool rows, so the entry's repair state tops up every
+    // missing tool without a second consent.
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'google-gmail',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+
+    const rows = await database.query<{ connector_type: string; status: string }>(
+      `SELECT connector_type,status FROM workspace_connectors
+       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
+         AND connector_type LIKE 'google-%'`,
+      [WORKSPACE, HUMAN, HELPER],
+    );
+    const byType = Object.fromEntries(rows.rows.map((row) => [row.connector_type, row.status]));
+    expect(Object.keys(byType).sort()).toEqual(
+      ['google-gmail', 'google-calendar', 'google-drive', 'google-youtube'].sort(),
+    );
+    expect(byType['google-gmail']).toBe('installing');
+    for (const type of ['google-calendar', 'google-drive', 'google-youtube']) {
+      expect(byType[type]).toBe('installing');
+    }
+
+    // Every sibling re-armed like the primary: fresh steps, no error line,
+    // and the helper daemon picks up all four installs on its next poll.
+    const queue = await daemonOperation('getConnectorAssignments', {});
+    const kinds = (queue.body as { assignments?: { kind: string; connectorType: string }[] })
+      .assignments?.filter((assignment) => assignment.connectorType?.startsWith('google-'));
+    expect(kinds?.map((assignment) => assignment.connectorType).sort()).toEqual(
+      ['google-calendar', 'google-drive', 'google-gmail', 'google-youtube'].sort(),
+    );
+    expect(kinds?.every((assignment) => assignment.kind === 'install')).toBe(true);
+  });
+
+  it('re-pairing one Google tool re-arms only the unconnected siblings', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'google-gmail',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+
+    // One sibling already carries a live grant from the first pairing.
+    await database.query(
+      `UPDATE workspace_connectors SET status='connected', connected_at=now()
+       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
+         AND connector_type='google-youtube'`,
+      [WORKSPACE, HUMAN, HELPER],
+    );
+
+    const again = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'google-gmail',
+      helperAgentId: HELPER,
+    })) as { connectorId: string; status: { status: string } };
+    expect(again.connectorId).toBe(paired.connectorId);
+    expect(again.status.status).toBe('installing');
+
+    const rows = await database.query<{ connector_type: string; status: string; connected_at: Date | null }>(
+      `SELECT connector_type,status,connected_at FROM workspace_connectors
+       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
+         AND connector_type LIKE 'google-%'`,
+      [WORKSPACE, HUMAN, HELPER],
+    );
+    const byType = Object.fromEntries(
+      rows.rows.map((row) => [row.connector_type, { status: row.status, connectedAt: row.connected_at }]),
+    );
+    // The connected sibling keeps its live grant untouched; the rest re-arm.
+    expect(byType['google-youtube']!.status).toBe('connected');
+    expect(byType['google-youtube']!.connectedAt).not.toBeNull();
+    for (const type of ['google-gmail', 'google-calendar', 'google-drive']) {
+      expect(byType[type]!.status).toBe('installing');
+    }
+  });
+
   it('keeps the connector receipt DM read-only for everyone but the connector identity', async () => {
     const connectorId = await pairOwnerConnector();
     await daemonOperation('postConnectionUsage', {

@@ -105,6 +105,10 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
+import {
+  GOOGLE_CONNECTOR_KINDS,
+  isGoogleToolConnectorKind,
+} from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -5476,6 +5480,40 @@ export class PhoneService {
     // derives its assignments from `status` AND `helper_agent_id` — receives
     // the install on its next poll even when the conflict row carried a
     // different agent of the same machine or a leftover `uninstall` op.
+    // ONE Google consent covers all four tool connectors: pairing any Google
+    // tool provisions the whole set on this machine, so the single Google
+    // connect entry tops up every missing tool. A sibling that is already
+    // connected keeps its live grant — only missing or broken siblings are
+    // (re-)armed.
+    if (isGoogleToolConnectorKind(input.connectorType)) {
+      for (const siblingType of GOOGLE_CONNECTOR_KINDS) {
+        if (siblingType === input.connectorType) continue;
+        await this.database.query(
+          `INSERT INTO workspace_connectors(
+             id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
+             status,status_steps
+           ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
+           ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+           SET helper_agent_id=EXCLUDED.helper_agent_id,
+               status='installing',
+               status_steps=EXCLUDED.status_steps,
+               status_error=NULL,
+               pending_ops='[]'::jsonb,
+               connected_at=NULL,
+               updated_at=now()
+           WHERE workspace_connectors.status <> 'connected'`,
+          [
+            randomUUID(),
+            ws.workspace_id,
+            viewerId,
+            siblingType,
+            matched.agent_id,
+            machineId,
+            JSON.stringify(defaultConnectorSteps()),
+          ],
+        );
+      }
+    }
     const existing =
       (
         await this.database.query<{

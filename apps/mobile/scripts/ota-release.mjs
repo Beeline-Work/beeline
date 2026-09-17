@@ -33,6 +33,10 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // runtime. Turning it off removes only the iOS@23 compatibility target.
 export const PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
 
+// Publish ios@25 alongside ios@26 until the captain's ios@25 device adopts a
+// newer store binary. Captain-directed legacy-pin coverage (2026-09-17).
+export const PUBLISH_IOS_RUNTIME_25_DURING_PUSH_ROLLOUT = true;
+
 // Publish android@23 alongside android@25 until the captain's runtime-23
 // device adopts a newer store binary. Mirror of the iOS@23 compat target.
 export const PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true;
@@ -48,6 +52,7 @@ export function releaseUpdateTargets(
   projectDir = process.cwd(),
   publishIosRuntime23 = PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
   publishAndroidRuntime23 = PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT,
+  publishIosRuntime25 = PUBLISH_IOS_RUNTIME_25_DURING_PUSH_ROLLOUT,
 ) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
@@ -57,6 +62,7 @@ export function releaseUpdateTargets(
     { platform: 'android', runtimeVersion: pins.android },
     ...(publishAndroidRuntime23 ? [{ platform: 'android', runtimeVersion: '23' }] : []),
     ...(publishIosRuntime23 ? [{ platform: 'ios', runtimeVersion: '23' }] : []),
+  ...(publishIosRuntime25 ? [{ platform: 'ios', runtimeVersion: '25' }] : []),
     { platform: 'ios', runtimeVersion: pins.ios },
   ];
   return targets.filter(
@@ -72,11 +78,15 @@ function fail(message) {
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  const options = { command, dryRun: false };
+  const options = { command, dryRun: false, embedded: false };
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
     if (token === '--dry-run') {
       options.dryRun = true;
+      continue;
+    }
+    if (token === '--embedded') {
+      options.embedded = true;
       continue;
     }
     if (!token.startsWith('--')) fail(`Unexpected argument: ${token}`);
@@ -757,10 +767,24 @@ function deliveryTarget(options) {
 }
 
 function rollback(options) {
+  // Embedded-only mode serves the runtime's FIRST production release: its
+  // ledger carries no previousProductionGroupId because no earlier update
+  // group exists to republish, and the only known-good bundle is the one
+  // embedded in that release's store binary. Every current production target
+  // is rolled back through update:roll-back-to-embedded instead.
+  const embeddedOnly = options.embedded === true;
   const sourceIds = groupIdList(options.group);
   let currentTargets = [];
-  if (sourceIds.length === 0) fail('rollback requires --group');
-  if (sourceIds.length > releaseUpdateTargets(process.cwd()).length) {
+  if (embeddedOnly && sourceIds.length > 0) {
+    fail('rollback --embedded rolls back to the embedded update and takes no --group');
+  }
+  if (!embeddedOnly && sourceIds.length === 0) fail('rollback requires --group');
+  if (embeddedOnly && !options.expectedCurrentGroup) {
+    fail(
+      'rollback --embedded requires --expected-current-group naming the production group being rolled back',
+    );
+  }
+  if (!embeddedOnly && sourceIds.length > releaseUpdateTargets(process.cwd()).length) {
     fail(
       `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
     );
@@ -804,18 +828,25 @@ function rollback(options) {
         );
         return;
       }
+    } else if (embeddedOnly && options.dryRun) {
+      // A dry run has no production payload to read; name the configured
+      // release targets so the printed plan shows one embedded rollback per
+      // target, mirroring what a real run would query from production.
+      currentTargets = releaseUpdateTargets(process.cwd());
     }
   }
-  const rolledBack = republishGroups(
-    sourceIds.map((group) => [group, null]),
-    {
-      label: 'Production rollback',
-      describe: (group) => `rollback production to ${group}`,
-      dryRun: options.dryRun,
-      expectedPlatforms: RELEASE_PLATFORMS,
-    },
-  );
-  if (options.dryRun) return;
+  const rolledBack = embeddedOnly
+    ? { updates: [] }
+    : republishGroups(
+        sourceIds.map((group) => [group, null]),
+        {
+          label: 'Production rollback',
+          describe: (group) => `rollback production to ${group}`,
+          dryRun: options.dryRun,
+          expectedPlatforms: RELEASE_PLATFORMS,
+        },
+      );
+  if (options.dryRun && !embeddedOnly) return;
   const restoredTargetKeys = new Set(rolledBack.updates.map(targetKey));
   const missingTargets = currentTargets.filter(
     (target) => !restoredTargetKeys.has(targetKey(target)),
@@ -835,10 +866,12 @@ function rollback(options) {
         '--json',
         '--non-interactive',
       ],
-      { env: { EXPO_RUNTIME_OVERRIDE: target.runtimeVersion } },
+      { env: { EXPO_RUNTIME_OVERRIDE: target.runtimeVersion }, dryRun: options.dryRun },
     );
+    if (options.dryRun) return { ...target, update: null };
     return requireTargetUpdate(result, `Embedded rollback of ${targetKey(target)}`, target);
   });
+  if (options.dryRun) return;
   const restoredTargets = [
     ...rolledBack.updates.map((update) => ({ ...update, update })),
     ...embeddedRollbackTargets,
@@ -856,6 +889,7 @@ function rollback(options) {
   writeLedger(options.ledger, {
     schemaVersion: 2,
     status: 'rolled-back',
+    ...(embeddedOnly ? { embeddedOnly: true } : {}),
     sourceGroupIds: sourceIds,
     sourceGroupId: joinGroupIds(sourceIds),
     productionGroupIds: platformGroupSummary(restoredTargets, configuredPins),

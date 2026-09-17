@@ -2,7 +2,9 @@
 # never releases current main. With no `rollback_group`, the predecessor is
 # read from the newest successful release run's `mobile-ota-promoted-<sha>`
 # ledger artifact. That ledger also supplies the exact current groups so the
-# rollback cannot overwrite a newer release or miss a rollout runtime.
+# rollback cannot overwrite a newer release or miss a rollout runtime. A
+# runtime's first production release has no predecessor group; its rollback
+# rolls every current target back to the embedded update instead.
 name: Mobile OTA rollback recovery (does not release current main)
 
 on:
@@ -77,9 +79,17 @@ jobs:
               const current = ledger.production?.groupId ?? ledger.production?.groupIds;
               const currentIds = [...new Set((typeof current === "string" ? current.split(",") : Object.values(current ?? {})).map((id) => String(id).trim()).filter(Boolean))];
               const rollbackIds = explicit ? explicit.split(",").map((id) => id.trim()).filter(Boolean) : ids;
-              if (rollbackIds.length === 0) throw new Error("release ledger has no previousProductionGroupId");
               if (currentIds.length === 0) throw new Error("release ledger has no production.groupId");
-              fs.appendFileSync(output, "group_id=" + rollbackIds.join(",") + "\ncurrent_group_id=" + currentIds.join(",") + "\n");
+              if (explicit && rollbackIds.length === 0) throw new Error("explicit rollback_group resolved to no group id");
+              // The FIRST production release on a runtime has no earlier
+              // update group to republish, so the ledger carries no
+              // previousProductionGroupId. That is not a failure: the store
+              // binary built for that release carries the only known-good
+              // bundle, so the rollback rolls every current production target
+              // back to the embedded update instead.
+              const embeddedOnly = rollbackIds.length === 0;
+              if (embeddedOnly) console.log("no previousProductionGroupId on the ledger; rolling back to the embedded update of the release store binary");
+              fs.appendFileSync(output, "group_id=" + rollbackIds.join(",") + "\ncurrent_group_id=" + currentIds.join(",") + "\nembedded_only=" + embeddedOnly + "\n");
             ' "$RUNNER_TEMP/last-good" "$GITHUB_OUTPUT" "$group"
 
       # EAS loads app.config.js and its local Expo plugins before it can issue
@@ -94,6 +104,7 @@ jobs:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
           ROLLBACK_GROUP: ${{ steps.rollback_source.outputs.group_id }}
           EXPECTED_CURRENT_GROUP: ${{ steps.rollback_source.outputs.current_group_id }}
+          EMBEDDED_ONLY: ${{ steps.rollback_source.outputs.embedded_only }}
         run: |
           set -euo pipefail
           if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
@@ -103,7 +114,14 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             npx --yes eas-cli@22.2.0 update:list --branch production --limit 1 --json --non-interactive >/dev/null
           fi
-          args=(rollback --group "$ROLLBACK_GROUP" --expected-current-group "$EXPECTED_CURRENT_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json")
+          # Embedded-only mode serves a runtime's first production release: no
+          # predecessor group exists, so every current target rolls back to
+          # the embedded update of this release's store binary.
+          if [ "$EMBEDDED_ONLY" = "true" ]; then
+            args=(rollback --embedded --expected-current-group "$EXPECTED_CURRENT_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json")
+          else
+            args=(rollback --group "$ROLLBACK_GROUP" --expected-current-group "$EXPECTED_CURRENT_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json")
+          fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
           node scripts/ota-release.mjs "${args[@]}"
 

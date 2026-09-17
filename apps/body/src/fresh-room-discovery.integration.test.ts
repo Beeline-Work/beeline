@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { chmod, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -48,7 +50,7 @@ import { createInterface } from 'node:readline';
 const lines = createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
 
-lines.on('line', (line) => {
+lines.on('line', async (line) => {
   let message;
   try { message = JSON.parse(line); } catch { return; }
   if (message.method === 'initialize') {
@@ -67,6 +69,67 @@ lines.on('line', (line) => {
         update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ECHO REPLY' } },
       },
     });
+    if (text.includes('OPEN CORNER')) {
+      // Play the open_corner tool: read the turn context the loop persists for
+      // the mounted MCP surface, then call the daemon operation it calls.
+      const { readdir, readFile } = await import('node:fs/promises');
+      const { join: pjoin } = await import('node:path');
+      const dir = process.env.BEELINE_TEST_CONTEXT_DIR;
+      const contexts = dir ? (await readdir(dir)).filter(
+        (f) => f.startsWith('beeline-command-') && f.endsWith('.json'),
+      ) : [];
+      let ctx;
+      for (const f of contexts) {
+        try {
+          const parsed = JSON.parse(await readFile(pjoin(dir, f), 'utf8'));
+          if (
+            parsed.roomId &&
+            parsed.requestId &&
+            parsed.generationId &&
+            parsed.roomId === process.env.BEELINE_DAEMON_ROOM_ID
+          )
+            ctx = parsed;
+        } catch {}
+      }
+      if (!ctx) console.error('[fake-harness] no turn context in', dir);
+      try {
+      const response = await fetch(
+        new URL('/v1/daemon/operations/createCorner', process.env.BEELINE_DAEMON_BASE_URL + '/'),
+        {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer ' + process.env.BEELINE_DAEMON_TOKEN,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...ctx,
+            name: 'Thing',
+            objective: 'Build the thing',
+            ...(process.env.BEELINE_TEST_REPO_KEY
+              ? { repository: process.env.BEELINE_TEST_REPO_KEY, targetBranch: 'main' }
+              : {}),
+          }),
+        },
+      );
+      const body = await response.json();
+      const cornerId = body.cornerId ?? ('http-' + response.status + ':' + JSON.stringify(body));
+      // Production fidelity: the parent turn keeps running after open_corner.
+      await new Promise((r) => setTimeout(r, 3000));
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'CORNER OPENED ' + cornerId },
+          },
+        },
+      });
+      } catch (error) {
+        console.error('[fake-harness] open corner failed', error);
+      }
+    }
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);
@@ -144,7 +207,10 @@ describe('fresh Room discovery through the live membership wake', () => {
     }));
     const phone = new PhoneService(database, 'http://placeholder');
     live = new LiveHub();
-    const daemon = new DaemonService(database, live);
+    const daemon = new DaemonService(database, live, async () => ({
+      token: 'test-room-token',
+      expiresAt: Date.now() + 60_000,
+    }));
     server = createBeelineServer({ database, auth, phone, daemon, live });
     listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 50);
     void listener.run();
@@ -194,7 +260,14 @@ describe('fresh Room discovery through the live membership wake', () => {
       mcpBinary: process.execPath,
       readonlyMcpCommand: process.execPath,
       readonlyMcpArgs: [],
-      agentEnv: { PATH: process.env.PATH ?? '', HOME: harnessHome },
+      agentEnv: {
+        PATH: process.env.PATH ?? '',
+        HOME: harnessHome,
+        BEELINE_DAEMON_BASE_URL: origin,
+        BEELINE_DAEMON_TOKEN: daemonToken,
+        BEELINE_DAEMON_ROOM_ID: ROOM,
+        BEELINE_TEST_CONTEXT_DIR: resolve(supervisorRoot, 'rooms', ROOM, 'agent-home'),
+      },
       workspaceRoot: join(supervisorRoot, 'workspace'),
       relayBaseUrl: origin,
       relayHost: '127.0.0.1',
@@ -257,6 +330,145 @@ describe('fresh Room discovery through the live membership wake', () => {
       },
       { timeout: 30_000, interval: 500 },
     );
+  });
+
+  it('agent works a freshly opened corner without a reconciliation heartbeat', { timeout: 120_000 }, async () => {
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: 'f'.repeat(64),
+      text: '@bee OPEN CORNER now',
+    });
+    // The Room turn itself must run at all.
+    await vi.waitFor(
+      async () => {
+        const room = await readRoom(ROOM);
+        expect(
+          room.messages.some((m) => (m.text ?? '').includes('CORNER OPENED ')),
+        ).toBe(true);
+      },
+      { timeout: 30_000, interval: 500 },
+    );
+    const room = await readRoom(ROOM);
+    const cornerId = room.messages
+      .find((m) => (m.text ?? '').includes('CORNER OPENED '))!
+      .text!.match(/CORNER OPENED (\S+)/)![1];
+    // The corner the agent itself just opened must be discovered and served
+    // through the live wake — never by the ten-minute heartbeat.
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(cornerId), {
+      timeout: 15_000,
+    });
+    // And the corner's opening objective must be claimed and answered.
+    await vi.waitFor(
+      async () => {
+        const corner = await readRoom(cornerId);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+      },
+      { timeout: 30_000, interval: 500 },
+    );
+  });
+
+  it('a corner still acts when a sibling Room cannot materialize its checkout', { timeout: 120_000 }, async () => {
+    // A second top-level Room whose repository checkout can NEVER materialize.
+    // startRoom runs before the corner-start pass in reconcile(); without
+    // per-Room isolation this deterministic failure aborts every reconcile
+    // before any corner starts — the agent keeps serving its running Rooms and
+    // looks healthy, while the freshly opened corner never acts.
+    const brokenRoom = '33333333-3333-4333-8333-333333333333';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,name,repository_key,repository_remote,repository_target_branch)
+       VALUES($1,$2,'#broken',$3,$4,'main')`,
+      [brokenRoom, WORKSPACE, 'owner/gone', 'file:///nonexistent/beeline-corner-open-broken.git'],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
+      [WORKSPACE, brokenRoom, AGENT],
+    );
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: 'd'.repeat(64),
+      text: '@bee OPEN CORNER now',
+    });
+    const room = await vi.waitFor(
+      async () => {
+        const room = await readRoom(ROOM);
+        expect(room.messages.some((m) => (m.text ?? '').includes('CORNER OPENED '))).toBe(true);
+        return room;
+      },
+      { timeout: 30_000, interval: 500 },
+    );
+    const cornerId = room.messages
+      .find((m) => (m.text ?? '').includes('CORNER OPENED '))!
+      .text!.match(/CORNER OPENED (\S+)/)![1];
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(cornerId), {
+      timeout: 15_000,
+    });
+    await vi.waitFor(
+      async () => {
+        const corner = await readRoom(cornerId);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+      },
+      { timeout: 30_000, interval: 500 },
+    );
+    // The broken Room itself never becomes active.
+    expect(core.activeRoomIds()).not.toContain(brokenRoom);
+  });
+
+  it('agent works a freshly opened repository corner without a reconciliation heartbeat', { timeout: 120_000 }, async () => {
+    // A real local git origin keeps the worktree materialization honest.
+    const execFileAsync = promisify(execFile);
+    const origin = resolve(supervisorRoot, 'origin.git');
+    const seed = resolve(supervisorRoot, 'seed');
+    await execFileAsync('git', ['init', '--bare', '-b', 'main', origin]);
+    await execFileAsync('git', ['clone', origin, seed]);
+    await writeFile(resolve(seed, 'README.md'), '# widgets\n');
+    await execFileAsync('git', ['-C', seed, 'add', 'README.md']);
+    await execFileAsync('git', ['-C', seed, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init']);
+    await execFileAsync('git', ['-C', seed, 'push', 'origin', 'main']);
+    await database.query(
+      `UPDATE rooms SET repository_key='owner/widgets',
+         repository_remote=$2,
+         repository_target_branch='main'
+       WHERE id=$1`,
+      [ROOM, 'file://' + origin],
+    );
+    process.env.BEELINE_TEST_REPO_KEY = 'owner/widgets';
+    try {
+      await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
+      await operation('sendRoomMessage', {
+        roomId: ROOM,
+        messageId: 'e'.repeat(64),
+        text: '@bee OPEN CORNER now',
+      });
+      const room = await vi.waitFor(
+        async () => {
+          const room = await readRoom(ROOM);
+          expect(
+            room.messages.some((m) => (m.text ?? '').includes('CORNER OPENED ')),
+          ).toBe(true);
+          return room;
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+      const cornerId = room.messages
+        .find((m) => (m.text ?? '').includes('CORNER OPENED '))!
+        .text!.match(/CORNER OPENED (\S+)/)![1];
+      expect(cornerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      await vi.waitFor(() => expect(core.activeRoomIds()).toContain(cornerId), {
+        timeout: 15_000,
+      });
+      await vi.waitFor(
+        async () => {
+          const corner = await readRoom(cornerId);
+          expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+    } finally {
+      delete process.env.BEELINE_TEST_REPO_KEY;
+    }
   });
 
   it('pushes rooms-changed to a connected daemon socket on membership change', { timeout: 60_000 }, async () => {

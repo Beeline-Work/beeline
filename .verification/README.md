@@ -39,7 +39,7 @@ Web render proof (react-native-web, the Tauri desktop shell's renderer and expo
 web share this stack) — the real `MessageReactionStrip` plus before/after chip
 and strip cells:
 
-    node apps/mobile/scripts/render-emoji-clip-proof.mjs
+    npm run emoji-clip:proof -w apps/mobile
     google-chrome --headless=new --no-sandbox --screenshot=.verification/emoji-top-clip-web.png \
       --window-size=430,620 --force-device-scale-factor=3 http://127.0.0.1:4177
 

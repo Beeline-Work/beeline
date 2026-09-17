@@ -921,6 +921,24 @@ test('the emulator release proof gates OTA promotion', () => {
   assert.match(aab.if, /needs\.mobile_native_android\.result == 'success'/);
   assert.match(aab.with.name, /mobile-native-android-build-/);
   assert.match(apk.if, /needs\.mobile_native_android\.result != 'success'/);
+  // The sideload build IS the carried-build proof path: npm ci installs
+  // @beeline/* as unbuilt file: symlinks whose package `main` is dist/index.js
+  // (gitignored), so Metro dies in createBundleReleaseJsAndAssets with
+  // "this package itself specifies a `main` module field that could not be
+  // resolved" and no commit whose Android build was carried can ever be
+  // proven (run 35041737312). The step must build the SDK dist exactly the
+  // way the native leg's eas-build-post-install does, after npm ci.
+  assert.match(apk.run, /npm ci/);
+  assert.match(apk.run, /npm run eas-build-post-install/);
+  assert.ok(
+    apk.run.indexOf('npm ci') < apk.run.indexOf('npm run eas-build-post-install'),
+    'eas-build-post-install must run after npm ci',
+  );
+  // The runner's system node is older than metro-config's use of
+  // Array.prototype.toReversed, so the proof job must pin the same node
+  // version the native build bundles on.
+  const proofNode = steps.find((step) => step.uses === 'actions/setup-node@v4');
+  assert.equal(String(proofNode.with['node-version']), '22');
   // The shared rig emulator must survive the OTA-only APK build's teardown.
   assert.equal(apk.env.BEELINE_ANDROID_KEEP_DEVICE, '1');
   assert.match(apk.env.ANDROID_SIDELOAD_KEYSTORE_B64, /secrets\./);
@@ -961,6 +979,29 @@ test('the emulator release proof gates OTA promotion', () => {
   const record = result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
   assert.match(record.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
   assert.match(record.run, /Promoted with skip_release_proof=true/);
+});
+
+test('the proof reinstalls over a foreign signature and signs in through the review bypass', () => {
+  const proof = readFileSync(
+    new URL('../apps/mobile/scripts/release-proof.mjs', import.meta.url),
+    'utf8',
+  );
+  // A rig whose last installed app.usebeeline was signed with a different
+  // keystore refuses a clean install with INSTALL_FAILED_UPDATE_INCOMPATIBLE
+  // (run 35051048162), so installArtifact must uninstall the existing package
+  // before every install attempt, APK and AAB alike.
+  const installFn = proof.indexOf('function installArtifact');
+  const uninstall = proof.indexOf("adb(device, ['uninstall', APP_ID]");
+  const install = proof.indexOf("adb(device, ['install'");
+  assert.ok(installFn >= 0, 'installArtifact must exist');
+  assert.ok(uninstall > installFn, 'uninstall must run inside installArtifact');
+  assert.ok(install > uninstall, 'install must follow the uninstall');
+  // The rig session cannot be assumed: a preflight that finds the app signed
+  // out fails the whole proof (run 35055087014). The review bypass
+  // (BEELINE_REVIEW_SECRET -> beeline://review/<secret>) re-establishes a
+  // signed-in session the same way a real sign-in lands.
+  assert.match(proof, /BEELINE_REVIEW_SECRET/);
+  assert.match(proof, /beeline:\/\/review\//);
 });
 
 // Evaluates the subset of GitHub workflow expressions the release gates use:

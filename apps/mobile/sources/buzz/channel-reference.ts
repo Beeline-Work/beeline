@@ -64,6 +64,17 @@ export type ChannelReferenceMatch = {
 };
 
 /**
+ * A Room read deliberately hides both missing Rooms and Rooms the viewer may
+ * not enter behind the same 404. Treat an explicit 403 the same way, while
+ * leaving connection and server failures available for a retryable error.
+ */
+export function isUnavailableChannelReferenceError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('status' in error)) return false;
+  const status = (error as { readonly status?: unknown }).status;
+  return status === 403 || status === 404;
+}
+
+/**
  * Build the workspace-scoped lookup index. Duplicate ids keep their first
  * entry; entries with empty names are dropped; corners whose parent Room is
  * absent from `rooms` are skipped (a corner reference is written through its

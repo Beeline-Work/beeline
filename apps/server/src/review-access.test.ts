@@ -1,9 +1,22 @@
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 import { TokenAuth, type PhoneTokens } from './auth.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { REVIEW_IDENTITY_ID, REVIEW_IDENTITY_NAME, ReviewAccess } from './review-access.js';
+import {
+  REVIEW_IDENTITY_ID,
+  REVIEW_IDENTITY_NAME,
+  ReviewAccess,
+} from './review-access.js';
+import {
+  REVIEW_PROOF_CORNER_ID,
+  REVIEW_PROOF_OBJECTIVE,
+  REVIEW_PROOF_ROOM_ID,
+  ensureReviewProofFixture,
+} from './review-proof-fixture.js';
+import { PhoneService } from './phone-service.js';
+import { joinRooms } from './membership-join.js';
 
 const SECRET = 'play-review-secret-value-0001';
 
@@ -116,7 +129,74 @@ describe('the review identity', () => {
     expect(memberships.rows).toEqual([
       { workspace_id: DEFAULT_WORKSPACE_ID, room_id: null },
       { workspace_id: DEFAULT_WORKSPACE_ID, room_id: WELCOME_ROOM_ID },
+      { workspace_id: DEFAULT_WORKSPACE_ID, room_id: REVIEW_PROOF_ROOM_ID },
+      { workspace_id: DEFAULT_WORKSPACE_ID, room_id: REVIEW_PROOF_CORNER_ID },
     ]);
+  });
+
+  it('seeds the release-proof fixture: one invite-only room with one live corner on the deck', async () => {
+    await auth.exchangeReviewIdentity();
+    const phone = new PhoneService(database, 'http://placeholder');
+    const deck = await phone.readChats(DEFAULT_WORKSPACE_ID, REVIEW_IDENTITY_ID);
+    expect(deck).not.toBeNull();
+    const proofRoom = deck!.chats.find((chat) => chat.room.id === REVIEW_PROOF_ROOM_ID);
+    expect(proofRoom?.cornerCount).toBe(1);
+    const corners = await phone.readCorners(REVIEW_PROOF_ROOM_ID, REVIEW_IDENTITY_ID);
+    expect(corners?.corners.map((corner) => corner.corner.id)).toEqual([REVIEW_PROOF_CORNER_ID]);
+    expect(corners?.corners[0]?.state).toBe('waiting');
+    // The corner screen's objective line reads the corner Room's `about`.
+    const cornerRoom = await phone.readRoom(REVIEW_PROOF_CORNER_ID, REVIEW_IDENTITY_ID);
+    expect(cornerRoom?.room.about).toBe(REVIEW_PROOF_OBJECTIVE);
+  });
+
+  it('the proof fixture is visible to no one else', async () => {
+    await auth.exchangeReviewIdentity();
+    // Another person lands the ordinary way: #welcome, never the proof room.
+    const other = createHash('sha256').update('other-human').digest('hex');
+    await database.transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO identities(id,kind,name,handle,updated_at) VALUES($1,'human','Other','other',now())
+         ON CONFLICT(id) DO NOTHING`,
+        [other],
+      );
+      await tx.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
+        [DEFAULT_WORKSPACE_ID, other],
+      );
+      await joinRooms(tx, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        identityId: other,
+        rooms: { type: 'all-live-top-level' },
+        workspaceJoined: true,
+      });
+    });
+    const members = await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships
+       WHERE room_id IN ($1,$2) AND removed_at IS NULL`,
+      [REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID],
+    );
+    expect(members.rows).toEqual([{ identity_id: REVIEW_IDENTITY_ID }, { identity_id: REVIEW_IDENTITY_ID }]);
+  });
+
+  it('reseeding the fixture changes nothing', async () => {
+    await auth.exchangeReviewIdentity();
+    await auth.exchangeReviewIdentity();
+    await database.transaction(async (tx) => {
+      await ensureReviewProofFixture(tx, REVIEW_IDENTITY_ID, DEFAULT_WORKSPACE_ID);
+    });
+    const rooms = await database.query<{ id: string }>(
+      `SELECT id FROM rooms WHERE id IN ($1,$2)`,
+      [REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID],
+    );
+    expect(rooms.rows.map((row) => row.id).sort()).toEqual(
+      [REVIEW_PROOF_CORNER_ID, REVIEW_PROOF_ROOM_ID].sort(),
+    );
+    const memberships = await database.query(
+      `SELECT 1 FROM memberships WHERE identity_id=$1 AND removed_at IS NULL`,
+      [REVIEW_IDENTITY_ID],
+    );
+    expect(memberships.rowCount).toBe(4);
   });
 
   it('holds no GitHub linkage, so it can never mint a repository token', async () => {
@@ -146,6 +226,6 @@ describe('the review identity', () => {
       `SELECT 1 FROM memberships WHERE identity_id=$1 AND removed_at IS NULL`,
       [REVIEW_IDENTITY_ID],
     );
-    expect(memberships.rowCount).toBe(2);
+    expect(memberships.rowCount).toBe(4);
   });
 });

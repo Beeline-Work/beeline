@@ -5,7 +5,7 @@
  * emulator rig (emulator-5554 by default).
  *
  * What it proves, per flow:
- *   room-renders       a repo-bound Room renders its transcript AND composer
+ *   room-renders       a Room on the deck renders its transcript AND composer
  *                      (the flow that would have caught the 2026-09-14
  *                      blank-screen release)
  *   corner-opens       a corner opens and renders its objective line
@@ -369,11 +369,13 @@ function pickRoom(xml) {
     if (!match) fail(`RELEASE_PROOF_ROOM=${override} has no row on the current room list.`);
     return { id: match, roomIds: ids };
   }
-  // A repo-bound room is the one carrying a corners toggle (corners exist only there).
+  // A room carrying a corners toggle is one with a live corner; the review
+  // identity's seeded proof room (review-proof-fixture.ts) carries one, so the
+  // pick no longer depends on transient production corners.
   const repoBound = new RegExp(`resource-id="room-corners-toggle-(${UUID})"`, 'g');
   const bound = [...xml.matchAll(repoBound)].map((m) => m[1]);
   if (bound.length) return { id: bound[0], roomIds: ids };
-  console.log('release-proof: WARNING — no repo-bound room on the deck; corner discovery will likely fail.');
+  console.log('release-proof: WARNING — no room with a live corner on the deck; corner discovery will likely fail.');
   return { id: ids[0], roomIds: ids };
 }
 
@@ -645,7 +647,7 @@ async function main() {
     if (!cornerId) {
       console.error(
         'release-proof: no corner could be opened — the corner-opens proof cannot run.\n' +
-        'Open (or point RELEASE_PROOF_CORNER at) a corner in the proof workspace and re-run.',
+        'Open (or point RELEASE_PROOF_CORNER at) a corner in the signed-in workspace and re-run.',
       );
       process.exit(2);
     }

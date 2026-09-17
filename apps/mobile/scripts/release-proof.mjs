@@ -292,6 +292,16 @@ function installArtifact(device, args) {
     adb(device, ['install', '-r', '-d', args.apk], { timeout: 10 * 60 * 1000 });
     return 'apk';
   }
+  const apks = buildUniversalApks(args);
+  run('java', ['-jar', ensureBundletool(), 'install-apks', '--apks=' + apks, '--device-id=' + device], { timeout: 10 * 60 * 1000 });
+  rmSync(apks, { force: true });
+  return 'aab';
+}
+
+// Build the universal sideload APKs from the proof AAB and return the path.
+// Used both by installArtifact and by the signed-out flow, which must
+// provision the same artifact version for user 0 before install-existing.
+function buildUniversalApks(args) {
   const ks = sideloadKeystore();
   const jar = ensureBundletool();
   const apks = '/tmp/release-proof-universal.apks';
@@ -307,9 +317,7 @@ function installArtifact(device, args) {
     '--ks-pass=pass:' + ks.storePass,
     '--key-pass=pass:' + (ks.keyPass ?? ks.storePass),
   ], { timeout: 15 * 60 * 1000 });
-  run('java', ['-jar', jar, 'install-apks', '--apks=' + apks, '--device-id=' + device], { timeout: 10 * 60 * 1000 });
-  rmSync(apks, { force: true });
-  return 'aab';
+  return apks;
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +438,13 @@ async function runSignedOutFlow(device, args, outDir) {
     await sleep(3000);
   }
   const created = adbShell(device, 'pm create-user beeline-proof', { allowFailure: true });
+  // A stale install on ANY user profile pins the package version on the
+  // device: provisioning an older proof build for a fresh secondary user then
+  // fails with INSTALL_FAILED_VERSION_DOWNGRADE (run 35274684695 hit exactly
+  // this: a version-70 install survived while the proof artifact carried
+  // version 27). Strip the app from every profile before provisioning, then
+  // reinstall the proof artifact fresh for user 0 so install-existing clones
+  // the right version.
   if (!created.ok || !/Success.*user id (\d+)/.test(created.stdout)) {
     return {
       ok: false,
@@ -439,6 +454,18 @@ async function runSignedOutFlow(device, args, outDir) {
   const userId = Number(created.stdout.match(/user id (\d+)/)[1]);
   console.log(`release-proof: created secondary user ${userId} for the signed-out proof`);
   try {
+    for (const [existingUserId] of listAndroidUsers(device)) {
+      const removed = adbShell(device, `pm uninstall --user ${existingUserId} ${APP_ID}`, { allowFailure: true });
+      if (/Success/.test(removed.stdout)) {
+        console.log(`release-proof: removed stale ${APP_ID} install from user ${existingUserId}`);
+      }
+    }
+    const reinstalled = args.apk
+      ? adb(device, ['install', '-r', '-d', args.apk], { allowFailure: true, timeout: 10 * 60 * 1000 })
+      : (() => { const p = buildUniversalApks(args); return run('java', ['-jar', ensureBundletool(), 'install-apks', '--apks=' + p, '--device-id=' + device], { allowFailure: true, timeout: 10 * 60 * 1000 }); })();
+    if (!reinstalled.ok || reinstalled.status !== 0) {
+      return { ok: false, output: `could not reinstall ${APP_ID} for user 0 before the signed-out proof:\n${reinstalled.stderr}` };
+    }
     const install = adbShell(device, `pm install-existing --user ${userId} ${APP_ID}`, { allowFailure: true });
     if (!install.ok || !/Success/.test(install.stdout)) {
       // Fall back to a full install for that user.

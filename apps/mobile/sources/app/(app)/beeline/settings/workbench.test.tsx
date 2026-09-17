@@ -130,6 +130,27 @@ describe('Workbench settings screen', () => {
     expect(navigation.push.mock.calls[0][0].params.connectorId).toBe('trusty-squire');
   });
 
+  it('folds the four Google tool rows into the ONE Google entry that pairs the whole set', async () => {
+    const renderer = await render();
+    // Exactly ONE Google row; the four tool kinds never render their own rows.
+    const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
+    expect(entry.props.title).toBe('Google Workspace');
+    expect(entry.props.value).toBe('connect');
+    expect(renderer.root.findAllByProps({ testID: /^google-entry-tool-/ })).toHaveLength(0);
+    await act(async () => {
+      entry.props.onPress();
+    });
+    const connect = renderer.root.findByProps({ testID: 'google-entry-connect' });
+    act(() => {
+      connect.props.onPress();
+    });
+    // The entry hands off with the LOGICAL google id; the source resolves it
+    // to the first not-yet-connected tool before the server call.
+    const push = navigation.push.mock.calls.at(-1)![0];
+    expect(push.pathname).toBe('/beeline/settings/workbench/connect');
+    expect(push.params.connectorId).toBe('google');
+  });
+
   it('collapses an expanded cell on a second tap', async () => {
     const renderer = await render();
     const row = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });

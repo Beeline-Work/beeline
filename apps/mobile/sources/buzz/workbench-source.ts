@@ -7,7 +7,14 @@ import type {
   WorkbenchHelper,
   WorkbenchView,
 } from './workbench';
-import { CONNECTOR_DESCRIPTIONS, connectionSpendCap, ledgerBytes, ledgerStamp } from './workbench';
+import {
+  CONNECTOR_DESCRIPTIONS,
+  GOOGLE_ENTRY_ID,
+  connectionSpendCap,
+  ledgerBytes,
+  ledgerStamp,
+  resolveGoogleConnectTarget,
+} from './workbench';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
@@ -133,9 +140,17 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     connectorId: string;
     helperId: string;
   }): Promise<{ connectorId: string }> {
+    // The ONE Google entry pairs the whole Google set: the logical `google`
+    // id resolves here to the first not-yet-connected tool (canonical order);
+    // the server provisions all four rows behind the one grant.
+    let connectorType = input.connectorId;
+    if (connectorType === GOOGLE_ENTRY_ID) {
+      const view = await this.readWorkbench({ workspaceId: input.workspaceId, viewerId: '' });
+      connectorType = resolveGoogleConnectTarget(view.connectors);
+    }
     const result = await monolithPhoneOperation('pairConnector', {
       workspaceId: input.workspaceId,
-      connectorType: input.connectorId as PhoneOperationMap['pairConnector']['input']['connectorType'],
+      connectorType: connectorType as PhoneOperationMap['pairConnector']['input']['connectorType'],
       helperAgentId: input.helperId,
     });
     return { connectorId: result.connectorId };

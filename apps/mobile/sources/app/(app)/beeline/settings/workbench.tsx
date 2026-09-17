@@ -6,7 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
-import { GoogleToolRow } from './workbench/GoogleToolRow';
+import { GoogleEntryRow } from './workbench/GoogleEntryRow';
 import {
   connectionHostsLine,
   connectionsForViewer,
@@ -126,7 +126,7 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
             Tools
           </Text>
-          {connectors.map((connector) => {
+          {connectors.map((connector, index) => {
             // Expandable tools (wallet, Trusty Squire) render through the ONE
             // shared ToolDetailsCell: the collapsed row is a fact, the
             // expanded section carries the tool's value proposition and the
@@ -162,17 +162,25 @@ export default function WorkbenchScreen() {
                 </ToolDetailsCell>
               );
             }
-            // Google Workspace tools use the account-backed tool pattern:
-            // collapsed row expands; the connect action lives in the pane.
+            // The ONE Google connect entry: the four google tool connectors
+            // fold into a single logical row (first google entry renders it;
+            // its siblings render nothing). The connect action lives in the
+            // pane and hands off with the logical `google` id, which the
+            // source resolves to the first not-yet-connected tool.
             if (isGoogleToolConnectorId(connector.id)) {
+              if (
+                connectors.findIndex((entry) => isGoogleToolConnectorId(entry.id)) !== index
+              ) {
+                return null;
+              }
               return (
-                <GoogleToolRow
-                  key={connector.id}
-                  connector={connector}
+                <GoogleEntryRow
+                  key="google"
+                  connectors={connectors}
                   onPressConnect={() =>
                     router.push({
                       pathname: '/beeline/settings/workbench/connect',
-                      params: { workspaceId, viewerId, connectorId: connector.id },
+                      params: { workspaceId, viewerId, connectorId: 'google' },
                     } as unknown as Href)
                   }
                 />

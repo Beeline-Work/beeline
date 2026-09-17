@@ -266,6 +266,23 @@ export function createBeelineServer(options: ServerOptions): Server {
     ) => {
       if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
       const releases = new Map<string, () => void>();
+      // A fresh Room (or any Room/corner membership change) inserts a
+      // `memberships` row whose live notification is Room-scoped — a Room this
+      // daemon has never heard of, so it holds no socket subscription for it.
+      // The workspace reconciliation heartbeat would eventually discover it;
+      // deliver an agent-directed wake instead so discovery starts now.
+      const membershipWakeRelease =
+        principal.kind === 'daemon'
+          ? options.live.subscribeAll((event) => {
+              if (
+                event.type === 'invalidate' &&
+                event.reason === 'postgres:memberships' &&
+                event.targetAgentId === principal.identityId &&
+                client.readyState === client.OPEN
+              )
+                client.send(JSON.stringify({ type: 'rooms-changed' }));
+            })
+          : undefined;
       const pendingPaintTraces = new Map<
         string,
         {
@@ -599,6 +616,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       });
       client.on('close', () => {
         if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
+        membershipWakeRelease?.();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

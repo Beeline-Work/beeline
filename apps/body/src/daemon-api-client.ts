@@ -122,6 +122,7 @@ export class DaemonApiClient {
       presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
     }
   >();
+  private roomsChangedListener?: () => void;
 
   constructor(
     readonly baseUrl: string,
@@ -182,6 +183,13 @@ export class DaemonApiClient {
     };
   }
 
+  /** Register the one listener invoked when the server reports this agent's
+   * Room/corner memberships changed — the wake that discovers a freshly
+   * created Room without waiting for the reconciliation heartbeat. */
+  setRoomsChangedListener(listener: () => void): void {
+    this.roomsChangedListener = listener;
+  }
+
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
     const room = this.liveRooms.get(roomId);
     if (room && cursor) room.cursor = cursor;
@@ -219,6 +227,11 @@ export class DaemonApiClient {
     socket.onopen = () => {
       this.liveReconnectDelayMs = 1_000;
       for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
+      // The membership wake is fire-and-forget: a Room created while this
+      // socket was connecting (or between reconnects) never replays its
+      // frame. Treat every open as a wake, so a membership written before the
+      // socket existed is still discovered by the next reconciliation.
+      this.roomsChangedListener?.();
     };
     socket.onmessage = (message) => {
       let value: unknown;
@@ -229,6 +242,10 @@ export class DaemonApiClient {
       }
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
+      if (event.type === 'rooms-changed') {
+        this.roomsChangedListener?.();
+        return;
+      }
       if (event.type === 'subscribed' && typeof event.roomId === 'string') {
         const capabilities = event.capabilities as Record<string, unknown> | undefined;
         this.liveRooms.get(event.roomId)?.onState?.(true, {

@@ -35,6 +35,42 @@ export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
 /**
+ * The #1369 discovery latch, counted instead of flagged.
+ *
+ * The server's agent-directed `rooms-changed` wake (a fresh Room or corner
+ * membership) re-arms fast reconcile. A boolean cleared unconditionally by the
+ * next reconcile swallowed any wake that landed while that reconcile was
+ * already running — a corner opened mid-reconcile then waited a heartbeat for
+ * a wake the daemon had already received. A reconcile covers exactly the wakes
+ * that arrived before it started (its reads happen after that point); anything
+ * landing during it re-arms. A reconcile that THROWS covers nothing, so a
+ * failed discovery keeps retrying fast.
+ */
+export class DiscoveryWakes {
+  private arrived = 0;
+  private served = 0;
+
+  /** Called for every agent-directed `rooms-changed` wake. */
+  wake(): void {
+    this.arrived += 1;
+  }
+
+  needsFastReconcile(): boolean {
+    return this.arrived !== this.served;
+  }
+
+  /** Snapshot at reconcile entry: the wake count its reads will cover. */
+  beginReconcile(): number {
+    return this.arrived;
+  }
+
+  /** Clear only wakes the completed start pass actually served. */
+  completeReconcile(covered: number): void {
+    this.served = Math.max(this.served, covered);
+  }
+}
+
+/**
  * A restarted helper must not overwrite the server's GitHub-owned corner facts,
  * and a helper joining a corner it did not open never announces the opening
  * state at all — the lifecycle facts belong to the corner, and they already
@@ -334,6 +370,11 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private confirmationPending = false;
+  /** Agent-directed discovery wakes (#1369), counted instead of flagged: a
+   *  wake that arrives while a reconcile is already running must survive its
+   *  start-pass clearing, or a corner opened mid-reconcile waits a heartbeat
+   *  for a wake the daemon already received. */
+  private readonly discoveryWakes = new DiscoveryWakes();
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;
   private readonly grantRunnerServer: GrantRunnerServer;
@@ -362,6 +403,12 @@ export class RoomRuntimeCoordinator {
     });
     this.grantRunnerServer = new GrantRunnerServer(this.grantRunner);
     this.connectorUsage = new ConnectorUsageRecorder();
+    // Optional on purpose: test stubs of the API surface predate the wake, and
+    // a daemon whose transport cannot deliver it still reconciles on the
+    // heartbeat as before.
+    this.options.daemonApi.setRoomsChangedListener?.(() => {
+      this.discoveryWakes.wake();
+    });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
@@ -398,7 +445,7 @@ export class RoomRuntimeCoordinator {
   }
 
   needsFastReconcile(): boolean {
-    return this.confirmationPending;
+    return this.confirmationPending || this.discoveryWakes.needsFastReconcile();
   }
 
   reconcileHeartbeatIntervalMs(): number {
@@ -440,6 +487,10 @@ export class RoomRuntimeCoordinator {
 
   async reconcile(): Promise<WorkspaceMembershipStatus> {
     this.confirmationPending = false;
+    // Everything this reconcile reads happens after this point, so every wake
+    // that has arrived by now is covered by its start pass. Wakes landing
+    // DURING the reconcile re-arm fast reconcile instead of being swallowed.
+    const coveredWakes = this.discoveryWakes.beginReconcile();
     const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
       agentId: this.agent.publicKey,
     });
@@ -509,7 +560,17 @@ export class RoomRuntimeCoordinator {
       }
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
-      if (!this.running.has(roomId)) await this.startRoom(roomId);
+      if (this.running.has(roomId)) return;
+      try {
+        await this.startRoom(roomId);
+      } catch (error) {
+        // One Room's failed start must not block the corner-start pass behind
+        // it: a corner opened while a Room cannot materialize its checkout
+        // would otherwise never start, while every already-running Room keeps
+        // the agent looking healthy. The failed Room retries on the next
+        // reconciliation heartbeat.
+        console.error(`[thin-core] failed to start Room ${roomId}:`, error);
+      }
     });
     await mapWithConcurrency(
       [...desiredCorners.values()],
@@ -519,6 +580,7 @@ export class RoomRuntimeCoordinator {
       },
     );
     for (const running of this.running.values()) running.body.requestReconciliation();
+    this.discoveryWakes.completeReconcile(coveredWakes);
     return 'member';
   }
 

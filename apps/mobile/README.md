@@ -36,8 +36,9 @@ workflow artifact. Manual recovery lives in the clearly named
 receipt is recorded by a bounded step of the release's own delivery report; it
 never changes the delivery verdict, and a receipt that has not arrived yet is
 confirmed by the next release's promote step.
-The runtime version is pinned by hand in `app.config.js` (`runtimeVersion:
-"21"`). It has to be: an installed binary keeps the stamp it was built with, so
+The runtime version is pinned by hand per platform in `app.config.js`
+(`runtimeVersion` under the `ios` and `android` Expo config sections — see the
+file for the current values). It has to be: an installed binary keeps the stamp it was built with, so
 a stamp that recomputes itself per commit — the fingerprint policy v0.0.42
 shipped — silently orphans every app already on a phone, which then reports
 `NoUpdatesAvailable` forever. Bumping the pin is a deliberate act that says a

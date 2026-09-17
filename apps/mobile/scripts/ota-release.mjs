@@ -530,8 +530,8 @@ function publish(options) {
   // a target list that drops a shipped runtime strands those installs forever.
   {
     const shippedKeys = new Set(
-      collectUpdates(previous).updates
-        .filter((u) => u.platform && u.runtimeVersion)
+      collectUpdates(previous)
+        .updates.filter((u) => u.platform && u.runtimeVersion)
         .map(targetKey),
     );
     const stranded = [...shippedKeys].filter((k) => !targets.some((t) => targetKey(t) === k));

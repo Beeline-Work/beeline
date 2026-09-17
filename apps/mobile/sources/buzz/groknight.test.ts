@@ -87,6 +87,41 @@ describe('Speakeasy canvas alignment', () => {
   });
 });
 
+describe('The quiet tier holds a WCAG-AA floor', () => {
+  const channel = (hex: string) => {
+    const value = hex.replace('#', '');
+    const c = parseInt(value, 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const luminance = (hex: string) => {
+    const value = hex.replace('#', '');
+    const [r, g, b] = [0, 2, 4].map((at) => channel(value.slice(at, at + 2)));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (ink: string, ground: string) => {
+    const [brighter, darker] = [luminance(ink), luminance(ground)].sort((x, y) => y - x);
+    return (brighter + 0.05) / (darker + 0.05);
+  };
+
+  it('lifts ledgerQuiet above 4.5:1 on every resting ground in both themes', () => {
+    expect(beelineThemes.obsidian.ledgerQuiet).toBe('#90909B');
+    expect(beelineThemes.bone.ledgerQuiet).toBe('#6F6455');
+    for (const set of Object.values(beelineThemes)) {
+      for (const ground of [set.bgBase, set.bgRaised, set.bgCode, set.bgUnread]) {
+        expect(contrast(set.ledgerQuiet, ground)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('keeps the lifted quiet tier a step below body and above ghost', () => {
+    for (const set of Object.values(beelineThemes)) {
+      const onCanvas = (ink: string) => contrast(ink, set.bgBase);
+      expect(onCanvas(set.ledgerBody)).toBeGreaterThan(onCanvas(set.ledgerQuiet));
+      expect(onCanvas(set.ledgerQuiet)).toBeGreaterThan(onCanvas(set.ledgerGhost));
+    }
+  });
+});
+
 describe('Borrowing Calm type roles and spacing', () => {
   const role = (fontFamily: string, fontSize: number, lineHeight: number, letterSpacing: number) => ({
     fontFamily,

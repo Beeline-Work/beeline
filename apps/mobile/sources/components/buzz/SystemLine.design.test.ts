@@ -83,7 +83,7 @@ describe('the system line', () => {
       fontFamily: typeRoles.meta.fontFamily,
       fontSize: typeRoles.meta.fontSize,
       lineHeight: typeRoles.meta.lineHeight,
-      color: '#83838d',
+      color: '#90909B',
     });
     expect(line.props.style.transform).toBeUndefined();
     expect(line.props.style.fontWeight).toBeUndefined();

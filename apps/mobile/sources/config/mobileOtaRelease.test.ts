@@ -768,6 +768,132 @@ esac
     );
   }, 60_000);
 
+  it('rolls a first production release back to the embedded update with no predecessor group', () => {
+    // A runtime's FIRST production release has no earlier update group, so
+    // its ledger carries no previousProductionGroupId. The rollback then has
+    // only one anchor: the embedded update of that release's store binary.
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-embedded-'));
+    const ledgerPath = join(directory, 'rollback.json');
+    const callsPath = join(directory, 'calls.log');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${callsPath}"
+case "$1" in
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-android","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:roll-back-to-embedded)
+    case "$5" in
+      25) printf '[{"id":"back-android-embedded","platform":"android","group":"restored-android-embedded","runtimeVersion":"25"}]\\n' ;;
+      23) printf '[{"id":"back-ios-23-embedded","platform":"ios","group":"restored-ios-23-embedded","runtimeVersion":"23"}]\\n' ;;
+      26) printf '[{"id":"back-ios-26-embedded","platform":"ios","group":"restored-ios-26-embedded","runtimeVersion":"26"}]\\n' ;;
+      *) exit 9 ;;
+    esac ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(
+      [
+        'rollback',
+        '--embedded',
+        '--expected-current-group',
+        'failed-android,failed-ios-23,failed-ios-26',
+        '--ledger',
+        ledgerPath,
+      ],
+      { EAS_CLI_PATH: fakeEas },
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
+      status: 'rolled-back',
+      embeddedOnly: true,
+      sourceGroupIds: [],
+      productionGroupIds: {
+        android: 'restored-android-embedded',
+        ios: 'restored-ios-26-embedded',
+      },
+      productionGroupId:
+        'restored-android-embedded,restored-ios-23-embedded,restored-ios-26-embedded',
+      embeddedRollbackTargets: [
+        { platform: 'android', runtimeVersion: '25', group: 'restored-android-embedded' },
+        { platform: 'ios', runtimeVersion: '23', group: 'restored-ios-23-embedded' },
+        { platform: 'ios', runtimeVersion: '26', group: 'restored-ios-26-embedded' },
+      ],
+    });
+    const calls = readFileSync(callsPath, 'utf8');
+    expect(calls).not.toContain('update:republish');
+    expect(calls).toContain(
+      'update:roll-back-to-embedded --branch production --runtime-version 25 --platform android',
+    );
+    expect(calls).toContain(
+      'update:roll-back-to-embedded --branch production --runtime-version 23 --platform ios',
+    );
+    expect(calls).toContain(
+      'update:roll-back-to-embedded --branch production --runtime-version 26 --platform ios',
+    );
+  }, 60_000);
+
+  it('prints the embedded rollback plan on a dry run without touching EAS', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-embedded-dry-'));
+    const ledgerPath = join(directory, 'dry-run.json');
+
+    const result = runRelease(
+      [
+        'rollback',
+        '--embedded',
+        '--expected-current-group',
+        'current-android,current-ios',
+        '--ledger',
+        ledgerPath,
+        '--dry-run',
+      ],
+      {},
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      'update:roll-back-to-embedded --branch production',
+    );
+    expect(existsSync(ledgerPath)).toBe(false);
+  }, 60_000);
+
+  it('refuses an embedded rollback that also names a group or omits the current group', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-embedded-args-'));
+
+    const withGroup = runRelease(
+      [
+        'rollback',
+        '--embedded',
+        '--group',
+        'known-good',
+        '--expected-current-group',
+        'failed',
+        '--ledger',
+        join(directory, 'a.json'),
+      ],
+      {},
+    );
+    expect(withGroup.status).toBe(1);
+    expect(withGroup.stderr).toContain(
+      'rollback --embedded rolls back to the embedded update and takes no --group',
+    );
+
+    const withoutCurrent = runRelease(
+      ['rollback', '--embedded', '--ledger', join(directory, 'b.json')],
+      {},
+    );
+    expect(withoutCurrent.status).toBe(1);
+    expect(withoutCurrent.stderr).toContain(
+      'rollback --embedded requires --expected-current-group naming the production group being rolled back',
+    );
+    expect(existsSync(join(directory, 'a.json'))).toBe(false);
+    expect(existsSync(join(directory, 'b.json'))).toBe(false);
+  }, 60_000);
+
   it('refuses a rollback that leaves a platform on the failed production group', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-partial-'));
     const ledgerPath = join(directory, 'rollback.json');
@@ -899,6 +1025,22 @@ esac
     );
     expect(rollbackWorkflow).toContain(
       '--expected-current-group "$EXPECTED_CURRENT_GROUP"',
+    );
+    // A missing predecessor is the embedded-anchor case, not a failure: the
+    // workflow resolves embedded_only and the leg rolls every current target
+    // back to the embedded update instead of a hand-supplied group.
+    expect(rollbackWorkflow).not.toContain(
+      'release ledger has no previousProductionGroupId',
+    );
+    expect(rollbackWorkflow).toContain('embedded_only=" + embeddedOnly');
+    expect(rollbackWorkflow).toContain(
+      'if [ "$EMBEDDED_ONLY" = "true" ]; then',
+    );
+    expect(rollbackWorkflow).toContain(
+      'rollback --embedded --expected-current-group "$EXPECTED_CURRENT_GROUP"',
+    );
+    expect(rollbackWorkflow).toContain(
+      'no previousProductionGroupId on the ledger; rolling back to the embedded update',
     );
     expect(canaryScript).toContain('item.platform === "android"');
     expect(canaryScript).toContain('x.candidateGroupIds?.android || x.candidateGroupId');

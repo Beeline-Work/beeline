@@ -35,6 +35,8 @@ import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { subscribeBookmarkChanges } from '@/buzz/bookmark-events';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/beeline/chat/';
@@ -184,6 +186,18 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.divider,
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
+  bookmarksRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.divider,
+  },
+  bookmarksGlyph: { color: theme.buzz.accent },
+  bookmarksCount: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
 }));
 
 /** One server-backed desktop pane for Workspace and Room movement. */
@@ -221,6 +235,7 @@ export const SidebarView = React.memo(function SidebarView() {
     () => new Map(),
   );
   const [activeCorners, setActiveCorners] = React.useState<readonly CornerListItem[]>([]);
+  const [bookmarkCount, setBookmarkCount] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -264,6 +279,33 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
     };
   }, [client, pathname, workspaceId]);
+
+  React.useEffect(() => {
+    if (!workspaceId) {
+      setBookmarkCount(0);
+      return;
+    }
+    let cancelled = false;
+    void monolithPhoneOperation('listMessageBookmarks', { workspaceId })
+      .then((result) => {
+        if (!cancelled) setBookmarkCount(result.bookmarks.length);
+      })
+      .catch(() => {
+        if (!cancelled) setBookmarkCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, workspaceId]);
+
+  React.useEffect(
+    () =>
+      subscribeBookmarkChanges((change) => {
+        if (change.workspaceId !== workspaceId) return;
+        setBookmarkCount((count) => Math.max(0, count + (change.bookmarked ? 1 : -1)));
+      }),
+    [workspaceId],
+  );
 
   React.useEffect(() => {
     if (!isDesktop || !client || !activeRoomId) {
@@ -492,6 +534,32 @@ export const SidebarView = React.memo(function SidebarView() {
           <Text style={styles.shortcut}>⌘K</Text>
         </View>
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+          {bookmarkCount > 0 && workspaceId ? (
+            <Pressable
+              accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
+              accessibilityRole="button"
+              onPress={() =>
+                router.push({
+                  pathname: '/beeline/bookmarks',
+                  params: { communityId: workspaceId },
+                } as Href)
+              }
+              style={({ pressed }) => [
+                styles.bookmarksRow,
+                (pathname.startsWith('/beeline/bookmarks') || pressed) && styles.roomRowSelected,
+              ]}
+              testID="desktop-bookmarks-cell"
+            >
+              <Ionicons name="bookmark" size={15} color={styles.bookmarksGlyph.color} />
+              <View style={styles.roomCopy}>
+                <Text style={styles.roomTitle}>Bookmarks</Text>
+                <Text style={styles.roomFact}>
+                  {bookmarkCount} saved message{bookmarkCount === 1 ? '' : 's'}
+                </Text>
+              </View>
+              <Text style={styles.bookmarksCount}>{bookmarkCount}</Text>
+            </Pressable>
+          ) : null}
           {navigationError ? (
             <Pressable
               accessibilityRole="button"

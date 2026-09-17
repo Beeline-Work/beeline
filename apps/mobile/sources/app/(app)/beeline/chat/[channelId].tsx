@@ -13,6 +13,7 @@ import {
   Platform,
   AppState,
   useWindowDimensions,
+  AccessibilityInfo,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -237,6 +238,7 @@ import {
   WritePermissionCard,
 } from './RoomMessageVariants';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { forwardMessageToRoom } from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
@@ -557,6 +559,7 @@ export default function BuzzChat() {
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
+  const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
   const [messageReactionsOpen, setMessageReactionsOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
@@ -1985,7 +1988,12 @@ export default function BuzzChat() {
     if (residentIndex >= 0) {
       const rowsFromNewest = combinedMessages.length - residentIndex;
       revealTranscriptThrough(rowsFromNewest);
+      return;
     }
+    // Bookmark links may target any durable message, not only the cached
+    // tail. Walk bounded history pages until the exact id arrives or the
+    // server reports the beginning of the Room.
+    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
   }, [
     combinedMessages,
     transcriptMessages,
@@ -1994,6 +2002,8 @@ export default function BuzzChat() {
     notificationTarget,
     cancelDesktopOpenLanding,
     revealTranscriptThrough,
+    loadOlderTranscriptMessages,
+    transcriptHistoryStatus,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
@@ -2436,6 +2446,43 @@ export default function BuzzChat() {
       }
     },
     [decodedId, refreshSignal],
+  );
+
+  const messageIsBookmarked = useCallback(
+    (message: ChatDisplayMessage) =>
+      optimisticBookmarks[message.relayId ?? message.id] ?? Boolean(message.bookmarked),
+    [optimisticBookmarks],
+  );
+
+  const handleBookmarkMessage = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (message.isAgentActivity || message.isAgentDraft) return;
+      const messageId = message.relayId ?? message.id;
+      const previous = messageIsBookmarked(message);
+      const bookmarked = !previous;
+      setOptimisticBookmarks((current) => ({ ...current, [messageId]: bookmarked }));
+      AccessibilityInfo.announceForAccessibility(
+        bookmarked ? 'Message bookmarked' : 'Bookmark removed',
+      );
+      try {
+        await monolithPhoneOperation('setMessageBookmark', {
+          roomId: decodedId,
+          messageId,
+          bookmarked,
+        });
+        if (activeCommunityId)
+          publishBookmarkChange({ workspaceId: activeCommunityId, bookmarked });
+        refreshSignal.force();
+      } catch (error) {
+        setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));
+        AccessibilityInfo.announceForAccessibility('Bookmark change failed');
+        Modal.alert(
+          bookmarked ? 'Could not bookmark message' : 'Could not remove bookmark',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
   );
 
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {
@@ -3872,13 +3919,17 @@ export default function BuzzChat() {
       }
 
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
+      const renderedItem =
+        messageIsBookmarked(item) === Boolean(item.bookmarked)
+          ? item
+          : { ...item, bookmarked: messageIsBookmarked(item) };
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
       return (
         <OrdinaryLedgerMessage
-          message={item}
+          message={renderedItem}
           // The byline carries the model stamped on the message at
           // generation time (server-side from the producing turn); an agent
           // row with no stamp keeps the plain `AGENT` word — never a live
@@ -3905,6 +3956,7 @@ export default function BuzzChat() {
           onMessageActions={openMessageActions}
           onReact={handleReactToMessage}
           onForward={beginForward}
+          onBookmark={handleBookmarkMessage}
           {...(!isCorner &&
           !isArchived &&
           !viewerIsAgent &&
@@ -3928,6 +3980,8 @@ export default function BuzzChat() {
       handleGrantDecision,
       handleOpenSystemIdentity,
       handleReactToMessage,
+      handleBookmarkMessage,
+      messageIsBookmarked,
       handleCornerProposalDecision,
       cornerProposalAction,
       beginForward,
@@ -4980,6 +5034,20 @@ export default function BuzzChat() {
               </View>
             ) : null}
           </>
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel={
+              messageIsBookmarked(messageActionsTarget) ? 'Remove bookmark' : 'Bookmark message'
+            }
+            label={messageIsBookmarked(messageActionsTarget) ? 'Remove bookmark' : 'Bookmark'}
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleBookmarkMessage(target);
+            }}
+            testID="message-bookmark-action"
+          />
         ) : null}
         {messageActionsTarget ? (
           <HullActionSheetRow

@@ -3,6 +3,7 @@ import { Keyboard, Platform, Pressable, SectionList, Text, TouchableOpacity, Vie
 import { StyleSheet } from 'react-native-unistyles';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -60,6 +61,8 @@ import {
   type RoomDeckComposeAction,
 } from '@/components/buzz/RoomDeckComposeMenu';
 import { BuzzRigTransport } from '@/sync/transport';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { subscribeBookmarkChanges } from '@/buzz/bookmark-events';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -197,6 +200,7 @@ export default function BuzzChannels() {
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
+  const [bookmarkCount, setBookmarkCount] = useState(0);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
 
@@ -408,10 +412,24 @@ export default function BuzzChannels() {
   useFocusEffect(
     useCallback(() => {
       refreshNow();
+      if (activeCommunityId) {
+        void monolithPhoneOperation('listMessageBookmarks', { workspaceId: activeCommunityId })
+          .then((result) => setBookmarkCount(result.bookmarks.length))
+          .catch(() => setBookmarkCount(0));
+      }
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
       return () => clearInterval(timer);
-    }, [refreshNow]),
+    }, [activeCommunityId, refreshNow]),
+  );
+
+  useEffect(
+    () =>
+      subscribeBookmarkChanges((change) => {
+        if (change.workspaceId !== activeCommunityId) return;
+        setBookmarkCount((count) => Math.max(0, count + (change.bookmarked ? 1 : -1)));
+      }),
+    [activeCommunityId],
   );
 
   useEffect(() => {
@@ -822,6 +840,31 @@ export default function BuzzChannels() {
           renderSectionHeader={({ section }) =>
             section.title ? <RoomListSectionHeader title={section.title} /> : null
           }
+          ListHeaderComponent={
+            bookmarkCount > 0 && activeCommunityId ? (
+              <Pressable
+                accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/bookmarks',
+                    params: { communityId: activeCommunityId },
+                  } as Href)
+                }
+                style={({ pressed }) => [styles.bookmarksCell, pressed && styles.bookmarksCellPressed]}
+                testID="bookmarks-cell"
+              >
+                <Ionicons color={styles.bookmarksGlyph.color} name="bookmark" size={15} />
+                <View style={styles.bookmarksCopy}>
+                  <Text style={styles.bookmarksTitle}>Bookmarks</Text>
+                  <Text style={styles.bookmarksMeta}>
+                    {bookmarkCount} saved message{bookmarkCount === 1 ? '' : 's'}
+                  </Text>
+                </View>
+                <Text style={styles.bookmarksOpen}>OPEN →</Text>
+              </Pressable>
+            ) : null
+          }
           ListEmptyComponent={
             <EmptyRoomActions
               canAddRoom={!viewerIsAgent && canManageWorkspace}
@@ -1125,6 +1168,22 @@ const styles = StyleSheet.create((theme) => {
     // clear of the floating compose control without turning that control into
     // a visually separate footer cell.
     list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
+    bookmarksCell: {
+      minHeight: 64,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.buzz.border,
+    },
+    bookmarksCellPressed: { backgroundColor: theme.buzz.bgHighlight },
+    bookmarksGlyph: { color: theme.buzz.accent },
+    bookmarksCopy: { flex: 1, minWidth: 0 },
+    bookmarksTitle: { ...Typography.default('semiBold'), color: theme.buzz.textPrimary, fontSize: 15 },
+    bookmarksMeta: { ...Typography.default(), color: theme.buzz.textSecondary, fontSize: 13, marginTop: 2 },
+    bookmarksOpen: { ...Typography.mono('semiBold'), color: theme.buzz.accent, fontSize: 10 },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

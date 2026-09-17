@@ -188,6 +188,8 @@ export type RoomViewMessage = {
   readonly createdAtMs?: number;
   readonly author: RoomViewIdentity;
   readonly presentation: 'message' | 'system' | 'activity' | 'card';
+  /** Private viewer state. Omitted unless this viewer saved the message. */
+  readonly bookmarked?: boolean;
   /** The structured event behind a server-phrased system line or card header;
    *  absent on rows written before the one system-line grammar. */
   readonly systemEvent?: SystemEvent;
@@ -290,6 +292,21 @@ export type RoomViewMessage = {
       readonly status: 'pending' | 'in_progress' | 'completed';
     }[];
   };
+};
+
+/** One private, Workspace-scoped pointer back to a durable message. */
+export type MessageBookmarkView = {
+  readonly messageId: string;
+  readonly workspaceId: string;
+  readonly roomId: string;
+  readonly roomName: string;
+  readonly roomKind: 'room' | 'corner';
+  readonly messageCreatedAt: number;
+  readonly bookmarkedAt: number;
+  /** False after deletion or when the viewer no longer has source access. */
+  readonly available: boolean;
+  readonly author?: RoomViewIdentity;
+  readonly text?: string;
 };
 
 export const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const;

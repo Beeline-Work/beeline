@@ -47,7 +47,9 @@ function blockFrom(text: string, marker: string, label: string): string {
 describe('channel reference links — workspace-scoped exact resolution', () => {
   const indexBlock = blockFrom(chatSource, 'const channelReferenceIndex', 'channelReferenceIndex');
 
-  it('builds its index from the verified Room family and this transcript’s own corners', () => {
+  it('builds its index from the viewer’s verified Workspace chats and this transcript’s corners', () => {
+    expect(indexBlock).toContain('workspaceChats');
+    expect(indexBlock).toContain('!item.directMessage');
     expect(indexBlock).toContain('roomSurface?.parent');
     expect(indexBlock).toContain('resolvedChannelName');
     expect(chatSource).toContain('buildChannelReferenceIndex');
@@ -66,6 +68,9 @@ describe('channel reference links — workspace-scoped exact resolution', () => 
       'handleOpenChannelReference',
     );
     expect(handler).toContain("target.kind === 'corner'");
+    expect(handler).toContain('await roomClient.room(target.channelId)');
+    expect(handler).toContain('isUnavailableChannelReferenceError(error)');
+    expect(handler).toContain("'Access denied'");
     expect(handler).toContain('openDesktopCorner(target.parentChannelId, target.channelId)');
     expect(handler).toContain('router.push(roomHref(target.channelId))');
     // A reference to the transcript you are already reading must not push a

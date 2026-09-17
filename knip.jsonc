@@ -46,6 +46,7 @@
         "sources/**/*.{ios,android,windows,web,native,default}.{js,jsx,ts,tsx}",
         "scripts/{ota-delivery-index,ota-release}.mjs",
         "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
+        "scripts/emoji-clip-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

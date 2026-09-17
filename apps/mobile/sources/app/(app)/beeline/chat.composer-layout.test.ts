@@ -107,7 +107,7 @@ describe('Room composer keyboard inset', () => {
 
   it('keeps the safe-area inset only while the software keyboard is closed', () => {
     expect(source).toContain(
-      'const composerBottomInset = composerBottomPadding(insets.bottom, keyboardHeight);',
+      'const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);',
     );
     expect(source).toContain('{ paddingBottom: composerBottomInset }');
   });

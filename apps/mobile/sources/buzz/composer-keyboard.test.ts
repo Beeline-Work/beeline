@@ -29,13 +29,18 @@ describe('transcript drag dismissal', () => {
 });
 
 describe('composer bottom padding', () => {
-  it('preserves the device safe area while the software keyboard is closed', () => {
-    expect(composerBottomPadding(34, 0)).toBe(34);
-    expect(composerBottomPadding(0, 0)).toBe(8);
+  it('keeps the Android edge gap above the safe area while the keyboard is closed', () => {
+    expect(composerBottomPadding('android', 24, 0)).toBe(32);
+    expect(composerBottomPadding('android', 0, 0)).toBe(8);
+  });
+
+  it('keeps the existing iOS safe-area spacing while the keyboard is closed', () => {
+    expect(composerBottomPadding('ios', 34, 0)).toBe(34);
+    expect(composerBottomPadding('ios', 0, 0)).toBe(8);
   });
 
   it('does not stack the device safe area above an open software keyboard', () => {
-    expect(composerBottomPadding(34, 301)).toBe(8);
-    expect(composerBottomPadding(0, 301)).toBe(8);
+    expect(composerBottomPadding('android', 24, 301)).toBe(8);
+    expect(composerBottomPadding('ios', 34, 301)).toBe(8);
   });
 });

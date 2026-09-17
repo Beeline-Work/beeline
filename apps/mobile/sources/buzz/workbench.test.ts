@@ -8,7 +8,7 @@ import {
   connectorDescription,
   connectorIdentityHandle,
   connectorIdentityId,
-  connectorRowValue,
+  connectorInstrument,
   googleEntryDescription,
   googleEntryState,
   isConnectorIdentityId,
@@ -31,7 +31,8 @@ const view: WorkbenchView = {
     {
       id: 'trusty-squire',
       name: 'Trusty Squire',
-      description: 'vault, sign-ups, payments',
+      description:
+        'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
       available: true,
     },
     { id: 'wallet', name: 'Wallet', description: 'crypto wallet for agents', available: false },
@@ -84,13 +85,34 @@ describe('Workbench sovereignty', () => {
 });
 
 describe('connector row copy', () => {
-  it('names soon connectors and never lets them act', () => {
-    expect(connectorRowValue(view.connectors[1])).toBe('soon');
+  it('reads soon connectors and never lets them act', () => {
+    expect(connectorInstrument('soon')).toEqual({ value: 'soon', connect: false });
     expect(view.connectors[1].available).toBe(false);
   });
 
-  it('offers connect while disconnected', () => {
-    expect(connectorRowValue(view.connectors[0])).toBe('connect');
+  it('reads a disconnected connector as its Connect button, no state word', () => {
+    expect(connectorInstrument(undefined)).toEqual({ connect: true });
+    expect(connectorInstrument('disconnected')).toEqual({ connect: true });
+  });
+
+  it('reads the settled, in-flight and broken states with their dots', () => {
+    expect(connectorInstrument('connected')).toEqual({
+      value: 'connected',
+      glyph: 'live',
+      connect: false,
+    });
+    expect(connectorInstrument('installing')).toEqual({
+      value: 'installing',
+      glyph: 'pulse',
+      valueTone: 'accent',
+      connect: false,
+    });
+    expect(connectorInstrument('error')).toEqual({
+      value: 'error',
+      glyph: 'failed',
+      valueTone: 'danger',
+      connect: false,
+    });
   });
 
   it('describes a connected connector by what it runs on', () => {
@@ -105,9 +127,9 @@ describe('connector row copy', () => {
     ).toBe('on squire-box · 3 agents · signed in as dani@…');
   });
 
-  it('keeps the plain description while disconnected', () => {
+  it('keeps the user-story description while disconnected', () => {
     expect(connectorDescription(view.connectors[0])).toBe(
-      'vault, sign-ups, payments',
+      'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
     );
   });
 });
@@ -216,7 +238,9 @@ describe('the ONE Google entry', () => {
     expect(googleEntryDescription(repaired, googleEntryState(repaired))).toBe(
       '2 of 4 tools connected',
     );
-    expect(googleEntryDescription(catalog, 'connect')).toBe('one Google OAuth grant for your agents');
+    expect(googleEntryDescription(catalog, 'connect')).toBe(
+      'Covers Gmail, Google Calendar, YouTube, and other Google services.',
+    );
   });
 
   it('resolves the connect target to the first unconnected tool in canonical order', () => {

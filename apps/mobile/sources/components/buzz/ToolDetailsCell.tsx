@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { SettingsRow } from './SettingsRow';
+import { SettingsRow, type SettingsRowActionControl } from './SettingsRow';
 
 /**
  * ToolDetailsCell — the ONE expandable/collapsible tool row for the
@@ -25,9 +25,14 @@ export type ToolDetailsCellProps = {
   details?: readonly { readonly name: string; readonly line: string }[];
   /** Affordances under the facts (a Connect button, a link row). */
   children?: React.ReactNode;
+  /** The compact bordered Connect control on the collapsed row's side. */
+  actionControl?: SettingsRowActionControl;
   value?: string;
-  /** Tone for the trailing value (an erroring tool reads danger). */
-  valueTone?: 'danger';
+  /** Tone for the trailing value (an erroring tool reads danger, work in
+   *  flight reads accent). */
+  valueTone?: 'danger' | 'accent';
+  /** The state dot beside the trailing value, when the state carries one. */
+  statusGlyph?: 'live' | 'pulse' | 'failed';
   description?: string;
   expanded?: boolean;
   leading?: React.ReactNode;
@@ -38,8 +43,10 @@ export type ToolDetailsCellProps = {
 
 export function ToolDetailsCell({
   children,
+  actionControl,
   value,
   valueTone,
+  statusGlyph,
   description,
   details,
   expanded: expandedProp,
@@ -58,9 +65,11 @@ export function ToolDetailsCell({
   return (
     <View testID={testID}>
       <SettingsRow
+        actionControl={actionControl}
         chevron={expanded ? 'up' : 'down'}
         description={description}
         onPress={toggle}
+        statusGlyph={statusGlyph}
         testID={`${testID}-head`}
         title={title}
         value={value}

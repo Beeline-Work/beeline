@@ -11,7 +11,7 @@ import {
   connectionHostsLine,
   connectionsForViewer,
   connectorDescription,
-  connectorRowValue,
+  connectorInstrument,
   isGoogleToolConnectorId,
   type WorkbenchView,
 } from '@/buzz/workbench';
@@ -82,6 +82,16 @@ export default function WorkbenchScreen() {
   const connections = view ? connectionsForViewer(view, viewerId) : [];
   const connectors = view?.connectors ?? [];
 
+  const connectConnector = useCallback(
+    (connectorId: string) => {
+      router.push({
+        pathname: '/beeline/settings/workbench/connect',
+        params: { workspaceId, viewerId, connectorId },
+      } as unknown as Href);
+    },
+    [workspaceId, viewerId],
+  );
+
   // The screen has three states, and they must not bleed into each other. A
   // failed load used to still render the section chrome and the "None yet"
   // empty state with a red banner pinned to the very bottom (behind the
@@ -127,46 +137,54 @@ export default function WorkbenchScreen() {
             Tools
           </Text>
           {connectors.map((connector, index) => {
-            // Expandable tools (wallet, Trusty Squire) render through the ONE
-            // shared ToolDetailsCell: the collapsed row is a fact, the
-            // expanded section carries the tool's value proposition and the
-            // Connect action (steer: the Connect button never triggers
-            // blindly from the collapsed row). The wallet opens its own
-            // dashboard; Trusty Squire opens the connect pipeline.
+            // Board revision 2 (PR #1351): every tool cell carries ONE
+            // compact Connect button on the row's side while it is not
+            // connected — the large full-width Connect button that used to
+            // live in the expanded pane is gone. The accordion mechanics
+            // (facts in the pane) are unchanged.
+            const instrument = connectorInstrument(
+              connector.available ? connector.status : 'soon',
+            );
+            const connectControl =
+              instrument.connect && connector.available
+                ? {
+                    label: 'Connect',
+                    onPress: () => connectConnector(connector.id),
+                    testID: `workbench-connector-${connector.id}-connect`,
+                  }
+                : undefined;
             const isWallet = connector.id === 'wallet';
             if (isWallet) {
               return (
                 <ToolDetailsCell
                   key={connector.id}
+                  actionControl={
+                    // The wallet opens its own dashboard rather than the
+                    // shared connect pipeline.
+                    connectControl && {
+                      ...connectControl,
+                      onPress: () =>
+                        router.push({
+                          pathname: '/beeline/settings/workbench/wallet',
+                          params: { workspaceId },
+                        } as unknown as Href),
+                    }
+                  }
                   description={connectorDescription(connector)}
                   details={WALLET_DETAILS}
+                  statusGlyph={instrument.glyph}
                   testID={`workbench-connector-${connector.id}`}
                   title={connector.name}
-                  value={connectorRowValue(connector)}
-                >
-                  <SettingsRow
-                    action="Connect"
-                    onPress={
-                      connector.available
-                        ? () =>
-                            router.push({
-                              pathname: '/beeline/settings/workbench/wallet',
-                              params: { workspaceId },
-                            } as unknown as Href)
-                        : undefined
-                    }
-                    testID="workbench-connector-wallet-connect"
-                    title="Connect Coinbase Wallet"
-                    tone="action"
-                  />
-                </ToolDetailsCell>
+                  value={instrument.value}
+                  valueTone={instrument.valueTone}
+                />
               );
             }
             // The ONE Google connect entry: the four google tool connectors
             // fold into a single logical row (first google entry renders it;
-            // its siblings render nothing). The connect action lives in the
-            // pane and hands off with the logical `google` id, which the
-            // source resolves to the first not-yet-connected tool.
+            // its siblings render nothing). Its side Connect button hands
+            // off with the logical `google` id, which the source resolves to
+            // the first not-yet-connected tool.
             if (isGoogleToolConnectorId(connector.id)) {
               if (
                 connectors.findIndex((entry) => isGoogleToolConnectorId(entry.id)) !== index
@@ -177,68 +195,41 @@ export default function WorkbenchScreen() {
                 <GoogleEntryRow
                   key="google"
                   connectors={connectors}
-                  onPressConnect={() =>
-                    router.push({
-                      pathname: '/beeline/settings/workbench/connect',
-                      params: { workspaceId, viewerId, connectorId: 'google' },
-                    } as unknown as Href)
-                  }
+                  onPressConnect={() => connectConnector('google')}
                 />
               );
             }
             const isSquire = connector.id === 'trusty-squire';
             if (isSquire) {
-              const canConnect =
-                connector.available &&
-                connector.status !== 'connected' &&
-                connector.status !== 'installing';
               return (
                 <ToolDetailsCell
                   key={connector.id}
+                  actionControl={connectControl}
                   description={connectorDescription(connector)}
                   details={SQUIRE_DETAILS}
+                  statusGlyph={instrument.glyph}
                   testID={`workbench-connector-${connector.id}`}
                   title={connector.name}
-                  value={connectorRowValue(connector)}
-                  valueTone={connector.status === 'error' ? 'danger' : undefined}
-                >
-                  <SettingsRow
-                    action="Connect"
-                    disabled={!canConnect}
-                    onPress={
-                      canConnect
-                        ? () =>
-                            router.push({
-                              pathname: '/beeline/settings/workbench/connect',
-                              params: { workspaceId, viewerId, connectorId: connector.id },
-                            } as unknown as Href)
-                        : undefined
-                    }
-                    testID={`workbench-connector-${connector.id}-connect`}
-                    title={`Connect ${connector.name}`}
-                    tone="action"
-                  />
-                </ToolDetailsCell>
+                  value={instrument.value}
+                  valueTone={instrument.valueTone}
+                />
               );
             }
             return (
               <SettingsRow
                 key={connector.id}
+                actionControl={connectControl}
+                chevron={connectControl ? 'right' : undefined}
                 description={connectorDescription(connector)}
-                disabled={!connector.available || connector.status === 'connected' || connector.status === 'installing'}
+                disabled={!connector.available}
                 onPress={
-                  connector.available && connector.status !== 'connected'
-                    ? () =>
-                        router.push({
-                          pathname: '/beeline/settings/workbench/connect',
-                          params: { workspaceId, viewerId, connectorId: connector.id },
-                        } as unknown as Href)
-                    : undefined
+                  connectControl ? undefined : connector.available ? () => connectConnector(connector.id) : undefined
                 }
+                statusGlyph={instrument.glyph}
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}
-                value={connectorRowValue(connector)}
-                valueTone={connector.status === 'error' ? 'danger' : undefined}
+                value={instrument.value}
+                valueTone={instrument.valueTone}
               />
             );
           })}

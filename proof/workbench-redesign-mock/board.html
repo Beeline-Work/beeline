@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workbench Visual Redesign</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg-void: #14091A; --bg-terminal: #14091A; --bg-raised: #190e21; --bg-highlight: #1e1326; --bg-hover: #21162a; --text-primary: #f0f0f3; --text-secondary: #c9c9d1; --text-muted: #83838d; --text-disabled: #6c6c76; --accent: #b08a4a; --danger: #c4544d; --success: #7a9b76; --border: #291e33; --border-strong: #3b3048; --space-xs: 4px; --space-sm: 8px; --space-md: 16px; --space-lg: 24px; --space-xl: 32px; --space-xxl: 48px; --row-height: 64px; }
+    [data-theme="light"] { --bg-void: #F3EEE4; --bg-terminal: #F3EEE4; --bg-raised: #ECE4D5; --bg-highlight: #E4D9C4; --bg-hover: #E2D7C2; --text-primary: #171310; --text-secondary: #4A4038; --text-muted: #8B7F6E; --text-disabled: #A79C89; --accent: #8a6323; --danger: #c4544d; --success: #5a7a56; --border: #DED2BC; --border-strong: #C9BBA0; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Space Grotesk',sans-serif;background:var(--bg-void);color:var(--text-primary);line-height:1.45}
+    .th{font-size:22px;font-weight:500;letter-spacing:-0.3px}
+    .tb{font-size:16px;font-weight:400}
+    .tm{font-size:13px}
+    .tmono{font-family:'IBM Plex Mono',monospace;font-size:13px;font-variant-numeric:tabular-nums}
+    .ts{font-size:10px;font-weight:500;letter-spacing:2px;text-transform:uppercase}
+    .board{max-width:1400px;margin:0 auto;padding:var(--space-xl)}
+    .bh{margin-bottom:var(--space-xxl);border-bottom:1px solid var(--border);padding-bottom:var(--space-lg)}
+    .bt{font-size:28px;font-weight:500;letter-spacing:-0.5px;margin-bottom:var(--space-sm)}
+    .bs{color:var(--text-muted);font-size:14px}
+    .bs-sec{margin-bottom:var(--space-xxl)}
+    .bs-t{font-size:20px;font-weight:500;margin-bottom:var(--space-lg);color:var(--text-secondary)}
+    .tt{position:fixed;top:var(--space-lg);right:var(--space-lg);background:var(--bg-raised);border:1px solid var(--border);border-radius:3px;padding:var(--space-sm) var(--space-md);color:var(--text-secondary);cursor:pointer;z-index:100}
+    .dg{display:grid;grid-template-columns:repeat(auto-fit,minmax(375px,1fr));gap:var(--space-xl);margin-bottom:var(--space-xxl)}
+    .df{background:var(--bg-terminal);border:1px solid var(--border);border-radius:12px;overflow:hidden;width:100%;max-width:400px;margin:0 auto}
+    .df.desk{max-width:800px}
+    .dh{background:var(--bg-raised);border-bottom:1px solid var(--border);padding:var(--space-sm) var(--space-md);display:flex;align-items:center;gap:var(--space-sm)}
+    .dd{display:flex;gap:6px}
+    .ddot{width:8px;height:8px;border-radius:50%;background:var(--border-strong)}
+    .dtt{flex:1;text-align:center;color:var(--text-muted);font-size:12px}
+    .ds{min-height:700px;position:relative}
+    .sh{min-height:66px;padding:var(--space-sm) var(--space-md);display:flex;align-items:center;gap:var(--space-sm);border-bottom:1px solid var(--border)}
+    .bb{width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--text-primary);font-size:24px}
+    .st{flex:1}
+    .sec{padding:var(--space-md)}
+    .sec-h{color:var(--text-muted);margin-bottom:var(--space-sm);padding-left:var(--space-sm)}
+    .row{min-height:var(--row-height);padding:0 var(--space-sm);display:flex;align-items:center;gap:var(--space-md);border-bottom:1px solid var(--border);cursor:pointer}
+    .row:hover{background:var(--bg-hover)}
+    .row.dis{opacity:0.5;cursor:not-allowed}
+    .rm{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .rt{color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .rd{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .rs{display:flex;align-items:center;gap:var(--space-sm);flex-shrink:0}
+    .sv{color:var(--text-secondary)}
+    .sv.conn{color:var(--accent)}
+    .sv.conning{color:var(--accent);font-weight:500}
+    .sv.conned{color:var(--text-muted)}
+    .sv.err{color:var(--danger)}
+    .sv.soon{color:var(--text-disabled)}
+    .sg{width:20px;height:20px;display:flex;align-items:center;justify-content:center}
+    .gch{color:var(--text-muted);font-size:14px}
+    .gind{width:8px;height:8px;border-radius:50%}
+    .gind.pen{border:1.5px solid var(--text-muted)}
+    .gind.act{background:var(--accent);animation:pulse 1.4s ease-in-out infinite}
+    .gind.done{background:var(--success)}
+    .gind.err{background:var(--danger)}
+    .gind.off{background:var(--text-disabled)}
+    .cbtn{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:500;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:3px;padding:5px 14px;cursor:pointer;flex-shrink:0;white-space:nowrap}
+    .cbtn:hover{background:var(--bg-highlight)}
+    .pan{padding:var(--space-md);padding-left:calc(var(--space-md) + var(--space-md));border-left:1px solid var(--border);margin-left:calc(var(--space-sm) + 10px);margin-bottom:var(--space-md)}
+    .pl{color:var(--text-secondary);font-weight:500}
+    .pli{color:var(--text-muted);margin-bottom:var(--space-sm);line-height:1.6}
+    .cf{padding:var(--space-md)}
+    .cfi{color:var(--text-muted);margin-bottom:var(--space-lg);line-height:1.6}
+    .hl{display:flex;flex-direction:column;gap:var(--space-xs)}
+    .hr{min-height:var(--row-height);padding:0 var(--space-sm);display:flex;align-items:center;gap:var(--space-md);border-bottom:1px solid var(--border)}
+    .hr.off{opacity:0.5}
+    .hm{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .ht{color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hmeta{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hmeta .offt{color:var(--text-disabled)}
+    .hact{color:var(--accent);font-weight:500}
+    .hr.off .hact{color:var(--text-disabled);font-weight:400}
+    .sl{display:flex;flex-direction:column;gap:var(--space-sm)}
+    .si{display:flex;flex-direction:column;gap:var(--space-xs)}
+    .shd{display:flex;align-items:center;gap:var(--space-sm)}
+    .sm{width:16px;height:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
+    .sm.done{color:var(--success)}
+    .sm.act{color:var(--accent);animation:pulse 1.4s ease-in-out infinite}
+    .sm.fail{color:var(--danger)}
+    .sm.pen{color:var(--text-muted)}
+    .slb{color:var(--text-muted)}
+    .slb.act{color:var(--accent);font-weight:500}
+    .slb.done{color:var(--text-secondary)}
+    .slb.fail{color:var(--danger)}
+    .scmd{margin-left:var(--space-lg);color:var(--text-muted)}
+    .sout{margin-left:var(--space-lg);color:var(--text-secondary);font-family:'IBM Plex Mono',monospace;font-size:12px;background:var(--bg-raised);padding:var(--space-sm);border-radius:3px;max-height:100px;overflow-y:auto}
+    .sr{margin-left:var(--space-lg);color:var(--danger)}
+    .ab{min-height:var(--row-height);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;margin-top:var(--space-lg);color:var(--text-secondary);cursor:pointer}
+    .ab:hover{background:var(--bg-hover)}
+    .ab.pr{border-color:var(--accent);color:var(--accent)}
+    .ab.pr:hover{background:var(--bg-highlight)}
+    .ab.dg{border-color:var(--danger);color:var(--danger)}
+    .emp{min-height:var(--row-height);padding:0 var(--space-sm);display:flex;align-items:center;color:var(--text-muted);border-bottom:1px solid var(--border)}
+    .note{background:var(--bg-raised);border-left:3px solid var(--accent);padding:var(--space-md);margin:var(--space-lg) 0}
+    .note-t{color:var(--accent);font-weight:500;margin-bottom:var(--space-xs)}
+    .note-x{color:var(--text-secondary);font-size:14px;line-height:1.5}
+  </style>
+</head>
+<body>
+  <button class="tt" onclick="document.body.toggleAttribute('data-theme')">Toggle Appearance</button>
+  <div class="board">
+    <header class="bh">
+      <h1 class="bt">Workbench Visual Redesign</h1>
+      <p class="bs">Design Board: Instrument Panel Concept</p>
+    </header>
+
+    <div class="note">
+      <div class="note-t">Visual Concept: Instrument Panel</div>
+      <div class="note-x">
+        Each tool is an instrument reading. Status communicates through: (1) Position: terminal states align right; 
+        (2) Weight: active/connecting states use bold; (3) Form: distinct glyphs (circle/dot/x/check) for each state;
+        (4) Color is secondary, supporting but never the sole signal.
+        Each tool cell carries ONE compact Connect button, aligned directly on the side of the cell.
+      </div>
+    </div>
+
+    <section class="bs-sec">
+      <h2 class="bs-t">1. Workbench Home - Tool Card States</h2>
+      <div class="dg">
+        <!-- Not Connected -->
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Not Connected</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
+            <div class="sec">
+              <div class="sec-h ts">Tools</div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">Covers Gmail, Google Calendar, YouTube, and other Google services.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Tailscale</div><div class="rd tm">Allows the machines in your B-Line network to connect to each other to form a tailnet.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Coinbase Wallet</div><div class="rd tm">With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana&mdash;with free transaction fees on Base.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+            </div>
+            <div class="sec">
+              <div class="sec-h ts">Keys</div>
+              <div class="emp"><span class="tb">None yet</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connected -->
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Connected</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
+            <div class="sec">
+              <div class="sec-h ts">Tools</div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">on squire-box 3 agents</div></div><div class="rs"><span class="sv conned tm">connected</span><div class="sg"><div class="gind done"></div></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">on squire-box signed in as dani</div></div><div class="rs"><span class="sv conned tm">connected</span><div class="sg"><div class="gind done"></div></div></div></div>
+            </div>
+            <div class="sec">
+              <div class="sec-h ts">Keys</div>
+              <div class="row"><div class="rm"><div class="rt tb">Vercel</div><div class="rd tm">token api.vercel.com</div></div><div class="rs"><span class="sv tm">active</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google</div><div class="rd tm">session accounts.google.com</div></div><div class="rs"><span class="sv tm">active</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connecting (in progress) -->
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Connecting</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
+            <div class="sec">
+              <div class="sec-h ts">Tools</div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><span class="sv conning tm">installing</span><div class="sg"><div class="gind act"></div></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">Covers Gmail, Google Calendar, YouTube, and other Google services.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+            </div>
+            <div class="sec">
+              <div class="sec-h ts">Keys</div>
+              <div class="emp"><span class="tb">None yet</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error State -->
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Error</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
+            <div class="sec">
+              <div class="sec-h ts">Tools</div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><span class="sv err tm">error</span><div class="sg"><div class="gind err"></div></div></div></div>
+            </div>
+            <div class="sec">
+              <div class="sec-h ts">Keys</div>
+              <div class="emp"><span class="tb">None yet</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bs-sec">
+      <h2 class="bs-t">2. Connect Flow - Helper Picker</h2>
+      <div class="dg">
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Choose Helper</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Connect Trusty Squire</div></div>
+            <div class="cf">
+              <p class="cfi tm">Squire runs on a helper. Every agent on that helper can use its connections, within the grants you set.</p>
+              <div class="sec-h ts">Helpers</div>
+              <div class="hl">
+                <div class="hr"><div class="hm"><div class="ht tb">squire-box</div><div class="hmeta tm">linux 3 agents online</div></div><span class="hact tm">pair</span></div>
+                <div class="hr"><div class="hm"><div class="ht tb">Dani MacBook</div><div class="hmeta tm">macos 1 agent online</div></div><span class="hact tm">pair</span></div>
+                <div class="hr off"><div class="hm"><div class="ht tb">office-mini</div><div class="hmeta tm">macos <span class="offt">offline</span></div></div><span class="hact tm">offline</span></div>
+              </div>
+              <p class="cfi tm" style="margin-top:var(--space-lg)">Pair a helper, not an agent. Offline helpers cannot be paired.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">No Helpers</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Connect Trusty Squire</div></div>
+            <div class="cf">
+              <p class="cfi tm">Squire runs on a helper. Every agent on that helper can use its connections, within the grants you set.</p>
+              <div class="sec-h ts">Helpers</div>
+              <div class="emp" style="justify-content:center"><span class="tm">No helpers found</span></div>
+              <div style="background:var(--bg-raised);padding:var(--space-md);margin-top:var(--space-lg)">
+                <p class="tmono" style="color:var(--text-primary);margin-bottom:var(--space-sm)">npx usebeeline connect</p>
+                <p class="tm" style="color:var(--text-muted)">Run this on the machine you want to hold your keys.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bs-sec">
+      <h2 class="bs-t">3. Connect Flow - Install Progress</h2>
+      <div class="dg">
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Installing</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Connect Trusty Squire</div></div>
+            <div class="cf">
+              <p class="cfi tm">Installing on squire-box</p>
+              <div class="sl">
+                <div class="si"><div class="shd"><div class="sm done">&#10003;</div><span class="slb done tb">helper squire-box reached</span></div></div>
+                <div class="si"><div class="shd"><div class="sm act">&#9679;</div><span class="slb act tb">trusty-squire 1.4.2 installed</span></div></div>
+                <div class="si"><div class="shd"><div class="sm pen">&#183;</div><span class="slb tm">paired to workspace squire-box</span></div></div>
+                <div class="si"><div class="shd"><div class="sm pen">&#183;</div><span class="slb tm">waiting for sign-in</span></div></div>
+                <div class="si"><div class="shd"><div class="sm pen">&#183;</div><span class="slb tm">connections sync</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Failed Step</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Connect Trusty Squire</div></div>
+            <div class="cf">
+              <p class="cfi tm">Installing on squire-box</p>
+              <div class="sl">
+                <div class="si"><div class="shd"><div class="sm done">&#10003;</div><span class="slb done tb">helper squire-box reached</span></div></div>
+                <div class="si"><div class="shd"><div class="sm act">&#9679;</div><span class="slb act tb">trusty-squire 1.4.2 installed</span></div></div>
+                <div class="si"><div class="shd"><div class="sm fail">&#10007;</div><span class="slb fail tb">paired to workspace squire-box</span></div><div class="sr tm">the helper could not reach the package registry</div></div>
+                <div class="si"><div class="shd"><div class="sm pen">&#183;</div><span class="slb tm">waiting for sign-in</span></div></div>
+                <div class="si"><div class="shd"><div class="sm pen">&#183;</div><span class="slb tm">connections sync</span></div></div>
+              </div>
+              <div class="ab">Retry</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Sign In Required</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Connect Trusty Squire</div></div>
+            <div class="cf">
+              <p class="cfi tm">Installing on squire-box</p>
+              <div class="sl">
+                <div class="si"><div class="shd"><div class="sm done">&#10003;</div><span class="slb done tb">helper squire-box reached</span></div></div>
+                <div class="si"><div class="shd"><div class="sm done">&#10003;</div><span class="slb done tb">trusty-squire 1.4.2 installed</span></div></div>
+                <div class="si"><div class="shd"><div class="sm done">&#10003;</div><span class="slb done tb">paired to workspace squire-box</span></div></div>
+                <div class="si"><div class="shd"><div class="sm done">&#10003;</div><span class="slb done tb">waiting for sign-in</span></div></div>
+                <div class="si"><div class="shd"><div class="sm pen">&#183;</div><span class="slb tm">connections sync</span></div></div>
+              </div>
+              <div class="ab pr">Sign in to Squire</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bs-sec">
+      <h2 class="bs-t">4. Desktop Layout Variant</h2>
+      <div class="dg">
+        <div class="df desk">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Workbench Desktop</div></div>
+          <div class="ds" style="display:flex">
+            <div style="width:280px;border-right:1px solid var(--border);padding:var(--space-md)">
+              <div class="ts" style="margin-bottom:var(--space-md)">Tools</div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);background:var(--bg-highlight);border-radius:3px;margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Trusty Squire</div><div class="tm" style="color:var(--text-muted)">connected</div></div><div class="sg"><div class="gind done"></div></div></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Google Workspace</div></div><button class="cbtn">Connect</button></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Tailscale</div></div><button class="cbtn">Connect</button></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Coinbase Wallet</div></div><button class="cbtn">Connect</button></div>
+            </div>
+            <div style="flex:1;padding:var(--space-md)">
+              <div class="th" style="margin-bottom:var(--space-lg)">Trusty Squire</div>
+              <div style="background:var(--bg-raised);border-left:3px solid var(--accent);padding:var(--space-md);margin-bottom:var(--space-xl)">
+                <div class="tm" style="color:var(--text-secondary);line-height:1.6">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-md);margin-bottom:var(--space-xl)">
+                <div style="background:var(--bg-raised);padding:var(--space-md);border-radius:3px">
+                  <div class="tm" style="color:var(--text-muted);margin-bottom:var(--space-xs)">Status</div>
+                  <div class="tb">Connected</div>
+                </div>
+                <div style="background:var(--bg-raised);padding:var(--space-md);border-radius:3px">
+                  <div class="tm" style="color:var(--text-muted);margin-bottom:var(--space-xs)">Helper</div>
+                  <div class="tb">squire-box</div>
+                </div>
+                <div style="background:var(--bg-raised);padding:var(--space-md);border-radius:3px">
+                  <div class="tm" style="color:var(--text-muted);margin-bottom:var(--space-xs)">Agents</div>
+                  <div class="tb">3</div>
+                </div>
+              </div>
+              <div class="ts" style="margin-bottom:var(--space-md)">Connected Keys</div>
+              <div style="background:var(--bg-raised);border-radius:3px;overflow:hidden">
+                <div style="display:flex;align-items:center;padding:var(--space-sm) var(--space-md);border-bottom:1px solid var(--border)"><div style="flex:1"><div class="tb">Vercel</div><div class="tm" style="color:var(--text-muted)">token api.vercel.com</div></div><span class="tm">active</span></div>
+                <div style="display:flex;align-items:center;padding:var(--space-sm) var(--space-md)"><div style="flex:1"><div class="tb">Google</div><div class="tm" style="color:var(--text-muted)">session accounts.google.com</div></div><span class="tm">active</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bs-sec">
+      <h2 class="bs-t">5. Expanded Tool Panel (Accordion)</h2>
+      <div class="dg">
+        <div class="df">
+          <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Expanded Tool</div></div>
+          <div class="ds">
+            <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
+            <div class="sec">
+              <div class="sec-h ts">Tools</div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="pan">
+                <div class="pli">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div>
+              </div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">Covers Gmail, Google Calendar, YouTube, and other Google services.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Tailscale</div><div class="rd tm">Allows the machines in your B-Line network to connect to each other to form a tailnet.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Coinbase Wallet</div><div class="rd tm">With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana&mdash;with free transaction fees on Base.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="note">
+      <div class="note-t">State Coverage Summary</div>
+      <div class="note-x">
+        <strong>Workbench Home:</strong> Not Connected, Connecting, Connected, Error<br>
+        <strong>Tools:</strong> Trusty Squire, Google Workspace (unified Gmail/Calendar/YouTube entry), Tailscale, Coinbase Wallet &mdash; each with a one-sentence user-story explanation<br>
+        <strong>Connect Flow:</strong> Helper Picker (with offline), No Helpers, Install Progress (pending/active/done/failed), Sign In Required<br>
+        <strong>Desktop Variant:</strong> Side panel navigation with detail pane<br>
+        <strong>Expanded Panel:</strong> Accordion tool explanations with the compact side Connect button on each row
+      </div>
+    </div>
+  </div>
+</body>
+</html>

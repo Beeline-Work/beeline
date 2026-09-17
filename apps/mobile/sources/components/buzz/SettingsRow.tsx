@@ -2,11 +2,23 @@ import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { StateDot } from './StateDot';
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 type SettingsRowTrailingPress = {
   accessibilityLabel?: string;
   disabled?: boolean;
+  onPress: () => void;
+  testID?: string;
+};
+
+/** The compact bordered action control on the trailing axis (board
+ *  revision 2's `.cbtn`): one word, brass, boxed — the Connect button a
+ *  tool row carries while it is not connected. Excludes `value`/`action`. */
+export type SettingsRowActionControl = {
+  accessibilityLabel?: string;
+  disabled?: boolean;
+  label: string;
   onPress: () => void;
   testID?: string;
 };
@@ -22,8 +34,12 @@ type SettingsRowDescriptionAction = {
 type SettingsRowProps = {
   accessibilityLabel?: string;
   accessibilityRole?: 'button' | 'link';
-  /** A single action word on the trailing axis. Excludes `value`. */
+  /** A single action word on the trailing axis. Excludes `value` and
+   *  `actionControl`. */
   action?: string;
+  /** The compact bordered action control on the trailing axis. Excludes
+   *  `value` and `action`. */
+  actionControl?: SettingsRowActionControl;
   /** The trailing chevron of a row that opens something. */
   chevron?: 'right' | 'down' | 'up';
   /** The quiet line under the title. A full sentence wraps here rather than
@@ -46,10 +62,15 @@ type SettingsRowProps = {
   /** The row's current state, on the trailing axis. Never in the title. */
   value?: string;
   /**
-   * Tone for the trailing value. Danger renders an error/breakage distinctly
-   * from a neutral state, without adding a box.
+   * The state dot beside the value word, when the state carries one. Never
+   * the only signal — the word beside it carries the state.
    */
-  valueTone?: 'danger';
+  statusGlyph?: 'live' | 'pulse' | 'failed';
+  /**
+   * Tone for the trailing value. Danger renders an error/breakage distinctly
+   * from a neutral state; accent marks work in flight — without adding a box.
+   */
+  valueTone?: 'danger' | 'accent';
 };
 
 /**
@@ -60,12 +81,16 @@ type SettingsRowProps = {
  * Its trailing column is the closed vocabulary the sheet row already carries
  * (C102), on the row's own padding edge and nothing else:
  *
- *   - `chevron`  a row that opens something — `'right'` to leave for it,
- *                `'down'` while its editor stands open beneath it;
- *   - `value`    the row's current state (pairs with `chevron`);
- *   - `action`   one word, for a row that acts on the thing it names;
- *   - nothing    for a plain fact, or for a row whose TITLE is the action —
- *                the shape the Members page removes a member with.
+ *   - `chevron`        a row that opens something — `'right'` to leave for
+ *                      it, `'down'` while its editor stands open beneath it;
+ *   - `value`          the row's current state (pairs with `chevron` and
+ *                      `statusGlyph`);
+ *   - `action`         one word, for a row that acts on the thing it names;
+ *   - `actionControl`  the compact bordered Connect control a tool row
+ *                      carries while it is not connected;
+ *   - nothing          for a plain fact, or for a row whose TITLE is the
+ *                      action — the shape the Members page removes a member
+ *                      with.
  *
  * A row never wears a box and never carries an explanatory paragraph.
  */
@@ -73,12 +98,14 @@ export function SettingsRow({
   accessibilityLabel,
   accessibilityRole = 'button',
   action,
+  actionControl,
   chevron,
   description,
   descriptionAction,
   disabled = false,
   leading,
   onPress,
+  statusGlyph,
   testID,
   title,
   tone,
@@ -86,21 +113,45 @@ export function SettingsRow({
   value,
   valueTone,
 }: SettingsRowProps) {
-  const spoken = [value ?? action, description].filter(Boolean).join('. ');
+  const spoken = [value ?? action ?? actionControl?.label, description].filter(Boolean).join('. ');
   const trailingMark =
     action !== undefined ? (
       <Text numberOfLines={1} style={styles.action}>
         {action}
       </Text>
     ) : value !== undefined ? (
-      <Text numberOfLines={1} style={[styles.value, valueTone === 'danger' && styles.valueDanger]}>
-        {value}
-      </Text>
+      <View style={styles.valueRow}>
+        {statusGlyph ? <StateDot kind={statusGlyph} testID={testID ? `${testID}-glyph` : undefined} /> : null}
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.value,
+            valueTone === 'danger' && styles.valueDanger,
+            valueTone === 'accent' && styles.valueAccent,
+          ]}
+        >
+          {value}
+        </Text>
+      </View>
     ) : null;
   // The trailing slot owns the width cap, not the text inside it: a percentage
   // on the text resolves against a content-sized press target and collapses.
   const trailing =
-    trailingMark === null ? null : trailingPress ? (
+    actionControl !== undefined ? (
+      <View style={styles.trailingSlot}>
+        <TouchableOpacity
+          accessibilityLabel={actionControl.accessibilityLabel ?? actionControl.label}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: Boolean(actionControl.disabled) }}
+          disabled={actionControl.disabled}
+          onPress={actionControl.onPress}
+          style={[styles.actionControl, actionControl.disabled && styles.disabled]}
+          testID={actionControl.testID}
+        >
+          <Text style={styles.actionControlLabel}>{actionControl.label}</Text>
+        </TouchableOpacity>
+      </View>
+    ) : trailingMark === null ? null : trailingPress ? (
       <TouchableOpacity
         accessibilityLabel={trailingPress.accessibilityLabel}
         accessibilityRole="button"
@@ -235,6 +286,30 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       textAlign: 'right',
       color: hull.dialogDanger,
+    },
+    valueAccent: {
+      ...Typography.default(),
+      ...Typography.ledger('medium'),
+      ...hull.type.meta,
+      textAlign: 'right',
+      color: hull.accent,
+    },
+    valueRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
+    // The one compact bordered control (board revision 2's `.cbtn`): brass
+    // word, brass border, the shared radius — acting stays the one thing
+    // with a box on a row, because it is the one thing a row must act on.
+    actionControl: {
+      borderWidth: 1,
+      borderColor: hull.accent,
+      borderRadius: hull.radius,
+      paddingVertical: 5,
+      paddingHorizontal: 14,
+    },
+    actionControlLabel: {
+      ...Typography.default(),
+      ...Typography.ledger('medium'),
+      ...hull.type.meta,
+      color: hull.accent,
     },
     // The one word that acts. Brass, because acting is what brass marks — and
     // redundant with the verb itself, never the only signal.

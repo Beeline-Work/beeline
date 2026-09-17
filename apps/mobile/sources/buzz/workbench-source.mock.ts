@@ -130,7 +130,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
         {
           id: 'trusty-squire',
           name: 'Trusty Squire',
-          description: 'vault, sign-ups, payments',
+          description: CONNECTOR_DESCRIPTIONS['trusty-squire'],
           available: true,
           ...(connected
             ? {
@@ -145,14 +145,14 @@ export class MockWorkbenchSource implements WorkbenchSource {
         },
         {
           id: 'wallet',
-          name: 'Wallet',
-          description: 'crypto wallet for agents',
+          name: 'Coinbase Wallet',
+          description: CONNECTOR_DESCRIPTIONS['wallet'],
           available: false,
         },
         {
           id: 'tailscale',
           name: 'Tailscale',
-          description: 'private network for helpers',
+          description: CONNECTOR_DESCRIPTIONS['tailscale'],
           available: false,
         },
         {

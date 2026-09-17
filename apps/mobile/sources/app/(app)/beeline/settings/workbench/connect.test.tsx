@@ -182,7 +182,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     const online = renderer.root.findByProps({ testID: 'connect-machine-helper-squire-box' });
     expect(online.props.title).toBe('squire-box');
     expect(online.props.description).toBe('online');
-    expect(online.props.action).toBe('install');
+    expect(online.props.action).toBe('pair');
     expect(online.props.value).toBeUndefined();
     expect(online.props.disabled).toBe(false);
     const offline = renderer.root.findByProps({ testID: 'connect-machine-helper-office-mini' });

@@ -684,4 +684,14 @@ describe('monolith Room send path', () => {
       githubInstallationId: 77,
     });
   });
+
+  it('unassigns the Room repository through the void phone operation', async () => {
+    controls.fetch.mockImplementation(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body))).toEqual({ roomId: ROOM });
+      return new Response(undefined, { status: 204 });
+    });
+    const transport = new MonolithRigTransport(identity);
+
+    await expect(transport.roomRepositoryRemove(ROOM)).resolves.toBeUndefined();
+  });
 });

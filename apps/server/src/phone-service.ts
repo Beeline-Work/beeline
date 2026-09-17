@@ -2539,6 +2539,9 @@ export class PhoneService {
           input as Input<'setRoomGitHubEvents'>,
           viewerId,
         )) as Output<Name>;
+      case 'removeRoomRepository':
+        await this.removeRepositoryBinding(input as Input<'removeRoomRepository'>, viewerId);
+        return undefined as Output<Name>;
       case 'listRoomWorkflows':
         await this.requireHumanRoomWorkspaceManager(
           (input as Input<'listRoomWorkflows'>).roomId,
@@ -4973,6 +4976,28 @@ export class PhoneService {
     );
     return this.roomRepository(input.roomId);
   }
+  /**
+   * Sever the Room→repository association: the Room becomes chat-only.
+   *
+   * This clears only the binding columns on the Room row. The repository
+   * itself, the Room, its messages, and its history are untouched, and any
+   * corner already opened from this Room keeps its own copy of the binding
+   * (corners carry their repository columns independently of the parent).
+   * Deliberately idempotent: unassigning an already chat-only Room is a
+   * quiet no-op, so a retried call succeeds.
+   */
+  private async removeRepositoryBinding(input: Input<'removeRoomRepository'>, viewerId: string) {
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    await this.database.query(
+      `UPDATE rooms
+       SET repository_key=NULL,repository_name=NULL,repository_remote=NULL,
+           repository_target_branch='main',github_installation_id=NULL,
+           repository_resolution='none',github_events_enabled=true,
+           repository_updated_at=now(),updated_at=now()
+       WHERE id=$1`,
+      [input.roomId],
+    );
+  }
   private async roomRepository(roomId: string) {
     const row = (await this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [roomId]))
       .rows[0];
@@ -6140,6 +6165,7 @@ export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;
 export const REVIEW_IDENTITY_MESSAGE = 'GitHub access denied for the review identity';
 export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'setRoomRepository',
+  'removeRoomRepository',
   'beginGitHubInstallation',
   'createGitHubRepository',
   'beginGitHubIdentityBind',
@@ -6192,6 +6218,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'setRoomRepository',
   'setRoomTargetBranch',
   'setRoomGitHubEvents',
+  'removeRoomRepository',
   'listRoomWorkflows',
   'dispatchRoomWorkflow',
   'approveCornerMerge',

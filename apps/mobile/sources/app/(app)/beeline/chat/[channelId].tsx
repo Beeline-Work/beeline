@@ -3357,6 +3357,34 @@ export default function BuzzChat() {
     }
   }, [decodedId, roomRepoBusy, roomRepository, transport]);
 
+  // Unassigning the repo is the inverse of linking it: the Room becomes
+  // chat-only. It is confirmed like the other destructive Room actions, and
+  // the confirm text carries the one room-side consequence that matters —
+  // open corners keep their own repo copies, nothing else moves.
+  const handleUnlinkRoomRepository = useCallback(async () => {
+    if (!transport || !roomRepository || roomRepoBusy) return;
+    const hasOpenCorners = roomListCorners(cornerLifecycle).length > 0;
+    const confirmed = await Modal.confirm(
+      `Unlink ${roomRepository.binding.name}?`,
+      hasOpenCorners
+        ? `This ${ROOM_LABEL} becomes chat-only. Open ${CORNER_LABEL}s keep their copies of the repo; messages and history are untouched.`
+        : `This ${ROOM_LABEL} becomes chat-only. Messages and history are untouched.`,
+      { cancelText: 'Cancel', confirmText: 'Unlink repo', destructive: true },
+    );
+    if (!confirmed) return;
+    setRoomRepoBusy(true);
+    setRoomRepoError(null);
+    try {
+      await transport.roomRepositoryRemove(decodedId);
+      refreshSignal.force();
+      setShowRoomRepoPicker(false);
+    } catch {
+      setRoomRepoError('Could not unlink the repository.');
+    } finally {
+      setRoomRepoBusy(false);
+    }
+  }, [cornerLifecycle, decodedId, roomRepoBusy, roomRepository, transport]);
+
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
     setRoomRepoError(null);
@@ -5173,6 +5201,7 @@ export default function BuzzChat() {
             ) : null
           }
           onToggle={() => void handleToggleRoomRepoPicker()}
+          onUnlink={roomRepository ? () => void handleUnlinkRoomRepository() : undefined}
           picker={
             <View style={styles.roomSheetInset}>
               <RepoPicker

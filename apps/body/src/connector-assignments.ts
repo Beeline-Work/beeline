@@ -292,6 +292,7 @@ export class ConnectorAssignmentLoop {
       workspaceId: this.agentId,
       mcp: this.squire(),
       onProgress: report,
+      log: (message) => this.log(`[trusty-squire] ${message}`),
     });
     if (result.status === 'error') {
       await this.api.execute('postConnectorStatus', {

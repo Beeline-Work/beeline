@@ -13,6 +13,13 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    Animated: {
+      Value: (v: number) => ({ _value: v, add: () => ({ _value: v }), interpolate: () => ({ _value: v }) }),
+      timing: () => ({ start: () => undefined }),
+      sequence: () => ({ start: () => undefined }),
+      loop: () => ({ start: () => undefined, stop: () => undefined }),
+      View: host('Animated.View'),
+    },
   };
 });
 
@@ -46,7 +53,7 @@ function tool(
   return {
     id,
     name: id.replace('google-', ''),
-    description: 'one Google OAuth grant for your agents',
+    description: 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
     available: true,
     ...(status ? { status } : {}),
   };
@@ -62,7 +69,7 @@ async function render(element: React.ReactElement): Promise<ReactTestRenderer> {
 }
 
 describe('GoogleEntryRow', () => {
-  it('renders the ONE Google entry: nothing connected shows connect and the per-tool lines', async () => {
+  it('renders the ONE Google entry: its Connect button sits on the row, facts stay in the pane', async () => {
     const onPressConnect = vi.fn();
     const connectors = [
       tool('trusty-squire'),
@@ -76,10 +83,22 @@ describe('GoogleEntryRow', () => {
     );
     const row = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(row.props.title).toBe('Google Workspace');
-    expect(row.props.value).toBe('connect');
-    expect(row.props.description).toBe('one Google OAuth grant for your agents');
-    // The connect action does not exist while the row is collapsed.
-    expect(renderer.root.findAllByProps({ testID: 'google-entry-connect' })).toEqual([]);
+    // Board revision 2: no state word while not connected — the ONE compact
+    // side Connect button carries the affordance, right on the row.
+    expect(row.props.value).toBeUndefined();
+    expect(row.props.actionControl).toMatchObject({
+      label: 'Connect',
+      testID: 'google-entry-connect',
+    });
+    expect(row.props.description).toBe(
+      'Covers Gmail, Google Calendar, YouTube, and other Google services.',
+    );
+    expect(onPressConnect).not.toHaveBeenCalled();
+    await act(async () => {
+      row.props.actionControl.onPress();
+    });
+    expect(onPressConnect).toHaveBeenCalledTimes(1);
+    // The accordion keeps the per-tool state lines beneath the row.
     await act(async () => {
       row.props.onPress();
     });
@@ -93,16 +112,9 @@ describe('GoogleEntryRow', () => {
       .map(textOf)
       .filter((text: string) => (seen.has(text) ? false : (seen.add(text), true)));
     expect(toolLines).toEqual(['· gmail · connect']);
-    const connect = renderer.root.findByProps({ testID: 'google-entry-connect' });
-    expect(connect.props.onPress).toBeTypeOf('function');
-    expect(onPressConnect).not.toHaveBeenCalled();
-    await act(async () => {
-      connect.props.onPress();
-    });
-    expect(onPressConnect).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a partially connected set as repair with how much of the grant is live', async () => {
+  it('shows a partially connected set as repair: side Connect tops up, pane counts what is live', async () => {
     const onPressConnect = vi.fn();
     const connectors = [
       tool('google-gmail', 'connected'),
@@ -114,7 +126,9 @@ describe('GoogleEntryRow', () => {
       React.createElement(GoogleEntryRow, { connectors, onPressConnect }),
     );
     const row = renderer.root.findByProps({ testID: 'google-entry-row' });
-    expect(row.props.value).toBe('repair');
+    // Repair connects exactly like a first connect — same button, no word.
+    expect(row.props.value).toBeUndefined();
+    expect(row.props.actionControl).toMatchObject({ label: 'Connect' });
     expect(row.props.description).toBe('2 of 4 tools connected');
     await act(async () => {
       row.props.onPress();
@@ -132,10 +146,6 @@ describe('GoogleEntryRow', () => {
       'google-entry-tool-google-drive': '· drive · connect',
       'google-entry-tool-google-youtube': '· youtube · connect',
     });
-    // Repair still offers the ONE connect action (top up the missing tools).
-    expect(renderer.root.findByProps({ testID: 'google-entry-connect' }).props.onPress).toBeTypeOf(
-      'function',
-    );
   });
 
   it('shows a fully connected set as connected with its sign-in identity and no connect button', async () => {
@@ -158,14 +168,8 @@ describe('GoogleEntryRow', () => {
     );
     const row = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(row.props.value).toBe('connected');
+    expect(row.props.statusGlyph).toBe('live');
+    expect(row.props.actionControl).toBeUndefined();
     expect(row.props.description).toContain('signed in as dana@gmail.test');
-    await act(async () => {
-      row.props.onPress();
-    });
-    expect(renderer.root.findByProps({ testID: 'google-entry-connected' }).props.children).toEqual([
-      'Connected',
-      ' as dana@gmail.test',
-    ]);
-    expect(renderer.root.findAllByProps({ testID: 'google-entry-connect' })).toEqual([]);
   });
 });

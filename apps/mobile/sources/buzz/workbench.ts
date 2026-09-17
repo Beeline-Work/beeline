@@ -71,16 +71,53 @@ export type WorkbenchHelper = {
   online: boolean;
 };
 
-/** The quiet line under each catalog row before anything is paired. */
+/** The one-sentence user story under each catalog row before anything is
+ *  paired (board revision 2, PR #1351). The Google tools share the entry's
+ *  one covering sentence. */
 export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
-  'trusty-squire': 'vault, sign-ups, payments',
-  wallet: 'your agents can spend',
-  tailscale: 'private network for helpers',
-  'google-gmail': 'one Google OAuth grant for your agents',
-  'google-calendar': 'one Google OAuth grant for your agents',
-  'google-drive': 'one Google OAuth grant for your agents',
-  'google-youtube': 'one Google OAuth grant for your agents',
+  'trusty-squire':
+    'With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.',
+  wallet:
+    'With Coinbase\'s non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana—with free transaction fees on Base.',
+  tailscale: 'Allows the machines in your B-Line network to connect to each other to form a tailnet.',
+  'google-gmail': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
+  'google-calendar': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
+  'google-drive': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
+  'google-youtube': 'Covers Gmail, Google Calendar, YouTube, and other Google services.',
 };
+
+/** How a tool row's trailing instrument reads (board revision 2): a state
+ *  word beside its state dot, or the ONE compact Connect button when the
+ *  tool is not connected and not `soon`. The dot is never the only signal —
+ *  the word carries the state. */
+export type ConnectorInstrument = {
+  /** The trailing state word; absent when the row carries its Connect button. */
+  value?: 'connected' | 'installing' | 'error' | 'soon';
+  /** The state dot beside the word, when the state has one. */
+  glyph?: 'live' | 'pulse' | 'failed';
+  valueTone?: 'danger' | 'accent';
+  /** The row carries its one compact Connect button. */
+  connect: boolean;
+};
+
+/** Project a connector's lifecycle into its row instrument. `undefined`
+ *  status reads as not connected; an unavailable tool reads `soon`. */
+export function connectorInstrument(
+  status: WorkbenchConnectorStatus | 'soon' | undefined,
+): ConnectorInstrument {
+  switch (status) {
+    case 'connected':
+      return { value: 'connected', glyph: 'live', connect: false };
+    case 'installing':
+      return { value: 'installing', glyph: 'pulse', valueTone: 'accent', connect: false };
+    case 'error':
+      return { value: 'error', glyph: 'failed', valueTone: 'danger', connect: false };
+    case 'soon':
+      return { value: 'soon', connect: false };
+    default:
+      return { connect: true };
+  }
+}
 
 /**
  * The ONE Google connect entry: the four Google tool connectors fold into a
@@ -183,22 +220,6 @@ export function googleToolStates(
   }));
 }
 
-/** Trailing value word for the single Google entry row. */
-export function googleEntryValue(state: GoogleEntryState): string {
-  switch (state) {
-    case 'connected':
-      return 'connected';
-    case 'installing':
-      return 'installing';
-    case 'error':
-      return 'error';
-    case 'repair':
-      return 'repair';
-    default:
-      return 'connect';
-  }
-}
-
 /** The quiet line under the single Google entry row. A partially connected
  * set names how much of the one grant is live; otherwise the connected
  * helper/sign-in facts, or the catalog description before anything pairs. */
@@ -299,21 +320,6 @@ export function connectionsForViewer(
   // that case.
   if (!viewerId) return view.connections;
   return view.connections.filter((connection) => connection.ownerId === viewerId);
-}
-
-/** Trailing value word for a connector row. */
-export function connectorRowValue(connector: WorkbenchConnector): string {
-  if (!connector.available) return 'soon';
-  switch (connector.status) {
-    case 'connected':
-      return 'connected';
-    case 'installing':
-      return 'installing';
-    case 'error':
-      return 'error';
-    default:
-      return 'connect';
-  }
 }
 
 /** The quiet line under a connected connector: what it runs on. */

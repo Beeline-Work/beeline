@@ -213,19 +213,24 @@ export default function ConnectTrustySquireScreen() {
         {noHelpers ? (
           <View testID="connect-no-helper">
             <Text style={styles.note}>
-              Squire runs on a helper. Every agent on that helper can use its keys, within the
-              grants you set.
+              Squire runs on a helper. Every agent on that helper can use its connections, within
+              the grants you set.
             </Text>
-            <Text style={styles.command}>npx usebeeline connect</Text>
-            <Text style={styles.note}>
-              Run this on the machine you want to hold your keys. When it appears here, come back
-              and pair it.
+            <Text style={styles.empty} testID="connect-no-helper-empty">
+              No helpers found
             </Text>
+            <View style={styles.commandBlock} testID="connect-no-helper-command">
+              <Text style={styles.command}>npx usebeeline connect</Text>
+              <Text style={styles.note}>
+                Run this on the machine you want to hold your keys. When it appears here, come back
+                and pair it.
+              </Text>
+            </View>
           </View>
         ) : null}
         {install === null && someHelpers ? (
           <View testID="connect-machine-picker">
-            <Text style={styles.sectionLabel}>Choose a helper machine</Text>
+            <Text style={styles.sectionLabel}>Helpers</Text>
             {helpers!.map((helper) => (
               <SettingsRow
                 key={helper.id}
@@ -234,13 +239,12 @@ export default function ConnectTrustySquireScreen() {
                 onPress={() => void pair(helper.id)}
                 testID={`connect-machine-${helper.id}`}
                 title={helper.name}
-                action={helper.online ? 'install' : undefined}
+                action={helper.online ? 'pair' : undefined}
                 value={helper.online ? undefined : 'offline'}
               />
             ))}
             <Text style={styles.note}>
-              The Trusty Squire binary is installed on the machine you pick. Offline machines
-              cannot be paired.
+              Pair a helper, not an agent. Offline helpers cannot be paired.
             </Text>
           </View>
         ) : null}
@@ -358,6 +362,23 @@ const styles = StyleSheet.create((theme) => {
     loading: { alignItems: 'center', gap: hull.space.sm, paddingVertical: hull.space.xl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     note: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    // The empty state's one centered fact (board: `emp`).
+    empty: {
+      ...Typography.default(),
+      ...hull.type.body,
+      color: hull.textPrimary,
+      textAlign: 'center',
+      paddingVertical: hull.space.md,
+    },
+    // The one raised block: the CLI command the user must run, boxed because
+    // it is the one thing the page asks them to act on.
+    commandBlock: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      borderRadius: hull.radius,
+      padding: hull.space.md,
+      gap: hull.space.sm,
+    },
     command: { ...Typography.mono(), ...hull.type.body, color: hull.textPrimary },
     steps: { gap: hull.space.xs },
     stepText: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },

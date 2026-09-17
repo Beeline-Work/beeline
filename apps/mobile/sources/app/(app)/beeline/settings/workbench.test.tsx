@@ -28,6 +28,17 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    Animated: {
+      Value: (v: number) => ({
+        _value: v,
+        add: () => ({ _value: v }),
+        interpolate: () => ({ _value: v }),
+      }),
+      timing: () => ({ start: () => undefined }),
+      sequence: () => ({ start: () => undefined }),
+      loop: () => ({ start: () => undefined, stop: () => undefined }),
+      View: host('Animated.View'),
+    },
   };
 });
 
@@ -83,31 +94,40 @@ describe('Workbench settings screen', () => {
     const renderer = await render();
     const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
     expect(squire.props.title).toBe('Trusty Squire');
-    expect(squire.props.value).toBe('connect');
-    // The wallet row is the one EXPANDABLE tool cell: the value column stays
-    // the row's state, and the Connect affordance lives inside the expansion.
+    // Board revision 2: the not-connected tool carries its ONE compact side
+    // Connect button on the row — no state word beside it.
+    expect(squire.props.value).toBeUndefined();
+    expect(squire.props.actionControl).toMatchObject({
+      label: 'Connect',
+      testID: 'workbench-connector-trusty-squire-connect',
+    });
+    // The wallet row stays the `soon` fact: value only, no dot, no control.
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     expect(wallet.props.value).toBe('soon');
-    act(() => {
-      wallet.props.onPress();
-    });
-    const connect = renderer.root.findByProps({
-      testID: 'workbench-connector-wallet-connect',
-    });
-    expect(connect.props.title).toBe('Connect Coinbase Wallet');
-    // A `soon` connector does not act yet: the affordance is present, inert.
-    expect(connect.props.onPress).toBeUndefined();
+    expect(wallet.props.actionControl).toBeUndefined();
+    expect(wallet.props.statusGlyph).toBeUndefined();
     expect(
       renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.value,
     ).toBe('soon');
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connector-tailscale' }).props.actionControl,
+    ).toBeUndefined();
   });
 
-  it('expands a tool cell to reveal details and the Connect button inside', async () => {
+  it('connects a tool from its row and keeps the accordion for the facts', async () => {
     const renderer = await render();
-    // Nothing expanded yet, no connect button on the collapsed row.
-    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-trusty-squire-connect' })).toHaveLength(0);
+    // The side Connect button exists on the collapsed row without expanding.
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
     act(() => {
-      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' }).props.onPress();
+      squire.props.actionControl.onPress();
+    });
+    expect(navigation.push).toHaveBeenCalledTimes(1);
+    expect(navigation.push.mock.calls[0][0].pathname).toBe('/beeline/settings/workbench/connect');
+    expect(navigation.push.mock.calls[0][0].params.connectorId).toBe('trusty-squire');
+    // The expanded pane carries the value proposition and named facts —
+    // no full-width Connect button inside it anymore.
+    act(() => {
+      squire.props.onPress();
     });
     const details = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-details' });
     const texts = details.findAll((node: any) => typeof node.props?.children === 'string');
@@ -120,32 +140,24 @@ describe('Workbench settings screen', () => {
     expect(
       prose.some((line: string) => /card is stored or uploaded/.test(line)),
     ).toBe(true);
-    // Collapsed rows carry no action word: Connect lives INSIDE the details.
-    expect(renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' }).props.action).toBeUndefined();
-    act(() => {
-      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-connect' }).props.onPress();
-    });
-    expect(navigation.push).toHaveBeenCalledTimes(1);
-    expect(navigation.push.mock.calls[0][0].pathname).toBe('/beeline/settings/workbench/connect');
-    expect(navigation.push.mock.calls[0][0].params.connectorId).toBe('trusty-squire');
   });
 
-  it('folds the four Google tool rows into the ONE Google entry that pairs the whole set', async () => {
+  it('folds the four Google tool rows into the ONE Google entry whose Connect button sits on the row', async () => {
     const renderer = await render();
     // Exactly ONE Google row; the four tool kinds never render their own rows.
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
-    expect(entry.props.value).toBe('connect');
+    expect(entry.props.value).toBeUndefined();
+    expect(entry.props.actionControl).toMatchObject({
+      label: 'Connect',
+      testID: 'google-entry-connect',
+    });
     expect(renderer.root.findAllByProps({ testID: /^google-entry-tool-/ })).toHaveLength(0);
-    await act(async () => {
-      entry.props.onPress();
-    });
-    const connect = renderer.root.findByProps({ testID: 'google-entry-connect' });
-    act(() => {
-      connect.props.onPress();
-    });
     // The entry hands off with the LOGICAL google id; the source resolves it
     // to the first not-yet-connected tool before the server call.
+    act(() => {
+      entry.props.actionControl.onPress();
+    });
     const push = navigation.push.mock.calls.at(-1)![0];
     expect(push.pathname).toBe('/beeline/settings/workbench/connect');
     expect(push.params.connectorId).toBe('google');
@@ -191,7 +203,7 @@ describe('Workbench settings screen', () => {
     expect(renderer.root.findAllByProps({ testID: 'workbench-connection-cred_google' })).toHaveLength(0);
   });
 
-  it('renders the error tone for a connector in error state', async () => {
+  it('renders the error tone and failed dot for a connector in error state', async () => {
     const source = new MockWorkbenchSource();
     source.failNextPair('trusty-squire');
     setWorkbenchSource(source);
@@ -199,6 +211,8 @@ describe('Workbench settings screen', () => {
     const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
     expect(squire.props.value).toBe('error');
     expect(squire.props.valueTone).toBe('danger');
+    expect(squire.props.statusGlyph).toBe('failed');
+    // The dot itself renders inside the real SettingsRow (mocked here).
   });
 
 

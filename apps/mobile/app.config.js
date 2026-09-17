@@ -67,7 +67,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "25",
+            runtimeVersion: runtimeVersionOverride || "26",
             icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -98,7 +98,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "24",
+            runtimeVersion: runtimeVersionOverride || "25",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -196,8 +196,12 @@ export default {
                 'expo-splash-screen',
                 {
                     ios: {
-                        backgroundColor: "#14091A",
+                        image: "./sources/assets/images/splash-android-light.png",
+                        imageWidth: 150,
+                        resizeMode: "contain",
+                        backgroundColor: "#F3EEE4",
                         dark: {
+                            image: "./sources/assets/images/splash-android-dark.png",
                             backgroundColor: "#14091A",
                         }
                     },
@@ -205,7 +209,7 @@ export default {
                         image: "./sources/assets/images/splash-android-light.png",
                         imageWidth: 150,
                         resizeMode: "contain",
-                        backgroundColor: "#14091A",
+                        backgroundColor: "#F3EEE4",
                         dark: {
                             image: "./sources/assets/images/splash-android-dark.png",
                             backgroundColor: "#14091A",

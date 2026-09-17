@@ -14,7 +14,11 @@ vi.mock('react-native', async () => {
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
     Animated: {
-      Value: (v: number) => ({ _value: v, add: () => ({ _value: v }), interpolate: () => ({ _value: v }) }),
+      Value: (v: number) => ({
+        _value: v,
+        add: () => ({ _value: v }),
+        interpolate: () => ({ _value: v }),
+      }),
       timing: () => ({ start: () => undefined }),
       sequence: () => ({ start: () => undefined }),
       loop: () => ({ start: () => undefined, stop: () => undefined }),
@@ -69,7 +73,7 @@ async function render(element: React.ReactElement): Promise<ReactTestRenderer> {
 }
 
 describe('GoogleEntryRow', () => {
-  it('renders the ONE Google entry: its Connect button sits on the row, facts stay in the pane', async () => {
+  it('renders one Connect action and reveals only the service one-liner', async () => {
     const onPressConnect = vi.fn();
     const connectors = [
       tool('trusty-squire'),
@@ -83,35 +87,23 @@ describe('GoogleEntryRow', () => {
     );
     const row = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(row.props.title).toBe('Google Workspace');
-    // Board revision 2: no state word while not connected — the ONE compact
-    // side Connect button carries the affordance, right on the row.
     expect(row.props.value).toBeUndefined();
-    expect(row.props.actionControl).toMatchObject({
-      label: 'Connect',
-      testID: 'google-entry-connect',
-    });
-    expect(row.props.description).toBe(
-      'Covers Gmail, Google Calendar, YouTube, and other Google services.',
-    );
+    expect(row.props.action).toBe('Connect');
+    expect(row.props.trailingPress.testID).toBe('google-entry-connect');
+    expect(row.props.description).toBeUndefined();
     expect(onPressConnect).not.toHaveBeenCalled();
     await act(async () => {
-      row.props.actionControl.onPress();
+      row.props.trailingPress.onPress();
     });
     expect(onPressConnect).toHaveBeenCalledTimes(1);
-    // The accordion keeps the per-tool state lines beneath the row.
     await act(async () => {
       row.props.onPress();
     });
     const details = renderer.root.findByProps({ testID: 'google-entry-details' });
     expect(details).toBeDefined();
-    const textOf = (node: any) =>
-      Array.isArray(node.props?.children) ? node.props.children.join('') : node.props?.children;
-    const seen = new Set<string>();
-    const toolLines = renderer.root
-      .findAllByProps({ testID: 'google-entry-tool-google-gmail' })
-      .map(textOf)
-      .filter((text: string) => (seen.has(text) ? false : (seen.add(text), true)));
-    expect(toolLines).toEqual(['· gmail · connect']);
+    expect(details.findByType('Text' as any).props.children).toBe(
+      'Covers Gmail, Google Calendar, YouTube, and other Google services.',
+    );
   });
 
   it('shows a partially connected set as repair: side Connect tops up, pane counts what is live', async () => {
@@ -126,26 +118,17 @@ describe('GoogleEntryRow', () => {
       React.createElement(GoogleEntryRow, { connectors, onPressConnect }),
     );
     const row = renderer.root.findByProps({ testID: 'google-entry-row' });
-    // Repair connects exactly like a first connect — same button, no word.
     expect(row.props.value).toBeUndefined();
-    expect(row.props.actionControl).toMatchObject({ label: 'Connect' });
-    expect(row.props.description).toBe('2 of 4 tools connected');
+    expect(row.props.action).toBe('Connect');
+    expect(row.props.description).toBeUndefined();
     await act(async () => {
       row.props.onPress();
     });
-    const textOf = (node: any) =>
-      Array.isArray(node.props?.children) ? node.props.children.join('') : node.props?.children;
-    const seen = new Set<string>();
-    const toolLines = renderer.root
-      .findAll((node: any) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('google-entry-tool-'))
-      .map((node: any) => [node.props.testID, textOf(node)])
-      .filter(([id]: [string]) => (seen.has(id) ? false : (seen.add(id), true)));
-    expect(Object.fromEntries(toolLines)).toEqual({
-      'google-entry-tool-google-gmail': '· gmail · connected',
-      'google-entry-tool-google-calendar': '· calendar · connected',
-      'google-entry-tool-google-drive': '· drive · connect',
-      'google-entry-tool-google-youtube': '· youtube · connect',
-    });
+    expect(
+      renderer.root.findAll((node: any) =>
+        String(node.props?.testID ?? '').startsWith('google-entry-tool-'),
+      ),
+    ).toHaveLength(0);
   });
 
   it('shows a fully connected set as connected with its sign-in identity and no connect button', async () => {
@@ -168,8 +151,8 @@ describe('GoogleEntryRow', () => {
     );
     const row = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(row.props.value).toBe('connected');
-    expect(row.props.statusGlyph).toBe('live');
-    expect(row.props.actionControl).toBeUndefined();
-    expect(row.props.description).toContain('signed in as dana@gmail.test');
+    expect(row.props.statusGlyph).toBeUndefined();
+    expect(row.props.action).toBeUndefined();
+    expect(row.props.description).toBeUndefined();
   });
 });

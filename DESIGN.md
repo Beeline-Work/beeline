@@ -85,10 +85,10 @@ code block, and footer share one spacing and type system on phone and desktop.
 
 A rule is not a box: one edge, no fill, no radius. It divides an _index_ — the
 Room list, the member list — and nothing else. Transcript messages use one
-compact vertical rhythm beneath the sender byline, including the first message
-in a run; there are no turn dividers or opener-only gaps. The only edges in the
-transcript are the quiet 2px left rules shared by code blocks, tool readouts,
-and system lines. No speaker rails anywhere.
+compact vertical rhythm within a same-speaker run. A speaker-changing byline
+gets exactly twice that separation, using proximity alone; there are no turn
+dividers. The only edges in the transcript are the quiet 2px left rules shared
+by code blocks, tool readouts, and system lines. No speaker rails anywhere.
 
 ## The ledger
 

@@ -448,6 +448,10 @@ export default function BuzzChat() {
   // immediately taps send. Keep the authoritative in-flight draft beside the
   // native TextInput so an @mention never drops trailing text.
   const inputTextRef = useRef('');
+  // A successful send replaces the native input. Advance this ref before any
+  // asynchronous React update so an event already queued by the consumed
+  // native field cannot put its text back into the next draft.
+  const composerInputRevisionRef = useRef(0);
   // The picker knows the exact agent key, whereas text-only lookup is a
   // fallback for manually typed mentions. Keep that identity through trailing
   // typing so an async roster refresh cannot turn a selected agent into an
@@ -522,6 +526,7 @@ export default function BuzzChat() {
     bindingsRef: roomSurfaceBindingsRef,
   });
   const [inputText, setInputText] = useState('');
+  const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
@@ -2445,13 +2450,159 @@ export default function BuzzChat() {
   const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
-  const handleSend = useCallback(
-    async (shortcut?: MessageShortcut) => {
-      const rawText = (shortcut?.text ?? inputTextRef.current).trim();
-      const activeReplyTarget = shortcut?.replyTarget ?? replyTarget;
-      const activePendingAttachments = shortcut ? [] : pendingAttachments;
-      // State updates are committed asynchronously. A ref closes the short
-      // double-tap window before `sending` can disable the native control.
+  const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
+    const rawText = (shortcut?.text ?? inputTextRef.current).trim();
+    const activeReplyTarget = shortcut?.replyTarget ?? replyTarget;
+    const activePendingAttachments = shortcut ? [] : pendingAttachments;
+    // State updates are committed asynchronously. A ref closes the short
+    // double-tap window before `sending` can disable the native control.
+    if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
+      return;
+    // The daemon already refuses corner-open on a repo-less Room; this is the
+    // friendly client-side path — catch the common phrasing before the
+    // message is sent (and the composer text lost) rather than after a
+    // doomed round-trip.
+    if (
+      !isCorner &&
+      ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
+      looksLikeCornerOpenIntent(rawText)
+    ) {
+      setCornerOpenRepoPrompt(true);
+      if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
+        void transport
+          .workspaceGitHubAccess({ refresh: true })
+          .then((access) => {
+            setRoomRepoCandidates(access.candidates);
+            setGitHubInstallations(access.installations);
+          })
+          .catch(() => undefined);
+      }
+      return;
+    }
+    const preparedReply = activeReplyTarget
+      ? prepareMessageReply(rawText, activeReplyTarget)
+      : undefined;
+    const text = preparedReply?.text ?? rawText;
+    const mentionedPubkeys = resolveComposerMentions(
+      text,
+      roomParticipants,
+      shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
+    ).pubkeys;
+    const selectedMentionedAgent = shortcut
+      ? undefined
+      : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
+    const mentionedAgent =
+      selectedMentionedAgent ??
+      preparedReply?.agentPubkey ??
+      mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
+      mentionedAgentPubkey(text, roomAgents);
+    // Resolve before attachment upload or cold transport creation so the ack
+    // cannot wait on either. A corner (one agent, always addressed) or a
+    // two-party Room (the sole other participant may speak naturally, per the
+    // addressing rule) counts too.
+    const addressesAgent =
+      isCorner ||
+      Boolean(mentionedAgent) ||
+      (roomAgents.length === 1 && roomParticipants.length <= 2);
+    setReceivedSteer(null);
+    setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
+
+    sendInFlightRef.current = true;
+    setSending(true);
+    if (desktopExperience) setDesktopDeliveryState('sending');
+    let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
+    let preparedTransport: BuzzRigTransport | undefined;
+    try {
+      // A warm/partial snapshot can paint before the hydration effect has
+      // published its transport state. Sending is still a valid operation:
+      // construct the monolith transport on demand rather than
+      // leaving the enabled send control as a silent no-op.
+      let sendTransport = transport;
+      if (!sendTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        sendTransport = new BuzzRigTransport(identity);
+      }
+      if (!transport) setSessionTransport(sendTransport);
+      preparedTransport = sendTransport;
+      const attachments = await uploadChatAttachments(
+        await sendTransport.ensureClient(),
+        activePendingAttachments,
+      );
+      // Sign before append. The authoritative event id is the optimistic row
+      // identity and the durable outbox key from its first frame onward.
+      preparedEvent = preparedReply?.reference
+        ? await sendTransport.composeReplyMessage(
+            text,
+            preparedReply.reference,
+            mentionedAgent,
+            attachments,
+            mentionedPubkeys,
+          )
+        : await sendTransport.composeMessage(
+            { sessionId: decodedId, text, attachments },
+            mentionedAgent || mentionedPubkeys.length
+              ? {
+                  ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
+                  ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+                }
+              : undefined,
+          );
+      if (addressesAgent) {
+        setPendingAck((current) =>
+          current ? { ...current, requestId: preparedEvent!.id } : current,
+        );
+      }
+      const optimistic = {
+        id: preparedEvent.id,
+        text,
+        isUser: true,
+        timestamp: preparedEvent.created_at,
+        authorIdentity: roomSurface?.viewer.identity ?? {
+          pubkey: userPubkey,
+          kind: 'human',
+          name: 'You',
+        },
+        pubkey: userPubkey,
+        reference: undefined,
+        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+        ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
+        ...(attachments.length ? { attachments } : {}),
+      } satisfies ChatDisplayMessage;
+      const activeOutbox = outbox.current();
+      if (!activeOutbox) throw new Error('Message outbox is unavailable');
+      await activeOutbox.enqueue(preparedEvent, {
+        id: preparedEvent.id,
+        text,
+        createdAt: preparedEvent.created_at,
+        author: roomSurface?.viewer.identity ?? {
+          pubkey: userPubkey,
+          kind: 'human',
+          name: 'You',
+        },
+        presentation: 'message',
+        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+        ...(attachments.length ? { attachments } : {}),
+      });
+      addMessages([optimistic]);
+      if (!shortcut) {
+        const nextInputRevision = composerInputRevisionRef.current + 1;
+        composerInputRevisionRef.current = nextInputRevision;
+        // Clear both owners of the controlled field. `clear()` removes the
+        // platform value immediately; the revision remount below guarantees
+        // the replacement starts empty even if native reconciliation lags.
+        composerRef.current?.clear();
+        inputTextRef.current = '';
+        setInputText('');
+        setComposerInputRevision(nextInputRevision);
+        setComposerHeight(COMPOSER_MIN_HEIGHT);
+        setInputSelection({ start: 0, end: 0 });
+        setPendingAttachments([]);
+        setReplyTarget(null);
+        if (desktopExperience) void saveDesktopDraft(decodedId, '');
+      }
+      await activeOutbox.attempted(preparedEvent.id);
+      const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
       if (
         sendInFlightRef.current ||
         (!rawText && activePendingAttachments.length === 0) ||
@@ -4705,6 +4856,10 @@ export default function BuzzChat() {
                   )
                 }
                 value={inputText}
+                inputRevision={composerInputRevision}
+                isInputRevisionCurrent={(inputRevision) =>
+                  inputRevision === composerInputRevisionRef.current
+                }
                 height={composerHeight}
                 maxHeight={COMPOSER_MAX_HEIGHT}
                 focused={composerFocused}

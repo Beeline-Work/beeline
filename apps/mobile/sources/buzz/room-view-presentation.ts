@@ -239,6 +239,7 @@ export type ChatDisplayMessage = {
    *  agent byline renders it verbatim and falls back to no model. */
   agentModel?: string;
   reactions?: RoomViewMessage['reactions'];
+  bookmarked?: boolean;
   replyToId?: string;
   isNew?: boolean;
   roomUpdate?: { digest?: string };
@@ -359,6 +360,7 @@ export function displayRoomMessage(
     ...(message.reactions
       ? { reactions: message.reactions.map((reaction) => ({ ...reaction })) }
       : {}),
+    ...(message.bookmarked ? { bookmarked: true } : {}),
     ...(message.reply ? { replyToId: message.reply.eventId } : {}),
     ...(message.durableFact ? { durableFact: { kind: message.durableFact } } : {}),
     ...(message.corner

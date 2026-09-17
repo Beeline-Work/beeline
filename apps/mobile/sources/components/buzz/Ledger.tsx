@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { identityPalette } from '@/buzz/identity-mark';
@@ -66,6 +67,8 @@ export type LedgerByline = {
   stamp: string;
   /** True only for the viewer's own turn — switches the name to brass. */
   isViewer?: boolean;
+  /** Private viewer state; the marker is status, never a separate control. */
+  bookmarked?: boolean;
   /** The speaker's identity mark. Omitted → the plain dot fallback renders. */
   mark?: LedgerBylineMark;
 };
@@ -295,7 +298,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
        *  above the name's feet. Baseline alignment is the type rule; the mark
        *  is a picture, not a word, so it stays centred on the row — hence the
        *  nested row, which keeps `alignItems: 'center'` for the tile. */}
-      <View style={styles.bylineWords}>
+      <View style={styles.bylineWords} testID="chat-byline-words">
         {byline.name ? (
           <Text
             numberOfLines={1}
@@ -315,9 +318,20 @@ function Byline({ byline }: { byline: LedgerByline }) {
             {byline.role}
           </Text>
         ) : null}
-        <Text style={styles.bylineStamp} testID="chat-byline-stamp">
-          {byline.stamp}
-        </Text>
+        <View style={styles.bylineStatus} testID="chat-byline-status">
+          {byline.bookmarked ? (
+            <Ionicons
+              accessibilityLabel="Bookmarked"
+              color={styles.bookmarkMark.color}
+              name="bookmark"
+              size={11}
+              testID="chat-bookmark-marker"
+            />
+          ) : null}
+          <Text style={styles.bylineStamp} testID="chat-byline-stamp">
+            {byline.stamp}
+          </Text>
+        </View>
       </View>
     </View>
   );
@@ -785,8 +799,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
     fontSize: 10,
     lineHeight: 14,
-    marginLeft: 'auto',
   },
+  bylineStatus: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5 },
+  bookmarkMark: { color: theme.buzz.accent },
   // ONE message size. The lead differs from the body by weight (medium) and
   // brightness (primary), never by size.
   ledgerLead: {

@@ -54,6 +54,8 @@ describe('phone contract', () => {
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })).toBe(false);
+    expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
+    expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })).toBe(false);
     for (const invalid of [
       { direction: 'sideways' },
       { received: 'yes' },
@@ -83,6 +85,8 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['output']>().toHaveProperty(
       'activeSteerAgentIds',
     );
+    expectTypeOf<PhoneOperationMap['setMessageBookmark']['input']>().toHaveProperty('bookmarked');
+    expectTypeOf<PhoneOperationMap['listMessageBookmarks']['output']>().toHaveProperty('bookmarks');
     expectTypeOf<PhoneOperationMap['addWorkspaceMember']['input']>().toHaveProperty('role');
     expectTypeOf<PhoneOperationMap['createRoomSchedule']['input']>().toHaveProperty('cadence');
     expectTypeOf<PhoneOperationMap['approveCornerMerge']['input']>().toHaveProperty('cornerId');

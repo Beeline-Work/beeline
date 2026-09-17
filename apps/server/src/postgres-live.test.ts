@@ -195,6 +195,38 @@ describe('Postgres live fanout', () => {
     ]);
   });
 
+  it('delivers a membership change as an agent-directed invalidation', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    const freshRoom = '99999999-9999-4999-8999-999999999999';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'milo')`,
+      [freshRoom, WORKSPACE, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, freshRoom, AUTHOR],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === AUTHOR &&
+          event.roomId === freshRoom,
+      ),
+    );
+  });
+
   it('fans an agent presence fact to every joined Room on another server', async () => {
     const otherRoom = '33333333-3333-4333-8333-333333333333';
     const agent = 'b'.repeat(64);

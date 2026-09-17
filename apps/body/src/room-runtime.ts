@@ -334,6 +334,11 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private confirmationPending = false;
+  /** Set by the server's agent-directed `rooms-changed` wake (a fresh Room or
+   * corner membership); cleared only by a reconcile that completed its start
+   * pass, so a failed discovery keeps retrying fast instead of waiting a
+   * heartbeat. */
+  private roomDiscoveryRequested = false;
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;
   private readonly grantRunnerServer: GrantRunnerServer;
@@ -362,6 +367,12 @@ export class RoomRuntimeCoordinator {
     });
     this.grantRunnerServer = new GrantRunnerServer(this.grantRunner);
     this.connectorUsage = new ConnectorUsageRecorder();
+    // Optional on purpose: test stubs of the API surface predate the wake, and
+    // a daemon whose transport cannot deliver it still reconciles on the
+    // heartbeat as before.
+    this.options.daemonApi.setRoomsChangedListener?.(() => {
+      this.roomDiscoveryRequested = true;
+    });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
@@ -398,7 +409,7 @@ export class RoomRuntimeCoordinator {
   }
 
   needsFastReconcile(): boolean {
-    return this.confirmationPending;
+    return this.confirmationPending || this.roomDiscoveryRequested;
   }
 
   reconcileHeartbeatIntervalMs(): number {
@@ -519,6 +530,7 @@ export class RoomRuntimeCoordinator {
       },
     );
     for (const running of this.running.values()) running.body.requestReconciliation();
+    this.roomDiscoveryRequested = false;
     return 'member';
   }
 

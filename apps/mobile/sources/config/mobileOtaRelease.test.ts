@@ -11,9 +11,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
-  PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT,
-  PUBLISH_ANDROID_RUNTIME_24_DURING_PUSH_ROLLOUT,
-  PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT,
+  COMPAT_RUNTIMES,
   releaseUpdateTargets,
 } from '../../scripts/ota-release.mjs';
 
@@ -63,22 +61,16 @@ function runRelease(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('mobile OTA release governor', () => {
-  it('makes the temporary compatibility targets committed removable flags', () => {
-    expect(PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT).toBe(true);
-    expect(PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT).toBe(true);
-    expect(PUBLISH_ANDROID_RUNTIME_24_DURING_PUSH_ROLLOUT).toBe(true);
+  it('publishes the committed compatibility runtime targets alongside the store pins', () => {
+    expect(COMPAT_RUNTIMES).toEqual([
+      { platform: 'android', runtimeVersion: '23' },
+      { platform: 'ios', runtimeVersion: '23' },
+    ]);
     expect(releaseUpdateTargets(mobileRoot)).toEqual([
-      { platform: 'android', runtimeVersion: '25' },
       { platform: 'android', runtimeVersion: '24' },
       { platform: 'android', runtimeVersion: '23' },
       { platform: 'ios', runtimeVersion: '23' },
-      { platform: 'ios', runtimeVersion: '26' },
-    ]);
-    expect(releaseUpdateTargets(mobileRoot, false)).toEqual([
-      { platform: 'android', runtimeVersion: '25' },
-      { platform: 'android', runtimeVersion: '23' },
-      { platform: 'ios', runtimeVersion: '23' },
-      { platform: 'ios', runtimeVersion: '26' },
+      { platform: 'ios', runtimeVersion: '25' },
     ]);
   });
 
@@ -117,21 +109,19 @@ describe('mobile OTA release governor', () => {
     const targetPublishes = publish.stdout
       .split('\n')
       .filter((line) => line.includes('eas-cli@22.2.0 update --branch beta'));
-    expect(targetPublishes).toHaveLength(5);
-    expect(targetPublishes[0]).toContain('EXPO_RUNTIME_OVERRIDE=25');
+    expect(targetPublishes).toHaveLength(4);
+    expect(targetPublishes[0]).toContain('EXPO_RUNTIME_OVERRIDE=24');
     expect(targetPublishes[0]).toContain('--platform android');
-    expect(targetPublishes[1]).toContain('EXPO_RUNTIME_OVERRIDE=24');
+    expect(targetPublishes[1]).toContain('EXPO_RUNTIME_OVERRIDE=23');
     expect(targetPublishes[1]).toContain('--platform android');
     expect(targetPublishes[2]).toContain('EXPO_RUNTIME_OVERRIDE=23');
-    expect(targetPublishes[2]).toContain('--platform android');
-    expect(targetPublishes[3]).toContain('EXPO_RUNTIME_OVERRIDE=23');
+    expect(targetPublishes[2]).toContain('--platform ios');
+    expect(targetPublishes[3]).toContain('EXPO_RUNTIME_OVERRIDE=25');
     expect(targetPublishes[3]).toContain('--platform ios');
-    expect(targetPublishes[4]).toContain('EXPO_RUNTIME_OVERRIDE=26');
-    expect(targetPublishes[4]).toContain('--platform ios');
-    expect(releaseSource).toContain('PUBLISH_ANDROID_RUNTIME_24_DURING_PUSH_ROLLOUT = true');
-    expect(releaseSource).toContain('PUBLISH_ANDROID_RUNTIME_23_DURING_PUSH_ROLLOUT = true');
-    expect(releaseSource).toContain('PUBLISH_IOS_RUNTIME_23_DURING_PUSH_ROLLOUT = true');
-    expect(releaseSource).not.toContain('PUBLISH_IOS_RUNTIME_25');
+    expect(releaseSource).toContain("{ platform: 'android', runtimeVersion: '23' }");
+    expect(releaseSource).toContain("{ platform: 'ios', runtimeVersion: '23' }");
+    expect(releaseSource).toContain('export const COMPAT_RUNTIMES = [');
+    expect(releaseSource).not.toContain('PUBLISH_');
     expect(workflow).not.toContain('EXPO_RUNTIME_OVERRIDE');
 
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-dry-run-'));
@@ -236,16 +226,14 @@ exit 1
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"known-good-android-25","platforms":"android","runtimeVersion":"25"},{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios","platforms":"ios","runtimeVersion":"26"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios","platforms":"ios","runtimeVersion":"25"}]}\\n' ;;
   update) printf '[{"id":"beta-%s-%s","platform":"%s","group":"candidate-%s-%s","runtimeVersion":"%s"}]\\n' "$7" "$EXPO_RUNTIME_OVERRIDE" "$7" "$7" "$EXPO_RUNTIME_OVERRIDE" "$EXPO_RUNTIME_OVERRIDE" ;;
   update:republish)
     case "$3" in
-      candidate-android-25) printf '[{"id":"prod-next-android-25","platform":"android","group":"production-android-25","runtimeVersion":"25"}]\\n' ;;
-      candidate-android-24) printf '[{"id":"prod-next-android-24","platform":"android","group":"production-android-24","runtimeVersion":"24"}]\n' ;;
+      candidate-android-24) printf '[{"id":"prod-next-android-24","platform":"android","group":"production-android-24","runtimeVersion":"24"}]\\n' ;;
       candidate-android-23) printf '[{"id":"prod-next-android-23","platform":"android","group":"production-android-23","runtimeVersion":"23"}]\\n' ;;
       candidate-ios-23) printf '[{"id":"prod-next-ios-23","platform":"ios","group":"production-ios-23","runtimeVersion":"23"}]\\n' ;;
       candidate-ios-25) printf '[{"id":"prod-next-ios-25","platform":"ios","group":"production-ios-25","runtimeVersion":"25"}]\\n' ;;
-      candidate-ios-26) printf '[{"id":"prod-next-ios-26","platform":"ios","group":"production-ios-26","runtimeVersion":"26"}]\\n' ;;
       *) exit 9 ;;
     esac ;;
   *) exit 9 ;;
@@ -270,28 +258,26 @@ esac
     expect(ledger).toMatchObject({
       status: 'production',
       updateTargets: [
-        { platform: 'android', runtimeVersion: '25' },
         { platform: 'android', runtimeVersion: '24' },
         { platform: 'android', runtimeVersion: '23' },
         { platform: 'ios', runtimeVersion: '23' },
-                { platform: 'ios', runtimeVersion: '26' },
+        { platform: 'ios', runtimeVersion: '25' },
       ],
       candidateGroupId:
-        'candidate-android-25,candidate-android-24,candidate-android-23,candidate-ios-23,candidate-ios-26',
-      androidUpdateId: 'beta-android-25',
-      previousProductionGroupId: 'known-good-android-25,known-good-android-24,known-good-android-23,known-good-ios-23,known-good-ios',
+        'candidate-android-24,candidate-android-23,candidate-ios-23,candidate-ios-25',
+      androidUpdateId: 'beta-android-24',
+      previousProductionGroupId: 'known-good-android-24,known-good-android-23,known-good-ios-23,known-good-ios',
       canary: { status: 'passed' },
       production: {
         sourceGroupId:
-          'candidate-android-25,candidate-android-24,candidate-android-23,candidate-ios-23,candidate-ios-26',
+          'candidate-android-24,candidate-android-23,candidate-ios-23,candidate-ios-25',
         groupId:
-          'production-android-25,production-android-24,production-android-23,production-ios-23,production-ios-26',
+          'production-android-24,production-android-23,production-ios-23,production-ios-25',
         targets: [
-          { platform: 'android', runtimeVersion: '25', group: 'production-android-25' },
           { platform: 'android', runtimeVersion: '24', group: 'production-android-24' },
           { platform: 'android', runtimeVersion: '23', group: 'production-android-23' },
           { platform: 'ios', runtimeVersion: '23', group: 'production-ios-23' },
-                    { platform: 'ios', runtimeVersion: '26', group: 'production-ios-26' },
+          { platform: 'ios', runtimeVersion: '25', group: 'production-ios-25' },
         ],
       },
     });
@@ -312,16 +298,14 @@ esac
 printf '%s\\n' "$*" >> "${callsPath}"
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"known-good-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-android-25","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"known-good-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"}]}\\n' ;;
   update) printf '[{"id":"beta-%s-%s","platform":"%s","group":"candidate-%s-%s","runtimeVersion":"%s"}]\\n' "$7" "$EXPO_RUNTIME_OVERRIDE" "$7" "$7" "$EXPO_RUNTIME_OVERRIDE" "$EXPO_RUNTIME_OVERRIDE" ;;
   update:republish)
     case "$3" in
-      candidate-android-25) printf '[{"id":"prod-next-android","platform":"android","group":"production-android","runtimeVersion":"25"}]\\n' ;;
-      candidate-android-24) printf '[{"id":"prod-next-android-24","platform":"android","group":"production-android-24","runtimeVersion":"24"}]\n' ;;
+      candidate-android-24) printf '[{"id":"prod-next-android","platform":"android","group":"production-android","runtimeVersion":"24"}]\\n' ;;
       candidate-android-23) printf '[{"id":"prod-next-android-23","platform":"android","group":"production-android-23","runtimeVersion":"23"}]\\n' ;;
       candidate-ios-23) printf '[{"id":"prod-next-ios-23","platform":"ios","group":"production-ios-23","runtimeVersion":"23"}]\\n' ;;
       candidate-ios-25) printf '[{"id":"prod-next-ios-25","platform":"ios","group":"production-ios-25","runtimeVersion":"25"}]\\n' ;;
-      candidate-ios-26) printf '[{"id":"prod-next-ios-26","platform":"ios","group":"production-ios-26","runtimeVersion":"26"}]\\n' ;;
       *) exit 9 ;;
     esac ;;
   *) exit 9 ;;
@@ -358,12 +342,12 @@ esac
 
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
       status: 'beta',
-      candidateGroupIds: { android: 'candidate-android-25', ios: 'candidate-ios-26' },
+      candidateGroupIds: { android: 'candidate-android-24', ios: 'candidate-ios-25' },
       candidateGroupId:
-        'candidate-android-25,candidate-android-24,candidate-android-23,candidate-ios-23,candidate-ios-26',
-      previousProductionGroupIds: { android: 'known-good-android-25', ios: 'known-good-ios-26' },
-      previousProductionGroupId: 'known-good-android-25,known-good-android-24,known-good-android-23,known-good-ios-23,known-good-ios-26',
-      runtimeVersions: ['25', '24', '23', '26'],
+        'candidate-android-24,candidate-android-23,candidate-ios-23,candidate-ios-25',
+      previousProductionGroupIds: { android: 'known-good-android-24', ios: 'known-good-ios-25' },
+      previousProductionGroupId: 'known-good-android-24,known-good-android-23,known-good-ios-23,known-good-ios-25',
+      runtimeVersions: ['24', '23', '25'],
     });
 
     expect(
@@ -373,47 +357,46 @@ esac
       0,
     );
 
-    // All six beta groups are promoted, including every compatibility runtime.
+    // All four beta groups are promoted, including every compatibility runtime.
     const republished = readFileSync(callsPath, 'utf8')
       .split('\n')
       .filter((line) => line.startsWith('update:republish'));
-    expect(republished).toHaveLength(5);
-    expect(republished[0]).toContain('--group candidate-android-25');
-    expect(republished[1]).toContain('--group candidate-android-24');
-    expect(republished[2]).toContain('--group candidate-android-23');
-    expect(republished[3]).toContain('--group candidate-ios-23');
-    expect(republished[4]).toContain('--group candidate-ios-26');
+    expect(republished).toHaveLength(4);
+    expect(republished[0]).toContain('--group candidate-android-24');
+    expect(republished[1]).toContain('--group candidate-android-23');
+    expect(republished[2]).toContain('--group candidate-ios-23');
+    expect(republished[3]).toContain('--group candidate-ios-25');
 
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
       status: 'production',
       production: {
-        sourceGroupIds: { android: 'candidate-android-25', ios: 'candidate-ios-26' },
-        groupIds: { android: 'production-android', ios: 'production-ios-26' },
+        sourceGroupIds: { android: 'candidate-android-24', ios: 'candidate-ios-25' },
+        groupIds: { android: 'production-android', ios: 'production-ios-25' },
         groupId:
-          'production-android,production-android-24,production-android-23,production-ios-23,production-ios-26',
+          'production-android,production-android-23,production-ios-23,production-ios-25',
       },
     });
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1).published).toMatchObject({
       groupIds: [
         'production-android',
-        'production-android-24',
         'production-android-23',
-        'production-ios-23',        'production-ios-26',
+        'production-ios-23',
+        'production-ios-25',
       ],
       groupId:
-        'production-android,production-android-24,production-android-23,production-ios-23,production-ios-26',
+        'production-android,production-android-23,production-ios-23,production-ios-25',
     });
 
     const proof = runRelease(['assert-promotion', '--ledger', ledgerPath, '--index', indexPath]);
     expect(proof.status).toBe(0);
     expect(proof.stdout).toContain(
-      'production_group_id=production-android,production-android-24,production-android-23,production-ios-23,production-ios-26',
+      'production_group_id=production-android,production-android-23,production-ios-23,production-ios-25',
     );
     expect(proof.stdout).toContain(
-      'production_groups=android=production-android,ios=production-ios-26',
+      'production_groups=android=production-android,ios=production-ios-25',
     );
     expect(proof.stdout).toContain(
-      'production_targets=android@25,android@24,android@23,ios@23,ios@26',
+      'production_targets=android@24,android@23,ios@23,ios@25',
     );
 
     // The delivery target names both groups, and the Android device receipt
@@ -435,7 +418,7 @@ esac
     );
     const target = runRelease(['delivery-target', '--index', indexPath]);
     expect(target.stdout.split('\n')[0]).toBe(
-      'group_id=production-android,production-android-24,production-android-23,production-ios-23,production-ios-26',
+      'group_id=production-android,production-android-23,production-ios-23,production-ios-25',
     );
     expect(
       runRelease([
@@ -447,9 +430,9 @@ esac
         '--receipt',
         receiptPath,
         '--group',
-        'production-android,production-android-24,production-android-23,production-ios-23,production-ios-26',
+        'production-android,production-android-23,production-ios-23,production-ios-25',
         '--update-ids',
-        'prod-next-android,prod-next-android-24,prod-next-android-23,prod-next-ios-23,prod-next-ios-26',
+        'prod-next-android,prod-next-android-23,prod-next-ios-23,prod-next-ios-25',
       ]).status,
     ).toBe(0);
     expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1)).toMatchObject({
@@ -458,9 +441,9 @@ esac
         groupId: 'production-android',
         groupIds: [
           'production-android',
-          'production-android-24',
           'production-android-23',
-          'production-ios-23',          'production-ios-26',
+          'production-ios-23',
+          'production-ios-25',
         ],
       },
     });
@@ -475,19 +458,17 @@ esac
       JSON.stringify({
         status: 'production',
         updateTargets: [
-          { platform: 'android', runtimeVersion: '25' },
-        { platform: 'android', runtimeVersion: '24' },
+          { platform: 'android', runtimeVersion: '24' },
           { platform: 'android', runtimeVersion: '23' },
           { platform: 'ios', runtimeVersion: '23' },
-                    { platform: 'ios', runtimeVersion: '26' },
+          { platform: 'ios', runtimeVersion: '25' },
         ],
         production: {
           targets: [
-            { platform: 'android', runtimeVersion: '25', group: 'production-android' },
-            { platform: 'android', runtimeVersion: '24', group: 'production-android-24' },
+            { platform: 'android', runtimeVersion: '24', group: 'production-android' },
             { platform: 'android', runtimeVersion: '23', group: 'production-android-23' },
             { platform: 'ios', runtimeVersion: '23', group: 'production-ios-23' },
-                        { platform: 'ios', runtimeVersion: '26', group: 'production-ios-26' },
+            { platform: 'ios', runtimeVersion: '25', group: 'production-ios-25' },
           ],
         },
       }),
@@ -496,7 +477,7 @@ esac
       fakeEas,
       `#!/bin/sh
 case "$1" in
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"production-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"production-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"production-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"production-android-24","platforms":"android","runtimeVersion":"24"},{"group":"production-android-23","platforms":"android","runtimeVersion":"23"},{"group":"production-android","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"production-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"production-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"production-android","platforms":"android","runtimeVersion":"24"},{"group":"production-android-23","platforms":"android","runtimeVersion":"23"}]}\\n' ;;
   *) exit 9 ;;
 esac
 `,
@@ -508,14 +489,14 @@ esac
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      'listed_production_targets=android@25,android@24,android@23,ios@23,ios@26',
+      'listed_production_targets=android@24,android@23,ios@23,ios@25',
     );
     expect(workflow).toContain('ota-release.mjs assert-production-list');
 
     writeFileSync(
       fakeEas,
       `#!/bin/sh
-printf '{"name":"production","id":"branch-id","currentPage":[{"group":"production-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"production-android","platforms":"android","runtimeVersion":"25"}]}\\n'
+printf '{"name":"production","id":"branch-id","currentPage":[{"group":"production-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"production-android","platforms":"android","runtimeVersion":"24"}]}\\n'
 `,
     );
     const missingLegacy = runRelease(['assert-production-list', '--ledger', ledgerPath], {
@@ -535,7 +516,7 @@ printf '{"name":"production","id":"branch-id","currentPage":[{"group":"productio
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '{"currentPage":[{"group":"known-good-android","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:list) printf '{"currentPage":[{"group":"known-good-android","platforms":"android","runtimeVersion":"24"}]}\\n' ;;
   update) exit 9 ;;
   *) exit 9 ;;
 esac
@@ -548,19 +529,19 @@ esac
       { EAS_CLI_PATH: fakeEas },
     );
     expect(incomplete.status).toBe(1);
-    expect(incomplete.stderr).toContain('no rollback anchor for android@24, android@23, ios@23');
+    expect(incomplete.stderr).toContain('no rollback anchor for android@23, ios@23');
     expect(existsSync(ledger)).toBe(false);
 
     // A platform whose store binary shipped in this release may use that
     // binary's embedded update as the anchor for its CURRENT pin only; ios@23
-    // and the android@24/android@23 compatibility runtimes are not the
+    // and the android@23 compatibility runtime are not the
     // current pin, so they still refuse.
     const stillMissing = runRelease(
       ['publish', '--sha', '1234567890abcdef', '--ref', 'main', '--ledger', ledger],
       { EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: 'android,ios' },
     );
     expect(stillMissing.status).toBe(1);
-    expect(stillMissing.stderr).toContain('no rollback anchor for android@24, android@23, ios@23');
+    expect(stillMissing.stderr).toContain('no rollback anchor for android@23, ios@23');
 
     writeFileSync(
       fakeEas,
@@ -589,7 +570,7 @@ esac
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '{"currentPage":[{"group":"known-good-android-25","platforms":"android","runtimeVersion":"25"},{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios","platforms":"ios","runtimeVersion":"26"}]}\\n' ;;
+  update:list) printf '{"currentPage":[{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios-25","platforms":"ios","runtimeVersion":"25"}]}\\n' ;;
   update) printf '[{"id":"beta-android","platform":"android","group":"candidate-android"}]\\n' ;;
   *) exit 9 ;;
 esac
@@ -611,7 +592,7 @@ esac
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Beta publish android@25 must return exactly android@25');
+    expect(result.stderr).toContain('Beta publish android@24 must return exactly android@24');
     expect(existsSync(join(directory, 'ledger.json'))).toBe(false);
   }, 60_000);
 
@@ -623,10 +604,10 @@ esac
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '{"currentPage":[{"group":"known-good-android-25","platforms":"android","runtimeVersion":"25"},{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios","platforms":"ios","runtimeVersion":"26"}]}\\n' ;;
+  update:list) printf '{"currentPage":[{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios-25","platforms":"ios","runtimeVersion":"25"}]}\\n' ;;
   update)
-    if [ "$EXPO_RUNTIME_OVERRIDE" = 25 ] && printf '%s' "$*" | grep -q -- '--platform android'; then
-      printf '[{"id":"beta-android","platform":"android","group":"candidate-android","runtimeVersion":"25"}]\\n'
+    if [ "$EXPO_RUNTIME_OVERRIDE" = 24 ] && printf '%s' "$*" | grep -q -- '--platform android'; then
+      printf '[{"id":"beta-android","platform":"android","group":"candidate-android","runtimeVersion":"24"}]\\n'
     else
       printf '[{"id":"beta-ios","platform":"ios","runtimeVersion":"23"}]\\n'
     fi ;;
@@ -651,7 +632,7 @@ esac
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      'Beta publish android@24 returned updates that belong to no update group: ios/beta-ios.',
+      'Beta publish android@23 returned updates that belong to no update group: ios/beta-ios.',
     );
   }, 60_000);
 
@@ -666,7 +647,7 @@ esac
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '[{"group":"known-good-android-25","updates":[{"id":"prod-android","platform":"android","runtimeVersion":"25"}]},{"group":"known-good-android-24","updates":[{"id":"prod-android-24","platform":"android","runtimeVersion":"24"}]},{"group":"known-good-android-23","updates":[{"id":"prod-android-23","platform":"android","runtimeVersion":"23"}]},{"group":"known-good-runtime-23","updates":[{"id":"prod-ios","platform":"ios","runtimeVersion":"23"}]},{"group":"known-good-ios-26","updates":[{"id":"prod-ios-26","platform":"ios","runtimeVersion":"26"}]}]\\n' ;;
+  update:list) printf '[{"group":"known-good-android-24","updates":[{"id":"prod-android","platform":"android","runtimeVersion":"24"}]},{"group":"known-good-android-23","updates":[{"id":"prod-android-23","platform":"android","runtimeVersion":"23"}]},{"group":"known-good-runtime-23","updates":[{"id":"prod-ios","platform":"ios","runtimeVersion":"23"}]},{"group":"known-good-ios-25","updates":[{"id":"prod-ios-25","platform":"ios","runtimeVersion":"25"}]}]\\n' ;;
   update) printf '[{"group":"candidate-%s-%s","updates":[{"id":"beta-%s-%s","platform":"%s","runtimeVersion":"%s"}]}]\\n' "$7" "$EXPO_RUNTIME_OVERRIDE" "$7" "$EXPO_RUNTIME_OVERRIDE" "$7" "$EXPO_RUNTIME_OVERRIDE" ;;
   *) exit 9 ;;
 esac
@@ -681,10 +662,10 @@ esac
       ).status,
     ).toBe(0);
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
-      candidateGroupIds: { android: 'candidate-android-25', ios: 'candidate-ios-26' },
+      candidateGroupIds: { android: 'candidate-android-24', ios: 'candidate-ios-25' },
       previousProductionGroupIds: {
-        android: 'known-good-android-25',
-        ios: 'known-good-ios-26',
+        android: 'known-good-android-24',
+        ios: 'known-good-ios-25',
       },
     });
   }, 60_000);
@@ -699,12 +680,13 @@ esac
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${callsPath}"
 case "$1" in
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-android","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-android","platforms":"android","runtimeVersion":"24"},{"group":"failed-android-23","platforms":"android","runtimeVersion":"23"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-ios-25","platforms":"ios","runtimeVersion":"25"}]}\\n' ;;
   update:republish)
     case "$3" in
-      known-good-android) printf '[{"id":"back-android","platform":"android","group":"restored-android","runtimeVersion":"25"}]\\n' ;;
+      known-good-android) printf '[{"id":"back-android","platform":"android","group":"restored-android","runtimeVersion":"24"}]\\n' ;;
+      known-good-android-23) printf '[{"id":"back-android-23","platform":"android","group":"restored-android-23","runtimeVersion":"23"}]\\n' ;;
       known-good-ios-23) printf '[{"id":"back-ios-23","platform":"ios","group":"restored-ios-23","runtimeVersion":"23"}]\\n' ;;
-      known-good-ios-26) printf '[{"id":"back-ios-26","platform":"ios","group":"restored-ios-26","runtimeVersion":"26"}]\\n' ;;
+      known-good-ios-25) printf '[{"id":"back-ios-25","platform":"ios","group":"restored-ios-25","runtimeVersion":"25"}]\\n' ;;
       *) exit 9 ;;
     esac ;;
   *) exit 9 ;;
@@ -717,9 +699,9 @@ esac
       [
         'rollback',
         '--group',
-        'known-good-android,known-good-ios-23,known-good-ios-26',
+        'known-good-android,known-good-android-23,known-good-ios-23,known-good-ios-25',
         '--expected-current-group',
-        'failed-android,failed-ios-23,failed-ios-26',
+        'failed-android,failed-android-23,failed-ios-23,failed-ios-25',
         '--ledger',
         ledgerPath,
       ],
@@ -729,14 +711,19 @@ esac
     expect(result.status).toBe(0);
     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject({
       status: 'rolled-back',
-      sourceGroupIds: ['known-good-android', 'known-good-ios-23', 'known-good-ios-26'],
-      productionGroupIds: { android: 'restored-android', ios: 'restored-ios-26' },
-      productionGroupId: 'restored-android,restored-ios-23,restored-ios-26',
+      sourceGroupIds: [
+        'known-good-android',
+        'known-good-android-23',
+        'known-good-ios-23',
+        'known-good-ios-25',
+      ],
+      productionGroupIds: { android: 'restored-android', ios: 'restored-ios-25' },
+      productionGroupId: 'restored-android,restored-android-23,restored-ios-23,restored-ios-25',
     });
     const republished = readFileSync(callsPath, 'utf8')
       .split('\n')
       .filter((line) => line.startsWith('update:republish'));
-    expect(republished).toHaveLength(3);
+    expect(republished).toHaveLength(4);
   }, 60_000);
 
   it('rolls back every target when the previous runtime shared one group', () => {
@@ -749,13 +736,13 @@ esac
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${callsPath}"
 case "$1" in
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-android","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-android","platforms":"android","runtimeVersion":"24"}]}\\n' ;;
   update:republish)
     case "$3" in
-      known-good-runtime-23) printf '[{"id":"back-android","platform":"android","group":"restored-runtime-23","runtimeVersion":"25"},{"id":"back-ios-23","platform":"ios","group":"restored-runtime-23","runtimeVersion":"23"}]\\n' ;;
+      known-good-runtime-23) printf '[{"id":"back-android","platform":"android","group":"restored-runtime-23","runtimeVersion":"24"},{"id":"back-ios-23","platform":"ios","group":"restored-runtime-23","runtimeVersion":"23"}]\\n' ;;
       *) exit 9 ;;
     esac ;;
-  update:roll-back-to-embedded) printf '[{"id":"back-ios-26-embedded","platform":"ios","group":"restored-ios-26-embedded","runtimeVersion":"26"}]\\n' ;;
+  update:roll-back-to-embedded) printf '[{"id":"back-ios-25-embedded","platform":"ios","group":"restored-ios-25-embedded","runtimeVersion":"25"}]\\n' ;;
   *) exit 9 ;;
 esac
 `,
@@ -768,7 +755,7 @@ esac
         '--group',
         'known-good-runtime-23',
         '--expected-current-group',
-        'failed-android,failed-ios-23,failed-ios-26',
+        'failed-android,failed-ios-23,failed-ios-25',
         '--ledger',
         ledgerPath,
       ],
@@ -781,18 +768,18 @@ esac
       sourceGroupIds: ['known-good-runtime-23'],
       productionGroupIds: {
         android: 'restored-runtime-23',
-        ios: 'restored-ios-26-embedded',
+        ios: 'restored-ios-25-embedded',
       },
-      productionGroupId: 'restored-runtime-23,restored-ios-26-embedded',
+      productionGroupId: 'restored-runtime-23,restored-ios-25-embedded',
       embeddedRollbackTargets: [
-        { platform: 'ios', runtimeVersion: '26', group: 'restored-ios-26-embedded' },
+        { platform: 'ios', runtimeVersion: '25', group: 'restored-ios-25-embedded' },
       ],
     });
     expect(readFileSync(callsPath, 'utf8')).toContain(
       'update:republish --group known-good-runtime-23',
     );
     expect(readFileSync(callsPath, 'utf8')).toContain(
-      'update:roll-back-to-embedded --branch production --runtime-version 26 --platform ios',
+      'update:roll-back-to-embedded --branch production --runtime-version 25 --platform ios',
     );
   }, 60_000);
 
@@ -809,14 +796,12 @@ esac
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${callsPath}"
 case "$1" in
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-ios-26","platforms":"ios","runtimeVersion":"26"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-android","platforms":"android","runtimeVersion":"25"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"failed-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"failed-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"failed-android","platforms":"android","runtimeVersion":"24"}]}\\n' ;;
   update:roll-back-to-embedded)
-    case "$5" in
-      25) printf '[{"id":"back-android-embedded","platform":"android","group":"restored-android-embedded","runtimeVersion":"25"}]\\n' ;;
-      23) printf '[{"id":"back-ios-23-embedded","platform":"ios","group":"restored-ios-23-embedded","runtimeVersion":"23"}]\\n' ;;
-      26) printf '[{"id":"back-ios-26-embedded","platform":"ios","group":"restored-ios-26-embedded","runtimeVersion":"26"}]\\n' ;;
-      *) exit 9 ;;
-    esac ;;
+    if [ "$5" = 24 ] && [ "$7" = android ]; then printf '[{"id":"back-android-embedded","platform":"android","group":"restored-android-embedded","runtimeVersion":"24"}]\\n'
+    elif [ "$5" = 23 ] && [ "$7" = ios ]; then printf '[{"id":"back-ios-23-embedded","platform":"ios","group":"restored-ios-23-embedded","runtimeVersion":"23"}]\\n'
+    elif [ "$5" = 25 ] && [ "$7" = ios ]; then printf '[{"id":"back-ios-25-embedded","platform":"ios","group":"restored-ios-25-embedded","runtimeVersion":"25"}]\\n'
+    else exit 9; fi ;;
   *) exit 9 ;;
 esac
 `,
@@ -828,7 +813,7 @@ esac
         'rollback',
         '--embedded',
         '--expected-current-group',
-        'failed-android,failed-ios-23,failed-ios-26',
+        'failed-android,failed-ios-23,failed-ios-25',
         '--ledger',
         ledgerPath,
       ],
@@ -842,26 +827,26 @@ esac
       sourceGroupIds: [],
       productionGroupIds: {
         android: 'restored-android-embedded',
-        ios: 'restored-ios-26-embedded',
+        ios: 'restored-ios-25-embedded',
       },
       productionGroupId:
-        'restored-android-embedded,restored-ios-23-embedded,restored-ios-26-embedded',
+        'restored-android-embedded,restored-ios-23-embedded,restored-ios-25-embedded',
       embeddedRollbackTargets: [
-        { platform: 'android', runtimeVersion: '25', group: 'restored-android-embedded' },
+        { platform: 'android', runtimeVersion: '24', group: 'restored-android-embedded' },
         { platform: 'ios', runtimeVersion: '23', group: 'restored-ios-23-embedded' },
-        { platform: 'ios', runtimeVersion: '26', group: 'restored-ios-26-embedded' },
+        { platform: 'ios', runtimeVersion: '25', group: 'restored-ios-25-embedded' },
       ],
     });
     const calls = readFileSync(callsPath, 'utf8');
     expect(calls).not.toContain('update:republish');
     expect(calls).toContain(
-      'update:roll-back-to-embedded --branch production --runtime-version 25 --platform android',
+      'update:roll-back-to-embedded --branch production --runtime-version 24 --platform android',
     );
     expect(calls).toContain(
       'update:roll-back-to-embedded --branch production --runtime-version 23 --platform ios',
     );
     expect(calls).toContain(
-      'update:roll-back-to-embedded --branch production --runtime-version 26 --platform ios',
+      'update:roll-back-to-embedded --branch production --runtime-version 25 --platform ios',
     );
   }, 60_000);
 
@@ -1254,16 +1239,14 @@ esac
       `#!/bin/sh
 case "$1" in
   channel:view|channel:edit) printf '{}\\n' ;;
-  update:list) printf '{"currentPage":[{"group":"known-good-android-25","platforms":"android","runtimeVersion":"25"},{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios","platforms":"ios","runtimeVersion":"26"}]}\\n' ;;
+  update:list) printf '{"currentPage":[{"group":"known-good-android-24","platforms":"android","runtimeVersion":"24"},{"group":"known-good-android-23","platforms":"android","runtimeVersion":"23"},{"group":"known-good-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"known-good-ios-25","platforms":"ios","runtimeVersion":"25"}]}\\n' ;;
   update) printf '[{"id":"beta-%s-%s","platform":"%s","group":"candidate-%s-%s","runtimeVersion":"%s"}]\\n' "$7" "$EXPO_RUNTIME_OVERRIDE" "$7" "$7" "$EXPO_RUNTIME_OVERRIDE" "$EXPO_RUNTIME_OVERRIDE" ;;
   update:republish)
     case "$3" in
-      candidate-android-25) printf '[{"id":"prod-android","platform":"android","group":"production-android","runtimeVersion":"25"}]\\n' ;;
-      candidate-android-24) printf '[{"id":"prod-android-24","platform":"android","group":"production-android-24","runtimeVersion":"24"}]\n' ;;
+      candidate-android-24) printf '[{"id":"prod-android","platform":"android","group":"production-android","runtimeVersion":"24"}]\\n' ;;
       candidate-android-23) printf '[{"id":"prod-android-23","platform":"android","group":"production-android-23","runtimeVersion":"23"}]\\n' ;;
       candidate-ios-23) printf '[{"id":"prod-ios-23","platform":"ios","group":"production-ios-23","runtimeVersion":"23"}]\\n' ;;
       candidate-ios-25) printf '[{"id":"prod-ios-25","platform":"ios","group":"production-ios-25","runtimeVersion":"25"}]\\n' ;;
-      candidate-ios-26) printf '[{"id":"prod-ios-26","platform":"ios","group":"production-ios-26","runtimeVersion":"26"}]\\n' ;;
       *) exit 9 ;;
     esac ;;
   *) exit 9 ;;
@@ -1356,9 +1339,9 @@ esac
           '--receipt',
           receiptPath,
           '--group',
-          'production-android,production-android-24,production-android-23,production-ios-23,production-ios-26',
+          'production-android,production-android-23,production-ios-23,production-ios-25',
           '--update-ids',
-          'prod-android,prod-android-24,prod-android-23,prod-ios-23,prod-ios-26',
+          'prod-android,prod-android-23,prod-ios-23,prod-ios-25',
         ],
         env,
       ).status,

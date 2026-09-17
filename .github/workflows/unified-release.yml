@@ -1287,6 +1287,12 @@ jobs:
           RELEASE_PROOF_UNPROVEN: ${{ inputs.skip_release_proof == true && needs.release_proof.result != 'success' }}
         run: |
           set -euo pipefail
+          # Every release-mutating gh call below goes through bounded-retry,
+          # asset-verified wrappers (run 35268976983: a transient GitHub-side
+          # HTTP 500 on `gh release upload` failed an otherwise finished
+          # release). They fail only when every attempt fails, so the
+          # manifest-commit-point/rollback-trap semantics are unchanged.
+          . scripts/gh-release-retry.sh
           state="$RUNNER_TEMP/release-attempt.json"
           mkdir -p "$RUNNER_TEMP/desktop-release"
           # Only a CARRIED desktop downloads the previous release's installers.
@@ -1319,8 +1325,8 @@ jobs:
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
             # A retry first restores the last known-good manifest. The new
             # manifest remains the final, independently verified commit point.
-            [ ! -f "$previous" ] || gh release upload "$RELEASE_VERSION" "$previous" --clobber
-            [ "${#assets[@]}" -eq 0 ] || gh release upload "$RELEASE_VERSION" "${assets[@]}" --clobber
+            [ ! -f "$previous" ] || ghr_upload_verified "$RELEASE_VERSION" "$previous"
+            [ "${#assets[@]}" -eq 0 ] || ghr_upload_verified "$RELEASE_VERSION" "${assets[@]}"
           else
             release_assets=("${assets[@]}")
             # Seed a newly published release with the last known-good
@@ -1328,16 +1334,16 @@ jobs:
             # desktop update while the new manifest is being committed.
             [ ! -f "$previous" ] || release_assets+=("$previous")
             if [ "${#release_assets[@]}" -gt 0 ]; then
-              gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes" "${release_assets[@]}"
+              ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes" "${release_assets[@]}"
             else
-              gh release create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
+              ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
             fi
           fi
           rollback_manifest() {
             if [ -f "$previous" ]; then
-              gh release upload "$RELEASE_VERSION" "$previous#Beeline-latest.json" --clobber || true
+              ghr_upload_verified "$RELEASE_VERSION" "$previous#Beeline-latest.json" || true
             else
-              gh release delete-asset "$RELEASE_VERSION" 'Beeline-latest.json' --yes || true
+              ghr_delete_asset "$RELEASE_VERSION" 'Beeline-latest.json' || true
             fi
           }
           manifest_committed=false
@@ -1349,7 +1355,7 @@ jobs:
           trap rollback_on_exit EXIT
           # The manifest is the commit point: every URL and signature it names
           # is already present before clients can discover this version.
-          gh release upload "$RELEASE_VERSION" "$manifest" --clobber
+          ghr_upload_verified "$RELEASE_VERSION" "$manifest"
           manifest_url='https://github.com/Beeline-Work/beeline/releases/latest/download/Beeline-latest.json'
           verified=false
           for _ in {1..12}; do

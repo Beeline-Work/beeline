@@ -298,7 +298,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
        *  above the name's feet. Baseline alignment is the type rule; the mark
        *  is a picture, not a word, so it stays centred on the row — hence the
        *  nested row, which keeps `alignItems: 'center'` for the tile. */}
-      <View style={styles.bylineWords}>
+      <View style={styles.bylineWords} testID="chat-byline-words">
         {byline.name ? (
           <Text
             numberOfLines={1}
@@ -318,7 +318,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
             {byline.role}
           </Text>
         ) : null}
-        <View style={styles.bylineStatus}>
+        <View style={styles.bylineStatus} testID="chat-byline-status">
           {byline.bookmarked ? (
             <Ionicons
               accessibilityLabel="Bookmarked"

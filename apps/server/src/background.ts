@@ -276,6 +276,20 @@ export class PushDeliveryLoop {
     `);
     let delivered = 0;
     for (const candidate of candidates.rows) {
+      // The candidate query and delivery claims are separate statements. A
+      // corner-open and its PR-open note can therefore be selected in one
+      // batch before either is claimed. Recheck immediately before claiming so
+      // the earlier corner-open candidate suppresses the expected PR note in
+      // that same batch as well as on later scans.
+      if (
+        candidate.corner_id &&
+        (await this.suppressExpectedPrOpen(
+          candidate.message_id,
+          candidate.corner_id,
+          candidate.token,
+        ))
+      )
+        continue;
       const claimed = candidate.is_release_catchup
         ? await claimReleaseCatchup(
             this.database,
@@ -368,6 +382,36 @@ export class PushDeliveryLoop {
       }
     }
     return delivered;
+  }
+
+  /**
+   * Opening a corner is the notification for its expected transition into
+   * review. Atomically consume the later PR-open note for the same device once
+   * that opening was attempted. Other lifecycle events remain independent.
+   */
+  private async suppressExpectedPrOpen(
+    messageId: string,
+    cornerId: string,
+    deviceToken: string,
+  ): Promise<boolean> {
+    const result = await this.database.query(
+      `INSERT INTO push_delivery_claims(message_id,device_token,status)
+       SELECT $1,$3,'suppressed'
+       FROM messages note
+       JOIN rooms corner ON corner.id=note.room_id AND corner.id=$2
+       JOIN messages opened ON opened.room_id=corner.parent_id
+         AND opened.card_type='daemon-fact'
+         AND opened.card->>'type'='corner-open'
+         AND opened.card->>'cornerId'=corner.id::text
+       JOIN push_delivery_claims opened_claim
+         ON opened_claim.message_id=opened.id AND opened_claim.device_token=$3
+       WHERE note.id=$1 AND note.card_type='github-corner-note'
+         AND note.system_event->>'verb'='opened a pull request'
+       ON CONFLICT DO NOTHING
+       RETURNING 1`,
+      [messageId, cornerId, deviceToken],
+    );
+    return result.rowCount > 0;
   }
 }
 

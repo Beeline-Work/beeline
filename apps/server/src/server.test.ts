@@ -304,6 +304,65 @@ describe('daemon live command push', () => {
     );
     expect(commandCalls()).toBe(2);
   });
+
+  it('pushes config-changed only to the changed agent, without an inbox replay', async () => {
+    const roomId = 'room-config';
+    const agentId = 'agent-config';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
+    expect(inboxCalls()).toBe(1);
+
+    // Another agent's selection change must not wake this daemon.
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'agent-config',
+      targetAgentId: 'another-agent',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+
+    const changed = nextSocketMessage(socket, 'config-changed');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'agent-config',
+      targetAgentId: agentId,
+    });
+    await expect(changed).resolves.toEqual({ type: 'config-changed', roomId });
+    // The wake carries no transcript: the durable fact is the agent-model
+    // system line, and the daemon needs no inbox replay to retire sessions.
+    expect(inboxCalls()).toBe(1);
+  });
 });
 
 describe('daemon operation presence evidence', () => {

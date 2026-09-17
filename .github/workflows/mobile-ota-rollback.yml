@@ -81,14 +81,14 @@ jobs:
               const rollbackIds = explicit ? explicit.split(",").map((id) => id.trim()).filter(Boolean) : ids;
               if (currentIds.length === 0) throw new Error("release ledger has no production.groupId");
               if (explicit && rollbackIds.length === 0) throw new Error("explicit rollback_group resolved to no group id");
-              // A runtime's FIRST production release has no earlier update
-              // group to republish, so its ledger carries no
+              // The FIRST production release on a runtime has no earlier
+              // update group to republish, so the ledger carries no
               // previousProductionGroupId. That is not a failure: the store
               // binary built for that release carries the only known-good
               // bundle, so the rollback rolls every current production target
               // back to the embedded update instead.
               const embeddedOnly = rollbackIds.length === 0;
-              if (embeddedOnly) console.log("no previousProductionGroupId on the ledger; rolling back to the embedded update of this release's store binary");
+              if (embeddedOnly) console.log("no previousProductionGroupId on the ledger; rolling back to the embedded update of the release store binary");
               fs.appendFileSync(output, "group_id=" + rollbackIds.join(",") + "\ncurrent_group_id=" + currentIds.join(",") + "\nembedded_only=" + embeddedOnly + "\n");
             ' "$RUNNER_TEMP/last-good" "$GITHUB_OUTPUT" "$group"
 

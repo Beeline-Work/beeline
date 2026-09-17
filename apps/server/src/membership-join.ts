@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { systemIdentityMention, systemLine, workspaceSystemLine } from './system-line.js';
 
@@ -254,17 +253,10 @@ export async function joinRooms(
       });
     }
     // Auto-joining public Rooms is only a membership projection of the
-    // Workspace arrival. In an ordinary Workspace that arrival is announced
-    // once per existing person in their @system DM, not again in every
-    // projected Room. The Beeline Welcome workspace is the shared onboarding
-    // Workspace: the join event IS the surface there, so the kinded
-    // `member-joined` line lands in every Room the newcomer actually joined,
-    // waking `joined` subscribers (the Greeter) exactly once per Room; the
-    // @system DM still covers the existing humans. An explicit Room join
-    // always belongs in that Room and keeps its subscribed `joined` event.
-    const announceRoomJoins =
-      input.rooms.type !== 'all-live-top-level' || input.workspaceId === DEFAULT_WORKSPACE_ID;
-    if (announceRoomJoins) {
+    // Workspace arrival. Announce that arrival once per existing person in
+    // their @system DM, not again in every projected Room. An explicit Room
+    // join still belongs in that Room and keeps its subscribed `joined` event.
+    if (input.rooms.type !== 'all-live-top-level') {
       for (const roomId of roomIds)
         await systemLine(transaction, {
           roomId,

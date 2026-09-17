@@ -5,7 +5,7 @@ import { createHeader } from '@/components/navigation/Header';
 import { Platform, View } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
-import { StatusTrayBackdrop } from '@/components/StatusTrayBackdrop';
+import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
 import { t } from '@/text';
 import { useIsDesktop } from '@/utils/responsive';
 
@@ -30,6 +30,10 @@ export default function RootLayout() {
       <Stack
         initialRouteName="index"
         screenOptions={{
+          // Status bar glyphs follow the app theme: dark icons over Bone,
+          // light icons over Obsidian, on every platform the stack runs on.
+          // Per-screen overrides were dropped — the theme is the one author.
+          statusBarStyle: statusBarStyleForTheme(theme),
           header: shouldUseCustomHeader ? createHeader : undefined,
           headerBackTitle: t('common.back'),
           headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'minimal' : undefined,
@@ -59,30 +63,28 @@ export default function RootLayout() {
           name="beeline/onboarding"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="buzz/github-callback"
-          options={{ headerShown: false, statusBarStyle: 'light' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="buzz/github-installation"
-          options={{ headerShown: false, statusBarStyle: 'light' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="beeline/github-callback"
-          options={{ headerShown: false, statusBarStyle: 'light' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="beeline/github-installation"
-          options={{ headerShown: false, statusBarStyle: 'light' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="beeline/channels"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
             contentStyle: { backgroundColor: theme.buzz.bgBase },
           }}
         />
@@ -90,49 +92,42 @@ export default function RootLayout() {
           name="beeline/community"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="beeline/agents"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="beeline/members"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="beeline/MembersScreen"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="beeline/settings/index"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="beeline/settings/identity"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="beeline/settings/workspace"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         {/* Scheduled work keeps the stack header (its back control); the page draws none. */}
@@ -140,7 +135,6 @@ export default function RootLayout() {
           name="beeline/settings/schedules"
           options={{
             headerTitle: 'Scheduled work',
-            statusBarStyle: 'light',
           }}
         />
         {/* Workbench keeps the stack header (its back control); the page draws none. */}
@@ -148,20 +142,25 @@ export default function RootLayout() {
           name="beeline/settings/workbench"
           options={{
             headerTitle: 'Workbench',
-            statusBarStyle: 'light',
           }}
         />
         {/* The connect flow draws its own header with the connector name, so the
             stack header would double it. */}
         <Stack.Screen
           name="beeline/settings/workbench/connect"
-          options={{ headerShown: false, statusBarStyle: 'light' }}
+          options={{ headerShown: false }}
+        />
+        {/* The Squire sign-in browser renders as an overlay card over the
+            connect screen — most of the screen, never full-bleed, with the
+            underlying screen frosted behind it. */}
+        <Stack.Screen
+          name="beeline/settings/workbench/connect-signin"
+          options={{ headerShown: false, presentation: 'transparentModal' }}
         />
         <Stack.Screen
           name="beeline/chat/[channelId]"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
             contentStyle: { backgroundColor: theme.buzz.bgBase },
           }}
         />
@@ -169,14 +168,12 @@ export default function RootLayout() {
           name="beeline/corners/[roomId]"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
           name="join/[token]"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         {/* The store-reviewer links' landing route. No in-app control opens it. */}
@@ -184,7 +181,6 @@ export default function RootLayout() {
           name="review/[secret]"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
@@ -203,7 +199,6 @@ export default function RootLayout() {
           name="changelog"
           options={{
             headerShown: false,
-            statusBarStyle: 'light',
           }}
         />
         <Stack.Screen
@@ -215,8 +210,6 @@ export default function RootLayout() {
           }}
         />
       </Stack>
-      {/* Painted after the Stack so it sits over the tray inset strip. */}
-      <StatusTrayBackdrop />
     </View>
   );
 }

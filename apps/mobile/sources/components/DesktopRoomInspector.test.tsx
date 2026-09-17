@@ -115,6 +115,10 @@ vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
   saveDesktopPaneWidth: vi.fn(async () => undefined),
 }));
 
+import {
+  clearDesktopArtifactPane,
+  openArtifactInDesktopWorkPane,
+} from '@/buzz/desktop-artifact-pane';
 import { DesktopRoomInspector } from './DesktopRoomInspector';
 
 const agent = {
@@ -275,6 +279,35 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).not.toContain('#CloverGTO/Fix fixture');
   });
 
+  it('presents an artifact opened while the pane was away, so the press never lands silently', async () => {
+    clearDesktopArtifactPane();
+    const attachment = {
+      id: 'artifact-1',
+      name: 'board.html',
+      mimeType: 'text/html',
+      size: 12,
+      url: '/v1/media/artifact-1',
+    } as any;
+    // The press landed while the pane was dismissed: only the module event fired.
+    openArtifactInDesktopWorkPane({ attachment, authorHandle: 'goosy' });
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<DesktopRoomInspector {...props()} />);
+    });
+    // The pane comes back showing the artifact, not the silent overview.
+    const panes = tree.root.findAllByType('DesktopArtifactPane' as any);
+    expect(panes).toHaveLength(1);
+    expect(panes[0]!.props.attachment).toBe(attachment);
+    expect(panes[0]!.props.authorHandle).toBe('goosy');
+    // Closing hands the pane back to its overview.
+    await act(async () => {
+      panes[0]!.props.onClose();
+    });
+    expect(tree.root.findAllByType('DesktopArtifactPane' as any)).toHaveLength(0);
+    expect(text(tree)).toContain('CORNERS');
+    clearDesktopArtifactPane();
+  });
+
   it('renders dispatchable workflows and confirms the name and default branch before running', async () => {
     phoneOperation
       .mockResolvedValueOnce({
@@ -323,7 +356,7 @@ describe('DesktopRoomInspector work pane', () => {
   });
 
   it.each(['member', 'owner', 'admin'] as const)(
-    'shares corner stop authority for a %s',
+    'removes working controls from the corner cockpit for a %s',
     async (role) => {
       const detail = {
         ...room(),
@@ -346,19 +379,9 @@ describe('DesktopRoomInspector work pane', () => {
       });
       const composer = tree.root.findByType('ConversationComposer' as any);
       const progress = tree.root.findByType('TurnProgressLine' as any);
-      expect(Boolean(composer.props.onStop)).toBe(role !== 'member');
-      expect(Boolean(progress.props.onStop)).toBe(role !== 'member');
+      expect(composer.props.onStop).toBeUndefined();
+      expect(progress.props.onStop).toBeUndefined();
       expect(composer.props.running).toBe(true);
-      if (role !== 'member') {
-        await act(async () => {
-          await composer.props.onStop();
-        });
-        expect(phoneOperation).toHaveBeenCalledWith('cancelAgentTurn', {
-          roomId: 'working',
-          requestId: 'turn-1',
-          agentId: agent.pubkey,
-        });
-      }
       act(() => tree.unmount());
     },
   );

@@ -52,7 +52,6 @@ vi.mock('@/utils/responsive', () => ({
   useIsTablet: () => true,
   useHeaderHeight: () => 0,
 }));
-vi.mock('@/hooks/useTauriZoom', () => ({ DEFAULT_APP_ZOOM: 1 }));
 vi.mock('@/navigation/browserNavigation', () => ({
   canRouteForward: () => false,
   canUseRouteBack: () => false,

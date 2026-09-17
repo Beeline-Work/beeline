@@ -209,7 +209,7 @@ describe('desktop tail landing wiring', () => {
     // loaded desktop row in the initial region and cover it in one fill; both
     // props remain desktop-only so native virtualization is untouched.
     const flatListProps = chatSource.slice(
-      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
+      chatSource.indexOf('<FlatList\n            {...(desktopTranscript'),
       chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
     );
     expect(flatListProps).toContain(

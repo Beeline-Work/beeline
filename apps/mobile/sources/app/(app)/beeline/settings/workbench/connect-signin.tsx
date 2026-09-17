@@ -3,7 +3,9 @@ import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'rea
 import { StyleSheet } from 'react-native-unistyles';
 import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
+import { AnimatedBlurBackdrop } from '@/components/AnimatedOverlay';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 
@@ -14,13 +16,15 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 const SIGN_IN_POLL_MS = 1500;
 
 /**
- * Squire sign-in — a FULL-SCREEN in-app browser (captain ruling, steer-2):
- * the complete sign-in sequence (Google's own windows, redirects, email
- * checks) runs inside a JavaScript-enabled WebView pushed over the connect
- * screen, never inside the step list. The screen polls the connector's
- * install state and dismisses itself the moment the helper reports
- * `connected`. Where a native WebView cannot load (web), it falls back to
- * the system browser and asks the user to return here.
+ * Squire sign-in — an in-app browser OVERLAY (captain rulings, steer-2 and
+ * the post-connect steer): the complete sign-in sequence (Google's own
+ * windows, redirects, email checks) runs inside a JavaScript-enabled
+ * WebView rendered over the connect screen in a card that occupies most —
+ * never all — of the screen, with the underlying screen frosted/muted
+ * behind it. The screen polls the connector's install state and dismisses
+ * itself the moment the helper reports `connected`. Where a native WebView
+ * cannot load (web), it falls back to the system browser and asks the user
+ * to return here.
  */
 export default function ConnectorSignInScreen() {
   const params = useLocalSearchParams<{
@@ -37,6 +41,7 @@ export default function ConnectorSignInScreen() {
   const webView = useSandboxWebView();
   const [fellBack, setFellBack] = useState(false);
   const dismissedRef = useRef(false);
+  const insets = useSafeAreaInsets();
 
   const dismiss = useCallback(() => {
     if (dismissedRef.current) return;
@@ -76,7 +81,11 @@ export default function ConnectorSignInScreen() {
   })();
 
   return (
-    <View style={styles.container}>
+    <View style={styles.scrim} testID="signin-overlay">
+      {/* Frosted glass over the underlying connect screen; tapping it is not
+          a close — the sign-in must settle on its own terms. */}
+      <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
+      <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
       <View style={styles.header}>
         <TouchableOpacity
           accessibilityLabel="Close sign-in"
@@ -129,6 +138,7 @@ export default function ConnectorSignInScreen() {
           <ActivityIndicator testID="signin-webview-loading" />
         </ScrollView>
       )}
+      </View>
     </View>
   );
 }
@@ -136,6 +146,19 @@ export default function ConnectorSignInScreen() {
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
+    // The overlay's own floor: transparent so the frosted backdrop reads
+    // over the connect screen beneath this modal route.
+    scrim: { flex: 1, justifyContent: 'space-between' },
+    // Most of the screen, never full-bleed.
+    card: {
+      flex: 1,
+      marginHorizontal: '5%',
+      backgroundColor: hull.bgTerminal,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      borderRadius: hull.radius,
+      overflow: 'hidden',
+    },
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     header: {
       minHeight: 66,

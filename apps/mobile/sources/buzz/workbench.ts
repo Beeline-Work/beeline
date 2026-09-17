@@ -11,7 +11,23 @@
  * member A's connections even if a rogue payload arrives.
  */
 
-export type WorkbenchConnectorId = 'trusty-squire' | 'wallet' | 'tailscale';
+export type WorkbenchConnectorId =
+  | 'trusty-squire'
+  | 'wallet'
+  | 'tailscale'
+  | 'google-gmail'
+  | 'google-calendar'
+  | 'google-drive'
+  | 'google-youtube';
+
+/** True for the Google Workspace tool connectors (one Google OAuth grant each). */
+export function isGoogleToolConnectorId(id: string): id is
+  | 'google-gmail'
+  | 'google-calendar'
+  | 'google-drive'
+  | 'google-youtube' {
+  return id.startsWith('google-');
+}
 
 export type WorkbenchConnectorStatus = 'disconnected' | 'installing' | 'connected' | 'error';
 
@@ -59,7 +75,26 @@ export const CONNECTOR_DESCRIPTIONS: Record<WorkbenchConnectorId, string> = {
   'trusty-squire': 'vault, sign-ups, payments',
   wallet: 'your agents can spend',
   tailscale: 'private network for helpers',
+  'google-gmail': 'one Google OAuth grant for your agents',
+  'google-calendar': 'one Google OAuth grant for your agents',
+  'google-drive': 'one Google OAuth grant for your agents',
+  'google-youtube': 'one Google OAuth grant for your agents',
 };
+
+/** The capability copy an expanded Google tool row shows before connecting. */
+export const GOOGLE_TOOL_CAPABILITIES: Record<
+  Extract<WorkbenchConnectorId, `google-${string}`>,
+  readonly string[]
+> = {
+  'google-gmail': ['draft and send messages', 'read messages and threads'],
+  'google-calendar': ['schedule events', 'fetch your upcoming events'],
+  'google-drive': ['search your documents', 'read document contents'],
+  'google-youtube': ['access video transcripts', 'list playlists and their videos'],
+};
+
+export function googleToolCapabilities(id: WorkbenchConnectorId): readonly string[] {
+  return isGoogleToolConnectorId(id) ? GOOGLE_TOOL_CAPABILITIES[id] : [];
+}
 
 export type ConnectorInstallStepStatus = 'done' | 'active' | 'pending' | 'failed';
 
@@ -68,6 +103,10 @@ export type ConnectorInstallStep = {
   status: ConnectorInstallStepStatus;
   /** The helper's own reason, shown in red under a failed step. */
   reason?: string;
+  /** The CLI command this step runs, when the helper reports one. */
+  command?: string;
+  /** The step's live output (CLI/tool logs), streamed while it runs. */
+  output?: string;
 };
 
 export type ConnectorSignInMethod = 'streamed' | 'oauth';

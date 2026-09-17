@@ -21,7 +21,15 @@ export type { WalletLedgerEntry };
 export type { ConnectorStatus, ConnectorStep };
 
 /** Connector types the Workbench can provision. Phase 1: Trusty Squire only. */
-export const CONNECTOR_KINDS = ['trusty-squire', 'wallet', 'tailscale'] as const;
+export const CONNECTOR_KINDS = [
+  'trusty-squire',
+  'wallet',
+  'tailscale',
+  'google-gmail',
+  'google-calendar',
+  'google-drive',
+  'google-youtube',
+] as const;
 export type ConnectorKind = (typeof CONNECTOR_KINDS)[number];
 
 export function isConnectorKind(value: unknown): value is ConnectorKind {
@@ -32,7 +40,13 @@ export function isConnectorKind(value: unknown): value is ConnectorKind {
  * Connector types the Workbench can actually pair today. The catalog rows for
  * the rest render as "soon" and refuse every operation.
  */
-export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = ['trusty-squire'];
+export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
+  'trusty-squire',
+  'google-gmail',
+  'google-calendar',
+  'google-drive',
+  'google-youtube',
+];
 
 export type WorkbenchConnectorView = {
   readonly connectorId: string;

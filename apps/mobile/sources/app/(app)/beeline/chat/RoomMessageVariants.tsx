@@ -1060,6 +1060,7 @@ function SwipeToReply({
   children,
   messageId,
   onLongPress,
+  onActions,
   onPress,
   onReply,
   onReact,
@@ -1070,6 +1071,9 @@ function SwipeToReply({
   children: React.ReactNode;
   messageId: string;
   onLongPress(): void;
+  /** Mobile long press — opens the message actions sheet. Desktop long press
+   *  keeps its copy shortcut and reaches the same sheet through its buttons. */
+  onActions?(): void;
   onPress?(): void;
   onReply(): void;
   onReact(emoji: MessageReactionEmoji): void;
@@ -1093,9 +1097,18 @@ function SwipeToReply({
       {children}
     </Pressable>
   ) : (
-    <View onTouchEnd={onPress} testID={`copy-message-${messageId}`}>
+    <Pressable
+      // The long press is the row's action sheet — reactions, copy, reply,
+      // forward — so it deliberately claims what native text selection once
+      // held on this row; Copy on the sheet is the way to the full text now.
+      // Touch end keeps its composer-dismissal job.
+      delayLongPress={450}
+      onLongPress={onActions}
+      onTouchEnd={onPress}
+      testID={`copy-message-${messageId}`}
+    >
       {children}
-    </View>
+    </Pressable>
   );
   if (isDesktop) {
     return (
@@ -1332,6 +1345,8 @@ export interface OrdinaryLedgerMessageProps {
   onTapOutsideComposer?(): void;
   onReply(message: ChatDisplayMessage): void;
   onCopy(text: string): void;
+  /** Mobile long press on the row — opens the message actions sheet. */
+  onMessageActions?(message: ChatDisplayMessage): void;
   onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
   onForward?(message: ChatDisplayMessage): void;
   onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
@@ -1423,6 +1438,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onTapOutsideComposer,
   onReply,
   onCopy,
+  onMessageActions,
   onReact = () => undefined,
   onForward = () => undefined,
   onCornerProposalDecision,
@@ -1563,6 +1579,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         <SwipeToReply
           messageId={message.id}
           onLongPress={() => onCopy(excerpt)}
+          onActions={onMessageActions ? () => onMessageActions(message) : undefined}
           {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
           onReply={() => onReply(message)}
           onReact={() => undefined}
@@ -1753,6 +1770,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     <SwipeToReply
       messageId={message.id}
       onLongPress={() => onCopy(message.text)}
+      onActions={onMessageActions ? () => onMessageActions(message) : undefined}
       {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
       onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
       onReact={(emoji) => onReact(message, emoji)}

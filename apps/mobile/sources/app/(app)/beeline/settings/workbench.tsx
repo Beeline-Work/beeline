@@ -4,18 +4,48 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { GoogleToolRow } from './workbench/GoogleToolRow';
 import {
   connectionHostsLine,
   connectionsForViewer,
   connectorDescription,
   connectorRowValue,
+  isGoogleToolConnectorId,
   type WorkbenchView,
 } from '@/buzz/workbench';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
+
+/** The expanded value proposition of the Coinbase Wallet tool (captain copy,
+ *  2026-09): what it subsidizes and what it reaches. */
+const WALLET_DETAILS = [
+  {
+    name: 'Gas Subsidies',
+    line: 'USDC transactions are subsidized on Base L2.',
+  },
+  {
+    name: 'Multi-Chain Support',
+    line: '16 EVM-compatible chains (Base, Arbitrum, Avalanche, Robinhood Chain, and more) plus Solana.',
+  },
+] as const;
+
+/** The expanded value proposition of the Trusty Squire tool (PR 1338):
+ *  what sign-in covers and what spending it enables. Same vocabulary as
+ *  `WALLET_DETAILS` — the one `ToolDetailsCell` detail shape. */
+const SQUIRE_DETAILS = [
+  {
+    name: 'Authentication',
+    line: 'Handles auth for your agents: you sign in once with Google and Trusty Squire grants access to your other services on their behalf.',
+  },
+  {
+    name: 'Payments',
+    line: 'Enables payments when a card is stored or uploaded to Trusty Squire. Agents can only spend within the grants you set.',
+  },
+] as const;
 
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
@@ -36,7 +66,6 @@ export default function WorkbenchScreen() {
   const viewerId = firstParam(params.viewerId) ?? '';
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   const load = useCallback(async () => {
     try {
       setView(await getWorkbenchSource().readWorkbench({ workspaceId, viewerId }));
@@ -98,39 +127,109 @@ export default function WorkbenchScreen() {
             Tools
           </Text>
           {connectors.map((connector) => {
-            // The wallet is not a pairing flow: tapping it IS the intent, so
-            // the row opens the wallet screen itself (mock §Screens 1).
+            // Expandable tools (wallet, Trusty Squire) render through the ONE
+            // shared ToolDetailsCell: the collapsed row is a fact, the
+            // expanded section carries the tool's value proposition and the
+            // Connect action (steer: the Connect button never triggers
+            // blindly from the collapsed row). The wallet opens its own
+            // dashboard; Trusty Squire opens the connect pipeline.
             const isWallet = connector.id === 'wallet';
-            const walletOnPress = isWallet
-              ? () =>
-                  router.push({
-                    pathname: '/beeline/settings/workbench/wallet',
-                    params: { workspaceId },
-                  } as unknown as Href)
-              : undefined;
+            if (isWallet) {
+              return (
+                <ToolDetailsCell
+                  key={connector.id}
+                  description={connectorDescription(connector)}
+                  details={WALLET_DETAILS}
+                  testID={`workbench-connector-${connector.id}`}
+                  title={connector.name}
+                  value={connectorRowValue(connector)}
+                >
+                  <SettingsRow
+                    action="Connect"
+                    onPress={
+                      connector.available
+                        ? () =>
+                            router.push({
+                              pathname: '/beeline/settings/workbench/wallet',
+                              params: { workspaceId },
+                            } as unknown as Href)
+                        : undefined
+                    }
+                    testID="workbench-connector-wallet-connect"
+                    title="Connect Coinbase Wallet"
+                    tone="action"
+                  />
+                </ToolDetailsCell>
+              );
+            }
+            // Google Workspace tools use the account-backed tool pattern:
+            // collapsed row expands; the connect action lives in the pane.
+            if (isGoogleToolConnectorId(connector.id)) {
+              return (
+                <GoogleToolRow
+                  key={connector.id}
+                  connector={connector}
+                  onPressConnect={() =>
+                    router.push({
+                      pathname: '/beeline/settings/workbench/connect',
+                      params: { workspaceId, viewerId, connectorId: connector.id },
+                    } as unknown as Href)
+                  }
+                />
+              );
+            }
+            const isSquire = connector.id === 'trusty-squire';
+            if (isSquire) {
+              const canConnect =
+                connector.available &&
+                connector.status !== 'connected' &&
+                connector.status !== 'installing';
+              return (
+                <ToolDetailsCell
+                  key={connector.id}
+                  description={connectorDescription(connector)}
+                  details={SQUIRE_DETAILS}
+                  testID={`workbench-connector-${connector.id}`}
+                  title={connector.name}
+                  value={connectorRowValue(connector)}
+                  valueTone={connector.status === 'error' ? 'danger' : undefined}
+                >
+                  <SettingsRow
+                    action="Connect"
+                    disabled={!canConnect}
+                    onPress={
+                      canConnect
+                        ? () =>
+                            router.push({
+                              pathname: '/beeline/settings/workbench/connect',
+                              params: { workspaceId, viewerId, connectorId: connector.id },
+                            } as unknown as Href)
+                        : undefined
+                    }
+                    testID={`workbench-connector-${connector.id}-connect`}
+                    title={`Connect ${connector.name}`}
+                    tone="action"
+                  />
+                </ToolDetailsCell>
+              );
+            }
             return (
               <SettingsRow
                 key={connector.id}
-                action={isWallet ? 'create' : undefined}
                 description={connectorDescription(connector)}
-                disabled={
-                  !isWallet &&
-                  (!connector.available || connector.status === 'connected')
-                }
+                disabled={!connector.available || connector.status === 'connected' || connector.status === 'installing'}
                 onPress={
-                  isWallet
-                    ? walletOnPress
-                    : connector.available && connector.status !== 'connected'
-                      ? () =>
-                          router.push({
-                            pathname: '/beeline/settings/workbench/connect',
-                            params: { workspaceId, viewerId, connectorId: connector.id },
-                          } as unknown as Href)
-                      : undefined
+                  connector.available && connector.status !== 'connected'
+                    ? () =>
+                        router.push({
+                          pathname: '/beeline/settings/workbench/connect',
+                          params: { workspaceId, viewerId, connectorId: connector.id },
+                        } as unknown as Href)
+                    : undefined
                 }
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}
-                value={isWallet ? undefined : connectorRowValue(connector)}
+                value={connectorRowValue(connector)}
                 valueTone={connector.status === 'error' ? 'danger' : undefined}
               />
             );

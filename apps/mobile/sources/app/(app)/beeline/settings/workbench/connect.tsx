@@ -3,7 +3,9 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
+import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import {
@@ -15,16 +17,32 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** User-visible connector names, one row per id the build knows. */
+const CONNECTOR_NAMES: Record<string, string> = {
+  'trusty-squire': 'Trusty Squire',
+  'google-gmail': 'Gmail',
+  'google-calendar': 'Google Calendar',
+  'google-drive': 'Google Drive',
+  'google-youtube': 'YouTube',
+};
+
+function connectorNameFor(connectorId: string): string {
+  return CONNECTOR_NAMES[connectorId] ?? connectorId;
+}
+
 const INSTALL_POLL_MS = 700;
 
 /**
  * Connect Trusty Squire — the pairing flow. ONE connect path (captain
- * ruling, steer-1): pairing asks once. With no connected machine the screen
- * says honestly what to run; with exactly one machine it pairs immediately;
- * only with more than one does a list appear. The helper's own step reports
- * follow (a failed step turns red with the helper's reason and a Retry that
- * re-pairs), and sign-in is a full-screen in-app browser route, never a row
- * inside the step list.
+ * ruling, steer-1): pairing asks once. The helper-machine selector is
+ * ALWAYS shown before the binary install starts — one machine or many —
+ * so the user explicitly targets the machine that will hold the keys
+ * (steer: multi-agent, multi-machine setups). The helper's own step
+ * reports follow as a live checklist: the running step pulses gold, the
+ * CLI command and its captured output stream under it, done steps check
+ * off, and a failed step shows its own reason and output with a Retry —
+ * never a silent hang. Sign-in is an in-app browser overlay route, never
+ * a row inside the step list.
  */
 export default function ConnectTrustySquireScreen() {
   const params = useLocalSearchParams<{
@@ -38,8 +56,8 @@ export default function ConnectTrustySquireScreen() {
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[] | null>(null);
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoPairedRef = useRef(false);
   const pairedHelperRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -111,29 +129,22 @@ export default function ConnectTrustySquireScreen() {
     [connectorId, startPolling, workspaceId],
   );
 
-  // One machine: pairing is not a question. Exactly one auto-pair per screen.
-  useEffect(() => {
-    if (helpers && helpers.length === 1 && !autoPairedRef.current) {
-      autoPairedRef.current = true;
-      void pair(helpers[0]!.id);
-    }
-  }, [helpers, pair]);
-
   const retry = useCallback(() => {
     setInstall(null);
     const helperId = pairedHelperRef.current;
     if (helperId) void pair(helperId);
   }, [pair]);
 
-  const connectorName = connectorId === 'trusty-squire' ? 'Trusty Squire' : connectorId;
+  const connectorName = connectorNameFor(connectorId);
 
   const noHelpers = helpers !== null && helpers.length === 0;
-  const oneHelper = helpers !== null && helpers.length === 1;
-  const manyHelpers = helpers !== null && helpers.length > 1;
+  // The machine selector is explicit BEFORE any install: the user targets
+  // the helper machine, whether the workspace runs one helper or many.
+  const someHelpers = helpers !== null && helpers.length > 0;
 
   return (
     <View style={styles.container}>
-      <HullSurface strength="quiet" style={styles.header}>
+      <HullSurface strength="quiet" style={[styles.header, { paddingTop: insets.top }]}>
         <TouchableOpacity
           accessibilityLabel="Back"
           accessibilityRole="button"
@@ -154,12 +165,6 @@ export default function ConnectTrustySquireScreen() {
             <Text style={styles.note}>Looking for your machine…</Text>
           </View>
         ) : null}
-        {oneHelper && install === null && helpers?.[0] ? (
-          <View style={styles.loading} testID="connect-pairing">
-            <PixelLoader />
-            <Text style={styles.note}>Pairing with {helpers[0].name}…</Text>
-          </View>
-        ) : null}
         {noHelpers ? (
           <View testID="connect-no-helper">
             <Text style={styles.note}>
@@ -173,9 +178,9 @@ export default function ConnectTrustySquireScreen() {
             </Text>
           </View>
         ) : null}
-        {install === null && manyHelpers ? (
+        {install === null && someHelpers ? (
           <View testID="connect-machine-picker">
-            <Text style={styles.sectionLabel}>Machines</Text>
+            <Text style={styles.sectionLabel}>Choose a helper machine</Text>
             {helpers!.map((helper) => (
               <SettingsRow
                 key={helper.id}
@@ -184,37 +189,53 @@ export default function ConnectTrustySquireScreen() {
                 onPress={() => void pair(helper.id)}
                 testID={`connect-machine-${helper.id}`}
                 title={helper.name}
-                action={helper.online ? 'pair' : undefined}
+                action={helper.online ? 'install' : undefined}
                 value={helper.online ? undefined : 'offline'}
               />
             ))}
-            <Text style={styles.note}>Pair a helper, not an agent. Offline machines cannot be paired.</Text>
+            <Text style={styles.note}>
+              The Trusty Squire binary is installed on the machine you pick. Offline machines
+              cannot be paired.
+            </Text>
           </View>
         ) : null}
         {install !== null ? (
           <View testID="connect-install-progress">
-            {oneHelper && helpers?.[0] ? (
-              <Text style={styles.note}>Pairing with {helpers[0].name}…</Text>
-            ) : null}
+            <Text style={styles.note}>
+              Installing on {install.helperName ?? 'your machine'}
+            </Text>
             <View style={styles.steps}>
               {install.steps.map((step, index) => (
                 <View key={`${step.label}-${index}`} testID={`connect-step-${index}-${step.status}`}>
-                  <Text
-                    style={[
-                      styles.stepText,
-                      step.status === 'done' && styles.stepDone,
-                      step.status === 'active' && styles.stepActive,
-                      step.status === 'failed' && styles.stepFailed,
-                    ]}
-                  >
-                    {step.status === 'done'
-                      ? `✓ ${step.label}`
-                      : step.status === 'active'
-                        ? `● ${step.label}`
+                  {step.status === 'active' ? (
+                    <PulsingText style={[styles.stepText, styles.stepActive]}>
+                      ● {step.label}
+                    </PulsingText>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.stepText,
+                        step.status === 'done' && styles.stepDone,
+                        step.status === 'failed' && styles.stepFailed,
+                      ]}
+                    >
+                      {step.status === 'done'
+                        ? `✓ ${step.label}`
                         : step.status === 'failed'
                           ? `✗ ${step.label}`
                           : `· ${step.label}`}
-                  </Text>
+                    </Text>
+                  )}
+                  {step.command ? (
+                    <Text style={styles.stepCommand} testID={`connect-step-${index}-command`}>
+                      $ {step.command}
+                    </Text>
+                  ) : null}
+                  {step.output ? (
+                    <Text style={styles.stepOutput} testID={`connect-step-${index}-output`}>
+                      {step.output}
+                    </Text>
+                  ) : null}
                   {step.reason ? (
                     <Text style={styles.stepReason} testID={`connect-step-${index}-reason`}>
                       {step.reason}
@@ -296,6 +317,19 @@ const styles = StyleSheet.create((theme) => {
     stepDone: { color: hull.textSecondary },
     stepActive: { color: hull.accent },
     stepFailed: { color: hull.dialogDanger },
+    stepCommand: {
+      ...Typography.mono(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      marginTop: 2,
+    },
+    stepOutput: {
+      ...Typography.mono(),
+      ...hull.type.meta,
+      color: hull.textSecondary,
+      opacity: 0.85,
+      marginTop: 2,
+    },
     stepReason: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
     signInButton: {
       minHeight: hull.layout.row,

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Google Drive connector">
+  <path d="M24 10 H40 L56 38 L48 52 L16 52 L8 38 Z" fill="#1c1c1e" stroke="#3a3a3d" stroke-width="2"/>
+  <path d="M24 10 L40 38 H56 M8 38 H40 L48 52" fill="none" stroke="#d7af5f" stroke-width="3"/>
+</svg>

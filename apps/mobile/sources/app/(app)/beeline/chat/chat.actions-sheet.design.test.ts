@@ -19,6 +19,7 @@ function sheet(marker: string, label: string): string {
 
 const roomSheet = sheet('testID="room-actions-sheet"', 'Room actions sheet');
 const cornerSheet = sheet('testID="corner-actions-sheet"', 'corner actions sheet');
+const messageSheet = sheet('testID="message-actions-sheet"', 'message actions sheet');
 
 const ROOM_ROWS = [
   'rename-room-action',
@@ -168,5 +169,59 @@ describe('Room and corner actions sheets', () => {
     // A rename in flight still holds the sheet open against the scrim.
     expect(chat).toContain('dismissOnBackdrop={!renameBusy}');
     expect(chat).toContain('const closeRoomActions = useCallback(() => {');
+  });
+
+  it('opens the message actions sheet from the row long press with the same list', () => {
+    // Long press on any human or agent message opens this third sheet: the
+    // React row expands to the six shipped reactions beneath it (the chevron
+    // `down` of the trailing vocabulary), Copy/Reply/Forward act on press.
+    expect(messageSheet).toContain('visible={Boolean(messageActionsTarget)}');
+    for (const testID of [
+      'message-react-action',
+      'message-copy-action',
+      'message-reply-action',
+      'message-forward-action',
+    ]) {
+      expect(row(messageSheet, testID)).toContain('<HullActionSheetRow');
+    }
+    expect(row(messageSheet, 'message-copy-action')).toContain('label="Copy"');
+    expect(row(messageSheet, 'message-reply-action')).toContain('label="Reply"');
+    expect(row(messageSheet, 'message-forward-action')).toContain('label="Forward"');
+    expect(messageSheet).toContain('testID="message-actions-close"');
+  });
+
+  it('spends the message sheet trailing column on the same closed vocabulary', () => {
+    // React is the one opener; it expands the strip beneath itself.
+    const react = row(messageSheet, 'message-react-action');
+    expect(react).toContain('label="React"');
+    expect(react).toContain("chevron={messageReactionsOpen ? 'down' : 'right'}");
+    // Copy, Reply and Forward are plain actions — no fifth mark.
+    for (const testID of ['message-copy-action', 'message-reply-action', 'message-forward-action']) {
+      const plain = row(messageSheet, testID);
+      expect(plain).not.toContain('chevron');
+      expect(plain).not.toContain('toggle=');
+      expect(plain).not.toContain('metadata=');
+    }
+  });
+
+  it('expands exactly the six shipped reactions, wired to the same react handler', () => {
+    expect(messageSheet).toContain('MESSAGE_REACTION_EMOJIS.map');
+    expect(chat).toContain('testID="message-reaction-strip"');
+    expect(messageSheet).toContain('void handleReactToMessage(target, emoji)');
+    // Activity narration keeps its reply-only scope: no React, no Forward.
+    expect(messageSheet).toContain('!messageActionsTarget.isAgentActivity');
+  });
+
+  it('wires the long press through OrdinaryLedgerMessage and not a second row surface', () => {
+    // One sheet per message actions; the rows stay inside this screen's
+    // HullActionSheetModal and the ledger only signals the long press.
+    expect(chat).toContain('onMessageActions={openMessageActions}');
+    const variants = readFileSync(
+      new URL('./RoomMessageVariants.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(variants).toContain('onMessageActions?');
+    expect(variants).toContain('onLongPress={onActions}');
+    expect(variants).not.toContain('message-actions-sheet');
   });
 });

@@ -78,7 +78,9 @@ function toConnection(dto: ConnectionViewDto, viewerId: string): WorkbenchView['
   };
 }
 
-function toSteps(steps: readonly { label: string; status: string; reason?: string }[]): readonly ConnectorInstallStep[] {
+function toSteps(
+  steps: readonly { label: string; status: string; reason?: string; command?: string; output?: string }[],
+): readonly ConnectorInstallStep[] {
   return steps.map((step) => ({
     label: step.label,
     status:
@@ -90,6 +92,8 @@ function toSteps(steps: readonly { label: string; status: string; reason?: strin
             ? ('failed' as const)
             : ('pending' as const),
     ...(step.reason ? { reason: step.reason } : {}),
+    ...(step.command ? { command: step.command } : {}),
+    ...(step.output ? { output: step.output } : {}),
   }));
 }
 

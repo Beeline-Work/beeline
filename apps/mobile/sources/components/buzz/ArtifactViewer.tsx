@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/buzz/artifact';
@@ -32,9 +33,15 @@ export function ArtifactViewerScreen({
 }) {
   const format = artifactFormat(attachment.mimeType);
   const title = attachment.title ?? attachment.name;
+  // The viewer fills the whole screen (HullModal placement 'fill', which is
+  // translucent under both system bars on Android's mandatory edge-to-edge),
+  // so the header row — title and the ✕ that closes the viewer — must clear
+  // the status tray the way every full-screen surface does.
+  const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   return (
     <View style={styles.screen} testID="artifact-viewer">
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
         <Text numberOfLines={1} style={styles.headerTitle}>
           {title}
         </Text>
@@ -195,7 +202,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.buzz.space.sm,
     paddingHorizontal: theme.buzz.space.md,
-    paddingTop: theme.buzz.space.md,
+    // The top clearance over the status tray is supplied by the screen
+    // (insets.top + space.md); the sheet never carries a second one.
     paddingBottom: theme.buzz.space.sm,
     borderBottomWidth: 1,
     borderBottomColor: theme.buzz.border,

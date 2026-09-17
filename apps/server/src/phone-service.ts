@@ -107,6 +107,7 @@ import {
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
+  ReadWalletHistoryInput,
 } from '@beeline/api-contract/wallet';
 import {
   createWallet,
@@ -114,6 +115,7 @@ import {
   sendFromWallet,
   grantWalletDelegation,
   walletBinding,
+  walletHistory,
 } from './wallet.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { closeCornerState } from './corner-close.js';
@@ -2641,6 +2643,18 @@ export class PhoneService {
           viewerId,
           (input as Input<'grantWalletDelegation'>).workspaceId,
         )) as Output<Name>;
+      case 'readWalletHistory': {
+        // The ledger is keyed on the viewer's identity alone, so the viewer
+        // scope IS the authorization — no workspace parameter to project.
+        const historyInput = input as unknown as Input<'readWalletHistory'>;
+        return {
+          entries: await walletHistory(
+            this.database,
+            viewerId,
+            (historyInput as ReadWalletHistoryInput).limit ?? 20,
+          ),
+        } as Output<Name>;
+      }
       case 'readConnectionDetail':
         return (await this.readConnectionDetail(
           input as Input<'readConnectionDetail'>,
@@ -5437,7 +5451,14 @@ export class PhoneService {
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps
        ) VALUES ($1,$2,$3,$4,$5,$6,'installing',$7::jsonb)
-       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO NOTHING`,
+       ON CONFLICT (workspace_id,owner_identity_id,connector_type,machine_id) DO UPDATE
+       SET helper_agent_id=EXCLUDED.helper_agent_id,
+           status='installing',
+           status_steps=EXCLUDED.status_steps,
+           status_error=NULL,
+           pending_ops='[]'::jsonb,
+           connected_at=NULL,
+           updated_at=now()`,
       [
         id,
         ws.workspace_id,
@@ -5448,6 +5469,13 @@ export class PhoneService {
         JSON.stringify(defaultConnectorSteps()),
       ],
     );
+    // A conflicting row (a previous pairing of the same connector on the same
+    // machine — a stale disconnected row, or a connected one being re-paired)
+    // is re-armed above exactly like a fresh insert: the mobile poll sees
+    // `installing` with default steps again, and the helper daemon — which
+    // derives its assignments from `status` AND `helper_agent_id` — receives
+    // the install on its next poll even when the conflict row carried a
+    // different agent of the same machine or a leftover `uninstall` op.
     const existing =
       (
         await this.database.query<{
@@ -6178,5 +6206,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWallet',
   'sendFromWallet',
   'grantWalletDelegation',
+  'readWalletHistory',
   'deleteAccount',
 ]);

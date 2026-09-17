@@ -42,6 +42,10 @@ const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
   { connectorType: 'trusty-squire', name: 'Trusty Squire', available: true },
   { connectorType: 'wallet', name: 'Wallet', available: true },
   { connectorType: 'tailscale', name: 'Tailscale', available: false },
+  { connectorType: 'google-gmail', name: 'Gmail', available: true },
+  { connectorType: 'google-calendar', name: 'Google Calendar', available: true },
+  { connectorType: 'google-drive', name: 'Google Drive', available: true },
+  { connectorType: 'google-youtube', name: 'YouTube', available: true },
 ];
 
 export function connectorCatalog(): readonly ConnectorCatalogEntry[] {

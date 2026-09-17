@@ -39,13 +39,24 @@ describe('the appearance toggle wired into Unistyles', () => {
   });
 
   it('registers both obsidian and bone, defaulting cold start to obsidian', async () => {
-    const { obsidianTheme, boneTheme } = await import('./theme');
+    const {
+      obsidianTheme,
+      obsidianSmallTheme,
+      obsidianLargeTheme,
+      boneTheme,
+      boneSmallTheme,
+      boneLargeTheme,
+    } = await import('./theme');
     await import('./unistyles');
 
     expect(configure).toHaveBeenCalledTimes(1);
     const config = configure.mock.calls[0][0];
     expect(config.themes.obsidian).toBe(obsidianTheme);
+    expect(config.themes.obsidianSmall).toBe(obsidianSmallTheme);
+    expect(config.themes.obsidianLarge).toBe(obsidianLargeTheme);
     expect(config.themes.bone).toBe(boneTheme);
+    expect(config.themes.boneSmall).toBe(boneSmallTheme);
+    expect(config.themes.boneLarge).toBe(boneLargeTheme);
     expect(config.settings.initialTheme).toBe('obsidian');
     expect(setRootViewBackgroundColor).toHaveBeenCalledWith(obsidianTheme.colors.groupped.background);
   });
@@ -58,13 +69,19 @@ describe('the appearance toggle wired into Unistyles', () => {
     expect(config.settings.initialTheme).toBe('bone');
   });
 
+  it('cold-starts native text at the persisted small or large size', async () => {
+    mmkvValues.set('local-settings', JSON.stringify({ appearance: 'dark', uiSize: 'small' }));
+    await import('./unistyles');
+    expect(configure.mock.calls[0][0].settings.initialTheme).toBe('obsidianSmall');
+  });
+
   it('setAppAppearance flips the live Unistyles theme and the native root color', async () => {
     const { boneTheme } = await import('./theme');
     const { setAppAppearance } = await import('./unistyles');
 
-    setAppAppearance('light');
+    setAppAppearance('light', 'large');
 
-    expect(setTheme).toHaveBeenCalledWith('bone');
+    expect(setTheme).toHaveBeenCalledWith('boneLarge');
     expect(setRootViewBackgroundColor).toHaveBeenCalledWith(boneTheme.colors.groupped.background);
     expect(setBackgroundColorAsync).toHaveBeenCalledWith(boneTheme.colors.groupped.background);
   });

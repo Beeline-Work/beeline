@@ -193,6 +193,44 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
+  it('routes Google tool connectors through the Google installer without vault reporting', async () => {
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-g', connectorType: 'google-gmail' }]);
+    const googleCalls: string[] = [];
+    const squireCalls: string[] = [];
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        squireCalls.push('install');
+        return { status: 'connected', steps: [] };
+      },
+      installGoogle: async (connectorType) => {
+        googleCalls.push(connectorType);
+        return {
+          status: 'connected',
+          steps: [{ label: 'helper reached', status: 'done' }],
+          signedInAs: 'dana@gmail.test',
+        };
+      },
+      googleHome: '/tmp/google-home',
+      readVault: async () => {
+        squireCalls.push('vault');
+        return [];
+      },
+    });
+    await loop.runOnce();
+    await settle();
+    expect(googleCalls).toEqual(['google-gmail']);
+    // No Squire install and no vault report for a Google connector.
+    expect(squireCalls).toEqual([]);
+    const install = api.calls.find((call) => call.op === 'installConnector')!;
+    expect(install.input.connectorId).toBe('conn-g');
+    expect(install.input.signedInAs).toBe('dana@gmail.test');
+    expect(api.calls.some((call) => call.op === 'postConnectorVault')).toBe(false);
+    loop.stop();
+  });
+
   it('survives a failed assignments read and re-arms its next poll', async () => {
     const calls: ExecuteCall[] = [];
     let fail = true;

@@ -41,6 +41,7 @@ import {
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
+  MESSAGE_REACTION_EMOJIS,
   type MessageReactionEmoji,
   type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
@@ -85,6 +86,11 @@ import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
+import {
+  subscribeDesktopArtifact,
+  type DesktopArtifactSelection,
+} from '@/buzz/desktop-artifact-pane';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
@@ -162,6 +168,7 @@ import {
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
 import {
+  desktopOpenLandingOnContentSizeChange,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
   desktopTailLanding,
@@ -204,6 +211,7 @@ import {
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
   activityMessageReplyTarget,
+  agentActivityReplyExcerpt,
   prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
@@ -348,6 +356,11 @@ const DESKTOP_TAIL_STALL_EPS = 1;
 // initial render region and let one fill cover it, so an appended row mounts
 // in the same list update instead of after a machine-speed-sensitive sequence
 // of estimated windows. Native keeps its virtualized defaults.
+// The desktop chronological list lands on the tail through measured content
+// sizes, because RN Web's scrollToEnd estimates unmeasured far frames and can
+// land short on a cold open (the oldest window renders first). Settle only
+// after measured growth has stopped long enough for the next window to mount.
+const DESKTOP_OPEN_LANDING_SETTLE_MS = 250;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
@@ -538,6 +551,8 @@ export default function BuzzChat() {
   const failedOutboxIds = outbox.failedIds;
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
+  const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
+  const [messageReactionsOpen, setMessageReactionsOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
     null,
@@ -832,6 +847,26 @@ export default function BuzzChat() {
       openDesktopCorner(roomId, cornerId);
     });
   }, [desktopExperience, desktopWorkRoomId, openDesktopCorner]);
+  // The work pane and the Room route are siblings, so an artifact Open press
+  // arrives as a module event. A dismissed pane re-presents around it; the
+  // pane then shows the artifact from its own module read. A suppressed pane
+  // cannot host the artifact at all, so the press hands off to the browser —
+  // the same boundary the pane uses for formats it cannot sandbox.
+  const openDesktopArtifact = useCallback(
+    (selection: DesktopArtifactSelection) => {
+      const transition = commitDesktopWorkPane({ type: 'open-artifact' });
+      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+      if (transition.placement === 'main')
+        void openArtifactInBrowserOrExplain(selection.attachment);
+    },
+    [commitDesktopWorkPane, workPaneWindowClass],
+  );
+  useEffect(() => {
+    if (!desktopExperience) return;
+    return subscribeDesktopArtifact((selection) => {
+      if (selection) openDesktopArtifact(selection);
+    });
+  }, [desktopExperience, openDesktopArtifact]);
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
   const handleOpenChannelReference = useCallback(
@@ -1816,6 +1851,20 @@ export default function BuzzChat() {
     },
     [],
   );
+  // A cold-open landing is distinct from ordinary tail following: its own
+  // programmatic jumps may report the partially measured list as unpinned.
+  // Keep landing through measured growth until it settles or the reader acts.
+  const desktopOpenLandingRef = useRef(false);
+  const desktopOpenLandingStartedRef = useRef(false);
+  const desktopOpenLandingSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelDesktopOpenLanding = useCallback(() => {
+    desktopOpenLandingRef.current = false;
+    if (desktopOpenLandingSettleTimerRef.current !== null) {
+      clearTimeout(desktopOpenLandingSettleTimerRef.current);
+      desktopOpenLandingSettleTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => cancelDesktopOpenLanding, [cancelDesktopOpenLanding]);
   // Updated on every onScroll; native's inverted list uses offset 0, while
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
@@ -1854,6 +1903,7 @@ export default function BuzzChat() {
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,
     isUserDragging: userDraggingRef.current,
+    openLandsOnTail: !desktopTranscript,
   });
   useLayoutEffect(() => {
     if (arrivalFollow === 'hold') {
@@ -1874,21 +1924,27 @@ export default function BuzzChat() {
       return;
     }
     if (desktopTranscript) {
-      // The arrival scroll may land short while the appended row's window is
-      // still unmeasured; the measured content size re-lands it.
-      desktopTailLandingsRef.current = DESKTOP_TAIL_LANDING_CAP;
-      desktopTailStableSinceRef.current = null;
-      desktopTailLastLandRef.current = null;
-      // The follow holds the reader where they were pinned on arrival; any
-      // later drop from this offset is the reader leaving, not growth.
-      const armNode = flatListRef.current?.getScrollableNode() as
-        { scrollHeight: number; clientHeight: number; scrollTop: number } | null | undefined;
-      desktopTailHeldOffsetRef.current = armNode
-        ? armNode.scrollTop
-        : currentScrollOffsetRef.current;
-      if (desktopTailDisarmTimerRef.current !== null) {
-        clearTimeout(desktopTailDisarmTimerRef.current);
-        desktopTailDisarmTimerRef.current = null;
+      const isColdOpen = !desktopOpenLandingStartedRef.current;
+      desktopOpenLandingStartedRef.current = true;
+      if (isColdOpen) {
+        // The immediate scroll may land short while the tail window is still
+        // unmeasured; measured content growth owns the landing from here.
+        desktopOpenLandingRef.current = true;
+      } else {
+        // An appended row may still land short while its window is unmeasured;
+        // measured content changes own the landing until the real gap settles.
+        desktopTailLandingsRef.current = DESKTOP_TAIL_LANDING_CAP;
+        desktopTailStableSinceRef.current = null;
+        desktopTailLastLandRef.current = null;
+        const armNode = flatListRef.current?.getScrollableNode() as
+          { scrollHeight: number; clientHeight: number; scrollTop: number } | null | undefined;
+        desktopTailHeldOffsetRef.current = armNode
+          ? armNode.scrollTop
+          : currentScrollOffsetRef.current;
+        if (desktopTailDisarmTimerRef.current !== null) {
+          clearTimeout(desktopTailDisarmTimerRef.current);
+          desktopTailDisarmTimerRef.current = null;
+        }
       }
     }
     scrollToNewestMessage();
@@ -1907,6 +1963,7 @@ export default function BuzzChat() {
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
+      cancelDesktopOpenLanding();
       requestAnimationFrame(() =>
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
@@ -1930,6 +1987,7 @@ export default function BuzzChat() {
     notificationMessageId,
     notificationResponseId,
     notificationTarget,
+    cancelDesktopOpenLanding,
     revealTranscriptThrough,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
@@ -2167,61 +2225,6 @@ export default function BuzzChat() {
     scrollToNewestMessage();
   }, [bottomChromeLayoutKey, composerFootprint, composerLayoutFollow, scrollToNewestMessage]);
 
-  /**
-   * Withdraw the question this turn is answering.
-   *
-   * The control is offered to the requester or Room manager (`viewerMayStopTurn`), and the
-   * server refuses anyone else, so the two agree on one rule rather than the
-   * phone guessing at it. The press is acknowledged on this line immediately
-   * (`stoppingTurn`); the cancelled receipt is still what settles the durable
-   * "stopped" line and retires the control.
-   */
-  const [stoppingTurn, setStoppingTurn] = useState<{
-    agentPubkey: string;
-    requestId: string;
-  } | null>(null);
-  const handleStopTurn = useCallback(
-    async (stop: { agentPubkey: string; requestId: string }) => {
-      setStoppingTurn(stop);
-      try {
-        await monolithPhoneOperation('cancelAgentTurn', {
-          roomId: decodedId,
-          requestId: stop.requestId,
-          agentId: stop.agentPubkey,
-        });
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        return true;
-      } catch (err) {
-        setStoppingTurn((current) =>
-          current?.requestId === stop.requestId && current.agentPubkey === stop.agentPubkey
-            ? null
-            : current,
-        );
-        // A turn that settled while the press was in the air is the ordinary
-        // race, not a failure worth a dialog: the line is already gone.
-        console.warn('Stopping the turn failed:', err);
-        return false;
-      }
-    },
-    [decodedId],
-  );
-  useEffect(() => {
-    if (!stoppingTurn) return;
-    if (
-      !activeAgentTurn ||
-      activeAgentTurn.requestId !== stoppingTurn.requestId ||
-      activeAgentTurn.agentPubkey !== stoppingTurn.agentPubkey
-    ) {
-      setStoppingTurn(null);
-    }
-  }, [activeAgentTurn, stoppingTurn]);
-  const stoppingThisTurn = Boolean(
-    stoppingTurn &&
-    composerAck?.stop &&
-    stoppingTurn.requestId === composerAck.stop.requestId &&
-    stoppingTurn.agentPubkey === composerAck.stop.agentPubkey,
-  );
-
   /** The settled "<Past> for Ns · done h:MM" line a finished turn leaves briefly. */
   const [settledTurn, setSettledTurn] = useState<{
     line: string;
@@ -2375,9 +2378,21 @@ export default function BuzzChat() {
     [decodedId, refreshSignal],
   );
 
+  const openMessageActions = useCallback((message: ChatDisplayMessage) => {
+    // A live draft is the turn still writing — it settles into the reply the
+    // actions would target, so it offers none.
+    if (message.isAgentDraft) return;
+    void Haptics.selectionAsync();
+    setMessageReactionsOpen(false);
+    setMessageActionsTarget(message);
+  }, []);
+
   const beginForward = useCallback(
     async (message: ChatDisplayMessage) => {
-      if (!desktopExperience || message.isAgentDraft || !roomClient || !activeCommunityId) return;
+      // Forward works wherever a transcript renders — the picker sheet and
+      // the send operation are not desktop-bound; the guard is only the
+      // message itself and the Room client.
+      if (message.isAgentDraft || !roomClient || !activeCommunityId) return;
       setForwardTarget(message);
       setForwardRooms(null);
       setForwardError(null);
@@ -2399,7 +2414,7 @@ export default function BuzzChat() {
         setForwardRooms([]);
       }
     },
-    [activeCommunityId, decodedId, desktopExperience, roomClient],
+    [activeCommunityId, decodedId, roomClient],
   );
 
   const forwardToRoom = useCallback(
@@ -3799,6 +3814,7 @@ export default function BuzzChat() {
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
+          onMessageActions={openMessageActions}
           onReact={handleReactToMessage}
           onForward={beginForward}
           {...(!isCorner &&
@@ -3852,6 +3868,7 @@ export default function BuzzChat() {
       handleOpenMention,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
+      openMessageActions,
       isReadOnlyDirectMessage,
       isArchived,
       isCorner,
@@ -4110,6 +4127,7 @@ export default function BuzzChat() {
           )}
 
           <FlatList
+            {...(desktopTranscript ? { onWheel: cancelDesktopOpenLanding } : {})}
             testID="chat-messages"
             ref={flatListRef}
             inverted={!desktopTranscript && transcriptMessages.length > 0}
@@ -4164,6 +4182,7 @@ export default function BuzzChat() {
             }}
             scrollEventThrottle={100}
             onScrollBeginDrag={() => {
+              cancelDesktopOpenLanding();
               userDraggingRef.current = true;
             }}
             onScrollEndDrag={() => {
@@ -4173,6 +4192,7 @@ export default function BuzzChat() {
               }
             }}
             onMomentumScrollBegin={() => {
+              cancelDesktopOpenLanding();
               userDraggingRef.current = true;
             }}
             onMomentumScrollEnd={() => {
@@ -4185,6 +4205,34 @@ export default function BuzzChat() {
               const previousHeight = nativeContentHeightRef.current;
               nativeContentHeightRef.current = height;
               if (desktopTranscript) {
+                if (desktopOpenLandingRef.current) {
+                  // Cold-open landing ignores transient pin reports from its
+                  // own jumps. Reader input cancels it through the handlers
+                  // above; appended-message following remains separately
+                  // guarded by its held reader offset.
+                  const openLandingDecision = desktopOpenLandingOnContentSizeChange({
+                    active: true,
+                    previousHeight,
+                    nextHeight: height,
+                    isUserDragging: userDraggingRef.current,
+                  });
+                  if (openLandingDecision === 'settle') {
+                    cancelDesktopOpenLanding();
+                  } else if (openLandingDecision === 'scroll') {
+                    flatListRef.current?.scrollToOffset({
+                      offset: height,
+                      animated: false,
+                    });
+                    if (desktopOpenLandingSettleTimerRef.current !== null) {
+                      clearTimeout(desktopOpenLandingSettleTimerRef.current);
+                    }
+                    desktopOpenLandingSettleTimerRef.current = setTimeout(
+                      cancelDesktopOpenLanding,
+                      DESKTOP_OPEN_LANDING_SETTLE_MS,
+                    );
+                  }
+                  return;
+                }
                 if (desktopTailDisarmTimerRef.current !== null) {
                   clearTimeout(desktopTailDisarmTimerRef.current);
                   desktopTailDisarmTimerRef.current = null;
@@ -4600,10 +4648,6 @@ export default function BuzzChat() {
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
                       received={composerAck.received}
-                      stopping={stoppingThisTurn}
-                      onStop={
-                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                      }
                       testID="turn-progress-line"
                     />
                   ) : desktopDeliveryState ? (
@@ -4628,10 +4672,6 @@ export default function BuzzChat() {
                       label={composerAck.label}
                       startedAt={composerAck.startedAt}
                       received={composerAck.received}
-                      stopping={stoppingThisTurn}
-                      onStop={
-                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                      }
                       testID="turn-progress-line"
                     />
                   )}
@@ -4641,10 +4681,7 @@ export default function BuzzChat() {
                 </>
               )}
               <ConversationComposer
-                onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
                 running={Boolean(activeAgentTurn)}
-                stopKey={composerAck?.turnKey}
-                stopping={stoppingThisTurn}
                 inputRef={composerRef}
                 reply={
                   replyTarget
@@ -4802,6 +4839,92 @@ export default function BuzzChat() {
         onPickPhoto={() => void pickPhoto()}
         onPickPasted={desktopExperience ? undefined : () => void pasteImage()}
       />
+
+      <HullActionSheetModal
+        accessibilityLabel="Close message actions"
+        onClose={() => setMessageActionsTarget(null)}
+        testID="message-actions-sheet"
+        title="Message"
+        visible={Boolean(messageActionsTarget)}
+      >
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <>
+            <HullActionSheetRow
+              accessibilityLabel="React to message"
+              chevron={messageReactionsOpen ? 'down' : 'right'}
+              label="React"
+              onPress={() => setMessageReactionsOpen((open) => !open)}
+              testID="message-react-action"
+            />
+            {messageReactionsOpen ? (
+              <View style={styles.messageReactionStrip} testID="message-reaction-strip">
+                {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+                  <Pressable
+                    accessibilityLabel={`React with ${emoji}`}
+                    accessibilityRole="button"
+                    key={emoji}
+                    onPress={() => {
+                      const target = messageActionsTarget;
+                      setMessageActionsTarget(null);
+                      if (target) void handleReactToMessage(target, emoji);
+                    }}
+                    style={({ pressed }) => [
+                      styles.messageReactionChoice,
+                      pressed && styles.messageReactionPressed,
+                    ]}
+                    testID={`message-reaction-${emoji}`}
+                  >
+                    <Text style={styles.messageReactionEmoji}>{emoji}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : null}
+        {messageActionsTarget ? (
+          <HullActionSheetRow
+            accessibilityLabel="Copy message text"
+            label="Copy"
+            onPress={() => {
+              handleCopyLedgerMessage(
+                messageActionsTarget.isAgentActivity
+                  ? agentActivityReplyExcerpt(messageActionsTarget)
+                  : messageActionsTarget.text,
+              );
+              setMessageActionsTarget(null);
+            }}
+            testID="message-copy-action"
+          />
+        ) : null}
+        {messageActionsTarget ? (
+          <HullActionSheetRow
+            accessibilityLabel="Reply to message"
+            label="Reply"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) beginReply(target);
+            }}
+            testID="message-reply-action"
+          />
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel="Forward message"
+            label="Forward"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void beginForward(target);
+            }}
+            testID="message-forward-action"
+          />
+        ) : null}
+        <HullActionSheetCancel
+          onPress={() => setMessageActionsTarget(null)}
+          testID="message-actions-close"
+        />
+      </HullActionSheetModal>
 
       <HullActionSheetModal
         accessibilityLabel="Close forward picker"
@@ -5346,6 +5469,30 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.meta,
       color: groknight.textSecondary,
+    },
+    // The message actions sheet's one between-rows surface: the reaction
+    // strip the React row expands, held to the sheet's own inset like the
+    // rename editor and the picker above.
+    messageReactionStrip: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: groknight.space.sm,
+      paddingHorizontal: HULL_SHEET_INSET,
+      paddingVertical: groknight.space.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.border,
+    },
+    messageReactionChoice: {
+      minWidth: 44,
+      minHeight: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    messageReactionPressed: { backgroundColor: groknight.bgHighlight },
+    messageReactionEmoji: {
+      ...Typography.default(),
+      ...groknight.type.body,
+      lineHeight: 22,
     },
 
     // ── Message blocks ──────────────────────────────────────────────

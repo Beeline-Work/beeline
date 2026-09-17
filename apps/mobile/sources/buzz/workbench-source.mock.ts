@@ -1,4 +1,5 @@
 import {
+  CONNECTOR_DESCRIPTIONS,
   type ConnectionDetailView,
   type ConnectorInstallState,
   type WorkbenchHelper,
@@ -85,6 +86,24 @@ export const INSTALL_STEP_LABELS = [
   () => 'connections sync',
 ] as const;
 
+/** The CLI command each install step runs, exactly as the helper reports it. */
+export const INSTALL_STEP_COMMANDS = [
+  (helperName: string) => `ssh ${helperName} squire status`,
+  () => 'npm install -g trusty-squire@1.4.2',
+  () => 'squire pair --workspace',
+  () => 'squire auth login',
+  () => 'squire vault sync',
+] as const;
+
+/** Live command output, captured while the step runs. */
+export const INSTALL_STEP_OUTPUTS = [
+  (helperName: string) => `ok · agent online · uptime 4d`,
+  () => 'added 1 package in 2.1s',
+  () => 'pairing token accepted',
+  () => 'waiting for the browser sign-in…',
+  () => 'synced 2 connections · 0 conflicts',
+] as const;
+
 /**
  * The mock install script: one step is revealed per poll, exactly the way the
  * helper's status reports arrive. `failAtStep` injects a failed step with a
@@ -132,6 +151,30 @@ export class MockWorkbenchSource implements WorkbenchSource {
           description: 'private network for helpers',
           available: false,
         },
+        {
+          id: 'google-gmail',
+          name: 'Gmail',
+          description: CONNECTOR_DESCRIPTIONS['google-gmail'],
+          available: true,
+        },
+        {
+          id: 'google-calendar',
+          name: 'Google Calendar',
+          description: CONNECTOR_DESCRIPTIONS['google-calendar'],
+          available: true,
+        },
+        {
+          id: 'google-drive',
+          name: 'Google Drive',
+          description: CONNECTOR_DESCRIPTIONS['google-drive'],
+          available: true,
+        },
+        {
+          id: 'google-youtube',
+          name: 'YouTube',
+          description: CONNECTOR_DESCRIPTIONS['google-youtube'],
+          available: true,
+        },
       ],
       connections: viewer ? viewer.connections.map((detail) => detail.connection) : [],
     };
@@ -171,26 +214,34 @@ export class MockWorkbenchSource implements WorkbenchSource {
     install.revealed = Math.min(install.revealed + 1, INSTALL_STEP_LABELS.length);
     const helper = MOCK_HELPERS.find((candidate) => candidate.id === install.helperId);
     const steps = INSTALL_STEP_LABELS.map((label, index) => {
+      const helperLabel = label(helper?.name ?? 'the helper');
+      const command = INSTALL_STEP_COMMANDS[index](helper?.name ?? 'the helper');
       const failShown =
         install.failAtStep !== undefined && install.revealed >= install.failAtStep;
       if (failShown && index === install.failAtStep) {
         return {
-          label: label(helper?.name ?? 'the helper'),
+          label: helperLabel,
           status: 'failed' as const,
           reason: 'the helper could not reach the package registry',
+          command,
+          output: 'npm ERR! network request to registry.npmjs.org failed',
         };
       }
       if (failShown && index > (install.failAtStep as number)) {
-        return { label: label(helper?.name ?? 'the helper'), status: 'pending' as const };
+        return { label: helperLabel, status: 'pending' as const };
       }
       return {
-        label: label(helper?.name ?? 'the helper'),
+        label: helperLabel,
         status:
           index < install.revealed - 1
             ? ('done' as const)
             : index === install.revealed - 1
               ? ('active' as const)
               : ('pending' as const),
+        command,
+        ...(index <= install.revealed - 1
+          ? { output: INSTALL_STEP_OUTPUTS[index](helper?.name ?? 'the helper') }
+          : {}),
       };
     });
     const reachedSignIn =

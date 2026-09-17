@@ -46,3 +46,27 @@ and strip cells:
 The corner sandbox seccomp-traps Chrome, so the capture is produced on the rig
 with the command above; the built bundle was verified to carry `lineHeight`
 only in the labeled before variants.
+
+## Emoji top-clip — Android native capture
+
+The same proof runs on the Android emulator through Expo Go 55.0.7 (the RN
+0.83-era Go runtime, matched to the app's expo ~55 SDK via the per-SDK URL in
+`https://api.expo.dev/v2/versions`). `apps/mobile/proofapp/` is a minimal Expo
+project whose entry renders the REAL `MessageReactionStrip` and proof-local
+chip/strip cells carrying the shipped before/after styles; unistyles' native
+runtime (absent from Expo Go) is stood in by `unistyles-proof-shim.tsx`, which
+resolves `StyleSheet.create` against the real groknight theme — the component
+code and style values are the shipped ones.
+
+    cd apps/mobile/proofapp
+    CI=1 ../node_modules/.bin/expo start --port 8091 --offline &
+    adb reverse tcp:8091 tcp:8091
+    adb shell am start -a android.intent.action.VIEW -d "exp://127.0.0.1:8091" host.exp.exponent
+    adb exec-out screencap -p > .verification/emoji-top-clip-android.png
+
+Capture (`emoji-top-clip-android.png`): real strip + before/after strip cells
+and chips all render complete glyphs at head 06d540928a59. Note the emulator's
+AOSP emoji font does not reproduce the observed device clip even in the before
+rows — the clip depends on the device emoji font's metrics; the fix removes the
+mechanism itself (no explicit lineHeight, so no `CustomLineHeightSpan`), which
+holds for any font by construction.

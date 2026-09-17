@@ -96,7 +96,8 @@ await writeFile(
 );
 
 const server = createServer((request, response) => {
-  const filePath = request.url === '/bundle.js' ? bundlePath : htmlPath;
+  const route = (request.url ?? '').split('?')[0];
+  const filePath = route === '/bundle.js' ? bundlePath : htmlPath;
   response.setHeader('Content-Type', filePath.endsWith('.js') ? 'text/javascript' : 'text/html');
   createReadStream(filePath).pipe(response);
 });

@@ -173,28 +173,15 @@ describe('Room and corner actions sheets', () => {
 
   it('opens the message actions sheet from the row long press with the same list', () => {
     // Long press on any human or agent message opens this third sheet: the
-    // React row expands to the six shipped reactions beneath it (the chevron
-    // `down` of the trailing vocabulary), Copy/Reply/Forward act on press.
+    // emoji scroll is its top cell (the reaction entry point itself), then
+    // Copy/Reply/Forward act on press.
     expect(messageSheet).toContain('visible={Boolean(messageActionsTarget)}');
-    for (const testID of [
-      'message-react-action',
-      'message-copy-action',
-      'message-reply-action',
-      'message-forward-action',
-    ]) {
+    for (const testID of ['message-copy-action', 'message-reply-action', 'message-forward-action']) {
       expect(row(messageSheet, testID)).toContain('<HullActionSheetRow');
     }
     expect(row(messageSheet, 'message-copy-action')).toContain('label="Copy"');
     expect(row(messageSheet, 'message-reply-action')).toContain('label="Reply"');
     expect(row(messageSheet, 'message-forward-action')).toContain('label="Forward"');
-    expect(messageSheet).toContain('testID="message-actions-close"');
-  });
-
-  it('spends the message sheet trailing column on the same closed vocabulary', () => {
-    // React is the one opener; it expands the strip beneath itself.
-    const react = row(messageSheet, 'message-react-action');
-    expect(react).toContain('label="React"');
-    expect(react).toContain("chevron={messageReactionsOpen ? 'down' : 'right'}");
     // Copy, Reply and Forward are plain actions — no fifth mark.
     for (const testID of ['message-copy-action', 'message-reply-action', 'message-forward-action']) {
       const plain = row(messageSheet, testID);
@@ -202,14 +189,32 @@ describe('Room and corner actions sheets', () => {
       expect(plain).not.toContain('toggle=');
       expect(plain).not.toContain('metadata=');
     }
+    expect(messageSheet).toContain('testID="message-actions-close"');
   });
 
-  it('expands exactly the six shipped reactions, wired to the same react handler', () => {
-    expect(messageSheet).toContain('MESSAGE_REACTION_EMOJIS.map');
-    expect(chat).toContain('testID="message-reaction-strip"');
-    expect(messageSheet).toContain('void handleReactToMessage(target, emoji)');
-    // Activity narration keeps its reply-only scope: no React, no Forward.
+  it('presents reactions as the emoji scroll itself — no React row, no buried menu', () => {
+    // The picker interaction is gone outright: no row opens it, no state
+    // expands it. The strip component is the entry point, the sheet's top
+    // cell, above Copy/Reply/Forward and gated on the reply-only scope.
+    expect(messageSheet).toContain('<MessageReactionStrip');
+    expect(messageSheet.indexOf('<MessageReactionStrip')).toBeLessThan(
+      messageSheet.indexOf('message-copy-action'),
+    );
+    expect(chat).not.toContain('message-react-action');
+    expect(chat).not.toContain('label="React"');
+    expect(chat).not.toContain('messageReactionsOpen');
     expect(messageSheet).toContain('!messageActionsTarget.isAgentActivity');
+  });
+
+  it('wires the strip through the same react handler, capped and scrolling', () => {
+    const strip = readFileSync(
+      new URL('../../../../components/buzz/MessageReactionStrip.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(strip).toContain('MESSAGE_REACTION_EMOJIS.slice(0, MAX_MESSAGE_REACTIONS)');
+    expect(strip).toContain('export const MAX_MESSAGE_REACTIONS = 12;');
+    expect(strip).toContain('horizontal');
+    expect(messageSheet).toContain('void handleReactToMessage(target, emoji)');
   });
 
   it('wires the long press through OrdinaryLedgerMessage and not a second row surface', () => {

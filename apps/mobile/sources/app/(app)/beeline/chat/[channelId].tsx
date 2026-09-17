@@ -42,7 +42,6 @@ import {
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
-  MESSAGE_REACTION_EMOJIS,
   type MessageReactionEmoji,
   type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
@@ -272,6 +271,7 @@ import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
+import { MessageReactionStrip } from '@/components/buzz/MessageReactionStrip';
 import {
   HULL_SHEET_INSET,
   HullActionSheetCancel,
@@ -560,7 +560,6 @@ export default function BuzzChat() {
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
-  const [messageReactionsOpen, setMessageReactionsOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly { id: string; name: string }[] | null>(
     null,
@@ -2490,7 +2489,6 @@ export default function BuzzChat() {
     // actions would target, so it offers none.
     if (message.isAgentDraft) return;
     void Haptics.selectionAsync();
-    setMessageReactionsOpen(false);
     setMessageActionsTarget(message);
   }, []);
 
@@ -5002,38 +5000,15 @@ export default function BuzzChat() {
         visible={Boolean(messageActionsTarget)}
       >
         {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
-          <>
-            <HullActionSheetRow
-              accessibilityLabel="React to message"
-              chevron={messageReactionsOpen ? 'down' : 'right'}
-              label="React"
-              onPress={() => setMessageReactionsOpen((open) => !open)}
-              testID="message-react-action"
-            />
-            {messageReactionsOpen ? (
-              <View style={styles.messageReactionStrip} testID="message-reaction-strip">
-                {MESSAGE_REACTION_EMOJIS.map((emoji) => (
-                  <Pressable
-                    accessibilityLabel={`React with ${emoji}`}
-                    accessibilityRole="button"
-                    key={emoji}
-                    onPress={() => {
-                      const target = messageActionsTarget;
-                      setMessageActionsTarget(null);
-                      if (target) void handleReactToMessage(target, emoji);
-                    }}
-                    style={({ pressed }) => [
-                      styles.messageReactionChoice,
-                      pressed && styles.messageReactionPressed,
-                    ]}
-                    testID={`message-reaction-${emoji}`}
-                  >
-                    <Text style={styles.messageReactionEmoji}>{emoji}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-          </>
+          // The reaction entry point is the emoji scroll itself — the sheet's
+          // top cell, with no React row and nothing to expand above it.
+          <MessageReactionStrip
+            onReact={(emoji) => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleReactToMessage(target, emoji);
+            }}
+          />
         ) : null}
         {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
           <HullActionSheetRow
@@ -5638,30 +5613,6 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.meta,
       color: groknight.textSecondary,
-    },
-    // The message actions sheet's one between-rows surface: the reaction
-    // strip the React row expands, held to the sheet's own inset like the
-    // rename editor and the picker above.
-    messageReactionStrip: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: groknight.space.sm,
-      paddingHorizontal: HULL_SHEET_INSET,
-      paddingVertical: groknight.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.border,
-    },
-    messageReactionChoice: {
-      minWidth: 44,
-      minHeight: 36,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    messageReactionPressed: { backgroundColor: groknight.bgHighlight },
-    messageReactionEmoji: {
-      ...Typography.default(),
-      ...groknight.type.body,
-      lineHeight: 22,
     },
 
     // ── Message blocks ──────────────────────────────────────────────

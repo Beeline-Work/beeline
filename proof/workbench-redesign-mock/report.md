@@ -18,7 +18,6 @@ The redesign treats each tool as an **instrument in a control panel**. Rather th
 | **Connecting** | "installing" in bold brass + pulsing amber dot |
 | **Connected** | "connected" in muted gray + filled green dot |
 | **Error** | "error" in red + red dot marker |
-| **Soon** | "soon" in disabled gray, row still tappable for details |
 
 ### Connect Flow
 | Screen | States Shown |
@@ -34,9 +33,9 @@ The redesign treats each tool as an **instrument in a control panel**. Rather th
 - Three-column stat grid for tool summary
 - Keys table with host metadata
 
-### Expanded Panel (New Pattern)
-- Capability bullets with bold labels
-- Primary action button in brass border
+### Expanded Panel (Accordion)
+- One-sentence user-story explanation per tool, revealed by the accordion
+- Connect action lives as a compact button on the row's side (no large bottom action button)
 
 ## Typography
 
@@ -63,6 +62,16 @@ The redesign treats each tool as an **instrument in a control panel**. Rather th
 | Text Secondary | #c9c9d1 | #4A4038 |
 | Text Muted | #83838d | #8B7F6E |
 
+## Revision 2 (captain feedback)
+
+1. **Unified Google Workspace integration.** All Google-related entries (Gmail, Google Calendar, and the implicit YouTube surface) are grouped into ONE item titled **Google Workspace** with a single Connect button. Per-service entries and buttons were removed. Explanation copy: "Covers Gmail, Google Calendar, YouTube, and other Google services."
+2. **Succinct one-sentence user-story explanations.** Every tool's descriptive explanation was replaced with a single value-proposition statement:
+   - **Trusty Squire**: "With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved."
+   - **Tailscale** (newly added to the board): "Allows the machines in your B-Line network to connect to each other to form a tailnet."
+   - **Coinbase Wallet**: "With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana—with free transaction fees on Base."
+   - **Google Workspace**: covered by the unified entry copy above.
+3. **Layout & action streamlining.** Every tool cell now carries ONE compact Connect button aligned directly on the side of its cell (`.cbtn`: brass border, 3px radius, compact padding), standardized across the Workbench Home states, the desktop sidebar, and the expanded panel. The large full-width Connect action that sat at the bottom of the expanded tool panel was removed. Accordion/expandable mechanics for tool explanations are unchanged.
+
 ## Design Decisions
 
 1. **No emoji**: Status uses styled glyphs (check, x, bullet, dot) with CSS animations
@@ -77,6 +86,7 @@ The redesign treats each tool as an **instrument in a control panel**. Rather th
 2. Does the desktop layout need a collapsed sidebar state?
 3. Should failed steps show a "view logs" expansion?
 4. Is the pulsing animation rate (1.4s) appropriate for accessibility?
+5. Should the unified Google Workspace entry break out per-service status (e.g. which Google grants are active) once connected?
 
 ## File Location
 

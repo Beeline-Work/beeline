@@ -57,11 +57,11 @@
     .gind.done{background:var(--success)}
     .gind.err{background:var(--danger)}
     .gind.off{background:var(--text-disabled)}
+    .cbtn{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:500;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:3px;padding:5px 14px;cursor:pointer;flex-shrink:0;white-space:nowrap}
+    .cbtn:hover{background:var(--bg-highlight)}
     .pan{padding:var(--space-md);padding-left:calc(var(--space-md) + var(--space-md));border-left:1px solid var(--border);margin-left:calc(var(--space-sm) + 10px);margin-bottom:var(--space-md)}
     .pl{color:var(--text-secondary);font-weight:500}
-    .pli{color:var(--text-muted);margin-bottom:var(--space-sm)}
-    .pact{min-height:var(--row-height);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;margin-top:var(--space-sm);color:var(--accent);cursor:pointer}
-    .pact:hover{background:var(--bg-highlight)}
+    .pli{color:var(--text-muted);margin-bottom:var(--space-sm);line-height:1.6}
     .cf{padding:var(--space-md)}
     .cfi{color:var(--text-muted);margin-bottom:var(--space-lg);line-height:1.6}
     .hl{display:flex;flex-direction:column;gap:var(--space-xs)}
@@ -113,6 +113,7 @@
         Each tool is an instrument reading. Status communicates through: (1) Position: terminal states align right; 
         (2) Weight: active/connecting states use bold; (3) Form: distinct glyphs (circle/dot/x/check) for each state;
         (4) Color is secondary, supporting but never the sole signal.
+        Each tool cell carries ONE compact Connect button, aligned directly on the side of the cell.
       </div>
     </div>
 
@@ -126,10 +127,10 @@
             <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
             <div class="sec">
               <div class="sec-h ts">Tools</div>
-              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">vault sign-ups payments</div></div><div class="rs"><span class="sv conn tm">connect</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
-              <div class="row"><div class="rm"><div class="rt tb">Gmail</div><div class="rd tm">one Google OAuth grant</div></div><div class="rs"><span class="sv conn tm">connect</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
-              <div class="row"><div class="rm"><div class="rt tb">Google Calendar</div><div class="rd tm">one Google OAuth grant</div></div><div class="rs"><span class="sv conn tm">connect</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
-              <div class="row"><div class="rm"><div class="rt tb">Coinbase Wallet</div><div class="rd tm">your agents can spend</div></div><div class="rs"><span class="sv soon tm">soon</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">Covers Gmail, Google Calendar, YouTube, and other Google services.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Tailscale</div><div class="rd tm">Allows the machines in your B-Line network to connect to each other to form a tailnet.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Coinbase Wallet</div><div class="rd tm">With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana&mdash;with free transaction fees on Base.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
             </div>
             <div class="sec">
               <div class="sec-h ts">Keys</div>
@@ -146,7 +147,7 @@
             <div class="sec">
               <div class="sec-h ts">Tools</div>
               <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">on squire-box 3 agents</div></div><div class="rs"><span class="sv conned tm">connected</span><div class="sg"><div class="gind done"></div></div></div></div>
-              <div class="row"><div class="rm"><div class="rt tb">Gmail</div><div class="rd tm">on squire-box signed in as dani</div></div><div class="rs"><span class="sv conned tm">connected</span><div class="sg"><div class="gind done"></div></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">on squire-box signed in as dani</div></div><div class="rs"><span class="sv conned tm">connected</span><div class="sg"><div class="gind done"></div></div></div></div>
             </div>
             <div class="sec">
               <div class="sec-h ts">Keys</div>
@@ -163,8 +164,8 @@
             <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
             <div class="sec">
               <div class="sec-h ts">Tools</div>
-              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">vault sign-ups payments</div></div><div class="rs"><span class="sv conning tm">installing</span><div class="sg"><div class="gind act"></div></div></div></div>
-              <div class="row"><div class="rm"><div class="rt tb">Gmail</div><div class="rd tm">one Google OAuth grant</div></div><div class="rs"><span class="sv conn tm">connect</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><span class="sv conning tm">installing</span><div class="sg"><div class="gind act"></div></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">Covers Gmail, Google Calendar, YouTube, and other Google services.</div></div><div class="rs"><button class="cbtn">Connect</button></div></div>
             </div>
             <div class="sec">
               <div class="sec-h ts">Keys</div>
@@ -180,7 +181,7 @@
             <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
             <div class="sec">
               <div class="sec-h ts">Tools</div>
-              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">vault sign-ups payments</div></div><div class="rs"><span class="sv err tm">error</span><div class="sg"><div class="gind err"></div></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><span class="sv err tm">error</span><div class="sg"><div class="gind err"></div></div></div></div>
             </div>
             <div class="sec">
               <div class="sec-h ts">Keys</div>
@@ -293,15 +294,18 @@
         <div class="df desk">
           <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Workbench Desktop</div></div>
           <div class="ds" style="display:flex">
-            <div style="width:240px;border-right:1px solid var(--border);padding:var(--space-md)">
+            <div style="width:280px;border-right:1px solid var(--border);padding:var(--space-md)">
               <div class="ts" style="margin-bottom:var(--space-md)">Tools</div>
-              <div style="padding:var(--space-sm);background:var(--bg-highlight);border-radius:3px;margin-bottom:var(--space-xs)"><div class="tb">Trusty Squire</div><div class="tm" style="color:var(--text-muted)">connected</div></div>
-              <div style="padding:var(--space-sm);margin-bottom:var(--space-xs)"><div class="tb">Gmail</div><div class="tm" style="color:var(--accent)">connect</div></div>
-              <div style="padding:var(--space-sm);margin-bottom:var(--space-xs)"><div class="tb">Calendar</div><div class="tm" style="color:var(--accent)">connect</div></div>
-              <div style="padding:var(--space-sm);opacity:0.5"><div class="tb">Wallet</div><div class="tm">soon</div></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);background:var(--bg-highlight);border-radius:3px;margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Trusty Squire</div><div class="tm" style="color:var(--text-muted)">connected</div></div><div class="sg"><div class="gind done"></div></div></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Google Workspace</div></div><button class="cbtn">Connect</button></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Tailscale</div></div><button class="cbtn">Connect</button></div>
+              <div style="display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm);margin-bottom:var(--space-xs)"><div style="flex:1;min-width:0"><div class="tb">Coinbase Wallet</div></div><button class="cbtn">Connect</button></div>
             </div>
             <div style="flex:1;padding:var(--space-md)">
               <div class="th" style="margin-bottom:var(--space-lg)">Trusty Squire</div>
+              <div style="background:var(--bg-raised);border-left:3px solid var(--accent);padding:var(--space-md);margin-bottom:var(--space-xl)">
+                <div class="tm" style="color:var(--text-secondary);line-height:1.6">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div>
+              </div>
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-md);margin-bottom:var(--space-xl)">
                 <div style="background:var(--bg-raised);padding:var(--space-md);border-radius:3px">
                   <div class="tm" style="color:var(--text-muted);margin-bottom:var(--space-xs)">Status</div>
@@ -328,7 +332,7 @@
     </section>
 
     <section class="bs-sec">
-      <h2 class="bs-t">5. Expanded Tool Panel (New Pattern)</h2>
+      <h2 class="bs-t">5. Expanded Tool Panel (Accordion)</h2>
       <div class="dg">
         <div class="df">
           <div class="dh"><div class="dd"><div class="ddot"></div><div class="ddot"></div><div class="ddot"></div></div><div class="dtt">Expanded Tool</div></div>
@@ -336,13 +340,13 @@
             <div class="sh"><div class="bb">&#8249;</div><div class="st th">Workbench</div></div>
             <div class="sec">
               <div class="sec-h ts">Tools</div>
-              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">vault sign-ups payments</div></div><div class="rs"><span class="sv conn tm">connect</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Trusty Squire</div><div class="rd tm">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
               <div class="pan">
-                <div class="pli"><span class="pl">Authentication</span> Handles auth for your agents</div>
-                <div class="pli"><span class="pl">Payments</span> Enables payments when a card is stored</div>
-                <div class="pact"><span class="tb">Connect Trusty Squire</span></div>
+                <div class="pli">With Trusty Squire, just by linking your Google account, B-Line agents can sign up for software services for you without you having to be involved.</div>
               </div>
-              <div class="row"><div class="rm"><div class="rt tb">Gmail</div><div class="rd tm">one Google OAuth grant</div></div><div class="rs"><span class="sv conn tm">connect</span><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Google Workspace</div><div class="rd tm">Covers Gmail, Google Calendar, YouTube, and other Google services.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Tailscale</div><div class="rd tm">Allows the machines in your B-Line network to connect to each other to form a tailnet.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
+              <div class="row"><div class="rm"><div class="rt tb">Coinbase Wallet</div><div class="rd tm">With Coinbase's non-custodial wallet API, you can transfer and receive crypto assets across 16 different EVM chains as well as Solana&mdash;with free transaction fees on Base.</div></div><div class="rs"><button class="cbtn">Connect</button><div class="sg"><span class="gch">&#8250;</span></div></div></div>
             </div>
           </div>
         </div>
@@ -352,10 +356,11 @@
     <div class="note">
       <div class="note-t">State Coverage Summary</div>
       <div class="note-x">
-        <strong>Workbench Home:</strong> Not Connected, Connecting, Connected, Error, Soon (disabled)<br>
+        <strong>Workbench Home:</strong> Not Connected, Connecting, Connected, Error<br>
+        <strong>Tools:</strong> Trusty Squire, Google Workspace (unified Gmail/Calendar/YouTube entry), Tailscale, Coinbase Wallet &mdash; each with a one-sentence user-story explanation<br>
         <strong>Connect Flow:</strong> Helper Picker (with offline), No Helpers, Install Progress (pending/active/done/failed), Sign In Required<br>
         <strong>Desktop Variant:</strong> Side panel navigation with detail pane<br>
-        <strong>Expanded Panel:</strong> Tool details with capability bullets and action button
+        <strong>Expanded Panel:</strong> Accordion tool explanations with the compact side Connect button on each row
       </div>
     </div>
   </div>

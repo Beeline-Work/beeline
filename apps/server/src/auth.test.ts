@@ -181,7 +181,7 @@ describe('opaque token ceremony', () => {
         .map((identity_id) => ({ identity_id, role: 'member' })),
     );
   });
-  it('joins new sign-ins to existing Welcome Rooms with one @system DM note and one push event', async () => {
+  it('joins new sign-ins to existing Welcome Rooms with one Room join line, one @system DM note and one push event', async () => {
     const welcomeId = 'bee11e00-0000-4000-8000-000000000001';
     const roomId = '11111111-1111-4111-8111-111111111111';
     const firstAuth = new TokenAuth(db, async () => ({
@@ -222,13 +222,14 @@ describe('opaque token ceremony', () => {
     ).toBe(1);
     expect(
       (
-        await db.query<{ text: string; presentation: string }>(
-          `SELECT text,presentation FROM messages
+        await db.query<{ text: string; presentation: string; kind: string | null }>(
+          `SELECT text,presentation,system_event->>'kind' kind
+           FROM messages
            WHERE room_id=$1 AND card_type='member-joined'`,
           [roomId],
         )
       ).rows,
-    ).toEqual([]);
+    ).toEqual([{ text: '@second joined', presentation: 'system', kind: 'joined' }]);
     expect(
       (
         await db.query<{ text: string; presentation: string }>(

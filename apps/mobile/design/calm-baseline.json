@@ -1,9 +1,9 @@
 {
-  "app/(app)/beeline/channels.tsx": 10,
+  "app/(app)/beeline/channels.tsx": 8,
   "app/(app)/beeline/chat/RoomMessageVariants.tsx": 17,
   "app/(app)/beeline/chat/[channelId].tsx": 49,
   "app/(app)/beeline/community.tsx": 9,
-  "app/(app)/beeline/corners/[roomId].tsx": 12,
+  "app/(app)/beeline/corners/[roomId].tsx": 8,
   "app/(app)/beeline/onboarding.tsx": 20,
   "app/(app)/beeline/settings/schedules.tsx": 5,
   "app/(app)/changelog.tsx": 6,

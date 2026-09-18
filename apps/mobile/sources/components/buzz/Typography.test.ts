@@ -17,6 +17,7 @@ const sources = [
   './HeaderLadder.tsx',
   './Ledger.tsx',
   './RoomDeckComposeMenu.tsx',
+  './RoomCornersList.tsx',
   './RoomRosterSheet.tsx',
   './SettingsRow.tsx',
 ];
@@ -104,7 +105,6 @@ const monoStyles = new Set([
   'rosterHandle',
   'rosterKind',
   'rosterRemoveText',
-  'headerActionText',
   'indexLabel',
   'indexSignalCount',
   'rowUnread',

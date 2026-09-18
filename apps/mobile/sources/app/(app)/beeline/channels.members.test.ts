@@ -14,6 +14,15 @@ describe('Workspace Members entry point', () => {
     expect(source).not.toContain('/beeline/agents?communityId=');
   });
 
+  it('draws that header entry as a people glyph with an accessible name', () => {
+    expect(source).toContain('name="people-outline"');
+    expect(source).toContain(
+      'accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}',
+    );
+    expect(source).not.toContain('MEMBERS_LABEL.toUpperCase()');
+    expect(source).not.toContain('headerActionText');
+  });
+
   it('redirects legacy agent-management links to Members', () => {
     expect(legacyAgentsSource).toContain(
       "import { Redirect, useLocalSearchParams, type Href } from 'expo-router';",

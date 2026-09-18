@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,12 +12,10 @@ import {
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { cornerHref } from '@/buzz/corner-navigation';
-import { cornerDisplayState } from '@/buzz/corner-display-state';
-import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { HullSurface, MonoButton, PixelLoader, StateCircle } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
@@ -153,57 +151,15 @@ export default function BuzzCorners() {
             <Text style={styles.error}>! {error}</Text>
           </TouchableOpacity>
         )}
-        <FlatList
-          data={surface.corners}
-          keyExtractor={(item) => item.corner.id}
+        <RoomCornersList
+          corners={surface.corners}
+          parentRoomId={decodedId}
+          parentRoomName={title}
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();
           }}
-          contentContainerStyle={surface.corners.length ? undefined : styles.emptyContainer}
-          renderItem={({ item }) => {
-            const label = displayCornerTitle(surface.room.name, item.corner.name, item.corner.id);
-            // Same presentation map as the Room-list dropdown; the state
-            // itself is already canonical on the server projection.
-            const display = cornerDisplayState(item);
-            return (
-              <TouchableOpacity
-                testID={`corner-${item.corner.id}`}
-                style={styles.row}
-                onPress={() => router.push(cornerHref(item.corner.id, decodedId, item.corner.name))}
-              >
-                <IdentityMark
-                  kind={item.agent?.kind === 'agent' ? 'agent' : 'human'}
-                  seed={item.agent?.pubkey ?? item.corner.id}
-                  avatarUrl={item.agent?.avatar}
-                  face={item.agent?.face}
-                  name={item.agent?.name ?? 'Corner'}
-                  size={34}
-                />
-                <View style={styles.rowCopy}>
-                  <Text numberOfLines={1} style={styles.rowTitle}>
-                    {label}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.agent}>
-                    {item.agent
-                      ? `Opened by ${item.agent.name}`
-                      : (item.latestMessage?.text ?? 'No activity yet')}
-                  </Text>
-                </View>
-                <StateCircle state={display.visual} tone={display.tone} />
-                <Text style={styles.chevron}>›</Text>
-              </TouchableOpacity>
-            );
-          }}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
-              <Text style={styles.emptyText}>
-                Go back to {title} and ask an Agent to start work.
-              </Text>
-            </View>
-          }
         />
       </View>
     </BuzzCommunityShell>
@@ -240,27 +196,5 @@ const styles = StyleSheet.create((theme) => {
     modelText: { ...Typography.default(), color: hull.textMuted, fontSize: 11, lineHeight: 16 },
     errorPanel: { paddingHorizontal: 16, paddingVertical: 8 },
     error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
-    row: {
-      minHeight: 70,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 11,
-      paddingHorizontal: 16,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    rowCopy: { flex: 1, minWidth: 0 },
-    rowTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 14 },
-    agent: { ...Typography.default(), color: hull.textMuted, fontSize: 11, marginTop: 3 },
-    chevron: { ...Typography.default(), color: hull.textMuted, fontSize: 22 },
-    emptyContainer: { flexGrow: 1 },
-    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
-    emptyTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 17 },
-    emptyText: {
-      ...Typography.default(),
-      color: hull.textMuted,
-      fontSize: 12,
-      textAlign: 'center',
-    },
   };
 });

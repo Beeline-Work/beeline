@@ -20,7 +20,13 @@ import {
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight } from '@/utils/responsive';
 import { isDesktopPlatform } from '@/utils/platform';
-import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
+import {
+  MEMBERS_LABEL,
+  ROOM_LABEL,
+  ROOMS_LABEL,
+  WORKSPACE_LABEL,
+  WORKSPACES_LABEL,
+} from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   displayGroupedCornerTitle,
@@ -406,6 +412,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
   const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
+  const membersSelected = pathname.startsWith('/beeline/members');
   const profileSettingsSelected =
     pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
@@ -505,6 +512,31 @@ export const SidebarView = React.memo(function SidebarView() {
               pickerTitle={WORKSPACES_LABEL}
             />
             <View style={styles.desktopWorkspaceHeaderActions}>
+              {workspaceId ? (
+                <Pressable
+                  accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: membersSelected }}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/beeline/members',
+                      params: { communityId: workspaceId },
+                    } as Href)
+                  }
+                  style={({ pressed }) => [
+                    styles.headerGlyph,
+                    (membersSelected || pressed) && styles.roomRowSelected,
+                  ]}
+                  testID="desktop-members"
+                >
+                  <Ionicons
+                    name="people-outline"
+                    size={16}
+                    color={styles.headerGlyphColor.color}
+                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                  />
+                </Pressable>
+              ) : null}
               {workspaceId ? (
                 <Pressable
                   accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}

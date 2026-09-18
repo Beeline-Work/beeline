@@ -240,7 +240,8 @@ then lies — still saying "open" long after the corner merged — and a termina
 stamp (`Alden ✕ FAILED`, `◇ OPEN`) interrupts a live conversation with a dead
 record while duplicating the pinned line above the composer. So a Room has
 exactly **one** active-corner affordance, the pinned line, and exactly one place
-a finished corner is recorded, the Room's corners view. The transcript keeps the
+a finished corner is recorded, the Room's corners view (opened from the header
+`◇`, and also shown in the desktop inspector overview). The transcript keeps the
 conversation and nothing else.
 
 **A turn in progress and an open corner are two different facts, and they get
@@ -300,7 +301,12 @@ Every phone and desktop surface renders that contract field directly; PR and
 check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
-row with the current count and opens the existing roster. The approval panel and
+row with the current count and opens the existing roster. The Room header's
+trailing slot carries the corner glyph `◇` beside overflow; it is a second door
+onto the Room's dedicated corners list (`corners/[roomId]`, windowed with the
+same cap and archived fallback as the desktop inspector overview), not a second
+live-corner jump. The pinned line below the transcript remains the one
+active-corner affordance. The approval panel and
 diff review exist only in a Corner — that is a difference in content, not in
 shape language.
 
@@ -396,9 +402,11 @@ accent is never the only thing carrying the fact.
 **The plus is a brass square.** Compose is one 44pt brass square floating at
 the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
 the slab its only affordance — opening the compose sheet. The header carries
-no plus: it is the Workspace name and nothing louder, with `⌬ MEMBERS` beside
-it as a quiet named affordance on the same mono tier as the index's own
-section labels.
+no plus: it is the Workspace name and nothing louder, with an outline people
+glyph (`people-outline`, the same Ionicons family as bookmarks) as the Members
+door. The word remains the accessible name. The retired hexagon `⌬` never
+returns; a Speakeasy animal is an identity face, not a chrome mark for the
+roster.
 
 The Workspace rail is the same slab with one hairline edge. Selection reads
 three redundant ways and none of them is a box or a fill: an edge bar (never a
@@ -514,10 +522,12 @@ the picture renders through the same `IdentityMark` primitive in the rail,
 header, and switcher, falling back to the generated Workspace mark when absent
 or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
 
-One concept gets one glyph, product-wide. Members are `⌬` everywhere the members
-screen is reachable — the Room-list header, the Workspace settings section, the
-empty-state entry, the screen's own title (`MEMBERS_GLYPH`,
-`buzz/vocabulary.ts`) — and that mark stays visually distinct from the corner
+One concept gets one glyph, product-wide. Members chrome on the Room-list
+header and the desktop workspace heading is the outline people glyph, a peer of
+bookmarks, with `Members` as the accessible name (`MEMBERS_LABEL`,
+`buzz/vocabulary.ts`). In-list titles (the Members page, Workspace settings, the
+roster sheet) keep the word. The retired hexagon `⌬` stays gone. That mark stays
+visually distinct from the corner
 lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on any
 Buzz surface means live corner work, never people.
 

@@ -35,10 +35,8 @@ export function parseCursorModelsOutput(output: string): CursorModelCatalog | un
 
 /**
  * Enumerate the models cursor-agent actually serves by running its own
- * `models` command. `cursor-agent-acp` advertises no model axis at
- * `session/new`, so this CLI read is the only live source of a real model
- * list. Any failure (binary missing, non-zero exit, timeout, unparseable
- * output) resolves `undefined` and the caller keeps its fallback behavior.
+ * `models` command. The owned cursor ACP bridge advertises this catalog at
+ * `session/new`; this CLI read remains the connect fallback when ACP is empty.
  */
 export async function enumerateCursorModels(
   env: NodeJS.ProcessEnv = process.env,

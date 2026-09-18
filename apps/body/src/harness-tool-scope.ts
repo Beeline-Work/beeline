@@ -148,10 +148,10 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
     },
   },
   {
-    match: /(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i,
+    match: /(^|[/\\])(cursor-acp-bridge|cursor-agent-acp)(\.[a-z]+)?$/i,
     profile: {
       enforcement: 'config-isolated',
-      note: "cursor-agent-acp bridges cursor-agent to ACP; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session",
+      note: 'cursor-acp-bridge drives cursor-agent; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session',
     },
   },
 ];

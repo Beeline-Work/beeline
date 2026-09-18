@@ -98,8 +98,8 @@ const SHARED_CREDENTIALS: Array<{
   // shape as codex).
   { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
   { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
-  // Cursor CLI stores auth state under ~/.cursor/; cursor-agent-acp
-  // reads CURSOR_HOME to relocate the data directory.
+  // Cursor CLI stores auth state under ~/.cursor/; cursor-agent reads
+  // CURSOR_HOME to relocate the data directory.
   { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
 ];
 

@@ -110,10 +110,10 @@ const PROFILES: Array<{ match: RegExp; profile: HarnessProfile }> = [
     },
   },
   {
-    match: /(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i,
+    match: /(^|[/\\])(cursor-acp-bridge|cursor-agent-acp)(\.[a-z]+)?$/i,
     profile: {
-      enforcement: 'permission-callback',
-      note: 'cursor-agent-acp is a third-party adapter that bridges the cursor-agent CLI to ACP; it sends standard session/request_permission requests for mutating tools in its default mode, unverified against the published adapter',
+      enforcement: 'none',
+      note: 'cursor-acp-bridge drives cursor-agent with --force in non-interactive stream-json mode, so cursor-agent never sends session/request_permission; Beeline already sandboxes the child',
     },
   },
 ];

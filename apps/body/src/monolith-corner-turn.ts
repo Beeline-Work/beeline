@@ -36,6 +36,7 @@ import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
@@ -644,6 +645,10 @@ export class MonolithCornerTurnLoop {
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
+    const harnessLabel = harnessIdentityLabel({
+      kind: this.options.config.agentKind,
+      command,
+    });
     const repository = this.options.repository;
     let githubEnv: Record<string, string> = repository
       ? { GH_TOKEN: repository.githubToken, GITHUB_TOKEN: repository.githubToken }
@@ -691,7 +696,7 @@ export class MonolithCornerTurnLoop {
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
     this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
     this.sessionScratchDir = tmpDir;
-    const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
+    const homeStateDirs = harnessHomeStateDirs(harnessLabel, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
     // (below): post_artifact can only post what write_scratch_file could write,
@@ -727,7 +732,7 @@ export class MonolithCornerTurnLoop {
       agentArgs: spawnCommand.args,
       agentEnv,
       agentCwd: this.options.worktreePath,
-      agentLabel: command,
+      agentLabel: harnessLabel,
       autoApprovePermissions: true,
       permissionHandler: () => Promise.resolve('allow'),
     };
@@ -775,7 +780,7 @@ export class MonolithCornerTurnLoop {
     // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
     // on pi would have no `pr_checks_status` and no `post_artifact` either.
     await installPiMcpBridge({
-      agentCommand: command,
+      agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
       servers,
     });
@@ -871,7 +876,10 @@ export class MonolithCornerTurnLoop {
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
     if (durableReplyText(result.agentText)) return undefined;
     return explainEmptyAgentTurn({
-      agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+      agentLabel: harnessIdentityLabel({
+        kind: this.options.config.agentKind,
+        command: this.options.config.agentCommand ?? this.options.config.agentBinary,
+      }),
       agentEnv: this.agentEnv,
       sessionId: this.sessionId!,
       result,

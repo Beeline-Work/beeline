@@ -73,7 +73,7 @@ export const fileConnectKeyStore: ConnectKeyStore = {
   save: (provider: ProviderKeyProvider, key: string) => saveProviderKey(provider, key),
 };
 
-const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok', string> = {
+const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok' | 'cursor', string> = {
   openrouter: 'z-ai/glm-5.3-flash',
   openai: 'gpt-5.4',
   anthropic: 'claude-opus-4-1',
@@ -82,6 +82,7 @@ const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok', stri
   codex: 'gpt-5.4',
   claude: 'claude-opus-4-1',
   grok: 'grok-4',
+  cursor: 'claude-sonnet-4',
 };
 
 /**
@@ -131,7 +132,7 @@ export function defaultConnectModel(
 ): string {
   return provider
     ? DEFAULT_MODELS[provider]
-    : (DEFAULT_MODELS[harness as 'codex' | 'claude' | 'grok'] ?? 'default');
+    : (DEFAULT_MODELS[harness as 'codex' | 'claude' | 'grok' | 'cursor'] ?? 'default');
 }
 
 function brassEnabled(

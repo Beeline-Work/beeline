@@ -85,7 +85,7 @@ const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
  * relative to the operator's real `$HOME`; `target` to the isolated dir.
  */
 const SHARED_CREDENTIALS: Array<{
-  dir: 'claude' | 'codex' | 'grok' | 'pi';
+  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor';
   source: string;
   target: string;
 }> = [
@@ -98,6 +98,9 @@ const SHARED_CREDENTIALS: Array<{
   // shape as codex).
   { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
   { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
+  // Cursor CLI stores auth state under ~/.cursor/; cursor-agent-acp
+  // reads CURSOR_HOME to relocate the data directory.
+  { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
 ];
 
 /**
@@ -151,7 +154,7 @@ const OPERATOR_SKILL_SOURCE_DIRS = [
  * through the same function so a session can never be pointed at a tree that
  * was not provisioned.
  */
-export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi'] as const;
+export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi', 'cursor'] as const;
 export type AgentSkillDir = (typeof AGENT_SKILL_DIRS)[number];
 
 /** The skills tree the selected harness reads. Anything else lands on codex's. */
@@ -233,6 +236,7 @@ export const HOME_SUBDIRS = [
   'goose',
   'grok',
   'pi',
+  'cursor',
   'state',
   'cache',
   'tmp',
@@ -989,6 +993,7 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
     CODEX_HOME: resolve(resolved, 'codex'),
     GOOSE_PATH_ROOT: resolve(resolved, 'goose'),
     GROK_HOME: resolve(resolved, 'grok'),
+    CURSOR_HOME: resolve(resolved, 'cursor'),
     PI_CODING_AGENT_DIR: resolve(resolved, 'pi'),
     XDG_STATE_HOME: resolve(resolved, 'state'),
     XDG_CACHE_HOME: resolve(resolved, 'cache'),
@@ -1009,6 +1014,7 @@ export const HARNESS_STATE_ENV_VARS = [
   'CODEX_HOME',
   'GOOSE_PATH_ROOT',
   'GROK_HOME',
+  'CURSOR_HOME',
   'PI_CODING_AGENT_DIR',
   'XDG_STATE_HOME',
   'XDG_CACHE_HOME',

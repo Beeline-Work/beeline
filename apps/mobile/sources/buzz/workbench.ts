@@ -20,8 +20,21 @@ export type WorkbenchConnectorId =
   | 'google-drive'
   | 'google-youtube';
 
-/** True for the Google Workspace tool connectors — the four tools behind the
- * ONE Google connect entry (`googleEntryConnector`). */
+/** True for Squire's busy-browser refusal (hyphen or em dash). A Google
+ *  tool row that carries this text is blocked on Trusty Squire, not broken
+ *  in its own right. */
+export function isSquireBrowserSessionFailure(text: string | undefined | null): boolean {
+  if (typeof text !== 'string' || text.length === 0) return false;
+  return (
+    /Trusty Squire[\s\S]{0,80}browser/i.test(text) ||
+    /browser[\s\S]{0,80}Trusty Squire/i.test(text)
+  );
+}
+
+/** The quiet line when Google cannot proceed because Squire's browser is busy. */
+export const GOOGLE_BLOCKED_ON_SQUIRE_LINE =
+  'Connect Trusty Squire first — its browser session is busy';
+
 export function isGoogleToolConnectorId(
   id: string,
 ): id is 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' {
@@ -146,15 +159,23 @@ function googleEntryTools(
 
 /** The single Google entry's state across its four tool connectors: fully
  * connected → `connected`; any install in flight → `installing`; any tool
- * error → `error`; SOME connected (a top-up is available) → `repair`;
- * none connected → `connect`. */
+ * error that is Google's own → `error`; a Trusty Squire browser-session
+ * failure on a Google row is not Google's breakage (see
+ * `googleBlockedOnSquireBrowser`); SOME connected (a top-up is available) →
+ * `repair`; none connected → `connect`. */
 export type GoogleEntryState = 'connected' | 'installing' | 'error' | 'repair' | 'connect';
 
 export function googleEntryState(connectors: readonly WorkbenchConnector[]): GoogleEntryState {
   const tools = googleEntryTools(connectors);
   if (tools.length && tools.every((tool) => tool.status === 'connected')) return 'connected';
   if (tools.some((tool) => tool.status === 'installing')) return 'installing';
-  if (tools.some((tool) => tool.status === 'error')) return 'error';
+  if (
+    tools.some(
+      (tool) => tool.status === 'error' && !isSquireBrowserSessionFailure(tool.errorMessage),
+    )
+  ) {
+    return 'error';
+  }
   if (tools.some((tool) => tool.status === 'connected')) return 'repair';
   return 'connect';
 }
@@ -169,7 +190,9 @@ export function googleEntryConnector(
   if (!tools.length) return undefined;
   const state = googleEntryState(connectors);
   const connected = tools.find((tool) => tool.status === 'connected');
-  const failed = tools.find((tool) => tool.status === 'error');
+  const failed = tools.find(
+    (tool) => tool.status === 'error' && !isSquireBrowserSessionFailure(tool.errorMessage),
+  );
   return {
     id: GOOGLE_ENTRY_ID,
     name: 'Google Workspace',
@@ -190,13 +213,25 @@ export function googleEntryConnector(
   };
 }
 
+export function googleBlockedOnSquireBrowser(
+  connectors: readonly WorkbenchConnector[],
+): boolean {
+  const squire = connectors.find((connector) => connector.id === 'trusty-squire');
+  if (isSquireBrowserSessionFailure(squire?.errorMessage)) return true;
+  return googleEntryTools(connectors).some(
+    (tool) => tool.status === 'error' && isSquireBrowserSessionFailure(tool.errorMessage),
+  );
+}
+
 /** The quiet line under the single Google entry row. A partially connected
- * set names how much of the one grant is live; otherwise the connected
+ * set names how much of the one grant is live; a shared Squire browser
+ * failure points at Trusty Squire once; otherwise the connected
  * helper/sign-in facts, or the catalog description before anything pairs. */
 export function googleEntryDescription(
   connectors: readonly WorkbenchConnector[],
   state: GoogleEntryState,
 ): string {
+  if (googleBlockedOnSquireBrowser(connectors)) return GOOGLE_BLOCKED_ON_SQUIRE_LINE;
   if (state === 'repair') {
     const tools = googleEntryTools(connectors);
     const connected = tools.filter((tool) => tool.status === 'connected').length;

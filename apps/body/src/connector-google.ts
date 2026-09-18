@@ -30,7 +30,11 @@ import {
   credentialsTokenSource,
   type GoogleCredentials,
 } from './google-workspace-client.js';
-import type { SquireMcpClient } from './connector-squire.js';
+import {
+  isSquireBrowserSessionFailure,
+  SQUIRE_BROWSER_BUSY_GOOGLE_REASON,
+  type SquireMcpClient,
+} from './connector-squire.js';
 
 /** The Google scopes each tool connector needs (scope minimization per tool). */
 export const GOOGLE_TOOL_SCOPES: Record<string, readonly string[]> = {
@@ -74,11 +78,18 @@ export async function readGoogleCredentialsFromVault(
   try {
     raw = await mcp.call('google_oauth_credentials', {});
   } catch (error) {
+    const detail = describe(error);
+    if (isSquireBrowserSessionFailure(detail)) {
+      return {
+        source: 'unavailable',
+        reason: SQUIRE_BROWSER_BUSY_GOOGLE_REASON,
+      };
+    }
     return {
       source: 'unavailable',
       reason:
         'Squire has no Google OAuth grant on record yet ' +
-        `(connect your Google account in Squire first: ${describe(error)})`,
+        `(connect your Google account in Squire first: ${detail})`,
     };
   }
   const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
@@ -235,9 +246,11 @@ export async function installGoogleTool(
       ? await options.resolveCredentials()
       : await (async () => {
           const oneClick = await readGoogleCredentialsFromVault(options.squire);
-          return oneClick.source === 'squire'
-            ? { ...oneClick }
-            : { ...loadManualGoogleCredentials(options.home, options.env) };
+          if (oneClick.source === 'squire') return oneClick;
+          // A busy Squire browser is not "no credentials" — do not fall
+          // through to the manual file and do not keep Squire's own error.
+          if (isSquireBrowserSessionFailure(oneClick.reason)) return oneClick;
+          return loadManualGoogleCredentials(options.home, options.env);
         })();
   if (!('credentials' in resolved)) {
     const reason = resolved.reason;

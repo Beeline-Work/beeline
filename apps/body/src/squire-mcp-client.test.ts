@@ -125,4 +125,24 @@ describe('StdioSquireMcpClient', () => {
     await expect(pending).rejects.toThrow('Squire MCP server exited');
     client.close();
   });
+
+  it('spawns the vault MCP server subcommand, not the connect CLI', async () => {
+    const spawned: string[][] = [];
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    const { child } = fakeChild({
+      initialize: {},
+      'tools/call': { content: [{ type: 'text', text: 'ok' }] },
+    });
+    const client = new StdioSquireMcpClient({
+      spawn: ((command: string, args: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        spawned.push([command, ...args]);
+        spawnedEnv = options?.env;
+        return child;
+      }) as typeof import('node:child_process').spawn,
+    });
+    await client.call('ping');
+    expect(spawned[0]).toEqual(['npx', '-y', '@trusty-squire/mcp@latest', 'server']);
+    expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toMatch(/chrome-profile$/);
+    client.close();
+  });
 });

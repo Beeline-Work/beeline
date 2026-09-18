@@ -164,6 +164,13 @@ export class MockWorkbenchSource implements WorkbenchSource {
           name: 'Gmail',
           description: CONNECTOR_DESCRIPTIONS['google-gmail'],
           available: true,
+          ...(this.failedConnectors.has('google-gmail')
+            ? {
+                status: 'error' as const,
+                errorMessage:
+                  'another Trusty Squire session is already using the browser — close it first',
+              }
+            : {}),
         },
         {
           id: 'google-calendar',

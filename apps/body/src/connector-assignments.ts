@@ -35,6 +35,7 @@ import {
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   installSquire,
+  isSquireBrowserSessionFailure,
   readVault,
   revokeGrants,
   type InstallSquireOptions,
@@ -164,6 +165,7 @@ export class ConnectorAssignmentLoop {
       this.log(`connector assignments unavailable: ${describe(error)}`);
       return;
     }
+    const squireWork: Promise<void>[] = [];
     let googleBatch: ConnectorAssignment[] | undefined;
     for (const assignment of assignments) {
       const key = `${assignment.kind}:${assignment.connectorId}`;
@@ -181,20 +183,23 @@ export class ConnectorAssignmentLoop {
       }
       if (this.inFlight.has(key)) continue;
       this.inFlight.add(key);
-      void this.handle(assignment)
-        .catch((error) => this.log(`connector assignment ${key} failed: ${describe(error)}`))
-        .finally(() => this.inFlight.delete(key));
+      squireWork.push(
+        this.handle(assignment)
+          .catch((error) => this.log(`connector assignment ${key} failed: ${describe(error)}`))
+          .finally(() => this.inFlight.delete(key)),
+      );
     }
-    if (googleBatch) this.flushGoogleBatch(googleBatch);
-  }
-
-  private flushGoogleBatch(batch: readonly ConnectorAssignment[]): void {
-    const keys = batch.map((a) => `${a.kind}:${a.connectorId}`);
-    void this.runGoogleBatch(batch)
-      .catch((error) => this.log(`google connector installs failed: ${describe(error)}`))
-      .finally(() => {
-        for (const key of keys) this.inFlight.delete(key);
-      });
+    if (googleBatch) {
+      // A Google vault lookup must not race a Squire connect for the one
+      // browser claim: wait for this drain's Squire work to settle first.
+      const keys = googleBatch.map((assignment) => `${assignment.kind}:${assignment.connectorId}`);
+      void Promise.all(squireWork)
+        .then(() => this.runGoogleBatch(googleBatch!))
+        .catch((error) => this.log(`google connector installs failed: ${describe(error)}`))
+        .finally(() => {
+          for (const key of keys) this.inFlight.delete(key);
+        });
+    }
   }
 
   /** The Google tool connectors ride ONE grant: every install in the batch
@@ -223,6 +228,7 @@ export class ConnectorAssignmentLoop {
       try {
         const oneClick = await readGoogleCredentialsFromVault(this.squire());
         if (oneClick.source === 'squire') return oneClick;
+        if (isSquireBrowserSessionFailure(oneClick.reason)) return oneClick;
       } catch (error) {
         this.log(`google one-click grant lookup failed: ${describe(error)}`);
       }

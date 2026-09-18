@@ -409,6 +409,42 @@ describe('GitHub auth session redirects', () => {
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
   });
 
+  it('does not let a late recovery overwrite a newer sign-in session', async () => {
+    await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+    let finishRecovery: ((response: Response) => void) | undefined;
+    const delayedRecovery = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishRecovery = resolve;
+        }),
+    );
+    const staleRecovery = recoverPendingGitHubBindChallenge(
+      undefined,
+      delayedRecovery as unknown as typeof fetch,
+    );
+    await vi.waitFor(() => expect(delayedRecovery).toHaveBeenCalledTimes(1));
+
+    const newerRecoveryToken = 'q'.repeat(43);
+    await persistGitHubSignInState(OTHER_STATE, 'signin', newerRecoveryToken);
+    finishRecovery?.(recoveryResponse());
+
+    await expect(staleRecovery).rejects.toMatchObject({ code: 'state_mismatch' });
+    expect(JSON.parse(storage.get('buzzy.github-sign-in-session.v2') ?? '{}')).toEqual({
+      state: OTHER_STATE,
+      purpose: 'signin',
+      recoveryToken: newerRecoveryToken,
+    });
+    expect(storage.has('buzzy.github-sign-in-callback.v1')).toBe(false);
+
+    const cancel = vi.fn();
+    await cancelPendingGitHubSignIn(undefined, cancel as unknown as typeof fetch, STATE);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(JSON.parse(storage.get('buzzy.github-sign-in-session.v2') ?? '{}')).toMatchObject({
+      state: OTHER_STATE,
+      recoveryToken: newerRecoveryToken,
+    });
+  });
+
   it('cancels explicitly and clears recovery only after the server confirms it', async () => {
     await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
     const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));

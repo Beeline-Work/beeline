@@ -4440,20 +4440,22 @@ export class PhoneService {
         name: context.agent_name,
         handle: context.agent_handle,
       });
+      // A model/effort change is a Workspace-scoped configuration fact, not
+      // Room activity: one fact routed through workspaceSystemLine into each
+      // person's @system DM, the same lane as role and visibility changes.
       for (const change of changes) {
         const value =
           change.axis === 'model' && change.value
             ? selectedModelLabel(change.value, context.model_catalog ?? [])
             : change.value;
-        for (const room of rooms.rows)
-          await systemLine(database, {
-            roomId: room.room_id,
-            subject: identitySubject(actor),
-            verb: 'changed',
-            object: `${agentMention}'s ${change.axis} to ${value ?? 'default'}`,
-            cardType: 'agent-model',
-            card: { agentId: input.agentId, axis: change.axis, value },
-          });
+        await workspaceSystemLine(database, {
+          workspaceId: input.workspaceId,
+          subject: identitySubject(actor),
+          verb: 'changed',
+          object: `${agentMention}'s ${change.axis} to ${value ?? 'default'}`,
+          cardType: 'agent-model',
+          card: { agentId: input.agentId, axis: change.axis, value },
+        });
       }
     });
   }

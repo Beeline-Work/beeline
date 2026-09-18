@@ -2,6 +2,16 @@
 # runs only affected components, and carries every other immutable artifact into
 # one new release record. A merge to main never releases. A normal selective
 # release ceiling is 20 minutes from dispatch to the final result.
+#
+# RELEASE POLICY (consent gates):
+# - The default release is OTA-ONLY. Mobile OTA promotion never requires the
+#   emulator device proof or a store submission.
+# - Store publishing (store_track != none) happens ONLY on the operator's
+#   explicit dispatch choice. A runtime-pin change is the one case the planner
+#   still treats as store-necessary (a new runtime needs a new store binary).
+# - The emulator device proof (run_release_proof=true) is opt-in: it never runs
+#   by default. An OTA promoted without it is recorded as UNPROVEN in the
+#   release record.
 name: Unified production release
 
 on:
@@ -40,8 +50,8 @@ on:
         type: boolean
         default: false
         required: false
-      skip_release_proof:
-        description: Recovery only - promote mobile OTA without the emulator release proof when the Android rig is down
+      run_release_proof:
+        description: Opt-in only - run the emulator device proof before OTA promotion; default off (OTA promotes without it, release recorded UNPROVEN)
         type: boolean
         default: false
         required: false
@@ -489,15 +499,12 @@ jobs:
     # restarts the emulator itself. The rig AVD and its signed-in session live
     # on the beeline-android pool hosts; a host without them fails the lane
     # loudly instead of passing vacuously.
-    # The proof runs whenever an update will be promoted: a native Android
-    # build that was skipped because it was not needed (carried forward or
-    # already checkpointed) is a perfectly good state to proof against — the
-    # proof builds its own sideload APK for an OTA-only release. Only a
-    # native build that genuinely FAILED stops the proof.
+    # consent-gated (run_release_proof=true): OTA promotion never depends on
+    # the proof.
     needs: [initialize, mobile_native_android]
     if: >-
       always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
-      inputs.skip_release_proof != true &&
+      inputs.run_release_proof == true &&
       needs.initialize.outputs.run_mobile_ota == 'true' &&
       needs.mobile_native_android.result != 'failure'
     runs-on: [self-hosted, beeline-android]
@@ -633,7 +640,7 @@ jobs:
       - uses: ./.github/actions/mobile-ota-leg
         if: >-
           contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
-          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
+          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
@@ -646,31 +653,30 @@ jobs:
       - name: Checkpoint OTA promotion
         if: >-
           contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
-          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
+          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
         run: |
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota-promoted.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
             "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
         if: >-
           contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
-          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
+          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
         with:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-promoted
           path: checkpoint-mobile-ota-promoted.json
           if-no-files-found: error
       - name: Refuse promotion unless the release proof succeeded
-        if: needs.release_proof.result != 'success' && inputs.skip_release_proof != true
+        if: inputs.run_release_proof == true && needs.release_proof.result != 'success'
         run: |
           echo "The emulator release proof did not succeed (result: ${{ needs.release_proof.result }})." >&2
           echo 'A proof that did not run is not a proof: OTA promotion is blocked.' >&2
           echo 'If the proof ran and failed, see the release-proof-<id> artifact for screenshots and logs.' >&2
-          echo 'To promote anyway while the rig is down, re-run with the workflow_dispatch input skip_release_proof=true —' >&2
-          echo 'the release record will be marked unproven.' >&2
+          echo 'The proof was explicitly requested for this release, so promotion stays blocked.' >&2
           exit 1
       - name: Locate promoted OTA evidence for a check-only retry
         if: >-
           needs.initialize.outputs.stage_mobile_ota == 'promoted' &&
-          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
+          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
         id: ota_promoted
         uses: actions/github-script@v7
         with:
@@ -686,14 +692,14 @@ jobs:
       - uses: actions/download-artifact@v4
         if: >-
           needs.initialize.outputs.stage_mobile_ota == 'promoted' &&
-          (needs.release_proof.result == 'success' || inputs.skip_release_proof == true)
+          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
         with:
           name: mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/mobile-ota-resume
           run-id: ${{ steps.ota_promoted.outputs.run_id }}
           github-token: ${{ github.token }}
       - name: Require rollback evidence and write checkpoint
-        if: needs.release_proof.result == 'success' || inputs.skip_release_proof == true
+        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
         run: |
           set -euo pipefail
           ledger="$RUNNER_TEMP/mobile-ota-ledger.json"
@@ -704,7 +710,7 @@ jobs:
           node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"checked",artifactRef})+"\n")' \
             "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
       - uses: actions/upload-artifact@v4
-        if: needs.release_proof.result == 'success' || inputs.skip_release_proof == true
+        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
         with:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota
           path: checkpoint-mobile-ota.json
@@ -1284,7 +1290,7 @@ jobs:
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
           STAGE_DESKTOP: ${{ needs.initialize.outputs.stage_desktop }}
-          RELEASE_PROOF_UNPROVEN: ${{ inputs.skip_release_proof == true && needs.release_proof.result != 'success' }}
+          RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
         run: |
           set -euo pipefail
           # Every release-mutating gh call below goes through bounded-retry,
@@ -1312,7 +1318,7 @@ jobs:
           git log --pretty='- %s (%h)' "${previous_sha:+${previous_sha}..}${RELEASE_SHA}" > "$notes"
           [ -s "$notes" ] || echo '- No component changes required.' > "$notes"
           if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
-            echo '- Promoted with skip_release_proof=true: the emulator release proof did not run (Android rig unavailable).' >> "$notes"
+            echo '- Promoted without a device proof: proof is opt-in and was not requested for this release (release recorded UNPROVEN).' >> "$notes"
           fi
           if [ "$RUN_DESKTOP" = true ] || [ "$STAGE_DESKTOP" = checked ]; then
             manifest="$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
@@ -1385,11 +1391,11 @@ jobs:
       - name: Finalize successful delivery after every selected promotion and record
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         env:
-          RELEASE_PROOF_UNPROVEN: ${{ inputs.skip_release_proof == true && needs.release_proof.result != 'success' }}
+          RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
         run: |
           args=(--state "$RUNNER_TEMP/release-attempt.json" --outcome success)
           if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
-            args+=(--unproven "mobile OTA promoted with skip_release_proof=true; the emulator release proof did not run")
+            args+=(--unproven "mobile OTA promoted without a device proof; proof is opt-in and was not requested")
           fi
           node scripts/unified-release.mjs finalize "${args[@]}"
       - name: Publish the one successful release index

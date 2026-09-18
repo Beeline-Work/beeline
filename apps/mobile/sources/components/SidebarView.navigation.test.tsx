@@ -46,6 +46,7 @@ const theme = vi.hoisted(() => ({
     textSecondary: '#aaa',
   },
   buzz: {
+    accent: '#b08a4a',
     type: { bodyStrong: {}, machine: {}, meta: {}, sectionHead: {} },
   },
 }));
@@ -252,6 +253,27 @@ describe('desktop Workspace navigation', () => {
     expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
   });
 
+  it('gives search a visible focus state without announcing decorative chrome', () => {
+    const search = tree.root.findByProps({ testID: 'desktop-room-search' });
+    const searchWrap = search.parent;
+
+    expect(search.props.accessibilityLabel).toBe('Search Rooms and direct messages');
+    expect(searchWrap?.props.style).not.toContainEqual({ borderColor: '#b08a4a' });
+
+    act(() => search.props.onFocus());
+    expect(searchWrap?.props.style).toContainEqual({ borderColor: '#b08a4a' });
+
+    const hiddenChrome = tree.root.findAll(
+      (node: { props: { 'aria-hidden'?: boolean } }) => node.props['aria-hidden'] === true,
+    );
+    expect(
+      hiddenChrome.some((node: { props: { name?: string } }) => node.props.name === 'search'),
+    ).toBe(true);
+    expect(
+      hiddenChrome.some((node: { props: { children?: unknown } }) => node.props.children === '⌘K'),
+    ).toBe(true);
+  });
+
   it('routes the persistent New Room, Workbench, and Bookmarks actions', () => {
     act(() => tree.root.findByProps({ testID: 'desktop-new-room' }).props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
@@ -297,9 +319,9 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(tree.root.findByProps({ testID: 'desktop-room-room-a' }).props.accessibilityState).toEqual(
-      { selected: true },
-    );
+    expect(
+      tree.root.findByProps({ testID: 'desktop-room-room-a' }).props.accessibilityState,
+    ).toEqual({ selected: true });
   });
 
   it('closes without routing when the current Workspace is picked', () => {

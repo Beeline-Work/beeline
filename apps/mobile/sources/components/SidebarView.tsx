@@ -116,6 +116,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderRadius: 8,
     backgroundColor: theme.colors.surface,
   },
+  searchWrapFocused: { borderColor: theme.buzz.accent },
   search: {
     ...theme.buzz.type.meta,
     flex: 1,
@@ -231,6 +232,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
   const [query, setQuery] = React.useState('');
+  const [searchFocused, setSearchFocused] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
@@ -611,12 +613,19 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : null}
           </View>
         )}
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
+        <View style={[styles.searchWrap, searchFocused && styles.searchWrapFocused]}>
+          <Ionicons
+            name="search"
+            size={14}
+            color={stylesheet.roomTime.color}
+            {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+          />
           <TextInput
             ref={searchRef}
             value={query}
             onChangeText={setQuery}
+            onBlur={() => setSearchFocused(false)}
+            onFocus={() => setSearchFocused(true)}
             accessibilityLabel={
               isDesktop ? `Search ${ROOMS_LABEL} and direct messages` : `Search ${ROOMS_LABEL}`
             }
@@ -627,7 +636,9 @@ export const SidebarView = React.memo(function SidebarView() {
             style={styles.search}
             testID="desktop-room-search"
           />
-          <Text style={styles.shortcut}>⌘K</Text>
+          <Text style={styles.shortcut} {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}>
+            ⌘K
+          </Text>
         </View>
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
           {navigationError ? (
@@ -785,7 +796,12 @@ export const SidebarView = React.memo(function SidebarView() {
           ]}
           testID="profile-settings-navigation"
         >
-          <Ionicons name="person-outline" size={18} color={stylesheet.settingsText.color} />
+          <Ionicons
+            name="person-outline"
+            size={18}
+            color={stylesheet.settingsText.color}
+            {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+          />
           <Text style={styles.settingsText}>{isDesktop ? 'PROFILE & SETTINGS' : 'SETTINGS'}</Text>
         </Pressable>
       </>

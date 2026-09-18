@@ -227,11 +227,13 @@ describe('the ledger — an agent turn', () => {
     const opener = resolved(opensRow) as Record<string, number>;
     const follower = resolved(continuedRow) as Record<string, number>;
     const sameSpeakerGap = follower.paddingBottom + follower.paddingTop;
-    const speakerChangeGap = follower.paddingBottom + opener.paddingTop;
+    // Phone list is inverted: layout-bottom is visual top, so the incoming
+    // byline wears the extra air on paddingBottom.
+    const speakerChangeGap = follower.paddingTop + opener.paddingBottom;
     expect(sameSpeakerGap).toBe(12);
     expect(speakerChangeGap).toBe(24);
     expect(speakerChangeGap).toBe(sameSpeakerGap * 2);
-    expect(opener).toMatchObject({ paddingTop: 18, paddingBottom: 6, marginBottom: 0 });
+    expect(opener).toMatchObject({ paddingTop: 6, paddingBottom: 18, marginBottom: 0 });
     expect(follower).toMatchObject({ paddingTop: 6, paddingBottom: 6, marginBottom: 0 });
 
     // Proximity alone carries the run boundary; no message row adds a rule,
@@ -390,20 +392,112 @@ describe('the ledger — a human turn is plain body text', () => {
     };
 
     // The sender byline opens the run at twice the compact same-speaker gap,
-    // without adding a divider, frame, or fill.
+    // without adding a divider, frame, or fill. On the inverted phone list
+    // that extra air is paddingBottom (visual top).
     const opener = rowStyle(opens, 'b1');
     const follower = rowStyle(continued, 'b2');
-    expect(opener.paddingTop).toBe(18);
-    expect(opener.paddingBottom).toBe(6);
+    expect(opener.paddingTop).toBe(6);
+    expect(opener.paddingBottom).toBe(18);
     expect(follower.paddingTop).toBe(6);
     expect(follower.paddingBottom).toBe(6);
     expect(follower.marginBottom).toBe(0);
-    expect(follower.paddingBottom! + opener.paddingTop!).toBe(
+    expect(follower.paddingTop! + opener.paddingBottom!).toBe(
       (follower.paddingBottom! + follower.paddingTop!) * 2,
     );
     expect(opener.borderTopWidth).toBeUndefined();
     expect(opener.borderBottomWidth).toBeUndefined();
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');
+  });
+
+  it('keeps agent→person and person→agent speaker-change gaps equal', () => {
+    // Counterfactual: extra air on paddingTop of a bylined row. On the inverted
+    // phone list that edge is the outgoing visual bottom, so an agent's last
+    // message (always bylined) opened a 24px gap while a person's last message
+    // in a run (often a continuation, no byline) opened 12px — both speaker
+    // changes. Extra air belongs on the incoming visual-top edge instead.
+    const row = (element: React.ReactElement, id: string) => {
+      const styles = render(element)
+        .root.findByProps({ testID: `chat-message-${id}` })
+        .props.style.filter(Boolean);
+      return Object.assign({}, ...styles) as Record<string, number>;
+    };
+    const invertedGap = (outgoing: Record<string, number>, incoming: Record<string, number>) =>
+      outgoing.paddingTop + incoming.paddingBottom + (incoming.marginBottom ?? 0);
+    const chronologicalGap = (outgoing: Record<string, number>, incoming: Record<string, number>) =>
+      outgoing.paddingBottom + incoming.paddingTop + (incoming.marginBottom ?? 0);
+
+    const agent = row(
+      React.createElement(LedgerEntry, {
+        itemId: 'sol',
+        luminous: true,
+        byline: { name: 'Sol', role: 'agent', stamp: '16:41' },
+        bodyText: 'Done.',
+        bodyTestID: 'body',
+      }),
+      'sol',
+    );
+    const person = row(
+      React.createElement(LedgerSteer, {
+        itemId: 'you',
+        byline: { name: 'You', stamp: '16:44', isViewer: true },
+        bodyText: 'Thanks.',
+        bodyTestID: 'steer-body',
+      }),
+      'you',
+    );
+    const personContinued = row(
+      React.createElement(LedgerSteer, {
+        itemId: 'you-2',
+        continued: true,
+        bodyText: 'And one more thing.',
+        bodyTestID: 'steer-body',
+      }),
+      'you-2',
+    );
+
+    expect(invertedGap(agent, person)).toBe(24);
+    expect(invertedGap(person, agent)).toBe(invertedGap(agent, person));
+    expect(invertedGap(personContinued, agent)).toBe(invertedGap(agent, person));
+
+    const agentChrono = row(
+      React.createElement(LedgerEntry, {
+        itemId: 'sol-c',
+        chronological: true,
+        luminous: true,
+        byline: { name: 'Sol', role: 'agent', stamp: '16:41' },
+        bodyText: 'Done.',
+        bodyTestID: 'body',
+      }),
+      'sol-c',
+    );
+    const personChrono = row(
+      React.createElement(LedgerSteer, {
+        itemId: 'you-c',
+        chronological: true,
+        byline: { name: 'You', stamp: '16:44', isViewer: true },
+        bodyText: 'Thanks.',
+        bodyTestID: 'steer-body',
+      }),
+      'you-c',
+    );
+    const personContinuedChrono = row(
+      React.createElement(LedgerSteer, {
+        itemId: 'you-2-c',
+        chronological: true,
+        continued: true,
+        bodyText: 'And one more thing.',
+        bodyTestID: 'steer-body',
+      }),
+      'you-2-c',
+    );
+
+    expect(chronologicalGap(agentChrono, personChrono)).toBe(24);
+    expect(chronologicalGap(personChrono, agentChrono)).toBe(
+      chronologicalGap(agentChrono, personChrono),
+    );
+    expect(chronologicalGap(personContinuedChrono, agentChrono)).toBe(
+      chronologicalGap(agentChrono, personChrono),
+    );
   });
 });
 

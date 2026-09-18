@@ -12,6 +12,13 @@ vi.mock('./model-catalog.js', async (importOriginal) => ({
   fetchAgentModelCatalog: vi.fn().mockResolvedValue({ catalog: [], raw: [] }),
 }));
 
+// CI has no harness binaries installed; resolveAgentCommand must not be the
+// thing under test here.
+vi.mock('./agent-command.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agent-command.js')>()),
+  resolveAgentCommand: vi.fn().mockReturnValue({ kind: 'cursor', command: 'cursor-agent', args: [] }),
+}));
+
 const { loadConnectModelCatalog } = await import('./connect-command.js');
 const { parseCursorModelsOutput } = await import('./cursor-models.js');
 

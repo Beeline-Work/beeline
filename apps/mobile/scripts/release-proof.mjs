@@ -711,7 +711,21 @@ async function main() {
       adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
       await sleep(2000);
       const started = Date.now();
-      const r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, flow.name);
+      // The Maestro Android driver occasionally fails to start up within its
+      // budget on the shared rig (settings-workbench in run 35281590377). That
+      // is a rig flake, not an app defect, so retry a timed-out driver start
+      // before failing the flow. Only driver-startup timeouts retry: a real
+      // flow assertion failure must still fail the proof.
+      const DRIVER_STARTUP_TIMEOUT = /did not start up in time/i;
+      let r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, flow.name);
+      let attempt = 1;
+      while (!r.ok && DRIVER_STARTUP_TIMEOUT.test(r.output) && attempt < 3) {
+        attempt += 1;
+        console.log(`release-proof: ${flow.name}: driver startup timeout (attempt ${attempt - 1}) - retrying`);
+        adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
+        await sleep(2000);
+        r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, `${flow.name}-retry${attempt - 1}`);
+      }
       const seconds = (Date.now() - started) / 1000;
       const screenshotPath = join(outDir, `${flow.name}.png`);
       screenshot(device, screenshotPath);

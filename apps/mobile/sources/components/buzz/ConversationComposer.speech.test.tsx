@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const platformSetter = vi.hoisted(() => {
   let _os = 'android';
   return {
-    setOS: (v: string) => { _os = v; },
+    setOS: (v: string) => {
+      _os = v;
+    },
     getOS: () => _os,
   };
 });
@@ -23,7 +25,9 @@ vi.mock('react-native', () => {
     View: host('View'),
     Linking: { openSettings: vi.fn() },
     Platform: {
-      get OS() { return platformSetter.getOS(); },
+      get OS() {
+        return platformSetter.getOS();
+      },
       select: (choices: any) => choices.default,
     },
     StyleSheet: { create: (styles: any) => styles },
@@ -69,9 +73,24 @@ vi.mock('@/buzz/groknight', () => ({
       radius: 3,
       bgBase: '#14091A',
       type: {
-        body: { fontFamily: 'SpaceGrotesk-Regular', fontSize: 16, lineHeight: 23, letterSpacing: 0 },
-        machine: { fontFamily: 'IBMPlexMono-Regular', fontSize: 13, lineHeight: 19, letterSpacing: 0 },
-        meta: { fontFamily: 'SpaceGrotesk-Regular', fontSize: 13, lineHeight: 19, letterSpacing: 0 },
+        body: {
+          fontFamily: 'SpaceGrotesk-Regular',
+          fontSize: 16,
+          lineHeight: 23,
+          letterSpacing: 0,
+        },
+        machine: {
+          fontFamily: 'IBMPlexMono-Regular',
+          fontSize: 13,
+          lineHeight: 19,
+          letterSpacing: 0,
+        },
+        meta: {
+          fontFamily: 'SpaceGrotesk-Regular',
+          fontSize: 13,
+          lineHeight: 19,
+          letterSpacing: 0,
+        },
       },
       transcriptCard: { rowTitleSize: 15, rowKindSize: 12 },
     },
@@ -132,8 +151,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   handlerMap.clear();
   platformSetter.setOS('android');
-  mockMod.getPermissionsAsync.mockResolvedValue({ status: 'granted', granted: true, canAskAgain: true });
-  mockMod.requestPermissionsAsync.mockResolvedValue({ status: 'granted', granted: true, canAskAgain: true });
+  mockMod.getPermissionsAsync.mockResolvedValue({
+    status: 'granted',
+    granted: true,
+    canAskAgain: true,
+  });
+  mockMod.requestPermissionsAsync.mockResolvedValue({
+    status: 'granted',
+    granted: true,
+    canAskAgain: true,
+  });
   mockMod.addListener.mockImplementation((event: string, handler: (...args: any[]) => void) => {
     handlerMap.set(event, handler);
     return { remove: vi.fn(() => handlerMap.delete(event)) };
@@ -182,7 +209,7 @@ describe('listening flow', () => {
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Listening');
   });
 
-  it('shows interim transcript in status line', async () => {
+  it('shows interim transcript once, inside the input in provisional styling', async () => {
     const { renderer } = render();
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
@@ -194,20 +221,87 @@ describe('listening flow', () => {
       });
     });
 
+    const interim = renderer.root.findByProps({ testID: 'chat-speech-interim' });
     const statusLine = renderer.root.findByProps({ testID: 'chat-speech-status' });
-    const statusText = statusLine.findByType('Text');
     const flattened: any[] = [];
     const collect = (node: any) => {
       if (node == null || typeof node === 'boolean') return;
-      if (Array.isArray(node)) { node.forEach(collect); return; }
+      if (Array.isArray(node)) {
+        node.forEach(collect);
+        return;
+      }
       if (typeof node === 'object') {
         if (typeof node.props?.children !== 'undefined') collect(node.props.children);
         return;
       }
       flattened.push(String(node));
     };
-    collect(statusText.props.children);
-    expect(flattened.join('')).toContain('hello world');
+    collect(interim.props.children);
+    expect(flattened.join('')).toBe('hello world');
+    const interimParts = interim.findAllByType('Text');
+    const [committedPart, partialPart] = interimParts.slice(-2);
+    expect(committedPart.props.style).not.toEqual(expect.objectContaining({ fontStyle: 'italic' }));
+    expect(partialPart.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ fontStyle: 'italic' })]),
+    );
+    flattened.length = 0;
+    collect(statusLine.props.children);
+    expect(flattened.join('')).not.toContain('hello world');
+  });
+
+  it('does not truncate a long interim transcript to one line', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'a long provisional phrase that needs to wrap onto another line' }],
+        isFinal: false,
+      });
+    });
+    const interimText = renderer.root.findByProps({
+      importantForAccessibility: 'no-hide-descendants',
+    });
+    expect(interimText.props.numberOfLines).toBeUndefined();
+  });
+
+  it('preserves special characters in final speech without escaping or decoding them', async () => {
+    const onChangeText = vi.fn();
+    const { renderer } = render({ value: '', onChangeText });
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: `<main> & \"quotes\" aren't %3F` }],
+        isFinal: true,
+      });
+    });
+    expect(onChangeText).toHaveBeenCalledWith(`<main> & \"quotes\" aren't %3F`);
+  });
+
+  it('announces listening state and the provisional transcript accessibly', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'accessible words' }], isFinal: false });
+    });
+    const mic = renderer.root.findByProps({ testID: 'chat-mic' });
+    expect(mic.props.accessibilityState).toEqual({ selected: true });
+    expect(mic.props.accessibilityValue).toEqual({ text: 'Listening: accessible words' });
+    const status = renderer.root.findByProps({ testID: 'chat-speech-status' });
+    expect(status.props.accessibilityLiveRegion).toBe('polite');
+    expect(status.props.accessibilityRole).toBe('text');
+  });
+
+  it('moves the mic level marks in response to native volume', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    const before = renderer.root.findAllByType('RNSVGLine').map((line: any) => line.props.y1);
+    await act(async () => fireEvent('volumechange', { value: 10 }));
+    const after = renderer.root.findAllByType('RNSVGLine').map((line: any) => line.props.y1);
+    expect(after).not.toEqual(before);
   });
 
   it('commits final result to onChangeText', async () => {
@@ -294,7 +388,11 @@ describe('listening flow', () => {
 describe('edge states', () => {
   it('shows permission-denied status and dims mic', async () => {
     mockMod.getPermissionsAsync.mockResolvedValue({ status: 'undetermined' });
-    mockMod.requestPermissionsAsync.mockResolvedValue({ status: 'denied', granted: false, canAskAgain: false });
+    mockMod.requestPermissionsAsync.mockResolvedValue({
+      status: 'denied',
+      granted: false,
+      canAskAgain: false,
+    });
 
     const { renderer } = render();
     const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });

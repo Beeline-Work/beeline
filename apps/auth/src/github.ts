@@ -23,6 +23,11 @@ export class GitHubHttpError extends Error {
   }
 }
 
+/** A listed workflow whose file or runs are gone is not dispatchable; auth/permission failures are not this. */
+function isMissingGitHubResource(error: unknown): boolean {
+  return error instanceof GitHubHttpError && error.status === 404;
+}
+
 export class GitHubCredentialRejectedError extends Error {}
 
 async function jsonResponseObject(
@@ -439,28 +444,40 @@ export class GitHubAppClient {
     const workflows = await Promise.all(
       candidates.map(async (workflow): Promise<GitHubDispatchableWorkflow | undefined> => {
         if (workflow.state !== 'active') return undefined;
-        const content = await jsonObject(
-          await fetch(
-            `${this.#config.apiBaseUrl}/repos/${path}/contents/${workflow.path
-              .split('/')
-              .map((part) => encodeURIComponent(part))
-              .join('/')}?ref=${encodeURIComponent(defaultBranch)}`,
-            { headers: githubHeaders(accessToken) },
-          ),
-          'GitHub workflow source',
-        );
+        let content: Record<string, unknown>;
+        try {
+          content = await jsonObject(
+            await fetch(
+              `${this.#config.apiBaseUrl}/repos/${path}/contents/${workflow.path
+                .split('/')
+                .map((part) => encodeURIComponent(part))
+                .join('/')}?ref=${encodeURIComponent(defaultBranch)}`,
+              { headers: githubHeaders(accessToken) },
+            ),
+            'GitHub workflow source',
+          );
+        } catch (error) {
+          if (isMissingGitHubResource(error)) return undefined;
+          throw error;
+        }
         if (content.encoding !== 'base64' || typeof content.content !== 'string') {
-          throw new Error('GitHub workflow source is invalid');
+          return undefined;
         }
         const source = Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8');
         if (!hasWorkflowDispatch(source)) return undefined;
-        const runs = await jsonObject(
-          await fetch(
-            `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows/${workflow.id}/runs?per_page=1`,
-            { headers: githubHeaders(accessToken) },
-          ),
-          'GitHub workflow runs',
-        );
+        let runs: Record<string, unknown>;
+        try {
+          runs = await jsonObject(
+            await fetch(
+              `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows/${workflow.id}/runs?per_page=1`,
+              { headers: githubHeaders(accessToken) },
+            ),
+            'GitHub workflow runs',
+          );
+        } catch (error) {
+          if (isMissingGitHubResource(error)) return undefined;
+          throw error;
+        }
         if (!Array.isArray(runs.workflow_runs)) throw new Error('GitHub workflow runs are invalid');
         const latest = runs.workflow_runs[0];
         if (!latest) return { id: workflow.id, name: workflow.name };

@@ -564,10 +564,11 @@ describe('folded historical transcripts', () => {
     pubkey: agent,
     isAgentAuthor: true,
     isAgentActivity: true,
+    requestId: 'turn-1',
     activity,
   });
 
-  it('keeps narration-separated runs of one to three tools as separate collapsed disclosures', () => {
+  it('collapses every tool call in one turn despite narration between machine runs', () => {
     const call = (id: string) =>
       row(id, [
         {
@@ -593,13 +594,7 @@ describe('folded historical transcripts', () => {
       call('tool-8'),
     ]);
 
-    expect(folded.map((message) => message.id)).toEqual([
-      'tool-1',
-      'prose-2',
-      'tool-3',
-      'prose-5',
-      'tool-6',
-    ]);
+    expect(folded.map((message) => message.id)).toEqual(['tool-1', 'prose-2', 'prose-5']);
     const renderer = render(
       <>
         {folded.map((message) => (
@@ -607,19 +602,13 @@ describe('folded historical transcripts', () => {
         ))}
       </>,
     );
-    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(3);
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(1);
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
     expect(
       renderer.root.findByProps({ testID: 'tool-run-group-tool-1' }).props.accessibilityLabel,
-    ).toBe('1 step, expandable');
-    expect(
-      renderer.root.findByProps({ testID: 'tool-run-group-tool-3' }).props.accessibilityLabel,
-    ).toBe('2 steps, expandable');
-    expect(
-      renderer.root.findByProps({ testID: 'tool-run-group-tool-6' }).props.accessibilityLabel,
-    ).toBe('3 steps, expandable');
+    ).toBe('6 steps, expandable');
 
-    for (const id of ['tool-1', 'tool-3', 'tool-6']) expandRun(renderer, id);
+    expandRun(renderer, 'tool-1');
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(6);
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-tool-8' }).props.onPress,

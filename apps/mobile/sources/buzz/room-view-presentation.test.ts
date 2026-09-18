@@ -377,7 +377,7 @@ describe('Room view presentation', () => {
     });
   });
 
-  it('keeps narration as a boundary between settled tool groups', () => {
+  it('keeps narration visible while collapsing one turn into one tool group', () => {
     const agent = 'b'.repeat(64);
     const activity = (
       id: string,
@@ -389,6 +389,7 @@ describe('Room view presentation', () => {
       pubkey: agent,
       isUser: false,
       isAgentActivity: true,
+      requestId: 'turn-1',
       activity: [item],
     });
     const folded = foldSettledActivityRuns([
@@ -397,7 +398,35 @@ describe('Room view presentation', () => {
       activity('tool-2', { kind: 'tool', title: 'Read two' }),
     ]);
 
-    expect(folded.map((message) => message.id)).toEqual(['tool-1', 'prose', 'tool-2']);
+    expect(folded.map((message) => message.id)).toEqual(['tool-1', 'prose']);
+    expect(folded[0]?.activity?.map((item) => item.title)).toEqual(['Read one', 'Read two']);
+    expect(folded[1]?.activity).toEqual([
+      { kind: 'output', title: 'Update', text: 'Between calls.' },
+    ]);
+  });
+
+  it('keeps adjacent tools from separate turns in separate disclosures', () => {
+    const agent = 'b'.repeat(64);
+    const tool = (id: string, requestId: string): ChatDisplayMessage => ({
+      id,
+      text: '',
+      timestamp: 1,
+      pubkey: agent,
+      isUser: false,
+      isAgentActivity: true,
+      requestId,
+      activity: [{ kind: 'tool', title: id }],
+    });
+
+    const folded = foldSettledActivityRuns([
+      tool('turn-one-tool', 'turn-1'),
+      tool('turn-two-tool', 'turn-2'),
+    ]);
+
+    expect(folded.map((message) => [message.id, message.activity?.length])).toEqual([
+      ['turn-one-tool', 1],
+      ['turn-two-tool', 1],
+    ]);
   });
 
   it('merges adjacent tool notes when only thinking and summary rows separate them', () => {

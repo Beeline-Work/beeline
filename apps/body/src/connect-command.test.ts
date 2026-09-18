@@ -946,15 +946,15 @@ describe('connect wizard', () => {
     // provider questions (cursor is not in CONNECT_PROVIDER_HARNESSES), loads
     // the unbounded catalog, and offers the default model with an explanatory
     // note. The flow must complete without throwing.
-    const fixture = promptFixture(['cursor', 'claude-sonnet-4']);
+    const fixture = promptFixture(['cursor', 'auto']);
     const announced: string[] = [];
     const seam = catalogSeam({
       configured: {
         // Simulate what cursor-agent-acp returns: no model options at all.
         // connectModelPickerFromAxes then produces the fallback catalog with
         // the explanatory note and default model as the single option.
-        currentValue: 'claude-sonnet-4',
-        options: [{ id: 'claude-sonnet-4' }],
+        currentValue: 'auto',
+        options: [{ id: 'auto' }],
         note: 'cursor did not enumerate models; offering the provider default',
       },
     });
@@ -970,7 +970,7 @@ describe('connect wizard', () => {
       ),
     ).resolves.toEqual({
       harness: 'cursor',
-      model: 'claude-sonnet-4',
+      model: 'auto',
     });
     // The probe returned nothing, so nothing is announced as found.
     expect(announced).toEqual([]);

@@ -106,10 +106,7 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
-import {
-  GOOGLE_CONNECTOR_KINDS,
-  isGoogleToolConnectorKind,
-} from '@beeline/api-contract/workbench';
+import { GOOGLE_CONNECTOR_KINDS, isGoogleToolConnectorKind } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -215,6 +212,14 @@ interface MessageRow {
   bookmarked?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
+  reaction_identities?: Array<{
+    id: string;
+    kind: 'human' | 'agent';
+    name: string;
+    handle: string | null;
+    avatar: string | null;
+    face_id: string | null;
+  }>;
   /** Derived on read from the row's text and the Room's membership, not stored. */
   tagged_ids: string[];
   reply_to_message_id: string | null;
@@ -444,6 +449,9 @@ function projectedMessage(
     },
     publicOrigin,
   );
+  const reactionIdentityById = new Map(
+    (row.reaction_identities ?? []).map((reactor) => [reactor.id, reactor]),
+  );
   const base: RoomViewMessage = {
     id: row.id,
     text: row.text,
@@ -494,6 +502,10 @@ function projectedMessage(
                     emoji,
                     count: reactors.length,
                     reacted: viewerId ? reactors.includes(viewerId) : false,
+                    members: reactors.flatMap((reactorId) => {
+                      const reactor = reactionIdentityById.get(reactorId);
+                      return reactor ? [identity(reactor, publicOrigin)] : [];
+                    }),
                   },
                 ]
               : [];
@@ -544,6 +556,26 @@ function projectedMessage(
     default:
       return base;
   }
+}
+
+/** Canonical reactor identities, kept beside each bounded message row so every
+ * Room/history projection can paint the same roster without a client lookup. */
+function reactionIdentitiesSql(messageAlias: string): string {
+  return `COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'id',reactor.id,
+      'kind',reactor.kind,
+      'name',reactor.name,
+      'handle',reactor.handle,
+      'avatar',reactor.avatar,
+      'face_id',reactor.face_id
+    ) ORDER BY reactor.id)
+    FROM identities reactor
+    WHERE reactor.id IN (
+      SELECT jsonb_array_elements_text(reaction.value)
+      FROM jsonb_each(${messageAlias}.reactions) reaction
+    )
+  ),'[]'::jsonb)`;
 }
 
 /**
@@ -676,6 +708,7 @@ export class PhoneService {
       await this.database.query<MessageRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+           ${reactionIdentitiesSql('message')} reaction_identities,
            ${taggedIdentityIdsSql('message')} tagged_ids
          FROM rooms room
          JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
@@ -1248,6 +1281,7 @@ export class PhoneService {
             `SELECT m.*,
                i.kind author_kind,i.name author_name,i.handle author_handle,
                i.avatar author_avatar,i.face_id author_face,
+               ${reactionIdentitiesSql('m')} reaction_identities,
                '{}'::text[] tagged_ids
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
@@ -1267,9 +1301,7 @@ export class PhoneService {
       : [];
     await this.enrichMessageTags(briefingRows);
     const briefing = collapsePermissionCards(
-      briefingRows
-        .map((row) => projectedMessage(row, this.publicOrigin))
-        .sort(messageOrder),
+      briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     );
     const attachmentFacts = await measured(
       'media',
@@ -1285,9 +1317,7 @@ export class PhoneService {
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages: decorateAttachments(messages, attachmentFacts),
-      ...(toolRows.length
-        ? { toolRows: decorateAttachments(toolRows, attachmentFacts) }
-        : {}),
+      ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
       latestAgentTurns,
       viewer: {
@@ -1501,6 +1531,7 @@ export class PhoneService {
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
@@ -1516,6 +1547,7 @@ export class PhoneService {
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
@@ -3868,10 +3900,7 @@ export class PhoneService {
         await database.query<{
           visibility: 'public' | 'invite-only';
           reviewer_agent_id: string | null;
-        }>(
-          'SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE',
-          [input.roomId],
-        )
+        }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
       if (input.reviewerAgentId !== undefined && input.reviewerAgentId !== null) {
         const reviewer = await database.query(
@@ -5469,7 +5498,10 @@ export class PhoneService {
    * per workspace. Read both halves by owner. `input.workspaceId` is accepted
    * and ignored for wire compatibility with clients that still send it.
    */
-  async readWorkbench(input: Input<'readWorkbench'>, viewerId: string): Promise<Output<'readWorkbench'>> {
+  async readWorkbench(
+    input: Input<'readWorkbench'>,
+    viewerId: string,
+  ): Promise<Output<'readWorkbench'>> {
     void input;
     const connectors = (
       await this.database.query<{
@@ -5722,25 +5754,24 @@ export class PhoneService {
         );
       }
     }
-    const existing =
-      (
-        await this.database.query<{
-          id: string;
-          status: ConnectorStatus['status'];
-          status_steps: ConnectorStep[] | null;
-          status_error: string | null;
-        }>(
-          `SELECT id,status,status_steps,status_error FROM workspace_connectors
+    const existing = (
+      await this.database.query<{
+        id: string;
+        status: ConnectorStatus['status'];
+        status_steps: ConnectorStep[] | null;
+        status_error: string | null;
+      }>(
+        `SELECT id,status,status_steps,status_error FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
-        )
-      ).rows[0] ?? {
-        id,
-        status: 'installing' as const,
-        status_steps: defaultConnectorSteps() as ConnectorStep[],
-        status_error: null,
-      };
+        [ws.workspace_id, viewerId, input.connectorType, machineId],
+      )
+    ).rows[0] ?? {
+      id,
+      status: 'installing' as const,
+      status_steps: defaultConnectorSteps() as ConnectorStep[],
+      status_error: null,
+    };
     // The helper sees the install assignment on its next poll.
     await ensureConnectorDirectMessageRoom(
       this.database,
@@ -5779,10 +5810,9 @@ export class PhoneService {
     await this.assertWorkbenchViewer(input.workspaceId, viewerId);
     const connector = await this.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.
-    await this.database.query(
-      `DELETE FROM workspace_connections WHERE connector_id=$1::uuid`,
-      [input.connectorId],
-    );
+    await this.database.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
+      input.connectorId,
+    ]);
     await this.database.query(
       `UPDATE workspace_connectors
        SET status='disconnected', status_steps='[]'::jsonb, status_error=NULL,
@@ -5902,10 +5932,10 @@ export class PhoneService {
     const updated = (connection.grants ?? []).map((grant) =>
       grant.revokedAt ? grant : { ...grant, revokedAt },
     );
-    await this.database.query(`UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`, [
-      connection.id,
-      JSON.stringify(updated),
-    ]);
+    await this.database.query(
+      `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
+      [connection.id, JSON.stringify(updated)],
+    );
     if (live.length)
       await this.database.query(
         `UPDATE workspace_connectors
@@ -6135,6 +6165,7 @@ export class PhoneService {
         `SELECT m.*,
            i.kind author_kind,i.name author_name,i.handle author_handle,
            i.avatar author_avatar,i.face_id author_face,
+           ${reactionIdentitiesSql('m')} reaction_identities,
            '{}'::text[] tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -6219,6 +6250,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -6231,6 +6263,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
@@ -6243,6 +6276,7 @@ export class PhoneService {
           `SELECT m.*,
              i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              '{}'::text[] tagged_ids
            FROM messages m JOIN identities i ON i.id=m.author_id
            WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL

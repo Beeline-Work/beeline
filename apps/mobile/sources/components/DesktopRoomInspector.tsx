@@ -13,6 +13,7 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
+import { inspectorCornerObjective, inspectorCornerWindow } from '@/buzz/inspector-corners';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { foldSystemLines } from '@/buzz/system-lines';
 import {
@@ -77,10 +78,6 @@ function age(corner: CornerListItem): string {
   return compactRelativeTime(corner.stateAt ?? corner.corner.updatedAt, Date.now());
 }
 
-function terminal(corner: CornerListItem): boolean {
-  return corner.state === 'archived';
-}
-
 function HeaderIconControl({
   label,
   glyph,
@@ -121,7 +118,7 @@ export function DesktopRoomInspector({
   const [detail, setDetail] = React.useState<RoomView | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
-  const [showConcluded, setShowConcluded] = React.useState(false);
+  const [cornersExpanded, setCornersExpanded] = React.useState(false);
   const [reviewerOpen, setReviewerOpen] = React.useState(false);
   const [reviewerAgentId, setReviewerAgentId] = React.useState(room.room.reviewerAgentId);
   const [reviewerBusy, setReviewerBusy] = React.useState(false);
@@ -141,7 +138,7 @@ export function DesktopRoomInspector({
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
   React.useEffect(() => {
     setDetail(null);
-    setShowConcluded(false);
+    setCornersExpanded(false);
     setReviewerAgentId(room.room.reviewerAgentId);
   }, [room.room.id, room.room.reviewerAgentId]);
   React.useEffect(() => {
@@ -224,8 +221,7 @@ export function DesktopRoomInspector({
     [width],
   );
 
-  const active = room.corners.filter((corner) => !terminal(corner));
-  const concluded = room.corners.filter(terminal);
+  const cornerList = inspectorCornerWindow(room.corners, cornersExpanded);
   const summary = room.corners.find((corner) => corner.corner.id === selectedCornerId);
   const agents = room.members.filter((member) => member.identity.kind === 'agent');
   const people = room.members.filter((member) => member.identity.kind === 'human');
@@ -312,7 +308,7 @@ export function DesktopRoomInspector({
             />
           </View>
           <FlatList
-            data={[...active, ...(showConcluded ? concluded : [])]}
+            data={[...cornerList.visible]}
             keyExtractor={(corner) => corner.corner.id}
             style={styles.scroll}
             contentContainerStyle={styles.content}
@@ -329,17 +325,17 @@ export function DesktopRoomInspector({
             )}
             ListFooterComponent={
               <>
-                {concluded.length > 0 && !showConcluded && (
+                {cornerList.overflowLabel ? (
                   <Pressable
                     accessibilityRole="button"
-                    onPress={() => setShowConcluded(true)}
+                    onPress={() => setCornersExpanded(true)}
                     style={styles.simpleRow}
-                    testID="desktop-work-concluded"
+                    testID="desktop-work-corners-more"
                   >
-                    <Text style={styles.simpleTitle}>archived · {concluded.length}</Text>
+                    <Text style={styles.simpleTitle}>{cornerList.overflowLabel}</Text>
                     <Text style={styles.chevron}>›</Text>
                   </Pressable>
-                )}
+                ) : null}
                 {canRunWorkflows ? (
                   <>
                     <View style={styles.sectionGap} />
@@ -471,6 +467,7 @@ function CornerRow({
 }) {
   const display = cornerDisplayState(corner);
   const title = displayGroupedCornerTitle(parentRoomName, corner.corner.name, corner.corner.id);
+  const objective = inspectorCornerObjective(title, corner.corner.about);
   const openedByViewer = corner.agent?.pubkey === viewerPubkey;
   return (
     <Pressable
@@ -480,7 +477,11 @@ function CornerRow({
       testID={`desktop-work-corner-${corner.corner.id}`}
     >
       <View style={styles.cornerHeadline}>
-        <Text style={styles.cornerTitle}>{title}</Text>
+        <Text
+          style={[styles.cornerTitle, display.terminal ? styles.cornerTitleArchived : undefined]}
+        >
+          {title}
+        </Text>
         <Text
           style={[
             styles.cornerStatus,
@@ -503,7 +504,16 @@ function CornerRow({
         ) : null}
         <Text style={styles.chevron}>›</Text>
       </View>
-      <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
+      {objective ? (
+        <Text
+          ellipsizeMode="tail"
+          numberOfLines={2}
+          style={[styles.objective, display.terminal ? styles.objectiveArchived : undefined]}
+          testID={`desktop-work-corner-objective-${corner.corner.id}`}
+        >
+          {objective}
+        </Text>
+      ) : null}
       <View style={styles.cornerAgent}>
         <IdentityMark
           kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
@@ -869,7 +879,9 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     includeFontPadding: false,
   },
+  cornerTitleArchived: { color: theme.colors.textSecondary },
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
+  objectiveArchived: { color: theme.colors.textSecondary },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
   cornerMe: {
     ...theme.buzz.type.sectionHead,

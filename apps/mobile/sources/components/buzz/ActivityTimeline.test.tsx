@@ -77,6 +77,10 @@ function hostNodes(renderer: ReactTestRenderer, pattern: RegExp) {
 
 const renderedText = (renderer: ReactTestRenderer) => JSON.stringify(renderer.toJSON());
 
+function expandRun(renderer: ReactTestRenderer, id: string): void {
+  act(() => renderer.root.findByProps({ testID: `tool-run-group-${id}` }).props.onPress());
+}
+
 const TOOLS = [
   {
     kind: 'tool' as const,
@@ -99,8 +103,11 @@ const TOOLS = [
 ];
 
 describe('one-line tool ledger', () => {
-  it('renders one collapsed ledger line per step — no summary row, no cards', () => {
+  it('renders one collapsed disclosure for the machine run — no cards', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
+    expect(renderer.root.findByProps({ testID: 'tool-run-group-read' })).toBeTruthy();
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+    expandRun(renderer, 'read');
     expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' })).toBeTruthy();
     expect(renderer.root.findByProps({ testID: 'tool-ledger-line-failure' })).toBeTruthy();
     expect(hostNodes(renderer, /^corner-tool-summary$/)).toHaveLength(0);
@@ -110,6 +117,7 @@ describe('one-line tool ledger', () => {
 
   it('a failed step carries its distilled reason inline, a success stays quiet', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
+    expandRun(renderer, 'read');
     const text = renderedText(renderer);
     // The distilled reason rides the line; the raw envelope waits in the sheet.
     expect(text).toContain('command not found: pnpm');
@@ -132,6 +140,7 @@ describe('one-line tool ledger', () => {
         ]}
       />,
     );
+    expandRun(renderer, 'shell');
     const text = renderedText(renderer);
     expect(text).toContain('ls -la node_modules/.bin');
     expect(text).not.toContain('terminalId');
@@ -151,6 +160,7 @@ describe('one-line tool ledger', () => {
 
   it('spends colour in exactly two places: the brass cross, the dim tick (design 2026-08-24)', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
+    expandRun(renderer, 'read');
     const passed = renderer.root.findByProps({ testID: 'activity-verdict-read' });
     expect(passed.props.children).toBe('✓');
     expect(passed.props.style).toContainEqual(
@@ -179,6 +189,7 @@ describe('one-line tool ledger', () => {
         ]}
       />,
     );
+    expandRun(renderer, 'live');
     const spinner = renderer.root.findByProps({ testID: 'activity-verdict-live' });
     expect(spinner.props.children.type).toBeTypeOf('function');
     expect(spinner.props.children.props.live).toBe(true);
@@ -194,6 +205,7 @@ describe('one-line tool ledger', () => {
         ]}
       />,
     );
+    expandRun(renderer, 'read');
     for (const id of ['read', 'bare']) {
       const [row] = hostNodes(renderer, new RegExp(`^tool-ledger-line-${id}$`));
       expect(row.props.style).toEqual(expect.objectContaining({ minHeight: 44 }));
@@ -231,15 +243,21 @@ describe('grouping consecutive steps', () => {
     status,
   });
 
-  it('runs at or under three steps render as individual lines', () => {
+  it.each([1, 2, 3])('a %i-step run renders as one collapsed disclosure', (count) => {
     const renderer = render(
-      <ActivityTimeline active={false} items={[call('a'), call('b'), call('c')]} />,
+      <ActivityTimeline
+        active={false}
+        items={Array.from({ length: count }, (_, index) => call(String.fromCharCode(97 + index)))}
+      />,
     );
-    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(3);
-    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(0);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(1);
+    expect(renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.accessibilityLabel).toBe(
+      `${count} ${count === 1 ? 'step' : 'steps'}, expandable`,
+    );
   });
 
-  it('an unbroken run over three folds into one summary line (design 2026-08-24)', () => {
+  it('an unbroken longer run folds into one summary line (design 2026-08-24)', () => {
     const renderer = render(
       <ActivityTimeline
         active={false}
@@ -318,6 +336,7 @@ describe('the output sheet', () => {
         ]}
       />,
     );
+    expandRun(renderer, 'long');
     act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-long' }).props.onPress());
     const sheet = renderer.root.findByProps({ testID: 'tool-output-sheet' });
     expect(sheet.props.visible).toBe(true);
@@ -346,6 +365,7 @@ describe('the output sheet', () => {
         ]}
       />,
     );
+    expandRun(renderer, 'out');
     act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-out' }).props.onPress());
     const body = renderer.root.findByProps({ testID: 'tool-output-text' });
     expect(body.props.selectable).toBe(true);
@@ -360,6 +380,7 @@ describe('the output sheet', () => {
 
   it('a failed call’s sheet leads with the distilled reason as the subtitle', () => {
     const renderer = render(<ActivityTimeline items={TOOLS} />);
+    expandRun(renderer, 'read');
     act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-failure' }).props.onPress());
     const sheet = renderer.root.findByProps({ testID: 'tool-output-sheet' });
     expect(sheet.props.subtitle).toBe('command not found: pnpm');
@@ -378,8 +399,8 @@ describe('the output sheet', () => {
         messageDraft="The reply is taking shape."
       />,
     );
-    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(1);
-    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' })).toBeTruthy();
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'tool-run-group-read' })).toBeTruthy();
     expect(hostNodes(renderer, /thought/)).toHaveLength(0);
     const draft = renderer.root.findByProps({ testID: 'activity-message-draft' });
     expect(draft.props.markdown).toBe('The reply is taking shape.');
@@ -405,6 +426,7 @@ describe('the output sheet', () => {
       />,
     );
     expect(renderedText(renderer)).not.toContain("at Alex's request");
+    expandRun(renderer, 'deploy');
     act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-deploy' }).props.onPress());
     expect(renderedText(renderer)).toContain("at Alex's request");
   });
@@ -438,7 +460,8 @@ describe('agent prose and drafts', () => {
     );
     // The draft lane is untouched by the ledger: prose stays prose, and the
     // tool lines do not borrow the draft's own tap budget.
-    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(1);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
   });
 
   it('keeps prose tight to the tool line it follows', () => {
@@ -544,6 +567,65 @@ describe('folded historical transcripts', () => {
     activity,
   });
 
+  it('keeps narration-separated runs of one to three tools as separate collapsed disclosures', () => {
+    const call = (id: string) =>
+      row(id, [
+        {
+          kind: 'tool',
+          id,
+          title: 'Read file',
+          toolKind: 'read',
+          input: `${id}.ts`,
+          output: `contents of ${id}.ts`,
+          status: 'completed',
+        },
+      ]);
+    const narration = (id: string, text: string) =>
+      row(id, [{ kind: 'output', title: 'Update', text }]);
+    const folded = foldSettledActivityRuns([
+      call('tool-1'),
+      narration('prose-2', 'First boundary.'),
+      call('tool-3'),
+      call('tool-4'),
+      narration('prose-5', 'Second boundary.'),
+      call('tool-6'),
+      call('tool-7'),
+      call('tool-8'),
+    ]);
+
+    expect(folded.map((message) => message.id)).toEqual([
+      'tool-1',
+      'prose-2',
+      'tool-3',
+      'prose-5',
+      'tool-6',
+    ]);
+    const renderer = render(
+      <>
+        {folded.map((message) => (
+          <ActivityTimeline key={message.id} items={message.activity ?? []} />
+        ))}
+      </>,
+    );
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(3);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-tool-1' }).props.accessibilityLabel,
+    ).toBe('1 step, expandable');
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-tool-3' }).props.accessibilityLabel,
+    ).toBe('2 steps, expandable');
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-tool-6' }).props.accessibilityLabel,
+    ).toBe('3 steps, expandable');
+
+    for (const id of ['tool-1', 'tool-3', 'tool-6']) expandRun(renderer, id);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(6);
+    expect(
+      renderer.root.findByProps({ testID: 'tool-ledger-line-tool-8' }).props.onPress,
+    ).toBeTypeOf('function');
+  });
+
   it('drops thinking-only rows while retaining summary tool lines', () => {
     const [group, ...rest] = foldSettledActivityRuns([
       row('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),
@@ -552,7 +634,8 @@ describe('folded historical transcripts', () => {
     ]);
     expect(rest).toHaveLength(0);
     const renderer = render(<ActivityTimeline items={group.activity!} />);
-    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
+    expect(hostNodes(renderer, /^tool-run-group-/)).toHaveLength(1);
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
     expect(hostNodes(renderer, /^corner-tool-summary$/)).toHaveLength(0);
   });
 

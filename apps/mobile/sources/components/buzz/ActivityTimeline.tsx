@@ -92,13 +92,20 @@ function ToolLedgerLineRow({
       ) : null}
       {showVerdict ? (
         line.outcome === 'running' ? (
-          <View pointerEvents="none" style={styles.callVerdict} testID={`activity-verdict-${line.id}`}>
+          <View
+            pointerEvents="none"
+            style={styles.callVerdict}
+            testID={`activity-verdict-${line.id}`}
+          >
             <BeelineMarkSpinner live />
           </View>
         ) : (
           <Text
             accessibilityElementsHidden
-            style={[styles.callVerdictText, line.outcome === 'failure' ? styles.callFailed : styles.callPassed]}
+            style={[
+              styles.callVerdictText,
+              line.outcome === 'failure' ? styles.callFailed : styles.callPassed,
+            ]}
             testID={`activity-verdict-${line.id}`}
           >
             {line.outcome === 'failure' ? '✗' : '✓'}
@@ -130,9 +137,8 @@ function ToolLedgerLineRow({
 }
 
 /**
- * A consecutive run longer than `TOOL_RUN_INLINE_MAX`: one collapsed summary
- * line — `⌄ 6 steps · 2 failed · 48s` — that expands in place into the same
- * ledger lines the short runs render.
+ * One collapsed machine-run summary — `⌄ 6 steps · 2 failed · 48s` —
+ * that expands in place into its individual ledger lines.
  */
 function ToolRunGroupRow({
   run,
@@ -183,13 +189,7 @@ function ToolRunGroupRow({
  * failure reason as the subtitle, and the full raw output in a scrollable,
  * selectable, copyable mono body. Inline expansion in the transcript is gone.
  */
-function ToolOutputSheet({
-  line,
-  onClose,
-}: {
-  line: ToolLedgerLine | null;
-  onClose: () => void;
-}) {
+function ToolOutputSheet({ line, onClose }: { line: ToolLedgerLine | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(
@@ -234,8 +234,8 @@ function ToolOutputSheet({
 
 /**
  * The live conversational turn: agent prose, and beneath it the one-line tool
- * ledger — a line per step, long consecutive runs folded into one expandable
- * group line, and every line that carries output opening the output sheet.
+ * ledger — one collapsed disclosure per machine run, expanding to a line per
+ * step, with every line that carries output opening the output sheet.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -280,18 +280,9 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           testID={`activity-narration-${index}`}
         />
       ))}
-      {runs.map((run) =>
-        run.kind === 'line' ? (
-          <ToolLedgerLineRow
-            key={run.line.id}
-            line={run.line}
-            onPress={run.line.detail ? () => setSheetLine(run.line) : undefined}
-            testID={`tool-ledger-line-${run.line.id}`}
-          />
-        ) : (
-          <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
-        ),
-      )}
+      {runs.map((run) => (
+        <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
+      ))}
       {messageDraft ? (
         <StreamingProse
           markdown={messageDraft}

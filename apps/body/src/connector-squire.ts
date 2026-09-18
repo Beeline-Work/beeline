@@ -240,13 +240,6 @@ function readLockFileOwner(lockPath: string): SquireProfileLockOwner | undefined
   }
 }
 
-export function readSquireProfileLockOwner(
-  profileDir: string = squireChromeProfileDir(),
-  lockRoot: string = tmpdir(),
-): SquireProfileLockOwner | undefined {
-  return readLockFileOwner(squireProfileLockPath(profileDir, lockRoot));
-}
-
 function removeProfileLock(lockPath: string): void {
   rmSync(lockPath, { recursive: true, force: true });
 }

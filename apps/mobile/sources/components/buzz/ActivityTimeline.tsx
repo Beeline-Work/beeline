@@ -234,8 +234,8 @@ function ToolOutputSheet({ line, onClose }: { line: ToolLedgerLine | null; onClo
 
 /**
  * The live conversational turn: agent prose, and beneath it the one-line tool
- * ledger — one collapsed disclosure per machine run, expanding to a line per
- * step, with every line that carries output opening the output sheet.
+ * ledger — one collapsed disclosure per agent turn, expanding to a line per
+ * tool call, with every line that carries output opening the output sheet.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,

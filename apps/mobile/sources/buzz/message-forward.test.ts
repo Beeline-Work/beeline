@@ -88,7 +88,12 @@ describe('forward targets', () => {
     directMessage?: ChatListItem['directMessage'];
   }): ChatListItem =>
     ({
-      room: { id: overrides.id, name: overrides.name, parentId: overrides.parentId, archived: overrides.archived },
+      room: {
+        id: overrides.id,
+        name: overrides.name,
+        parentId: overrides.parentId,
+        archived: overrides.archived,
+      },
       directMessage: overrides.directMessage,
     }) as ChatListItem;
 
@@ -103,19 +108,34 @@ describe('forward targets', () => {
             peer: { pubkey: 'person-dm', name: 'Bee', handle: '@bee', kind: 'human' },
           },
         }),
+        room({
+          id: 'dm2',
+          name: 'Direct message',
+          directMessage: {
+            peer: { pubkey: 'agent-dm', name: 'Scout', handle: '@scout', kind: 'agent' },
+          },
+        }),
       ],
       workspace,
       'here',
     );
     expect(targets).toEqual([
-      { kind: 'room', id: 'r1', label: '#general' },
-      { kind: 'room', id: 'dm1', label: '@bee' },
-      { kind: 'member', id: 'person-new', label: '@new', memberId: 'person-new' },
+      { kind: 'room', id: 'r1', label: '#general', group: 'rooms' },
+      { kind: 'room', id: 'dm1', label: '@bee', group: 'people' },
+      { kind: 'room', id: 'dm2', label: '@scout', group: 'agents' },
+      {
+        kind: 'member',
+        id: 'person-new',
+        label: '@new',
+        memberId: 'person-new',
+        group: 'people',
+      },
       {
         kind: 'member',
         id: 'agent-new',
         label: '@Helper',
         memberId: 'agent-new',
+        group: 'agents',
       },
     ]);
   });
@@ -131,7 +151,7 @@ describe('forward targets', () => {
       { ...workspace, members: workspace.members.slice(0, 1), agents: [] },
       'here',
     );
-    expect(targets).toEqual([{ kind: 'room', id: 'r2', label: '#keep' }]);
+    expect(targets).toEqual([{ kind: 'room', id: 'r2', label: '#keep', group: 'rooms' }]);
   });
 
   it('does not re-add the source DM peer as a member destination', () => {
@@ -155,7 +175,13 @@ describe('forward targets', () => {
     const resolveDirectMessage = vi.fn(async () => ({ channelId: 'new-dm' }));
     await expect(
       resolveForwardTargetRoom(
-        { kind: 'member', id: 'person-new', label: '@new', memberId: 'person-new' },
+        {
+          kind: 'member',
+          id: 'person-new',
+          label: '@new',
+          memberId: 'person-new',
+          group: 'people',
+        },
         'workspace',
         resolveDirectMessage,
       ),
@@ -165,7 +191,7 @@ describe('forward targets', () => {
     resolveDirectMessage.mockClear();
     await expect(
       resolveForwardTargetRoom(
-        { kind: 'room', id: 'existing-room', label: '#general' },
+        { kind: 'room', id: 'existing-room', label: '#general', group: 'rooms' },
         'workspace',
         resolveDirectMessage,
       ),

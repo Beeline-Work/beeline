@@ -13,6 +13,7 @@ import {
   clampDesktopPaneWidth,
   desktopComposerKeyAction,
   desktopDraftKey,
+  desktopWorkPaneEventApplies,
   desktopWorkPaneMode,
   desktopWorkPaneWidthMode,
   desktopWorkPaneWindowClass,
@@ -22,6 +23,7 @@ import {
   DESKTOP_WORK_PANE_THRESHOLD,
   initialDesktopWorkPaneState,
   isDesktopWorkPaneCommand,
+  type DesktopWorkPaneEvent,
   loadDesktopDraft,
   loadDesktopWorkPanePreference,
   loadDesktopPaneWidth,
@@ -33,6 +35,26 @@ import {
 
 describe('desktop workbench state', () => {
   beforeEach(() => values.clear());
+
+  it('a direct message lets through only hydration and window resizes', () => {
+    const events: DesktopWorkPaneEvent[] = [
+      { type: 'hydrate', preference: 'present' },
+      { type: 'resize', width: 1400 },
+      { type: 'dismiss' },
+      { type: 'toggle' },
+      { type: 'open-overview' },
+      { type: 'open-corner', cornerId: 'c1' },
+      { type: 'open-artifact' },
+      { type: 'drop-corner', cornerId: 'c1' },
+      { type: 'open-corner-in-main' },
+    ];
+    for (const event of events) {
+      expect(desktopWorkPaneEventApplies(event, true)).toBe(
+        event.type === 'hydrate' || event.type === 'resize',
+      );
+      expect(desktopWorkPaneEventApplies(event, false)).toBe(true);
+    }
+  });
 
   it('derives the threshold from the three minimum readable regions', () => {
     expect(DESKTOP_WORK_PANE_THRESHOLD).toBe(240 + 440 + 320);

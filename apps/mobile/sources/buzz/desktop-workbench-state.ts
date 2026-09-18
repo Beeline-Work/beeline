@@ -69,6 +69,22 @@ export function initialDesktopWorkPaneState(width: number): DesktopWorkPaneState
   };
 }
 
+/**
+ * A direct message has no inspector to host — no corners, no repository, no
+ * roster beyond its two participants — so channel-driven pane events are
+ * no-ops there: nothing can re-present the pane, and neither a dismissal nor
+ * a re-presentation is ever persisted as the person's preference. Hydration
+ * and window resizes still apply, so returning to a Room restores the pane
+ * exactly as it was left.
+ */
+export function desktopWorkPaneEventApplies(
+  event: DesktopWorkPaneEvent,
+  isDirectMessage: boolean,
+): boolean {
+  if (!isDirectMessage) return true;
+  return event.type === 'hydrate' || event.type === 'resize';
+}
+
 export function desktopWorkPaneMode(state: DesktopWorkPaneState): DesktopWorkPaneMode {
   return state.widthMode === 'narrow' ? 'suppressed' : state.preference;
 }

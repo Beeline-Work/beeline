@@ -454,6 +454,22 @@ describe('DesktopRoomInspector work pane', () => {
     });
   });
 
+  it('says plainly when a repository has no dispatchable workflows', async () => {
+    phoneOperation.mockResolvedValueOnce({ defaultBranch: 'main', workflows: [] });
+    const repositoryRoom = {
+      ...room(),
+      repositoryResolution: 'repository',
+      repository: { fullName: 'acme/beeline', defaultBranch: 'main' },
+    } as any;
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<DesktopRoomInspector {...props({ room: repositoryRoom })} />);
+    });
+    expect(text(tree)).toContain('WORKFLOWS');
+    expect(text(tree)).toContain('No dispatchable workflows');
+    expect(text(tree)).not.toContain('Could not load workflows');
+  });
+
   it.each(['member', 'owner', 'admin'] as const)(
     'shares corner stop authority for a %s',
     async (role) => {

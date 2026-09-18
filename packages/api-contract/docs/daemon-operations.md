@@ -61,8 +61,12 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 omitting it selects the corner's own PR. It returns `checks` (`passed`, `failed`, or `pending`),
 `pullRequest` (URL), `headSha`, `approvalPending`, `reviewer` (the parent Room's currently
 configured reviewer as `@handle`, or null), `reviewerIsAuthor` (true when that reviewer is also
-this corner's opener), and `rule` (states which actor's `approve_merge` clears the gate). The
-server resolves the current head, shares head-bound check facts across corners, and reconciles
+this corner's opener), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched`,
+plus a `detail` sentence the author can restate), and `rule` (states which actor's `approve_merge`
+clears the gate). The membership used to *deliver* a green wake is not the configuration itself:
+a reviewer id on the parent Room that is not a current parent member stays configured, reports
+`unreachable`, and does not collapse to "no reviewer". The server resolves the current head, shares
+head-bound check facts across corners, and reconciles
 missing/invalidated snapshots with GitHub check runs and combined commit status. A single webhook
 check is not a complete snapshot. When the configured reviewer opened the corner it is reviewing,
 `approvalPending` is false — self-review is not required, and no other agent's approval can ever

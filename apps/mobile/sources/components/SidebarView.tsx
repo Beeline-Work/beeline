@@ -21,6 +21,7 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { useHeaderHeight } from '@/utils/responsive';
 import { isDesktopPlatform } from '@/utils/platform';
 import { ROOM_LABEL, ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
+import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   displayGroupedCornerTitle,
   NO_ACTIVITY_PREVIEW,
@@ -400,12 +401,15 @@ export const SidebarView = React.memo(function SidebarView() {
     [filteredChats],
   );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
-  const canCreateRoom =
-    surface?.viewer.kind !== 'agent' &&
-    (surface?.workspace.role === 'owner' || surface?.workspace.role === 'admin');
+  // ChatListView carries workspace.role; the server's viewer.permissions.manage
+  // is the same boolean (`role !== 'member'`). Do not invent a second gate.
+  const canManageWorkspace = isWorkspaceManagerRole(surface?.workspace.role);
+  const canCreateRoom = surface?.viewer.kind !== 'agent' && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
+  const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
   const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
-  const profileSettingsSelected = pathname.startsWith('/beeline/settings') && !workbenchSelected;
+  const profileSettingsSelected =
+    pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
@@ -556,6 +560,32 @@ export const SidebarView = React.memo(function SidebarView() {
                   {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
                 />
                 <Text style={styles.primaryActionText}>New Room</Text>
+              </Pressable>
+            ) : null}
+            {canManageWorkspace && workspaceId ? (
+              <Pressable
+                accessibilityLabel={`Open ${WORKSPACE_LABEL} settings`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: workspaceSettingsSelected }}
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/settings/workspace',
+                    params: { communityId: workspaceId },
+                  } as Href)
+                }
+                style={({ pressed }) => [
+                  styles.primaryAction,
+                  (workspaceSettingsSelected || pressed) && styles.roomRowSelected,
+                ]}
+                testID="desktop-workspace-settings"
+              >
+                <Ionicons
+                  name="settings-outline"
+                  size={16}
+                  color={styles.primaryActionIcon.color}
+                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                />
+                <Text style={styles.primaryActionText}>{`${WORKSPACE_LABEL} settings`}</Text>
               </Pressable>
             ) : null}
             {workspaceId && identityPubkey ? (

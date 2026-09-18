@@ -663,7 +663,7 @@ describe('Members workspace management', () => {
     });
   });
 
-  it('opens the soul editor on the seeded text and restores it after an edit', async () => {
+  it('opens the soul editor on the running soul with no seeded restore control', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
     await press(renderer, 'edit-agent-soul');
@@ -671,19 +671,73 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
       'Keep the tests green.',
     );
-    await press(renderer, 'restore-seeded-soul');
-    expect(renderer.root.findByProps({ testID: 'agent-soul-instructions' }).props.value).toBe(
-      state.agent.seededSoul,
-    );
-    // Restored, the control has nothing left to do and leaves.
+    // The seeded-restore control is gone; the editor carries only cancel/save.
     expect(renderer.root.findAllByProps({ testID: 'restore-seeded-soul' })).toHaveLength(0);
+  });
 
+  it('writes the seeded soul back when the owner pastes it in', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    await press(renderer, 'edit-agent-soul');
+    await act(async () => {
+      renderer.root
+        .findByProps({ testID: 'agent-soul-instructions' })
+        .props.onChangeText(state.agent.seededSoul);
+    });
     await press(renderer, 'save-agent-soul');
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Clara',
       soul: state.agent.seededSoul,
       avatarSeed: AGENT,
     });
+  });
+
+  it('keeps the soul input on the theme text token with a themed placeholder', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+    await press(renderer, 'edit-agent-soul');
+    const input = renderer.root.findByProps({ testID: 'agent-soul-instructions' });
+    expect(input.props.style.color).toBe(unistylesTheme.buzz.textPrimary);
+    expect(input.props.placeholderTextColor).toBe(unistylesTheme.buzz.textMuted);
+  });
+
+  it('leaves agent rows inert for a member who is neither admin nor owner', async () => {
+    state.workspace = {
+      ...baseWorkspace(),
+      viewer: {
+        ...baseWorkspace().viewer,
+        role: 'member',
+        permissions: { send: true, manage: false },
+      },
+    };
+    const renderer = await render();
+    const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
+    expect(row.props.disabled).toBe(true);
+    expect(row.props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
+    ).toHaveLength(0);
+    expect(
+      renderer.root
+        .findByProps({ testID: `agent-${AGENT}-identity` })
+        .findAllByType('Text' as any)
+        .flatMap((node: any) => node.props.children)
+        .join(' '),
+    ).not.toContain('›');
+  });
+
+  it('keeps agent rows clickable with their chevron for admin and owner viewers', async () => {
+    for (const role of ['admin', 'owner'] as const) {
+      state.workspace = baseWorkspace(role);
+      const renderer = await render();
+      const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
+      expect(row.props.disabled).toBe(false);
+      expect(typeof row.props.onPress).toBe('function');
+      await press(renderer, `agent-${AGENT}-identity`);
+      expect(
+        renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` }),
+      ).toBeTruthy();
+    }
   });
 
   it('shows the seeded soul when its owner has not written one', async () => {
@@ -760,7 +814,10 @@ describe('Members workspace management', () => {
       },
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    // A plain member cannot open the detail panel at all: the row is inert.
+    expect(
+      renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
+    ).toHaveLength(0);
 
     expect(renderer.root.findAllByProps({ testID: 'agent-access-switch' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'edit-agent-soul' })).toHaveLength(0);
@@ -855,7 +912,10 @@ describe('Members workspace management', () => {
       yolo: { enabled: true, canChange: false, setBy: { name: 'Captain' }, setAt: 1_756_684_800 },
     };
     const renderer = await render();
-    await press(renderer, `agent-${AGENT}-identity`);
+    // A plain member cannot open the detail panel at all: the row is inert.
+    expect(
+      renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
+    ).toHaveLength(0);
 
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
   });

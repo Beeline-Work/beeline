@@ -37,6 +37,7 @@ import {
   ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -530,6 +531,10 @@ export class MonolithRoomTurnLoop {
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
+    const harnessLabel = harnessIdentityLabel({
+      kind: this.options.config.agentKind,
+      command,
+    });
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
@@ -545,7 +550,7 @@ export class MonolithRoomTurnLoop {
     this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
     this.sessionScratchDir = tmpDir;
     this.sessionStateDirs = stateDirs;
-    const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
+    const homeStateDirs = harnessHomeStateDirs(harnessLabel, agentEnv.HOME ?? operatorHome);
     await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
     // The same path handed to the MCP server as BEELINE_ATTACH_SCRATCH_ROOT
     // (below): post_artifact can only post what write_scratch_file could write,
@@ -591,7 +596,7 @@ export class MonolithRoomTurnLoop {
     // panel is written into its own extensions directory instead
     // (`pi-mcp-bridge.ts`). Every other harness ignores this.
     await installPiMcpBridge({
-      agentCommand: command,
+      agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
       servers,
     });
@@ -601,7 +606,7 @@ export class MonolithRoomTurnLoop {
       agentArgs: spawnCommand.args,
       agentEnv,
       agentCwd: this.options.cwd,
-      agentLabel: command,
+      agentLabel: harnessLabel,
       // `bwrapPath` is set only when `detectBwrapSandbox` passed its self-test
       // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
       osSandbox: Boolean(this.options.config.bwrapPath),
@@ -707,7 +712,10 @@ export class MonolithRoomTurnLoop {
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
     if (durableReplyText(result.agentText)) return undefined;
     return explainEmptyAgentTurn({
-      agentLabel: this.options.config.agentCommand ?? this.options.config.agentBinary,
+      agentLabel: harnessIdentityLabel({
+        kind: this.options.config.agentKind,
+        command: this.options.config.agentCommand ?? this.options.config.agentBinary,
+      }),
       agentEnv: this.agentEnv,
       sessionId: this.sessionId!,
       result,

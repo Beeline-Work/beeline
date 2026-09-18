@@ -9,6 +9,7 @@ import {
   parseAgentCommand,
   resolveAgentCommand,
 } from './agent-command.js';
+import { runtimeAgentCommand, type AgentRuntimeRecord } from './runtime.js';
 
 const cleanup: string[] = [];
 
@@ -130,28 +131,19 @@ describe('agent command selection', () => {
     });
   });
 
-  it('resolves the Cursor Agent CLI with its ACP adapter to an exact command', async () => {
+  it('resolves a Cursor Agent CLI install through Beeline\'s owned ACP bridge', async () => {
     const cursorAgent = await executable('cursor-agent');
-    const adapter = await executable('cursor-agent-acp');
     const selected = resolveAgentCommand({
       kind: 'cursor',
       env: {
         HOME: await hermeticHome(),
-        PATH: [cursorAgent.directory, adapter.directory].join(delimiter),
+        PATH: cursorAgent.directory,
       },
     });
-    expect(selected).toEqual({ kind: 'cursor', command: adapter.path, args: [] });
-  });
-
-  it('gives an actionable adapter-install error when Cursor Agent CLI needs an ACP adapter', async () => {
-    const cursorAgent = await executable('cursor-agent');
-    const home = await hermeticHome();
-    expect(() =>
-      resolveAgentCommand({
-        kind: 'cursor',
-        env: { HOME: home, PATH: cursorAgent.directory },
-      }),
-    ).toThrow('npm install -g cursor-agent-acp');
+    expect(selected.kind).toBe('cursor');
+    expect(selected.command).toBe(process.execPath);
+    expect(selected.args.some((arg) => arg.includes('cursor-acp-bridge'))).toBe(true);
+    expect(selected.args).not.toContain('cursor-agent-acp');
   });
 
   it('gives an actionable install error when the Cursor Agent CLI is missing', async () => {
@@ -161,7 +153,7 @@ describe('agent command selection', () => {
     ).toThrow('Cursor Agent CLI not found');
   });
 
-  it('detects a cursor-agent install as missing-adapter when the ACP adapter is absent', async () => {
+  it('detects a cursor-agent install as ready with no adapter step', async () => {
     const cursorAgent = await executable('cursor-agent');
     const home = await hermeticHome();
     const detected = detectInstalledAgentCommands({
@@ -169,9 +161,31 @@ describe('agent command selection', () => {
     });
     expect(detected).toContainEqual({
       kind: 'cursor',
-      status: 'missing-adapter',
-      install: { command: 'npm', args: ['install', '-g', 'cursor-agent-acp'] },
+      status: 'ready',
+      agent: expect.objectContaining({
+        kind: 'cursor',
+        command: process.execPath,
+      }),
     });
+    expect(detected.some((candidate) => candidate.status === 'missing-adapter' && candidate.kind === 'cursor')).toBe(
+      false,
+    );
+  });
+
+  it('re-resolves a stored cursor-agent-acp runtime onto the owned bridge', async () => {
+    const cursorAgent = await executable('cursor-agent');
+    const selected = runtimeAgentCommand(
+      {
+        agentKind: 'cursor',
+        agentCommand: '/usr/bin/cursor-agent-acp',
+        agentArgs: [],
+        agentBinary: '/usr/bin/cursor-agent-acp',
+      } as AgentRuntimeRecord,
+      { HOME: await hermeticHome(), PATH: cursorAgent.directory },
+    );
+    expect(selected.kind).toBe('cursor');
+    expect(selected.command).toBe(process.execPath);
+    expect(selected.args.some((arg) => arg.includes('cursor-acp-bridge'))).toBe(true);
   });
 
   it('resolves a Cursor community-bridge custom command through the custom path', async () => {

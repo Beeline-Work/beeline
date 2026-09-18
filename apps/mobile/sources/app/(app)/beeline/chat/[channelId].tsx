@@ -4120,7 +4120,9 @@ export default function BuzzChat() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
-        <Text style={styles.loadingText}>LOADING {ROOM_LABEL.toUpperCase()}</Text>
+        <Text style={styles.loadingText}>
+          LOADING {(isCorner ? CORNER_LABEL : ROOM_LABEL).toUpperCase()}
+        </Text>
       </View>
     );
   }

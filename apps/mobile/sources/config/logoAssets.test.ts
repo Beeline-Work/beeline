@@ -14,6 +14,8 @@ const DARK_SPLASH_SHA256 = 'ee8fbf35ab77d06c6b11c48158056e094315ff50c558f4ea4062
 const vectorNames = [
   'icon.svg',
   'icon-adaptive.svg',
+  'icon-light.svg',
+  'icon-monochrome.svg',
   'mark.svg',
   'mark-dark.svg',
   'favicon-active.svg',
@@ -50,22 +52,30 @@ describe('Beeline continuous-line logo assets', () => {
     expect(vectors[0]).toContain('rect width="240" height="240" fill="#14091A"');
     expect(vectors[0]).toContain('fill="#E5A645"');
     expect(vectors[1]).toContain('fill="#E5A645"');
-    expect(vectors[2]).toContain('fill="#E5A645"');
-    expect(vectors[3]).toContain('fill="#14091A"');
-    expect(vectors[4]).toContain('rect width="240" height="240" fill="#14091A"');
+    // icon-light.svg and icon-monochrome.svg are the new light/monochrome icon
+    // variants; they do not carry brass or aubergine colors.
     expect(vectors[4]).toContain('fill="#E5A645"');
     expect(vectors[5]).toContain('fill="#14091A"');
+    expect(vectors[6]).toContain('rect width="240" height="240" fill="#14091A"');
     expect(vectors[6]).toContain('fill="#E5A645"');
+    expect(vectors[7]).toContain('fill="#14091A"');
+    expect(vectors[8]).toContain('fill="#E5A645"');
     expect(adaptiveBackground).toContain('fill="#14091A"');
     expect([...vectors, adaptiveBackground].join('\n')).not.toMatch(
       /#f0b95a|#C48A33|linearGradient/i,
     );
 
     expect(appConfig.icon).toBe('./sources/assets/images/icon.png');
+    expect(appConfig.ios.icon).toMatchObject({
+      light: './sources/assets/images/icon-light.png',
+      dark: './sources/assets/images/icon-ios.png',
+      tinted: './sources/assets/images/icon-ios-tinted.png',
+    });
     expect(appConfig.android.adaptiveIcon).toEqual({
       foregroundImage: './sources/assets/images/icon-adaptive.png',
       backgroundImage: './sources/assets/images/icon-adaptive-background.png',
       backgroundColor: '#14091A',
+      monochromeImage: './sources/assets/images/icon-adaptive-monochrome.png',
     });
     expect(appConfig.web.favicon).toBe('./sources/assets/images/favicon.png');
     const notificationPlugin = appConfig.plugins.find(
@@ -102,6 +112,50 @@ describe('Beeline continuous-line logo assets', () => {
     expect(JSON.stringify(appConfig)).not.toContain('#090909');
   });
 
+  it('uses ink on cream for the default iOS light icon and white on transparent for tinted/monochrome', () => {
+    const lightSvg = readFileSync(
+      new URL('../assets/images/icon-light.svg', import.meta.url),
+      'utf8',
+    );
+    const monoChromeSvg = readFileSync(
+      new URL('../assets/images/icon-monochrome.svg', import.meta.url),
+      'utf8',
+    );
+
+    // Light icon: cream field (#F3EEE4), ink loop (#171310)
+    expect(lightSvg).toContain('rect width="1024" height="1024" fill="#F3EEE4"');
+    expect(lightSvg).toContain('fill="#171310"');
+    expect(lightSvg).toContain(adaptiveFraming);
+    expect(lightSvg).toContain(canonicalInset);
+
+    // Monochrome icon: white loop on transparent, no background rect
+    expect(monoChromeSvg).not.toMatch(/<rect/);
+    expect(monoChromeSvg).toContain('fill="#FFFFFF"');
+    expect(monoChromeSvg).toContain(adaptiveFraming);
+    expect(monoChromeSvg).toContain(canonicalInset);
+  });
+
+  it('generates 1024x1024 PNGs for the new icon variants', () => {
+    const lightPng = readFileSync(
+      new URL('../assets/images/icon-light.png', import.meta.url),
+    );
+    const tintedPng = readFileSync(
+      new URL('../assets/images/icon-ios-tinted.png', import.meta.url),
+    );
+    const monoChromePng = readFileSync(
+      new URL('../assets/images/icon-adaptive-monochrome.png', import.meta.url),
+    );
+
+    // Check PNG dimensions via the file header (IHDR chunk at bytes 16-20)
+    for (const png of [lightPng, tintedPng, monoChromePng]) {
+      expect(png[0]).toBe(0x89); // PNG magic byte
+      const width = png.readUInt32BE(16);
+      const height = png.readUInt32BE(20);
+      expect(width).toBe(1024);
+      expect(height).toBe(1024);
+    }
+  });
+
   it('uses the canonical swirl in ink on ivory for the light splash', () => {
     const lightSplash = readFileSync(
       new URL('../assets/images/splash-android-light.png', import.meta.url),
@@ -118,7 +172,12 @@ describe('Beeline continuous-line logo assets', () => {
     expect(vectors[0]).toContain(canonicalInset);
     expect(vectors[1]).toContain(canonicalInset);
     expect(vectors[1]).toContain(adaptiveFraming);
-    for (const vector of vectors.slice(2)) {
+    // icon-light.svg and icon-monochrome.svg are adaptive home-screen marks
+    expect(vectors[2]).toContain(canonicalInset);
+    expect(vectors[2]).toContain(adaptiveFraming);
+    expect(vectors[3]).toContain(canonicalInset);
+    expect(vectors[3]).toContain(adaptiveFraming);
+    for (const vector of vectors.slice(4)) {
       expect(vector).not.toContain(canonicalInset);
       expect(vector).not.toContain(adaptiveFraming);
     }

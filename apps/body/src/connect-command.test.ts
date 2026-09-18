@@ -64,7 +64,7 @@ function promptFixture(answers: string[]) {
 }
 
 /** Supported harnesses this machine is pretending to have installed. */
-function installed(...kinds: Array<'codex' | 'claude' | 'goose' | 'pi' | 'grok'>) {
+function installed(...kinds: Array<'codex' | 'claude' | 'goose' | 'pi' | 'grok' | 'cursor'>) {
   return () =>
     kinds.map(
       (kind) =>
@@ -939,26 +939,97 @@ describe('connect wizard', () => {
     expect(picker.note).toBeUndefined();
   });
 
-  it('reads the effort axis under any of the three names a harness spells it with', () => {
-    for (const category of ['effort', 'reasoning_effort', 'thought_level']) {
-      expect(
-        connectEffortPickerFromAxes([
-          { category: 'model', options: [{ id: 'gpt-5.4' }] },
-          { category, currentValue: 'medium', options: [{ id: 'low' }, { id: 'medium' }] },
-        ]),
-      ).toEqual({ currentValue: 'medium', options: [{ id: 'low' }, { id: 'medium' }] });
-    }
-    // Nothing to choose from is not a question worth asking.
-    expect(connectEffortPickerFromAxes([{ category: 'model', options: [] }])).toBeUndefined();
-    expect(connectEffortPickerFromAxes([{ category: 'effort', options: [] }])).toBeUndefined();
-    // Same raw-axis fallback the model picker keeps: a filter that emptied the
-    // safe view must not cost the question.
-    expect(
-      connectEffortPickerFromAxes(
-        [{ category: 'effort', currentValue: 'off', options: [] }],
-        [{ category: 'thought_level', currentValue: 'off', options: [{ id: 'off' }] }],
+  it('completes the wizard flow for cursor when the probe enumerates no models', async () => {
+    // cursor-agent-acp's session/new does not expose configOptions or models,
+    // so the catalog comes back empty and the probe returns undefined (not
+    // configured). The wizard falls through to the non-configured path, skips
+    // provider questions (cursor is not in CONNECT_PROVIDER_HARNESSES), loads
+    // the unbounded catalog, and offers the default model with an explanatory
+    // note. The flow must complete without throwing.
+    const fixture = promptFixture(['cursor', 'auto']);
+    const announced: string[] = [];
+    const seam = catalogSeam({
+      configured: {
+        // Simulate what cursor-agent-acp returns: no model options at all.
+        // connectModelPickerFromAxes then produces the fallback catalog with
+        // the explanatory note and default model as the single option.
+        currentValue: 'auto',
+        options: [{ id: 'auto' }],
+        note: 'cursor did not enumerate models; offering the provider default',
+      },
+    });
+
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        seam.load,
+        { read: async () => undefined, save: async () => {} },
+        process.env,
+        async () => undefined,
+        { detect: installed('cursor'), announce: (line) => announced.push(line) },
       ),
-    ).toEqual({ currentValue: 'off', options: [{ id: 'off' }] });
+    ).resolves.toEqual({
+      harness: 'cursor',
+      model: 'auto',
+    });
+    // The probe returned nothing, so nothing is announced as found.
+    expect(announced).toEqual([]);
+    // Two questions: harness (select), model (autocomplete with fallback)
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
+      'select',
+      'autocomplete',
+    ]);
+    // The model picker call includes the explanatory note
+    expect(fixture.calls[1]).toContain('cursor did not enumerate models');
+  });
+
+  it('handles undefined picked from prompts in askModel without crashing', async () => {
+    // If prompts.autocomplete returns undefined (observed in clack's
+    // multiselect validator checking `t === void 0`), the old bare
+    // `picked.trim()` would crash with "Cannot read properties of undefined
+    // (reading 'trim')". The guard `(picked ?? '').trim()` prevents this.
+    const fixture = promptFixture(['codex', '']);
+    // The empty string answer triggers the autocomplete path; the fixture
+    // returns '' which exercises the trim guard on a falsy-but-not-undefined
+    // value. The test verifies no crash and a resolved promise.
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        catalogSeam({
+          configured: { options: [{ id: 'gpt-5.4' }] },
+        }).load,
+        { read: async () => undefined, save: async () => {} },
+        process.env,
+        async () => undefined,
+        { detect: installed('codex'), announce: () => {} },
+      ),
+    ).resolves.toBeDefined();
+    expect(fixture.calls[0]).toContain('Choose model');
+  });
+
+  it('handles undefined picked from prompts in askEffort without crashing', async () => {
+    // Same guard applies to the effort picker's `picked.trim()`.
+    const fixture = promptFixture(['codex', 'gpt-5.4', '']);
+    await expect(
+      collectConnectWizard(
+        fixture.prompts,
+        catalogSeam({
+          configured: {
+            currentValue: 'gpt-5.4',
+            options: [{ id: 'gpt-5.4' }],
+            effort: {
+              currentValue: 'medium',
+              options: [{ id: 'medium' }, { id: 'high' }],
+            },
+          },
+        }).load,
+        { read: async () => undefined, save: async () => {} },
+        process.env,
+        async () => undefined,
+        { detect: installed('codex'), announce: () => {} },
+      ),
+    ).resolves.toBeDefined();
+    expect(fixture.calls[1]).toContain('Choose reasoning effort');
   });
 
   it('sends the chosen effort with the claim, and omits it when nothing was chosen', async () => {

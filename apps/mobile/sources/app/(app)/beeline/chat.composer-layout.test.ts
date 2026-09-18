@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
+const ledger = readFileSync(
+  new URL('../../../components/buzz/Ledger.tsx', import.meta.url),
+  'utf8',
+);
 const composerSource = readFileSync(
   new URL('../../../components/buzz/ConversationComposer.tsx', import.meta.url),
   'utf8',
@@ -67,13 +71,48 @@ describe('Room composer status layout', () => {
     expect(source).toContain('copyEntireTurn(text, Clipboard.setStringAsync)');
   });
 
-  it('keeps desktop transcript rows out of transform-based inversion', () => {
-    expect(source).toContain('const desktopTranscript = isDesktop;');
+  it('keeps desktop transcript rows out of transform-based inversion at every window width', () => {
+    // Tauri's Windows shell is a web surface and can be resized below the
+    // persistent-sidebar breakpoint. Transcript flow follows the platform,
+    // not that width breakpoint, because variable-height inverted web rows
+    // can retain stale transform coordinates and overlap.
+    expect(source).toContain('const desktopTranscript = desktopExperience;');
+    expect(source).not.toContain('const desktopTranscript = isDesktop;');
     expect(source).not.toContain("const desktopTranscript = Platform.OS === 'web';");
     expect(source).toContain('const transcriptMessages = desktopTranscript ? visibleMessages');
     expect(source).toContain('inverted={!desktopTranscript && transcriptMessages.length > 0}');
     expect(source).toContain('flatListRef.current?.scrollToEnd({ animated: false });');
     expect(source).toContain('desktopTranscript && styles.messageListContentDesktop');
+  });
+
+  it('keeps attachment and system-message height in the measured row flow', () => {
+    const entry = ledger.slice(
+      ledger.indexOf('export function LedgerEntry'),
+      ledger.indexOf('export function LedgerSteer'),
+    );
+    const entryStyle = ledger.slice(
+      ledger.indexOf('  entry: {'),
+      ledger.indexOf('  entryWithByline: {'),
+    );
+    const systemLineStyle = ledger.slice(
+      ledger.indexOf('  systemLine: {'),
+      ledger.indexOf('  systemLineText: {'),
+    );
+    const attachmentStyle = variants.slice(
+      variants.indexOf('  attachmentCard: {'),
+      variants.indexOf('  attachmentThumbnail: {'),
+    );
+
+    // Attachments stay inside the message's measured outer row, and system
+    // lines own a relative outer row. The timestamp may hang in its reserved
+    // gutter, but neither variable-height row itself may be absolute.
+    expect(entry).toContain('{attachments}');
+    expect(entryStyle).toContain("width: '100%'");
+    expect(entryStyle).not.toContain("position: 'absolute'");
+    expect(attachmentStyle).toContain('minHeight: 58');
+    expect(attachmentStyle).not.toContain("position: 'absolute'");
+    expect(systemLineStyle).toContain("position: 'relative'");
+    expect(systemLineStyle).toContain("width: '100%'");
   });
 });
 

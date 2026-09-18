@@ -145,7 +145,7 @@ export function ConversationComposer({
       : speech.state === 'nothing-recognised'
         ? "didn't catch that \u00b7 tap mic to try again"
         : speech.state === 'listening'
-          ? '\u25cf listening \u00b7 tap mic to stop'
+          ? 'listening \u00b7 tap mic to stop'
           : '';
   const statusIsError =
     speech.state === 'permission-denied' || speech.state === 'nothing-recognised';
@@ -327,6 +327,12 @@ export function ConversationComposer({
             style={[
               styles.micButton,
               isListening && styles.micButtonListening,
+              isListening && {
+                opacity: 0.72 + speech.volumeLevel * 0.28,
+                shadowOpacity: 0.16 + speech.volumeLevel * 0.44,
+                shadowRadius: 4 + speech.volumeLevel * 6,
+                transform: [{ scale: 1 + speech.volumeLevel * 0.12 }],
+              },
               speech.state === 'permission-denied' && styles.micButtonDimmed,
             ]}
             testID={`${testIDPrefix}-mic`}

@@ -39,10 +39,22 @@ describe('desktop layout mode', () => {
     const channels = source('app/(app)/beeline/channels.tsx');
 
     expect(sidebar).toContain('roomListSections(filteredChats)');
-    expect(sidebar).toContain("section.kind === 'rooms' && <RoomListSectionHeader");
+    expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
     expect(sidebar).toContain('<RoomListSectionHeader');
-    expect(sidebar).not.toContain("'Direct messages'");
     expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
+  });
+
+  it('keeps creation and utility destinations above the conversation sections', () => {
+    const sidebar = source('components/SidebarView.tsx');
+    const actions = sidebar.indexOf('testID="desktop-primary-actions"');
+    const sections = sidebar.indexOf('<RoomListSectionHeader', actions);
+
+    expect(actions).toBeGreaterThanOrEqual(0);
+    expect(sections).toBeGreaterThan(actions);
+    expect(sidebar).toContain('testID="desktop-new-room"');
+    expect(sidebar).toContain('testID="desktop-workbench"');
+    expect(sidebar).toContain('testID="desktop-bookmarks"');
+    expect(sidebar).not.toContain('desktop-create-section');
   });
 
   it('aligns the desktop Workspace identity with the conversation header', () => {
@@ -93,7 +105,7 @@ describe('desktop layout mode', () => {
     expect(messages).not.toContain("if (Platform.OS === 'web') {");
     expect(messages).not.toContain('<Text style={styles.replyDesktopLabel}>REPLY</Text>');
     expect(room).toContain('const desktopExperience = isDesktopPlatform();');
-    expect(room).toContain('const desktopTranscript = isDesktop;');
+    expect(room).toContain('const desktopTranscript = desktopExperience;');
   });
 
   it('shares the Ledger turn rhythm between mobile and desktop transcripts', () => {

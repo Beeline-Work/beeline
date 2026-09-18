@@ -15,6 +15,10 @@ describe('artifact format selection (one artifact kind keyed by mime)', () => {
   it('selects the per-format branch from the mime type alone', () => {
     expect(artifactFormat('text/html')).toBe('html');
     expect(artifactFormat('image/svg+xml')).toBe('svg');
+    expect(artifactFormat('image/png')).toBe('image');
+    expect(artifactFormat('image/jpeg')).toBe('image');
+    expect(artifactFormat('image/gif')).toBe('image');
+    expect(artifactFormat('image/webp')).toBe('image');
     expect(artifactFormat('application/pdf')).toBe('pdf');
     expect(artifactFormat('text/markdown')).toBe('markdown');
     expect(artifactFormat('text/x-markdown')).toBe('markdown');

@@ -112,6 +112,7 @@ interface WaitForAuthCallbackInput {
     listener: (url: string) => void,
   ): AuthUrlSubscription | Promise<AuthUrlSubscription>;
   callbackGraceMs?: number;
+  openedCallbackWaitMs?: number;
 }
 
 export interface AuthCallbackResult {
@@ -143,6 +144,7 @@ export async function waitForAuthCallbackResult({
   openAuthSession,
   subscribeToUrls,
   callbackGraceMs = 1_500,
+  openedCallbackWaitMs = 120_000,
 }: WaitForAuthCallbackInput): Promise<AuthCallbackResult> {
   let resolveObservedCallback: (result: AuthCallbackResult) => void = () => undefined;
   const observedCallback = new Promise<AuthCallbackResult>((resolve) => {
@@ -165,10 +167,15 @@ export async function waitForAuthCallbackResult({
       return { url: browserResult.url, source: 'browser' };
     }
 
+    // Native auth-session implementations settle only after their browser has
+    // closed. Tauri can only report that it opened the system browser, so its
+    // callback remains live for the whole authorization window instead of
+    // being mistaken for a canceled browser after the native grace period.
+    const waitMs = browserResult.type === 'opened' ? openedCallbackWaitMs : callbackGraceMs;
     const callback = await Promise.race([
       observedCallback,
       new Promise<null>((resolve) => {
-        timeout = setTimeout(() => resolve(null), callbackGraceMs);
+        timeout = setTimeout(() => resolve(null), waitMs);
       }),
     ]);
     if (callback) return callback;

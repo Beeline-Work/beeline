@@ -198,6 +198,16 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   const { theme } = useUnistyles();
   const groknight = theme.buzz;
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
+  // Connector identities are fixed server-owned speakers, not people opting
+  // into profile photos. Their logo URL is the identity mark itself, so this
+  // narrow lane does not weaken the product-wide no-photo rule for humans.
+  const showConnectorLogo =
+    kind === 'human' &&
+    Boolean(
+      avatarUrl &&
+      /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(avatarUrl) &&
+      failedAvatar !== avatarUrl,
+    );
   // Workspace pictures are the sole photo exception. Human and agent relay
   // photos stay inert even when an untyped/stale caller supplies avatarUrl.
   const showRelayAvatar =
@@ -226,6 +236,24 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
         ) : (
           <WorkspacePlate seed={seed} size={size} selected={selected} />
         )}
+      </View>
+    );
+  }
+
+  if (showConnectorLogo) {
+    return (
+      <View
+        accessibilityLabel={label}
+        style={[styles.frame, styles.plate, { width: size, height: size }]}
+        testID={testID}
+      >
+        <Image
+          onError={() => setFailedAvatar(avatarUrl ?? null)}
+          resizeMode="cover"
+          source={{ uri: avatarUrl! }}
+          style={styles.image}
+          testID="identity-connector-logo"
+        />
       </View>
     );
   }

@@ -15,6 +15,7 @@ import {
   type DetectedAgentCommand,
 } from './agent-command.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
+import { enumerateCursorModels } from './cursor-models.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import { verifyProviderKey, type ConnectKeyProvider } from './provider-key-check.js';
 import { completeDevicePairing, type DevicePairingGrant } from './device-pairing.js';
@@ -82,7 +83,9 @@ const DEFAULT_MODELS: Record<ConnectProvider | 'codex' | 'claude' | 'grok' | 'cu
   codex: 'gpt-5.4',
   claude: 'claude-opus-4-1',
   grok: 'grok-4',
-  cursor: 'claude-sonnet-4',
+  // cursor-agent's own default; always served, and the only model safe to
+  // assume before `cursor-agent models` has been read.
+  cursor: 'auto',
 };
 
 /**
@@ -333,13 +336,25 @@ export async function loadConnectModelCatalog(
     input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
   );
   const effort = connectEffortPickerFromAxes(catalog.catalog, catalog.raw);
+  const picker = connectModelPickerFromAxes(
+    catalog.catalog,
+    defaultConnectModel(input.harness, input.provider),
+    input.harness,
+    catalog.raw,
+  );
+  // cursor-agent-acp advertises no model axis at `session/new`, but the
+  // cursor-agent CLI does: enumerate real models there instead of offering a
+  // single invented default. Any CLI failure keeps the fallback picker.
+  if (
+    input.harness === 'cursor' &&
+    !catalog.catalog.some((axis) => axis.category === 'model' && axis.options.length) &&
+    !catalog.raw.some((axis) => axis.category === 'model' && axis.options.length)
+  ) {
+    const cliModels = await enumerateCursorModels();
+    if (cliModels) return { ...cliModels, ...(effort ? { effort } : {}) };
+  }
   return {
-    ...connectModelPickerFromAxes(
-      catalog.catalog,
-      defaultConnectModel(input.harness, input.provider),
-      input.harness,
-      catalog.raw,
-    ),
+    ...picker,
     ...(effort ? { effort } : {}),
   };
 }
@@ -450,7 +465,7 @@ export async function collectConnectWizard(
       placeholder: 'Type to filter available models…',
       maxItems: 12,
     });
-    return picked.trim();
+    return (picked ?? '').trim();
   };
   /**
    * Reasoning effort, asked whenever the harness advertises the axis. Ladders
@@ -491,7 +506,7 @@ export async function collectConnectWizard(
         ? { initialValue: axis.currentValue! }
         : {}),
     });
-    return picked.trim();
+    return (picked ?? '').trim();
   };
   // One bounded attempt, and never a hard failure: a harness that times out,
   // refuses or crashes is simply one the wizard has to ask about.

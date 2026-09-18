@@ -207,6 +207,8 @@ describe('listening flow', () => {
 
     // Check placeholder
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Listening');
+    const status = renderer.root.findByProps({ testID: 'chat-speech-status' }).findByType('Text');
+    expect(String(status.props.children)).toBe('listening \u00b7 tap mic to stop');
   });
 
   it('shows interim transcript once, inside the input in provisional styling', async () => {
@@ -294,7 +296,7 @@ describe('listening flow', () => {
     expect(status.props.accessibilityRole).toBe('text');
   });
 
-  it('moves the mic level marks in response to native volume', async () => {
+  it('pulses the mic treatment in response to native volume', async () => {
     const { renderer } = render();
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
@@ -302,6 +304,12 @@ describe('listening flow', () => {
     await act(async () => fireEvent('volumechange', { value: 10 }));
     const after = renderer.root.findAllByType('RNSVGLine').map((line: any) => line.props.y1);
     expect(after).not.toEqual(before);
+    const micStyle = renderer.root.findByProps({ testID: 'chat-mic' }).props.style;
+    expect(micStyle).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ transform: [{ scale: 1.12 }], opacity: 1 }),
+      ]),
+    );
   });
 
   it('commits final result to onChangeText', async () => {
@@ -350,6 +358,49 @@ describe('listening flow', () => {
     });
     expect(onChangeText).toHaveBeenCalledWith('hello there friend');
     expect(root).toBeTruthy();
+  });
+
+  it('replaces interim text with the final transcript without rendering both', async () => {
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState('');
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={setValue}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={vi.fn()}
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />);
+    });
+    renderers.push(renderer);
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'hello world' }], isFinal: false });
+    });
+    const interimOverlays = () =>
+      renderer.root
+        .findAllByType('View')
+        .filter((node: any) => node.props.testID === 'chat-speech-interim');
+    expect(interimOverlays()).toHaveLength(1);
+
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'hello world' }], isFinal: true });
+    });
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('hello world');
+    expect(interimOverlays()).toHaveLength(0);
   });
 
   it('auto-stops after silence timeout', async () => {
@@ -409,7 +460,7 @@ describe('edge states', () => {
     );
   });
 
-  it('shows "nothing recognised" when stopped without result', async () => {
+  it('does not show a capture error when the user stops before speaking', async () => {
     const { renderer } = render();
     const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });
 
@@ -420,9 +471,7 @@ describe('edge states', () => {
     await act(async () => micBtn.props.onPress());
     await act(async () => {});
 
-    const statusLine = renderer.root.findByProps({ testID: 'chat-speech-status' });
-    const statusText = statusLine.findByType('Text');
-    expect(String(statusText.props.children)).toContain("didn't catch that");
+    expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
   });
 });
 

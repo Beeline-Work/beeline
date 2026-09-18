@@ -63,9 +63,9 @@ describe('wallet over the fake CDP seam', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
-    helperToken = (
-      await auth.exchangeDaemonToken((await auth.createDaemonExchange(HELPER)).exchangeToken)
-    )!.daemonToken;
+    helperToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(HELPER)).exchangeToken,
+    ))!.daemonToken;
   });
 
   afterEach(async () => {
@@ -115,6 +115,34 @@ describe('wallet over the fake CDP seam', () => {
       address: string;
     };
     expect(again.address).toBe(view.address);
+
+    const emptyChats = (await (
+      await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      })
+    ).json()) as { chats: Array<{ directMessage?: { peer: { handle?: string } } }> };
+    expect(emptyChats.chats.some((chat) => chat.directMessage?.peer.handle === 'wallet')).toBe(
+      false,
+    );
+
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+    const chats = (await (
+      await fetch(`${origin}/v1/phone/workspaces/${WORKSPACE}/chats`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      })
+    ).json()) as {
+      chats: Array<{
+        latestMessage?: { text: string };
+        directMessage?: { peer: { name: string; handle?: string; avatar?: string } };
+      }>;
+    };
+    const wallet = chats.chats.find((chat) => chat.directMessage?.peer.handle === 'wallet');
+    expect(wallet?.directMessage?.peer).toMatchObject({
+      name: 'Wallet',
+      handle: 'wallet',
+      avatar: 'http://placeholder/v1/connectors/logo/wallet.svg',
+    });
+    expect(wallet?.latestMessage?.text).toContain('granted agents permission to sign');
   });
 
   it('a failing history read does not break createWallet or readWallet', async () => {

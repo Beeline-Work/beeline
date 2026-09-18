@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   platformOS: { value: 'android' as string },
   safeAreaTop: { value: 42 },
+  artifactImageSource: vi.fn(),
   fetchArtifactBytes: vi.fn(),
   fetchArtifactText: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock('react-native', async () => {
       select: (choices: Record<string, unknown>) => choices.default,
     },
     Pressable: host('Pressable'),
+    Image: host('Image'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),
     View: host('View'),
@@ -57,6 +59,7 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: mocks.safeAreaTop.value, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock('@/buzz/artifact-link', () => ({
+  artifactImageSource: mocks.artifactImageSource,
   artifactPdfLocalUri: mocks.artifactPdfLocalUri,
   fetchArtifactBytes: mocks.fetchArtifactBytes,
   fetchArtifactText: mocks.fetchArtifactText,
@@ -162,6 +165,26 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(html).toContain(ARTIFACT_DEFAULT_CANVAS);
     // The transparent-page regression painted the SVG over the app ink plate.
     expect(html.includes('background:transparent')).toBe(false);
+  });
+
+  it('renders a photo in-app with authenticated media and contain fit', async () => {
+    const source = {
+      uri: 'https://server.usebeeline.app/v1/media/9f0f6a50-1111-4222-8333-444455556666',
+      headers: { authorization: 'Bearer access-token' },
+    };
+    mocks.artifactImageSource.mockResolvedValue(source);
+    const renderer = render(
+      <ArtifactViewerScreen
+        attachment={attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    const image = renderer.root.findByProps({ testID: 'artifact-viewer-image' });
+    expect(image.props.source).toEqual(source);
+    expect(image.props.resizeMode).toBe('contain');
+    expect(image.props.accessibilityLabel).toBe('Photo');
+    expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
   });
 
   it('every navigation after the initial load is denied', async () => {

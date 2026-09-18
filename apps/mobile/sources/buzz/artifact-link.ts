@@ -12,10 +12,28 @@ import { cacheDirectory, writeAsStringAsync, EncodingType } from 'expo-file-syst
  * signed storage link — fetch follows it); "Open in browser" mints a
  * ten-minute signed link through `GET /v1/media/<id>/link` at tap time, so
  * Chrome gets a URL it can read without the app's bearer token.
+ *
+ * An attachment's stored url is caller-supplied text, so it is read for its
+ * media id and thrown away: every request is rebuilt against the configured
+ * monolith origin. An absolute url is never followed, because this session's
+ * bearer token belongs to that origin alone and any host can serve a
+ * `/v1/media/<id>` path.
  */
 export function artifactMediaUrl(attachment: AttachmentReference): string {
-  const base = getBuzzRuntimeConfig().monolithUrl;
-  return attachment.url.startsWith('http') ? attachment.url : `${base}${attachment.url}`;
+  const objectId = mediaIdFromUrl(attachment.url);
+  if (!objectId) throw new Error('attachment is not a monolith media URL');
+  return `${getBuzzRuntimeConfig().monolithUrl}/v1/media/${objectId}`;
+}
+
+/** Native images load the authenticated artifact route without leaving the app. */
+export async function artifactImageSource(attachment: AttachmentReference): Promise<{
+  uri: string;
+  headers: { authorization: string };
+}> {
+  return {
+    uri: artifactMediaUrl(attachment),
+    headers: { authorization: `Bearer ${await monolithSession.authorization()}` },
+  };
 }
 
 export async function fetchArtifactBytes(attachment: AttachmentReference): Promise<Uint8Array> {

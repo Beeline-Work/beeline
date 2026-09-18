@@ -8,79 +8,112 @@ const app = () =>
     slug: 'test',
     apiBaseUrl: 'https://api.github.test',
   });
+const sha = 'a'.repeat(40);
+const response = (state: string, nodes: Record<string, unknown>[], totalCount = nodes.length) => ({
+  data: {
+    repository: {
+      object: { oid: sha, statusCheckRollup: { state, contexts: { totalCount, nodes } } },
+    },
+  },
+});
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('GitHub PR check reads', () => {
-  it('paginates latest runs so a failure beyond the first hundred is not hidden', async () => {
-    const urls: string[] = [];
-    vi.stubGlobal('fetch', async (input: string) => {
-      urls.push(input);
-      return Response.json(
-        new URL(input).searchParams.get('page') === '1'
-          ? {
-              check_runs: Array.from({ length: 100 }, (_, id) => ({
-                id,
-                status: 'completed',
-                conclusion: 'success',
-              })),
-            }
-          : new URL(input).searchParams.get('page') === '2'
-            ? { check_runs: [{ id: 101, status: 'completed', conclusion: 'failure' }] }
-            : { state: 'pending', total_count: 0 },
-      );
-    });
-    const checks = await app().readCommitChecks('token', 'owner/widgets', 'a'.repeat(40));
-    expect(Object.keys(checks)).toHaveLength(101);
-    expect(checks['run:101']).toBe('failed');
-    expect(urls).toHaveLength(3);
-    expect(urls[0]).toContain('filter=latest&per_page=100&page=1');
-  });
-
-  it('maps neutral/skipped to passing, queued/null to pending and terminal errors to failed', async () => {
-    const runs = [
-      { id: 1, status: 'completed', conclusion: 'neutral' },
-      { id: 2, status: 'completed', conclusion: 'skipped' },
-      { id: 3, status: 'queued', conclusion: null },
-      { id: 4, status: 'completed', conclusion: null },
-      { id: 5, status: 'completed', conclusion: 'cancelled' },
-      { id: 6, status: 'completed', conclusion: 'timed_out' },
-    ];
-    vi.stubGlobal('fetch', async (url: string) =>
+  it("uses GitHub's combined rollup instead of reconstructing a verdict", async () => {
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
       Response.json(
-        url.includes('check-runs') ? { check_runs: runs } : { state: 'failure', total_count: 200 },
+        response('SUCCESS', [
+          {
+            __typename: 'CheckRun',
+            name: 'test',
+            status: 'COMPLETED',
+            conclusion: 'SUCCESS',
+            detailsUrl: 'https://github.com/owner/widgets/actions/runs/1',
+          },
+          {
+            __typename: 'StatusContext',
+            context: 'deploy',
+            state: 'SUCCESS',
+            description: 'deployed',
+            targetUrl: 'https://example.test/deploy',
+          },
+        ]),
       ),
     );
-    expect(await app().readCommitChecks('token', 'owner/widgets', 'a'.repeat(40))).toEqual({
-      'run:1': 'passed',
-      'run:2': 'passed',
-      'run:3': 'pending',
-      'run:4': 'pending',
-      'run:5': 'failed',
-      'run:6': 'failed',
-      'commit-status': 'failed',
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).resolves.toEqual({
+      state: 'passed',
+      total: 2,
+      failing: [],
+      checks: [
+        {
+          name: 'test',
+          status: 'passed',
+          conclusion: 'SUCCESS',
+          url: 'https://github.com/owner/widgets/actions/runs/1',
+        },
+        {
+          name: 'deploy',
+          status: 'passed',
+          conclusion: 'deployed',
+          url: 'https://example.test/deploy',
+        },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://api.github.test/graphql');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({
+      variables: { owner: 'owner', name: 'widgets', expression: sha },
     });
   });
 
-  it.each(['success', 'pending'])(
-    'includes nonempty combined status %s alongside runs',
-    async (state) => {
-      vi.stubGlobal('fetch', async (url: string) =>
-        Response.json(url.includes('check-runs') ? { check_runs: [] } : { state, total_count: 1 }),
-      );
-      expect(await app().readCommitChecks('token', 'owner/widgets', 'a'.repeat(40))).toEqual({
-        'commit-status': state === 'success' ? 'passed' : 'pending',
-      });
-    },
-  );
+  it.each([
+    ['PENDING', 'pending'],
+    ['EXPECTED', 'pending'],
+    ['FAILURE', 'failed'],
+    ['ERROR', 'failed'],
+  ] as const)('maps GitHub rollup %s to %s', async (githubState, state) => {
+    vi.stubGlobal('fetch', async () =>
+      Response.json(
+        response(githubState, [
+          {
+            __typename: 'CheckRun',
+            name: 'build',
+            status: githubState === 'PENDING' ? 'IN_PROGRESS' : 'COMPLETED',
+            conclusion: githubState === 'FAILURE' ? 'FAILURE' : null,
+          },
+        ]),
+      ),
+    );
+    expect(await app().readCommitCheckRollup('token', 'owner/widgets', sha)).toMatchObject({
+      state,
+    });
+  });
 
-  it('rejects unreadable checks and invalid PR heads rather than inventing a verdict', async () => {
-    vi.stubGlobal('fetch', async () => new Response('{}', { status: 403 }));
-    await expect(
-      app().readCommitChecks('token', 'owner/widgets', 'a'.repeat(40)),
-    ).rejects.toThrow();
-    vi.stubGlobal('fetch', async () => Response.json({ head: { sha: '../main' } }));
-    await expect(app().readPullRequest('token', 'owner/widgets', 614)).rejects.toThrow(
-      'valid head',
+  it('treats a head with no rollup as pending rather than passing', async () => {
+    vi.stubGlobal('fetch', async () =>
+      Response.json({ data: { repository: { object: { oid: sha, statusCheckRollup: null } } } }),
+    );
+    await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).resolves.toEqual({
+      state: 'pending',
+      total: 0,
+      failing: [],
+      checks: [],
+    });
+  });
+
+  it('rejects errors and a response for a different head', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ errors: [{ message: 'forbidden' }] }));
+    await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).rejects.toThrow(
+      'returned errors',
+    );
+    vi.stubGlobal('fetch', async () =>
+      Response.json({ data: { repository: { object: { oid: 'b'.repeat(40) } } } }),
+    );
+    await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).rejects.toThrow(
+      'head mismatch',
     );
   });
 });

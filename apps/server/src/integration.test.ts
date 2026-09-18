@@ -1236,9 +1236,7 @@ describe('monolith integration', () => {
       .daemonToken;
 
     // Admins and members cannot delete the Workspace, only its owner can.
-    expect(
-      (await operation('deleteWorkspace', { workspaceId }, aliceToken)).status,
-    ).toBe(403);
+    expect((await operation('deleteWorkspace', { workspaceId }, aliceToken)).status).toBe(403);
     expect((await operation('deleteWorkspace', { workspaceId }, bobToken)).status).toBe(403);
 
     const deleted = await operation('deleteWorkspace', { workspaceId });
@@ -1257,8 +1255,7 @@ describe('monolith integration', () => {
         .rowCount,
     ).toBe(0);
     expect(
-      (await database.query(`SELECT 1 FROM invites WHERE workspace_id=$1`, [workspaceId]))
-        .rowCount,
+      (await database.query(`SELECT 1 FROM invites WHERE workspace_id=$1`, [workspaceId])).rowCount,
     ).toBe(0);
     expect(
       (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [room.id])).rowCount,
@@ -1283,9 +1280,7 @@ describe('monolith integration', () => {
     const aliceWorkspaces = (await (
       await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
     ).json()) as { deletedNotices?: Array<{ workspaceId: string; workspaceName: string }> };
-    expect(aliceWorkspaces.deletedNotices).toEqual([
-      { workspaceId, workspaceName: 'Doomed' },
-    ]);
+    expect(aliceWorkspaces.deletedNotices).toEqual([{ workspaceId, workspaceName: 'Doomed' }]);
     // Consumed once: a second read carries no notice.
     const aliceWorkspacesAgain = (await (
       await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
@@ -1497,7 +1492,7 @@ describe('monolith integration', () => {
     });
   });
 
-  it('toggles a fixed reaction and projects its count for the viewer', async () => {
+  it('toggles a fixed reaction and projects its identity roster for the viewer', async () => {
     const messageId = '9'.repeat(64);
     expect(
       (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'React here' })).status,
@@ -1508,7 +1503,36 @@ describe('monolith integration', () => {
 
     const reacted = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
     expect(reacted.messages.find((message) => message.id === messageId)?.reactions).toEqual([
-      { emoji: '👍', count: 1, reacted: true },
+      {
+        emoji: '👍',
+        count: 1,
+        reacted: true,
+        members: [{ pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' }],
+      },
+    ]);
+
+    await database.query(`UPDATE messages SET reactions=$2::jsonb WHERE id=$1`, [
+      messageId,
+      JSON.stringify({ '👍': [HUMAN, AGENT] }),
+    ]);
+    const multiple = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
+    expect(multiple.messages.find((message) => message.id === messageId)?.reactions).toEqual([
+      {
+        emoji: '👍',
+        count: 2,
+        reacted: true,
+        members: [
+          { pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' },
+          { pubkey: AGENT, kind: 'agent', name: 'Bee', handle: 'bee' },
+        ],
+      },
+    ]);
+    expect((await phone.readHistory(ROOM, HUMAN))?.messages.at(-1)?.reactions).toEqual(
+      multiple.messages.find((message) => message.id === messageId)?.reactions,
+    );
+    await database.query(`UPDATE messages SET reactions=$2::jsonb WHERE id=$1`, [
+      messageId,
+      JSON.stringify({ '👍': [HUMAN] }),
     ]);
 
     expect(
@@ -1554,9 +1578,9 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(200);
     expect(
-      (await (
-        await operation('listMessageBookmarks', { workspaceId: WORKSPACE })
-      ).json()) as { bookmarks: unknown[] },
+      (await (await operation('listMessageBookmarks', { workspaceId: WORKSPACE })).json()) as {
+        bookmarks: unknown[];
+      },
     ).toEqual({ bookmarks: [] });
   });
 
@@ -4098,7 +4122,12 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
        VALUES($1,$2,$3,'text/plain','notes.txt',$4)`,
-      [mediaId, AGENT, Buffer.from('agent-file-bytes'), createHash('sha256').update('agent-file-bytes').digest('hex')],
+      [
+        mediaId,
+        AGENT,
+        Buffer.from('agent-file-bytes'),
+        createHash('sha256').update('agent-file-bytes').digest('hex'),
+      ],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -4188,7 +4217,12 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
        VALUES($1,$2,$3,'video/mp4','clip.mp4',$4)`,
-      [mediaId, AGENT, Buffer.from('video-bytes'), createHash('sha256').update('video-bytes').digest('hex')],
+      [
+        mediaId,
+        AGENT,
+        Buffer.from('video-bytes'),
+        createHash('sha256').update('video-bytes').digest('hex'),
+      ],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,

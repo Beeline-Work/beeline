@@ -817,7 +817,7 @@ function rollback(options) {
       'rollback --embedded requires --expected-current-group naming the production group being rolled back',
     );
   }
-  if (!embeddedOnly && sourceIds.length > releaseUpdateTargets(process.cwd()).length) {
+  if (!embeddedOnly && sourceIds.length > productionUpdateTargets(process.cwd()).length) {
     fail(
       `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
     );
@@ -839,7 +839,7 @@ function rollback(options) {
       const expectedCurrentIds = groupIdList(options.expectedCurrentGroup);
       currentTargets =
         expectedCurrentIds.length > RELEASE_PLATFORMS.length
-          ? newestTargets(current, releaseUpdateTargets(process.cwd()))
+          ? newestTargets(current, productionUpdateTargets(process.cwd()))
           : [];
       const observed =
         currentTargets.length > 0
@@ -865,7 +865,7 @@ function rollback(options) {
       // A dry run has no production payload to read; name the configured
       // release targets so the printed plan shows one embedded rollback per
       // target, mirroring what a real run would query from production.
-      currentTargets = releaseUpdateTargets(process.cwd());
+      currentTargets = productionUpdateTargets(process.cwd());
     }
   }
   const rolledBack = embeddedOnly

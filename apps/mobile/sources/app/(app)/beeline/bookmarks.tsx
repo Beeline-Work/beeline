@@ -309,7 +309,6 @@ export default function BookmarksScreen() {
         onOpenInMain={openInMain}
         onClose={() => setSelectedId(null)}
         onNewCorner={() => undefined}
-        onOpenRoster={() => undefined}
       />
     ) : desktop ? (
       <View style={styles.paneFallback} testID="bookmark-pane">

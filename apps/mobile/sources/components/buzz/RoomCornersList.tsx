@@ -14,10 +14,10 @@ import { Typography } from '@/constants/Typography';
 
 /**
  * The Room's dedicated corners index. Windowing is `inspectorCornerWindow` —
- * the same cap, archived fallback, and see-more the desktop inspector overview
- * already uses — so this is a second door onto that list, not a third set of
- * rules. The header `◇` and this screen are the door and the room; the
- * inspector remains the desktop work-pane overview that also shows corners.
+ * the same cap, archived fallback, and see-more the desktop work-pane corner
+ * list already uses — so this is a second door onto that list, not a third set
+ * of rules. The header `◇` and this screen are the door and the room; the
+ * inspector remains the desktop work pane's corner list.
  */
 export function RoomCornersList({
   corners,

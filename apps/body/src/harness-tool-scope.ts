@@ -53,6 +53,8 @@
  *     of its own, so the mounted servers are the whole set by construction.
  */
 
+import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
+
 /** How well the daemon can confine this harness's tool surface to its own. */
 export type ToolScopeEnforcement =
   /** The session request itself pins the allowlist; operator config cannot widen it. */
@@ -148,10 +150,10 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
     },
   },
   {
-    match: /(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i,
+    match: CURSOR_HARNESS_COMMAND,
     profile: {
       enforcement: 'config-isolated',
-      note: "cursor-agent-acp bridges cursor-agent to ACP; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session",
+      note: 'cursor-acp-bridge drives cursor-agent; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session',
     },
   },
 ];

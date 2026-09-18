@@ -5,6 +5,7 @@ import { AcpClient } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingCacheDir, openRouterRoutingInput } from './openrouter-routing.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import type { BodyConfig } from './config.js';
 import { explainEmptyAgentTurn, isAccountOrProviderRefusal } from './empty-turn.js';
 import {
@@ -226,6 +227,10 @@ export async function runUpdateFunctionalProbe(input: {
   compareWithCurrentRelease?: (appeal: ProbeAppeal) => Promise<CurrentReleaseProbeOutcome>;
 }): Promise<UpdateFunctionalProbeResult> {
   const command = input.config.agentCommand ?? input.config.agentBinary;
+  const harnessLabel = harnessIdentityLabel({
+    kind: input.config.agentKind,
+    command,
+  });
   const harness = input.config.agentKind ?? command;
   if (input.config.modelUnavailable) {
     throw new UpdateFunctionalProbeError('model-unavailable', input.config.modelUnavailable.detail);
@@ -299,7 +304,7 @@ export async function runUpdateFunctionalProbe(input: {
     if (input.config.bwrapPath) {
       const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
       const operatorHome = input.config.operatorHome ?? homedir();
-      const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME ?? operatorHome);
+      const homeStateDirs = harnessHomeStateDirs(harnessLabel, agentEnv.HOME ?? operatorHome);
       await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
       spawnCommand = wrapAgentCommand({
         bwrapPath: input.config.bwrapPath,
@@ -319,7 +324,7 @@ export async function runUpdateFunctionalProbe(input: {
     client = new AcpClient({
       agentCommand: spawnCommand.command,
       agentArgs: spawnCommand.args,
-      agentLabel: command,
+      agentLabel: harnessLabel,
       agentEnv,
       agentCwd: cwd,
       autoApprovePermissions: true,
@@ -366,7 +371,7 @@ export async function runUpdateFunctionalProbe(input: {
           modelAnswer = { modelAnswer: 'served' };
         } else {
           const explained = await explainEmptyAgentTurn({
-            agentLabel: command,
+            agentLabel: harnessLabel,
             agentEnv,
             sessionId,
             result: served,

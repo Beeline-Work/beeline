@@ -36,25 +36,113 @@ export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '23' },
   { platform: 'android', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '23' },
+  { platform: 'ios', runtimeVersion: '24' },
   { platform: 'ios', runtimeVersion: '26' },
+];
+
+// Every (platform, runtimeVersion) a shipped or submitted native store binary
+// carries, traced from successful unified releases and native-build/submission
+// checkpoints — NOT from the current pins. Inferring coverage from pins is
+// exactly how #1353/#1383 stranded android@25 and ios@26 installs: the pins
+// moved (25→24, 26→25) and the compat list silently shrank with them. Release
+// planning must cover every entry: the current pins plus COMPAT_RUNTIMES.
+export const SHIPPED_NATIVE_RUNTIMES = [
+  {
+    platform: 'android',
+    runtimeVersion: '23',
+    evidence:
+      'store binaries shipped on the 2026-09-12 runtime-23 pin (29049b9b) and served by the android@23 compat target through #1323/#1383',
+  },
+  {
+    platform: 'android',
+    runtimeVersion: '24',
+    evidence:
+      'store binaries built on the android@24 pin (128ffd47, #1228) and submitted by successful unified release run 34894012548 (head 01127118)',
+  },
+  {
+    platform: 'android',
+    runtimeVersion: '25',
+    evidence:
+      'store binaries built and submitted by unified release run 35250884374 (v0.0.109, head e30fdfdf on the #1353 android@25 pin 427c5f5c)',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '23',
+    evidence:
+      'store binaries shipped on the 2026-09-12 runtime-23 pin (29049b9b) and served by the ios@23 compat target through #1383',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '24',
+    evidence:
+      'store binaries built on the #1185 ios@24 pin (e509ad14) and submitted by successful unified release run 34779452653 (head 77823615)',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '25',
+    evidence:
+      'store binaries built on the ios@25 pin (128ffd47) and submitted by successful unified release run 35141982984 (head 63b1ef08); #1373 briefly dropped ios@25 coverage and #1382 reverted that',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '26',
+    evidence:
+      'store binaries built and submitted by unified release run 35250884374 (v0.0.109, head e30fdfdf on the #1353 ios@26 pin 427c5f5c)',
+  },
+];
+
+// Compat runtimes retired by an explicit, committed decision backed by
+// adoption/store evidence. Retiring an entry here is the ONLY way it may
+// leave COMPAT_RUNTIMES: the coverage governor (planCoverageErrors) refuses
+// release planning while a shipped runtime is neither planned nor retired,
+// so this list cannot silently shrink.
+export const RETIRED_COMPAT_RUNTIMES = [
+  // Shape (uncomment a real entry to retire a runtime deliberately):
+  // { platform: 'android', runtimeVersion: '23', evidence: 'retired by <PR>: EAS adoption + store data show no live install' },
 ];
 
 function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
 }
 
+// The pre-publication coverage governor: release planning fails while ANY
+// runtime a shipped or submitted native binary carries is absent from the
+// plan (current pins ∪ COMPAT_RUNTIMES) and not explicitly retired. The
+// compat/retired/shipped overrides exist for tests; production planning
+// always reads the committed lists.
+export function planCoverageErrors(
+  pins,
+  compat = COMPAT_RUNTIMES,
+  retired = RETIRED_COMPAT_RUNTIMES,
+  shipped = SHIPPED_NATIVE_RUNTIMES,
+) {
+  const planned = new Set(
+    [
+      ...RELEASE_PLATFORMS.map((platform) => ({ platform, runtimeVersion: pins[platform] })),
+      ...compat,
+    ].map(targetKey),
+  );
+  const retiredKeys = new Set(retired.map(targetKey));
+  return shipped
+    .filter((runtime) => !planned.has(targetKey(runtime)) && !retiredKeys.has(targetKey(runtime)))
+    .map(
+      (runtime) =>
+        `${targetKey(runtime)} was shipped or submitted (${runtime.evidence}) but is absent from the release plan; add it to COMPAT_RUNTIMES or record its retirement in RETIRED_COMPAT_RUNTIMES.`,
+    );
+}
+
 // Current runtimes come from the same resolved Expo config that EAS reads.
 // The compatibility runtimes are the exceptional, explicitly temporary
 // targets. Keep this list ordered so the release log is deterministic.
-export function releaseUpdateTargets(projectDir = process.cwd()) {
+export function releaseUpdateTargets(projectDir = process.cwd(), pins) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
   }
-  const pins = readPinnedRuntimeVersion(projectDir);
+  const resolvedPins = pins ?? readPinnedRuntimeVersion(projectDir);
   const targets = [
-    { platform: 'android', runtimeVersion: pins.android },
+    { platform: 'android', runtimeVersion: resolvedPins.android },
     ...COMPAT_RUNTIMES,
-    { platform: 'ios', runtimeVersion: pins.ios },
+    { platform: 'ios', runtimeVersion: resolvedPins.ios },
   ];
   return targets.filter(
     (target, index) =>
@@ -394,6 +482,18 @@ function publish(options) {
   // target set it will publish, so a stranded runtime is visible in logs.
   console.log(`ota_plan_targets=${targets.map(targetKey).join(',')}`);
 
+  // Pre-publication coverage governor: refuse to plan a release that would
+  // strand any runtime a shipped or submitted native binary still carries.
+  // This runs before ANY EAS call so a bad plan fails before publication.
+  const coverageErrors = planCoverageErrors(configuredPins);
+  if (coverageErrors.length > 0) {
+    fail(
+      'Refusing to plan an OTA release that strands shipped binaries:\n' +
+        coverageErrors.map((line) => `  - ${line}`).join('\n'),
+    );
+  }
+  console.log(`release_plan_targets=${targets.map(targetKey).join(',')}`);
+
   const channel = runEas(['channel:view', 'beta', '--json', '--non-interactive'], {
     allowFailure: true,
     dryRun: options.dryRun,
@@ -430,8 +530,8 @@ function publish(options) {
   // a target list that drops a shipped runtime strands those installs forever.
   {
     const shippedKeys = new Set(
-      collectUpdates(previous).updates
-        .filter((u) => u.platform && u.runtimeVersion)
+      collectUpdates(previous)
+        .updates.filter((u) => u.platform && u.runtimeVersion)
         .map(targetKey),
     );
     const stranded = [...shippedKeys].filter((k) => !targets.some((t) => targetKey(t) === k));
@@ -463,10 +563,13 @@ function publish(options) {
       target.runtimeVersion === pins[target.platform],
   );
   for (const target of embeddedAnchorTargets)
-    console.log(`${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`);
+    console.log(
+      `${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`,
+    );
   const embeddedAnchorKeys = new Set(embeddedAnchorTargets.map(targetKey));
   const missingRollbackTargets = requiredRollbackTargets.filter(
-    (target) => !previousTargetKeys.has(targetKey(target)) && !embeddedAnchorKeys.has(targetKey(target)),
+    (target) =>
+      !previousTargetKeys.has(targetKey(target)) && !embeddedAnchorKeys.has(targetKey(target)),
   );
   if (!options.dryRun && missingRollbackTargets.length > 0) {
     fail(
@@ -690,6 +793,7 @@ function assertPromotion(options) {
     }
   }
   if (Array.isArray(ledger.updateTargets)) {
+    console.log(`release_targets=${ledger.updateTargets.map(targetKey).join(',')}`);
     const expected = ledger.updateTargets.map(targetKey).sort();
     const actual = (producedTargets ?? []).map(targetKey).sort();
     if (

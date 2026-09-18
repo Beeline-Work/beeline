@@ -99,6 +99,13 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/MessageReactionRoster', async () => {
+  const ReactModule = await import('react');
+  return {
+    MessageReactionRoster: (props: any) =>
+      ReactModule.createElement('MessageReactionRoster', props),
+  };
+});
 vi.mock('@/components/buzz/ActivityTimeline', async () => {
   const ReactModule = await import('react');
   return { ActivityTimeline: (props: any) => ReactModule.createElement('ActivityTimeline', props) };
@@ -837,7 +844,17 @@ describe('Room message variant components', () => {
     const onReact = vi.fn();
     const row = message({
       id: 'reacted',
-      reactions: [{ emoji: '👍', count: 2, reacted: true }],
+      reactions: [
+        {
+          emoji: '👍',
+          count: 2,
+          reacted: true,
+          members: [
+            { pubkey: 'one', kind: 'human', name: 'One' },
+            { pubkey: 'two', kind: 'agent', name: 'Two' },
+          ],
+        },
+      ],
     });
     const renderer = render(
       <OrdinaryLedgerMessage
@@ -858,9 +875,9 @@ describe('Room message variant components', () => {
         onDismiss={vi.fn()}
       />,
     );
-    const chip = renderer.root.findByProps({ testID: 'reaction-chip-reacted-👍' });
-    expect(chip.props.accessibilityState).toEqual({ selected: true });
-    act(() => chip.props.onPress());
+    const chip = renderer.root.findByType('MessageReactionRoster' as any);
+    expect(chip.props.reaction.reacted).toBe(true);
+    act(() => chip.props.onReact());
     expect(onReact).toHaveBeenCalledWith(row, '👍');
   });
 

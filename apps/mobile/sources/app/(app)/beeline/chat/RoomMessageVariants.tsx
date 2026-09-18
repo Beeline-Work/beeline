@@ -49,6 +49,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MessageReactionRoster } from '@/components/buzz/MessageReactionRoster';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { isCornerProposalText } from '@/buzz/corner-proposal';
 import {
@@ -1759,18 +1760,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
             {message.reactions.map((reaction) => (
-              <Pressable
-                accessibilityLabel={`${reaction.emoji}, ${reaction.count} reaction${reaction.count === 1 ? '' : 's'}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: reaction.reacted }}
+              <MessageReactionRoster
+                desktop={desktopLayout}
                 key={reaction.emoji}
-                onPress={() => onReact(message, reaction.emoji)}
-                style={[styles.reactionChip, reaction.reacted && styles.reactionChipMine]}
-                testID={`reaction-chip-${message.id}-${reaction.emoji}`}
-              >
-                <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
-                <Text style={styles.reactionCount}>{reaction.count}</Text>
-              </Pressable>
+                messageId={message.id}
+                onReact={() => onReact(message, reaction.emoji)}
+                reaction={reaction}
+              />
             ))}
           </View>
         ) : null}
@@ -1928,26 +1924,7 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: 6,
     marginLeft: 8,
   },
-  reactionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    minHeight: 28,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgBase,
-  },
-  reactionChipMine: {
-    borderColor: theme.buzz.accent,
-    backgroundColor: theme.buzz.bgHighlight,
-  },
   reactionEmoji: emojiTextStyle(theme.buzz.type.body),
-  reactionCount: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
-  },
   cornerProposalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',

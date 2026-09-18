@@ -213,6 +213,14 @@ interface MessageRow {
   bookmarked?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
+  reaction_identities?: Array<{
+    id: string;
+    kind: 'human' | 'agent';
+    name: string;
+    handle: string | null;
+    avatar: string | null;
+    face_id: string | null;
+  }>;
   /** Derived on read from the row's text and the Room's membership, not stored. */
   tagged_ids: string[];
   reply_to_message_id: string | null;
@@ -442,6 +450,9 @@ function projectedMessage(
     },
     publicOrigin,
   );
+  const reactionIdentityById = new Map(
+    (row.reaction_identities ?? []).map((reactor) => [reactor.id, reactor]),
+  );
   const base: RoomViewMessage = {
     id: row.id,
     text: row.text,
@@ -492,6 +503,10 @@ function projectedMessage(
                     emoji,
                     count: reactors.length,
                     reacted: viewerId ? reactors.includes(viewerId) : false,
+                    members: reactors.flatMap((reactorId) => {
+                      const reactor = reactionIdentityById.get(reactorId);
+                      return reactor ? [identity(reactor, publicOrigin)] : [];
+                    }),
                   },
                 ]
               : [];
@@ -542,6 +557,26 @@ function projectedMessage(
     default:
       return base;
   }
+}
+
+/** Canonical reactor identities, kept beside each bounded message row so every
+ * Room/history projection can paint the same roster without a client lookup. */
+function reactionIdentitiesSql(messageAlias: string): string {
+  return `COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'id',reactor.id,
+      'kind',reactor.kind,
+      'name',reactor.name,
+      'handle',reactor.handle,
+      'avatar',reactor.avatar,
+      'face_id',reactor.face_id
+    ) ORDER BY reactor.id)
+    FROM identities reactor
+    WHERE reactor.id IN (
+      SELECT jsonb_array_elements_text(reaction.value)
+      FROM jsonb_each(${messageAlias}.reactions) reaction
+    )
+  ),'[]'::jsonb)`;
 }
 
 /**
@@ -674,6 +709,7 @@ export class PhoneService {
       await this.database.query<MessageRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+           ${reactionIdentitiesSql('message')} reaction_identities,
            ${taggedIdentityIdsSql('message')} tagged_ids
          FROM rooms room
          JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
@@ -1256,6 +1292,7 @@ export class PhoneService {
             `SELECT m.*,
                i.kind author_kind,i.name author_name,i.handle author_handle,
                i.avatar author_avatar,i.face_id author_face,
+               ${reactionIdentitiesSql('m')} reaction_identities,
                '{}'::text[] tagged_ids
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
@@ -1505,6 +1542,7 @@ export class PhoneService {
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
@@ -1520,6 +1558,7 @@ export class PhoneService {
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
@@ -6137,6 +6176,7 @@ export class PhoneService {
         `SELECT m.*,
            i.kind author_kind,i.name author_name,i.handle author_handle,
            i.avatar author_avatar,i.face_id author_face,
+           ${reactionIdentitiesSql('m')} reaction_identities,
            '{}'::text[] tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -6221,6 +6261,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -6233,6 +6274,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
@@ -6245,6 +6287,7 @@ export class PhoneService {
           `SELECT m.*,
              i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              '{}'::text[] tagged_ids
            FROM messages m JOIN identities i ON i.id=m.author_id
            WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL

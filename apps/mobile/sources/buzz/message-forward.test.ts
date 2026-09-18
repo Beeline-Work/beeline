@@ -4,6 +4,7 @@ import {
   forwardedMessageParts,
   forwardMessageToRoom,
   forwardTargets,
+  resolveForwardTargetRoom,
 } from './message-forward';
 import type { ChatListItem } from '@beeline/buzz-client';
 
@@ -58,6 +59,27 @@ describe('message forwarding', () => {
 });
 
 describe('forward targets', () => {
+  const workspace = {
+    viewer: { identity: { pubkey: 'viewer', kind: 'human', name: 'Viewer' } },
+    members: [
+      { identity: { pubkey: 'viewer', kind: 'human', name: 'Viewer' }, role: 'owner' },
+      {
+        identity: { pubkey: 'person-new', kind: 'human', name: 'New Person', handle: '@new' },
+        role: 'member',
+      },
+      {
+        identity: { pubkey: 'person-dm', kind: 'human', name: 'DM Person', handle: '@dm' },
+        role: 'member',
+      },
+    ],
+    agents: [
+      {
+        identity: { pubkey: 'agent-new', kind: 'agent', name: 'Helper' },
+        role: 'member',
+      },
+    ],
+  } as const;
+
   const room = (overrides: {
     id: string;
     name: string;
@@ -77,14 +99,24 @@ describe('forward targets', () => {
         room({
           id: 'dm1',
           name: 'Direct message',
-          directMessage: { peer: { pubkey: 'p', name: 'Bee', handle: '@bee', kind: 'agent' } },
+          directMessage: {
+            peer: { pubkey: 'person-dm', name: 'Bee', handle: '@bee', kind: 'human' },
+          },
         }),
       ],
+      workspace,
       'here',
     );
     expect(targets).toEqual([
-      { id: 'r1', label: '#general' },
-      { id: 'dm1', label: '@bee' },
+      { kind: 'room', id: 'r1', label: '#general' },
+      { kind: 'room', id: 'dm1', label: '@bee' },
+      { kind: 'member', id: 'person-new', label: '@new', memberId: 'person-new' },
+      {
+        kind: 'member',
+        id: 'agent-new',
+        label: '@Helper',
+        memberId: 'agent-new',
+      },
     ]);
   });
 
@@ -96,8 +128,48 @@ describe('forward targets', () => {
         room({ id: 'old', name: 'old', archived: true }),
         room({ id: 'r2', name: 'keep' }),
       ],
+      { ...workspace, members: workspace.members.slice(0, 1), agents: [] },
       'here',
     );
-    expect(targets).toEqual([{ id: 'r2', label: '#keep' }]);
+    expect(targets).toEqual([{ kind: 'room', id: 'r2', label: '#keep' }]);
+  });
+
+  it('does not re-add the source DM peer as a member destination', () => {
+    const targets = forwardTargets(
+      [
+        room({
+          id: 'here',
+          name: 'Direct message',
+          directMessage: {
+            peer: { pubkey: 'person-new', name: 'New Person', handle: '@new', kind: 'human' },
+          },
+        }),
+      ],
+      { ...workspace, members: workspace.members.slice(0, 2), agents: [] },
+      'here',
+    );
+    expect(targets).toEqual([]);
+  });
+
+  it('resolves a member destination to a DM and leaves Room destinations unchanged', async () => {
+    const resolveDirectMessage = vi.fn(async () => ({ channelId: 'new-dm' }));
+    await expect(
+      resolveForwardTargetRoom(
+        { kind: 'member', id: 'person-new', label: '@new', memberId: 'person-new' },
+        'workspace',
+        resolveDirectMessage,
+      ),
+    ).resolves.toBe('new-dm');
+    expect(resolveDirectMessage).toHaveBeenCalledWith('workspace', 'person-new');
+
+    resolveDirectMessage.mockClear();
+    await expect(
+      resolveForwardTargetRoom(
+        { kind: 'room', id: 'existing-room', label: '#general' },
+        'workspace',
+        resolveDirectMessage,
+      ),
+    ).resolves.toBe('existing-room');
+    expect(resolveDirectMessage).not.toHaveBeenCalled();
   });
 });

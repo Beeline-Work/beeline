@@ -88,6 +88,11 @@ const CONNECTOR_TYPES_BY_ID = new Map(
   CONNECTOR_KINDS.map((type) => [connectorIdentityId(type), type]),
 );
 
+/** Every fixed connector speaker id, for read surfaces that distinguish its ledger DM. */
+export function connectorIdentityIds(): readonly string[] {
+  return [...CONNECTOR_TYPES_BY_ID.keys()];
+}
+
 /**
  * True when any direct participant of this DM is a connector identity. Those
  * DMs are receipt ledgers, not conversations: only the connector identity
@@ -109,7 +114,7 @@ export async function ensureConnectorIdentity(
      VALUES ($1,'human',$2,$3,true,$4) ON CONFLICT(id) DO UPDATE
      SET name=EXCLUDED.name,handle=EXCLUDED.handle,
          hidden_from_roster=true,avatar=EXCLUDED.avatar,updated_at=now()`,
-    [id, connectorDisplayName(type), type, `/v1/connectors/${type}/logo`],
+    [id, connectorDisplayName(type), type, `/v1/connectors/logo/${type}.svg`],
   );
   return id;
 }
@@ -243,10 +248,9 @@ async function resolveUsageConnection(
   let picked = candidates[0];
   if (candidates.length > 1 && (input.roomId || input.cornerId)) {
     const scope = (
-      await database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM rooms WHERE id=$1`,
-        [input.cornerId ?? input.roomId],
-      )
+      await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+        input.cornerId ?? input.roomId,
+      ])
     ).rows[0];
     if (scope)
       picked = candidates.find(
@@ -287,7 +291,7 @@ async function postUsageReceiptCard(
           records[0]!.operation,
           records[0]!.statusCode !== undefined ? String(records[0]!.statusCode) : undefined,
           records[0]!.bytes ? formatBytes(records[0]!.bytes) : undefined,
-          records[0]!.grantLabel ?? records[0]!.grantId
+          (records[0]!.grantLabel ?? records[0]!.grantId)
             ? `grant ${records[0]!.grantLabel ?? records[0]!.grantId}`
             : undefined,
         ]
@@ -325,10 +329,15 @@ async function postUsageReceiptCard(
         [connection.id, input.requestId],
       )
     ).rows[0]!;
-    await restateSystemLine(database, existing.message_id, {
-      ...phrase,
-      consequence: `${totals.calls} calls · ${formatBytes(Number(totals.total_bytes))}`,
-    }, card);
+    await restateSystemLine(
+      database,
+      existing.message_id,
+      {
+        ...phrase,
+        consequence: `${totals.calls} calls · ${formatBytes(Number(totals.total_bytes))}`,
+      },
+      card,
+    );
     return existing.message_id;
   }
 
@@ -418,10 +427,9 @@ export async function applyVaultList(
     if (!seen.has(row.reference))
       await database.query(`DELETE FROM workspace_connections WHERE id=$1`, [row.id]);
   }
-  await database.query(
-    `UPDATE workspace_connectors SET updated_at=now() WHERE id=$1`,
-    [connector.id],
-  );
+  await database.query(`UPDATE workspace_connectors SET updated_at=now() WHERE id=$1`, [
+    connector.id,
+  ]);
 }
 
 /** The default steps a freshly paired connector shows while installing. */

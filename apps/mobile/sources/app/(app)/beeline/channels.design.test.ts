@@ -25,6 +25,10 @@ const desktopInspectorSource = readFileSync(
 );
 const cornerHeaderSource = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
 const cornerListSource = readFileSync(new URL('./corners/[roomId].tsx', import.meta.url), 'utf8');
+const roomCornersListSource = readFileSync(
+  new URL('../../../components/buzz/RoomCornersList.tsx', import.meta.url),
+  'utf8',
+);
 const cornerTitleTypeface = readFileSync(
   new URL('../../../assets/fonts/SpaceGrotesk-SemiBold.ttf', import.meta.url),
 );
@@ -340,7 +344,9 @@ describe('Room list layout contract', () => {
     expect(styleBlock(cornerHeaderSource, 'cornerHeaderWaiting')).toContain(
       'color: groknight.accent',
     );
-    expect(cornerListSource).toContain(
+    expect(cornerListSource).toContain('<RoomCornersList');
+    expect(roomCornersListSource).toContain("from '@/buzz/inspector-corners'");
+    expect(roomCornersListSource).toContain(
       '<StateCircle state={display.visual} tone={display.tone} />',
     );
   });

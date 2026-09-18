@@ -74,7 +74,7 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
-import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import {
   COMPOSER_ACK_BOUND_MS,
   STEER_RECEIVED_VISIBLE_MS,
@@ -208,6 +208,7 @@ import {
   cornerOpenAction,
   cornerHref,
   resolveMentionDirectMessageAction,
+  roomCornersHref,
   roomHref,
   type ChatStackRoute,
 } from '@/buzz/corner-navigation';
@@ -4302,15 +4303,24 @@ export default function BuzzChat() {
                 <HeaderMetaCaps testID="room-header-meta">{dmHeaderPresence}</HeaderMetaCaps>
               ) : null}
             </View>
-            {/* The trailing slot holds ONE control. There is no `+` beside it:
-              a Room or corner's members have one way in — the Members row in
-              this overflow sheet opens the roster, whose section heads carry
-              the add control. This preserves the title and subtitle width.
-
-              One overflow vocabulary: the same ••• the Room header carries,
-              holding whatever destructive/rare actions the surface has. A
-              corner's "close" belongs here, not as a permanent button sitting
-              under the composer where the reader's thumb lives. */}
+            {/* Membership still consumes no header width: the Members row lives
+              in the overflow sheet (corner) or the inspector (desktop Room).
+              The trailing slot carries the corner glyph `◇` beside overflow —
+              a second door onto the Room's dedicated corners list, not a
+              second live-corner jump. The pinned line below the transcript
+              stays the one active-corner affordance. */}
+            {!parentChannelId && !isDirectMessage && (
+              <TouchableOpacity
+                accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
+                accessibilityRole="button"
+                hitSlop={HEADER_EDGE_HIT_SLOP}
+                onPress={() => router.push(roomCornersHref(decodedId))}
+                style={styles.roomActionsButton}
+                testID="room-corners-menu"
+              >
+                <Text style={styles.roomActionsGlyph}>◇</Text>
+              </TouchableOpacity>
+            )}
             {isCorner && !viewerIsAgent && !isArchived && (
               <TouchableOpacity
                 accessibilityLabel={`${CORNER_LABEL} actions`}

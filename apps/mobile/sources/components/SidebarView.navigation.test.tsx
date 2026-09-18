@@ -313,8 +313,19 @@ describe('desktop Workspace navigation', () => {
     ).toBe(true);
   });
 
-  it('routes the heading glyphs to Bookmarks, with no Workbench sidebar entry', () => {
+  it('routes the heading glyphs to Members and Bookmarks, with no Workbench sidebar entry', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
+
+    const members = tree.root.findByProps({ testID: 'desktop-members' });
+    expect(members.props.accessibilityLabel).toBe('Workspace members');
+    expect(members.findAllByType('Text')).toHaveLength(0);
+    expect(members.findByType('Ionicons').props.name).toBe('people-outline');
+
+    act(() => members.props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/members',
+      params: { communityId: 'workspace-a' },
+    });
 
     act(() => tree.root.findByProps({ testID: 'desktop-bookmarks' }).props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
@@ -423,6 +434,7 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workspace-settings' })).toHaveLength(0);
     expect(tree.root.findByProps({ testID: 'desktop-new-direct-message' })).toBeDefined();
     expect(tree.root.findByProps({ testID: 'desktop-bookmarks' })).toBeDefined();
+    expect(tree.root.findByProps({ testID: 'desktop-members' })).toBeDefined();
     expect(tree.root.findByProps({ testID: 'profile-settings-navigation' })).toBeDefined();
   });
 
@@ -447,12 +459,33 @@ describe('desktop Workspace navigation', () => {
     const selected = (style: unknown) =>
       Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
     const bookmarks = tree.root.findByProps({ testID: 'desktop-bookmarks' });
+    const members = tree.root.findByProps({ testID: 'desktop-members' });
     const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
 
     expect(selected(bookmarks.props.style({ pressed: false }))).toBe(true);
+    expect(selected(members.props.style({ pressed: false }))).toBe(false);
     expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
     expect(bookmarks.props.accessibilityState).toEqual({ selected: true });
+    expect(members.props.accessibilityState).toEqual({ selected: false });
     expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
+  });
+
+  it('keeps Members selected only on the members route', async () => {
+    route.pathname = '/beeline/members';
+    await act(async () => {
+      tree.update(<SidebarView key="members-route" />);
+    });
+    await settle();
+
+    const selected = (style: unknown) =>
+      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
+    const members = tree.root.findByProps({ testID: 'desktop-members' });
+    const bookmarks = tree.root.findByProps({ testID: 'desktop-bookmarks' });
+
+    expect(selected(members.props.style({ pressed: false }))).toBe(true);
+    expect(selected(bookmarks.props.style({ pressed: false }))).toBe(false);
+    expect(members.props.accessibilityState).toEqual({ selected: true });
+    expect(bookmarks.props.accessibilityState).toEqual({ selected: false });
   });
 
   it('exposes the active conversation to assistive technology', async () => {

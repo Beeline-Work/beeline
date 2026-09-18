@@ -60,6 +60,11 @@ export function roomHref(channelId: string): Href {
   return { pathname: '/beeline/chat/[channelId]', params: { channelId } } as unknown as Href;
 }
 
+/** Open the Room's dedicated corners list — the one place archived work is recorded. */
+export function roomCornersHref(roomId: string): Href {
+  return { pathname: '/beeline/corners/[roomId]', params: { roomId } } as unknown as Href;
+}
+
 /** Resolve or create the Workspace-scoped DM behind a tagged member mention. */
 export async function resolveMentionDirectMessageAction(
   resolveDirectMessage: (

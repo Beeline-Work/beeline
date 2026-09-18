@@ -766,7 +766,7 @@ export default function BuzzChannels() {
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <TouchableOpacity
-              accessibilityLabel={`${WORKSPACE_LABEL} members`}
+              accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
               accessibilityRole="button"
               onPress={() =>
                 router.push({
@@ -777,7 +777,12 @@ export default function BuzzChannels() {
               style={styles.headerAction}
               testID="workspace-members"
             >
-              <Text style={styles.headerActionText}>{MEMBERS_LABEL.toUpperCase()}</Text>
+              <Ionicons
+                name="people-outline"
+                size={16}
+                color={styles.headerActionGlyph.color}
+                {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+              />
             </TouchableOpacity>
           )}
         </View>
@@ -1150,12 +1155,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       paddingHorizontal: 8,
     },
-    headerActionText: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 9,
-      letterSpacing: 0.6,
-    },
+    headerActionGlyph: { color: hull.textMuted },
     errorBar: {
       paddingHorizontal: 16,
       paddingVertical: 8,

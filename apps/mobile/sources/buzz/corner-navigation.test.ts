@@ -5,6 +5,7 @@ import {
   cornerHref,
   popCountToParentRoom,
   resolveMentionDirectMessageAction,
+  roomCornersHref,
   roomHref,
   routeChannelId,
   type ChatStackRoute,
@@ -140,6 +141,13 @@ describe('corner hrefs', () => {
     expect(roomHref('room-1')).toEqual({
       pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'room-1' },
+    });
+  });
+
+  it('opens the Room’s dedicated corners list', () => {
+    expect(roomCornersHref('room-1')).toEqual({
+      pathname: '/beeline/corners/[roomId]',
+      params: { roomId: 'room-1' },
     });
   });
 });

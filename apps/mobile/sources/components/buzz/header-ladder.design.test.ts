@@ -122,9 +122,23 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    // The retired inspector info toggle no longer occupies this header. Work
-    // pane recovery lives on its own right-edge handle.
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(3);
+    // Back, Room corners, corner overflow, Room overflow.
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(4);
+  });
+
+  it('puts a corner glyph beside Room overflow that opens the dedicated corners list', () => {
+    expect(chatSource).toContain('testID="room-corners-menu"');
+    expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
+    expect(chatSource).toContain('<Text style={styles.roomActionsGlyph}>◇</Text>');
+    expect(chatSource).toContain('router.push(roomCornersHref(decodedId))');
+    expect(chatSource).toContain("from '@/buzz/corner-navigation'");
+    expect(chatSource).toContain('roomCornersHref');
+    // DMs and the corner's own header do not grow this control.
+    const glyph = chatSource.slice(
+      chatSource.indexOf('{!parentChannelId && !isDirectMessage && ('),
+      chatSource.indexOf('testID="room-corners-menu"'),
+    );
+    expect(glyph).toContain('!parentChannelId && !isDirectMessage');
   });
 
   it('leaves one quiet, overlaid tab when the desktop work pane is dismissed', () => {

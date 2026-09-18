@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 const index = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
 const settings = readFileSync(new URL('./identity.tsx', import.meta.url), 'utf8');
+const appearanceSetting = readFileSync(
+  new URL('../../../../components/buzz/AppearanceSetting.tsx', import.meta.url),
+  'utf8',
+);
 const pushLevelSetting = readFileSync(
   new URL('../../../../components/buzz/PushLevelSetting.tsx', import.meta.url),
   'utf8',
@@ -18,6 +22,8 @@ describe('single Settings surface', () => {
     for (const label of ['Name', 'Handle', 'Face', 'GitHub', 'Version']) {
       expect(settings).toContain(`>${label}<`);
     }
+    expect(appearanceSetting).toContain('title="Appearance"');
+    expect(settings).toContain('<AppearanceSetting');
     expect(pushLevelSetting).toContain('title="Push notifications"');
     expect(settings).toContain('Sign out');
     expect(settings).toContain('Delete account');

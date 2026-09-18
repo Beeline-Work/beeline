@@ -1841,8 +1841,10 @@ export default function BuzzChat() {
   const continuedAttributionIds = useStable(rawContinuedAttributionIds, sameStringSet);
   // Native keeps the established inverted list. React Native Web implements
   // `inverted` with scale transforms, which can leave variable-height rows at
-  // stale coordinates after a send. Desktop uses ordinary chronological flow.
-  const desktopTranscript = isDesktop;
+  // stale coordinates after a send. Every desktop-platform transcript uses
+  // ordinary chronological flow, including a packaged Windows window resized
+  // below the persistent-sidebar breakpoint.
+  const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
   // A live message/card change follows only when the reader is already at the

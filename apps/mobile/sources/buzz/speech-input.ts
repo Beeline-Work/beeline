@@ -2,8 +2,9 @@
  * useSpeechInput — free platform speech recognition.
  *
  * Wraps the platform speech recogniser with on-device preference, transparent
- * session chaining past platform limits, and a ~2 s silence auto-stop.
- * Returns available/capable state, the live transcript, and start/stop controls.
+ * session chaining past platform limits, and a silence auto-stop. Silence is
+ * a result-gap with no speech-level volume, not merely a sparse Android
+ * interim; captured text never shares the page with "didn't catch that".
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -26,8 +27,14 @@ export interface SpeechInputValue {
   stop(): void;
 }
 
-const SILENCE_TIMEOUT_MS = 2000;
+// Long enough for a short multi-word phrase when Android's first interim is
+// late, and for a sparse gap between hypotheses. Speech-level volume re-arms
+// this so a longer utterance is not cut while the user is still talking.
+export const SPEECH_SILENCE_TIMEOUT_MS = 4000;
 const MAX_RESTARTS = 10;
+// Native volume spans roughly -2 (silent) through 10 (loud). Anything above
+// the documented silence floor counts as speech activity.
+const SPEECH_VOLUME_FLOOR = 0;
 
 /**
  * Hook wrapping platform speech recognition.
@@ -97,11 +104,24 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     };
   }, []);
 
+  const finishStopWithCapture = React.useCallback((pendingPartial: string) => {
+    pendingPartialRef.current = '';
+    setPartialText('');
+    if (pendingPartial.trim()) {
+      onResultRef.current(pendingPartial);
+      setState('idle');
+      return true;
+    }
+    return false;
+  }, []);
+
   const restartIfStillListening = React.useCallback(() => {
     if (!listeningRef.current) return;
     if (restartCountRef.current >= MAX_RESTARTS) {
       doStop();
-      setState(sessionGotResultRef.current ? 'idle' : 'nothing-recognised');
+      if (!finishStopWithCapture(pendingPartialRef.current)) {
+        setState(sessionGotResultRef.current ? 'idle' : 'nothing-recognised');
+      }
       return;
     }
     restartCountRef.current += 1;
@@ -111,20 +131,20 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     } catch {
       doStop();
     }
-  }, [doStop, startOptions]);
+  }, [doStop, finishStopWithCapture, startOptions]);
 
   const armSilenceTimer = React.useCallback(() => {
     clearSilenceTimer();
     silenceTimerRef.current = setTimeout(() => {
       if (!listeningRef.current) return;
       doStop();
-      setPartialText('');
-      // ~2 s of silence with nothing recognised is the mock's edge state;
-      // otherwise a silence stop is just an ordinary end of listening.
+      // Captured words are a successful stop even when the platform has not
+      // marked a final yet. "Didn't catch that" is only for a true empty.
+      if (finishStopWithCapture(pendingPartialRef.current)) return;
       if (!sessionGotResultRef.current) setState('nothing-recognised');
       else setState('idle');
-    }, SILENCE_TIMEOUT_MS);
-  }, [clearSilenceTimer, doStop]);
+    }, SPEECH_SILENCE_TIMEOUT_MS);
+  }, [clearSilenceTimer, doStop, finishStopWithCapture]);
 
   // Register one listener set per effect lifetime. In React Strict Mode an
   // effect is mounted, cleaned up, and mounted again; a sticky "registered"
@@ -151,6 +171,8 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
         pendingPartialRef.current = '';
         setPartialText('');
         onResultRef.current(transcript);
+        // A late final after silence-stop is still a catch, not an error.
+        if (stopRequestedRef.current) setState('idle');
       } else {
         pendingPartialRef.current = transcript;
         setPartialText(transcript);
@@ -177,13 +199,10 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     const onEnd = () => {
       if (stopRequestedRef.current) {
         stopRequestedRef.current = false;
-        const pendingPartial = pendingPartialRef.current;
-        pendingPartialRef.current = '';
-        setPartialText('');
         // Android continuous recognition can end a requested stop with a
         // client error instead of a final result. Preserve the last real
         // hypothesis rather than losing captured speech or showing an error.
-        if (pendingPartial.trim()) onResultRef.current(pendingPartial);
+        finishStopWithCapture(pendingPartialRef.current);
         return;
       }
       if (listeningRef.current) restartIfStillListening();
@@ -193,6 +212,7 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
       if (!listeningRef.current || typeof event?.value !== 'number') return;
       // Native values span roughly -2 (silent) through 10 (loud).
       setVolumeLevel(Math.max(0, Math.min(1, (event.value + 2) / 12)));
+      if (event.value > SPEECH_VOLUME_FLOOR) armSilenceTimer();
     };
 
     try {
@@ -219,7 +239,7 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
         }
       }
     };
-  }, [armSilenceTimer, clearSilenceTimer, doStop, restartIfStillListening]);
+  }, [armSilenceTimer, clearSilenceTimer, doStop, finishStopWithCapture, restartIfStillListening]);
 
   const start = React.useCallback(async () => {
     if (capability !== 'available') return;

@@ -36,13 +36,14 @@ describe('desktop workbench wiring', () => {
     expect(inspector).toContain('desktop-work-overview-header');
     expect(inspector).toContain('desktop-work-cockpit');
     expect(inspector).toContain('desktop-work-objective');
-    expect(inspector).toContain('corner.corner.about ?? corner.corner.name');
+    expect(inspector).toContain('inspectorCornerObjective(');
     expect(inspector).not.toContain('BRANCH · PR · CHECKS');
   });
 
   it('auto-opens a newly announced corner while the work pane is present', () => {
     expect(room).toContain('observedCornerCardsRef');
     expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner', cornerId: opened })");
+    expect(room).toContain(".filter((corner) => corner.state !== 'archived')");
   });
 
   it('re-presents the work pane when an artifact opens while it is dismissed', () => {
@@ -68,7 +69,8 @@ describe('desktop workbench wiring', () => {
       inspector.indexOf('function CornerRow'),
       inspector.indexOf('function CornerCockpit'),
     );
-    expect(cornerRow).toContain('corner.corner.about ?? corner.corner.name');
+    expect(cornerRow).toContain('inspectorCornerObjective(');
+    expect(cornerRow).not.toContain('corner.corner.about ?? corner.corner.name');
     expect(cornerRow).toContain('cornerDisplayState(corner)');
     expect(cornerRow).toContain('{display.word}');
     expect(cornerRow).not.toMatch(/pull request|github|branch|checks|\bPR\b/i);

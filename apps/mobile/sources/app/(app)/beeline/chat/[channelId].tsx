@@ -714,7 +714,13 @@ export default function BuzzChat() {
     // The server-owned corner list is the lifecycle authority. Current corner
     // cards are daemon facts, so watching the retired `message.corner` shape
     // misses a real newly opened corner even though it is already paintable.
-    const ids = new Set(roomSurface.corners.map((corner) => corner.corner.id));
+    // Live corners only: archived rows ride the same parent list so the
+    // inspector can show them, but a finished corner is not newly opened work.
+    const ids = new Set(
+      roomSurface.corners
+        .filter((corner) => corner.state !== 'archived')
+        .map((corner) => corner.corner.id),
+    );
     const observed = observedCornerCardsRef.current;
     if (!observed || observed.roomId !== roomSurface.room.id) {
       observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };

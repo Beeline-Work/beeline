@@ -1,19 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir, hostname } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import {
   connectionGrant,
   connectionLedgerEntry,
   defaultStreamedRunner,
   installSquire,
   isProcessAlive,
+  isSquireBrowserSessionFailure,
   parseConnectOutput,
   readConnectionDetail,
   readConnectionLedger,
   readGrants,
   readVault,
+  reclaimSquireProfileClaim,
   releaseSquireConnectSession,
   resolveSquireConnectSpec,
   revokeGrants,
+  squireConnectProcessEnv,
   squireConnectSession,
+  squireProfileLockPath,
   vaultConnectionMeta,
   type ShellRunner,
   type StreamedShellRunner,
@@ -404,6 +412,186 @@ describe('connect session claim', () => {
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
     await until(() => !isProcessAlive(claim.pid));
+  });
+});
+
+describe('on-disk profile claim reclaim', () => {
+  function claimDir(): { profileDir: string; lockRoot: string; lockPath: string; cleanup: () => void } {
+    const root = mkdtempSync(join(tmpdir(), 'squire-claim-'));
+    const profileDir = join(root, 'profile');
+    const lockRoot = join(root, 'locks');
+    mkdirSync(profileDir);
+    mkdirSync(lockRoot);
+    const lockPath = squireProfileLockPath(profileDir, lockRoot);
+    return {
+      profileDir,
+      lockRoot,
+      lockPath,
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  }
+
+  function writeLock(lockPath: string, pid: number, startTime = 'unknown'): void {
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ host: hostname(), pid, start_time: startTime, token: 'test-token' }),
+    );
+  }
+
+  it('isSquireBrowserSessionFailure matches hyphen, em-dash, and remapped spellings', () => {
+    expect(
+      isSquireBrowserSessionFailure(
+        'another Trusty Squire session is already using the browser — close it first',
+      ),
+    ).toBe(true);
+    expect(
+      isSquireBrowserSessionFailure(
+        'another Trusty Squire session is already using the browser - close it first',
+      ),
+    ).toBe(true);
+    expect(
+      isSquireBrowserSessionFailure(
+        'Trusty Squire is still using the browser — connect Trusty Squire first',
+      ),
+    ).toBe(true);
+    expect(
+      isSquireBrowserSessionFailure(
+        "Trusty Squire's browser is in use by another process (pid 12). Finish or close that Trusty Squire session, then press Connect again.",
+      ),
+    ).toBe(true);
+    expect(isSquireBrowserSessionFailure('scope refused')).toBe(false);
+    expect(
+      isSquireBrowserSessionFailure(
+        'no Google credentials found. Put a google-credentials.json at /tmp or connect your Google account in Trusty Squire first.',
+      ),
+    ).toBe(false);
+  });
+
+  it('reclaims a lock whose owner process is gone', () => {
+    const dir = claimDir();
+    writeLock(dir.lockPath, 2_147_483_647);
+    expect(existsSync(dir.lockPath)).toBe(true);
+    const result = reclaimSquireProfileClaim({
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+    });
+    expect(result.kind).toBe('reclaimed-dead');
+    expect(existsSync(dir.lockPath)).toBe(false);
+    dir.cleanup();
+  });
+
+  it('does not kill a live foreign owner; installSquire fails with an actionable pid', async () => {
+    const dir = claimDir();
+    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
+    writeLock(dir.lockPath, holder.pid!);
+    let streamed = false;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      run: okRunner(),
+      streamRun: async () => {
+        streamed = true;
+        return { stdout: '', stderr: '', abort: () => {} };
+      },
+    });
+    expect(streamed).toBe(false);
+    expect(result.status).toBe('error');
+    expect(result.errorMessage).toContain(String(holder.pid));
+    expect(result.errorMessage).toContain('Finish or close that Trusty Squire session');
+    expect(existsSync(dir.lockPath)).toBe(true);
+    expect(isProcessAlive(holder.pid)).toBe(true);
+    holder.kill();
+    dir.cleanup();
+  });
+
+  it('releases a lock this helper already claimed without killing a live owner', () => {
+    const dir = claimDir();
+    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
+    writeLock(dir.lockPath, holder.pid!);
+    const result = reclaimSquireProfileClaim({
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      ourPids: [holder.pid!],
+    });
+    expect(result.kind).toBe('released-ours');
+    expect(existsSync(dir.lockPath)).toBe(false);
+    expect(isProcessAlive(holder.pid)).toBe(true);
+    holder.kill();
+    dir.cleanup();
+  });
+
+  it('rewrites a busy-browser connect refusal to the foreign-holder action', async () => {
+    const dir = claimDir();
+    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
+    const { run } = scriptedRunner([{ stdout: '1.1.15' }, { stdout: '1.1.15' }]);
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      run,
+      streamRun: async () => {
+        writeLock(dir.lockPath, holder.pid!);
+        return {
+          stdout: '',
+          stderr: 'another Trusty Squire session is already using the browser - close it first',
+          abort: () => {},
+        };
+      },
+    });
+    expect(result.status).toBe('error');
+    expect(result.errorMessage).toContain(String(holder.pid));
+    expect(result.errorMessage).toContain('Finish or close that Trusty Squire session');
+    expect(result.errorMessage).not.toMatch(/close it first/i);
+    expect(existsSync(dir.lockPath)).toBe(true);
+    holder.kill();
+    dir.cleanup();
+  });
+
+  it('clears a dead on-disk lock before connect runs', async () => {
+    const dir = claimDir();
+    writeLock(dir.lockPath, 2_147_483_647);
+    const { run } = scriptedRunner([{ stdout: '1.1.15' }, { stdout: '1.1.15' }]);
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      run,
+      streamRun: fakeStreamRunner({
+        stdout: 'https://squire.example/install?token=x',
+        signIn: { method: 'streamed-page', url: 'https://squire.example/install?token=x' },
+      }),
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(result.status).toBe('connected');
+    expect(existsSync(dir.lockPath)).toBe(false);
+    dir.cleanup();
+  });
+
+  it('pins connect to the helper profile so a foreign Codex config cannot steal the claim', async () => {
+    const dir = claimDir();
+    let env: NodeJS.ProcessEnv | undefined;
+    const { run } = scriptedRunner([{ stdout: '1.1.15' }, { stdout: '1.1.15' }]);
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      run,
+      streamRun: async (_command, _args, spawnEnv) => {
+        env = spawnEnv;
+        return {
+          stdout: 'https://squire.example/install?token=x',
+          stderr: '',
+          signIn: { method: 'streamed-page', url: 'https://squire.example/install?token=x' },
+          abort: () => {},
+        };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(result.status).toBe('connected');
+    expect(env?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
+    expect(squireConnectProcessEnv(dir.profileDir).TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
+    dir.cleanup();
   });
 });
 

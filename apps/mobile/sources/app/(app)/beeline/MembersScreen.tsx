@@ -900,23 +900,31 @@ export default function BuzzMembers() {
                 <Text style={styles.sectionAddGlyph}>+</Text>
               </TouchableOpacity>
             </View>
-            {surface.agents.map((member) => (
-              <MemberRosterRow
-                avatarUrl={member.identity.avatar}
-                divider="bottom"
-                face={member.identity.face}
-                handle={member.identity.handle}
-                kind="agent"
-                key={member.identity.pubkey}
-                model={member.model}
-                name={member.identity.name}
-                onPress={() => void openAgent(member.identity.pubkey)}
-                ownerHandle={member.owner?.handle}
-                pubkey={member.identity.pubkey}
-                testID={`agent-${member.identity.pubkey}-identity`}
-                trailing={<Text style={styles.chevron}>›</Text>}
-              />
-            ))}
+            {surface.agents.map((member) => {
+              const agentDetail = canManage;
+              return (
+                <MemberRosterRow
+                  avatarUrl={member.identity.avatar}
+                  disabled={!agentDetail || busy}
+                  divider="bottom"
+                  face={member.identity.face}
+                  handle={member.identity.handle}
+                  kind="agent"
+                  key={member.identity.pubkey}
+                  model={member.model}
+                  name={member.identity.name}
+                  onPress={
+                    agentDetail ? () => void openAgent(member.identity.pubkey) : undefined
+                  }
+                  ownerHandle={member.owner?.handle}
+                  pubkey={member.identity.pubkey}
+                  testID={`agent-${member.identity.pubkey}-identity`}
+                  trailing={
+                    agentDetail ? <Text style={styles.chevron}>›</Text> : undefined
+                  }
+                />
+              );
+            })}
           </View>
           {selectedAgent && (
             <HullSurface
@@ -976,6 +984,7 @@ export default function BuzzMembers() {
                         maxLength={AGENT_NAME_MAX_LENGTH}
                         onChangeText={setAgentNameDraft}
                         placeholder="Agent name"
+                        placeholderTextColor={theme.buzz.textMuted}
                         style={styles.textInput}
                         testID="agent-soul-name"
                         value={agentNameDraft}
@@ -987,21 +996,12 @@ export default function BuzzMembers() {
                         multiline
                         onChangeText={setAgentSoulDraft}
                         placeholder="How this agent should work"
-                        style={[styles.textInput, styles.soulInput]}
+                        placeholderTextColor={theme.buzz.textMuted}
+                        style={styles.soulInput}
                         testID="agent-soul-instructions"
                         value={agentSoulDraft}
                       />
                       <View style={styles.soulActions}>
-                        {!!selectedAgent.seededSoul &&
-                          agentSoulDraft.trim() !== selectedAgent.seededSoul && (
-                            <MonoButton
-                              label="SEEDED"
-                              disabled={busy}
-                              onPress={() => setAgentSoulDraft(selectedAgent.seededSoul ?? '')}
-                              testID="restore-seeded-soul"
-                              variant="secondary"
-                            />
-                          )}
                         <MonoButton
                           label="CANCEL"
                           disabled={busy}
@@ -1319,7 +1319,18 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.border,
       backgroundColor: hull.bgTerminal,
     },
-    soulInput: { minHeight: 112, textAlignVertical: 'top' },
+    soulInput: {
+      ...Typography.default(),
+      ...hull.type.body,
+      color: hull.textPrimary,
+      minHeight: 112,
+      paddingHorizontal: hull.space.sm,
+      paddingVertical: hull.space.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      backgroundColor: hull.bgTerminal,
+      textAlignVertical: 'top',
+    },
     soulActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
     modelSection: { gap: hull.space.sm },
     axisBlock: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },

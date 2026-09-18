@@ -28,13 +28,17 @@
  *   `--prefer-online`, and if the cache still refuses to move, connect runs
  *   the exact current release resolved at runtime — never a stale copy.
  *
- * - SESSION: the spawned connect process OWNS the helper's one Squire
- *   browser-session claim. The claim outlives its process on purpose: when a
- *   fresh connect attempt starts, it releases the claim — detecting a dead
- *   owner (process gone: page closed, sign-in finished, or a crash) and
- *   clearing it, or aborting a still-live one it supersedes. Closing the
- *   noVNC page and hitting Retry must never leave the next attempt staring at
- *   "another Trusty Squire session is already using the browser".
+ * - SESSION: two claims, one authority. The spawned connect process owns the
+ *   helper's in-memory claim (`activeConnectSession`). Squire itself records
+ *   the real cross-process claim on disk as
+ *   `/tmp/trusty-squire-profile-<digest>.lock` (digest of the Chrome profile
+ *   path). A fresh connect attempt releases BOTH: a dead on-disk owner is
+ *   reclaimed, our previous connect is aborted, and a still-live owner that
+ *   is not our connect (another Squire server, another agent system) is
+ *   left alone with an actionable "close that session" line — never killed.
+ *   Closing the noVNC page and hitting Retry must never leave the next
+ *   attempt staring at "another Trusty Squire session is already using the
+ *   browser".
  *
  * Vault reads, ledger reads, and grant revocation go through the Squire MCP
  * tools (`list_credentials`, `audit_log`, `list_app_access`,
@@ -43,6 +47,10 @@
  * Squire and no test touches a real Squire account.
  */
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { homedir, hostname, tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import type {
   ConnectionDetail,
   ConnectionGrant,
@@ -120,6 +128,165 @@ export function releaseSquireConnectSession(log?: (message: string) => void): vo
   }
 }
 
+/** The profile Squire serializes on, matching `@trusty-squire/mcp` defaults. */
+export function squireChromeProfileDir(): string {
+  return process.env.TRUSTY_SQUIRE_PROFILE_DIR ?? join(homedir(), '.trusty-squire', 'chrome-profile');
+}
+
+/**
+ * Squire's profile-path identity: realpath the longest existing prefix and
+ * re-append missing suffixes so two spellings of the same profile hash
+ * identically (the lock digest is of this string, not the raw path).
+ */
+export function squireProfilePathIdentity(profileDir: string): string {
+  const absolute = resolve(profileDir);
+  const suffix: string[] = [];
+  let candidate = absolute;
+  for (;;) {
+    try {
+      return join(realpathSync.native(candidate), ...suffix.reverse());
+    } catch {
+      const parent = dirname(candidate);
+      if (parent === candidate) return absolute;
+      suffix.push(basename(candidate));
+      candidate = parent;
+    }
+  }
+}
+
+/** On-disk profile-operation lock Squire's connect CLI acquires. */
+export function squireProfileLockPath(
+  profileDir: string = squireChromeProfileDir(),
+  lockRoot: string = tmpdir(),
+): string {
+  const digest = createHash('sha256')
+    .update(squireProfilePathIdentity(profileDir))
+    .digest('hex')
+    .slice(0, 24);
+  return join(lockRoot, `trusty-squire-profile-${digest}.lock`);
+}
+
+export type SquireProfileLockOwner = {
+  readonly host: string;
+  readonly pid: number;
+  readonly startTime: string | null;
+};
+
+/** Helper copy when a Google tool is blocked on Squire's one browser claim. */
+export const SQUIRE_BROWSER_BUSY_GOOGLE_REASON =
+  'Trusty Squire is still using the browser — connect Trusty Squire first';
+
+/** True for Squire's PROFILE_BUSY_MESSAGE (hyphen or em dash) and the
+ *  helper's remapped "connect Trusty Squire first" spellings. */
+export function isSquireBrowserSessionFailure(text: string | undefined | null): boolean {
+  if (typeof text !== 'string' || text.length === 0) return false;
+  return (
+    /Trusty Squire[\s\S]{0,80}browser/i.test(text) ||
+    /browser[\s\S]{0,80}Trusty Squire/i.test(text)
+  );
+}
+
+export function squireForeignClaimAction(owner: SquireProfileLockOwner): string {
+  return (
+    `Trusty Squire's browser is in use by another process (pid ${owner.pid}). ` +
+    'Finish or close that Trusty Squire session, then press Connect again.'
+  );
+}
+
+export type SquireProfileClaim =
+  | { readonly kind: 'free' }
+  | { readonly kind: 'reclaimed-dead'; readonly owner: SquireProfileLockOwner }
+  | { readonly kind: 'released-ours'; readonly owner: SquireProfileLockOwner }
+  | {
+      readonly kind: 'blocked-foreign';
+      readonly owner: SquireProfileLockOwner;
+      readonly action: string;
+    };
+
+function readLinuxStartTime(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const close = stat.lastIndexOf(')');
+    return close < 0 ? undefined : stat.slice(close + 2).split(' ')[19];
+  } catch {
+    return undefined;
+  }
+}
+
+function lockOwnerIsAlive(owner: SquireProfileLockOwner): boolean {
+  if (!isProcessAlive(owner.pid)) return false;
+  if (owner.startTime === null || owner.startTime === 'unknown') return true;
+  const actual = readLinuxStartTime(owner.pid);
+  if (actual === undefined) return true;
+  return actual === owner.startTime;
+}
+
+function readLockFileOwner(lockPath: string): SquireProfileLockOwner | undefined {
+  try {
+    const target = lstatSync(lockPath).isDirectory() ? join(lockPath, 'owner.json') : lockPath;
+    const parsed = JSON.parse(readFileSync(target, 'utf8')) as {
+      host?: unknown;
+      pid?: unknown;
+      start_time?: unknown;
+    };
+    if (typeof parsed.host !== 'string' || typeof parsed.pid !== 'number') return undefined;
+    return {
+      host: parsed.host,
+      pid: parsed.pid,
+      startTime: typeof parsed.start_time === 'string' ? parsed.start_time : null,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function removeProfileLock(lockPath: string): void {
+  rmSync(lockPath, { recursive: true, force: true });
+}
+
+/**
+ * Reclaim Squire's on-disk browser claim so a fresh connect is not blocked
+ * by a phantom lock. Dead owners (process gone, or pid reused with a
+ * different start_time) are cleared. A pid this helper already aborted is
+ * cleared. A live owner that is not ours is left untouched — killing
+ * another Squire server (or another agent system on this machine) is not
+ * safe; the caller surfaces `action` instead.
+ */
+export function reclaimSquireProfileClaim(options?: {
+  readonly profileDir?: string;
+  readonly lockRoot?: string;
+  readonly ourPids?: readonly number[];
+  readonly log?: (message: string) => void;
+}): SquireProfileClaim {
+  const profileDir = options?.profileDir ?? squireChromeProfileDir();
+  const lockRoot = options?.lockRoot ?? tmpdir();
+  const lockPath = squireProfileLockPath(profileDir, lockRoot);
+  const owner = readLockFileOwner(lockPath);
+  if (!owner) {
+    return { kind: 'free' };
+  }
+  const ours = (options?.ourPids ?? []).includes(owner.pid);
+  if (ours) {
+    removeProfileLock(lockPath);
+    options?.log?.(
+      `released our trusty-squire on-disk browser claim (pid ${owner.pid})`,
+    );
+    return { kind: 'released-ours', owner };
+  }
+  if (owner.host !== hostname() || lockOwnerIsAlive(owner)) {
+    const action = squireForeignClaimAction(owner);
+    options?.log?.(
+      `trusty-squire browser claim blocked by live pid ${owner.pid} — not superseding a foreign session`,
+    );
+    return { kind: 'blocked-foreign', owner, action };
+  }
+  removeProfileLock(lockPath);
+  options?.log?.(
+    `cleared dead trusty-squire on-disk browser claim (pid ${owner.pid} gone)`,
+  );
+  return { kind: 'reclaimed-dead', owner };
+}
+
 export type ShellRunner = (
   command: string,
   args: readonly string[],
@@ -161,9 +328,22 @@ export type StreamedCommandResult = {
   readonly abort: () => void;
 };
 
+/** Env for every helper-spawned Squire process. `--target=codex` otherwise
+ *  reads that agent's config and can steal a foreign profile (on this
+ *  machine, Codex points at signup-test-profile). */
+export function squireConnectProcessEnv(
+  profileDir: string = squireChromeProfileDir(),
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    TRUSTY_SQUIRE_PROFILE_DIR: profileDir,
+  };
+}
+
 export type StreamedShellRunner = (
   command: string,
   args: readonly string[],
+  env?: NodeJS.ProcessEnv,
 ) => Promise<StreamedCommandResult>;
 
 const CONNECT_TIMEOUT_MS = 300_000; // 5-minute safety bound for the connect process
@@ -174,10 +354,24 @@ const CONNECT_TIMEOUT_MS = 300_000; // 5-minute safety bound for the connect pro
  * process exits without one). Keeps the process alive until the safety
  * timeout or an explicit `abort()`.
  */
-export const defaultStreamedRunner: StreamedShellRunner = (command, args) =>
+function killConnectTree(child: { pid?: number; kill: () => boolean }): void {
+  const pid = child.pid;
+  if (pid !== undefined) {
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      // Not a process-group leader (spawn without detached); fall through.
+    }
+  }
+  child.kill();
+}
+
+export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =>
   new Promise((resolve) => {
     const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: env ?? squireConnectProcessEnv(),
+      detached: true,
     });
 
     let stdout = '';
@@ -189,12 +383,12 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args) =>
         resolved = true;
         resolve({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
       }
-      child.kill();
+      killConnectTree(child);
     }, CONNECT_TIMEOUT_MS);
 
     const abort = () => {
       clearTimeout(safetyTimer);
-      child.kill();
+      killConnectTree(child);
     };
 
     // The connect process owns the helper's browser-session claim from spawn
@@ -289,6 +483,13 @@ export type InstallSquireOptions = {
   readonly onProgress?: (steps: readonly ConnectorStep[]) => void;
   /** Helper-side diagnostics (session-claim releases, re-resolutions). */
   readonly log?: (message: string) => void;
+  /**
+   * The Chrome profile Squire serializes on, and the directory its
+   * profile-operation lock lives in. Tests inject a temp pair; production
+   * uses Squire's own defaults (`~/.trusty-squire/chrome-profile`, `os.tmpdir()`).
+   */
+  readonly profileDir?: string;
+  readonly lockRoot?: string;
 };
 
 export type InstallSquireResult = {
@@ -401,6 +602,8 @@ export function parseSignedInAs(output: string): string | undefined {
  * stays pending.
  */
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
+  const profileDir = options.profileDir ?? squireChromeProfileDir();
+  const lockRoot = options.lockRoot ?? tmpdir();
   const run = options.run ?? defaultShellRunner;
   const streamRun = options.streamRun ?? defaultStreamedRunner;
   const log = options.log ?? (() => {});
@@ -421,7 +624,18 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // previous attempt still claims — aborting a live owner, clearing a dead
   // one — so closing the noVNC page and retrying is never blocked by a
   // phantom "another session is already using the browser".
+  const previousPid = squireConnectSession()?.pid;
   releaseSquireConnectSession(log);
+  const claim = reclaimSquireProfileClaim({
+    log,
+    profileDir,
+    lockRoot,
+    ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
+  });
+  if (claim.kind === 'blocked-foreign') {
+    push(step('trusty-squire installed', 'failed', claim.action));
+    return fail(claim.action);
+  }
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
   // one against the current published release.
@@ -437,17 +651,30 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // its own Chrome, so no local display or tunnel binaries are needed on a
   // headless helper. The streaming runner captures the URL from live stdout
   // and resolves immediately — keeping the process alive.
-  const install = await streamRun('npx', [
-    ...resolution.npxArgs,
-    'connect',
-    '--force-relogin=google',
-    '--target=codex',
-    '--skip-browser',
-  ]);
+  const install = await streamRun(
+    'npx',
+    [
+      ...resolution.npxArgs,
+      'connect',
+      '--force-relogin=google',
+      '--target=codex',
+      '--skip-browser',
+    ],
+    squireConnectProcessEnv(profileDir),
+  );
   if (!install.signIn) {
     const stderr = install.stderr.trim();
-    push(step('trusty-squire installed', 'failed', stderr || 'connect printed no sign-in URL'));
-    return fail(stderr || 'the trusty-squire connect command printed no sign-in surface');
+    let stepReason = stderr || 'connect printed no sign-in URL';
+    let failReason = stderr || 'the trusty-squire connect command printed no sign-in surface';
+    if (isSquireBrowserSessionFailure(stderr)) {
+      const again = reclaimSquireProfileClaim({ log, profileDir, lockRoot });
+      if (again.kind === 'blocked-foreign') {
+        stepReason = again.action;
+        failReason = again.action;
+      }
+    }
+    push(step('trusty-squire installed', 'failed', stepReason));
+    return fail(failReason);
   }
   // The connect process stays alive in the background for the human to sign in.
   // `install.abort()` can kill it (safety timeout also fires after 5 min).

@@ -437,7 +437,8 @@ export function assertModelSelectionAdvertised(
     if (!target.value) continue;
     const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
     if (!axis) {
-      // A harness that advertises no axis (cursor-agent-acp exposes neither
+      // A harness that advertises no axis runs its own default (a connect
+      // that could not enumerate an axis still starts):
       // model nor effort at `session/new`) runs its own default; there is
       // nothing to apply and nothing to refuse, so the selection is skipped
       // rather than failed. A persisted value is still honored the moment the

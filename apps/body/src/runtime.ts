@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
 import { DEFAULT_ACCESS_POLICY, LEGACY_ACCESS_POLICY, type AgentAccessPolicy } from './access-policy.js';
-import type { AgentCommand, AgentKind } from './agent-command.js';
+import { resolveAgentCommand, type AgentCommand, type AgentKind } from './agent-command.js';
 import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
 import type { SandboxPolicy } from './bwrap-sandbox.js';
 
@@ -106,7 +106,18 @@ export function runtimeIdentity(identity: StoredIdentity): Identity {
   return restored;
 }
 
-export function runtimeAgentCommand(runtime: AgentRuntimeRecord): AgentCommand {
+export function runtimeAgentCommand(
+  runtime: AgentRuntimeRecord,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentCommand {
+  if (runtime.agentKind === 'cursor') {
+    try {
+      return resolveAgentCommand({ kind: 'cursor', env });
+    } catch {
+      // cursor-agent missing on this host: keep the stored spawn so start still
+      // fails with the same binary-not-found path it already had.
+    }
+  }
   return {
     kind: runtime.agentKind ?? 'reference',
     command: runtime.agentCommand ?? runtime.agentBinary,

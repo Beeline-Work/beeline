@@ -320,6 +320,7 @@ describe('bwrap argv construction', () => {
     expect(harnessHomeStateDirs('/home/op/.cursor/bin/cursor-agent-acp', '/home/op')).toEqual([
       '/home/op/.cursor',
     ]);
+    expect(harnessHomeStateDirs('cursor-acp-bridge', '/home/op')).toEqual(['/home/op/.cursor']);
     // An unrecognised harness gets none, rather than four empty directories
     // created in the operator's home for harnesses this host does not run.
     expect(harnessHomeStateDirs('some-unknown-acp', '/home/op')).toEqual([]);

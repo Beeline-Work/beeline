@@ -22,7 +22,7 @@ Install one of these supported agents:
   goose  https://block.github.io/goose/docs/getting-started/installation/
   pi     npm install -g @mariozechner/pi-coding-agent pi-acp
   grok   curl -fsSL https://x.ai/cli/install.sh | bash
-  cursor npm install -g cursor-agent-acp
+  cursor Install Cursor Agent CLI from https://cursor.com/docs/cli
 Then retry, or explicitly use \`--agent reference\` with an LLM key.
 For another ACP server, use \`--agent custom --agent-command "<cmd> [args...]"\`.`;
 

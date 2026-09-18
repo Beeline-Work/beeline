@@ -273,6 +273,8 @@ export type ChatDisplayMessage = {
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
   /** An agent asking its owner for reach; rendered as the grant card. */
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
+  /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
+  connectorOffer?: NonNullable<RoomViewMessage['connectorOffer']>;
   /** @wallet ledger facts, rendered as ledger cards in the @wallet thread. */
   walletTx?: NonNullable<RoomViewMessage['walletTx']>;
   walletInsufficient?: NonNullable<RoomViewMessage['walletInsufficient']>;
@@ -400,6 +402,7 @@ export function displayRoomMessage(
           },
         }
       : {}),
+    ...(message.connectorOffer ? { connectorOffer: { ...message.connectorOffer } } : {}),
     ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),
     ...(message.walletInsufficient
       ? { walletInsufficient: { ...message.walletInsufficient } }

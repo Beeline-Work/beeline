@@ -32,9 +32,9 @@ import {
  * `presentation='system'` insert or any text restatement outside this file.
  *
  * A line is the default container. A card (`presentation: 'card'`) is only for
- * something a tap must settle — a grant request, a permission ask, the merge
- * summary with its pull-request link — and keeps its own component on the
- * phone; its header sentence still comes from here.
+ * something a tap must settle — a grant request, a connector offer, a permission
+ * ask, the merge summary with its pull-request link — and keeps its own
+ * component on the phone; its header sentence still comes from here.
  */
 export interface SystemLineInput {
   readonly roomId: string;

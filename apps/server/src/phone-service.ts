@@ -57,6 +57,11 @@ import {
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
 import {
+  isOfferableConnectorKind,
+  type ConnectorOfferCardView,
+  type ConnectorOfferStatus,
+} from '@beeline/api-contract/connector-offers';
+import {
   AGENT_REACHABLE_HORIZON_MS,
   MAX_ACCESS_ALLOWLIST_ENTRIES,
   agentAccessPolicyRecord,
@@ -106,7 +111,11 @@ import {
   isConnectableConnector,
   isMetadataStale,
 } from './workbench.js';
-import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
+import type {
+  ConnectorKind,
+  ConnectorStatus,
+  ConnectorStep,
+} from '@beeline/api-contract/workbench';
 import { GOOGLE_CONNECTOR_KINDS, isGoogleToolConnectorKind } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
@@ -270,6 +279,14 @@ interface CornerRow extends RoomRow {
   latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
 }
+/**
+ * The decision rows kept only for a daemon wake and never shown (C101): a
+ * grant decision and an accepted connector offer both settle their card in
+ * place, so the hidden line would read the same answer twice.
+ */
+function hiddenDecisionCardSql(column: string): string {
+  return `${column} IS DISTINCT FROM 'grant-decision' AND ${column} IS DISTINCT FROM 'connector-offer-decision'`;
+}
 // Correlated with the authorized Room and viewer in both Room read paths.
 const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
   'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
@@ -277,7 +294,7 @@ const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
     SELECT message.id FROM messages message
     WHERE message.room_id=room.id AND message.author_id<>$2
       AND message.presentation<>'activity'
-      AND message.card_type IS DISTINCT FROM 'grant-decision'
+      AND ${hiddenDecisionCardSql('message.card_type')}
       AND (message.created_at,message.id)>(
         COALESCE((SELECT message_created_at FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'-infinity'::timestamptz),
         COALESCE((SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'')
@@ -534,6 +551,11 @@ function projectedMessage(
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
+    case 'connector-offer':
+      return {
+        ...base,
+        connectorOffer: row.card as NonNullable<RoomViewMessage['connectorOffer']>,
+      };
     case 'wallet-tx':
       return { ...base, walletTx: row.card as NonNullable<RoomViewMessage['walletTx']> };
     case 'wallet-insufficient':
@@ -719,7 +741,7 @@ export class PhoneService {
            AND workspace_member.removed_at IS NULL
          JOIN messages message ON message.room_id=room.id AND message.id=$2
          JOIN identities author ON author.id=message.author_id
-         WHERE room.id=$1 AND message.card_type IS DISTINCT FROM 'grant-decision'
+         WHERE room.id=$1 AND ${hiddenDecisionCardSql('message.card_type')}
            AND (
              message.presentation<>'activity' OR message.durable_fact IS NOT NULL OR EXISTS(
                SELECT 1 FROM agent_turns turn
@@ -1023,7 +1045,7 @@ export class PhoneService {
       LEFT JOIN LATERAL (
         SELECT * FROM messages
         WHERE room_id=r.id AND presentation IN ('message','system','card')
-          AND card_type IS DISTINCT FROM 'grant-decision'
+          AND ${hiddenDecisionCardSql('card_type')}
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
@@ -1082,7 +1104,7 @@ export class PhoneService {
            LEFT JOIN LATERAL(
              SELECT id,created_at FROM messages
              WHERE room_id=room.id AND presentation IN ('message','system','card')
-               AND card_type IS DISTINCT FROM 'grant-decision'
+               AND ${hiddenDecisionCardSql('card_type')}
                AND author_id IS DISTINCT FROM $2
              ORDER BY created_at DESC,id DESC LIMIT 1
            ) latest ON true
@@ -1550,7 +1572,7 @@ export class PhoneService {
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
            WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-             AND m.card_type IS DISTINCT FROM 'grant-decision'
+             AND ${hiddenDecisionCardSql('m.card_type')}
              AND (NOT EXISTS(
                SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
              ) OR ${eligible})
@@ -2492,6 +2514,11 @@ export class PhoneService {
       case 'revokeAgentGrant':
         return (await this.revokeAgentGrant(
           input as Input<'revokeAgentGrant'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'acceptConnectorOffer':
+        return (await this.acceptConnectorOffer(
+          input as Input<'acceptConnectorOffer'>,
           viewerId,
         )) as Output<Name>;
       case 'createWorkspace':
@@ -4654,6 +4681,159 @@ export class PhoneService {
     return grant;
   }
   /**
+   * The one affirmative tap on a connector-offer card (R5). Authorization is
+   * the captain's Q4 answer, decided here and never on the phone: the person
+   * the agent ADDRESSED — whose keys the tool will hold — or a current
+   * Workspace manager, who already owns Workspace configuration. Nobody else
+   * can act on the card, whatever the phone shows.
+   *
+   * Accepting is configuration, not authority: it pairs the connector on the
+   * OFFERING agent's machine through the very row the Workbench page's own
+   * Connect writes (`armConnectorPairing`), so every later credential use goes
+   * through the connector's unchanged receipts and approvals, and the vault
+   * stays write-only. The card settles in place naming who acted, and one
+   * hidden `connector-offer-decided` line resumes the paused turn — kept for
+   * that wake and never shown, exactly like `grant-decision` (C101).
+   */
+  private async acceptConnectorOffer(
+    input: Input<'acceptConnectorOffer'>,
+    viewerId: string,
+  ): Promise<Output<'acceptConnectorOffer'>> {
+    if (typeof input.offerId !== 'string' || !input.offerId)
+      throw new Error('offerId is required');
+    const offer = (
+      await this.database.query<{
+        id: string;
+        agent_id: string;
+        workspace_id: string;
+        room_id: string;
+        addressee_id: string;
+        connector_type: string;
+        machine_id: string;
+        status: ConnectorOfferStatus;
+        command_id: string | null;
+      }>(
+        `SELECT id,agent_id,workspace_id,room_id,addressee_id,connector_type,machine_id,status,command_id
+         FROM connector_offers WHERE id::text=$1`,
+        [input.offerId],
+      )
+    ).rows[0];
+    if (!offer) throw new Error('connector offer not found');
+    if (offer.status !== 'pending')
+      throw new Error('connector offer conflict: already accepted');
+    if (!isOfferableConnectorKind(offer.connector_type))
+      throw new Error(`connector offer is invalid: ${offer.connector_type} cannot be added`);
+    const connectorType: ConnectorKind = offer.connector_type;
+    if (offer.addressee_id !== viewerId) {
+      const manager = await this.database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2
+           AND role IN ('owner','admin') AND removed_at IS NULL`,
+        [offer.workspace_id, viewerId],
+      );
+      if (!manager.rowCount) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
+    }
+    // The addressee decides only while they are still in the Workspace.
+    await this.requireWorkspaceMember(offer.workspace_id, viewerId);
+    // The helper is the offering agent's machine; it must still be here to install.
+    const helper = await this.database.query(
+      `SELECT 1 FROM agents a
+       JOIN memberships m ON m.identity_id=a.agent_id AND m.workspace_id=$2
+         AND m.room_id IS NULL AND m.removed_at IS NULL
+       WHERE a.agent_id=$1`,
+      [offer.agent_id, offer.workspace_id],
+    );
+    if (!helper.rowCount)
+      throw new Error('connector offer conflict: the offering agent has left this Workspace');
+    const acceptor = await this.requireIdentity(viewerId);
+    const connectorName = connectorDisplayName(connectorType);
+    const paired = await this.database.transaction(async (database) => {
+      const updated = await database.query<{ accepted_at: Date }>(
+        `UPDATE connector_offers SET status='accepted',accepted_by=$2,accepted_at=now()
+         WHERE id::text=$1 AND status='pending' RETURNING accepted_at`,
+        [input.offerId, viewerId],
+      );
+      const acceptedAt = updated.rows[0]?.accepted_at;
+      if (!acceptedAt) throw new Error('connector offer conflict: already accepted');
+      const pairing = await this.armConnectorPairing(database, {
+        workspaceId: offer.workspace_id,
+        ownerIdentityId: viewerId,
+        connectorType,
+        helperAgentId: offer.agent_id,
+        machineId: offer.machine_id,
+      });
+      await database.query(`UPDATE connector_offers SET connector_id=$2::uuid WHERE id::text=$1`, [
+        input.offerId,
+        pairing.connectorId,
+      ]);
+      await this.settleConnectorOfferCard(database, {
+        roomId: offer.room_id,
+        offerId: input.offerId,
+        acceptedBy: acceptor,
+        acceptedAt,
+        connectorId: pairing.connectorId,
+      });
+      // `<@handle> added Trusty Squire`: exactly `formatConnectorOfferDecisionLine`'s
+      // shape, so the daemon recognises the answer structurally. A resume kind
+      // (`RESUME_KINDS`): it answers the paused turn and never starts a second.
+      await systemLine(database, {
+        roomId: offer.room_id,
+        authorId: viewerId,
+        subject: identitySubject({ id: acceptor.pubkey, kind: acceptor.kind, name: acceptor.name }),
+        verb: 'added',
+        object: connectorName,
+        kind: 'connector-offer-decided',
+        ...(offer.command_id ? { commandId: offer.command_id } : {}),
+        wakes: [offer.agent_id],
+        cardType: 'connector-offer-decision',
+        card: { offerId: input.offerId, status: 'accepted', connectorId: pairing.connectorId },
+      });
+      return pairing;
+    });
+    return {
+      offerId: input.offerId,
+      status: 'accepted',
+      roomId: offer.room_id,
+      connectorId: paired.connectorId,
+    };
+  }
+  /**
+   * Settle the offer card in place: the button goes, and the record names who
+   * acted and when — a Room has many people, and the simplification must not
+   * erase the actor. The Workbench row id rides along for the settled card's
+   * `Manage in Workbench ›` link.
+   */
+  private async settleConnectorOfferCard(
+    database: SqlDatabase,
+    input: {
+      roomId: string;
+      offerId: string;
+      acceptedBy: RoomViewIdentity;
+      acceptedAt: Date;
+      connectorId: string;
+    },
+  ) {
+    const card = (
+      await database.query<{ id: string; card: ConnectorOfferCardView }>(
+        `SELECT id,card FROM messages
+         WHERE room_id=$1 AND card_type='connector-offer' AND card->>'offerId'=$2
+         ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+        [input.roomId, input.offerId],
+      )
+    ).rows[0];
+    if (!card || card.card.status !== 'pending') return;
+    const settled: ConnectorOfferCardView = {
+      ...card.card,
+      status: 'accepted',
+      acceptedBy: input.acceptedBy,
+      acceptedAt: unix(input.acceptedAt),
+      connectorId: input.connectorId,
+    };
+    await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [
+      card.id,
+      JSON.stringify(settled),
+    ]);
+  }
+  /**
    * The agent "yolo" switch. Authorization is decided here, never on the phone:
    * the viewer must be the agent's owner (the identity that connected it).
    * Public Workspaces reject enabling yolo while preserving the stored value
@@ -5707,8 +5887,38 @@ export class PhoneService {
     const ws = machine.rows[0];
     if (!ws)
       throw new Error('the connector helper must be a current agent you share a Workspace with');
+    return this.armConnectorPairing(this.database, {
+      workspaceId: ws.workspace_id,
+      ownerIdentityId: viewerId,
+      connectorType: input.connectorType,
+      helperAgentId: matched.agent_id,
+      machineId,
+    });
+  }
+
+  /**
+   * The one row write behind every pairing: the Workbench page's Connect
+   * (`pairConnector`, where the person picks one of their own machines) and an
+   * accepted connector offer (`acceptConnectorOffer`, where the machine is the
+   * offering agent's). Authorization is the caller's; this arms the row the
+   * helper daemon derives its install from and opens the status DM.
+   */
+  private async armConnectorPairing(
+    database: SqlDatabase,
+    input: {
+      workspaceId: string;
+      ownerIdentityId: string;
+      connectorType: Input<'pairConnector'>['connectorType'];
+      helperAgentId: string;
+      machineId: string;
+    },
+  ): Promise<Output<'pairConnector'>> {
+    const viewerId = input.ownerIdentityId;
+    const machineId = input.machineId;
+    const ws = { workspace_id: input.workspaceId };
+    const matched = { agent_id: input.helperAgentId };
     const id = randomUUID();
-    await this.database.query(
+    await database.query(
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps
@@ -5746,7 +5956,7 @@ export class PhoneService {
     if (isGoogleToolConnectorKind(input.connectorType)) {
       for (const siblingType of GOOGLE_CONNECTOR_KINDS) {
         if (siblingType === input.connectorType) continue;
-        await this.database.query(
+        await database.query(
           `INSERT INTO workspace_connectors(
              id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
              status,status_steps
@@ -5773,7 +5983,7 @@ export class PhoneService {
       }
     }
     const existing = (
-      await this.database.query<{
+      await database.query<{
         id: string;
         status: ConnectorStatus['status'];
         status_steps: ConnectorStep[] | null;
@@ -5792,7 +6002,7 @@ export class PhoneService {
     };
     // The helper sees the install assignment on its next poll.
     await ensureConnectorDirectMessageRoom(
-      this.database,
+      database,
       ws.workspace_id,
       input.connectorType,
       viewerId,
@@ -6187,7 +6397,7 @@ export class PhoneService {
            '{}'::text[] tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-           AND m.card_type IS DISTINCT FROM 'grant-decision'
+           AND ${hiddenDecisionCardSql('m.card_type')}
          ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
          ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
         before ? [roomId, before.createdAt, before.id] : [roomId],
@@ -6272,7 +6482,7 @@ export class PhoneService {
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-         AND m.card_type IS DISTINCT FROM 'grant-decision'
+         AND ${hiddenDecisionCardSql('m.card_type')}
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
        ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
       [roomId],
@@ -6419,6 +6629,13 @@ function personMention(handle: string | null | undefined): string | undefined {
 /** Grant decisions retain the owner-or-Workspace-manager authority axis. */
 export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace admin can change this";
 
+/**
+ * Who may accept a connector offer (R5, Q4): the person the agent addressed
+ * or a Workspace manager. Named here so `server.ts` answers 403.
+ */
+export const CONNECTOR_OFFER_AUTHORITY_MESSAGE =
+  'Only the person the agent addressed or a workspace admin can add this tool';
+
 /** Agent configuration belongs only to the human who connected that agent. */
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
 
@@ -6466,6 +6683,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'decideWritePermission',
   'decideAgentGrant',
   'revokeAgentGrant',
+  'acceptConnectorOffer',
   'createWorkspace',
   'updateWorkspace',
   'leaveWorkspace',

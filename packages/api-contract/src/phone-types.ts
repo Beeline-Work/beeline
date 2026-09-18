@@ -1,6 +1,7 @@
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 import type { AgentAccessPolicy } from './agent-access.js';
+import type { ConnectorOfferCardView } from './connector-offers.js';
 
 export interface AttachmentReference {
   url: string;
@@ -231,6 +232,8 @@ export type RoomViewMessage = {
   };
   /** One grant card: the agent asks its owner; several asks in one turn share a card. */
   readonly grantRequest?: GrantRequestCardView;
+  /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
+  readonly connectorOffer?: ConnectorOfferCardView;
   readonly targetBranch?: {
     readonly proposalId: string;
     readonly from: string;

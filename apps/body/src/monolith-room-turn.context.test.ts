@@ -180,6 +180,9 @@ describe('monolith Room turn context', () => {
       'For every ask, first reply on one line `Proposed corner: <name> — <objective>`',
     );
     expect(systemPrompts[0]).toContain(
+      'Before emitting `Proposed corner:` or calling open_corner, consult the release-versioned beeline-triage skill',
+    );
+    expect(systemPrompts[0]).toContain(
       'If one message contains several asks, list one numbered `Proposed corner:` line per ask; `go on 1 and 3` opens exactly those objectives',
     );
 

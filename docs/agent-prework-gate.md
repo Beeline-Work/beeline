@@ -1,282 +1,136 @@
-# Agent pre-work gate
+# Agent request triage
 
 ## Decision
 
-Require every agent to complete one server-recorded preflight before it can open a writable
-corner. The preflight covers three questions:
+Run one lightweight triage skill before an agent proposes or opens a corner:
 
-1. Is this work already active or already delivered?
-2. What existing behavior can this change regress, and how will the corner preserve it?
-3. Does the work support the repository's stated product direction?
+1. **Is it clear?** Rewrite the request as a concrete outcome with acceptance criteria and
+   material exclusions. Ask a focused question when ambiguity could change the outcome.
+2. **Is work warranted?** Reproduce a reported bug or establish the unmet need, then search current
+   code, history, issues, and pull requests for work that resolves or supersedes it.
+3. **Is it desirable?** Compare the request with repository-owned goals, invariants, architecture,
+   user benefit, maintenance cost, and the smallest coherent solution.
 
-The gate runs in the read-only parent Room. A successful result is a short-lived receipt bound to
-the agent, Room, originating command, and exact normalized objective. `createCorner` must reject a
-repository-backed corner without that receipt. Chat-only corners use the same gate without the
-GitHub search lane.
+Clarity can require a question before work is proposed. The other two legs emit evidence-backed
+warnings but do not block the implementer. The configured reviewer independently repeats the
+warranted-work and desirability checks against the completed change, verifies that the diff matches
+the clarified request, and checks tests and regression exposure before approving the exact head.
 
-The model makes the semantic decision. The server gathers authoritative candidates, validates the
-shape of the evidence, records the decision, and enforces that the process happened. A lexical
-match alone never blocks work.
+This split keeps pre-work useful without creating a new approval queue. Triage improves the request
+and exposes concerns while the reviewer remains the hard quality gate.
 
-## Why this shape
+## Evidence behind the design
 
-Several established practices agree on checking direction before implementation:
+Several established practices support this shape:
 
-- GitHub's issue-form example makes searching existing issues a required attestation, and GitHub
-  gives duplicates an explicit relationship so related work remains discoverable instead of
-  becoming parallel maintenance.
-- Google's review guidance starts with whether a change makes sense at all and recommends raising
-  major design problems before detailed review. Its broader checklist asks whether the change fits
-  the system, avoids speculative complexity, and has tests that would fail for the regression.
-- Kubernetes requires most non-trivial changes to use a common proposal record. Its template asks
-  for motivation, goals, non-goals, user stories, risks, tests, and rollback or disablement before a
-  proposal becomes implementable.
-
-The useful common denominator is small: search first, state the user outcome, name what must not
-break, and compare the change with an authoritative direction. Beeline should not copy the full
-issue or enhancement processes into every task.
+- GitHub recommends giving coding agents clear, bounded tasks with explicit acceptance criteria.
+- GitHub Next's issue-triage workflow searches related work but distinguishes duplicates from
+  related issues, missing information, and cases needing maintainer judgment.
+- Google's review guidance asks whether a change belongs in the codebase, benefits users, avoids
+  speculative functionality, and improves overall code health.
+- GitHub warns that agent review can miss defects or invent findings, so findings need independent
+  verification.
+- GitHub binds review approval to a revision; new commits require the updated head to be reviewed.
 
 Sources:
 
-- [GitHub issue forms](https://docs.github.com/en/enterprise-cloud@latest/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms)
-- [GitHub duplicate relationships](https://docs.github.com/en/issues/tracking-your-work-with-issues/administering-issues/marking-issues-or-pull-requests-as-a-duplicate)
-- [Google: navigating a change review](https://google.github.io/eng-practices/review/reviewer/navigate.html)
+- [GitHub coding-agent best practices](https://docs.github.com/en/copilot/using-github-copilot/using-copilot-coding-agent-to-work-on-tasks/best-practices-for-using-copilot-to-work-on-tasks)
+- [GitHub Next issue-triage workflow](https://github.com/githubnext/agentics/blob/main/workflows/issue-triage.md)
 - [Google: what to look for in a change review](https://google.github.io/eng-practices/review/reviewer/looking-for.html)
-- [Kubernetes enhancement process](https://github.com/kubernetes/enhancements/blob/master/keps/README.md)
-- [Kubernetes enhancement template](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/README.md)
+- [GitHub responsible use for agents](https://docs.github.com/en/copilot/responsible-use/agents)
+- [GitHub code review](https://docs.github.com/en/copilot/concepts/agents/code-review)
 
-## Current gap
+No published skill covers the complete flow. GitHub Next's issue-triage and contribution-checker
+workflows provide useful rubrics, but the former stops before implementation and the latter starts
+after a pull request exists. Beeline therefore needs a small repository-aware skill of its own.
 
-Beeline already has two good boundaries:
+## Triage behavior
 
-- `using-beeline` requires a named, fixed objective and normally asks a person to confirm it.
-- `CORNER_AUTHOR_CONTRACT` requires reproduction, a regression test, and a built demonstration
-  after the corner opens.
+The triage skill runs in the read-only parent Room, before either the ordinary `Proposed corner:`
+line or a direct `open_corner` call.
 
-Neither boundary checks whether another corner, issue, pull request, commit, or existing feature
-already satisfies the ask. Vision and regression reasoning happen only if the harness remembers to
-do them. The server currently proves only that the opening command is authorized and idempotent for
-the same request. Two different requests can still commission the same work.
+### Clear request
 
-The confirmation ceremony is also prompt-enforced. `createCorner` cannot tell whether an agent
-inspected the project before calling it. Adding more prose to the prompt would improve behavior but
-would not make the gate agent-wide.
-
-## User-visible flow
-
-### Clear work
-
-1. A person asks for a change.
-2. The agent inspects relevant code and project guidance, then calls `preflight_corner`.
-3. The tool returns `clear` with a receipt and a compact evidence summary.
-4. If ordinary confirmation is required, the agent posts the existing `Proposed corner:` line. On
-   confirmation it calls `open_corner` with the receipt. An explicitly scoped corner command may
-   proceed immediately.
-
-The normal case adds no extra chat turn.
-
-### Existing work
-
-If the evidence shows an exact active corner or open pull request, the agent does not propose a new
-corner. It links the existing work and either answers from it or asks whether the person wants that
-work steered. The gate records `parked_duplicate` and issues no receipt.
-
-If a merged change already provides the requested outcome, the agent reports the evidence and
-parks. A person can restate a different unmet outcome, which creates a new objective and preflight.
-
-### Ambiguous or conflicting work
-
-If overlap is plausible, regression exposure is high but underspecified, or product guidance
-conflicts, the tool returns `needs_confirmation`. The agent asks one concrete question containing
-the relevant evidence. A person's informed answer is a new command; the agent records it in a new
-preflight. There is no generic “override” checkbox and no reusable bypass.
-
-## Tool contract
-
-Add `preflight_corner` next to `open_corner` on top-level Room surfaces.
-
-```ts
-type PreflightCornerInput = TurnOutputAuthority &
-  RoomInput & {
-    requestId: string;
-    name: string;
-    objective: string;
-    workKind: 'defect' | 'feature' | 'maintenance';
-    userStory: string; // "a person who does X sees Y"
-    duplicateAssessment?: readonly {
-      candidateId: string;
-      verdict: 'duplicate' | 'overlap' | 'unrelated';
-      reason: string;
-    }[];
-    repositoryFindings?: readonly {
-      kind: 'commit' | 'code' | 'test';
-      reference: string;
-      conclusion: string;
-    }[];
-    regression: {
-      affectedPaths: readonly string[];
-      behaviorToPreserve: string;
-      reproductionOrBaseline: string;
-      plannedProof: string;
-      rollback?: string;
-    };
-    vision: {
-      references: readonly { path: string; section?: string }[];
-      alignment: string;
-      nonGoals: readonly string[];
-    };
-    risk: {
-      level: 'low' | 'medium' | 'high';
-      reasons: readonly string[];
-    };
-  };
-
-type PreflightCornerResult = {
-  preflightId: string;
-  verdict: 'clear' | 'needs_confirmation' | 'parked_duplicate';
-  candidates: readonly WorkCandidate[];
-  risk: 'low' | 'medium' | 'high';
-  reasons: readonly string[];
-  expiresAt?: number;
-};
-```
-
-The first call omits `duplicateAssessment`. The server returns candidates and no usable receipt.
-The agent classifies every returned candidate, adds relevant checkout findings, and submits the
-completed evidence on the second call. This keeps remote candidate discovery authoritative without
-asking the server to make semantic claims.
-
-`open_corner` gains required `preflightId`. `CreateCornerInput` carries it through to the server.
-The server consumes it in the same transaction that creates the Room and writes the receipt ID to
-`corner_facts`. Retries for the same originating request remain idempotent.
-
-## Evidence collection
-
-Candidate discovery should be bounded and deterministic:
-
-- Active and archived sibling corners: query `rooms` and `corner_facts` in the parent Room.
-- GitHub issues and pull requests, open and closed: search the bound repository through its existing
-  installation credential. Return number, type, state, title, URL, and update time.
-- Recent repository history: the agent uses the existing read-only checkout and reports matching
-  commits or paths. The server does not need access to the operator's filesystem.
-- Current implementation: the agent cites files, tests, or symbols found with the existing
-  read-only repository tools.
-
-Search terms are derived from the normalized objective and user story, with an optional bounded
-list supplied by the agent. Cap each source, rank exact identifiers and phrase overlap first, and
-always label results as candidates. If GitHub is unavailable, return `needs_confirmation` with a
-specific degraded-source reason; do not claim the search is clear.
-
-For the first release, project-direction references are repository files the agent actually read.
-Use this discovery order when present: `AGENTS.md`, `spec.md`, `VISION.md`, `ROADMAP.md`,
-`CONTRIBUTING.md`, and `README.md`. References are evidence, not authority granted by a filename;
-the agent must quote the section's meaning in its alignment statement. A later repository setting
-may name canonical files, but the gate must not hard-code Beeline's document names as a universal
-product model.
-
-## Risk classification
-
-Risk controls the required detail, not whether useful work is allowed.
-
-- `low`: local presentation, copy, or isolated behavior with a narrow existing test seam.
-- `medium`: shared contract, multi-component behavior, persistence read path, or default behavior.
-- `high`: authorization, secrets, destructive writes, schema migrations, release paths,
-  concurrency, cross-tenant data, public API compatibility, or no safe rollback.
-
-Medium and high risk require a concrete baseline and integration-level proof. High risk also
-requires rollback or an explanation of why rollback is impossible, plus informed human
-confirmation if the original request did not already acknowledge that consequence. These are
-structural checks over the agent's evidence; the server should not infer risk from filenames alone.
-
-The stored regression record is injected into the corner prompt beside the immutable objective.
-That lets the corner author and reviewer verify the same promised preservation work instead of
-reconstructing it after implementation.
-
-## Storage and enforcement
-
-Add `corner_preflights`:
+Emit the existing proposal line without extra ceremony:
 
 ```text
-id, workspace_id, room_id, agent_id,
-root_command_id, source_message_id,
-name, objective, objective_hash, work_kind, user_story,
-candidates, duplicate_assessment, repository_findings,
-regression, vision, risk, verdict, reasons,
-created_at, expires_at, consumed_at
+Proposed corner: <name> — <objective>
 ```
 
-Important invariants:
+### Unclear request
 
-- A receipt is valid only for its Room, agent, live root command, normalized name and objective.
-- A changed objective requires a new preflight. Hash the normalized values, not raw whitespace.
-- Only `clear` can be consumed.
-- A receipt expires after 15 minutes or when a candidate active corner/PR changes state. Start with
-  time expiry; webhook invalidation can be added without changing the contract.
-- Consumption and corner creation are atomic. A consumed receipt points to exactly one corner.
-- A server that does not advertise the operation cannot accept the new `createCorner` shape. Keep
-  mixed versions fail-closed, as agent commands do.
-- Scratch-backed chat-only work records local duplicate, regression, and alignment evidence but
-  does not fail because no repository or GitHub source exists.
+Ask one focused question when different answers would materially change the objective or acceptance
+criteria. Do not guess at scope.
 
-The receipt is an audit fact, not a transcript card. People should see only a useful exception:
-existing work, a conflict, degraded discovery, or a consequential risk that needs a decision.
+### Warranted-work or desirability concern
 
-## Placement in the existing system
+Keep the concern visible beside the proposal without blocking it:
 
-- `packages/api-contract/src/daemon-operations.ts`: add the operation, result types, and
-  `preflightId` on `CreateCornerInput`.
-- `apps/body/src/read-only-mcp.ts`: expose `preflight_corner`; retain the existing proposal and
-  confirmation wording; require the receipt in `open_corner`.
-- `apps/body/src/beeline-skill.ts`: describe the three checks and exception behavior in the shared
-  Room guidance. Do not duplicate the full policy in each harness prompt.
-- `apps/server/src/daemon-service.ts`: authorize, store, validate, consume, and project the
-  preflight onto the created corner.
-- `apps/server/src/github-operations.ts` and `apps/auth/src/github.ts`: add bounded repository issue
-  and pull-request search through the existing installation-scoped client.
-- `apps/body/src/monolith-corner-turn.ts`: include the user story and regression promise in the
-  immutable corner context.
+```text
+Proposed corner: <name> — <objective>
+Triage warning — warranted: <evidence-backed reason>
+Triage warning — desirable: <evidence-backed reason>
+```
 
-Do not put this in PR checks. By then duplicate implementation and product-direction waste has
-already happened. Do not make it a mobile approval queue; ordinary clear work should stay silent,
-and ambiguity should remain a normal Room conversation.
+Emit only applicable warnings. A failed reproduction is a warning, not proof that the report is
+false. A similar title is a search candidate, not proof of duplication. Missing evidence alone is
+not a warning when the repository offers no practical way to obtain it.
 
-## Rollout
+## Desirability rubric
 
-1. Ship contract, storage, candidate search, and a non-enforcing tool. Record verdicts and tune
-   candidate limits against real tasks.
-2. Update all supported harness guidance and require a clear receipt in the Body tool.
-3. Once the minimum helper release is deployed, require and consume the receipt in the server.
-4. Add webhook invalidation for active-candidate changes if the 15-minute bound proves stale in
-   practice.
+Use objective repository evidence where possible:
 
-Measure duplicate parks, informed-confirmation rate, degraded searches, receipt latency, and the
-share of opened corners whose promised regression proof appears in the pull request. Do not use
-corner count reduction as a success metric by itself; agents could reduce it by refusing useful
-work.
+- The request serves a concrete user outcome.
+- It is compatible with documented product direction and invariants.
+- It follows established architecture unless the request authorizes changing it.
+- It is the smallest coherent solution and adds no unapproved scope.
+- Its maintenance and compatibility costs are proportionate to the benefit.
+
+Do not invent product strategy. Conflicting or absent evidence produces a warning during triage.
+At review, a confirmed conflict or unsupported product judgment blocks approval; a merely plausible
+concern remains non-blocking and is reported as such.
+
+## Review behavior
+
+The existing `beeline-review` skill remains bound to the configured reviewer and exact green head.
+Before judging implementation details, the reviewer must independently establish:
+
+- the bug or unmet need still exists on the target branch;
+- no current or recently merged work resolves or supersedes it;
+- the change has concrete user benefit and fits repository direction;
+- the diff implements the clarified request and no unapproved additions;
+- tests exercise the user outcome and credible regression paths.
+
+Confirmed duplicate or obsolete work, a confirmed product conflict, unapproved scope, missing
+demonstration, or insufficient regression proof fails review. The author still owns merging after
+approval; the reviewer never merges.
+
+## Placement
+
+- `apps/body/src/beeline-skill.ts` owns the release-versioned `beeline-triage` skill, the mandatory
+  pre-corner instruction, and the expanded `beeline-review` rubric.
+- `apps/body/src/agent-home.ts` provisions `beeline-triage` to every agent home and keeps
+  `beeline-review` exclusive to configured reviewers.
+- The existing Room prompt invokes triage before proposal or opening. The existing green-check
+  transition invokes review against the exact pull-request head.
+
+The server needs no receipt or new blocking operation. The behavior is procedural before work and
+enforced through the existing reviewer approval gate after implementation.
 
 ## Acceptance tests
 
-- An active sibling corner classified as an exact duplicate returns `parked_duplicate`; no receipt
-  can open another corner.
-- A matching candidate classified `unrelated` with a reason can clear; lexical overlap alone never
-  blocks.
-- A merged PR classified as already producing the same user outcome parks with its URL.
-- A changed objective, Room, agent, or root command cannot reuse a receipt.
-- Two concurrent `createCorner` calls with one receipt create one corner.
-- GitHub failure produces `needs_confirmation`, not an empty clear result.
-- Medium/high-risk evidence without a baseline or integration proof is rejected structurally.
-- High-risk irreversible work requires an informed follow-up command.
-- Vision conflict or missing guidance for a product change asks one concrete question.
-- A defect that restores an explicit invariant can clear without a product-design discussion.
-- The corner prompt contains the stored user story and regression promise after restart.
-- Repo-less work can clear without fabricated GitHub or repository evidence.
-- Older helpers cannot bypass a server that has enabled enforcement.
+- Every implementer home contains `beeline-triage`; non-reviewers still lack `beeline-review`.
+- Every Room prompt explicitly requires triage before `Proposed corner:` or `open_corner`.
+- Ambiguity that can alter the outcome asks a question instead of silently choosing scope.
+- Failed reproduction, plausible duplicate work, or desirability conflict warns without blocking.
+- The reviewer independently records warranted-work and desirability evidence.
+- The reviewer still demonstrates the user outcome, runs affected tests, checks regressions, and
+  binds approval to the exact head.
 
 ## Non-goals
 
 - Automatically deciding roadmap priority or product taste.
-- Treating embedding or keyword similarity as proof of duplication.
-- Replacing issue trackers, design documents, code review, checks, or the human hold.
-- Requiring a long proposal for every small fix.
-- Letting one approval bypass future objectives.
-- Posting routine gate machinery into the Room transcript.
+- Treating keyword similarity as proof of duplication.
+- Claiming that green CI alone proves an absence of regressions.
+- Adding a server receipt, mobile approval queue, or separate pre-work reviewer.
+- Allowing triage warnings to approve or reject work.

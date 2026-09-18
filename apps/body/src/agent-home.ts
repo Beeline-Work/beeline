@@ -60,7 +60,9 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { AgentKind } from './agent-command.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_TRIAGE_SKILL_NAME,
   beelineReviewSkillMarkdown,
+  beelineTriageSkillMarkdown,
   runningBeelineReleaseId,
   USING_BEELINE_SKILL_NAME,
   usingBeelineSkillMarkdown,
@@ -121,6 +123,7 @@ const GOOSE_SHARED_CONFIG_FILES = ['config.yaml', 'secrets.yaml'] as const;
  */
 export const BEELINE_DEFAULT_SKILL_NAMES = [
   BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_TRIAGE_SKILL_NAME,
   USING_BEELINE_SKILL_NAME,
 ] as const;
 
@@ -355,6 +358,7 @@ async function provisionAgentSkillsAndMcp(
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
+    { name: BEELINE_TRIAGE_SKILL_NAME, content: beelineTriageSkillMarkdown(skillReleaseId) },
     ...(isReviewer
       ? [{ name: BEELINE_REVIEW_SKILL_NAME, content: beelineReviewSkillMarkdown(skillReleaseId) }]
       : []),

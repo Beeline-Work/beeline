@@ -4,6 +4,7 @@ import { SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
+export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
 export const BEELINE_REVIEW_SKILL_NAME = 'beeline-review';
 
 /**
@@ -18,8 +19,8 @@ export function isConfiguredReviewer(
 ): boolean {
   return Boolean(
     agentHandle &&
-      reviewerHandle &&
-      agentHandle.replace(/^@/, '') === reviewerHandle.replace(/^@/, ''),
+    reviewerHandle &&
+    agentHandle.replace(/^@/, '') === reviewerHandle.replace(/^@/, ''),
   );
 }
 
@@ -35,6 +36,7 @@ const BEELINE_ROOM_CAPABILITIES = [
   `To react to things that HAPPEN in this Room rather than only to what is said to you, call beeline-agent subscribe_events with the kinds you want (${SERVER_EVENT_KINDS.join(', ')}); each one then wakes you for a turn. Subscriptions are per Room and cover every way the event lands: joining a Room you subscribed to wakes you, and so does a person arriving in the Workspace when that arrival projects into this Room - subscribe to joined in an onboarding Room and every newcomer wakes you, exactly like a greeter. It replaces your list, so send every kind you want - list_event_subscriptions shows the current one. You do this yourself: nobody has to configure it for you. grant-decided carries the grant id and status and resumes the turn that asked for the grant.`,
   'To state something that happened so the Room and other agents can act on it, call beeline-agent emit_event with your own agent:<slug> kind, one sentence, and optionally the agent members to wake. Chains of events are bounded and a refused emit posts nothing.',
   'When repository work is needed, you MUST call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words. The host-governed call is the only way to start write work.',
+  'Before emitting `Proposed corner:` or calling open_corner, consult the release-versioned beeline-triage skill and follow it. An unclear request requires a question; a warranted-work or desirability warning does not block the proposal or corner.',
   "Never open a corner from your own reading of a person's ask. For every ask, first reply on one line `Proposed corner: <name> — <objective>`, using the exact title and objective you would pass to open_corner, then stop and wait. If one message contains several asks, list one numbered `Proposed corner:` line per ask; `go on 1 and 3` opens exactly those objectives and leaves the others proposed. A person's `go`, `yes`, or equivalent opens exactly the proposed corner; if they edit it, their edited text is the objective. Skip this ceremony only when the message itself explicitly commands a corner and states its scope, such as `open a corner and do X` or `go build X in a corner`; open that scope immediately.",
   'Agreement is not action: never merely acknowledge an ask. Reply with a proposed corner, a question, or a line beginning `parked:` with the reason.',
   'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening. End the turn with nothing more unless the person asked something else.',
@@ -160,6 +162,11 @@ Follow these steps in order. Do not skip or reorder them.
 
 ## 2. P0 - OBJECTIVE FULFILLED, DEMONSTRATED
 
+Before judging the implementation, independently repeat the two judgment legs from request triage:
+
+- **Work warranted:** For a bug, reproduce the reported behavior on the target branch. For another request, establish the unmet user need from the request and current product. Search current code, history, issues, and open or recently merged pull requests for work that already resolves or supersedes it. Treat title similarity only as a candidate, not proof of duplication. FAIL confirmed duplicate or obsolete work.
+- **Desirable:** Check repository-owned goals, invariants, architecture, and established product behavior. Require a concrete user benefit, the smallest coherent solution, and no unapproved scope. FAIL a confirmed conflict or an unsupported product judgment; put merely plausible concerns below as non-blocking findings.
+
 - Quote the corner objective verbatim.
 - Derive its end-user story in one sentence: \`a user who does X sees Y\`.
 - Make Y happen against the built PR head: run the app or affected service and perform X.
@@ -203,6 +210,8 @@ Follow these steps in order. Do not skip or reorder them.
 
 \`objective quoted:\`
 \`user story:\`
+\`work warranted evidence:\`
+\`desirability evidence:\`
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
 \`critical findings (block):\`
@@ -215,5 +224,49 @@ Then take exactly one action:
 - FAIL: reply \`@author\` with the confirmed findings to fix.
 - PASS: call \`approve_merge\` with the reviewed head SHA, then reply \`@author approved <reviewed sha>, merge\`.
 - Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.
+`;
+}
+
+export function beelineTriageSkillMarkdown(releaseId: string): string {
+  return `---
+name: beeline-triage
+description: Clarify and assess a user request before proposing or opening a Beeline corner. Use immediately before emitting Proposed corner or calling open_corner.
+---
+
+<!-- beeline-release: ${releaseId} -->
+
+# Beeline request triage
+
+Run these checks before proposing or opening a corner.
+
+## 1. Is it clear?
+
+- Rewrite the request as a concrete outcome and acceptance criteria.
+- State material exclusions needed to prevent unrequested work.
+- Keep the corner objective complete and within 24 words.
+- If an ambiguity could materially change the outcome, ask one focused question instead of proposing or opening the corner.
+
+## 2. Is work warranted?
+
+- For a bug, try to reproduce the exact user-visible behavior and record the evidence.
+- For another request, identify the unmet user need and the current behavior that does not meet it.
+- Search current code, history, issues, and open or recently merged pull requests for released or unreleased work that resolves or supersedes the request.
+- Treat similar titles as candidates. Confirm behavior and scope before calling work duplicate.
+- If the need cannot be established, reproduction fails, or other work may obviate it, warn; do not block.
+
+## 3. Is it desirable?
+
+- Compare the request with repository-owned goals, invariants, architecture, and established product behavior.
+- Look for concrete user benefit, the smallest coherent solution, and ongoing maintenance cost.
+- Do not invent product strategy. If the evidence is absent or conflicting, warn; do not block.
+
+## Output
+
+When proposing work, emit the ordinary \`Proposed corner: <name> — <objective>\` line. Add only applicable warnings on following lines:
+
+\`Triage warning — warranted: <evidence-backed reason>\`
+\`Triage warning — desirable: <evidence-backed reason>\`
+
+Do not emit a warning merely because evidence is incomplete when the repository offers no practical way to obtain it. Never describe a warning as approval or rejection. Warnings inform the user and implementer; they do not block work.
 `;
 }

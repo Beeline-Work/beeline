@@ -18,8 +18,11 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * and system lines. Hierarchy on a long agent turn comes from weight and
  * brightness — a medium-weight bright lead line, then regular secondary
  * prose — never from size. Same-speaker chunks use one compact vertical
- * rhythm; a new byline gets exactly twice that separation so a voice change
- * reads without speaker rails, bubbles, dividers, or boxes.
+ * rhythm; a new byline gets exactly twice that separation on its visual-top
+ * edge so a voice change reads without speaker rails, bubbles, dividers, or
+ * boxes. Extra air lives on that incoming edge, not on whichever outgoing
+ * row happens to wear a byline — agents always re-announce, people often
+ * don't, and those two speaker-change gaps must still match.
  *
  * Identity lives in the byline above every agent prose message and the first
  * message in a human run: the speaker's
@@ -86,6 +89,13 @@ type LedgerBodyProps = {
   byline?: LedgerByline;
   /** True when this message continues the speaker run above it. */
   continued?: boolean;
+  /**
+   * The transcript lays rows out chronologically (desktop's ordinary flow)
+   * rather than in the phone's inverted list, so a cell's layout-top — not its
+   * layout-bottom — is its visual top. Speaker-change extra padding mirrors to
+   * that visual-top edge.
+   */
+  chronological?: boolean;
   marginalia?: React.ReactNode;
   replyReference?: React.ReactNode;
   attachments?: React.ReactNode;
@@ -403,6 +413,7 @@ export function LedgerEntry({
   bodyTestID,
   byline,
   continued = false,
+  chronological = false,
   luminous = false,
   replyReference,
   attachments,
@@ -461,7 +472,10 @@ export function LedgerEntry({
   );
   return (
     <View
-      style={[styles.entry, byline && styles.entryWithByline]}
+      style={[
+        styles.entry,
+        byline && (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
+      ]}
       testID={`chat-message-${itemId}`}
     >
       {byline ? <Byline byline={byline} /> : null}
@@ -491,6 +505,7 @@ export function LedgerSteer({
   bodyText,
   bodyTestID,
   byline,
+  chronological = false,
   replyReference,
   attachments,
   mentionHandles,
@@ -503,7 +518,10 @@ export function LedgerSteer({
   // body's; ownership reads from the byline alone.
   return (
     <View
-      style={[styles.entry, byline && styles.entryWithByline]}
+      style={[
+        styles.entry,
+        byline && (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
+      ]}
       testID={`chat-message-${itemId}`}
     >
       {byline ? <Byline byline={byline} /> : null}
@@ -764,9 +782,15 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.buzz.messageGap,
   },
   // Adjacent compact rows contribute 6px each for a 12px same-speaker gap.
-  // A bylined row contributes 18px above instead, so the preceding row's 6px
-  // makes the speaker-change boundary exactly 24px on phone and desktop.
+  // A bylined row contributes the extra 12px on its visual-top edge, so the
+  // preceding row's compact 6px makes the speaker-change boundary 24px
+  // whether that preceding row is an agent (always bylined) or a person
+  // continuation (no byline). The inverted phone list renders a cell's
+  // layout-bottom at its visual top; chronological desktop is upright.
   entryWithByline: {
+    paddingBottom: theme.buzz.messagePaddingVertical * 3,
+  },
+  entryWithBylineChronological: {
     paddingTop: theme.buzz.messagePaddingVertical * 3,
   },
   byline: {

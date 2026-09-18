@@ -1506,7 +1506,7 @@ describe('monolith integration', () => {
     });
   });
 
-  it('toggles a fixed reaction and projects its count for the viewer', async () => {
+  it('toggles a fixed reaction and projects its identity roster for the viewer', async () => {
     const messageId = '9'.repeat(64);
     expect(
       (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'React here' })).status,
@@ -1517,7 +1517,36 @@ describe('monolith integration', () => {
 
     const reacted = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
     expect(reacted.messages.find((message) => message.id === messageId)?.reactions).toEqual([
-      { emoji: '👍', count: 1, reacted: true },
+      {
+        emoji: '👍',
+        count: 1,
+        reacted: true,
+        members: [{ pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' }],
+      },
+    ]);
+
+    await database.query(`UPDATE messages SET reactions=$2::jsonb WHERE id=$1`, [
+      messageId,
+      JSON.stringify({ '👍': [HUMAN, AGENT] }),
+    ]);
+    const multiple = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
+    expect(multiple.messages.find((message) => message.id === messageId)?.reactions).toEqual([
+      {
+        emoji: '👍',
+        count: 2,
+        reacted: true,
+        members: [
+          { pubkey: HUMAN, kind: 'human', name: 'Owner', handle: 'owner' },
+          { pubkey: AGENT, kind: 'agent', name: 'Bee', handle: 'bee' },
+        ],
+      },
+    ]);
+    expect((await phone.readHistory(ROOM, HUMAN))?.messages.at(-1)?.reactions).toEqual(
+      multiple.messages.find((message) => message.id === messageId)?.reactions,
+    );
+    await database.query(`UPDATE messages SET reactions=$2::jsonb WHERE id=$1`, [
+      messageId,
+      JSON.stringify({ '👍': [HUMAN] }),
     ]);
 
     expect(

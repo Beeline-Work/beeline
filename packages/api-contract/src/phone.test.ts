@@ -56,6 +56,14 @@ describe('phone contract', () => {
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })).toBe(false);
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })).toBe(false);
+    const reaction = { emoji: '👍', count: 1, reacted: true, members: [identity] };
+    expect(isRoomView({ ...room, messages: [{ ...message, reactions: [reaction] }] })).toBe(true);
+    expect(
+      isRoomView({
+        ...room,
+        messages: [{ ...message, reactions: [{ ...reaction, count: 2 }] }],
+      }),
+    ).toBe(false);
     for (const invalid of [
       { direction: 'sideways' },
       { received: 'yes' },

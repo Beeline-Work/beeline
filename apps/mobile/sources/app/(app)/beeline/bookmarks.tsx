@@ -16,6 +16,7 @@ import type { MessageBookmarkView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
+import { PageHeader } from '@/components/buzz/PageHeader';
 
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -205,22 +206,13 @@ export default function BookmarksScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: desktop ? 0 : insets.top }]}>
-      <View style={styles.header}>
-        {!desktop ? (
-          <Pressable
-            accessibilityLabel="Back to Rooms"
-            accessibilityRole="button"
-            onPress={() => router.back()}
-            style={styles.back}
-          >
-            <Ionicons color={styles.headerTitle.color} name="chevron-back" size={22} />
-          </Pressable>
-        ) : null}
-        <View style={styles.headerCopy}>
-          <Text style={styles.headerTitle}>Bookmarks</Text>
-          <Text style={styles.headerMeta}>PRIVATE · {bookmarks.length} SAVED</Text>
-        </View>
-      </View>
+      <PageHeader
+        backAccessibilityLabel="Back to Rooms"
+        meta={`PRIVATE · ${bookmarks.length} SAVED`}
+        onBack={desktop ? undefined : () => router.back()}
+        testID="bookmarks-header"
+        title="Bookmarks"
+      />
       {error ? (
         <Pressable accessibilityRole="button" onPress={() => void load()} style={styles.error}>
           <Text style={styles.errorText}>{error} · Retry</Text>
@@ -286,18 +278,6 @@ export default function BookmarksScreen() {
 
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
-  header: {
-    minHeight: 60,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-    paddingHorizontal: 12,
-  },
-  back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerCopy: { flex: 1, minWidth: 0 },
-  headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
   body: { flex: 1, flexDirection: 'row' },
   list: { flex: 1 },
   desktopList: {

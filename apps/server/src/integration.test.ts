@@ -4,7 +4,7 @@ import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
+import { FACE_NAMES, FACE_SOULS, isFaceId, type CornerLifecycleView, type FaceId } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
@@ -77,6 +77,8 @@ describe('monolith integration', () => {
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
+    installationToken: ReturnType<typeof vi.fn>;
+    readCommitChecks: ReturnType<typeof vi.fn>;
   };
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -103,6 +105,8 @@ describe('monolith integration', () => {
     githubApp = {
       deleteBranch: vi.fn(async () => undefined),
       mergePullRequest: vi.fn(async () => undefined),
+      installationToken: vi.fn(async () => ({ token: 'install-token', expiresAt: '2030-01-01T00:00:00Z' })),
+      readCommitChecks: vi.fn(async () => ({})),
     };
     githubOperations = new GitHubOperations(
       database,
@@ -5289,6 +5293,256 @@ describe('monolith integration', () => {
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
     });
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
+  });
+
+  it('reconciles a stuck pending workflow_run fact so the reviewer is woken when the head is actually green', async () => {
+    processWebhook.mockImplementation((event, payload) =>
+      githubOperations.processWebhook(event, payload),
+    );
+    const reviewerId = 'e'.repeat(64);
+    const headSha = 'f'.repeat(40);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Echo','echo')`, [
+      reviewerId,
+    ]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [reviewerId, HUMAN]);
+    await database.query(
+      `INSERT INTO github_installations(
+         installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+       ) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `UPDATE rooms SET repository_key='owner/widgets',
+         repository_remote='https://github.com/owner/widgets.git',
+         repository_resolution='repository',github_installation_id=77 WHERE id=$1`,
+      [ROOM],
+    );
+    // Wire up the reviewer agent
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, reviewerId],
+    );
+    await operation('updateRoom', { roomId: ROOM, reviewerAgentId: reviewerId });
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'reconcile-reviewer-corner',
+      name: 'Review test',
+      objective: 'Review test',
+      repository: 'owner/widgets',
+      targetBranch: 'main',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    await daemonOperation('postCornerRemoteState', {
+      cornerId,
+      branch: 'fm/review-test',
+      state: 'working',
+      checks: 'unknown',
+    });
+    const base = {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+    };
+    // Open the PR so the lifecycle has a head SHA to match against
+    await webhook('pull_request', 'reconcile-pr-open', {
+      ...base,
+      action: 'opened',
+      pull_request: {
+        number: 99,
+        title: 'Review test PR',
+        html_url: 'https://github.com/owner/widgets/pull/99',
+        head: { ref: 'fm/review-test', sha: headSha },
+        base: { ref: 'main' },
+        mergeable_state: 'clean',
+        merged: false,
+      },
+      sender: { login: 'octocat' },
+    });
+    // Verify the PR lifecycle is set up with the right head SHA
+    const beforeStuckRows = await database.query<{ lifecycle: CornerLifecycleView; feature_branch: string | null }>(
+      `SELECT lifecycle,feature_branch FROM corner_facts WHERE corner_id=$1`,
+      [cornerId],
+    );
+    const beforeStuck = beforeStuckRows.rows[0];
+    expect(beforeStuck?.lifecycle?.pr?.headSha).toBe(headSha);
+    expect(beforeStuck?.feature_branch).toBe('fm/review-test');
+
+    // Simulate a skipped workflow_run that sent a `requested` webhook but never completed:
+    // this creates a pending fact that will get stuck.
+    await webhook('check_run', 'reconcile-stuck-pending', {
+      ...base,
+      action: 'in_progress',
+      check_run: {
+        id: 9901,
+        name: 'run:104545169555',
+        status: 'in_progress',
+        check_suite: { head_branch: 'fm/review-test', head_sha: headSha },
+      },
+    });
+    // Verify the aggregate is now pending because of the stuck check
+    const stuckLifecycle = (
+      await database.query<{ lifecycle: CornerLifecycleView }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.lifecycle;
+    expect(stuckLifecycle?.checks).toBe('pending');
+
+    // Mock GitHub to say the head is fully green — the stuck run is actually skipped/doesn't exist
+    githubApp.readCommitChecks.mockResolvedValueOnce({
+      'run:104545169555': 'passed',
+      typecheck: 'passed',
+    });
+
+    // Now send a COMPLETED check for a DIFFERENT check on the same head.
+    // On origin/main the aggregate stays pending and the reviewer is never woken.
+    await webhook('check_run', 'reconcile-passed-check', {
+      ...base,
+      action: 'completed',
+      check_run: {
+        id: 9902,
+        name: 'typecheck',
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'https://github.com/owner/widgets/actions/runs/9902',
+        check_suite: { head_branch: 'fm/review-test', head_sha: headSha },
+      },
+    });
+
+    // After the fix: reconciliation should have resolved the stuck pending fact,
+    // the aggregate should now be passing, and the reviewer should have a command.
+    const reconciledLifecycle = (
+      await database.query<{ lifecycle: CornerLifecycleView }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.lifecycle;
+    expect(reconciledLifecycle?.checks).toBe('passing');
+
+    // The reviewer must have a subscribed_event command dispatched to them.
+    const reviewerCommands = await database.query(
+      `SELECT command.id,command.reason,command.state
+       FROM agent_commands command
+       WHERE command.room_id=$1 AND command.agent_id=$2
+       ORDER BY command.created_at`,
+      [cornerId, reviewerId],
+    );
+    expect(reviewerCommands.rows).toContainEqual(
+      expect.objectContaining({
+        reason: 'subscribed_event',
+        state: 'pending',
+      }),
+    );
+
+    // A genuinely pending check (no conclusion yet) must still hold the gate.
+    // Send a NEW head with a pending check and verify reconciliation does NOT flip it.
+    const newHeadSha = 'g'.repeat(40);
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        ...reconciledLifecycle,
+        checks: 'unknown',
+        pr: { ...reconciledLifecycle?.pr, headSha: newHeadSha },
+      }),
+    ]);
+    // Add a genuinely pending check (no completed event will follow)
+    await database.query(
+      `INSERT INTO corner_check_facts(corner_id,name,status,head_sha)
+       VALUES($1,'run:genuinely-pending','pending',$2)
+       ON CONFLICT(corner_id,name) DO UPDATE SET status=EXCLUDED.status,head_sha=EXCLUDED.head_sha`,
+      [cornerId, newHeadSha],
+    );
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        ...reconciledLifecycle,
+        checks: 'pending',
+        pr: { ...reconciledLifecycle?.pr, headSha: newHeadSha },
+      }),
+    ]);
+    // Mock GitHub to show the pending check as still pending (not resolved)
+    githubApp.readCommitChecks.mockResolvedValueOnce({
+      'run:genuinely-pending': 'pending',
+    });
+    // Send a completed check — reconciliation should NOT flip because GitHub says it's still pending
+    await webhook('check_run', 'reconcile-no-flip-pending', {
+      ...base,
+      action: 'completed',
+      check_run: {
+        id: 9903,
+        name: 'lint',
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'https://github.com/owner/widgets/actions/runs/9903',
+        check_suite: { head_branch: 'fm/review-test', head_sha: newHeadSha },
+      },
+    });
+    const stillPending = (
+      await database.query<{ lifecycle: CornerLifecycleView }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.lifecycle;
+    expect(stillPending?.checks).toBe('pending');
+
+    // A failing check must also still hold the gate.
+    const failingHeadSha = 'h'.repeat(40);
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        ...reconciledLifecycle,
+        checks: 'unknown',
+        pr: { ...reconciledLifecycle?.pr, headSha: failingHeadSha },
+      }),
+    ]);
+    await database.query(
+      `INSERT INTO corner_check_facts(corner_id,name,status,head_sha)
+       VALUES($1,'run:genuinely-failing','passed',$2)
+       ON CONFLICT(corner_id,name) DO UPDATE SET status=EXCLUDED.status,head_sha=EXCLUDED.head_sha`,
+      [cornerId, failingHeadSha],
+    );
+    await database.query(
+      `INSERT INTO corner_check_facts(corner_id,name,status,head_sha)
+       VALUES($1,'lint','failed',$2)
+       ON CONFLICT(corner_id,name) DO UPDATE SET status=EXCLUDED.status,head_sha=EXCLUDED.head_sha`,
+      [cornerId, failingHeadSha],
+    );
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        ...reconciledLifecycle,
+        checks: 'failing',
+        pr: { ...reconciledLifecycle?.pr, headSha: failingHeadSha },
+      }),
+    ]);
+    // Mock GitHub to confirm the failure
+    githubApp.readCommitChecks.mockResolvedValueOnce({
+      'run:genuinely-failing': 'passed',
+      lint: 'failed',
+    });
+    await webhook('check_run', 'reconcile-no-flip-failing', {
+      ...base,
+      action: 'completed',
+      check_run: {
+        id: 9904,
+        name: 'typecheck',
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'https://github.com/owner/widgets/actions/runs/9904',
+        check_suite: { head_branch: 'fm/review-test', head_sha: failingHeadSha },
+      },
+    });
+    const stillFailing = (
+      await database.query<{ lifecycle: CornerLifecycleView }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.lifecycle;
+    expect(stillFailing?.checks).toBe('failing');
   });
 
   it('serves a corner to every member agent, keeps archive with the opener, and refuses a non-member', async () => {

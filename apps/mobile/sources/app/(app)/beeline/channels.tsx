@@ -62,7 +62,6 @@ import {
 } from '@/components/buzz/RoomDeckComposeMenu';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { subscribeBookmarkChanges } from '@/buzz/bookmark-events';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -171,9 +170,11 @@ export default function BuzzChannels() {
   const params = useLocalSearchParams<{
     communityId?: string | string[];
     newRoom?: string | string[];
+    newDirectMessage?: string | string[];
   }>();
   const requestedWorkspaceId = firstParam(params.communityId);
   const requestedNewRoom = firstParam(params.newRoom);
+  const requestedNewDirectMessage = firstParam(params.newDirectMessage);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
@@ -204,7 +205,6 @@ export default function BuzzChannels() {
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
-  const [bookmarkCount, setBookmarkCount] = useState(0);
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
@@ -237,6 +237,24 @@ export default function BuzzChannels() {
     handledNewRoomRequest.current = requestedNewRoom;
     setShowCreateRoom(true);
   }, [canManageWorkspace, chatList, isDesktop, requestedNewRoom, viewerIsAgent]);
+
+  // Desktop's one door into the shared direct-message picker: the sidebar's
+  // DIRECT MESSAGES `+` arrives as a one-shot route param, same pattern as
+  // `newRoom` above. The picker itself (and `handleStartDirectMessage`) are
+  // unchanged components.
+  const handledNewDirectMessageRequest = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !isDesktop ||
+      !requestedNewDirectMessage ||
+      requestedNewDirectMessage === handledNewDirectMessageRequest.current ||
+      viewerIsAgent
+    ) {
+      return;
+    }
+    handledNewDirectMessageRequest.current = requestedNewDirectMessage;
+    setMemberPickerVisible(true);
+  }, [isDesktop, requestedNewDirectMessage, viewerIsAgent]);
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
@@ -432,24 +450,10 @@ export default function BuzzChannels() {
   useFocusEffect(
     useCallback(() => {
       refreshNow();
-      if (activeCommunityId) {
-        void monolithPhoneOperation('listMessageBookmarks', { workspaceId: activeCommunityId })
-          .then((result) => setBookmarkCount(result.bookmarks.length))
-          .catch(() => setBookmarkCount(0));
-      }
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
       return () => clearInterval(timer);
     }, [activeCommunityId, refreshNow]),
-  );
-
-  useEffect(
-    () =>
-      subscribeBookmarkChanges((change) => {
-        if (change.workspaceId !== activeCommunityId) return;
-        setBookmarkCount((count) => Math.max(0, count + (change.bookmarked ? 1 : -1)));
-      }),
-    [activeCommunityId],
   );
 
   useEffect(() => {
@@ -860,30 +864,6 @@ export default function BuzzChannels() {
           renderSectionHeader={({ section }) =>
             section.title ? <RoomListSectionHeader title={section.title} /> : null
           }
-          ListHeaderComponent={
-            bookmarkCount > 0 && activeCommunityId ? (
-              <Pressable
-                accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
-                accessibilityRole="button"
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/bookmarks',
-                    params: { communityId: activeCommunityId },
-                  } as Href)
-                }
-                style={({ pressed }) => [styles.bookmarksCell, pressed && styles.bookmarksCellPressed]}
-                testID="bookmarks-cell"
-              >
-                <Ionicons color={styles.bookmarksGlyph.color} name="bookmark" size={15} />
-                <View style={styles.bookmarksCopy}>
-                  <Text style={styles.bookmarksTitle}>Bookmarks</Text>
-                  <Text style={styles.bookmarksMeta}>
-                    {bookmarkCount} saved message{bookmarkCount === 1 ? '' : 's'}
-                  </Text>
-                </View>
-              </Pressable>
-            ) : null
-          }
           ListEmptyComponent={
             <EmptyRoomActions
               canAddRoom={!viewerIsAgent && canManageWorkspace}
@@ -1187,21 +1167,6 @@ const styles = StyleSheet.create((theme) => {
     // clear of the floating compose control without turning that control into
     // a visually separate footer cell.
     list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
-    bookmarksCell: {
-      minHeight: 64,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.buzz.border,
-    },
-    bookmarksCellPressed: { backgroundColor: theme.buzz.bgHighlight },
-    bookmarksGlyph: { color: theme.buzz.accent },
-    bookmarksCopy: { flex: 1, minWidth: 0 },
-    bookmarksTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-    bookmarksMeta: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, marginTop: 2 },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

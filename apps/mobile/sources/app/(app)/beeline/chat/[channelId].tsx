@@ -5267,22 +5267,6 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
-        {!isDirectMessage && (
-          <HullActionSheetRow
-            accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
-            chevron="right"
-            disabled={!memberManagement.canOpenRoster}
-            label="Members"
-            metadata={
-              participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
-            }
-            onPress={() => {
-              closeRoomActions();
-              setRosterVisible(true);
-            }}
-            testID="room-participant-roster-trigger"
-          />
-        )}
         {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">

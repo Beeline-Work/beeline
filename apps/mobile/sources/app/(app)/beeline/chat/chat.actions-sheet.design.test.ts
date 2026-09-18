@@ -69,14 +69,14 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
-  it('adds membership to both existing sheets without replacing their settings', () => {
-    for (const source of [roomSheet, cornerSheet]) {
-      const members = row(source, 'room-participant-roster-trigger');
-      expect(members).toContain('label="Members"');
-      expect(members).toContain('metadata=');
-      expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
-      expect(members).toContain('setRosterVisible(true)');
-    }
+  it('keeps the membership roster row on the corner actions sheet and out of the Room sheet', () => {
+    const members = row(cornerSheet, 'room-participant-roster-trigger');
+    expect(members).toContain('label="Members"');
+    expect(members).toContain('metadata=');
+    expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(members).toContain('setRosterVisible(true)');
+    expect(roomSheet, 'the Room sheet has its own header door; a Members row here is retired')
+      .not.toContain('room-participant-roster-trigger');
     for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
     expect(cornerSheet).toContain('testID="close-corner-action"');
   });

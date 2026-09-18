@@ -13,10 +13,15 @@ import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { MessageBookmarkView } from '@beeline/api-contract/phone';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import type { RoomView } from '@beeline/buzz-client';
+import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { cornerHref } from '@/buzz/corner-navigation';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -38,6 +43,10 @@ export default function BookmarksScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
+  const [client, setClient] = useState<RoomViewClient | null>(null);
+  const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
+  const [paneCornerId, setPaneCornerId] = useState<string | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -69,10 +78,59 @@ export default function BookmarksScreen() {
     return () => clearTimeout(timer);
   }, [removed]);
 
+  useEffect(() => {
+    if (!desktop) return;
+    let cancelled = false;
+    void (async () => {
+      const identity = await loadBuzzIdentity();
+      if (!identity || cancelled) return;
+      const http = new RoomViewClient({
+        baseUrl: await getEffectiveRelayUrl(),
+        identity,
+      });
+      if (!cancelled) setClient(http);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop]);
+
   const selected = useMemo(
     () => bookmarks.find((bookmark) => bookmark.messageId === selectedId) ?? null,
     [bookmarks, selectedId],
   );
+
+  useEffect(() => {
+    if (!desktop || !client || !selected?.available) {
+      setInspectRoom(null);
+      setPaneCornerId(null);
+      setInspectError(null);
+      return;
+    }
+    let cancelled = false;
+    setInspectError(null);
+    setPaneCornerId(selected.roomId);
+    void (async () => {
+      try {
+        const source = await client.room(selected.roomId);
+        if (cancelled) return;
+        const workRoom =
+          source.parent?.id && source.parent.id !== source.room.id
+            ? await client.room(source.parent.id)
+            : source;
+        if (cancelled) return;
+        setInspectRoom(workRoom);
+        setPaneCornerId(source.room.id);
+      } catch (cause) {
+        if (cancelled) return;
+        setInspectRoom(null);
+        setInspectError(cause instanceof Error ? cause.message : String(cause));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, desktop, selected]);
 
   const open = useCallback(
     (bookmark: MessageBookmarkView) => {
@@ -88,6 +146,27 @@ export default function BookmarksScreen() {
       } as Href);
     },
     [router],
+  );
+
+  const openInMain = useCallback(
+    (cornerId: string) => {
+      if (inspectRoom && cornerId !== inspectRoom.room.id) {
+        router.push(cornerHref(cornerId, inspectRoom.room.id));
+        return;
+      }
+      if (selected?.available && cornerId === selected.roomId) {
+        open(selected);
+        return;
+      }
+      router.push({
+        pathname: '/beeline/chat/[channelId]',
+        params: {
+          channelId: cornerId,
+          ...(selected?.workspaceId ? { communityId: selected.workspaceId } : {}),
+        },
+      } as Href);
+    },
+    [inspectRoom, open, router, selected],
   );
 
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {
@@ -186,6 +265,19 @@ export default function BookmarksScreen() {
               SAVED {compactRelativeTime(bookmark.bookmarkedAt, Date.now()).toUpperCase()}
             </Text>
             {!desktop ? <Text style={styles.open}>OPEN →</Text> : null}
+            {desktop && bookmark.available ? (
+              <Pressable
+                accessibilityLabel="Remove bookmark"
+                accessibilityRole="button"
+                onPress={(event) => {
+                  event.stopPropagation();
+                  void remove(bookmark);
+                }}
+                style={styles.remove}
+              >
+                <Text style={styles.removeText}>REMOVE</Text>
+              </Pressable>
+            ) : null}
           </View>
           {!bookmark.available ? (
             <Pressable
@@ -204,6 +296,47 @@ export default function BookmarksScreen() {
     />
   );
 
+  const pane =
+    desktop && selected?.available && inspectRoom && client ? (
+      <DesktopRoomInspector
+        room={inspectRoom}
+        client={client}
+        selectedCornerId={paneCornerId}
+        focusMessageId={
+          selected.available && paneCornerId === selected.roomId ? selected.messageId : null
+        }
+        onSelectCorner={setPaneCornerId}
+        onOpenInMain={openInMain}
+        onClose={() => setSelectedId(null)}
+        onNewCorner={() => undefined}
+        onOpenRoster={() => undefined}
+      />
+    ) : desktop ? (
+      <View style={styles.paneFallback} testID="bookmark-pane">
+        {selected && !selected.available ? (
+          <View style={styles.emptyBlock}>
+            <Text style={styles.emptyTitle}>Source unavailable</Text>
+            <Text style={styles.empty}>This bookmark no longer exposes message content.</Text>
+            <Pressable
+              accessibilityLabel="Remove unavailable bookmark"
+              accessibilityRole="button"
+              onPress={() => void remove(selected)}
+              style={styles.remove}
+            >
+              <Text style={styles.removeText}>REMOVE</Text>
+            </Pressable>
+          </View>
+        ) : selected?.available && inspectError ? (
+          <View style={styles.emptyBlock}>
+            <Text style={styles.emptyTitle}>Could not open this corner</Text>
+            <Text style={styles.empty}>{inspectError}</Text>
+          </View>
+        ) : selected?.available ? (
+          <Text style={styles.empty}>Loading Corner…</Text>
+        ) : null}
+      </View>
+    ) : null;
+
   return (
     <View style={[styles.screen, { paddingTop: desktop ? 0 : insets.top }]}>
       <PageHeader
@@ -220,43 +353,7 @@ export default function BookmarksScreen() {
       ) : null}
       <View style={styles.body}>
         {list}
-        {desktop ? (
-          <View style={styles.preview} testID="bookmark-preview">
-            {selected?.available ? (
-              <>
-                <Text style={styles.previewPath}>{sourceLabel(selected)}</Text>
-                <Text style={styles.previewAuthor}>{selected.author?.name}</Text>
-                <Text style={styles.previewText}>{selected.text}</Text>
-                <View style={styles.previewFooter}>
-                  <Pressable
-                    accessibilityLabel="Remove bookmark"
-                    accessibilityRole="button"
-                    onPress={() => void remove(selected)}
-                    style={styles.previewAction}
-                  >
-                    <Text style={styles.previewActionText}>REMOVE</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel={`Open in ${sourceLabel(selected)}`}
-                    accessibilityRole="link"
-                    onPress={() => open(selected)}
-                    style={styles.previewAction}
-                  >
-                    <Text style={styles.previewOpen}>OPEN IN {sourceLabel(selected)} →</Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : selected ? (
-              <View style={styles.emptyBlock}>
-                <Text style={styles.emptyTitle}>Source unavailable</Text>
-                <Text style={styles.empty}>This bookmark no longer exposes message content.</Text>
-                <Pressable onPress={() => void remove(selected)} style={styles.previewAction}>
-                  <Text style={styles.previewActionText}>REMOVE</Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
+        {pane}
       </View>
       {removed ? (
         <View accessibilityLiveRegion="polite" style={styles.undo} testID="bookmark-undo">
@@ -315,36 +412,9 @@ const styles = StyleSheet.create((theme) => ({
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
   saved: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerGhost },
   open: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
-  remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center', marginTop: 4 },
+  remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
   removeText: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },
-  preview: { flex: 1, padding: 32, justifyContent: 'center' },
-  previewPath: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  previewAuthor: {
-    ...theme.buzz.type.bodyStrong,
-    color: theme.buzz.accent,
-    marginTop: 22,
-  },
-  previewText: {
-    ...theme.buzz.type.body,
-    color: theme.buzz.textPrimary,
-    marginTop: 10,
-    maxWidth: 720,
-  },
-  previewFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 28,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.buzz.border,
-    paddingTop: 14,
-  },
-  previewAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 },
-  previewActionText: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.textSecondary,
-  },
-  previewOpen: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
+  paneFallback: { flex: 1, justifyContent: 'center' },
   emptyBlock: { padding: 28, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },
   emptyTitle: {

@@ -44,11 +44,12 @@ const theme = vi.hoisted(() => ({
     textLink: '#b08a4a',
     surface: '#190e21',
   },
-  buzz: {
-    accent: '#b08a4a',
-    radius: 3,
-    type: { hero: {}, body: {}, bodyStrong: {}, meta: {}, machine: {}, sectionHead: {} },
-  },
+    buzz: {
+      accent: '#b08a4a',
+      radius: 3,
+      bgHighlight: '#1e1326',
+      type: { hero: {}, body: {}, bodyStrong: {}, meta: {}, machine: {}, sectionHead: {} },
+    },
 }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
@@ -531,6 +532,7 @@ describe('DesktopRoomInspector work pane', () => {
       );
     });
     expect(tree.root.findByProps({ testID: 'desktop-work-cockpit' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'desktop-inspector-resizer' })).toBeTruthy();
     expect(text(tree)).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
     );
@@ -551,5 +553,82 @@ describe('DesktopRoomInspector work pane', () => {
     expect(onOpenInMain).toHaveBeenCalledWith('working');
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(() => tree.root.findByProps({ accessibilityLabel: 'Back to work overview' })).toThrow();
+  });
+
+  it('inscribes a focused bookmark in the corner transcript instead of restating it', async () => {
+    const detail = {
+      ...room(),
+      room: corners[0].corner,
+      parent: room().room,
+      messages: [
+        { id: 'm0', text: 'Earlier context.', createdAt: 4, author: person, presentation: 'message' },
+        { id: 'm1', text: 'Working on it.', createdAt: 5, author: agent, presentation: 'message' },
+      ],
+    } as any;
+    const client = {
+      room: vi.fn(async () => detail),
+      history: vi.fn(async () => ({ roomId: 'working', messages: [] })),
+    } as any;
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({ client, selectedCornerId: 'working', focusMessageId: 'm1' })}
+        />,
+      );
+    });
+    const focused = tree.root.findByProps({ testID: 'desktop-work-focused-message' });
+    expect(focused.findByType('OrdinaryLedgerMessage' as any).props.message.id).toBe('m1');
+    expect(focused.findByType('OrdinaryLedgerMessage' as any).props.message.text).toBe(
+      'Working on it.',
+    );
+    expect(tree.root.findAllByType('OrdinaryLedgerMessage' as any)).toHaveLength(2);
+    expect(client.history).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it('pages corner history until the focused bookmark is in the thread', async () => {
+    const detail = {
+      ...room(),
+      room: corners[0].corner,
+      parent: room().room,
+      messages: [
+        { id: 'm2', text: 'Latest note.', createdAt: 8, author: agent, presentation: 'message' },
+      ],
+    } as any;
+    const client = {
+      room: vi.fn(async () => detail),
+      history: vi.fn(async () => ({
+        roomId: 'working',
+        messages: [
+          {
+            id: 'm1',
+            text: 'The bookmarked line.',
+            createdAt: 3,
+            author: person,
+            presentation: 'message',
+          },
+        ],
+      })),
+    } as any;
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({ client, selectedCornerId: 'working', focusMessageId: 'm1' })}
+        />,
+      );
+    });
+    await act(async () => undefined);
+    expect(client.history).toHaveBeenCalled();
+    const focused = tree.root.findByProps({ testID: 'desktop-work-focused-message' });
+    expect(focused.findByType('OrdinaryLedgerMessage' as any).props.message.id).toBe('m1');
+    expect(focused.findByType('OrdinaryLedgerMessage' as any).props.message.text).toBe(
+      'The bookmarked line.',
+    );
+    expect(
+      tree.root.findAllByType('OrdinaryLedgerMessage' as any).map((node: any) => node.props.message.id),
+    ).toEqual(['m1', 'm2']);
+    act(() => tree.unmount());
   });
 });

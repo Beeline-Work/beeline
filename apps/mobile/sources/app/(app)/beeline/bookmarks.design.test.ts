@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 const bookmarks = readFileSync(new URL('./bookmarks.tsx', import.meta.url), 'utf8');
 const channels = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
 const chat = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const inspector = readFileSync(
+  new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
+  'utf8',
+);
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
 const ledger = readFileSync(
   new URL('../../../components/buzz/Ledger.tsx', import.meta.url),
@@ -33,6 +37,19 @@ describe('private bookmark surfaces', () => {
     expect(chat).toContain(
       "if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();",
     );
+  });
+
+  it('opens a selected desktop bookmark in the shared Room work pane', () => {
+    expect(bookmarks).toContain('<DesktopRoomInspector');
+    expect(bookmarks).toContain('focusMessageId=');
+    expect(bookmarks).not.toContain('styles.preview');
+    expect(bookmarks).not.toContain('previewPath');
+    expect(bookmarks).not.toContain('previewAuthor');
+    expect(bookmarks).not.toContain('previewText');
+    expect(bookmarks).not.toContain('OPEN IN {sourceLabel(selected)}');
+    expect(inspector).toContain('focusMessageId');
+    expect(inspector).toContain('useRoomTranscriptHistory');
+    expect(inspector).toContain('desktop-work-focused-message');
   });
 
   it('does not expose cached content for unavailable sources', () => {

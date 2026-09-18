@@ -215,6 +215,30 @@ describe('Workbench settings screen', () => {
     expect(squire.props.descriptionTone).toBe('danger');
   });
 
+  it('does not paint the Trusty Squire browser-session failure on Google Workspace', async () => {
+    const source = new MockWorkbenchSource();
+    source.failNextPair('trusty-squire');
+    source.failNextPair('google-gmail');
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
+    expect(squire.props.description).toContain(
+      'another Trusty Squire session is already using the browser',
+    );
+    expect(squire.props.action).toBe('Connect');
+    const google = renderer.root.findByProps({ testID: 'google-entry-row' });
+    expect(google.props.title).toBe('Google Workspace');
+    expect(google.props.action).toBeUndefined();
+    expect(google.props.trailingPress).toBeUndefined();
+    expect(google.props.descriptionTone).not.toBe('danger');
+    expect(google.props.description).toBe(
+      'Connect Trusty Squire first — its browser session is busy',
+    );
+    expect(google.props.description).not.toMatch(
+      /another Trusty Squire session is already using the browser/i,
+    );
+  });
+
   it('creates a wallet from Connect and opens the dashboard', async () => {
     const renderer = await render();
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });

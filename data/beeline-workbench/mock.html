@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench: Trusty Squire connector</title>
+<style>
+  :root{--bg:#14091A;--raised:#190e21;--hi:#1e1326;--line:#291e33;--line2:#3b3048;--ink:#f0f0f3;--ink2:#c9c9d1;--quiet:#83838d;--ghost:#6c6c76;--brass:#b08a4a;--red:#c9584f;--green:#7fae7a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "IBM Plex Sans",Inter,system-ui,sans-serif;padding:24px 16px 64px}
+  main{max-width:1240px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  .lede{color:var(--quiet);margin:0 0 20px;max-width:780px}
+  h2{font:600 11px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--quiet);margin:30px 0 10px}
+  .row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+  .phone{width:372px;background:var(--bg);border:1px solid var(--line2);border-radius:14px;padding:14px 12px 12px;min-height:520px}
+  .cap{font:600 10px "IBM Plex Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--quiet);margin:0 0 10px}
+  .hdr{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+  .hdr .back{color:var(--quiet)} .hdr .t{font-weight:700;font-size:20px}
+  .hdr .sub{font:12px "IBM Plex Mono",monospace;color:var(--quiet);margin-left:auto}
+  .sec{font:600 10px "IBM Plex Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--quiet);margin:14px 0 6px}
+  .item{display:flex;align-items:center;gap:12px;padding:12px 10px;border:1px solid var(--line);border-radius:12px;margin:0 0 8px;background:var(--raised)}
+  .item .ic{width:34px;height:34px;border-radius:9px;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;font:600 12px "IBM Plex Mono",monospace;color:var(--brass)}
+  .item .n{font-weight:600} .item .d{font:12px "IBM Plex Mono",monospace;color:var(--quiet)}
+  .item .st{margin-left:auto;font:600 10px "IBM Plex Mono",monospace;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:5px;border:1px solid var(--line2);color:var(--quiet)}
+  .st.on{color:var(--green);border-color:var(--green)} .st.go{color:var(--brass);border-color:var(--brass)} .st.wait{color:var(--brass)}
+  .item.dim{opacity:.45}
+  .btn{display:block;text-align:center;padding:12px;border-radius:12px;border:1px solid var(--brass);color:var(--brass);font-weight:600;margin:12px 0 0}
+  .btn.ghost{border-color:var(--line2);color:var(--quiet)}
+  .note{font-size:13px;color:var(--quiet);margin:10px 0 0;max-width:372px}
+  .note b{color:var(--ink);font-weight:600}
+  .steps{font:12px "IBM Plex Mono",monospace;color:var(--quiet);padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--raised)}
+  .steps div{padding:4px 0} .steps .done{color:var(--green)} .steps .now{color:var(--brass)}
+  .frame{border:1px solid var(--line2);border-radius:12px;height:230px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--quiet);font:12px "IBM Plex Mono",monospace;background:#0f0713;margin:8px 0}
+  .frame .g{width:180px;height:26px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:#333;font:12px system-ui;display:flex;align-items:center;padding:0 8px}
+  .ledger{font:12px "IBM Plex Mono",monospace;color:var(--ink2)}
+  .ledger div{padding:7px 10px;border-bottom:1px solid var(--line)} .ledger span{color:var(--quiet);margin-right:8px}
+  .msg{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--raised);margin:8px 0}
+  .msg .a{color:var(--green);font-weight:600} .msg .ts{float:right;color:var(--ghost);font:11px "IBM Plex Mono",monospace}
+  .msg p{margin:4px 0 0;color:var(--ink2);font-size:14px}
+  .receipt{margin-top:8px;border:1px solid var(--line2);border-radius:10px;padding:8px 10px;font:12px "IBM Plex Mono",monospace;color:var(--quiet)}
+  .receipt b{color:var(--ink);font-weight:600}
+  .rule{color:var(--ink2);margin:4px 0 0 18px;padding:0} .rule li{margin:4px 0}
+  .settings{list-style:none;padding:0;margin:0}
+  .settings li{padding:11px 10px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+  .settings li span{color:var(--quiet);font:12px "IBM Plex Mono",monospace}
+</style></head>
+<body><main>
+  <h1>Workbench · Trusty Squire connector</h1>
+  <p class="lede">Phase 1. Workbench is a settings section listing connectors and connections. Trusty Squire is the first connector: a member pairs a helper, the helper installs Squire, sign-in happens in Squire's own surface, and that member's vault then shows up as their connections. Each connection is sovereign to the human who provisioned it.</p>
+
+  <h2>Story 1 · A member opens Workbench, connects their Squire, picks a helper</h2>
+  <div class="row">
+    <div class="phone"><p class="cap">settings → workbench (any member)</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Workbench</span><span class="sub">you</span></div>
+      <div class="sec">Connectors</div>
+      <div class="item"><div class="ic">TS</div><div><div class="n">Trusty Squire</div><div class="d">vault · sign-ups · payments for your agents</div></div><span class="st go">connect</span></div>
+      <div class="item dim"><div class="ic">◎</div><div><div class="n">Wallet</div><div class="d">crypto wallet for agents</div></div><span class="st">soon</span></div>
+      <div class="item dim"><div class="ic">TS</div><div><div class="n">Tailscale</div><div class="d">private network for your helpers</div></div><span class="st">soon</span></div>
+      <div class="sec">Connections</div>
+      <p class="note">None yet. Connections appear here once a connector stores them.</p>
+    </div>
+    <div class="phone"><p class="cap">tap connect → pick the helper to pair</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Connect Trusty Squire</span></div>
+      <p class="note" style="margin:0 0 10px">Squire runs on a helper. Every agent on that helper can use its connections, within the grants you set.</p>
+      <div class="sec">Helpers</div>
+      <div class="item"><div class="ic">▣</div><div><div class="n">squire-box</div><div class="d">linux · 3 agents · online</div></div><span class="st go">pair</span></div>
+      <div class="item"><div class="ic">▣</div><div><div class="n">Dani's MacBook</div><div class="d">macos · 1 agent · online</div></div><span class="st go">pair</span></div>
+      <div class="item dim"><div class="ic">▣</div><div><div class="n">office-mini</div><div class="d">macos · offline</div></div><span class="st">offline</span></div>
+      <p class="note"><b>Pair a helper, not an agent.</b> Offline helpers cannot be paired.</p>
+    </div>
+    <div class="phone"><p class="cap">helper installs squire, reports back</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Connect Trusty Squire</span></div>
+      <div class="steps">
+        <div class="done">✓ helper squire-box reached</div>
+        <div class="done">✓ trusty-squire 1.4.2 installed</div>
+        <div class="done">✓ paired to workspace Tubing Crew</div>
+        <div class="now">● waiting for sign-in</div>
+        <div>· connections sync</div>
+      </div>
+      <a class="btn">Sign in to Squire</a>
+      <p class="note">Progress comes from the helper's status reports. If the install fails, the failing line turns red with the helper's reason and a retry.</p>
+    </div>
+  </div>
+
+  <h2>Story 2 · Sign-in in Squire's surface, connection turns green</h2>
+  <div class="row">
+    <div class="phone"><p class="cap">in-app browser · squire's streamed sign-in</p>
+      <div class="hdr"><span class="back">×</span><span class="t">Sign in to Squire</span><span class="sub">squire-box</span></div>
+      <div class="frame"><div>streamed from the helper's browser (noVNC)</div><div class="g">accounts.google.com · Sign in</div><div>the session is created on the helper, never copied</div></div>
+      <p class="note">This is Squire's own noVNC page, opened in the in-app browser. For API-only scopes Squire may offer plain OAuth here instead; same screen to the user.</p>
+    </div>
+    <div class="phone"><p class="cap">connected</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Workbench</span><span class="sub">you</span></div>
+      <div class="sec">Connectors</div>
+      <div class="item"><div class="ic">TS</div><div><div class="n">Trusty Squire</div><div class="d">on squire-box · 3 agents · signed in as dani@…</div></div><span class="st on">connected</span></div>
+      <div class="sec">Connections</div>
+      <div class="item"><div class="ic">G</div><div><div class="n">Google</div><div class="d">session · mail, calendar</div></div><span class="st on">active</span></div>
+      <div class="item"><div class="ic">GH</div><div><div class="n">GitHub · Beeline-Work</div><div class="d">token · api.github.com</div></div><span class="st on">active</span></div>
+      <p class="note"><b>Connections</b> = what Squire's vault holds for this account. Names, hosts, kind, state. Never a value.</p>
+    </div>
+  </div>
+
+  <h2>Story 3 · A connection and its ledger</h2>
+  <div class="row">
+    <div class="phone"><p class="cap">tap a connection</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Vercel</span><span class="sub">token</span></div>
+      <ul class="settings">
+        <li>Hosts <span>api.vercel.com</span></li>
+        <li>Created by <span>@hoots · sign-up · 13 Sep</span></li>
+        <li>Grants <span>hoots, terra</span></li>
+        <li>Spend cap <span>none</span></li>
+      </ul>
+      <div class="sec">Ledger</div>
+      <div class="ledger">
+        <div><span>14:26</span>@hoots · deploy · 200 · 1.2 kB</div>
+        <div><span>14:19</span>@hoots · deploy · 200 · 0.9 kB</div>
+        <div><span>13:41</span>@terra · list projects · 200</div>
+        <div><span>13:40</span>grant minted for @terra</div>
+        <div><span>12:02</span>credential stored by @hoots (sign-up)</div>
+      </div>
+      <a class="btn ghost">Revoke all grants</a>
+      <p class="note">Ledger rows are Squire's audit events, read through its API. Revoke is a Squire command, available only to the human who provisioned the connection.</p>
+    </div>
+    <div class="phone"><p class="cap">story 4 · another member's workbench</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Workbench</span><span class="sub">terra (human)</span></div>
+      <div class="sec">Connectors</div>
+      <div class="item"><div class="ic">TS</div><div><div class="n">Trusty Squire</div><div class="d">vault · sign-ups · payments for your agents</div></div><span class="st go">connect</span></div>
+      <div class="sec">Connections</div>
+      <p class="note">None yet. Dani's connections are not listed here and cannot be used by agents on Terra's behalf.</p>
+      <p class="note"><b>Sovereign per human.</b> Every member has their own Workbench; a connection belongs to whoever provisioned it. Agents use it only under that human's grants.</p>
+    </div>
+    <div class="phone"><p class="cap">story 5 · agent used a connection → its human gets a dm</p>
+      <div class="hdr"><span class="back">‹</span><span class="t">Trusty Squire</span><span class="sub">direct message</span></div>
+      <div class="msg"><span class="a">Trusty Squire</span><span class="ts">14:26</span><p>@hoots used your Vercel connection.</p>
+        <div class="receipt"><b>Vercel</b> · deploy · via Trusty Squire on squire-box<br>grant hoots · 2 calls · 2.1 kB · <b>View ledger →</b></div>
+      </div>
+      <p class="note">The Room only shows the outcome card. The receipt with connection, grant and counts goes to the DM of the human who provisioned the connection, from the connector identity (@trusty-squire) — never from the agent that used it. The wallet connector reads identically through @wallet.</p>
+    </div>
+  </div>
+
+  <h2>Rules</h2>
+  <ul class="rule">
+    <li>Workbench lives under settings for every member. A connection is sovereign to the human who provisioned it: nobody else sees it, and agents use it only under that human's grants. The server enforces this, not just the UI.</li>
+    <li>Pairing is per helper. All agents on that helper get access through grants; grants are the per-agent scope.</li>
+    <li>The helper installs and pairs Squire and reports each step; the app shows the helper's status, never guesses.</li>
+    <li>Sign-in happens in Squire's own surface inside the in-app browser: the streamed noVNC page for browser sessions, plain OAuth where Squire offers it.</li>
+    <li>Connections are Squire's vault entries, read live: name, kind, hosts, state, grants, ledger. Beeline never stores or shows a secret value.</li>
+    <li>Usage receipts go to the provisioning human as a DM from the connector identity (@trusty-squire), never from the agent that used the connection, and never into a Room channel. The wallet connector uses the same path through @wallet.</li>
+    <li>Wallet and Tailscale connectors are listed as "soon" so the section has its shape from day one.</li>
+  </ul>
+</main></body></html>

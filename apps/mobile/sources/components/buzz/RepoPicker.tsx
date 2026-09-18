@@ -354,7 +354,7 @@ export const RepoPicker = memo(function RepoPicker({
           style={styles.actionRow}
           testID={`${testIDPrefix}-unlink`}
         >
-          <Text style={styles.destructiveActionText}>Unlink repo</Text>
+          <Text style={[styles.actionText, styles.destructiveActionText]}>Unlink repo</Text>
         </TouchableOpacity>
       ) : null}
       {notice && !error && (
@@ -425,7 +425,7 @@ const styles = StyleSheet.create((theme) => {
       borderTopColor: groknight.border,
     },
     actionText: { ...Typography.mono(), color: groknight.textPrimary, fontSize: 12 },
-    destructiveActionText: { ...Typography.mono(), color: groknight.dialogDanger, fontSize: 12 },
+    destructiveActionText: { color: groknight.dialogDanger },
     connectCard: {
       borderWidth: 1,
       borderColor: groknight.border,

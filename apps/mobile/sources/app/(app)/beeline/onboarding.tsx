@@ -450,10 +450,12 @@ export default function BuzzOnboarding() {
     clearOnboardingNotice();
     setNotice(null);
     markSignInInFlight(true);
+    let startedState: string | undefined;
     try {
       const runtime = getBuzzRuntimeConfig();
       if (runtime.monolithEnabled) {
         const state = randomState();
+        startedState = state;
         const challenge = await runResilientGitHubSignInSession({
           state,
           recoveryToken: randomState(),
@@ -478,6 +480,7 @@ export default function BuzzOnboarding() {
       await savePendingGitHubIdentity(identity);
       existingIdentity.current = identity;
       const state = randomState();
+      startedState = state;
       const start = startGitHubSignInWebFlow(state, runtime);
       await persistGitHubSignInState(state);
       const callbackUrl = await waitForAuthCallback({
@@ -497,7 +500,7 @@ export default function BuzzOnboarding() {
       await finishPendingBind(pending);
     } catch (error) {
       if (getBuzzRuntimeConfig().monolithEnabled) {
-        await cancelPendingGitHubSignIn().catch(() => undefined);
+        await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
       } else {
         await clearPendingGitHubSignInState();
       }

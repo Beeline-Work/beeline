@@ -62,6 +62,29 @@ export function releaseUpdateTargets(projectDir = process.cwd()) {
   );
 }
 
+// Production OTA operations (publish guards, rollback, assert-production-list)
+// must target the SHIPPED runtimes, not the development/native-build pins,
+// until a new store submission retires them. Compute from the COMPAT_RUNTIMES
+// set plus the previous current pins (android 24, ios 25).
+export function productionUpdateTargets() {
+  const shippedPins = { android: '24', ios: '25' };
+  const shippedCompat = [
+    { platform: 'android', runtimeVersion: '23' },
+    { platform: 'android', runtimeVersion: '25' },
+    { platform: 'ios', runtimeVersion: '23' },
+    { platform: 'ios', runtimeVersion: '26' },
+  ];
+  const targets = [
+    { platform: 'android', runtimeVersion: shippedPins.android },
+    ...shippedCompat,
+    { platform: 'ios', runtimeVersion: shippedPins.ios },
+  ];
+  return targets.filter(
+    (target, index) =>
+      targets.findIndex((candidate) => targetKey(candidate) === targetKey(target)) === index,
+  );
+}
+
 function fail(message) {
   console.error(message);
   process.exit(1);

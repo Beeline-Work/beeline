@@ -245,9 +245,13 @@ function render(options = props()): ReactTestRenderer {
 }
 
 function text(tree: ReactTestRenderer): string {
-  return tree.root
+  return nodeText(tree.root);
+}
+
+function nodeText(node: { findAllByType(type: unknown): any[] }): string {
+  return node
     .findAllByType('Text' as any)
-    .flatMap((node: any) => node.props.children)
+    .flatMap((item: any) => item.props.children)
     .join(' ')
     .replace(/\s+/g, ' ');
 }
@@ -264,6 +268,82 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).toContain('1 people · 1 agents');
     expect(copy).toContain('@codex');
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
+    const objective = tree.root.findByProps({ testID: 'desktop-work-corner-objective-working' });
+    expect(objective.props.numberOfLines).toBe(2);
+    expect(objective.props.ellipsizeMode).toBe('tail');
+    expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toThrow();
+  });
+
+  it('never repeats the corner title as its subtitle, even when about is missing or identical', () => {
+    const duplicateRoom = room();
+    duplicateRoom.corners = [
+      {
+        ...corners[0],
+        corner: {
+          ...corners[0].corner,
+          id: 'same-text',
+          name: 'Desktop Update Diagnosis',
+          about: 'Desktop Update Diagnosis',
+        },
+      },
+      {
+        ...corners[1],
+        corner: {
+          ...corners[1].corner,
+          id: 'name-only',
+          name: 'Desktop Update Diagnosis',
+        },
+      },
+    ];
+    delete duplicateRoom.corners[1].corner.about;
+    const tree = render(props({ room: duplicateRoom }));
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-corner-objective-same-text' })).toHaveLength(
+      0,
+    );
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-corner-objective-name-only' })).toHaveLength(
+      0,
+    );
+    const sameRow = tree.root.findByProps({ testID: 'desktop-work-corner-same-text' });
+    expect(nodeText(sameRow).match(/Desktop Update Diagnosis/g)).toHaveLength(1);
+  });
+
+  it('caps the live list at five and expands the rest, including archived corners', () => {
+    const crowded = room();
+    crowded.corners = [
+      ...Array.from({ length: 6 }, (_, index) => ({
+        ...corners[0],
+        corner: { ...corners[0].corner, id: `live-${index}`, name: `Live ${index}` },
+      })),
+      corners[2],
+    ];
+    const tree = render(props({ room: crowded }));
+    for (const id of ['live-0', 'live-1', 'live-2', 'live-3', 'live-4']) {
+      expect(tree.root.findByProps({ testID: `desktop-work-corner-${id}` })).toBeTruthy();
+    }
+    expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-live-5' })).toThrow();
+    expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toThrow();
+    const more = tree.root.findByProps({ testID: 'desktop-work-corners-more' });
+    expect(nodeText(more)).toContain('2 more');
+    act(() => more.props.onPress());
+    expect(tree.root.findByProps({ testID: 'desktop-work-corner-live-5' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'desktop-work-corner-state-done' }).props.children).toBe(
+      'archived',
+    );
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-corners-more' })).toHaveLength(0);
+  });
+
+  it('shows archived corners when the Room has no live work, instead of an empty section', () => {
+    const archivedOnly = room();
+    archivedOnly.corners = [corners[2], { ...corners[2], corner: { ...corners[2].corner, id: 'older', name: 'Older work' } }];
+    const tree = render(props({ room: archivedOnly }));
+    expect(tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'desktop-work-corner-older' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'desktop-work-corner-state-done' }).props.children).toBe(
+      'archived',
+    );
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-corners-more' })).toHaveLength(0);
+    expect(text(tree)).not.toContain('archived · 2');
   });
 
   it('marks the corner the viewer opened with gold ME text beside the row chevron', () => {

@@ -5275,7 +5275,7 @@ describe('monolith integration', () => {
           pullRequest?: { number?: number; title?: string; url: string; targetBranch?: string };
         };
       }>;
-      corners: Array<{ corner: { id: string } }>;
+      corners: Array<{ corner: { id: string; about?: string }; state: string }>;
     };
     expect(parent.messages).toContainEqual(
       expect.objectContaining({
@@ -5303,7 +5303,10 @@ describe('monolith integration', () => {
         },
       }),
     );
-    expect(parent.corners.map((item) => item.corner.id)).not.toContain(cornerId);
+    expect(parent.corners.find((item) => item.corner.id === cornerId)).toMatchObject({
+      state: 'archived',
+      corner: { id: cornerId, about: 'Ship widget' },
+    });
     expect(
       (
         await database.query<{ archived: boolean }>(
@@ -6770,6 +6773,9 @@ describe('monolith integration', () => {
       name: 'Rework the room',
       objective: 'Rework the room list so every corner row carries a state mark',
     });
+    expect(room.corners.find((item) => item.corner.id === cornerId)?.corner.about).toBe(
+      'Rework the room list so every corner row carries a state mark',
+    );
   });
 
   it('reads the selection with an empty catalog, defaults a connect-wizard soul avatarSeed to the pubkey, and passes the detail guard', async () => {

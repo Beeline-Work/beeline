@@ -99,6 +99,8 @@ describe('harness permission enforcement', () => {
     // ask mode — same class as claude, held by the daemon callback alone.
     expect(harnessEnforcement('/home/op/.grok/bin/grok').enforcement).toBe('permission-callback');
     expect(harnessEnforcement('/usr/local/bin/grok-acp').enforcement).toBe('unknown');
+    expect(harnessEnforcement('cursor-acp-bridge').enforcement).toBe('none');
+    expect(harnessEnforcement('/usr/local/bin/cursor-agent-acp').enforcement).toBe('none');
   });
 
   it('fails closed on an unverified harness rather than assuming it asks', () => {

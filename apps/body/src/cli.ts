@@ -21,6 +21,7 @@ import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { loadBodyConfig } from './config.js';
+import { CURSOR_ACP_BRIDGE_FLAG, runCursorAcpStdioServer } from './cursor-acp-bridge.js';
 import { formatAgentCommand } from './agent-command.js';
 import {
   AGENT_ACCESS_POLICIES,
@@ -466,6 +467,10 @@ async function main(): Promise<void> {
   if (args.length === 0) usage();
 
   const command = args[0];
+  if (command === CURSOR_ACP_BRIDGE_FLAG) {
+    await runCursorAcpStdioServer();
+    return;
+  }
   if (command === '--help' || command === '-h') usage(0);
 
   if (command === 'managed-update-worker') {

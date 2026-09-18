@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubOAuthClient } from './github.js';
+import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from './github.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -280,6 +280,140 @@ describe('GitHub-only account and repository access', () => {
       'https://api.github.com/repos/acme/beeline/contents/.github/workflows/release.yml?ref=main',
       'https://api.github.com/repos/acme/beeline/contents/.github/workflows/checks.yml?ref=main',
       'https://api.github.com/repos/acme/beeline/actions/workflows/12/runs?per_page=1',
+    ]);
+  });
+
+  it('omits a workflow whose source is missing on the default branch and still lists the rest', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 11,
+                name: 'Retired bundle',
+                path: '.github/workflows/beeline-bundle.yml',
+                state: 'active',
+              },
+              { id: 12, name: 'Release', path: '.github/workflows/release.yml', state: 'active' },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            encoding: 'base64',
+            content: Buffer.from('on:\n  workflow_dispatch:\n').toString('base64'),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [{ created_at: '2026-09-12T12:00:00Z', conclusion: 'success' }],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+    await expect(
+      app.listDispatchableWorkflows('room-token', 'acme/beeline', 'main'),
+    ).resolves.toEqual([
+      { id: 12, name: 'Release', lastRunAt: 1_789_214_400, conclusion: 'success' },
+    ]);
+  });
+
+  it('still fails the list when a workflow source is unauthorized', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 11,
+                name: 'Retired bundle',
+                path: '.github/workflows/beeline-bundle.yml',
+                state: 'active',
+              },
+              { id: 12, name: 'Release', path: '.github/workflows/release.yml', state: 'active' },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+    const error = await app
+      .listDispatchableWorkflows('room-token', 'acme/beeline', 'main')
+      .catch((caught) => caught);
+    expect(error).toBeInstanceOf(GitHubHttpError);
+    expect(error).toMatchObject({
+      message: 'GitHub workflow source failed: HTTP 401',
+      status: 401,
+    });
+  });
+
+  it('omits a dispatchable workflow whose runs listing is missing', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              { id: 12, name: 'Release', path: '.github/workflows/release.yml', state: 'active' },
+              { id: 14, name: 'Nightly', path: '.github/workflows/nightly.yml', state: 'active' },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            encoding: 'base64',
+            content: Buffer.from('on:\n  workflow_dispatch:\n').toString('base64'),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            encoding: 'base64',
+            content: Buffer.from('on:\n  workflow_dispatch:\n').toString('base64'),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflow_runs: [{ created_at: '2026-09-12T12:00:00Z', conclusion: 'failure' }],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+    await expect(
+      app.listDispatchableWorkflows('room-token', 'acme/beeline', 'main'),
+    ).resolves.toEqual([
+      { id: 14, name: 'Nightly', lastRunAt: 1_789_214_400, conclusion: 'failure' },
     ]);
   });
 

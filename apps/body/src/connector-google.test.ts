@@ -124,6 +124,25 @@ describe('installGoogleTool', () => {
     expect(result.status).toBe('error');
     expect(result.errorMessage).toContain('not a Google tool connector');
   });
+
+  it('does not present a Trusty Squire browser-session failure as Google’s own breakage', async () => {
+    const squire = fakeSquire(() => {
+      throw new Error(
+        'another Trusty Squire session is already using the browser — close it first',
+      );
+    });
+    const result = await installGoogleTool({
+      connectorType: 'google-gmail',
+      home: '/tmp/home',
+      squire,
+      client: okClient,
+    });
+    expect(result.status).toBe('error');
+    expect(result.errorMessage).toBe(
+      'Trusty Squire is still using the browser — connect Trusty Squire first',
+    );
+    expect(result.errorMessage).not.toMatch(/another Trusty Squire session is already using the browser/i);
+  });
 });
 
 describe('outputTail', () => {

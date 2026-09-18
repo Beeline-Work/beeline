@@ -315,6 +315,44 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
+  it('runs Google installs only after this drain’s Squire work settles', async () => {
+    let releaseSquire!: () => void;
+    const squireGate = new Promise<void>((resolve) => {
+      releaseSquire = resolve;
+    });
+    const events: string[] = [];
+    const api = apiMock([
+      { kind: 'install', connectorId: 'conn-s', connectorType: 'trusty-squire' },
+      { kind: 'install', connectorId: 'g1', connectorType: 'google-gmail' },
+    ]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        events.push('squire-start');
+        await squireGate;
+        events.push('squire-end');
+        return { status: 'connected', steps: [] };
+      },
+      installGoogle: async () => {
+        events.push('google-start');
+        return { status: 'connected', steps: [], signedInAs: 'dana@gmail.test' };
+      },
+      googleHome: '/tmp/google-home',
+      readVault: async () => [],
+    });
+    void loop.runOnce();
+    await settle();
+    expect(events).toEqual(['squire-start']);
+    releaseSquire();
+    for (let index = 0; index < 50 && !events.includes('google-start'); index += 1) {
+      await settle();
+    }
+    expect(events).toEqual(['squire-start', 'squire-end', 'google-start']);
+    loop.stop();
+  });
+
   it('survives a failed assignments read and re-arms its next poll', async () => {
     const calls: ExecuteCall[] = [];
     let fail = true;

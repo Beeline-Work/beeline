@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
 
 export const AGENT_KINDS = [
   'codex',
@@ -34,7 +35,7 @@ export type DetectedAgentCommand =
       agent: AgentCommand;
     }
   | {
-      kind: 'codex' | 'claude' | 'pi' | 'cursor';
+      kind: 'codex' | 'claude' | 'pi';
       status: 'missing-adapter';
       install: AdapterInstallCommand;
     };
@@ -48,7 +49,7 @@ const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string
   cursor: 'cursor-agent',
 };
 
-const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi' | 'cursor', AdapterInstallCommand> = {
+const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
   codex: {
     command: 'npm',
     args: ['install', '-g', '@agentclientprotocol/codex-acp'],
@@ -60,10 +61,6 @@ const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi' | 'cursor', Ada
   pi: {
     command: 'npm',
     args: ['install', '-g', 'pi-acp'],
-  },
-  cursor: {
-    command: 'npm',
-    args: ['install', '-g', 'cursor-agent-acp'],
   },
 };
 
@@ -325,22 +322,17 @@ export function resolveAgentCommand(opts: {
   }
 
   if (typedKind === 'cursor') {
-    // cursor-agent does not support ACP natively; it needs the cursor-agent-acp
-    // adapter to bridge ACP with its --print (script/non-interactive) mode.
-    // The cursor-agent binary is detected by its official name `cursor-agent`.
+    // cursor-agent has no native ACP server. The published third-party adapter
+    // (`cursor-agent-acp`) is an unfinished stub, so Beeline owns the bridge
+    // (`cursor-acp-bridge.ts`) and drives `--print --output-format stream-json`.
     requireExecutable(
       'cursor-agent',
       env,
       cwd,
-      'Cursor Agent CLI not found. Install it from https://cursor.com/docs/cli, then retry with `--agent cursor`.'
+      'Cursor Agent CLI not found. Install it from https://cursor.com/docs/cli, then retry with `--agent cursor`.',
     );
-    const command = requireExecutable(
-      'cursor-agent-acp',
-      env,
-      cwd,
-      `Cursor ACP adapter not found. Install it with \`${adapterInstallHint('cursor')}\`, then retry with \`--agent cursor\`.`
-    );
-    return { kind: typedKind, command, args: [] };
+    const bridge = cursorAcpBridgeLaunch();
+    return { kind: typedKind, command: bridge.command, args: bridge.args };
   }
 
   if (typedKind === 'grok') {
@@ -409,10 +401,10 @@ export function detectInstalledAgentCommands(
         agent: resolveAgentCommand({ kind, env, cwd: opts.cwd }),
       });
     } catch {
-      // goose speaks ACP natively (`goose acp`) and grok does too (`grok agent
-      // stdio`): neither has a separable adapter to install, so a detected
-      // binary that fails to resolve has no actionable install step.
-      if (kind !== 'goose' && kind !== 'grok') {
+      // goose, grok, and cursor have no separable adapter to install (cursor
+      // uses Beeline's own ACP bridge), so a detected binary that fails to
+      // resolve has no actionable install step.
+      if (kind !== 'goose' && kind !== 'grok' && kind !== 'cursor') {
         detected.push({
           kind,
           status: 'missing-adapter',

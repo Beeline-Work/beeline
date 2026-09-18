@@ -496,24 +496,23 @@ function CornerRow({
         >
           {display.word}
         </Text>
-        <Text style={styles.chevron}>›</Text>
-      </View>
-      <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
-      <View style={styles.cornerAgent}>
         {openedByViewer ? (
           <Text style={styles.cornerMe} testID={`desktop-work-corner-me-${corner.corner.id}`}>
             ME
           </Text>
-        ) : (
-          <IdentityMark
-            kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
-            seed={corner.agent?.pubkey ?? corner.corner.id}
-            avatarUrl={corner.agent?.avatar}
-            face={corner.agent?.face}
-            name={corner.agent?.name ?? 'Unassigned'}
-            size={18}
-          />
-        )}
+        ) : null}
+        <Text style={styles.chevron}>›</Text>
+      </View>
+      <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
+      <View style={styles.cornerAgent}>
+        <IdentityMark
+          kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
+          seed={corner.agent?.pubkey ?? corner.corner.id}
+          avatarUrl={corner.agent?.avatar}
+          face={corner.agent?.face}
+          name={corner.agent?.name ?? 'Unassigned'}
+          size={18}
+        />
         <Text style={styles.cornerMeta}>
           {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
           {age(corner)}
@@ -872,7 +871,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
-  cornerMe: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent, width: 18 },
+  cornerMe: {
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.accent,
+    includeFontPadding: false,
+  },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
   cornerStatus: {
     ...theme.buzz.type.sectionHead,

@@ -266,14 +266,18 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
   });
 
-  it('marks the corner the viewer opened with gold ME text, not an identity bubble', () => {
+  it('marks the corner the viewer opened with gold ME text beside the row chevron', () => {
     const ownRoom = room();
     ownRoom.corners = [{ ...corners[0], agent: person }, corners[1]];
     const tree = render(props({ room: ownRoom }));
     const meMark = tree.root.findByProps({ testID: 'desktop-work-corner-me-working' });
     expect(meMark.props.children).toBe('ME');
+    expect(
+      meMark.parent?.findAllByType('Text' as any).map((node: any) => node.props.children).slice(-2),
+    ).toEqual(['ME', '›']);
     const ownRow = tree.root.findByProps({ testID: 'desktop-work-corner-working' });
-    expect(ownRow.findAllByType('IdentityMark' as any)).toHaveLength(0);
+    expect(ownRow.findAllByType('IdentityMark' as any)).toHaveLength(1);
+    expect(ownRow.findByType('IdentityMark' as any).props.seed).toBe(person.pubkey);
     const otherRow = tree.root.findByProps({ testID: 'desktop-work-corner-review' });
     const otherSeeds = otherRow
       .findAllByType('IdentityMark' as any)

@@ -209,6 +209,8 @@ export class PushDeliveryLoop {
               )
               -- A grant request names its owner in the card, not in its sentence.
               OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=m.push_identity_id)
+              -- A connector offer names the person it is addressed to (R5).
+              OR (m.card_type='connector-offer' AND m.card->'addressee'->>'pubkey'=m.push_identity_id)
               OR (m.card_type='target-branch' AND m.push_role IN ('owner','admin'))
               OR (
                 -- Corner lifecycle widens to all corners for all, and only the

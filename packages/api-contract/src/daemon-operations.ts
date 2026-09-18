@@ -194,6 +194,10 @@ export type DaemonOperationMap = {
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
   listAgentGrants: Operation<AgentInput, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
+  /** R5: what the Workbench can add, and what the person this turn answers already has. */
+  readAgentWorkbench: Operation<RoomInput, AgentWorkbenchView>;
+  /** R5: the agent offers to add one connector; a card goes to the Room and the turn pauses on it. */
+  offerConnector: Operation<OfferConnectorInput, OfferConnectorResult>;
   installConnector: Operation<InstallConnectorInput, WriteResult>;
   postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
   postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
@@ -598,6 +602,63 @@ export type AgentGrantListResult = {
 };
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };
+
+// ── Connector offers (R5) ─────────────────────────────────────────
+
+/**
+ * What an agent may learn about the Workbench from a Room: the catalog (every
+ * connector kind, its name, one-line purpose, and whether it can be offered),
+ * plus what the ADDRESSEE — the person whose message woke this turn — already
+ * has paired and which keys they hold (names only; a vault value never crosses
+ * this wire). Another member's rows are never visible.
+ */
+export type AgentWorkbenchView = {
+  readonly addressee: {
+    readonly identityId: string;
+    readonly name: string;
+    readonly handle?: string;
+  };
+  readonly catalog: readonly {
+    readonly connectorType: string;
+    readonly name: string;
+    readonly purpose: string;
+    /** The Workbench can pair it today. */
+    readonly available: boolean;
+    /** You may offer it from this Room with offer_connector. */
+    readonly offerable: boolean;
+    /** The addressee's own row for this kind, when they have one on any machine. */
+    readonly paired?: {
+      readonly status: 'installing' | 'connected' | 'error' | 'disconnected';
+      readonly helperName: string;
+      /** The pairing runs on THIS agent's machine. */
+      readonly onThisMachine: boolean;
+    };
+  }[];
+  /** The addressee's provisioned keys, by name only. */
+  readonly connections: readonly {
+    readonly connectorType: string;
+    readonly service: string | null;
+    readonly label: string;
+    readonly state: 'active' | 'error';
+  }[];
+  /** This agent's own machine, where an accepted offer would install. */
+  readonly machine: { readonly machineId: string; readonly name: string };
+};
+
+/** offer_connector: the agent offers ONE connector in ONE Room, with its reason. */
+export type OfferConnectorInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly connectorType: string;
+    readonly reason: string;
+  };
+export type OfferConnectorResult = {
+  readonly offerId: string;
+  readonly status: 'pending' | 'accepted';
+  /** The card message. */
+  readonly messageId: string;
+  /** True when this call joined an offer this agent already had open in the Room. */
+  readonly joined: boolean;
+};
 
 // ── Connector / Squire types ───────────────────────────────────────
 

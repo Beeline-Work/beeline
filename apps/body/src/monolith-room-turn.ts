@@ -178,12 +178,38 @@ export function inboxItemPromptBody(item: {
   return isScheduledPrompt(item) ? (item.systemEvent?.consequence ?? item.body) : item.body;
 }
 
-/** A `request_grant` call whose reply says the card is posted pauses the turn. */
+/**
+ * A `request_grant` or `offer_connector` call whose reply says the card is
+ * posted pauses the turn: the person's answer on that card resumes it (a
+ * `grant-decided` or `connector-offer-decided` RESUME kind).
+ */
 export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
-  if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) return false;
-  return /pending, card posted/i.test(
+  if (!/(?:^|[._:/-])(?:request_grant|offer_connector)$/i.test(call.title ?? '')) return false;
+  return /(?:pending|already offered), card (?:posted|still open)/i.test(
     typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
   );
+}
+
+/**
+ * The resume prompt for the answer that woke a paused turn. A grant answer and
+ * a connector-offer answer resume the same way (`RESUME_KINDS`), but the model
+ * must be told which question was answered — the connector one arrives as
+ * `<person> added <tool>`, and its right response is to acknowledge and carry
+ * on with the work that needed the tool, not to look for a grant verdict.
+ */
+export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }): string {
+  if (item.systemEvent?.kind === 'connector-offer-decided') {
+    return [
+      `This is the answer to your connector offer: ${item.body}.`,
+      'Your paused work resumes now. The tool is being installed on your machine; its sign-in and status reach the person through the tool’s own status message, not through you.',
+      'Acknowledge in one short line (for example "Adding Trusty Squire now.") and continue the work that needed it, or say plainly what still has to happen before you can.',
+    ].join(' ');
+  }
+  return [
+    'This is the answer to your grant request; your paused work resumes now.',
+    'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
+    'If it was declined, try another way or say plainly what you cannot do.',
+  ].join(' ');
 }
 
 /**
@@ -886,13 +912,7 @@ export class MonolithRoomTurnLoop {
                     'Room conversation so far:',
                     'New in the Room since your last turn (the earlier conversation is already in this session):',
                   ),
-                  grantDecision
-                    ? [
-                        'This is the answer to your grant request; your paused work resumes now.',
-                        'If it was approved and it is a command grant, run it with run_granted_command and the exact argv.',
-                        'If it was declined, try another way or say plainly what you cannot do.',
-                      ].join(' ')
-                    : '',
+                  grantDecision ? resumePrompt(item) : '',
                   roomMentionDirectory(roster, this.agent.publicKey),
                   (corners.corners ?? []).some((corner) => !corner.archived)
                     ? `Current corners you belong to (use the exact cornerId with steer_corner):\n${JSON.stringify(
@@ -1021,7 +1041,7 @@ export class MonolithRoomTurnLoop {
                 );
               } else if (resumedRequestId) {
                 console.log(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by grant decision ${item.id}`,
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${resumedRequestId} resumed by card decision ${item.id}`,
                 );
               }
               if (openCornerCall) {
@@ -1205,7 +1225,7 @@ export class MonolithRoomTurnLoop {
             id: command.turnRequestId,
             body:
               command.action === 'resume'
-                ? `Resume the paused turn. The server supplied this grant decision: ${command.source.body}`
+                ? `Resume the paused turn. The server supplied this answer: ${command.source.body}`
                 : command.source.body,
           };
           this.startPrompt(item);

@@ -5,6 +5,7 @@ import type {
   RoomInboxResult,
 } from '@beeline/api-contract/daemon';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
+import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { systemLine } from './system-line.js';
@@ -621,7 +622,7 @@ export async function routeSystemCommand(
     const action =
       input.kind === 'turn-cancelled'
         ? 'stop'
-        : input.kind === 'grant-decided'
+        : isResumeKind(input.kind)
           ? 'resume'
           : 'input';
     let parent: CommandRow | undefined;

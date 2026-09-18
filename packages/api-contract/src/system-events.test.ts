@@ -84,6 +84,7 @@ describe('the event kinds beside the prose', () => {
       'check-failed',
       'merged',
       'grant-decided',
+      'connector-offer-decided',
       'turn-cancelled',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
@@ -107,9 +108,10 @@ describe('the event kinds beside the prose', () => {
     expect(isSystemEventKind('agent:BAD')).toBe(false);
   });
 
-  it('keeps grant decisions on the resume path, never on the trigger path', () => {
-    expect([...RESUME_KINDS]).toEqual(['grant-decided']);
+  it('keeps grant and connector-offer decisions on the resume path, never on the trigger path', () => {
+    expect([...RESUME_KINDS]).toEqual(['grant-decided', 'connector-offer-decided']);
     expect(isResumeKind('grant-decided')).toBe(true);
+    expect(isResumeKind('connector-offer-decided')).toBe(true);
     expect(isResumeKind('joined')).toBe(false);
   });
 

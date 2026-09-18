@@ -29,6 +29,11 @@
       "import": "./dist/agent-grants.js",
       "default": "./dist/agent-grants.js"
     },
+    "./connector-offers": {
+      "types": "./dist/connector-offers.d.ts",
+      "import": "./dist/connector-offers.js",
+      "default": "./dist/connector-offers.js"
+    },
     "./surface-capabilities": {
       "types": "./dist/surface-capabilities.d.ts",
       "import": "./dist/surface-capabilities.js",

@@ -63,6 +63,11 @@ import {
   type CommandGrantScript,
 } from '@beeline/api-contract/agent-grants';
 import {
+  CONNECTOR_OFFER_REASON_MAX_LENGTH,
+  OFFERABLE_CONNECTOR_KINDS,
+  isOfferableConnectorKind,
+} from '@beeline/api-contract/connector-offers';
+import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
   MAX_MENTIONS_PER_EVENT,
   SERVER_EVENT_KINDS,
@@ -614,6 +619,36 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'workbench_status',
+    description:
+      'Read the Workbench as it stands for the person you are answering: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this person already has and on which machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. Free to call; it changes nothing.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'offer_connector',
+    description:
+      'Offer to add ONE Workbench tool (connector) you need for the work in front of you, at the moment you need it. A card goes into this Room, spoken by you and addressed to the person you are answering; it carries your reason, a fixed line naming the consequence and the safety boundary, and ONE affirmative action. Only that person or a Workspace admin can accept; accepting pairs the tool on YOUR machine, and the sign-in or keys are theirs, never in chat. Your turn pauses on the card: say in prose what you found out about the tool and what you are waiting for, then end the turn — you are woken when someone accepts. Never offer a tool you have not looked into: if you do not already know what it is, research it first and say so in your reply BEFORE calling this. This is setup, not authority: it never replaces a grant, write permission, target-branch confirmation or the merge gate.',
+    inputSchema: {
+      type: 'object',
+      required: ['connectorType', 'reason'],
+      properties: {
+        connectorType: {
+          type: 'string',
+          enum: [...OFFERABLE_CONNECTOR_KINDS],
+          description: 'The catalog connectorType from workbench_status that is marked offerable.',
+        },
+        reason: {
+          type: 'string',
+          minLength: 1,
+          maxLength: CONNECTOR_OFFER_REASON_MAX_LENGTH,
+          description:
+            'One short clause: what you will do once it is added, e.g. "provision the 1inch API key into its vault".',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'run_granted_command',
     description:
       'Run a command under an approved command grant, only when an approved grant is a word-for-word prefix of argv. In a top-level Room it runs on the SAME read-only filesystem the Room promises — you can read anything and write only your own scratch, so open a corner for work that changes files. A corner can do everything a Room can and more: its worktree is writable and a command there may act on the live host, next to the branch and the transcript that explain it. The named secrets are in its environment and never in the output. Ten-minute timeout, capped output, one ledger row per run.',
@@ -647,6 +682,9 @@ export function agentToolsFor(
   return AGENT_TOOLS.filter((tool) => {
     if (tool.name === 'steer_corner') return !directMessage && !cornerTurn;
     if (tool.name === 'approve_merge') return cornerTurn && reviewer;
+    // A connector is offered where a person is answering — a Room or a DM —
+    // never from a corner, whose work is the branch (R5).
+    if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
     return !directMessage || tool.name !== 'open_corner';
   });
 }
@@ -1957,6 +1995,96 @@ export async function requestGrant(
   );
 }
 
+export interface ConnectorOfferDeps {
+  roomId: string;
+  execute: (name: string, input: JsonObject) => Promise<JsonObject>;
+}
+
+export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
+  return { roomId: agentScheduleRoomId(), execute: daemonExecute };
+}
+
+/**
+ * workbench_status: the Workbench as it stands for the person this turn
+ * answers, rendered as text the model reads line by line — a tool it may
+ * offer, a tool already paired (and where), a connection by name.
+ */
+export async function workbenchStatus(
+  deps: ConnectorOfferDeps = connectorOfferDepsFromEnv(),
+): Promise<string> {
+  const view = (await deps.execute('readAgentWorkbench', { roomId: deps.roomId })) as {
+    addressee?: { name?: string; handle?: string };
+    catalog?: Array<{
+      connectorType: string;
+      name: string;
+      purpose: string;
+      available: boolean;
+      offerable: boolean;
+      paired?: { status: string; helperName: string; onThisMachine: boolean };
+    }>;
+    connections?: Array<{ connectorType: string; service: string | null; label: string; state: string }>;
+    machine?: { machineId: string; name: string };
+  };
+  const who = view.addressee?.handle
+    ? `@${view.addressee.handle}`
+    : (view.addressee?.name ?? 'the person you are answering');
+  const lines = [
+    `Workbench for ${who} (an accepted offer installs on your machine, ${view.machine?.name ?? 'this machine'}).`,
+    '',
+    'Catalog:',
+  ];
+  for (const entry of view.catalog ?? []) {
+    const state = entry.paired
+      ? `${entry.paired.status} on ${entry.paired.helperName}${entry.paired.onThisMachine ? ' (your machine)' : ''}`
+      : !entry.available
+        ? 'not available yet'
+        : entry.offerable
+          ? 'not added — you may offer it with offer_connector'
+          : 'not added — added only from the Workbench page';
+    lines.push(`- ${entry.connectorType} (${entry.name}): ${state}. ${entry.purpose}`);
+  }
+  lines.push('', 'Connections (keys already provisioned, by name only):');
+  const connections = view.connections ?? [];
+  if (!connections.length) lines.push('- none');
+  for (const connection of connections)
+    lines.push(
+      `- ${connection.label}${connection.service ? ` (${connection.service})` : ''} via ${connection.connectorType}${connection.state === 'error' ? ' — in error' : ''}`,
+    );
+  return lines.join('\n');
+}
+
+/**
+ * offer_connector: one card, one tool, the turn paused on it. The server
+ * owns the card's consequence line; the agent supplies only its reason.
+ */
+export async function offerConnector(
+  args: JsonObject,
+  deps: ConnectorOfferDeps = connectorOfferDepsFromEnv(),
+): Promise<string> {
+  const connectorType = stringArg(args, 'connectorType');
+  if (!isOfferableConnectorKind(connectorType)) {
+    throw new Error(
+      `connectorType must be one of ${OFFERABLE_CONNECTOR_KINDS.join(', ')} (see workbench_status)`,
+    );
+  }
+  const reason = stringArg(args, 'reason')?.trim().replace(/\s+/g, ' ');
+  if (!reason) throw new Error('reason must be a non-empty string');
+  if (reason.length > CONNECTOR_OFFER_REASON_MAX_LENGTH) throw new Error('reason is too long');
+  const result = await deps.execute('offerConnector', {
+    roomId: deps.roomId,
+    connectorType,
+    reason,
+  });
+  const offerId = typeof result.offerId === 'string' ? result.offerId : 'unknown';
+  const joined = result.joined === true;
+  return (
+    `${joined ? 'already offered, card still open' : 'pending, card posted'}: add ${connectorType} [offer ${offerId}]. ` +
+    'The person you addressed, or a Workspace admin, can accept it with the one action on the card; ' +
+    'your turn is paused on this offer. In prose, say what you learned about the tool and that you are waiting for them to add it, then end your turn now; ' +
+    'you will be woken when it is added. Do not ask them to open Settings or the Workbench page — the card is the whole ask.'
+  );
+}
+
 export interface GrantRunDeps {
   roomId: string;
   run: (input: { roomId: string; argv: string[] }) => Promise<JsonObject>;
@@ -2123,6 +2251,10 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return deleteSchedule(args);
     case 'request_grant':
       return requestGrant(args);
+    case 'workbench_status':
+      return workbenchStatus();
+    case 'offer_connector':
+      return offerConnector(args);
     case 'run_granted_command':
       return runGrantedCommand(args);
     default:

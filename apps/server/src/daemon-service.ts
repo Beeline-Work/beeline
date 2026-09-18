@@ -66,12 +66,26 @@ import {
   type SystemPhrase,
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
-import { applyVaultList, isMetadataStale, receiveConnectionUsage } from './workbench.js';
+import {
+  applyVaultList,
+  connectorCatalog,
+  connectorDisplayName,
+  isMetadataStale,
+  receiveConnectionUsage,
+} from './workbench.js';
 import type {
   ConnectorAssignment,
+  ConnectorKind,
   ConnectorStatus,
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
+import {
+  CONNECTOR_OFFER_REASON_MAX_LENGTH,
+  connectorOfferConsequence,
+  connectorPurpose,
+  isOfferableConnectorKind,
+  type ConnectorOfferCardView,
+} from '@beeline/api-contract/connector-offers';
 import {
   AGENT_REACHABLE_HORIZON_MS,
   parseAgentAccessPolicy,
@@ -195,6 +209,7 @@ export class DaemonService {
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
+      'offerConnector',
     ]);
     if (
       !this.commandTransaction &&
@@ -287,6 +302,14 @@ export class DaemonService {
           await db.query(
             `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
             [(result as { grantId: string }).grantId, command.id],
+          );
+        }
+        if (name === 'offerConnector') {
+          // The accept's hidden `connector-offer-decided` line resumes THIS
+          // command's turn, the way a grant decision resumes its ask.
+          await db.query(
+            `UPDATE connector_offers SET command_id=$2 WHERE id::text=$1 AND command_id IS NULL`,
+            [(result as { offerId: string }).offerId, command.id],
           );
         }
         if (name === 'postRoomMessage' && candidate.relay === undefined) {
@@ -642,6 +665,16 @@ export class DaemonService {
       case 'consumeAgentGrant':
         return (await this.consumeAgentGrant(
           input as Input<'consumeAgentGrant'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'readAgentWorkbench':
+        return (await this.agentWorkbench(
+          input as Input<'readAgentWorkbench'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'offerConnector':
+        return (await this.offerConnector(
+          input as Input<'offerConnector'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'createCorner':
@@ -3181,6 +3214,326 @@ export class DaemonService {
     if (!spent.rowCount) throw new Error('once grant not found');
     return this.writeResult();
   }
+
+  // --- R5: connector offers -------------------------------------------------
+
+  /**
+   * The Room, this agent's machine, and the person this turn answers. The
+   * ADDRESSEE is the human whose message woke the agent — whose keys an added
+   * tool will hold — read from the command that woke it (the command IS the
+   * trigger, so a scheduled or subscription wake resolves too). An agent-woken
+   * turn addresses nobody human; the offering agent's owner stands in.
+   */
+  private async offerContext(roomId: string, agentId: string) {
+    const context = (
+      await this.database.query<{
+        workspace_id: string;
+        parent_id: string | null;
+        owner_id: string;
+        machine_id: string | null;
+        machine_name: string | null;
+        agent_name: string;
+        agent_handle: string | null;
+        agent_avatar: string | null;
+        owner_name: string;
+        owner_handle: string | null;
+        owner_avatar: string | null;
+      }>(
+        `SELECT room.workspace_id,room.parent_id,a.owner_id,a.machine_id,a.machine_name,
+                agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
+                owner.name owner_name,owner.handle owner_handle,owner.avatar owner_avatar
+         FROM rooms room
+         JOIN agents a ON a.agent_id=$2
+         JOIN identities agent ON agent.id=a.agent_id
+         JOIN identities owner ON owner.id=a.owner_id
+         WHERE room.id=$1`,
+        [roomId, agentId],
+      )
+    ).rows[0];
+    if (!context) throw new Error('agent not found');
+    const woke = this.authorizedCommand?.source_message_id
+      ? await this.database.query<{
+          id: string;
+          name: string;
+          handle: string | null;
+          avatar: string | null;
+        }>(
+          `SELECT identity.id,identity.name,identity.handle,identity.avatar
+           FROM messages message JOIN identities identity ON identity.id=message.author_id
+           WHERE message.id=$1 AND identity.kind='human' AND identity.hidden_from_roster=false`,
+          [this.authorizedCommand.source_message_id],
+        )
+      : await this.database.query<{
+          id: string;
+          name: string;
+          handle: string | null;
+          avatar: string | null;
+        }>(
+          `SELECT identity.id,identity.name,identity.handle,identity.avatar
+           FROM agent_commands command
+           JOIN messages message ON message.id=command.source_message_id
+           JOIN identities identity ON identity.id=message.author_id
+           WHERE command.room_id=$1 AND command.agent_id=$2
+             AND identity.kind='human' AND identity.hidden_from_roster=false
+           ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+          [roomId, agentId],
+        );
+    const addresseeRow = woke.rows[0];
+    const addressee = addresseeRow
+      ? {
+          pubkey: addresseeRow.id,
+          kind: 'human' as const,
+          name: addresseeRow.name,
+          ...(addresseeRow.handle ? { handle: addresseeRow.handle } : {}),
+          ...(addresseeRow.avatar ? { avatar: addresseeRow.avatar } : {}),
+        }
+      : {
+          pubkey: context.owner_id,
+          kind: 'human' as const,
+          name: context.owner_name,
+          ...(context.owner_handle ? { handle: context.owner_handle } : {}),
+          ...(context.owner_avatar ? { avatar: context.owner_avatar } : {}),
+        };
+    const agent = {
+      pubkey: agentId,
+      kind: 'agent' as const,
+      name: context.agent_name,
+      ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+      ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
+    };
+    // A legacy daemon that never reported a machine IS its own machine, the
+    // same identity `pairConnector` resolves for it.
+    const machine = {
+      machineId: context.machine_id ?? agentId,
+      name: context.machine_name ?? context.agent_name,
+    };
+    return {
+      workspaceId: context.workspace_id,
+      isCorner: context.parent_id !== null,
+      addressee,
+      agent,
+      machine,
+    };
+  }
+
+  /**
+   * workbench_status: what the Workbench can add, and what the person this
+   * turn answers already has. Names only — a connection is listed by service
+   * and label, never by anything the vault holds.
+   */
+  private async agentWorkbench(
+    input: Input<'readAgentWorkbench'>,
+    agentId: string,
+  ): Promise<Output<'readAgentWorkbench'>> {
+    if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
+    const context = await this.offerContext(input.roomId, agentId);
+    const paired = (
+      await this.database.query<{
+        connector_type: string;
+        status: 'installing' | 'connected' | 'error' | 'disconnected';
+        machine_id: string | null;
+        helper_agent_id: string;
+        helper_name: string;
+        updated_at: Date;
+      }>(
+        `SELECT k.connector_type,k.status,k.machine_id,k.helper_agent_id,
+                COALESCE(NULLIF(a.machine_name,''),helper.name) helper_name,k.updated_at
+         FROM workspace_connectors k
+         JOIN identities helper ON helper.id=k.helper_agent_id
+         LEFT JOIN agents a ON a.agent_id=k.helper_agent_id
+         WHERE k.workspace_id=$1 AND k.owner_identity_id=$2
+         ORDER BY k.updated_at DESC`,
+        [context.workspaceId, context.addressee.pubkey],
+      )
+    ).rows;
+    const catalog = connectorCatalog().map((entry) => {
+      // The most recently touched row wins; a live one over a disconnected one.
+      const rows = paired.filter((row) => row.connector_type === entry.connectorType);
+      const row = rows.find((candidate) => candidate.status !== 'disconnected') ?? rows[0];
+      return {
+        connectorType: entry.connectorType,
+        name: entry.name,
+        purpose: connectorPurpose(entry.connectorType),
+        available: entry.available,
+        offerable:
+          entry.available && !context.isCorner && isOfferableConnectorKind(entry.connectorType),
+        ...(row
+          ? {
+              paired: {
+                status: row.status,
+                helperName: row.helper_name,
+                onThisMachine: (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
+              },
+            }
+          : {}),
+      };
+    });
+    const connections = (
+      await this.database.query<{
+        connector_type: string;
+        service: string | null;
+        label: string | null;
+        reference: string;
+        state: 'active' | 'error';
+      }>(
+        `SELECT k.connector_type,NULLIF(c.service,'') service,c.label,c.reference,c.state
+         FROM workspace_connections c
+         JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE c.owner_identity_id=$1 AND k.workspace_id=$2
+         ORDER BY c.service,c.reference`,
+        [context.addressee.pubkey, context.workspaceId],
+      )
+    ).rows;
+    return {
+      addressee: {
+        identityId: context.addressee.pubkey,
+        name: context.addressee.name,
+        ...(context.addressee.handle ? { handle: context.addressee.handle } : {}),
+      },
+      catalog,
+      connections: connections.map((row) => ({
+        connectorType: row.connector_type,
+        service: row.service,
+        label: row.label ?? row.reference,
+        state: row.state,
+      })),
+      machine: context.machine,
+    };
+  }
+
+  /**
+   * offer_connector: ONE card in the Room, spoken by the agent, addressed to
+   * the person whose keys the tool will hold. The turn pauses on it the way a
+   * grant ask pauses (the card's accept resumes it through the hidden
+   * `connector-offer-decided` line). A repeat of the same offer inside the
+   * window joins the open card rather than posting a second; a tool the
+   * addressee already has, or that ANOTHER agent already offered here, is a
+   * refusal the agent can restate — a second agent could never be woken by
+   * the first agent's card, so it must not wait on it.
+   */
+  private async offerConnector(
+    input: Input<'offerConnector'>,
+    agentId: string,
+  ): Promise<Output<'offerConnector'>> {
+    if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
+    if (!isOfferableConnectorKind(input.connectorType))
+      throw new Error(
+        `connector type is invalid: ${String(input.connectorType)} cannot be offered from a Room`,
+      );
+    if (typeof input.reason !== 'string' || !input.reason.trim())
+      throw new Error('offer reason is required');
+    const reason = input.reason.trim().replace(/\s+/g, ' ');
+    if (reason.length > CONNECTOR_OFFER_REASON_MAX_LENGTH)
+      throw new Error('offer reason is invalid: too long');
+    const connectorType: ConnectorKind = input.connectorType;
+    const context = await this.offerContext(input.roomId, agentId);
+    if (context.isCorner)
+      throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
+    const connectorName = connectorDisplayName(connectorType);
+    const already = (
+      await this.database.query<{ status: string }>(
+        `SELECT status FROM workspace_connectors
+         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
+           AND status IN ('installing','connected')
+         ORDER BY updated_at DESC LIMIT 1`,
+        [context.workspaceId, context.addressee.pubkey, connectorType],
+      )
+    ).rows[0];
+    if (already)
+      throw new Error(
+        `connector offer conflict: ${context.addressee.name} already has ${connectorName} (${already.status}); check workbench_status`,
+      );
+    const result = await this.database.transaction(async (database) => {
+      // One open offer per Room+connector, even when two agents race: lock
+      // first, then read any pending row (age does not create a second card).
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `connector-offer:${input.roomId}:${connectorType}`,
+      ]);
+      const open = (
+        await database.query<{ id: string; agent_id: string; message_id: string | null }>(
+          `SELECT id,agent_id,message_id FROM connector_offers
+           WHERE room_id=$1 AND connector_type=$2 AND status='pending'
+           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+          [input.roomId, connectorType],
+        )
+      ).rows[0];
+      if (open && open.agent_id === agentId && open.message_id)
+        return { offerId: open.id, messageId: open.message_id, joined: true };
+      if (open && open.agent_id !== agentId) {
+        const other = (
+          await database.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [
+            open.agent_id,
+          ])
+        ).rows[0];
+        throw new Error(
+          `connector offer conflict: ${other?.name ?? 'another agent'} already offered ${connectorName} here; let that card be answered`,
+        );
+      }
+      const offerId = randomUUID();
+      const messageId = id();
+      const created = (
+        await database.query<{ created_at: Date }>(
+          `INSERT INTO connector_offers(
+             id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id
+           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`,
+          [
+            offerId,
+            agentId,
+            context.workspaceId,
+            input.roomId,
+            context.addressee.pubkey,
+            connectorType,
+            reason,
+            context.machine.machineId,
+          ],
+        )
+      ).rows[0]!;
+      const card: ConnectorOfferCardView = {
+        offerId,
+        agent: context.agent,
+        addressee: context.addressee,
+        connectorType,
+        connectorName,
+        reason,
+        consequence: connectorOfferConsequence(connectorType, reason),
+        helper: context.machine,
+        status: 'pending',
+        createdAt: seconds(created.created_at),
+      };
+      // The addressee is reached by the card itself (`background.ts` pushes a
+      // connector offer to the person named on it), not by a wake: this line
+      // has no kind, so it starts no turn.
+      await systemLine(database, {
+        id: messageId,
+        roomId: input.roomId,
+        subject: { kind: 'agent', id: agentId, name: context.agent.name },
+        verb: `offered ${systemIdentityMention({
+          id: context.addressee.pubkey,
+          kind: 'human',
+          name: context.addressee.name,
+          handle: context.addressee.handle ?? null,
+        })}`,
+        object: connectorName,
+        consequence: reason,
+        presentation: 'card',
+        cardType: 'connector-offer',
+        card: card as unknown as Record<string, unknown>,
+      });
+      await database.query(`UPDATE connector_offers SET message_id=$2 WHERE id=$1`, [
+        offerId,
+        messageId,
+      ]);
+      return { offerId, messageId, joined: false };
+    });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'connector-offer',
+      agentId,
+    });
+    return { offerId: result.offerId, status: 'pending', messageId: result.messageId, joined: result.joined };
+  }
+
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
     // Untidy is not wrong: a brief handed over with line breaks or double
     // spaces is flattened here, and only a genuinely over-long text is
@@ -3572,6 +3925,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   requestAgentGrant: true,
   listAgentGrants: true,
   consumeAgentGrant: true,
+  readAgentWorkbench: true,
+  offerConnector: true,
   createCorner: true,
   archiveCorner: true,
   ensureAgentMembership: true,

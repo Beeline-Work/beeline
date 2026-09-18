@@ -1109,6 +1109,33 @@ CREATE TABLE IF NOT EXISTS workspace_connections (
 CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
   ON workspace_connections(owner_identity_id, connector_id);
 
+-- R5: an agent's offer to add one connector, made from a Room at the moment
+-- of need. The addressee is the person whose message woke the offering turn
+-- (whose keys the tool will hold); they or a Workspace manager accept it.
+-- Accepting pairs the connector on the offering agent's machine through the
+-- same row pairConnector writes, and settles the Room's card in place.
+CREATE TABLE IF NOT EXISTS connector_offers (
+  id uuid PRIMARY KEY,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  addressee_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  connector_type text NOT NULL,
+  reason text NOT NULL,
+  machine_id text NOT NULL,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted')),
+  message_id text REFERENCES messages(id) ON DELETE SET NULL,
+  command_id text,
+  accepted_by text REFERENCES identities(id),
+  accepted_at timestamptz,
+  connector_id uuid REFERENCES workspace_connectors(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS connector_offers_room_idx
+  ON connector_offers(room_id, connector_type, status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_offers_open_idx
+  ON connector_offers(room_id, connector_type) WHERE status='pending';
+
 
 
 -- What an agent did with a connection, as reported by the helper. The ledger
@@ -1191,7 +1218,8 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_unread_cursor_idx
      ON messages(room_id,created_at,id) INCLUDE(author_id)
-     WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'`,
+     WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
+       AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
   );
   await database.query(POSTGRES_LIVE_SCHEMA);
   await backfillCornerOwners(database);

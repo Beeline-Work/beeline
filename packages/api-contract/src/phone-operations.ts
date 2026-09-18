@@ -48,6 +48,8 @@ export type PhoneOperationMap = {
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
+  /** R5: the one affirmative tap on a connector-offer card; pairs the connector on the offering agent's machine. */
+  acceptConnectorOffer: { input: AcceptConnectorOfferInput; output: AcceptConnectorOfferResult };
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
@@ -239,6 +241,14 @@ export type AgentGrantDecisionResult = {
   readonly status: AgentGrantStatus;
   /** The Room the grant's card lives in, so the server can invalidate it. */
   readonly roomId: string;
+};
+export type AcceptConnectorOfferInput = { readonly offerId: string };
+export type AcceptConnectorOfferResult = {
+  readonly offerId: string;
+  readonly status: 'accepted';
+  readonly roomId: string;
+  /** The Workbench connector row the acceptance created or re-armed. */
+  readonly connectorId: string;
 };
 export type UpdateWorkspaceInput = WorkspaceInput & {
   readonly name?: string;

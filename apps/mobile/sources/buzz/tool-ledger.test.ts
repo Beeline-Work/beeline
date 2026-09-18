@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnActivityAction } from './activity-timeline';
-import {
-  TOOL_RUN_INLINE_MAX,
-  groupToolLedgerRuns,
-  toolGlyph,
-  toolGroupSummary,
-  toolLedgerLines,
-} from './tool-ledger';
+import { groupToolLedgerRuns, toolGlyph, toolGroupSummary, toolLedgerLines } from './tool-ledger';
 
 const step = (patch: Partial<TurnActivityAction> & { id: string }): TurnActivityAction => ({
   kind: 'tool',
@@ -86,19 +80,32 @@ describe('toolLedgerLines', () => {
         output: '[{"type":"content","content":{"type":"text","text":"first\\nsecond"}}]',
       }),
     ]);
-    expect(line!.detail).toBe(['permission denied', 'M sources/Ledger.tsx', 'first', 'second'].join('\n'));
+    expect(line!.detail).toBe(
+      ['permission denied', 'M sources/Ledger.tsx', 'first', 'second'].join('\n'),
+    );
   });
 
   it('a step with nothing behind it is not pressable — no detail at all', () => {
     const [line] = toolLedgerLines([
-      step({ id: 'q', toolKind: 'read', title: 'Read', output: '[{"type":"terminal","terminalId":"x"}]' }),
+      step({
+        id: 'q',
+        toolKind: 'read',
+        title: 'Read',
+        output: '[{"type":"terminal","terminalId":"x"}]',
+      }),
     ]);
     expect(line!.detail).toBeUndefined();
   });
 
   it('a thought carries its text as detail; a summary-only thought stays quiet', () => {
     const [texted, quiet] = toolLedgerLines([
-      step({ id: 't', kind: 'thought', label: 'thought', output: 'weighing the two layouts', durationMs: 51_000 }),
+      step({
+        id: 't',
+        kind: 'thought',
+        label: 'thought',
+        output: 'weighing the two layouts',
+        durationMs: 51_000,
+      }),
       step({ id: 's', kind: 'thought', label: 'thought', durationMs: 12_000 }),
     ]);
     expect(texted!.kind).toBe('thought');
@@ -133,30 +140,19 @@ describe('toolLedgerLines', () => {
 });
 
 describe('groupToolLedgerRuns', () => {
-  const run = (ids: string[]) => toolLedgerLines(ids.map((id) => step({ id, toolKind: 'read', title: 'Read' })));
+  const run = (ids: string[]) =>
+    toolLedgerLines(ids.map((id) => step({ id, toolKind: 'read', title: 'Read' })));
 
-  it('a run at or under the inline max stays individual lines', () => {
-    const runs = groupToolLedgerRuns(run(['a', 'b', 'c']));
-    expect(runs).toHaveLength(3);
-    expect(runs.every((r) => r.kind === 'line')).toBe(true);
+  it.each([1, 2, 3])('folds a %i-step machine run into one group', (count) => {
+    const ids = Array.from({ length: count }, (_, index) => String.fromCharCode(97 + index));
+    const [group, ...rest] = groupToolLedgerRuns(run(ids));
+    expect(rest).toHaveLength(0);
+    expect(group).toMatchObject({ kind: 'group', id: 'a', count, failed: 0 });
+    expect(group!.lines.map((line) => line.id)).toEqual(ids);
   });
 
-  it('a longer run folds into one group, collapsed by default', () => {
-    const runs = groupToolLedgerRuns(run(['a', 'b', 'c', 'd']));
-    expect(runs).toHaveLength(1);
-    const group = runs[0]!;
-    expect(group.kind).toBe('group');
-    if (group.kind !== 'group') return;
-    expect(group.count).toBe(4);
-    expect(group.failed).toBe(0);
-    expect(group.lines).toHaveLength(4);
-    expect(group.id).toBe('a');
-  });
-
-  it('the boundary sits at more than three — three lines, four a group', () => {
-    expect(groupToolLedgerRuns(run(['a', 'b', 'c'])).every((r) => r.kind === 'line')).toBe(true);
-    expect(groupToolLedgerRuns(run(['a', 'b', 'c', 'd'])).every((r) => r.kind === 'group')).toBe(true);
-    expect(TOOL_RUN_INLINE_MAX).toBe(3);
+  it('returns no disclosure for an empty machine run', () => {
+    expect(groupToolLedgerRuns([])).toEqual([]);
   });
 
   it('counts failures and sums the durations the receipts carried', () => {

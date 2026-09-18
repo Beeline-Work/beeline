@@ -13,9 +13,10 @@ import {
  * glyph, the verb-object label, a quiet verdict mark, and — only when the step
  * actually carries one — a right-gutter duration. No cards, no chips. A failed
  * step carries its distilled failure reason inline; a tap opens the full raw
- * output in the Hull output sheet. Consecutive steps longer than
- * `TOOL_RUN_INLINE_MAX` fold into one group line (`⌄ 6 steps · 2 failed · 48s`)
- * that expands in place.
+ * output in the Hull output sheet. Every machine run folds into one group
+ * line (`⌄ 6 steps · 2 failed · 48s`) that expands in place. This is
+ * true even for a one-step run: narration defines the run boundary, not an
+ * arbitrary minimum number of calls.
  *
  * The glyph vocabulary is deliberately three marks and a fallback, all already
  * spoken elsewhere in the product's mono chrome:
@@ -35,9 +36,6 @@ import {
  * Durations are shown only from existing receipts. A step with no duration
  * omits the gutter rather than faking one.
  */
-
-/** Runs at or under this length render as individual lines; longer runs fold. */
-export const TOOL_RUN_INLINE_MAX = 3;
 
 const GLYPH_SHELL = '>_';
 const GLYPH_FILE = '≡';
@@ -123,57 +121,44 @@ function detailOf(step: TurnActivityAction): Pick<ToolLedgerLine, 'detail'> | {}
   const output = toolCallOutput(step.output).join('\n');
   if (output) parts.push(output);
   if (step.requestedBy) {
-    parts.push(step.requestedBy.name ? `at ${step.requestedBy.name}'s request` : 'at a grant\'s request');
+    parts.push(
+      step.requestedBy.name ? `at ${step.requestedBy.name}'s request` : "at a grant's request",
+    );
   }
   return parts.length ? { detail: parts.join('\n') } : {};
 }
 
-export type ToolLedgerRun =
-  | { kind: 'line'; line: ToolLedgerLine }
-  | {
-      kind: 'group';
-      id: string;
-      count: number;
-      failed: number;
-      durationMs?: number;
-      lines: ToolLedgerLine[];
-    };
+export type ToolLedgerRun = {
+  kind: 'group';
+  id: string;
+  count: number;
+  failed: number;
+  durationMs?: number;
+  lines: ToolLedgerLine[];
+};
 
 /**
- * Fold consecutive steps into runs. A run at or under `TOOL_RUN_INLINE_MAX`
- * stays individual lines; anything longer becomes one group line, collapsed by
- * default, expandable in place. Thought steps fold with the tools around them —
- * the design's "group consecutive steps" has no tool-only exception.
+ * Fold a machine run into one group line, collapsed by default and expandable
+ * in place. Transcript narration separates calls before they reach this
+ * function, so a short run must not be flattened back into individual rows.
  */
 export function groupToolLedgerRuns(lines: readonly ToolLedgerLine[]): ToolLedgerRun[] {
-  const runs: ToolLedgerRun[] = [];
-  let pending: ToolLedgerLine[] = [];
-  const flush = () => {
-    if (!pending.length) return;
-    if (pending.length <= TOOL_RUN_INLINE_MAX) {
-      for (const line of pending) runs.push({ kind: 'line', line });
-    } else {
-      const failed = pending.filter((line) => line.outcome === 'failure').length;
-      const durations = pending
-        .map((line) => line.durationMs)
-        .filter((ms): ms is number => typeof ms === 'number');
-      const durationMs = durations.length ? durations.reduce((sum, ms) => sum + ms, 0) : undefined;
-      runs.push({
-        kind: 'group',
-        id: pending[0]!.id,
-        count: pending.length,
-        failed,
-        ...(durationMs ? { durationMs } : {}),
-        lines: pending,
-      });
-    }
-    pending = [];
-  };
-  for (const line of lines) {
-    pending.push(line);
-  }
-  flush();
-  return runs;
+  if (!lines.length) return [];
+  const failed = lines.filter((line) => line.outcome === 'failure').length;
+  const durations = lines
+    .map((line) => line.durationMs)
+    .filter((ms): ms is number => typeof ms === 'number');
+  const durationMs = durations.length ? durations.reduce((sum, ms) => sum + ms, 0) : undefined;
+  return [
+    {
+      kind: 'group',
+      id: lines[0]!.id,
+      count: lines.length,
+      failed,
+      ...(durationMs ? { durationMs } : {}),
+      lines: [...lines],
+    },
+  ];
 }
 
 /** The group line's copy: `6 steps · 2 failed · 48s` — segments the run earned. */

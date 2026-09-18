@@ -147,6 +147,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { executableOnPath } from './agent-command.js';
 import type { SessionMode } from './config.js';
+import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
 
 /** Operator switch, persisted on the runtime record and mirrored onto BodyConfig. */
 export type SandboxPolicy = 'bwrap' | 'off';
@@ -196,7 +197,7 @@ export const HARNESS_HOME_STATE_DIRS: Array<{ match: RegExp; dirs: string[] }> =
     dirs: ['.grok'],
   },
   {
-    match: /(^|[/\\])(cursor-acp-bridge|cursor-agent-acp)(\.[a-z]+)?$/i,
+    match: CURSOR_HARNESS_COMMAND,
     dirs: ['.cursor'],
   },
 ];

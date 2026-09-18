@@ -57,6 +57,8 @@
  * unenforced, because "we did not verify it" must not read as "it is safe".
  */
 
+import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
+
 /** How much of the Room/corner boundary a harness can actually be held to. */
 export type HarnessEnforcement =
   /** Asks for every mutation AND runs in its own OS sandbox when read-only. */
@@ -110,7 +112,7 @@ const PROFILES: Array<{ match: RegExp; profile: HarnessProfile }> = [
     },
   },
   {
-    match: /(^|[/\\])(cursor-acp-bridge|cursor-agent-acp)(\.[a-z]+)?$/i,
+    match: CURSOR_HARNESS_COMMAND,
     profile: {
       enforcement: 'none',
       note: 'cursor-acp-bridge drives cursor-agent with --force in non-interactive stream-json mode, so cursor-agent never sends session/request_permission; Beeline already sandboxes the child',

@@ -64,7 +64,7 @@ describe('GitHub phone operations', () => {
     );
     expect(app.dispatchWorkflow).toHaveBeenCalledWith('room-token', 'owner/widgets', 12, 'trunk');
   });
-  it('keeps the corner gate passing when completed check deliveries overlap', async () => {
+  it("serializes overlapping webhook refreshes and stores GitHub's latest rollup", async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -112,12 +112,38 @@ describe('GitHub phone operations', () => {
         }),
       ],
     );
-    const operations = new GitHubOperations(
-      database,
-      {} as GitHubOAuthClient,
-      {} as GitHubAppClient,
-      'secret',
-    );
+    let started!: () => void;
+    let release!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const releaseFirst = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const readCommitCheckRollup = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        started();
+        await releaseFirst;
+        return { state: 'pending', total: 2, failing: [], checks: [] };
+      })
+      .mockResolvedValueOnce({
+        state: 'passed',
+        total: 2,
+        failing: [],
+        checks: [
+          { name: 'lint', status: 'passed' },
+          { name: 'typecheck', status: 'passed' },
+        ],
+      });
+    const app = {
+      installationToken: vi.fn(async () => ({
+        token: 'room-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+      readCommitCheckRollup,
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
     const payload = (name: string, status: 'in_progress' | 'completed') => ({
       action: status === 'completed' ? 'completed' : 'in_progress',
       installation: { id: 77 },
@@ -129,61 +155,29 @@ describe('GitHub phone operations', () => {
         check_suite: { head_branch: 'feature/checks', head_sha: headSha },
       },
     });
-    await operations.processWebhook('check_run', payload('lint', 'in_progress'));
-    await operations.processWebhook('check_run', payload('typecheck', 'in_progress'));
-
-    // Force the race from the old read/aggregate/write sequence: lint reads a pending
-    // aggregate, typecheck commits the passing aggregate, then lint writes its stale view.
-    const originalQuery = database.query.bind(database);
-    let markSummaryCaptured!: () => void;
-    const summaryCaptured = new Promise<void>((resolve) => {
-      markSummaryCaptured = resolve;
-    });
-    let releaseStaleSummary!: () => void;
-    const staleSummaryMayFinish = new Promise<void>((resolve) => {
-      releaseStaleSummary = resolve;
-    });
-    let staleSummaryHeld = false;
-    vi.spyOn(database, 'query').mockImplementation(async (sql, values = []) => {
-      if (
-        sql.includes('INSERT INTO corner_check_facts') &&
-        values[1] === 'typecheck' &&
-        values[2] === 'passed'
-      ) {
-        await summaryCaptured;
-      }
-      if (sql.includes('SELECT name,status,conclusion,url,updated_at') && !staleSummaryHeld) {
-        staleSummaryHeld = true;
-        const result = await originalQuery(sql, values);
-        markSummaryCaptured();
-        await staleSummaryMayFinish;
-        return result;
-      }
-      if (
-        sql.includes('UPDATE corner_facts SET lifecycle=$2::jsonb') &&
-        typeof values[1] === 'string' &&
-        JSON.parse(values[1]).checks === 'passing'
-      ) {
-        const result = await originalQuery(sql, values);
-        releaseStaleSummary();
-        return result;
-      }
-      return originalQuery(sql, values);
-    });
-
-    await Promise.all([
-      operations.processWebhook('check_run', payload('lint', 'completed')),
-      operations.processWebhook('check_run', payload('typecheck', 'completed')),
-    ]);
+    const first = operations.processWebhook('check_run', payload('lint', 'completed'));
+    await firstStarted;
+    const second = operations.processWebhook('check_run', payload('typecheck', 'completed'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(readCommitCheckRollup).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all([first, second]);
 
     expect(
       (
-        await originalQuery<{ lifecycle: { checks: string; checksSummary: { status: string } } }>(
+        await database.query<{ lifecycle: { checks: string; checksSummary: { status: string } } }>(
           `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
           [corner],
         )
       ).rows[0]?.lifecycle,
-    ).toMatchObject({ checks: 'passing', checksSummary: { status: 'passing' } });
+    ).toMatchObject({
+      checks: 'passing',
+      checksSummary: {
+        status: 'passing',
+        total: 2,
+        checks: [{ name: 'lint' }, { name: 'typecheck' }],
+      },
+    });
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

@@ -472,7 +472,6 @@ export class GitHubOperations {
       token: token.token,
       repository: row.full_name,
       defaultBranch: row.default_branch,
-      repositoryId: row.repository_id,
     };
   }
 
@@ -549,53 +548,9 @@ export class GitHubOperations {
       throw new Error('invalid pull request number');
     // Always resolve the head: a force-push must never inherit a green predecessor.
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
-    const facts = await this.database.transaction(async (database) => {
-      const inserted = await database.query(
-        `INSERT INTO github_head_checks(repository_id,head_sha) VALUES($1,$2)
-         ON CONFLICT DO NOTHING RETURNING head_sha`,
-        [target.repositoryId, pr.headSha],
-      );
-      const cached = (
-        await database.query<{
-          facts: Record<string, 'passed' | 'failed' | 'pending'>;
-          fresh: boolean;
-        }>(
-          `SELECT facts,verified_at > now()-interval '30 seconds' AS fresh FROM github_head_checks
-          WHERE repository_id=$1 AND head_sha=$2 FOR UPDATE`,
-          [target.repositoryId, pr.headSha],
-        )
-      ).rows[0]!;
-      if (cached.fresh) return cached.facts;
-      // Reuse existing head-bound facts from any corner in this Room on first lookup.
-      // An invalidated/expired cache is reconciled with GitHub, not stale corner rows.
-      const known = inserted.rowCount
-        ? (
-            await database.query<{ name: string; status: 'passed' | 'failed' | 'pending' }>(
-              `SELECT DISTINCT ON (c.name) c.name,c.status FROM corner_check_facts c
-         JOIN rooms r ON r.id=c.corner_id WHERE r.parent_id=$1 AND c.head_sha=$2
-         ORDER BY c.name,c.updated_at DESC`,
-              [corner.parent_id, pr.headSha],
-            )
-          ).rows
-        : [];
-      const facts = known.length
-        ? Object.fromEntries(known.map((c) => [c.name, c.status]))
-        : await this.app.readCommitChecks(target.token, target.repository, pr.headSha);
-      // Holding the head row lock across the fetch ensures a concurrent webhook invalidates
-      // AFTER this snapshot is stored, instead of being overwritten by an older HTTP answer.
-      await database.query(
-        `UPDATE github_head_checks SET facts=$3::jsonb,verified_at=now()
-        WHERE repository_id=$1 AND head_sha=$2`,
-        [target.repositoryId, pr.headSha, JSON.stringify(facts)],
-      );
-      return facts;
-    });
-    const values = Object.values(facts);
-    const checks = values.includes('failed')
-      ? ('failed' as const)
-      : !values.length || values.includes('pending')
-        ? ('pending' as const)
-        : ('passed' as const);
+    const checks = (
+      await this.app.readCommitCheckRollup(target.token, target.repository, pr.headSha)
+    ).state;
     const approval = await this.database.query(
       `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
        WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
@@ -607,8 +562,8 @@ export class GitHubOperations {
     // deadlock, not a real gate.
     const reviewerIsAuthor = Boolean(
       corner.reviewer_agent_id &&
-        corner.owner_agent_id &&
-        corner.reviewer_agent_id === corner.owner_agent_id,
+      corner.owner_agent_id &&
+      corner.reviewer_agent_id === corner.owner_agent_id,
     );
     const approvalPending = reviewerIsAuthor
       ? false
@@ -631,34 +586,6 @@ export class GitHubOperations {
       reviewerIsAuthor,
       rule,
     };
-  }
-
-  /** Keep head facts even when no Beeline corner authored this branch (including fork PRs).
-   * A delivery is only one check, never proof that the full head is green. Invalidate the
-   * complete snapshot so the next gate reconciles all runs and commit-status contexts.
-   */
-  private async recordHeadCheck(event: string, body: GitHubRecord, installationId: number) {
-    const check = checkFact(event, body);
-    const repository = repositoryName(body);
-    if (!check?.headSha || !repository) return;
-    await this.database.query(
-      `INSERT INTO github_head_checks(repository_id,head_sha,facts)
-       SELECT g.repository_id,$3,$4::jsonb FROM github_repositories g
-       JOIN github_installations i ON i.installation_id=g.installation_id AND i.status='active'
-       WHERE g.installation_id=$1 AND lower(g.full_name)=lower($2) AND g.active
-         AND EXISTS (SELECT 1 FROM rooms r WHERE r.parent_id IS NULL AND r.archived_at IS NULL
-           AND r.github_installation_id=g.installation_id
-           AND lower(regexp_replace(regexp_replace(COALESCE(r.repository_remote,r.repository_key,''),
-             '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower(g.full_name))
-       ON CONFLICT(repository_id,head_sha) DO UPDATE SET
-         facts=github_head_checks.facts||EXCLUDED.facts,verified_at=NULL`,
-      [
-        installationId,
-        repository,
-        check.headSha,
-        JSON.stringify({ [`${event}:${check.name}`]: check.status }),
-      ],
-    );
   }
 
   async approveCornerMerge(viewerId: string, input: Input<'approveCornerMerge'>) {
@@ -750,7 +677,6 @@ export class GitHubOperations {
       event === 'check_suite' ||
       event === 'status'
     ) {
-      await this.recordHeadCheck(event, body, install.id);
       await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
       return;
@@ -982,9 +908,6 @@ export class GitHubOperations {
           integer(body.size) ?? (Array.isArray(body.commits) ? body.commits.length : 0);
         const head = text(body.after);
         if (head) {
-          await database.query(`DELETE FROM corner_check_facts WHERE corner_id=$1`, [
-            target.corner_id,
-          ]);
           const lifecycle = await this.lifecycle(target.corner_id, database);
           await this.updateLifecycle(
             target.corner_id,
@@ -1021,10 +944,11 @@ export class GitHubOperations {
         continue;
       }
       const check = checkFact(event, body);
-      if (check) {
+      const checkHeadSha = check?.headSha;
+      if (check && checkHeadSha) {
         await database.transaction(async (database) => {
-          // Check deliveries for one corner overlap in production. Lock the lifecycle row so
-          // each delivery folds its fact and aggregate before the next delivery takes a snapshot.
+          // Webhooks are wake-up signals. Serialize refreshes for this corner, then ask GitHub
+          // for its current aggregate instead of treating any delivery as the complete verdict.
           const current = (
             await database.query<{ lifecycle: CornerLifecycleView }>(
               `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
@@ -1033,22 +957,27 @@ export class GitHubOperations {
           ).rows[0]?.lifecycle;
           if (!current) return;
           // GitHub may deliver a completed run for the previous branch head after a push.
-          if (check.headSha && current.pr?.headSha && check.headSha !== current.pr.headSha) return;
-          await database.query(
-            `INSERT INTO corner_check_facts(corner_id,name,status,conclusion,url,head_sha)
-             VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(corner_id,name) DO UPDATE SET
-               status=EXCLUDED.status,conclusion=EXCLUDED.conclusion,url=EXCLUDED.url,
-               head_sha=EXCLUDED.head_sha,updated_at=now()`,
-            [
-              target.corner_id,
-              check.name,
-              check.status,
-              check.conclusion ?? null,
-              check.url ?? null,
-              check.headSha ?? null,
-            ],
+          if (current.pr?.headSha && checkHeadSha !== current.pr.headSha) return;
+          const token = await this.app.installationToken(Number(target.installation_id), {
+            repositoryIds: [Number(target.repository_id)],
+          });
+          const rollup = await this.app.readCommitCheckRollup(
+            token.token,
+            repository,
+            checkHeadSha,
           );
-          const summary = await this.checksSummary(target.corner_id, database);
+          const summary = {
+            status:
+              rollup.state === 'passed'
+                ? ('passing' as const)
+                : rollup.state === 'failed'
+                  ? ('failing' as const)
+                  : ('pending' as const),
+            total: rollup.total,
+            failing: rollup.failing,
+            checks: rollup.checks,
+            updatedAt: Math.floor(Date.now() / 1_000),
+          };
           await this.updateLifecycle(
             target.corner_id,
             {
@@ -1058,6 +987,8 @@ export class GitHubOperations {
             database,
           );
           const label = check.status === 'pending' ? 'started' : check.status;
+          const becamePassing = summary.status === 'passing' && current.checks !== 'passing';
+          const becameFailing = summary.status === 'failing' && current.checks !== 'failing';
           await this.systemNote(
             target.corner_id,
             target.author_id,
@@ -1065,9 +996,9 @@ export class GitHubOperations {
               subject: GITHUB_SUBJECT,
               verb: `${label} a check`,
               // A check that is still running is not yet a fact to react to.
-              ...(check.status === 'passed'
+              ...(becamePassing
                 ? { kind: 'check-passed' as const }
-                : check.status === 'failed'
+                : becameFailing
                   ? { kind: 'check-failed' as const }
                   : {}),
               object: {
@@ -1113,42 +1044,6 @@ export class GitHubOperations {
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
-  }
-
-  private async checksSummary(cornerId: string, database: SqlDatabase = this.database) {
-    const rows = await database.query<{
-      name: string;
-      status: 'pending' | 'passed' | 'failed';
-      conclusion: string | null;
-      url: string | null;
-      updated_at: Date;
-    }>(
-      `SELECT name,status,conclusion,url,updated_at FROM corner_check_facts
-       WHERE corner_id=$1 ORDER BY name`,
-      [cornerId],
-    );
-    const failing = rows.rows.filter((row) => row.status === 'failed').map((row) => row.name);
-    const status = failing.length
-      ? ('failing' as const)
-      : rows.rows.some((row) => row.status === 'pending')
-        ? ('pending' as const)
-        : rows.rows.length
-          ? ('passing' as const)
-          : ('unknown' as const);
-    return {
-      status,
-      total: rows.rows.length,
-      failing,
-      checks: rows.rows.map((row) => ({
-        name: row.name,
-        status: row.status,
-        ...(row.conclusion ? { conclusion: row.conclusion } : {}),
-        ...(row.url ? { url: row.url } : {}),
-      })),
-      updatedAt: Math.floor(
-        Math.max(0, ...rows.rows.map((row) => row.updated_at.getTime())) / 1_000,
-      ),
-    };
   }
 
   private async systemNote(

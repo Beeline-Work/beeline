@@ -233,6 +233,18 @@ export interface GitHubDispatchableWorkflow {
   readonly conclusion?: string;
 }
 
+export interface GitHubCheckRollup {
+  readonly state: 'passed' | 'failed' | 'pending';
+  readonly total: number;
+  readonly failing: readonly string[];
+  readonly checks: readonly {
+    readonly name: string;
+    readonly status: 'passed' | 'failed' | 'pending';
+    readonly conclusion?: string;
+    readonly url?: string;
+  }[];
+}
+
 function repositoryPath(fullName: string): string {
   const parts = fullName.split('/');
   if (parts.length !== 2 || parts.some((part) => !part))
@@ -497,42 +509,90 @@ export class GitHubAppClient {
     return { number, url: `https://github.com/${fullName}/pull/${number}`, headSha: head.sha };
   }
 
-  /** All latest check runs plus GitHub's aggregate of every commit-status context. */
-  async readCommitChecks(accessToken: string, fullName: string, headSha: string) {
-    const checks: Record<string, 'passed' | 'failed' | 'pending'> = {};
-    for (let page = 1; ; page++) {
-      const body = await this.readRepositoryJson(
-        accessToken,
-        fullName,
-        `commits/${encodeURIComponent(headSha)}/check-runs?filter=latest&per_page=100&page=${page}`,
-      );
-      if (!Array.isArray(body.check_runs)) throw new Error('GitHub check runs are invalid');
-      for (const run of body.check_runs as Record<string, unknown>[]) {
-        const key = `run:${String(run.id)}`;
-        checks[key] =
-          run.status !== 'completed' || !run.conclusion
-            ? 'pending'
-            : ['success', 'neutral', 'skipped'].includes(String(run.conclusion))
-              ? 'passed'
-              : 'failed';
-      }
-      if (body.check_runs.length < 100) break;
+  /** GitHub's own combined verdict for every check run and commit-status context on a head. */
+  async readCommitCheckRollup(
+    accessToken: string,
+    fullName: string,
+    headSha: string,
+  ): Promise<GitHubCheckRollup> {
+    const [owner, name] = fullName.split('/');
+    if (!owner || !name || !/^[a-f0-9]{40,64}$/i.test(headSha)) {
+      throw new Error('invalid GitHub commit check target');
     }
-    const status = await this.readRepositoryJson(
-      accessToken,
-      fullName,
-      `commits/${encodeURIComponent(headSha)}/status`,
-    );
-    if (
-      !['success', 'failure', 'pending'].includes(String(status.state)) ||
-      typeof status.total_count !== 'number'
-    )
-      throw new Error('GitHub combined status is invalid');
-    // GitHub reports pending for zero status contexts; it must not mask passing check runs.
-    if (status.total_count > 0)
-      checks['commit-status'] =
-        status.state === 'success' ? 'passed' : status.state === 'failure' ? 'failed' : 'pending';
-    return checks;
+    const response = await fetch(`${this.#config.apiBaseUrl}/graphql`, {
+      method: 'POST',
+      headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({
+        query: `query CommitCheckRollup($owner:String!,$name:String!,$expression:String!){
+          repository(owner:$owner,name:$name){object(expression:$expression){... on Commit{
+            oid statusCheckRollup{state contexts(first:100){totalCount nodes{
+              __typename
+              ... on CheckRun{name status conclusion detailsUrl}
+              ... on StatusContext{context state description targetUrl}
+            }}}
+          }}}
+        }`,
+        variables: { owner, name, expression: headSha },
+      }),
+    });
+    const body = await jsonObject(response, 'GitHub commit check rollup');
+    if (Array.isArray(body.errors) && body.errors.length) {
+      throw new Error('GitHub commit check rollup returned errors');
+    }
+    const repository = body.data as Record<string, unknown> | undefined;
+    const object = (repository?.repository as Record<string, unknown> | undefined)?.object as
+      Record<string, unknown> | undefined;
+    if (object?.oid !== headSha) throw new Error('GitHub commit check rollup head mismatch');
+    const rollup = object.statusCheckRollup as Record<string, unknown> | null | undefined;
+    if (!rollup) return { state: 'pending', total: 0, failing: [], checks: [] };
+    const state =
+      rollup.state === 'SUCCESS'
+        ? ('passed' as const)
+        : rollup.state === 'FAILURE' || rollup.state === 'ERROR'
+          ? ('failed' as const)
+          : rollup.state === 'PENDING' || rollup.state === 'EXPECTED'
+            ? ('pending' as const)
+            : undefined;
+    if (!state) throw new Error('GitHub commit check rollup state is invalid');
+    const contexts = rollup.contexts as Record<string, unknown> | undefined;
+    if (!contexts || typeof contexts.totalCount !== 'number' || !Array.isArray(contexts.nodes)) {
+      throw new Error('GitHub commit check rollup contexts are invalid');
+    }
+    const checks = contexts.nodes.flatMap((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const context = value as Record<string, unknown>;
+      const isRun = context.__typename === 'CheckRun';
+      const checkName = isRun ? context.name : context.context;
+      if (typeof checkName !== 'string' || !checkName) return [];
+      const checkState = isRun
+        ? context.status !== 'COMPLETED' || !context.conclusion
+          ? 'pending'
+          : ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(String(context.conclusion))
+            ? 'passed'
+            : 'failed'
+        : context.state === 'SUCCESS'
+          ? 'passed'
+          : context.state === 'FAILURE' || context.state === 'ERROR'
+            ? 'failed'
+            : 'pending';
+      const conclusion = isRun ? context.conclusion : context.description;
+      const url = isRun ? context.detailsUrl : context.targetUrl;
+      return [
+        {
+          name: checkName,
+          status: checkState,
+          ...(typeof conclusion === 'string' && conclusion ? { conclusion } : {}),
+          ...(typeof url === 'string' && url ? { url } : {}),
+        } as const,
+      ];
+    });
+    return {
+      state,
+      total: contexts.totalCount,
+      failing: checks.filter((check) => check.status === 'failed').map((check) => check.name),
+      checks,
+    };
   }
 
   private async readRepositoryJson(

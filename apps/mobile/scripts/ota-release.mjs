@@ -34,9 +34,9 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // remove an entry once no live install carries that runtime.
 export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '23' },
-  { platform: 'android', runtimeVersion: '25' },
+  { platform: 'android', runtimeVersion: '24' },
   { platform: 'ios', runtimeVersion: '23' },
-  { platform: 'ios', runtimeVersion: '26' },
+  { platform: 'ios', runtimeVersion: '25' },
 ];
 
 function targetKey(target) {

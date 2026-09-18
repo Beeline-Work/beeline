@@ -65,17 +65,17 @@ describe('mobile OTA release governor', () => {
   it('publishes the committed compatibility runtime targets alongside the store pins', () => {
     expect(COMPAT_RUNTIMES).toEqual([
       { platform: 'android', runtimeVersion: '23' },
-      { platform: 'android', runtimeVersion: '25' },
+      { platform: 'android', runtimeVersion: '24' },
       { platform: 'ios', runtimeVersion: '23' },
-      { platform: 'ios', runtimeVersion: '26' },
+      { platform: 'ios', runtimeVersion: '25' },
     ]);
     expect(releaseUpdateTargets(mobileRoot)).toEqual([
-      { platform: 'android', runtimeVersion: '24' },
-      { platform: 'android', runtimeVersion: '23' },
       { platform: 'android', runtimeVersion: '25' },
+      { platform: 'android', runtimeVersion: '23' },
+      { platform: 'android', runtimeVersion: '24' },
       { platform: 'ios', runtimeVersion: '23' },
-      { platform: 'ios', runtimeVersion: '26' },
       { platform: 'ios', runtimeVersion: '25' },
+      { platform: 'ios', runtimeVersion: '26' },
     ]);
   });
 

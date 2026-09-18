@@ -26,4 +26,12 @@ describe('desktop profile settings path', () => {
     expect(identitySettings).toContain('testID="identity-managed-handle"');
     expect(identitySettings).toContain('testID="identity-face-setting"');
   });
+
+  it('keeps Appearance on that same Settings surface, above Identity', () => {
+    expect(identitySettings).toContain('<AppearanceSetting');
+    expect(identitySettings).toContain('testID="appearance-section"');
+    expect(identitySettings.indexOf('testID="appearance-section"')).toBeLessThan(
+      identitySettings.indexOf('testID="identity-settings"'),
+    );
+  });
 });

@@ -175,11 +175,42 @@ describe('phone contract', () => {
         isCornerListView({
           ...base,
           corners: [
-            { corner: header, lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state },
+            {
+              corner: header,
+              lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+              state,
+              initiator: identity,
+            },
           ],
         }),
       ).toBe(true);
     }
+    expect(
+      isCornerListView({
+        ...base,
+        corners: [
+          {
+            corner: header,
+            lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+            state: 'working',
+            initiator: { pubkey: 'missing identity fields' },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isCornerListView({
+        ...base,
+        corners: [
+          {
+            corner: header,
+            lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+            state: 'working',
+            initiator: { ...identity, kind: 'agent' },
+          },
+        ],
+      }),
+    ).toBe(false);
     for (const state of ['open', 'idle', 'concluded', 'closed']) {
       expect(
         isCornerListView({

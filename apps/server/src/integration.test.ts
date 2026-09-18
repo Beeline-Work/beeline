@@ -6616,6 +6616,20 @@ describe('monolith integration', () => {
       objective: 'Ship the widget end to end',
       commissioned_by: HUMAN,
     });
+    const roomView = await new PhoneService(database, origin).readRoom(ROOM, HUMAN);
+    expect(roomView?.corners.find((item) => item.corner.id === cornerId)).toEqual(
+      expect.objectContaining({
+        initiator: expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
+        agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent' }),
+      }),
+    );
+    const cornerList = await new PhoneService(database, origin).readCorners(ROOM, HUMAN);
+    expect(cornerList?.corners.find((item) => item.corner.id === cornerId)).toEqual(
+      expect.objectContaining({
+        initiator: expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
+        agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent' }),
+      }),
+    );
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',

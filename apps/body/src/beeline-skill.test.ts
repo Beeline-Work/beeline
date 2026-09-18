@@ -4,6 +4,7 @@ import {
   beelineCapabilityContextForHarness,
   beelinePrimer,
   BEELINE_REVIEW_SKILL_NAME,
+  beelineTriageSkillMarkdown,
   isConfiguredReviewer,
   usingBeelineSkillMarkdown,
   beelineReviewSkillMarkdown,
@@ -27,6 +28,9 @@ describe('using-beeline Room guidance', () => {
     // The primer asks for the corner's NAME as well as its objective (C89).
     expect(beelinePrimer()).toContain(
       'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
+    );
+    expect(beelinePrimer()).toContain(
+      'Before emitting `Proposed corner:` or calling open_corner, consult the release-versioned beeline-triage skill',
     );
     expect(markdown).not.toContain('close_corner');
     expect(markdown).not.toContain('no action or corner tools');
@@ -97,10 +101,35 @@ describe('using-beeline Room guidance', () => {
   });
 });
 
+describe('beeline-triage request skill', () => {
+  const markdown = beelineTriageSkillMarkdown('test-release');
+
+  it('clarifies first and warns without blocking on warranted work or desirability', () => {
+    expect(markdown).toContain('beeline-release: test-release');
+    expect(markdown).toContain('## 1. Is it clear?');
+    expect(markdown).toContain(
+      'ask one focused question instead of proposing or opening the corner',
+    );
+    expect(markdown).toContain('## 2. Is work warranted?');
+    expect(markdown).toContain('try to reproduce the exact user-visible behavior');
+    expect(markdown).toContain('open or recently merged pull requests');
+    expect(markdown).toContain('## 3. Is it desirable?');
+    expect(markdown).toContain('repository-owned goals, invariants, architecture');
+    expect(markdown).toContain('Warnings inform the user and implementer; they do not block work.');
+  });
+
+  it('uses the existing proposal line and adds only evidence-backed warnings', () => {
+    expect(markdown).toContain('Proposed corner: <name> — <objective>');
+    expect(markdown).toContain('Triage warning — warranted:');
+    expect(markdown).toContain('Triage warning — desirable:');
+    expect(markdown).toContain('Do not emit a warning merely because evidence is incomplete');
+  });
+});
+
 describe('using-beeline merge ownership', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 
-  it('names merging as the author\'s own step after the reviewer approves', () => {
+  it("names merging as the author's own step after the reviewer approves", () => {
     // An implementer that never hears this reads the reviewer skill (if it
     // can find one) and refuses to merge on the reviewer's rule.
     expect(markdown).toContain(
@@ -116,7 +145,7 @@ describe('using-beeline merge ownership', () => {
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
 
-  it('ends the reviewer\'s authority at approval and leaves the merge to the author', () => {
+  it("ends the reviewer's authority at approval and leaves the merge to the author", () => {
     expect(markdown).toContain('## 8. Gate and verdict');
     expect(markdown).toContain(
       'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
@@ -125,6 +154,15 @@ describe('beeline-review reviewer skill', () => {
 
   it('carries no bare never-merge sentence the implementer could borrow', () => {
     expect(markdown).not.toContain('Never merge');
+  });
+
+  it('rechecks warranted work and desirability before testing the implementation', () => {
+    expect(markdown).toContain('independently repeat the two judgment legs from request triage');
+    expect(markdown).toContain('For a bug, reproduce the reported behavior on the target branch');
+    expect(markdown).toContain('FAIL confirmed duplicate or obsolete work');
+    expect(markdown).toContain('Require a concrete user benefit, the smallest coherent solution');
+    expect(markdown).toContain('work warranted evidence:');
+    expect(markdown).toContain('desirability evidence:');
   });
 });
 
@@ -158,7 +196,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
 
   it('holds the key-sovereignty rule', () => {
     expect(markdown).toContain(
-      'they belong to the human who provisioned them. You cannot use another member\'s key and must not ask a member to share one.',
+      "they belong to the human who provisioned them. You cannot use another member's key and must not ask a member to share one.",
     );
   });
 });

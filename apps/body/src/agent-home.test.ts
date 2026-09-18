@@ -15,7 +15,11 @@ import {
   prepareRoomAgentHome,
   roomAgentHomeEnv,
 } from './agent-home.js';
-import { BEELINE_REVIEW_SKILL_NAME, USING_BEELINE_SKILL_NAME } from './beeline-skill.js';
+import {
+  BEELINE_REVIEW_SKILL_NAME,
+  BEELINE_TRIAGE_SKILL_NAME,
+  USING_BEELINE_SKILL_NAME,
+} from './beeline-skill.js';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
@@ -450,6 +454,11 @@ describe('operator skills + MCP passthrough', () => {
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
     expect(reviewSkill).toContain('P0 - OBJECTIVE FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
+    const triageSkill = readFileSync(resolve(skillsDir, 'beeline-triage', 'SKILL.md'), 'utf8');
+    expect(triageSkill).toContain('name: beeline-triage');
+    expect(triageSkill).toContain(
+      'Warnings inform the user and implementer; they do not block work.',
+    );
     for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'claude')) {
       expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
     }
@@ -498,9 +507,9 @@ describe('operator skills + MCP passthrough', () => {
     const reviewerRoot = resolve(await scratch('beeline-reviewer-'), 'agent-home');
 
     await prepareRoomAgentHome({ root: implementerRoot, operatorHome, agentKind: 'claude' });
-    expect(
-      readdirSync(resolve(implementerRoot, 'claude', 'skills')).sort(),
-    ).toEqual(['greet', USING_BEELINE_SKILL_NAME]);
+    expect(readdirSync(resolve(implementerRoot, 'claude', 'skills')).sort()).toEqual(
+      ['greet', BEELINE_TRIAGE_SKILL_NAME, USING_BEELINE_SKILL_NAME].sort(),
+    );
 
     await prepareRoomAgentHome({
       root: reviewerRoot,
@@ -508,9 +517,14 @@ describe('operator skills + MCP passthrough', () => {
       agentKind: 'claude',
       isReviewer: true,
     });
-    expect(
-      readdirSync(resolve(reviewerRoot, 'claude', 'skills')).sort(),
-    ).toEqual([BEELINE_REVIEW_SKILL_NAME, 'greet', USING_BEELINE_SKILL_NAME]);
+    expect(readdirSync(resolve(reviewerRoot, 'claude', 'skills')).sort()).toEqual(
+      [
+        BEELINE_REVIEW_SKILL_NAME,
+        BEELINE_TRIAGE_SKILL_NAME,
+        'greet',
+        USING_BEELINE_SKILL_NAME,
+      ].sort(),
+    );
 
     // Provisioning is deletion too: the same home losing its reviewer role
     // loses the skill on the next activation, never keeping a stale copy.

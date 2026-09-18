@@ -203,7 +203,7 @@ export type RoomViewMessage = {
    *  the server. Absent on rows before the stamp existed and on non-agent
    *  rows; the byline falls back to no model, never a roster lookup. */
   readonly agentModel?: string;
-  /** Fixed-vocabulary reactions. Reactor identities never leave the server. */
+  /** Fixed-vocabulary reactions with the canonical identities of each reactor. */
   readonly reactions?: readonly MessageReactionView[];
   /** Same-Room proof returned by the indexer and passed unchanged to reply signing. */
   readonly reply?: {
@@ -315,6 +315,8 @@ export type MessageReactionView = {
   readonly emoji: MessageReactionEmoji;
   readonly count: number;
   readonly reacted: boolean;
+  /** Canonical identities in reaction order; used by the reaction roster. */
+  readonly members: readonly RoomViewIdentity[];
 };
 
 /** One line of a grant card and one row of the agent profile's grant list. */

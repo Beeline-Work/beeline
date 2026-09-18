@@ -474,6 +474,7 @@ export type {
   RoomViewMember,
   RoomViewMessage,
   MessageReactionEmoji,
+  MessageReactionView,
   SurfaceWatchFilter,
   WorkspaceListView,
   WorkspaceView,

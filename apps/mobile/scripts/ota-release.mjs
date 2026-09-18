@@ -34,9 +34,9 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // remove an entry once no live install carries that runtime.
 export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '23' },
-  { platform: 'android', runtimeVersion: '24' },
+  { platform: 'android', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '23' },
-  { platform: 'ios', runtimeVersion: '25' },
+  { platform: 'ios', runtimeVersion: '26' },
 ];
 
 function targetKey(target) {
@@ -55,29 +55,6 @@ export function releaseUpdateTargets(projectDir = process.cwd()) {
     { platform: 'android', runtimeVersion: pins.android },
     ...COMPAT_RUNTIMES,
     { platform: 'ios', runtimeVersion: pins.ios },
-  ];
-  return targets.filter(
-    (target, index) =>
-      targets.findIndex((candidate) => targetKey(candidate) === targetKey(target)) === index,
-  );
-}
-
-// Production OTA operations (publish guards, rollback, assert-production-list)
-// must target the SHIPPED runtimes, not the development/native-build pins,
-// until a new store submission retires them. Compute from the COMPAT_RUNTIMES
-// set plus the previous current pins (android 24, ios 25).
-export function productionUpdateTargets() {
-  const shippedPins = { android: '24', ios: '25' };
-  const shippedCompat = [
-    { platform: 'android', runtimeVersion: '23' },
-    { platform: 'android', runtimeVersion: '25' },
-    { platform: 'ios', runtimeVersion: '23' },
-    { platform: 'ios', runtimeVersion: '26' },
-  ];
-  const targets = [
-    { platform: 'android', runtimeVersion: shippedPins.android },
-    ...shippedCompat,
-    { platform: 'ios', runtimeVersion: shippedPins.ios },
   ];
   return targets.filter(
     (target, index) =>
@@ -817,7 +794,7 @@ function rollback(options) {
       'rollback --embedded requires --expected-current-group naming the production group being rolled back',
     );
   }
-  if (!embeddedOnly && sourceIds.length > productionUpdateTargets(process.cwd()).length) {
+  if (!embeddedOnly && sourceIds.length > releaseUpdateTargets(process.cwd()).length) {
     fail(
       `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
     );
@@ -839,7 +816,7 @@ function rollback(options) {
       const expectedCurrentIds = groupIdList(options.expectedCurrentGroup);
       currentTargets =
         expectedCurrentIds.length > RELEASE_PLATFORMS.length
-          ? newestTargets(current, productionUpdateTargets(process.cwd()))
+          ? newestTargets(current, releaseUpdateTargets(process.cwd()))
           : [];
       const observed =
         currentTargets.length > 0
@@ -865,7 +842,7 @@ function rollback(options) {
       // A dry run has no production payload to read; name the configured
       // release targets so the printed plan shows one embedded rollback per
       // target, mirroring what a real run would query from production.
-      currentTargets = productionUpdateTargets(process.cwd());
+      currentTargets = releaseUpdateTargets(process.cwd());
     }
   }
   const rolledBack = embeddedOnly

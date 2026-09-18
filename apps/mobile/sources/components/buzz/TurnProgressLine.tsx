@@ -26,11 +26,11 @@ const STOP_HIT_SLOP = 9;
  * precisely what a turn in progress is.
  *
  * The shape of the line is the status-line idiom: a mark, the verb line, then
- * elapsed minutes and seconds ticking once per second. The mark is the Beeline ribbon
- * (`BeelineMarkSpinner`) drawing itself, never a cycling text glyph — a glyph
- * whose advance width changes per frame walks the label's left edge back and
- * forth, so the mark sits in one fixed `MARK_CELL` square and the label's x
- * never depends on it. The counter starts from the server receipt's own
+ * elapsed minutes and seconds ticking once per second. The mark is the Beeline
+ * icon (`BeelineMarkSpinner`) painting itself and releasing — never a cycling
+ * text glyph or a row of dots. A glyph whose advance width changes per frame
+ * walks the label's left edge back and forth, so the mark sits in one fixed
+ * `MARK_CELL` square and the label's x never depends on it. The counter starts from the server receipt's own
  * `createdAt` (unix seconds), so it reads correctly even when the app opened
  * mid-turn. The ticking interval lives entirely inside this tiny leaf — it
  * never recreates the transcript.

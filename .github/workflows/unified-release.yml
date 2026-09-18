@@ -55,6 +55,11 @@ on:
         type: boolean
         default: false
         required: false
+      allow_pin_restore:
+        description: Consent only - assert a runtime-pin change is a RESTORE to pins whose store binaries already exist, shipping OTA-only without a store submission
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   actions: write
@@ -166,6 +171,7 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.release_version || '' }}
           SELECTION: ${{ inputs.selection || 'auto' }}
           STORE_TRACK: ${{ inputs.store_track || 'none' }}
+          ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
         run: |
           set -euo pipefail
           git fetch origin main
@@ -222,7 +228,7 @@ jobs:
           args=(plan --version "$release_version" --sha "$release_sha"
             --paths "$RUNNER_TEMP/release-paths.txt" --component-paths "$RUNNER_TEMP/release-component-paths.json"
             --selection "$SELECTION"
-            --store-track "$STORE_TRACK" --state "$RUNNER_TEMP/unified-release.json"
+            --store-track "$STORE_TRACK" --allow-pin-restore "${ALLOW_PIN_RESTORE:-false}" --state "$RUNNER_TEMP/unified-release.json"
             --summary "$RUNNER_TEMP/release-plan.json")
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
           if [ -f "$retry" ]; then args+=(--retry "$retry"); fi
@@ -1507,6 +1513,7 @@ jobs:
           ATTEMPT: ${{ inputs.retry_attempt || '1' }}
           SELECTION: ${{ inputs.selection || 'auto' }}
           STORE_TRACK: ${{ inputs.store_track || 'none' }}
+          ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
         with:
           script: |
             const attempt = Number(process.env.ATTEMPT);
@@ -1519,5 +1526,6 @@ jobs:
                 retry_attempt: String(attempt + 1),
                 selection: process.env.SELECTION,
                 store_track: process.env.STORE_TRACK,
+                allow_pin_restore: process.env.ALLOW_PIN_RESTORE === 'true',
               },
             });

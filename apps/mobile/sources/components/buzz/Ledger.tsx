@@ -54,6 +54,8 @@ export type LedgerBylineMark = {
   kind: 'agent' | 'human';
   /** The creature the speaker chose; absent → derived from the seed. */
   face?: string;
+  /** Fixed server-owned connector logo; ordinary profile-photo URLs stay inert. */
+  avatarUrl?: string;
   /** Agents only: working right now → the gold ring. */
   alive?: boolean;
 };
@@ -274,6 +276,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
             seed={mark.seed}
             kind="agent"
             face={mark.face}
+            avatarUrl={mark.avatarUrl}
             alive={Boolean(mark.alive)}
             size={LEDGER_MARK_SIZE}
             testID="chat-byline-mark"
@@ -283,6 +286,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
             seed={mark.seed}
             kind="human"
             face={mark.face}
+            avatarUrl={mark.avatarUrl}
             size={LEDGER_MARK_SIZE}
             testID="chat-byline-mark"
           />
@@ -456,7 +460,10 @@ export function LedgerEntry({
     </>
   );
   return (
-    <View style={[styles.entry, byline && styles.entryWithByline]} testID={`chat-message-${itemId}`}>
+    <View
+      style={[styles.entry, byline && styles.entryWithByline]}
+      testID={`chat-message-${itemId}`}
+    >
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {settleFrom && (leadText || remainingText) ? (
@@ -495,7 +502,10 @@ export function LedgerSteer({
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
   // body's; ownership reads from the byline alone.
   return (
-    <View style={[styles.entry, byline && styles.entryWithByline]} testID={`chat-message-${itemId}`}>
+    <View
+      style={[styles.entry, byline && styles.entryWithByline]}
+      testID={`chat-message-${itemId}`}
+    >
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {bodyText ? (

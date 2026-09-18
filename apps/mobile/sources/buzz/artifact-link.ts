@@ -18,6 +18,17 @@ export function artifactMediaUrl(attachment: AttachmentReference): string {
   return attachment.url.startsWith('http') ? attachment.url : `${base}${attachment.url}`;
 }
 
+/** Native images load the authenticated artifact route without leaving the app. */
+export async function artifactImageSource(attachment: AttachmentReference): Promise<{
+  uri: string;
+  headers: { authorization: string };
+}> {
+  return {
+    uri: artifactMediaUrl(attachment),
+    headers: { authorization: `Bearer ${await monolithSession.authorization()}` },
+  };
+}
+
 export async function fetchArtifactBytes(attachment: AttachmentReference): Promise<Uint8Array> {
   const response = await monolithSession.fetch(artifactMediaUrl(attachment), {}, { timeoutMs: 20_000 });
   if (!response.ok) throw new Error(`artifact fetch failed: ${response.status}`);

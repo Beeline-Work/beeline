@@ -12,7 +12,7 @@ const route = vi.hoisted(() => ({
 }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
-    workspace: { id: workspaceId, name: workspaceId },
+    workspace: { id: workspaceId, name: workspaceId, role: 'owner' },
     chats:
       workspaceId === 'workspace-a' ? [{ room: { id: 'room-a', workspaceId, name: 'Alpha' } }] : [],
   })),
@@ -245,6 +245,26 @@ describe('desktop Workspace navigation', () => {
     act(() => profileSettings.props.onPress());
 
     expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
+  });
+
+  it('routes the persistent New Room, Workbench, and Bookmarks actions', () => {
+    act(() => tree.root.findByProps({ testID: 'desktop-new-room' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/channels',
+      params: { communityId: 'workspace-a', newRoom: expect.any(String) },
+    });
+
+    act(() => tree.root.findByProps({ testID: 'desktop-workbench' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/settings/workbench',
+      params: { workspaceId: 'workspace-a', viewerId: 'viewer' },
+    });
+
+    act(() => tree.root.findByProps({ testID: 'desktop-bookmarks' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/bookmarks',
+      params: { communityId: 'workspace-a' },
+    });
   });
 
   it('closes without routing when the current Workspace is picked', () => {

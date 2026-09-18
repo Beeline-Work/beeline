@@ -123,6 +123,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     outlineStyle: 'none',
   } as any,
   shortcut: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  primaryActions: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.divider,
+  },
+  primaryAction: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 10,
+    borderRadius: 3,
+  },
+  primaryActionText: { ...theme.buzz.type.bodyStrong, color: theme.colors.text, flex: 1 },
+  primaryActionMeta: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
+  primaryActionIcon: { color: theme.colors.textSecondary },
+  primaryActionIconAccent: { color: theme.colors.textLink },
   list: { flex: 1 },
   listContent: { paddingBottom: 8 },
   roomRow: {
@@ -186,18 +204,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.divider,
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
-  bookmarksRow: {
-    minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.divider,
-  },
-  bookmarksGlyph: { color: theme.buzz.accent },
-  bookmarksCount: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
 }));
 
 /** One server-backed desktop pane for Workspace and Room movement. */
@@ -392,6 +398,7 @@ export const SidebarView = React.memo(function SidebarView() {
     [filteredChats],
   );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+  const canCreateRoom = surface?.workspace.role === 'owner' || surface?.workspace.role === 'admin';
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
@@ -520,13 +527,98 @@ export const SidebarView = React.memo(function SidebarView() {
         </View>
       )}
       <>
+        {isDesktop && (
+          <View style={styles.primaryActions} testID="desktop-primary-actions">
+            {canCreateRoom && workspaceId ? (
+              <Pressable
+                accessibilityLabel="Create a new Room"
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/channels',
+                    params: { communityId: workspaceId, newRoom: String(Date.now()) },
+                  } as Href)
+                }
+                style={({ pressed }) => [styles.primaryAction, pressed && styles.roomRowSelected]}
+                testID="desktop-new-room"
+              >
+                <Ionicons
+                  name="add"
+                  size={18}
+                  color={styles.primaryActionIconAccent.color}
+                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                />
+                <Text style={styles.primaryActionText}>New Room</Text>
+              </Pressable>
+            ) : null}
+            {workspaceId && identityPubkey ? (
+              <Pressable
+                accessibilityLabel="Open Workbench"
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/settings/workbench',
+                    params: { workspaceId, viewerId: identityPubkey },
+                  } as Href)
+                }
+                style={({ pressed }) => [
+                  styles.primaryAction,
+                  (pathname.startsWith('/beeline/settings/workbench') || pressed) &&
+                    styles.roomRowSelected,
+                ]}
+                testID="desktop-workbench"
+              >
+                <Ionicons
+                  name="hammer-outline"
+                  size={16}
+                  color={styles.primaryActionIcon.color}
+                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                />
+                <Text style={styles.primaryActionText}>Workbench</Text>
+              </Pressable>
+            ) : null}
+            {workspaceId ? (
+              <Pressable
+                accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/bookmarks',
+                    params: { communityId: workspaceId },
+                  } as Href)
+                }
+                style={({ pressed }) => [
+                  styles.primaryAction,
+                  (pathname.startsWith('/beeline/bookmarks') || pressed) && styles.roomRowSelected,
+                ]}
+                testID="desktop-bookmarks"
+              >
+                <Ionicons
+                  name="bookmark-outline"
+                  size={16}
+                  color={styles.primaryActionIcon.color}
+                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                />
+                <Text style={styles.primaryActionText}>Bookmarks</Text>
+                {bookmarkCount > 0 ? (
+                  <Text style={styles.primaryActionMeta}>{bookmarkCount}</Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+          </View>
+        )}
         <View style={styles.searchWrap}>
           <Ionicons name="search" size={14} color={stylesheet.roomTime.color} />
           <TextInput
             ref={searchRef}
             value={query}
             onChangeText={setQuery}
-            placeholder={`Search ${ROOMS_LABEL}`}
+            accessibilityLabel={
+              isDesktop ? `Search ${ROOMS_LABEL} and direct messages` : `Search ${ROOMS_LABEL}`
+            }
+            placeholder={
+              isDesktop ? `Search ${ROOMS_LABEL} and direct messages` : `Search ${ROOMS_LABEL}`
+            }
             placeholderTextColor={stylesheet.roomTime.color}
             style={styles.search}
             testID="desktop-room-search"
@@ -534,32 +626,6 @@ export const SidebarView = React.memo(function SidebarView() {
           <Text style={styles.shortcut}>⌘K</Text>
         </View>
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-          {bookmarkCount > 0 && workspaceId ? (
-            <Pressable
-              accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/beeline/bookmarks',
-                  params: { communityId: workspaceId },
-                } as Href)
-              }
-              style={({ pressed }) => [
-                styles.bookmarksRow,
-                (pathname.startsWith('/beeline/bookmarks') || pressed) && styles.roomRowSelected,
-              ]}
-              testID="desktop-bookmarks-cell"
-            >
-              <Ionicons name="bookmark" size={15} color={styles.bookmarksGlyph.color} />
-              <View style={styles.roomCopy}>
-                <Text style={styles.roomTitle}>Bookmarks</Text>
-                <Text style={styles.roomFact}>
-                  {bookmarkCount} saved message{bookmarkCount === 1 ? '' : 's'}
-                </Text>
-              </View>
-              <Text style={styles.bookmarksCount}>{bookmarkCount}</Text>
-            </Pressable>
-          ) : null}
           {navigationError ? (
             <Pressable
               accessibilityRole="button"
@@ -571,14 +637,16 @@ export const SidebarView = React.memo(function SidebarView() {
             <Text style={styles.empty}>
               {surface
                 ? query.trim()
-                  ? `No ${ROOMS_LABEL.toLowerCase()} match this search.`
+                  ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
                   : `No ${ROOMS_LABEL.toLowerCase()} yet.`
                 : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
             </Text>
           ) : (
             filteredChatSections.map((section) => (
               <React.Fragment key={section.kind}>
-                {section.kind === 'rooms' && <RoomListSectionHeader title={ROOMS_LABEL} />}
+                <RoomListSectionHeader
+                  title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                />
                 {section.data.map((item) => {
                   const rowName = roomRowName(item);
                   const preview = roomRowPreview(item, identityPubkey ?? undefined);

@@ -15,14 +15,17 @@ const ledger = readFileSync(
 );
 
 describe('private bookmark surfaces', () => {
-  it('keeps the navigation cell conditional and above the Room sections', () => {
-    expect(channels).toContain('bookmarkCount > 0 && activeCommunityId');
-    const header = channels.indexOf('ListHeaderComponent={');
-    const cell = channels.indexOf('testID="bookmarks-cell"', header);
-    const empty = channels.indexOf('ListEmptyComponent={', cell);
-    expect(header).toBeGreaterThanOrEqual(0);
-    expect(cell).toBeGreaterThan(header);
-    expect(empty).toBeGreaterThan(cell);
+  it('routes phone bookmarks through the desktop sidebar glyph, not a deck cell', () => {
+    // The phone deck's bookmarks cell was retired (R4); the desktop sidebar's
+    // workspace-heading glyph is the one bookmarks door.
+    expect(channels).not.toContain('bookmarks-cell');
+    expect(channels).not.toContain('bookmarkCount');
+    const sidebar = readFileSync(
+      new URL('../../../components/SidebarView.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(sidebar).toContain('testID="desktop-bookmarks"');
+    expect(sidebar).toContain("pathname: '/beeline/bookmarks'");
   });
 
   it('offers the toggle in mobile and desktop message actions and marks saved timestamps', () => {

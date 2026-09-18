@@ -305,7 +305,6 @@ export function DesktopRoomInspector({
               <Text numberOfLines={1} style={styles.headerTitle}>
                 #{room.room.name}
               </Text>
-              <Text style={styles.headerMeta}>work</Text>
             </View>
             <HeaderIconControl
               label="Close work pane"

@@ -66,6 +66,12 @@ describe('Room deck bootstrap', () => {
     expect(source).toContain('!canManageWorkspace');
   });
 
+  it('opens the shared direct-message picker for a fresh desktop DM request', () => {
+    expect(source).toContain('handledNewDirectMessageRequest.current = requestedNewDirectMessage');
+    expect(source).toContain('setMemberPickerVisible(true)');
+    expect(source).toContain('!viewerIsAgent');
+  });
+
   it('refetches an acknowledged Room write without leaving the refreshed deck', () => {
     const createPath = source.slice(
       source.indexOf('const createRoom = useCallback'),

@@ -132,8 +132,21 @@ vi.mock('@/buzz/desktop-work-pane', () => ({
 vi.mock('@/components/buzz/RoomListSectionHeader', async () => {
   const ReactModule = await import('react');
   return {
+    // Render the header type with its action as a real Pressable so tests can
+    // reach the section-head creation controls by testID.
     RoomListSectionHeader: (props: any) =>
-      ReactModule.createElement('RoomListSectionHeader', props),
+      ReactModule.createElement(
+        'RoomListSectionHeader',
+        props,
+        props.onAction
+          ? ReactModule.createElement('Pressable', {
+              testID: props.actionTestID,
+              accessibilityLabel: props.actionAccessibilityLabel,
+              accessibilityRole: 'button',
+              onPress: props.onAction,
+            })
+          : null,
+      ),
   };
 });
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -149,6 +162,9 @@ vi.mock('@/components/buzz/DesktopWorkspaceRail', async () => {
     DesktopWorkspaceRail: (props: any) => ReactModule.createElement('DesktopWorkspaceRail', props),
   };
 });
+vi.mock('@/components/buzz/IdentityMark', () => ({
+  IdentityMark: (props: any) => React.createElement('IdentityMark', props),
+}));
 
 import { SidebarView } from './SidebarView';
 
@@ -259,17 +275,17 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
   });
 
-  it('keeps profile settings reachable from the persistent desktop navigation', () => {
+  it('keeps profile settings reachable from the persistent desktop navigation as the viewer\'s own face', () => {
     const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
 
-    expect(profileSettings.props.accessibilityLabel).toBe('Open profile settings');
+    expect(profileSettings.props.accessibilityLabel).toBe('Settings');
+    expect(profileSettings.findByType('IdentityMark').props).toMatchObject({
+      seed: 'viewer',
+      kind: 'human',
+    });
     expect(
-      profileSettings
-        .findAllByType('Text')
-        .some(
-          (node: { props: { children?: unknown } }) => node.props.children === 'PROFILE & SETTINGS',
-        ),
-    ).toBe(true);
+      profileSettings.findAllByType('Text').map((node: { props: { children?: unknown } }) => node.props.children),
+    ).toEqual([]);
 
     act(() => profileSettings.props.onPress());
 
@@ -297,18 +313,8 @@ describe('desktop Workspace navigation', () => {
     ).toBe(true);
   });
 
-  it('routes the persistent New Room, Workbench, and Bookmarks actions', () => {
-    act(() => tree.root.findByProps({ testID: 'desktop-new-room' }).props.onPress());
-    expect(routerPush).toHaveBeenCalledWith({
-      pathname: '/beeline/channels',
-      params: { communityId: 'workspace-a', newRoom: expect.any(String) },
-    });
-
-    act(() => tree.root.findByProps({ testID: 'desktop-workbench' }).props.onPress());
-    expect(routerPush).toHaveBeenCalledWith({
-      pathname: '/beeline/settings/workbench',
-      params: { workspaceId: 'workspace-a', viewerId: 'viewer' },
-    });
+  it('routes the heading glyphs to Bookmarks, with no Workbench sidebar entry', () => {
+    expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
 
     act(() => tree.root.findByProps({ testID: 'desktop-bookmarks' }).props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
@@ -322,13 +328,8 @@ describe('desktop Workspace navigation', () => {
     // viewer.permissions.manage, member ⇒ not. Same signal as workspace.tsx.
     const settings = tree.root.findByProps({ testID: 'desktop-workspace-settings' });
     expect(settings.props.accessibilityLabel).toBe('Open Workspace settings');
-    expect(
-      settings
-        .findAllByType('Text')
-        .some(
-          (node: { props: { children?: unknown } }) => node.props.children === 'Workspace settings',
-        ),
-    ).toBe(true);
+    // A glyph, not a labeled row: the heading carries no settings text.
+    expect(settings.findAllByType('Text')).toHaveLength(0);
 
     act(() => settings.props.onPress());
 
@@ -356,7 +357,7 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(tree.root.findAllByProps({ testID: 'desktop-workspace-settings' })).toHaveLength(0);
-    expect(tree.root.findByProps({ testID: 'desktop-workbench' })).toBeDefined();
+    expect(tree.root.findByProps({ testID: 'desktop-bookmarks' })).toBeDefined();
   });
 
   it('keeps Workspace settings and profile settings from appearing selected together', async () => {
@@ -377,17 +378,52 @@ describe('desktop Workspace navigation', () => {
     expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
   });
 
-  it('separates Rooms and direct messages without section creation controls', () => {
+  it('carries the section creation controls in the section heads', () => {
     expect(
       tree.root
         .findAllByType('RoomListSectionHeader')
         .map((header: { props: { title: string } }) => header.props.title),
     ).toEqual(['Rooms', 'Direct messages']);
     expect(
+      tree.root.findAllByProps({ testID: 'desktop-new-room' }).map((row: { props: { accessibilityLabel: string } }) => row.props.accessibilityLabel),
+    ).toEqual(['Create a new Room']);
+    expect(tree.root.findByProps({ testID: 'desktop-new-direct-message' }).props.accessibilityLabel).toBe('Start a direct message');
+    expect(
       tree.root
         .findAllByType('Text')
         .some((node: { props: { children?: unknown } }) => node.props.children === 'New section'),
     ).toBe(false);
+  });
+
+  it('routes the section-head pluses to the existing Room dialog and direct-message picker', () => {
+    const push = (testID: string) => {
+      routerPush.mockClear();
+      act(() => tree.root.findByProps({ testID }).props.onPress());
+      return routerPush.mock.calls[0][0];
+    };
+
+    expect(push('desktop-new-room')).toEqual({
+      pathname: '/beeline/channels',
+      params: { communityId: 'workspace-a', newRoom: expect.any(String) },
+    });
+    expect(push('desktop-new-direct-message')).toEqual({
+      pathname: '/beeline/channels',
+      params: { communityId: 'workspace-a', newDirectMessage: expect.any(String) },
+    });
+  });
+
+  it('hides the Rooms plus and the settings glyph from an ordinary member and takes nothing else away', async () => {
+    workspaceRole.current = 'member';
+    await act(async () => {
+      tree.update(<SidebarView key="member-viewer" />);
+    });
+    await settle();
+
+    expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-workspace-settings' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'desktop-new-direct-message' })).toBeDefined();
+    expect(tree.root.findByProps({ testID: 'desktop-bookmarks' })).toBeDefined();
+    expect(tree.root.findByProps({ testID: 'profile-settings-navigation' })).toBeDefined();
   });
 
   it('does not offer New Room to an agent even with an elevated Workspace role', async () => {
@@ -401,21 +437,21 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByProps({ testID: 'desktop-workspace-settings' })).toBeDefined();
   });
 
-  it('keeps Workbench and profile settings from appearing selected together', async () => {
-    route.pathname = '/beeline/settings/workbench';
+  it('keeps Bookmarks and profile settings from appearing selected together', async () => {
+    route.pathname = '/beeline/bookmarks';
     await act(async () => {
-      tree.update(<SidebarView key="workbench-route" />);
+      tree.update(<SidebarView key="bookmarks-route" />);
     });
     await settle();
 
     const selected = (style: unknown) =>
       Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
-    const workbench = tree.root.findByProps({ testID: 'desktop-workbench' });
+    const bookmarks = tree.root.findByProps({ testID: 'desktop-bookmarks' });
     const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
 
-    expect(selected(workbench.props.style({ pressed: false }))).toBe(true);
+    expect(selected(bookmarks.props.style({ pressed: false }))).toBe(true);
     expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
-    expect(workbench.props.accessibilityState).toEqual({ selected: true });
+    expect(bookmarks.props.accessibilityState).toEqual({ selected: true });
     expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
   });
 

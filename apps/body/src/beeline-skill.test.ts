@@ -189,9 +189,12 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('not yet available');
   });
 
-  it('holds the never-pair / never-ask rule and names the exact path', () => {
+  it('holds the never-pair / never-ask rule without walking the person to the Workbench', () => {
     expect(markdown).toContain('You NEVER pair a tool and never ask for a raw credential in chat.');
-    expect(markdown).toContain('Settings → Workbench → Tools');
+    expect(markdown).toContain(
+      'the person decides whether to add it, in their own Settings; you never walk them through it',
+    );
+    expect(markdown).not.toContain('Settings → Workbench → Tools');
   });
 
   it('holds the key-sovereignty rule', () => {

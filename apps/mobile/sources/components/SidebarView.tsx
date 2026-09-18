@@ -32,6 +32,7 @@ import {
 } from '@/buzz/room-list-row';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
@@ -90,7 +91,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
-  eyebrow: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary, marginBottom: 7 },
   workspaceRow: { flexDirection: 'row', gap: 6 },
   workspaceButton: {
     minWidth: 34,
@@ -125,24 +125,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     outlineStyle: 'none',
   } as any,
   shortcut: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
-  primaryActions: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.divider,
-  },
-  primaryAction: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    paddingHorizontal: 10,
-    borderRadius: 3,
-  },
-  primaryActionText: { ...theme.buzz.type.bodyStrong, color: theme.colors.text, flex: 1 },
-  primaryActionMeta: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
-  primaryActionIcon: { color: theme.colors.textSecondary },
-  primaryActionIconAccent: { color: theme.colors.textLink },
   list: { flex: 1 },
   listContent: { paddingBottom: 8 },
   roomRow: {
@@ -206,6 +188,21 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.divider,
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
+  desktopWorkspaceHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  desktopWorkspaceHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  headerGlyph: {
+    minHeight: 32,
+    minWidth: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 3,
+  },
+  headerGlyphColor: { color: theme.colors.textSecondary },
+  settingsFaceSlot: { width: 22, height: 22, borderRadius: 11 },
 }));
 
 /** One server-backed desktop pane for Workspace and Room movement. */
@@ -404,7 +401,8 @@ export const SidebarView = React.memo(function SidebarView() {
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
   // is the same boolean (`role !== 'member'`). Do not invent a second gate.
   const canManageWorkspace = isWorkspaceManagerRole(surface?.workspace.role);
-  const canCreateRoom = surface?.viewer.kind !== 'agent' && canManageWorkspace;
+  const viewerIsAgent = surface?.viewer.kind === 'agent';
+  const canCreateRoom = !viewerIsAgent && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
   const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
@@ -498,17 +496,70 @@ export const SidebarView = React.memo(function SidebarView() {
     >
       {isDesktop ? (
         <View style={styles.desktopWorkspaceHeader}>
-          <CommunitySwitcherTrigger
-            community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
-            expanded={workspaceSwitcherOpen}
-            onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
-            attention={otherWorkspaceNeedsAttention}
-            pickerTitle={WORKSPACES_LABEL}
-          />
+          <View style={styles.desktopWorkspaceHeaderRow}>
+            <CommunitySwitcherTrigger
+              community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
+              expanded={workspaceSwitcherOpen}
+              onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
+              attention={otherWorkspaceNeedsAttention}
+              pickerTitle={WORKSPACES_LABEL}
+            />
+            <View style={styles.desktopWorkspaceHeaderActions}>
+              {workspaceId ? (
+                <Pressable
+                  accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: bookmarksSelected }}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/beeline/bookmarks',
+                      params: { communityId: workspaceId },
+                    } as Href)
+                  }
+                  style={({ pressed }) => [
+                    styles.headerGlyph,
+                    (bookmarksSelected || pressed) && styles.roomRowSelected,
+                  ]}
+                  testID="desktop-bookmarks"
+                >
+                  <Ionicons
+                    name="bookmark-outline"
+                    size={16}
+                    color={styles.headerGlyphColor.color}
+                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                  />
+                </Pressable>
+              ) : null}
+              {canManageWorkspace && workspaceId ? (
+                <Pressable
+                  accessibilityLabel={`Open ${WORKSPACE_LABEL} settings`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: workspaceSettingsSelected }}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/beeline/settings/workspace',
+                      params: { communityId: workspaceId },
+                    } as Href)
+                  }
+                  style={({ pressed }) => [
+                    styles.headerGlyph,
+                    (workspaceSettingsSelected || pressed) && styles.roomRowSelected,
+                  ]}
+                  testID="desktop-workspace-settings"
+                >
+                  <Ionicons
+                    name="settings-outline"
+                    size={16}
+                    color={styles.headerGlyphColor.color}
+                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                  />
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
         </View>
       ) : (
         <View style={styles.workspaceBlock}>
-          <Text style={styles.eyebrow}>{WORKSPACE_LABEL.toUpperCase()}</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -538,113 +589,6 @@ export const SidebarView = React.memo(function SidebarView() {
         </View>
       )}
       <>
-        {isDesktop && (
-          <View style={styles.primaryActions} testID="desktop-primary-actions">
-            {canCreateRoom && workspaceId ? (
-              <Pressable
-                accessibilityLabel="Create a new Room"
-                accessibilityRole="button"
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/channels',
-                    params: { communityId: workspaceId, newRoom: String(Date.now()) },
-                  } as Href)
-                }
-                style={({ pressed }) => [styles.primaryAction, pressed && styles.roomRowSelected]}
-                testID="desktop-new-room"
-              >
-                <Ionicons
-                  name="add"
-                  size={18}
-                  color={styles.primaryActionIconAccent.color}
-                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-                />
-                <Text style={styles.primaryActionText}>New Room</Text>
-              </Pressable>
-            ) : null}
-            {canManageWorkspace && workspaceId ? (
-              <Pressable
-                accessibilityLabel={`Open ${WORKSPACE_LABEL} settings`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: workspaceSettingsSelected }}
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/settings/workspace',
-                    params: { communityId: workspaceId },
-                  } as Href)
-                }
-                style={({ pressed }) => [
-                  styles.primaryAction,
-                  (workspaceSettingsSelected || pressed) && styles.roomRowSelected,
-                ]}
-                testID="desktop-workspace-settings"
-              >
-                <Ionicons
-                  name="settings-outline"
-                  size={16}
-                  color={styles.primaryActionIcon.color}
-                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-                />
-                <Text style={styles.primaryActionText}>{`${WORKSPACE_LABEL} settings`}</Text>
-              </Pressable>
-            ) : null}
-            {workspaceId && identityPubkey ? (
-              <Pressable
-                accessibilityLabel="Open Workbench"
-                accessibilityRole="button"
-                accessibilityState={{ selected: workbenchSelected }}
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/settings/workbench',
-                    params: { workspaceId, viewerId: identityPubkey },
-                  } as Href)
-                }
-                style={({ pressed }) => [
-                  styles.primaryAction,
-                  (workbenchSelected || pressed) && styles.roomRowSelected,
-                ]}
-                testID="desktop-workbench"
-              >
-                <Ionicons
-                  name="hammer-outline"
-                  size={16}
-                  color={styles.primaryActionIcon.color}
-                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-                />
-                <Text style={styles.primaryActionText}>Workbench</Text>
-              </Pressable>
-            ) : null}
-            {workspaceId ? (
-              <Pressable
-                accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: bookmarksSelected }}
-                onPress={() =>
-                  router.push({
-                    pathname: '/beeline/bookmarks',
-                    params: { communityId: workspaceId },
-                  } as Href)
-                }
-                style={({ pressed }) => [
-                  styles.primaryAction,
-                  (bookmarksSelected || pressed) && styles.roomRowSelected,
-                ]}
-                testID="desktop-bookmarks"
-              >
-                <Ionicons
-                  name="bookmark-outline"
-                  size={16}
-                  color={styles.primaryActionIcon.color}
-                  {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-                />
-                <Text style={styles.primaryActionText}>Bookmarks</Text>
-                {bookmarkCount > 0 ? (
-                  <Text style={styles.primaryActionMeta}>{bookmarkCount}</Text>
-                ) : null}
-              </Pressable>
-            ) : null}
-          </View>
-        )}
         <View style={[styles.searchWrap, searchFocused && styles.searchWrapFocused]}>
           <Ionicons
             name="search"
@@ -693,6 +637,26 @@ export const SidebarView = React.memo(function SidebarView() {
               <React.Fragment key={section.kind}>
                 <RoomListSectionHeader
                   title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                  actionTestID={
+                    section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
+                  }
+                  actionAccessibilityLabel={
+                    section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                  }
+                  onAction={
+                    !workspaceId || viewerIsAgent
+                      ? undefined
+                      : section.kind === 'rooms' && !canCreateRoom
+                        ? undefined
+                        : () =>
+                            router.push({
+                              pathname: '/beeline/channels',
+                              params:
+                                section.kind === 'rooms'
+                                  ? { communityId: workspaceId, newRoom: String(Date.now()) }
+                                  : { communityId: workspaceId, newDirectMessage: String(Date.now()) },
+                            } as Href)
+                  }
                 />
                 {section.data.map((item) => {
                   const rowName = roomRowName(item);
@@ -818,7 +782,7 @@ export const SidebarView = React.memo(function SidebarView() {
           )}
         </ScrollView>
         <Pressable
-          accessibilityLabel="Open profile settings"
+          accessibilityLabel="Settings"
           accessibilityRole="button"
           accessibilityState={{ selected: profileSettingsSelected }}
           onPress={() => router.push('/beeline/settings' as Href)}
@@ -828,13 +792,23 @@ export const SidebarView = React.memo(function SidebarView() {
           ]}
           testID="profile-settings-navigation"
         >
-          <Ionicons
-            name="person-outline"
-            size={18}
-            color={stylesheet.settingsText.color}
-            {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
-          />
-          <Text style={styles.settingsText}>{isDesktop ? 'PROFILE & SETTINGS' : 'SETTINGS'}</Text>
+          {isDesktop ? (
+            identityPubkey ? (
+              <IdentityMark seed={identityPubkey} kind="human" size={22} />
+            ) : (
+              <View style={styles.settingsFaceSlot} />
+            )
+          ) : (
+            <>
+              <Ionicons
+                name="person-outline"
+                size={18}
+                color={stylesheet.settingsText.color}
+                {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+              />
+              <Text style={styles.settingsText}>SETTINGS</Text>
+            </>
+          )}
         </Pressable>
       </>
       {isDesktop && (

@@ -44,17 +44,18 @@ describe('desktop layout mode', () => {
     expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
   });
 
-  it('keeps creation and utility destinations above the conversation sections', () => {
+  it('keeps section-head creation controls above the conversation sections', () => {
     const sidebar = source('components/SidebarView.tsx');
-    const actions = sidebar.indexOf('testID="desktop-primary-actions"');
-    const sections = sidebar.indexOf('<RoomListSectionHeader', actions);
+    const actions = sidebar.indexOf("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
+    const sections = sidebar.indexOf('<RoomListSectionHeader');
 
-    expect(actions).toBeGreaterThanOrEqual(0);
-    expect(sections).toBeGreaterThan(actions);
-    expect(sidebar).toContain('testID="desktop-new-room"');
-    expect(sidebar).toContain('testID="desktop-workbench"');
-    expect(sidebar).toContain('testID="desktop-bookmarks"');
-    expect(sidebar).not.toContain('desktop-create-section');
+    // The retired primary-action block must stay retired.
+    expect(sidebar).not.toContain('desktop-primary-actions');
+    expect(sidebar).not.toContain('testID="desktop-workbench"');
+    expect(sections).toBeGreaterThanOrEqual(0);
+    expect(actions).toBeGreaterThan(sections);
+    expect(sidebar).toContain('desktop-new-room');
+    expect(sidebar).toContain('desktop-new-direct-message');
   });
 
   it('aligns the desktop Workspace identity with the conversation header', () => {

@@ -756,16 +756,8 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCE
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 
-CREATE TABLE IF NOT EXISTS corner_check_facts (
-  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  status text NOT NULL CHECK(status IN ('pending','passed','failed')),
-  conclusion text,
-  url text,
-  head_sha text,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (corner_id, name)
-);
+-- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
+DROP TABLE IF EXISTS corner_check_facts;
 
 CREATE TABLE IF NOT EXISTS corner_merge_approvals (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
@@ -880,14 +872,7 @@ CREATE TABLE IF NOT EXISTS github_repositories (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Shared across author and reviewer corners; webhook-only rows are incomplete snapshots.
-CREATE TABLE IF NOT EXISTS github_head_checks (
-  repository_id bigint NOT NULL REFERENCES github_repositories(repository_id) ON DELETE CASCADE,
-  head_sha text NOT NULL,
-  facts jsonb NOT NULL DEFAULT '{}',
-  verified_at timestamptz,
-  PRIMARY KEY(repository_id, head_sha)
-);
+DROP TABLE IF EXISTS github_head_checks;
 
 CREATE TABLE IF NOT EXISTS github_user_tokens (
   subject text PRIMARY KEY,

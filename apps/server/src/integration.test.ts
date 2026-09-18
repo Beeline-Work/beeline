@@ -77,7 +77,10 @@ describe('monolith integration', () => {
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
+    installationToken: ReturnType<typeof vi.fn>;
+    readCommitCheckRollup: ReturnType<typeof vi.fn>;
   };
+  let githubRollupState: 'pending' | 'passed' | 'failed';
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -100,9 +103,20 @@ describe('monolith integration', () => {
       const login = proof === 'proof' ? 'owner' : proof === 'recipient-proof' ? 'recipient' : proof;
       return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
     });
+    githubRollupState = 'pending';
     githubApp = {
       deleteBranch: vi.fn(async () => undefined),
       mergePullRequest: vi.fn(async () => undefined),
+      installationToken: vi.fn(async () => ({
+        token: 'github-room-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: githubRollupState,
+        total: 1,
+        failing: githubRollupState === 'failed' ? ['typecheck'] : [],
+        checks: [{ name: 'typecheck', status: githubRollupState }],
+      })),
     };
     githubOperations = new GitHubOperations(
       database,
@@ -4940,6 +4954,7 @@ describe('monolith integration', () => {
         check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
       },
     });
+    githubRollupState = 'failed';
     await webhook('check_suite', 'corner-checks-failed', {
       ...base,
       action: 'completed',
@@ -4958,7 +4973,7 @@ describe('monolith integration', () => {
     });
     expect(redApproval.status).toBe(409);
     expect(await redApproval.json()).toEqual({
-      error: 'corner checks are failing: Beeline CI check suite; retry with force=true',
+      error: 'corner checks are failing: typecheck; retry with force=true',
     });
     const forcedApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,
@@ -4998,6 +5013,7 @@ describe('monolith integration', () => {
        WHERE corner_id=$1`,
       [cornerId, '1'.repeat(40)],
     );
+    githubRollupState = 'passed';
     await webhook('check_suite', 'corner-checks-passed', {
       ...base,
       action: 'completed',
@@ -5079,7 +5095,7 @@ describe('monolith integration', () => {
       checksSummary: {
         failing: [],
         checks: expect.arrayContaining([
-          expect.objectContaining({ name: 'Beeline CI check suite', status: 'passed' }),
+          expect.objectContaining({ name: 'typecheck', status: 'passed' }),
         ]),
       },
     });
@@ -5110,7 +5126,7 @@ describe('monolith integration', () => {
       checksSummary: {
         status: 'passing',
         checks: expect.arrayContaining([
-          expect.objectContaining({ name: 'Beeline CI check suite', status: 'passed' }),
+          expect.objectContaining({ name: 'typecheck', status: 'passed' }),
         ]),
       },
     });

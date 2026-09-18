@@ -11,11 +11,21 @@ const route = vi.hoisted(() => ({
   parent: undefined as string | undefined,
   pathname: '/beeline/channels',
 }));
+const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: 'owner' },
+    viewer: { kind: viewer.kind },
     chats:
-      workspaceId === 'workspace-a' ? [{ room: { id: 'room-a', workspaceId, name: 'Alpha' } }] : [],
+      workspaceId === 'workspace-a'
+        ? [
+            { room: { id: 'room-a', workspaceId, name: 'Alpha' } },
+            {
+              room: { id: 'dm-a', workspaceId, name: 'Direct' },
+              directMessage: { peer: { name: 'Mina' } },
+            },
+          ]
+        : [],
   })),
 );
 const windowListeners = new Map<string, (event: any) => void>();
@@ -93,8 +103,18 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 vi.mock('@/buzz/room-list-row', () => ({
   displayGroupedCornerTitle: vi.fn(() => ''),
   NO_ACTIVITY_PREVIEW: 'No activity',
-  roomListSections: vi.fn((items) => (items.length ? [{ kind: 'rooms', data: items }] : [])),
-  roomRowName: vi.fn((item) => ({ name: item.room.name, sigil: '#' })),
+  roomListSections: vi.fn((items) => {
+    const rooms = items.filter((item: any) => !item.directMessage);
+    const directMessages = items.filter((item: any) => item.directMessage);
+    return [
+      ...(rooms.length ? [{ kind: 'rooms', data: rooms }] : []),
+      ...(directMessages.length ? [{ kind: 'messages', data: directMessages }] : []),
+    ];
+  }),
+  roomRowName: vi.fn((item) => ({
+    name: item.directMessage?.peer.name ?? item.room.name,
+    sigil: item.directMessage ? '@' : '#',
+  })),
   roomRowNeedsAttention: vi.fn(() => false),
   roomRowPreview: vi.fn(() => ({ text: 'No activity' })),
 }));
@@ -167,6 +187,7 @@ describe('desktop Workspace navigation', () => {
     route.communityId = undefined;
     route.parent = undefined;
     route.pathname = '/beeline/channels';
+    viewer.kind = 'human';
     await act(async () => {
       tree = create(<SidebarView />);
     });
@@ -292,6 +313,29 @@ describe('desktop Workspace navigation', () => {
       pathname: '/beeline/bookmarks',
       params: { communityId: 'workspace-a' },
     });
+  });
+
+  it('separates Rooms and direct messages without section creation controls', () => {
+    expect(
+      tree.root
+        .findAllByType('RoomListSectionHeader')
+        .map((header: { props: { title: string } }) => header.props.title),
+    ).toEqual(['Rooms', 'Direct messages']);
+    expect(
+      tree.root
+        .findAllByType('Text')
+        .some((node: { props: { children?: unknown } }) => node.props.children === 'New section'),
+    ).toBe(false);
+  });
+
+  it('does not offer New Room to an agent even with an elevated Workspace role', async () => {
+    viewer.kind = 'agent';
+    await act(async () => {
+      tree.update(<SidebarView key="agent-viewer" />);
+    });
+    await settle();
+
+    expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
   });
 
   it('keeps Workbench and profile settings from appearing selected together', async () => {

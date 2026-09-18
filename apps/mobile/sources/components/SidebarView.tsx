@@ -400,7 +400,9 @@ export const SidebarView = React.memo(function SidebarView() {
     [filteredChats],
   );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
-  const canCreateRoom = surface?.workspace.role === 'owner' || surface?.workspace.role === 'admin';
+  const canCreateRoom =
+    surface?.viewer.kind !== 'agent' &&
+    (surface?.workspace.role === 'owner' || surface?.workspace.role === 'admin');
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
   const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
   const profileSettingsSelected = pathname.startsWith('/beeline/settings') && !workbenchSelected;

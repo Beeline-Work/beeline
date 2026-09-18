@@ -7,8 +7,6 @@ type RoomRepositoryActionsProps = {
   canManage: boolean;
   notifications?: React.ReactNode;
   onToggle: () => void;
-  /** Present only when a repo is bound and the viewer may manage it. */
-  onUnlink?: () => void;
   picker: React.ReactNode;
   pickerVisible: boolean;
   reviewer?: React.ReactNode;
@@ -20,7 +18,6 @@ export function RoomRepositoryActions({
   canManage,
   notifications,
   onToggle,
-  onUnlink,
   picker,
   pickerVisible,
   reviewer,
@@ -54,17 +51,6 @@ export function RoomRepositoryActions({
         testID="room-repo-action"
       />
       {reviewer}
-      {repositoryName && onUnlink ? (
-        <HullActionSheetRow
-          accessibilityLabel={`Unlink repo, currently ${repositoryName}`}
-          description={`${CORNER_LABEL}s keep their own repo copies. Messages and history stay.`}
-          destructive
-          disabled={busy}
-          label="Unlink repo"
-          onPress={onUnlink}
-          testID="room-repo-unlink"
-        />
-      ) : null}
       {pickerVisible ? picker : null}
       {notifications}
     </>

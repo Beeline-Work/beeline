@@ -4,12 +4,13 @@
  * decision the server lane applies at post time. Pure so the per-format
  * branches are testable without a renderer.
  */
-export type ArtifactFormat = 'html' | 'svg' | 'pdf' | 'markdown' | 'document';
+export type ArtifactFormat = 'html' | 'svg' | 'image' | 'pdf' | 'markdown' | 'document';
 
 export function artifactFormat(mimeType: string): ArtifactFormat {
   const mime = mimeType.split(';')[0]!.trim().toLowerCase();
   if (mime === 'text/html') return 'html';
   if (mime === 'image/svg+xml') return 'svg';
+  if (mime.startsWith('image/')) return 'image';
   if (mime === 'application/pdf') return 'pdf';
   if (mime === 'text/markdown' || mime === 'text/x-markdown') return 'markdown';
   return 'document';

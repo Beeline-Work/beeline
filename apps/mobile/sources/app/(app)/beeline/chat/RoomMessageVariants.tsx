@@ -344,12 +344,23 @@ export const WalletCards = React.memo(function WalletCards({
   const tx = message.walletTx;
   const refusal = message.walletInsufficient;
   const delegation = message.walletDelegation;
+  const walletIdentity = message.authorIdentity;
+  const identity = (
+    <IdentityMark
+      kind="human"
+      seed={walletIdentity?.pubkey ?? 'wallet'}
+      name={walletIdentity?.name ?? 'Wallet'}
+      avatarUrl={walletIdentity?.avatar}
+      face={walletIdentity?.face}
+      size={26}
+    />
+  );
   if (tx) {
     const actor = tx.agentName ? `@${tx.agentName.replace(/^@/, '')}` : 'You';
     return (
       <TranscriptCard
         tier="record"
-        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        identity={identity}
         title={
           tx.direction === 'out' ? `${actor} sent ${tx.amountText}` : `Received ${tx.amountText}`
         }
@@ -365,7 +376,7 @@ export const WalletCards = React.memo(function WalletCards({
     return (
       <TranscriptCard
         tier="record"
-        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        identity={identity}
         title={
           refusal.reason ? `${actor} could not pay · ${refusal.reason}` : `${actor} could not pay`
         }
@@ -382,7 +393,7 @@ export const WalletCards = React.memo(function WalletCards({
     return (
       <TranscriptCard
         tier="record"
-        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        identity={identity}
         title="Granted agents permission to sign"
         subline={`Until ${new Date(delegation.expiresAt).toLocaleString()} · renews in the app`}
         sublineTestID="wallet-delegation-subline"
@@ -1476,6 +1487,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
   const speakerFace = indexedAuthor?.face ?? agent?.face;
+  const speakerAvatar = indexedAuthor?.avatar ?? agent?.avatar;
   const currentAgent =
     indexedAuthor?.kind === 'agent'
       ? {
@@ -1531,6 +1543,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                   seed: markSeed,
                   kind: isAgent ? ('agent' as const) : ('human' as const),
                   ...(speakerFace ? { face: speakerFace } : {}),
+                  ...(speakerAvatar ? { avatarUrl: speakerAvatar } : {}),
                   ...(isAgent ? { alive: speakerWorking } : {}),
                 },
               }),

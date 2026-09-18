@@ -1,6 +1,6 @@
 import type { AttachmentReference } from '@beeline/api-contract/phone';
-import type { ChatListItem } from '@beeline/buzz-client';
-import { roomRowName } from '@/buzz/room-list-row';
+import type { ChatListItem, WorkspaceView } from '@beeline/buzz-client';
+import { previewHandle, roomRowName } from '@/buzz/room-list-row';
 
 const FORWARD_CAPTION = /\n\n(FORWARDED FROM #[^\n]+)$/;
 
@@ -46,25 +46,57 @@ export async function forwardMessageToRoom(
 }
 
 /** One candidate row of the forward picker, named like the Room list names it. */
-export type ForwardTarget = { id: string; label: string };
+export type ForwardTarget =
+  | { kind: 'room'; id: string; label: string }
+  | { kind: 'member'; id: string; label: string; memberId: string };
+
+/** Resolve a member-backed destination only when the viewer selects it. */
+export async function resolveForwardTargetRoom(
+  target: ForwardTarget,
+  workspaceId: string,
+  resolveDirectMessage: (workspaceId: string, memberId: string) => Promise<{ channelId: string }>,
+): Promise<string> {
+  if (target.kind === 'room') return target.id;
+  return (await resolveDirectMessage(workspaceId, target.memberId)).channelId;
+}
 
 /**
  * Forward destinations: every top-level live Room the viewer can see, DMs
- * included — sharing a file into a DM is a forward's most natural job. Corners
- * (parented Rooms) and archived Rooms are never destinations, and the Room the
- * message came from is excluded.
+ * included, followed by Workspace peers who do not have a DM yet. Selecting a
+ * peer resolves their DM before sending. Existing DMs stay Room destinations
+ * and are not duplicated as member rows. Corners, archived Rooms, the viewer,
+ * and the Room the message came from are never destinations.
  */
 export function forwardTargets(
   chats: readonly Pick<ChatListItem, 'room' | 'directMessage'>[],
+  workspace: Pick<WorkspaceView, 'members' | 'agents' | 'viewer'>,
   excludeRoomId: string,
 ): ForwardTarget[] {
-  return chats
+  const representedDmPeers = new Set(
+    chats.flatMap((chat) =>
+      chat.directMessage?.peer.pubkey ? [chat.directMessage.peer.pubkey] : [],
+    ),
+  );
+  const roomTargets: ForwardTarget[] = chats
     .filter(
       (chat) =>
         chat.room.id !== excludeRoomId && !chat.room.parentId && !chat.room.archived,
     )
     .map((chat) => {
       const row = roomRowName(chat);
-      return { id: chat.room.id, label: `${row.sigil}${row.name}` };
+      return { kind: 'room', id: chat.room.id, label: `${row.sigil}${row.name}` };
     });
+  const memberTargets: ForwardTarget[] = [...workspace.members, ...workspace.agents]
+    .filter(
+      (member) =>
+        member.identity.pubkey !== workspace.viewer.identity.pubkey &&
+        !representedDmPeers.has(member.identity.pubkey),
+    )
+    .map(({ identity }) => ({
+      kind: 'member',
+      id: identity.pubkey,
+      label: `@${previewHandle(identity)}`,
+      memberId: identity.pubkey,
+    }));
+  return [...roomTargets, ...memberTargets];
 }

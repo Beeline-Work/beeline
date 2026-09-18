@@ -268,6 +268,36 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(hostNodes(renderer, 'artifact-open')).toHaveLength(0);
   });
 
+  it('offers an in-app viewer for a photo artifact', async () => {
+    const photo = artifactAttachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
+    const renderer = render(<ArtifactCard attachment={photo} />);
+    await flush();
+    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(1);
+    await act(async () => {
+      hostNodes(renderer, 'artifact-open')[0]!.props.onPress();
+    });
+    expect(mocks.modalShow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: expect.any(Function),
+        props: expect.objectContaining({ attachment: photo }),
+        placement: 'fill',
+      }),
+    );
+    expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
+  });
+
+  it('keeps photo artifacts on the browser path in the desktop pane', async () => {
+    const renderer = render(
+      <ArtifactCard
+        attachment={artifactAttachment({ mimeType: 'image/png', name: 'photo.png' })}
+        isDesktop
+      />,
+    );
+    await flush();
+    expect(hostNodes(renderer, 'artifact-open-browser')).toHaveLength(1);
+    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(0);
+  });
+
   it('Open in browser mints the signed link at tap time; Open full screen shows the viewer', async () => {
     mocks.probeArtifactPreview.mockResolvedValue(null);
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);

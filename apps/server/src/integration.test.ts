@@ -31,6 +31,7 @@ import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
+import { closeExpiredChoices } from './room-choice.js';
 
 /** Who a message tags, read the way every surface reads it: from its own text. */
 async function taggedBy(database: PgliteDatabase, messageId: string): Promise<string[]> {
@@ -236,6 +237,8 @@ describe('monolith integration', () => {
       'postRoomEvent',
       'requestAgentGrant',
       'offerConnector',
+      'askRoomChoice',
+      'openRoomPoll',
     ]);
     const who = await auth.authenticateDaemon(token);
     if (who && typeof input.roomId === 'string' && writes.has(name)) {
@@ -8488,6 +8491,136 @@ describe('monolith integration', () => {
       { room_id: null, event_subscriptions: [] },
       { room_id: ROOM, event_subscriptions: ['joined'] },
     ]);
+  });
+
+  it('posts a choice card, settles it in place, hides the wake, and refuses an undersized poll', async () => {
+    const posted = await daemonOperation('askRoomChoice', {
+      roomId: ROOM,
+      prompt: 'How do you want to push the desk past this?',
+      constraint: 'CDP AgentKit needs JWT signing',
+      options: [
+        { label: 'Kraken paper', consequence: 'Works with plugin auth' },
+        { label: 'Keep waiting', consequence: 'Blocked on CDP JWT', costly: true },
+      ],
+    });
+    expect(posted.status).toBe(200);
+    const body = (await posted.json()) as { choiceId: string; messageId: string; mode: string };
+    expect(body.mode).toBe('question');
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(room)).toBe(true);
+    const card = room.messages.find((message) => message.choice);
+    expect(card?.choice).toEqual(
+      expect.objectContaining({
+        choiceId: body.choiceId,
+        status: 'open',
+        prompt: 'How do you want to push the desk past this?',
+      }),
+    );
+    expect(card?.choice?.options).toHaveLength(2);
+
+    const answered = await operation('answerChoice', { choiceId: body.choiceId, optionId: 'A' });
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toEqual(
+      expect.objectContaining({ choiceId: body.choiceId, status: 'answered', roomId: ROOM }),
+    );
+    const settled = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(settled)).toBe(true);
+    expect(settled.messages.find((message) => message.choice)?.choice).toEqual(
+      expect.objectContaining({ status: 'answered', selectedOptionId: 'A' }),
+    );
+    expect(settled.messages.some((message) => message.choice?.footer?.includes('picked A'))).toBe(
+      true,
+    );
+    const hidden = await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-answered'`,
+      [ROOM],
+    );
+    expect(hidden.rows).toHaveLength(1);
+    expect(await wokenBy(database, hidden.rows[0]!.id)).toEqual([AGENT]);
+    expect(settled.messages.some((message) => message.systemEvent?.kind === 'choice-answered')).toBe(
+      false,
+    );
+
+    const again = await operation('answerChoice', { choiceId: body.choiceId, optionId: 'B' });
+    expect(again.status).toBe(409);
+
+    const undersized = await daemonOperation('openRoomPoll', {
+      roomId: ROOM,
+      prompt: 'Which paper API?',
+      ttlSeconds: 300,
+      options: [
+        { label: 'Kraken paper', consequence: 'plugin auth' },
+        { label: 'Keep waiting', consequence: 'blocked' },
+      ],
+    });
+    expect(undersized.status).toBe(400);
+    expect(((await undersized.json()) as { error: string }).error).toContain('ask_choice');
+
+    const memberId = createHash('sha256').update('github:member').digest('hex');
+    const memberToken = await phoneToken('member');
+    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    await operation('addRoomMember', { roomId: ROOM, memberId });
+    const poll = await daemonOperation('openRoomPoll', {
+      roomId: ROOM,
+      prompt: 'Which paper API?',
+      ttlSeconds: 300,
+      options: [
+        { label: 'Kraken paper', consequence: 'plugin auth' },
+        { label: 'Keep waiting', consequence: 'blocked' },
+      ],
+    });
+    expect(poll.status).toBe(200);
+    const pollBody = (await poll.json()) as { choiceId: string; electorateCount: number };
+    expect(pollBody.electorateCount).toBe(2);
+    expect(
+      (await operation('answerChoice', { choiceId: pollBody.choiceId, optionId: 'A' })).status,
+    ).toBe(200);
+    expect(
+      (
+        await operation(
+          'answerChoice',
+          { choiceId: pollBody.choiceId, optionId: 'A' },
+          memberToken,
+        )
+      ).status,
+    ).toBe(200);
+    const closed = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(closed)).toBe(true);
+    expect(closed.messages.find((message) => message.choice?.status === 'closed')?.choice).toEqual(
+      expect.objectContaining({ status: 'closed', outcome: 'winner' }),
+    );
+  });
+
+  it('expires an unanswered question as skipped and hides the wake', async () => {
+    const posted = await daemonOperation('askRoomChoice', {
+      roomId: ROOM,
+      prompt: 'Which paper API?',
+      ttlSeconds: 300,
+      options: [
+        { label: 'Kraken paper', consequence: 'plugin auth' },
+        { label: 'Keep waiting', consequence: 'blocked' },
+      ],
+    });
+    expect(posted.status).toBe(200);
+    const body = (await posted.json()) as { choiceId: string };
+    await database.query(`UPDATE room_choices SET closes_at=now() - interval '1 second' WHERE id=$1`, [
+      body.choiceId,
+    ]);
+    expect(await closeExpiredChoices(database)).toBe(1);
+    const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(room)).toBe(true);
+    expect(room.messages.find((message) => message.choice)?.choice).toEqual(
+      expect.objectContaining({ status: 'skipped', footer: 'expired · no answer' }),
+    );
+    expect(room.messages.some((message) => message.systemEvent?.kind === 'choice-skipped')).toBe(
+      false,
+    );
+    const hidden = await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-skipped'`,
+      [ROOM],
+    );
+    expect(hidden.rows).toHaveLength(1);
+    expect(await wokenBy(database, hidden.rows[0]!.id)).toEqual([AGENT]);
   });
 });
 

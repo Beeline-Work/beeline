@@ -78,6 +78,7 @@ export type LedgerAttributionMessage = {
   durableFact?: unknown;
   grantRequest?: unknown;
   connectorOffer?: unknown;
+  choice?: unknown;
   writePermission?: unknown;
   targetBranchProposal?: unknown;
 };
@@ -108,7 +109,8 @@ export function ledgerSpeakerKey(
     message.daemonFact ||
     message.durableFact ||
     message.grantRequest ||
-    message.connectorOffer
+    message.connectorOffer ||
+    message.choice
   )
     return null;
   if (message.writePermission || message.targetBranchProposal) return null;

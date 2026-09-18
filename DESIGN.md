@@ -83,6 +83,16 @@ structured system-card catalog uses `TranscriptCard`: record tier for facts and
 settled asks, ask tier only while a response is needed. Its head, body, rows,
 code block, and footer share one spacing and type system on phone and desktop.
 
+Choice options are plates, not ledger rows. A `choice` card (question or poll)
+still uses `TranscriptCard` for the ask/record shell — identity, title, subline,
+stamp, footer Skip. Its options are not `TranscriptCardRow`. That row is a
+two-line ledger fact (state word, title, kind line, hairline). A poll option is
+a tap target, so it is its own plate: house radius (`groknight.radius = 3`),
+1px border, a gap of `space.sm` between plates, letter on a 26px square, label
+in `body`, consequence in `meta` at `ledgerQuiet`. The plate is licensed by the
+box rule above (something the user must find and act on). Grant / permission /
+target-branch keep footer verbs; they are not option lists.
+
 A rule is not a box: one edge, no fill, no radius. It divides an _index_ — the
 Room list, the member list — and nothing else. Transcript messages use one
 compact vertical rhythm within a same-speaker run. A speaker-changing byline
@@ -633,6 +643,14 @@ sweeping band, a moving crest, a progress bar, or a row of dashes all read as
 make about an agent's turn, and at rest they read as broken chrome. Breathing
 says "still going" and claims nothing else.
 
+A closed poll's fill is a still magnitude, not live progress. The ban on
+travelling fills stands for turns, corners, checks, and any claim that work is
+filling toward a finish. A closed poll is a recorded tally. Each option plate
+may carry a still brass wash whose width is that option's votes over the
+leading option's votes (the leader fills the track). The fill does not animate,
+pulse, or sweep. Counts stay inscribed. Reduced motion changes nothing because
+nothing moves. This is not a license for progress bars elsewhere.
+
 The one drawn exception is the thinking line's glyph, `BeelineMarkSpinner`: a
 brass stroke draws the Beeline mark's outline from nothing, lingers complete,
 unwinds and redraws, on a 2s ping-pong. It is allowed because the loop returns
@@ -657,6 +675,14 @@ backgrounded app, and the settled row all show the same completed static mark.
    stops meaning anything. Do not add a second hue; do not let a further meaning
    attach to gold without checking whether it still needs to be redundant with
    something else first.
+   A poll tally uses brass as the pigment of that still wash because it is the one
+   accent, not because brass now means "winner." Magnitude is the width; a unique
+   leader is also the longest bar and `bodyStrong` on its label. Do not fill a
+   whole plate in brass to mark the winner, and do not introduce a second hue for
+   the graph. An open selected choice takes a brass border (the existing "moment
+   you act" meaning), redundant with the letter square lighting. A costly option
+   keeps `diffRemoved` on the letter only, redundant with the consequence naming
+   the cost.
 2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/
    `diffRemoved`) exist only inside diff/change-review views, redundant with
    `+`/`−` prefixes and `A`/`M`/`D` status letters. Red is also the failed

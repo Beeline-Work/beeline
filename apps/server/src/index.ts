@@ -13,6 +13,7 @@ import {
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
@@ -159,6 +160,7 @@ async function main() {
         service: objectService,
       })
     : new MediaExpiryLoop(jobsDatabase);
+  const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
   const sendPushTest = pushSender
     ? createPushTestSender(database, pushSender, apnsPushSender)
     : undefined;
@@ -231,6 +233,7 @@ async function main() {
     async () => {
       if (push) await push.runIfDue();
       await schedules.runOnce();
+      await choiceExpiry.runOnce();
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;

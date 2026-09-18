@@ -62,6 +62,9 @@ export const SERVER_EVENT_KINDS = [
   'grant-decided',
   'connector-offer-decided',
   'turn-cancelled',
+  'choice-answered',
+  'choice-skipped',
+  'poll-closed',
 ] as const;
 export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
 export type AgentEventKind = `agent:${string}`;
@@ -83,7 +86,10 @@ export function isSystemEventKind(value: unknown): value is SystemEventKind {
  * Kinds that RESUME a turn instead of starting one. A grant decision is the
  * answer to a turn already paused on the ask (`isGrantDecisionLine`); treating
  * it as a new trigger would run the same work twice. An accepted connector
- * offer answers a turn paused the same way (`connector-offers.ts`).
+ * offer answers a turn paused the same way (`connector-offers.ts`). Choice
+ * answers start a new `input` turn (`choice-answered` / `choice-skipped` /
+ * `poll-closed`) because the asking turn already ended — they are not resume
+ * kinds.
  */
 export const RESUME_KINDS: readonly SystemEventKind[] = [
   'grant-decided',

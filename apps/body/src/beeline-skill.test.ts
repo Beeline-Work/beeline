@@ -56,6 +56,9 @@ describe('using-beeline Room guidance', () => {
     expect(primer).toContain(
       'grant-decided carries the grant id and status and resumes the turn that asked for the grant',
     );
+    expect(primer).toContain('ask_choice');
+    expect(primer).toContain('open_poll');
+    expect(primer).toContain('A plurality is a fact');
   });
 
   it('delivers strictly conversational guidance for a direct message', () => {
@@ -63,6 +66,8 @@ describe('using-beeline Room guidance', () => {
     expect(primer).toContain('private direct-message conversation with one person');
     expect(primer).toContain('no repository binding and no corner can be opened');
     expect(primer).not.toContain('open_corner');
+    expect(primer).toContain('ask_choice');
+    expect(primer).toContain('open_poll is refused here');
     expect(primer).not.toContain('@name');
 
     const context = beelineCapabilityContextForHarness('codex-acp', undefined, true);

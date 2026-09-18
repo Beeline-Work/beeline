@@ -66,6 +66,7 @@ import {
   type SystemPhrase,
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import { postRoomChoice } from './room-choice.js';
 import {
   applyVaultList,
   connectorCatalog,
@@ -210,6 +211,8 @@ export class DaemonService {
       'postRoomEvent',
       'requestAgentGrant',
       'offerConnector',
+      'askRoomChoice',
+      'openRoomPoll',
     ]);
     if (
       !this.commandTransaction &&
@@ -658,6 +661,16 @@ export class DaemonService {
       case 'requestAgentGrant':
         return (await this.requestAgentGrant(
           input as Input<'requestAgentGrant'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'askRoomChoice':
+        return (await this.askRoomChoice(
+          input as Input<'askRoomChoice'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'openRoomPoll':
+        return (await this.openRoomPoll(
+          input as Input<'openRoomPoll'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'listAgentGrants':
@@ -3166,6 +3179,42 @@ export class DaemonService {
       ...(escalations.length ? { escalations } : {}),
     };
   }
+
+  private async askRoomChoice(input: Input<'askRoomChoice'>, agentId: string) {
+    const posted = await this.writeRoomChoice({
+      roomId: input.roomId,
+      agentId,
+      mode: 'question',
+      prompt: input.prompt,
+      constraint: input.constraint,
+      options: input.options,
+      ttlSeconds: input.ttlSeconds,
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'choice', agentId });
+    return posted;
+  }
+
+  private async openRoomPoll(input: Input<'openRoomPoll'>, agentId: string) {
+    const posted = await this.writeRoomChoice({
+      roomId: input.roomId,
+      agentId,
+      mode: 'poll',
+      prompt: input.prompt,
+      constraint: input.constraint,
+      options: input.options,
+      ttlSeconds: input.ttlSeconds,
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'choice', agentId });
+    return posted;
+  }
+
+  private async writeRoomChoice(
+    input: Parameters<typeof postRoomChoice>[1],
+  ): Promise<Awaited<ReturnType<typeof postRoomChoice>>> {
+    if (this.commandTransaction) return postRoomChoice(this.database, input);
+    return this.database.transaction((database) => postRoomChoice(database, input));
+  }
+
   /** Every live rule for this agent: approved or once, unexpired, not revoked. */
   private async listAgentGrants(agentId: string) {
     const rows = await this.database.query<{
@@ -3923,6 +3972,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postCornerPlan: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,
+  askRoomChoice: true,
+  openRoomPoll: true,
   listAgentGrants: true,
   consumeAgentGrant: true,
   readAgentWorkbench: true,

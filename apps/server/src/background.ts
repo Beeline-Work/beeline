@@ -213,6 +213,29 @@ export class PushDeliveryLoop {
               OR (m.card_type='connector-offer' AND m.card->'addressee'->>'pubkey'=m.push_identity_id)
               OR (m.card_type='target-branch' AND m.push_role IN ('owner','admin'))
               OR (
+                m.card_type='choice'
+                AND COALESCE(m.card->>'status','open')='open'
+                AND (
+                  (
+                    m.card->>'mode'='question'
+                    AND (
+                      m.card->'requester'->>'pubkey'=m.push_identity_id
+                      OR EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(m.card->'mentionIds','[]'::jsonb)) tagged
+                        WHERE tagged=m.push_identity_id
+                      )
+                    )
+                  )
+                  OR (
+                    m.card->>'mode'='poll'
+                    AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements_text(COALESCE(m.card->'electorate','[]'::jsonb)) elector
+                      WHERE elector=m.push_identity_id
+                    )
+                  )
+                )
+              )
+              OR (
                 -- Corner lifecycle widens to all corners for all, and only the
                 -- recorded commissioner's corners for the default mine level.
                 (

@@ -235,6 +235,7 @@ import {
   NotificationLifecycleCard,
   GrantRequestCard,
   ConnectorOfferCard,
+  ChoiceCard,
   WalletCards,
   OrdinaryLedgerMessage,
   RelayHandOff,
@@ -650,6 +651,7 @@ export default function BuzzChat() {
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
   const [connectorOfferActionId, setConnectorOfferActionId] = useState<string | null>(null);
+  const [choiceActionId, setChoiceActionId] = useState<string | null>(null);
   /** Proposal currently being confirmed, and the last refusal/failure text. */
   const [targetBranchActionId, setTargetBranchActionId] = useState<string | null>(null);
   const [targetBranchNotice, setTargetBranchNotice] = useState<{
@@ -3098,6 +3100,38 @@ export default function BuzzChat() {
     [grantActionId, viewerIsAgent],
   );
 
+  const handleChoiceAnswer = useCallback(
+    async (choiceId: string, optionId: string) => {
+      if (viewerIsAgent || choiceActionId) return;
+      setChoiceActionId(choiceId);
+      try {
+        await monolithPhoneOperation('answerChoice', { choiceId, optionId });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (err) {
+        console.warn('Choice answer failed:', err);
+      } finally {
+        setChoiceActionId(null);
+      }
+    },
+    [choiceActionId, viewerIsAgent],
+  );
+
+  const handleChoiceSkip = useCallback(
+    async (choiceId: string) => {
+      if (viewerIsAgent || choiceActionId) return;
+      setChoiceActionId(choiceId);
+      try {
+        await monolithPhoneOperation('skipChoice', { choiceId });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      } catch (err) {
+        console.warn('Choice skip failed:', err);
+      } finally {
+        setChoiceActionId(null);
+      }
+    },
+    [choiceActionId, viewerIsAgent],
+  );
+
   /**
    * Accept a connector-offer card (R5). The server holds the authority (the
    * person the agent addressed or a Workspace manager) and refuses anyone
@@ -3959,6 +3993,19 @@ export default function BuzzChat() {
           />
         );
       }
+      if (item.choice) {
+        return (
+          <ChoiceCard
+            message={item}
+            agent={agentByPubkey.get(item.choice.agent.pubkey)}
+            viewerIsAgent={viewerIsAgent}
+            viewerPubkey={cacheViewerPubkey}
+            actionId={choiceActionId}
+            onAnswer={handleChoiceAnswer}
+            onSkip={handleChoiceSkip}
+          />
+        );
+      }
 
       if (item.connectorOffer) {
         return (
@@ -4130,6 +4177,8 @@ export default function BuzzChat() {
       isDesktop,
       handleWritePermission,
       handleGrantDecision,
+      handleChoiceAnswer,
+      handleChoiceSkip,
       handleOpenSystemIdentity,
       handleReactToMessage,
       handleBookmarkMessage,
@@ -4141,6 +4190,7 @@ export default function BuzzChat() {
       connectorOfferActionId,
       handleAcceptConnectorOffer,
       openWorkbench,
+      choiceActionId,
       handleConfirmTargetBranch,
       openCorner,
       participantsHydrated,

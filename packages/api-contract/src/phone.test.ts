@@ -82,6 +82,44 @@ describe('phone contract', () => {
       isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } }),
     ).toBe(false);
     expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
+
+    const agent = { pubkey: 'c'.repeat(64), kind: 'agent' as const, name: 'Bee' };
+    const choice = {
+      choiceId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+      mode: 'poll',
+      status: 'closed',
+      agent,
+      prompt: 'Which paper API?',
+      options: [
+        {
+          optionId: 'A',
+          letter: 'A',
+          label: 'Kraken paper',
+          consequence: 'plugin auth',
+          votes: 2,
+          share: 1,
+          leader: true,
+        },
+        {
+          optionId: 'B',
+          letter: 'B',
+          label: 'Keep waiting',
+          consequence: 'blocked',
+          votes: 1,
+          share: 0.5,
+        },
+      ],
+      electorate: [identity.pubkey],
+      votedCount: 3,
+      electorateCount: 4,
+      responses: [{ identityId: identity.pubkey, optionId: 'A' }],
+      outcome: 'winner',
+      footer: 'closed · 3 of 4 voted',
+    };
+    expect(isRoomView({ ...room, messages: [{ ...message, choice }] })).toBe(true);
+    expect(
+      isRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] }),
+    ).toBe(false);
   });
 
   it('keeps list guards and named operations type-visible', () => {
@@ -104,6 +142,9 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['dispatchRoomWorkflow']['input']>().toHaveProperty(
       'workflowName',
     );
+    expectTypeOf<PhoneOperationMap['answerChoice']['input']>().toHaveProperty('optionId');
+    expectTypeOf<PhoneOperationMap['skipChoice']['input']>().toHaveProperty('choiceId');
+    expectTypeOf<PhoneOperationMap['acceptConnectorOffer']['input']>().toHaveProperty('offerId');
     expectTypeOf<PhoneOperationMap['requestCornerClose']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['closeChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['reopenChat']['input']>().toHaveProperty('roomId');

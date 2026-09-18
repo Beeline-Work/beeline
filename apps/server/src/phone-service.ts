@@ -102,6 +102,11 @@ import {
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import {
+  answerRoomChoice,
+  hiddenWakeCardSql,
+  skipRoomChoice,
+} from './room-choice.js';
+import {
   connectorCatalog,
   connectorDisplayName,
   connectorIdentityIds,
@@ -279,14 +284,6 @@ interface CornerRow extends RoomRow {
   latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
 }
-/**
- * The decision rows kept only for a daemon wake and never shown (C101): a
- * grant decision and an accepted connector offer both settle their card in
- * place, so the hidden line would read the same answer twice.
- */
-function hiddenDecisionCardSql(column: string): string {
-  return `${column} IS DISTINCT FROM 'grant-decision' AND ${column} IS DISTINCT FROM 'connector-offer-decision'`;
-}
 // Correlated with the authorized Room and viewer in both Room read paths.
 const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
   'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
@@ -294,7 +291,7 @@ const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
     SELECT message.id FROM messages message
     WHERE message.room_id=room.id AND message.author_id<>$2
       AND message.presentation<>'activity'
-      AND ${hiddenDecisionCardSql('message.card_type')}
+      AND ${hiddenWakeCardSql('message')}
       AND (message.created_at,message.id)>(
         COALESCE((SELECT message_created_at FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'-infinity'::timestamptz),
         COALESCE((SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),'')
@@ -556,6 +553,8 @@ function projectedMessage(
         ...base,
         connectorOffer: row.card as NonNullable<RoomViewMessage['connectorOffer']>,
       };
+    case 'choice':
+      return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };
     case 'wallet-tx':
       return { ...base, walletTx: row.card as NonNullable<RoomViewMessage['walletTx']> };
     case 'wallet-insufficient':
@@ -741,7 +740,7 @@ export class PhoneService {
            AND workspace_member.removed_at IS NULL
          JOIN messages message ON message.room_id=room.id AND message.id=$2
          JOIN identities author ON author.id=message.author_id
-         WHERE room.id=$1 AND ${hiddenDecisionCardSql('message.card_type')}
+         WHERE room.id=$1 AND ${hiddenWakeCardSql('message')}
            AND (
              message.presentation<>'activity' OR message.durable_fact IS NOT NULL OR EXISTS(
                SELECT 1 FROM agent_turns turn
@@ -1045,7 +1044,7 @@ export class PhoneService {
       LEFT JOIN LATERAL (
         SELECT * FROM messages
         WHERE room_id=r.id AND presentation IN ('message','system','card')
-          AND ${hiddenDecisionCardSql('card_type')}
+          AND ${hiddenWakeCardSql()}
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
@@ -1104,7 +1103,7 @@ export class PhoneService {
            LEFT JOIN LATERAL(
              SELECT id,created_at FROM messages
              WHERE room_id=room.id AND presentation IN ('message','system','card')
-               AND ${hiddenDecisionCardSql('card_type')}
+               AND ${hiddenWakeCardSql()}
                AND author_id IS DISTINCT FROM $2
              ORDER BY created_at DESC,id DESC LIMIT 1
            ) latest ON true
@@ -1572,7 +1571,7 @@ export class PhoneService {
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
            WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-             AND ${hiddenDecisionCardSql('m.card_type')}
+             AND ${hiddenWakeCardSql('m')}
              AND (NOT EXISTS(
                SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
              ) OR ${eligible})
@@ -2521,6 +2520,10 @@ export class PhoneService {
           input as Input<'acceptConnectorOffer'>,
           viewerId,
         )) as Output<Name>;
+      case 'answerChoice':
+        return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
+      case 'skipChoice':
+        return (await this.skipChoice(input as Input<'skipChoice'>, viewerId)) as Output<Name>;
       case 'createWorkspace':
         return (await this.createWorkspace(
           input as Input<'createWorkspace'>,
@@ -4609,6 +4612,20 @@ export class PhoneService {
     if (!revoked.rowCount) throw new Error('grant revoke conflict: grant is not active');
     return { grantId: input.grantId, status: 'revoked' as const, roomId: grant.room_id };
   }
+  private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
+    return this.database.transaction((database) =>
+      answerRoomChoice(database, {
+        choiceId: input.choiceId,
+        optionId: input.optionId,
+        viewerId,
+      }),
+    );
+  }
+  private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
+    return this.database.transaction((database) =>
+      skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
+    );
+  }
   /**
    * Settle one grant's line inside the card the Room already shows. The card
    * is what the phone renders its ALWAYS/ONCE/NO buttons from, so a rule that
@@ -6397,7 +6414,7 @@ export class PhoneService {
            '{}'::text[] tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-           AND ${hiddenDecisionCardSql('m.card_type')}
+           AND ${hiddenWakeCardSql('m')}
          ${before ? 'AND (m.created_at,m.id)<(to_timestamp($2),$3)' : ''}
          ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
         before ? [roomId, before.createdAt, before.id] : [roomId],
@@ -6482,7 +6499,7 @@ export class PhoneService {
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-         AND ${hiddenDecisionCardSql('m.card_type')}
+         AND ${hiddenWakeCardSql('m')}
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
        ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
       [roomId],
@@ -6684,6 +6701,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'decideAgentGrant',
   'revokeAgentGrant',
   'acceptConnectorOffer',
+  'answerChoice',
+  'skipChoice',
   'createWorkspace',
   'updateWorkspace',
   'leaveWorkspace',

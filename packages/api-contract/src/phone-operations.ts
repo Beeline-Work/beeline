@@ -1,4 +1,5 @@
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
+import type { ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
 import type {
@@ -50,6 +51,8 @@ export type PhoneOperationMap = {
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
   /** R5: the one affirmative tap on a connector-offer card; pairs the connector on the offering agent's machine. */
   acceptConnectorOffer: { input: AcceptConnectorOfferInput; output: AcceptConnectorOfferResult };
+  answerChoice: { input: AnswerChoiceInput; output: ChoiceDecisionResult };
+  skipChoice: { input: SkipChoiceInput; output: ChoiceDecisionResult };
   createWorkspace: { input: NamedWorkspaceInput; output: IdResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };
   leaveWorkspace: { input: WorkspaceInput; output: void };
@@ -249,6 +252,16 @@ export type AcceptConnectorOfferResult = {
   readonly roomId: string;
   /** The Workbench connector row the acceptance created or re-armed. */
   readonly connectorId: string;
+};
+export type AnswerChoiceInput = {
+  readonly choiceId: string;
+  readonly optionId: string;
+};
+export type SkipChoiceInput = { readonly choiceId: string };
+export type ChoiceDecisionResult = {
+  readonly choiceId: string;
+  readonly status: ChoiceStatus;
+  readonly roomId: string;
 };
 export type UpdateWorkspaceInput = WorkspaceInput & {
   readonly name?: string;

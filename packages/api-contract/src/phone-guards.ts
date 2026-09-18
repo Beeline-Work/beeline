@@ -31,6 +31,7 @@ import {
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
 import { isConnectorOfferStatus } from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
+import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
 
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -153,6 +154,73 @@ export function isConnectorOfferCardView(value: unknown): boolean {
     (item.acceptedBy === undefined || identity(item.acceptedBy)) &&
     (item.acceptedAt === undefined || integer(item.acceptedAt)) &&
     optionalString(item.connectorId),
+  );
+}
+
+function choiceLetter(value: unknown): boolean {
+  return typeof value === 'string' && (CHOICE_LETTERS as readonly string[]).includes(value);
+}
+
+function choiceShare(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function choiceOption(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    choiceLetter(item.optionId) &&
+    item.letter === item.optionId &&
+    typeof item.label === 'string' &&
+    typeof item.consequence === 'string' &&
+    (item.costly === undefined || item.costly === true) &&
+    (item.votes === undefined || integer(item.votes)) &&
+    (item.share === undefined || choiceShare(item.share)) &&
+    (item.leader === undefined || item.leader === true),
+  );
+}
+
+function choiceResponse(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    typeof item.identityId === 'string' &&
+    HEX.test(item.identityId) &&
+    choiceLetter(item.optionId),
+  );
+}
+
+function choiceCard(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item &&
+    typeof item.choiceId === 'string' &&
+    UUID.test(item.choiceId) &&
+    isChoiceMode(item.mode) &&
+    isChoiceStatus(item.status) &&
+    identity(item.agent) &&
+    item.agent.kind === 'agent' &&
+    (item.requester === undefined || identity(item.requester)) &&
+    typeof item.prompt === 'string' &&
+    optionalString(item.constraint) &&
+    Array.isArray(item.options) &&
+    item.options.length >= 2 &&
+    item.options.length <= 4 &&
+    item.options.every(choiceOption) &&
+    stringArray(item.electorate, (id) => HEX.test(id)) &&
+    (item.mentionIds === undefined || stringArray(item.mentionIds, (id) => HEX.test(id))) &&
+    (item.closesAt === undefined || integer(item.closesAt)) &&
+    integer(item.votedCount) &&
+    integer(item.electorateCount) &&
+    Array.isArray(item.responses) &&
+    item.responses.every(choiceResponse) &&
+    (item.answeredBy === undefined || identity(item.answeredBy)) &&
+    (item.selectedOptionId === undefined || choiceLetter(item.selectedOptionId)) &&
+    (item.outcome === undefined ||
+      item.outcome === 'winner' ||
+      item.outcome === 'tie' ||
+      item.outcome === 'no-votes') &&
+    optionalString(item.footer),
   );
 }
 
@@ -507,6 +575,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.permission === undefined || messagePermission(item.permission)) &&
     (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
     (item.connectorOffer === undefined || isConnectorOfferCardView(item.connectorOffer)) &&
+    (item.choice === undefined || choiceCard(item.choice)) &&
     (item.walletTx === undefined || walletTx(item.walletTx)) &&
     (item.walletInsufficient === undefined || walletInsufficient(item.walletInsufficient)) &&
     (item.walletDelegation === undefined || walletDelegation(item.walletDelegation)) &&

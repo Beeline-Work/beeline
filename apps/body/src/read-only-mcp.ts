@@ -71,6 +71,13 @@ import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
   MAX_MENTIONS_PER_EVENT,
   SERVER_EVENT_KINDS,
+  CHOICE_CONSTRAINT_MAX_LENGTH,
+  CHOICE_CONSEQUENCE_MAX_LENGTH,
+  CHOICE_LABEL_MAX_LENGTH,
+  CHOICE_OPTIONS_MAX,
+  CHOICE_OPTIONS_MIN,
+  CHOICE_PROMPT_MAX_LENGTH,
+  CHOICE_TTL_SECONDS,
   isAgentKind,
   isServerEventKind,
   type CornerLifecycleView,
@@ -649,6 +656,97 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'ask_choice',
+    description:
+      'Post an optional lettered question (A–D) for a human in this Room. This is a preference, not a grant: it does not pause your turn and Skip or timeout means continue without that input. Never use this for sandbox reach, spend, merge, or branch-target authority.',
+    inputSchema: {
+      type: 'object',
+      required: ['prompt', 'options'],
+      properties: {
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: CHOICE_PROMPT_MAX_LENGTH,
+          description: 'One sentence. The card title.',
+        },
+        constraint: {
+          type: 'string',
+          maxLength: CHOICE_CONSTRAINT_MAX_LENGTH,
+          description: 'Optional one-line constraint under the title.',
+        },
+        options: {
+          type: 'array',
+          minItems: CHOICE_OPTIONS_MIN,
+          maxItems: CHOICE_OPTIONS_MAX,
+          items: {
+            type: 'object',
+            required: ['label', 'consequence'],
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: CHOICE_LABEL_MAX_LENGTH },
+              consequence: {
+                type: 'string',
+                minLength: 1,
+                maxLength: CHOICE_CONSEQUENCE_MAX_LENGTH,
+              },
+              costly: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+        ttl: {
+          type: 'integer',
+          enum: [...CHOICE_TTL_SECONDS],
+          description: 'Optional lifetime in seconds (5m / 15m / 1h / 4h / 24h).',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'open_poll',
+    description:
+      'Open a time-bounded poll of every human in this Room. Refused in DMs, below two electors, and above fifty. A plurality is a fact, never permission to deploy, delete, merge, or spend. Required ttl from 5m / 15m / 1h / 4h / 24h.',
+    inputSchema: {
+      type: 'object',
+      required: ['prompt', 'options', 'ttl'],
+      properties: {
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: CHOICE_PROMPT_MAX_LENGTH,
+        },
+        constraint: {
+          type: 'string',
+          maxLength: CHOICE_CONSTRAINT_MAX_LENGTH,
+        },
+        options: {
+          type: 'array',
+          minItems: CHOICE_OPTIONS_MIN,
+          maxItems: CHOICE_OPTIONS_MAX,
+          items: {
+            type: 'object',
+            required: ['label', 'consequence'],
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: CHOICE_LABEL_MAX_LENGTH },
+              consequence: {
+                type: 'string',
+                minLength: 1,
+                maxLength: CHOICE_CONSEQUENCE_MAX_LENGTH,
+              },
+              costly: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+        ttl: {
+          type: 'integer',
+          enum: [...CHOICE_TTL_SECONDS],
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'run_granted_command',
     description:
       'Run a command under an approved command grant, only when an approved grant is a word-for-word prefix of argv. In a top-level Room it runs on the SAME read-only filesystem the Room promises — you can read anything and write only your own scratch, so open a corner for work that changes files. A corner can do everything a Room can and more: its worktree is writable and a command there may act on the live host, next to the branch and the transcript that explain it. The named secrets are in its environment and never in the output. Ten-minute timeout, capped output, one ledger row per run.',
@@ -685,7 +783,8 @@ export function agentToolsFor(
     // A connector is offered where a person is answering — a Room or a DM —
     // never from a corner, whose work is the branch (R5).
     if (tool.name === 'workbench_status' || tool.name === 'offer_connector') return !cornerTurn;
-    return !directMessage || tool.name !== 'open_corner';
+    if (tool.name === 'open_corner' || tool.name === 'open_poll') return !directMessage;
+    return true;
   });
 }
 
@@ -2085,6 +2184,74 @@ export async function offerConnector(
   );
 }
 
+function choiceOptionArgs(args: JsonObject): Array<{
+  label: string;
+  consequence: string;
+  costly?: boolean;
+}> {
+  if (!Array.isArray(args.options)) throw new Error('options must be an array');
+  return args.options.map((raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('choice option is invalid');
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.label !== 'string' || !entry.label.trim()) {
+      throw new Error('choice option label is required');
+    }
+    if (typeof entry.consequence !== 'string' || !entry.consequence.trim()) {
+      throw new Error('choice option consequence is required');
+    }
+    return {
+      label: entry.label,
+      consequence: entry.consequence,
+      ...(entry.costly === true ? { costly: true } : {}),
+    };
+  });
+}
+
+/** ask_choice: optional lettered question; the turn is not paused. */
+export async function askChoice(
+  args: JsonObject,
+  deps: AgentGrantDeps = agentGrantDepsFromEnv(),
+): Promise<string> {
+  const result = await deps.execute('askRoomChoice', {
+    roomId: deps.roomId,
+    prompt: args.prompt,
+    ...(typeof args.constraint === 'string' ? { constraint: args.constraint } : {}),
+    options: choiceOptionArgs(args),
+    ...(typeof args.ttl === 'number' ? { ttlSeconds: args.ttl } : {}),
+  });
+  const choiceId = typeof result.choiceId === 'string' ? result.choiceId : 'unknown';
+  return (
+    `posted [${choiceId}] · not paused · Skip or an option will wake you if you end this turn waiting. ` +
+    'You may continue without the answer. A pick is a preference, never sandbox, spend, merge, or branch authority.'
+  );
+}
+
+/** open_poll: Room/corner only; a plurality is a fact, never a mandate. */
+export async function openPoll(
+  args: JsonObject,
+  deps: AgentGrantDeps = agentGrantDepsFromEnv(),
+): Promise<string> {
+  const result = await deps.execute('openRoomPoll', {
+    roomId: deps.roomId,
+    prompt: args.prompt,
+    ...(typeof args.constraint === 'string' ? { constraint: args.constraint } : {}),
+    options: choiceOptionArgs(args),
+    ttlSeconds: args.ttl,
+  });
+  const choiceId = typeof result.choiceId === 'string' ? result.choiceId : 'unknown';
+  const electorate =
+    typeof result.electorateCount === 'number' ? result.electorateCount : undefined;
+  const closesAt =
+    typeof result.closesAt === 'number'
+      ? new Date(result.closesAt * 1000).toISOString()
+      : undefined;
+  return (
+    `posted [${choiceId}] · electorate ${electorate ?? 'n'} · closes at ${closesAt ?? 'deadline'}. ` +
+    'Not paused. A plurality is a preference fact: it does not grant sandbox reach, spend, merge, or branch-target authority. ' +
+    'A tie or no votes means do not pick.'
+  );
+}
+
 export interface GrantRunDeps {
   roomId: string;
   run: (input: { roomId: string; argv: string[] }) => Promise<JsonObject>;
@@ -2255,6 +2422,10 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return workbenchStatus();
     case 'offer_connector':
       return offerConnector(args);
+    case 'ask_choice':
+      return askChoice(args);
+    case 'open_poll':
+      return openPoll(args);
     case 'run_granted_command':
       return runGrantedCommand(args);
     default:

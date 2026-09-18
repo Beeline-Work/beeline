@@ -1031,6 +1031,37 @@ ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS script jsonb;
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 
+-- Preference cards: one lettered question or Room poll per row. Electorate is
+-- frozen at insert so a join/leave cannot move the denominator. Votes live in
+-- room_choice_votes; the card JSON on messages is the phone projection.
+CREATE TABLE IF NOT EXISTS room_choices (
+  id uuid PRIMARY KEY,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  mode text NOT NULL CHECK (mode IN ('question','poll')),
+  prompt text NOT NULL,
+  constraint_text text,
+  options jsonb NOT NULL,
+  electorate text[] NOT NULL,
+  closes_at timestamptz,
+  status text NOT NULL CHECK (status IN ('open','answered','skipped','closed','retracted')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS room_choices_open_agent_room
+  ON room_choices(agent_id, room_id) WHERE status='open';
+CREATE INDEX IF NOT EXISTS room_choices_due_idx
+  ON room_choices(closes_at) WHERE status='open' AND closes_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS room_choice_votes (
+  choice_id uuid NOT NULL REFERENCES room_choices(id) ON DELETE CASCADE,
+  voter_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  option_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (choice_id, voter_id)
+);
+
 CREATE TABLE IF NOT EXISTS import_runs (
   import_id text PRIMARY KEY,
   source_fingerprint text NOT NULL,

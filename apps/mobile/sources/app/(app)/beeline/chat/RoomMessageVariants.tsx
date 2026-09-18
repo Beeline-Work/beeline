@@ -8,6 +8,7 @@ import {
   type AttachmentReference,
   type MessageReactionEmoji,
 } from '@beeline/buzz-client';
+import { formatChoiceClock } from '@beeline/api-contract/phone';
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -70,6 +71,7 @@ import {
   TranscriptCard,
   TranscriptCardHandle,
   type TranscriptCardAction,
+  type TranscriptCardChoice,
   type TranscriptCardRow,
 } from '@/components/buzz/TranscriptCard';
 import { forwardedMessageParts } from '@/buzz/message-forward';
@@ -432,6 +434,111 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             : `connector-offer-${offer.offerId}-waiting`
           : `connector-offer-${offer.offerId}-outcome`
       }
+      actions={actions}
+    />
+  );
+});
+
+export interface ChoiceCardProps {
+  message: ChatDisplayMessage;
+  agent?: AgentPresentation;
+  viewerIsAgent: boolean;
+  viewerPubkey: string;
+  actionId: string | null;
+  onAnswer(choiceId: string, optionId: string): void;
+  onSkip(choiceId: string): void;
+}
+
+function choiceHandle(identity?: { handle?: string; name: string; pubkey: string }): string {
+  const handle = identity?.handle?.replace(/^@/, '');
+  return handle || identity?.name?.replace(/^@/, '') || 'someone';
+}
+
+/**
+ * One choice family: lettered plates for a question or a poll. Skip is a footer
+ * word on an open question. Closed polls carry a still brass wash; options are
+ * never TranscriptCardRow.
+ */
+export const ChoiceCard = React.memo(function ChoiceCard({
+  message,
+  agent,
+  viewerIsAgent,
+  viewerPubkey,
+  actionId,
+  onAnswer,
+  onSkip,
+}: ChoiceCardProps) {
+  const card = message.choice!;
+  const display = resolveAgentDisplayIdentity(card.agent.pubkey, agent);
+  const agentName = agent ? display.name : card.agent.name;
+  const open = card.status === 'open';
+  const viewerVote = card.responses.find((response) => response.identityId === viewerPubkey);
+  const canAct =
+    open &&
+    !viewerIsAgent &&
+    (card.mode === 'question' || card.electorate.includes(viewerPubkey));
+  const busy = actionId === card.choiceId;
+  const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
+  const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
+  const subline =
+    card.mode === 'poll'
+      ? [clock, turnout].filter(Boolean).join(' · ')
+      : [card.constraint, clock].filter(Boolean).join(' · ') || undefined;
+  const choices: TranscriptCardChoice[] = card.options.map((option) => ({
+    id: option.optionId,
+    letter: option.letter,
+    label: option.label,
+    consequence: option.consequence,
+    costly: option.costly,
+    votes: option.votes,
+    share: option.share,
+    leader: option.leader,
+    selected: viewerVote?.optionId === option.optionId || card.selectedOptionId === option.optionId,
+    ...(canAct && card.mode === 'poll'
+      ? { onPress: () => onAnswer(card.choiceId, option.optionId) }
+      : canAct && card.mode === 'question' && !busy
+        ? { onPress: () => onAnswer(card.choiceId, option.optionId) }
+        : {}),
+  }));
+  const actions: TranscriptCardAction[] =
+    canAct && card.mode === 'question'
+      ? [
+          {
+            label: 'Skip',
+            disabled: busy,
+            onPress: () => onSkip(card.choiceId),
+            testID: `choice-${card.choiceId}-skip`,
+          },
+        ]
+      : [];
+  return (
+    <TranscriptCard
+      tier={open ? 'ask' : 'record'}
+      testID={`choice-${card.choiceId}`}
+      identity={
+        <IdentityMark
+          kind="agent"
+          seed={display.avatarSeed ?? card.agent.pubkey}
+          avatarUrl={display.avatarUrl}
+          face={display.face}
+          name={agentName}
+          size={26}
+        />
+      }
+      title={card.prompt}
+      subline={subline || card.constraint}
+      sublineTestID={`choice-${card.choiceId}-subline`}
+      stamp={ledgerStamp(message.timestamp)}
+      choices={choices}
+      footerNote={
+        open
+          ? undefined
+          : card.footer ||
+            (card.status === 'answered'
+              ? `picked ${card.selectedOptionId ?? ''} · @${choiceHandle(card.answeredBy)}`
+              : undefined)
+      }
+      footerNoteTestID={`choice-${card.choiceId}-footer`}
       actions={actions}
     />
   );

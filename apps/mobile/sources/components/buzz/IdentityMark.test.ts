@@ -212,7 +212,10 @@ describe('plate polarity is the class', () => {
     expect(plateOf(agent).backgroundColor).toBe(palette.mid);
     // The hue lives on the plate, so the figure never repeats it — and it is
     // the whole creature, in both of the neutral tones, not an ink silhouette.
-    const painted = figurePaints(agent).flatMap((node: any) => [node.props.fill, node.props.stroke]);
+    const painted = figurePaints(agent).flatMap((node: any) => [
+      node.props.fill,
+      node.props.stroke,
+    ]);
     expect(painted).toContain(BONE);
     expect(painted).toContain(INK);
     expect(
@@ -432,6 +435,24 @@ describe('one mark, everywhere', () => {
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
     expect(hosts(renderer, 'face-figure')).toHaveLength(1);
     expect(groknight.photoIdentityMarksEnabled).toBe(false);
+  });
+
+  it('renders a fixed server connector logo without enabling human profile photos', () => {
+    const renderer = render(
+      React.createElement(IdentityMark, {
+        seed: HUMAN,
+        kind: 'human',
+        avatarUrl: 'https://api.example.test/v1/connectors/logo/wallet.svg',
+        name: 'Wallet',
+      }),
+    );
+    expect(renderer.root.findByProps({ testID: 'identity-connector-logo' }).props.source).toEqual({
+      uri: 'https://api.example.test/v1/connectors/logo/wallet.svg',
+    });
+
+    act(() => renderer.root.findByType('Image').props.onError());
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(hosts(renderer, 'face-figure')).toHaveLength(1);
   });
 
   it('renders a Workspace picture and falls back to its generated mark', () => {

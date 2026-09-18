@@ -99,6 +99,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import {
   connectorCatalog,
   connectorDisplayName,
+  connectorIdentityIds,
   defaultConnectorSteps,
   dmParticipantsIncludeConnectorIdentity,
   ensureConnectorDirectMessageRoom,
@@ -1019,15 +1020,24 @@ export class PhoneService {
         )) closed
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (
+        SELECT * FROM messages
+        WHERE room_id=r.id AND presentation IN ('message','system','card')
+          AND card_type IS DISTINCT FROM 'grant-decision'
+        ORDER BY created_at DESC,id DESC LIMIT 1
+      ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
         ) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
+        AND (
+          r.direct_participants IS NULL OR peer.id IS NULL
+          OR NOT (peer.id = ANY($3::text[])) OR lm.id IS NOT NULL
+        )
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
-      [workspaceId, viewerId],
+      [workspaceId, viewerId, connectorIdentityIds()],
     );
     const roomIds = rooms.rows.map((room) => room.id);
     const [presence, cursors] = await Promise.all([
@@ -1071,7 +1081,8 @@ export class PhoneService {
            LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
            LEFT JOIN LATERAL(
              SELECT id,created_at FROM messages
-             WHERE room_id=room.id AND presentation IN ('message','system')
+             WHERE room_id=room.id AND presentation IN ('message','system','card')
+               AND card_type IS DISTINCT FROM 'grant-decision'
                AND author_id IS DISTINCT FROM $2
              ORDER BY created_at DESC,id DESC LIMIT 1
            ) latest ON true

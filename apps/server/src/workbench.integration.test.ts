@@ -11,7 +11,11 @@ import { createBeelineServer } from './server.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
-import { applyVaultList, connectorIdentityId } from './workbench.js';
+import {
+  applyVaultList,
+  connectorIdentityId,
+  ensureConnectorDirectMessageRoom,
+} from './workbench.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
 const HELPER = 'b'.repeat(64);
@@ -40,15 +44,12 @@ describe('workbench connectors', () => {
              ($3,'human','Recipient','recipient','recipient'),($4,'agent','Wasp','wasp',NULL)`,
       [HUMAN, HELPER, createHash('sha256').update('github:recipient').digest('hex'), OTHER_HELPER],
     );
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$4)`,
-      [
-        HELPER,
-        HUMAN,
-        OTHER_HELPER,
-        createHash('sha256').update('github:recipient').digest('hex'),
-      ],
-    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$4)`, [
+      HELPER,
+      HUMAN,
+      OTHER_HELPER,
+      createHash('sha256').update('github:recipient').digest('hex'),
+    ]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -79,12 +80,12 @@ describe('workbench connectors', () => {
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
     recipientToken = (await auth.exchangeGitHubOidc('recipient-proof')).accessToken;
-    helperToken = (
-      await auth.exchangeDaemonToken((await auth.createDaemonExchange(HELPER)).exchangeToken)
-    )!.daemonToken;
-    otherHelperToken = (
-      await auth.exchangeDaemonToken((await auth.createDaemonExchange(OTHER_HELPER)).exchangeToken)
-    )!.daemonToken;
+    helperToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(HELPER)).exchangeToken,
+    ))!.daemonToken;
+    otherHelperToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(OTHER_HELPER)).exchangeToken,
+    ))!.daemonToken;
   });
 
   afterEach(async () => {
@@ -135,22 +136,18 @@ describe('workbench connectors', () => {
     // future sync report; grants ride the helper's detail surface, so one
     // live grant is seeded here in the shape the helper reports.
     await daemonOperation('installConnector', { connectorId: paired.connectorId });
-    await applyVaultList(
-      database,
-      { id: paired.connectorId, owner_identity_id: HUMAN },
-      [
-        {
-          reference: 'github.com/acme/tooling',
-          service: 'github',
-          label: 'Acme tooling',
-          fieldNames: ['token'],
-          allowedHosts: ['github.com'],
-          createdAt: Math.floor(Date.now() / 1000),
-          stale: false,
-          state: 'active',
-        },
-      ],
-    );
+    await applyVaultList(database, { id: paired.connectorId, owner_identity_id: HUMAN }, [
+      {
+        reference: 'github.com/acme/tooling',
+        service: 'github',
+        label: 'Acme tooling',
+        fieldNames: ['token'],
+        allowedHosts: ['github.com'],
+        createdAt: Math.floor(Date.now() / 1000),
+        stale: false,
+        state: 'active',
+      },
+    ]);
     await database.query(
       `UPDATE workspace_connections SET grants=$2::jsonb WHERE connector_id=$1::uuid`,
       [
@@ -225,7 +222,15 @@ describe('workbench connectors', () => {
   });
 
   it('rejects pairing a connector that is not connectable and a helper outside the Workspace', async () => {
-    expect((await operation('pairConnector', { workspaceId: WORKSPACE, connectorType: 'wallet', helperAgentId: HELPER })).status).toBe(503);
+    expect(
+      (
+        await operation('pairConnector', {
+          workspaceId: WORKSPACE,
+          connectorType: 'wallet',
+          helperAgentId: HELPER,
+        })
+      ).status,
+    ).toBe(503);
     expect(
       (
         await operation('pairConnector', {
@@ -274,6 +279,59 @@ describe('workbench connectors', () => {
     expect(cards).toHaveLength(0);
   });
 
+  it('hides an empty connector DM, then reveals its repaired identity with the first card', async () => {
+    const roomId = await ensureConnectorDirectMessageRoom(
+      database,
+      WORKSPACE,
+      'trusty-squire',
+      HUMAN,
+    );
+    expect(
+      (await phone.readChats(WORKSPACE, HUMAN))?.chats.some((chat) => chat.room.id === roomId),
+    ).toBe(false);
+
+    const identity = (
+      await database.query<{ name: string; handle: string; avatar: string }>(
+        `SELECT name,handle,avatar FROM identities WHERE id=$1`,
+        [connectorIdentityId('trusty-squire')],
+      )
+    ).rows[0];
+    expect(identity).toEqual({
+      name: 'Trusty Squire',
+      handle: 'trusty-squire',
+      avatar: '/v1/connectors/logo/trusty-squire.svg',
+    });
+
+    await pairOwnerConnector();
+    await daemonOperation('postConnectionUsage', {
+      requestId: createHash('sha256').update('first-visible-receipt').digest('hex'),
+      agentId: HELPER,
+      usage: [
+        {
+          ref: 'github.com/acme/tooling',
+          operation: 'fetch_credential github.com/acme/tooling',
+          eventClass: 'approval',
+        },
+      ],
+    });
+    const chat = (await phone.readChats(WORKSPACE, HUMAN))?.chats.find(
+      (candidate) => candidate.room.id === roomId,
+    );
+    expect(chat?.latestMessage?.text).toContain('@bee used Acme tooling');
+    expect(chat?.directMessage?.peer).toMatchObject({
+      name: 'Trusty Squire',
+      handle: 'trusty-squire',
+      avatar: 'http://placeholder/v1/connectors/logo/trusty-squire.svg',
+    });
+
+    const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(logo.status).toBe(200);
+    expect(logo.headers.get('content-type')).toBe('image/svg+xml');
+    expect(await logo.text()).toContain('aria-label="Trusty Squire"');
+  });
+
   it('DMs exactly one receipt card for an approval-class event', async () => {
     const connectorId = await pairOwnerConnector();
     const requestId = createHash('sha256').update('turn-approval').digest('hex');
@@ -306,7 +364,7 @@ describe('workbench connectors', () => {
     expect(cards[0]!.text).toContain('fetch_credential');
   });
 
-  it('aggregates a second approval-class report into the turn\'s existing card', async () => {
+  it("aggregates a second approval-class report into the turn's existing card", async () => {
     const connectorId = await pairOwnerConnector();
     const requestId = createHash('sha256').update('turn-batched').digest('hex');
     const approval = {
@@ -376,18 +434,25 @@ describe('workbench connectors', () => {
     // Member B can neither read nor manage member A's connection.
     expect(
       (
-        await operation('readConnectionDetail', { workspaceId: WORKSPACE, connectionId }, recipientToken)
+        await operation(
+          'readConnectionDetail',
+          { workspaceId: WORKSPACE, connectionId },
+          recipientToken,
+        )
       ).status,
     ).toBe(403);
     expect(
       (
-        await operation('revokeConnectionGrants', { workspaceId: WORKSPACE, connectionId }, recipientToken)
+        await operation(
+          'revokeConnectionGrants',
+          { workspaceId: WORKSPACE, connectionId },
+          recipientToken,
+        )
       ).status,
     ).toBe(403);
     expect(
-      (
-        await operation('unpairConnector', { workspaceId: WORKSPACE, connectorId }, recipientToken)
-      ).status,
+      (await operation('unpairConnector', { workspaceId: WORKSPACE, connectorId }, recipientToken))
+        .status,
     ).toBe(403);
 
     // A helper that does not serve the connector cannot report against it:
@@ -421,7 +486,9 @@ describe('workbench connectors', () => {
     expect(revoked.revoked).toBe(1);
     // The helper is asked to drop its egress grants on the next poll.
     const queue = await daemonOperation('getConnectorAssignments', {});
-    const kinds = (queue.body as { assignments?: { kind: string }[] }).assignments?.map((a) => a.kind);
+    const kinds = (queue.body as { assignments?: { kind: string }[] }).assignments?.map(
+      (a) => a.kind,
+    );
     expect(kinds).toContain('revoke-grants');
 
     await phoneOperation('unpairConnector', { workspaceId: WORKSPACE, connectorId });
@@ -438,9 +505,9 @@ describe('workbench connectors', () => {
     // The uninstall assignment reaches the helper; its status poll is the
     // ack path that reaps the row.
     const after = await daemonOperation('getConnectorAssignments', {});
-    expect((after.body as { assignments?: { kind: string }[] }).assignments?.map((a) => a.kind)).toContain(
-      'uninstall',
-    );
+    expect(
+      (after.body as { assignments?: { kind: string }[] }).assignments?.map((a) => a.kind),
+    ).toContain('uninstall');
     await daemonOperation('getConnectorStatus', {});
     const gone = await database.query<{ count: string }>(
       `SELECT count(*)::text count FROM workspace_connectors WHERE id=$1::uuid`,
@@ -554,8 +621,9 @@ describe('workbench connectors', () => {
     // Every sibling re-armed like the primary: fresh steps, no error line,
     // and the helper daemon picks up all four installs on its next poll.
     const queue = await daemonOperation('getConnectorAssignments', {});
-    const kinds = (queue.body as { assignments?: { kind: string; connectorType: string }[] })
-      .assignments?.filter((assignment) => assignment.connectorType?.startsWith('google-'));
+    const kinds = (
+      queue.body as { assignments?: { kind: string; connectorType: string }[] }
+    ).assignments?.filter((assignment) => assignment.connectorType?.startsWith('google-'));
     expect(kinds?.map((assignment) => assignment.connectorType).sort()).toEqual(
       ['google-calendar', 'google-drive', 'google-gmail', 'google-youtube'].sort(),
     );
@@ -585,14 +653,21 @@ describe('workbench connectors', () => {
     expect(again.connectorId).toBe(paired.connectorId);
     expect(again.status.status).toBe('installing');
 
-    const rows = await database.query<{ connector_type: string; status: string; connected_at: Date | null }>(
+    const rows = await database.query<{
+      connector_type: string;
+      status: string;
+      connected_at: Date | null;
+    }>(
       `SELECT connector_type,status,connected_at FROM workspace_connectors
        WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
          AND connector_type LIKE 'google-%'`,
       [WORKSPACE, HUMAN, HELPER],
     );
     const byType = Object.fromEntries(
-      rows.rows.map((row) => [row.connector_type, { status: row.status, connectedAt: row.connected_at }]),
+      rows.rows.map((row) => [
+        row.connector_type,
+        { status: row.status, connectedAt: row.connected_at },
+      ]),
     );
     // The connected sibling keeps its live grant untouched; the rest re-arm.
     expect(byType['google-youtube']!.status).toBe('connected');

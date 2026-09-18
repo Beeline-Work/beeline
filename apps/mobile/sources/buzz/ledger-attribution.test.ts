@@ -40,6 +40,7 @@ describe('ledger attribution runs', () => {
       { daemonFact: { type: 'corner-complete', outcome: 'landed' } },
       { durableFact: { kind: 'merge' } },
       { grantRequest: { id: 'grant' } },
+      { connectorOffer: { offerId: 'offer' } },
     ];
 
     for (const [index, card] of cards.entries()) {

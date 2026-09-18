@@ -5,6 +5,7 @@ export * from './phone-operations.js';
 export * from './invite-token.js';
 export * from './agent-pairing-code.js';
 export * from './agent-grants.js';
+export * from './connector-offers.js';
 export * from './agent-access.js';
 export * from './faces.js';
 export * from './system-events.js';

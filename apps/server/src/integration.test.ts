@@ -235,6 +235,7 @@ describe('monolith integration', () => {
       'createCorner',
       'postRoomEvent',
       'requestAgentGrant',
+      'offerConnector',
     ]);
     const who = await auth.authenticateDaemon(token);
     if (who && typeof input.roomId === 'string' && writes.has(name)) {
@@ -7428,6 +7429,385 @@ describe('monolith integration', () => {
       ).grants,
     ).toEqual([]);
     expect((await operation('revokeAgentGrant', { grantId: third.grantId })).status).toBe(409);
+  });
+
+  it('runs the connector offer loop (R5): card addressed to the person, one affirmative tap gated to addressee or manager, pairing on the offering machine, settled card naming who acted, hidden resume line', async () => {
+    const send = vi.fn(async () => undefined);
+    const pushes = new PushDeliveryLoop(database, { send });
+    await pushes.runOnce();
+    const person = async (login: string, role: 'member' | 'admin') => {
+      const token = await phoneToken(login);
+      const id = createHash('sha256').update(`github:${login}`).digest('hex');
+      await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: id, role });
+      await operation('addRoomMember', { roomId: ROOM, memberId: id });
+      return { token, id };
+    };
+    const zeke = await person('zeke', 'member'); // the addressee: the key will be theirs
+    const bystander = await person('bystander', 'member'); // neither addressee nor manager
+    const mara = await person('mara', 'admin'); // a Workspace manager
+    await database.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('offer-addressee-device-12345678901234567890',$1,'android','physical')`,
+      [zeke.id],
+    );
+    // The offering agent has reported its machine: that is where the tool installs.
+    expect(
+      (
+        await daemonOperation('postAgentMachineReport', {
+          machineId: 'machine-otter-1',
+          machineName: 'otter-laptop',
+        })
+      ).status,
+    ).toBe(200);
+    const ask = (await (
+      await operation(
+        'sendRoomMessage',
+        {
+          roomId: ROOM,
+          text: '@bee can you install trusty squire so you can get the keys for me?',
+          mentions: [AGENT],
+        },
+        zeke.token,
+      )
+    ).json()) as { messageId: string };
+    await pushes.runOnce();
+    send.mockClear();
+
+    // workbench_status: the agent learns what the Workbench can add and that
+    // the person it answers has nothing yet — names only, never a secret.
+    const status = (await (
+      await daemonOperation('readAgentWorkbench', { roomId: ROOM })
+    ).json()) as {
+      addressee: { identityId: string; name: string; handle?: string };
+      catalog: Array<{
+        connectorType: string;
+        offerable: boolean;
+        available: boolean;
+        purpose: string;
+        paired?: unknown;
+      }>;
+      connections: unknown[];
+      machine: { machineId: string; name: string };
+    };
+    expect(status.addressee).toEqual({ identityId: zeke.id, name: 'Zeke', handle: 'zeke' });
+    expect(status.machine).toEqual({ machineId: 'machine-otter-1', name: 'otter-laptop' });
+    expect(status.connections).toEqual([]);
+    const squire = status.catalog.find((entry) => entry.connectorType === 'trusty-squire');
+    expect(squire).toEqual(
+      expect.objectContaining({ offerable: true, available: true, purpose: expect.any(String) }),
+    );
+    expect(squire?.paired).toBeUndefined();
+    // The wallet is created only from the Workbench page; it has no offer shape.
+    expect(status.catalog.find((entry) => entry.connectorType === 'wallet')?.offerable).toBe(false);
+    expect(status.catalog.find((entry) => entry.connectorType === 'tailscale')?.offerable).toBe(
+      false,
+    );
+
+    // Refusals at offer time are the tool's error, not a card.
+    expect(
+      (
+        await daemonOperation('offerConnector', {
+          roomId: ROOM,
+          requestId: ask.messageId,
+          connectorType: 'wallet',
+          reason: 'hold funds',
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await daemonOperation('offerConnector', {
+          roomId: ROOM,
+          requestId: ask.messageId,
+          connectorType: 'trusty-squire',
+          reason: '   ',
+        })
+      ).status,
+    ).toBe(400);
+
+    // The offer: ONE card, spoken by the agent, addressed to the person it answers.
+    const offer = (await (
+      await daemonOperation('offerConnector', {
+        roomId: ROOM,
+        requestId: ask.messageId,
+        connectorType: 'trusty-squire',
+        reason: 'provision the 1inch API key into its vault',
+      })
+    ).json()) as { offerId: string; status: string; messageId: string; joined: boolean };
+    expect(offer).toEqual({
+      offerId: expect.any(String),
+      status: 'pending',
+      messageId: expect.any(String),
+      joined: false,
+    });
+    // A repeat of the same offer joins the open card instead of posting a second.
+    const repeat = (await (
+      await daemonOperation('offerConnector', {
+        roomId: ROOM,
+        requestId: ask.messageId,
+        connectorType: 'trusty-squire',
+        reason: 'provision the 1inch API key into its vault',
+      })
+    ).json()) as { offerId: string; messageId: string; joined: boolean };
+    expect(repeat).toEqual({
+      offerId: offer.offerId,
+      status: 'pending',
+      messageId: offer.messageId,
+      joined: true,
+    });
+    const cards = await database.query<{
+      id: string;
+      author_id: string;
+      text: string;
+      tagged_ids: string[];
+      presentation: string;
+      card: Record<string, any>;
+    }>(
+      `SELECT id,author_id,text,${taggedIdentityIdsSql('messages')} tagged_ids,presentation,card
+       FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(cards.rows).toHaveLength(1);
+    const card = cards.rows[0]!;
+    expect(card.id).toBe(offer.messageId);
+    expect(card.author_id).toBe(AGENT);
+    expect(card.presentation).toBe('card');
+    expect(card.tagged_ids).toEqual([]);
+    expect(card.text).toBe(
+      '@bee offered @zeke Trusty Squire · provision the 1inch API key into its vault',
+    );
+    expect(card.card).toEqual(
+      expect.objectContaining({
+        offerId: offer.offerId,
+        status: 'pending',
+        connectorType: 'trusty-squire',
+        connectorName: 'Trusty Squire',
+        reason: 'provision the 1inch API key into its vault',
+        helper: { machineId: 'machine-otter-1', name: 'otter-laptop' },
+      }),
+    );
+    expect(card.card.agent.pubkey).toBe(AGENT);
+    expect(card.card.addressee.pubkey).toBe(zeke.id);
+    // The consequence and the standing boundary, together, in one server-owned line.
+    expect(card.card.consequence).toMatch(/^This changes your Workbench\./);
+    expect(card.card.consequence).toContain('still no raw key in chat');
+    expect(card.card.consequence).toContain('provision the 1inch API key into its vault');
+    // The offer is linked to the turn it paused, so the accept can resume it.
+    const linked = await database.query<{ command_id: string | null; addressee_id: string }>(
+      `SELECT command_id,addressee_id FROM connector_offers WHERE id::text=$1`,
+      [offer.offerId],
+    );
+    expect(linked.rows[0]!.addressee_id).toBe(zeke.id);
+    expect(linked.rows[0]!.command_id).toEqual(expect.any(String));
+    // The card reaches the addressee's phone once, and nobody else's.
+    expect(await pushes.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      'offer-addressee-device-12345678901234567890',
+      expect.objectContaining({
+        text: '@bee offered @zeke Trusty Squire · provision the 1inch API key into its vault',
+      }),
+    );
+    // The phone reads a validated connectorOffer message.
+    const pending = (await (
+      await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, zeke.token)
+    ).json()) as RoomView;
+    expect(isRoomView(pending)).toBe(true);
+    const pendingCard = pending.messages.find((message) => message.connectorOffer);
+    expect(pendingCard?.connectorOffer).toEqual(
+      expect.objectContaining({ offerId: offer.offerId, status: 'pending' }),
+    );
+
+    // Neither the addressee nor a manager: the tap is refused and nothing changes.
+    const refused = await operation(
+      'acceptConnectorOffer',
+      { offerId: offer.offerId },
+      bystander.token,
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'Only the person the agent addressed or a workspace admin can add this tool',
+    });
+    expect(
+      (await database.query(`SELECT 1 FROM workspace_connectors WHERE workspace_id=$1`, [WORKSPACE]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM connector_offers WHERE id::text=$1`,
+          [offer.offerId],
+        )
+      ).rows[0]!.status,
+    ).toBe('pending');
+
+    // The addressee accepts: the connector pairs on the OFFERING agent's
+    // machine, owned by the acceptor, through the same row Connect writes.
+    const accepted = await operation(
+      'acceptConnectorOffer',
+      { offerId: offer.offerId },
+      zeke.token,
+    );
+    expect(accepted.status).toBe(200);
+    const acceptance = (await accepted.json()) as { connectorId: string; roomId: string; status: string };
+    expect(acceptance).toEqual({
+      offerId: offer.offerId,
+      status: 'accepted',
+      roomId: ROOM,
+      connectorId: expect.any(String),
+    });
+    const connector = (
+      await database.query<{
+        owner_identity_id: string;
+        helper_agent_id: string;
+        machine_id: string;
+        status: string;
+        connector_type: string;
+      }>(
+        `SELECT owner_identity_id,helper_agent_id,machine_id,status,connector_type
+         FROM workspace_connectors WHERE id=$1::uuid`,
+        [acceptance.connectorId],
+      )
+    ).rows[0];
+    expect(connector).toEqual({
+      owner_identity_id: zeke.id,
+      helper_agent_id: AGENT,
+      machine_id: 'machine-otter-1',
+      status: 'installing',
+      connector_type: 'trusty-squire',
+    });
+    // The offering agent's daemon sees the install on its next poll.
+    const assignments = (await (
+      await daemonOperation('getConnectorAssignments', { agentId: AGENT })
+    ).json()) as { assignments: Array<{ kind: string; connectorId: string }> };
+    expect(assignments.assignments).toEqual([
+      expect.objectContaining({ kind: 'install', connectorId: acceptance.connectorId }),
+    ]);
+    // A second tap is a conflict, not a second pairing.
+    expect(
+      (await operation('acceptConnectorOffer', { offerId: offer.offerId }, mara.token)).status,
+    ).toBe(409);
+    // The card settled in place: same row, and it names WHO acted.
+    const settled = await database.query<{ id: string; card: Record<string, any> }>(
+      `SELECT id,card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(settled.rows).toHaveLength(1);
+    expect(settled.rows[0]!.id).toBe(offer.messageId);
+    expect(settled.rows[0]!.card).toEqual(
+      expect.objectContaining({
+        status: 'accepted',
+        acceptedAt: expect.any(Number),
+        connectorId: acceptance.connectorId,
+      }),
+    );
+    expect(settled.rows[0]!.card.acceptedBy).toEqual(
+      expect.objectContaining({ pubkey: zeke.id, kind: 'human', name: 'Zeke', handle: 'zeke' }),
+    );
+    // One hidden line resumes the paused turn: it reaches the agent's inbox as
+    // a RESUME kind and is never drawn in the Room (C101).
+    const inbox = (await (
+      await daemonOperation('getRoomInbox', { roomId: ROOM, after: undefined })
+    ).json()) as {
+      items: Array<{ type: string; body: string; authorId: string; systemEvent?: unknown }>;
+    };
+    const decision = inbox.items.filter(
+      (item) => item.type === 'system' && /\badded\b/.test(item.body),
+    );
+    expect(decision.map((item) => item.body)).toEqual(['@zeke added Trusty Squire']);
+    expect(decision[0]!.authorId).toBe(zeke.id);
+    expect(decision[0]!.systemEvent).toEqual({
+      subject: { kind: 'person', id: zeke.id, name: '@zeke' },
+      verb: 'added',
+      kind: 'connector-offer-decided',
+      object: { text: 'Trusty Squire' },
+    });
+    const resume = await database.query<{ action: string; state: string }>(
+      `SELECT action,state FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action='resume'`,
+      [ROOM, AGENT],
+    );
+    expect(resume.rows).toEqual([{ action: 'resume', state: 'pending' }]);
+    expect(await pushes.runOnce()).toBe(0);
+    for (const token of [zeke.token, accessToken]) {
+      const room = (await (
+        await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, token)
+      ).json()) as RoomView;
+      expect(isRoomView(room)).toBe(true);
+      expect(room.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text))).toEqual(
+        [],
+      );
+      const settledCard = room.messages.find((message) => message.connectorOffer);
+      expect(settledCard?.connectorOffer).toEqual(
+        expect.objectContaining({
+          status: 'accepted',
+          acceptedBy: expect.objectContaining({ pubkey: zeke.id, name: 'Zeke' }),
+          connectorId: acceptance.connectorId,
+        }),
+      );
+    }
+    const history = (await (await request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
+      messages: Array<{ text: string }>;
+    };
+    expect(history.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text))).toEqual(
+      [],
+    );
+    // The addressee now has the tool; a fresh offer of it is refused, and
+    // workbench_status says so.
+    const duplicate = await daemonOperation('offerConnector', {
+      roomId: ROOM,
+      requestId: ask.messageId,
+      connectorType: 'trusty-squire',
+      reason: 'provision the 1inch API key into its vault',
+    });
+    expect(duplicate.status).toBe(409);
+    const after = (await (
+      await daemonOperation('readAgentWorkbench', { roomId: ROOM })
+    ).json()) as { catalog: Array<{ connectorType: string; paired?: Record<string, unknown> }> };
+    expect(after.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toEqual({
+      status: 'installing',
+      helperName: 'otter-laptop',
+      onThisMachine: true,
+    });
+
+    // A Workspace manager may accept an offer addressed to someone else: the
+    // Google sign-in is the MANAGER's (they tapped), on the offering machine.
+    const gmailAsk = (await (
+      await operation(
+        'sendRoomMessage',
+        { roomId: ROOM, text: '@bee read my inbox for me', mentions: [AGENT] },
+        zeke.token,
+      )
+    ).json()) as { messageId: string };
+    const gmail = (await (
+      await daemonOperation('offerConnector', {
+        roomId: ROOM,
+        requestId: gmailAsk.messageId,
+        connectorType: 'google-gmail',
+        reason: 'read the inbox you asked about',
+      })
+    ).json()) as { offerId: string };
+    const byManager = await operation(
+      'acceptConnectorOffer',
+      { offerId: gmail.offerId },
+      mara.token,
+    );
+    expect(byManager.status).toBe(200);
+    const google = await database.query<{ owner_identity_id: string; connector_type: string }>(
+      `SELECT owner_identity_id,connector_type FROM workspace_connectors
+       WHERE workspace_id=$1 AND connector_type LIKE 'google-%' ORDER BY connector_type`,
+      [WORKSPACE],
+    );
+    expect(google.rows.every((row) => row.owner_identity_id === mara.id)).toBe(true);
+    expect(google.rows.map((row) => row.connector_type)).toEqual([
+      'google-calendar',
+      'google-drive',
+      'google-gmail',
+      'google-youtube',
+    ]);
+    const managerSettled = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer' AND card->>'offerId'=$1`,
+      [gmail.offerId],
+    );
+    expect(managerSettled.rows[0]!.card.acceptedBy).toEqual(
+      expect.objectContaining({ pubkey: mara.id, name: 'Mara' }),
+    );
   });
 
   it('approves grants on the spot under yolo with auto=true and no card, except budget which always asks', async () => {

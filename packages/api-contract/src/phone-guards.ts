@@ -29,6 +29,8 @@ import {
   type WorkspaceView,
 } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
+import { isConnectorOfferStatus } from './connector-offers.js';
+import { isConnectorKind } from './workbench.js';
 
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -122,6 +124,35 @@ function grantRequest(value: unknown): boolean {
     Array.isArray(item.grants) &&
     item.grants.length > 0 &&
     item.grants.every(isAgentGrantView),
+  );
+}
+
+/** The connector-offer card the phone renders verbatim (R5). */
+export function isConnectorOfferCardView(value: unknown): boolean {
+  const item = record(value);
+  const helper = item ? record(item.helper) : null;
+  return Boolean(
+    item &&
+    typeof item.offerId === 'string' &&
+    UUID.test(item.offerId) &&
+    identity(item.agent) &&
+    item.agent.kind === 'agent' &&
+    identity(item.addressee) &&
+    item.addressee.kind === 'human' &&
+    isConnectorKind(item.connectorType) &&
+    typeof item.connectorName === 'string' &&
+    item.connectorName.length > 0 &&
+    typeof item.reason === 'string' &&
+    typeof item.consequence === 'string' &&
+    item.consequence.length > 0 &&
+    helper &&
+    typeof helper.machineId === 'string' &&
+    typeof helper.name === 'string' &&
+    isConnectorOfferStatus(item.status) &&
+    integer(item.createdAt) &&
+    (item.acceptedBy === undefined || identity(item.acceptedBy)) &&
+    (item.acceptedAt === undefined || integer(item.acceptedAt)) &&
+    optionalString(item.connectorId),
   );
 }
 
@@ -475,6 +506,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.corner === undefined || messageCorner(item.corner)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
     (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
+    (item.connectorOffer === undefined || isConnectorOfferCardView(item.connectorOffer)) &&
     (item.walletTx === undefined || walletTx(item.walletTx)) &&
     (item.walletInsufficient === undefined || walletInsufficient(item.walletInsufficient)) &&
     (item.walletDelegation === undefined || walletDelegation(item.walletDelegation)) &&

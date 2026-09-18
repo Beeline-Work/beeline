@@ -144,6 +144,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  ConnectorOfferCard,
   agentBylineLabel,
   OrdinaryLedgerMessage,
   RelayHandOff,
@@ -1821,6 +1822,158 @@ describe('Room message variant components', () => {
       'allowed once',
     );
     expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe('denied');
+  });
+
+  describe('connector-offer card (R5)', () => {
+    const agent = { pubkey: 'otter', kind: 'agent' as const, name: 'Otter', handle: 'otter' };
+    const zeke = { pubkey: 'zeke', kind: 'human' as const, name: 'Zeke', handle: 'zeke' };
+    const consequence =
+      'This changes your Workbench. Once it is added, I can provision keys into its vault and use them from there — still no raw key in chat.';
+    const pending = message({
+      connectorOffer: {
+        offerId: 'offer-1',
+        agent,
+        addressee: zeke,
+        connectorType: 'trusty-squire',
+        connectorName: 'Trusty Squire',
+        reason: 'to provision the 1inch API key into its vault',
+        consequence,
+        helper: { machineId: 'machine-otter', name: 'Otter' },
+        status: 'pending',
+        createdAt: 1,
+      },
+    });
+
+    it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {
+      const onAccept = vi.fn();
+      const card = render(
+        <ConnectorOfferCard
+          message={pending}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          viewerRole="member"
+          actionId={null}
+          onAccept={onAccept}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      const json = JSON.stringify(card.toJSON());
+      expect(card.root.findByProps({ testID: 'connector-offer-pending' })).toBeDefined();
+      expect(json).toContain('Add Trusty Squire as a tool?');
+      // ONE subtitle: the server-owned consequence + boundary, including the
+      // agent's reason. Not a second line of agent prose.
+      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children).toBe(
+        consequence,
+      );
+      expect(json).toContain('still no raw key in chat');
+      expect(json).not.toContain('to provision the 1inch API key into its vault');
+      // One action, with the check glyph; no menu, no second button.
+      const accept = card.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
+      expect(accept.props.accessibilityLabel).toBe('✓ Add Trusty Squire');
+      const actionLabels = card.root
+        .findAllByType('Pressable')
+        .filter((node: ReactTestInstance) => node.props.accessibilityLabel !== undefined)
+        .map((node: ReactTestInstance) => node.props.accessibilityLabel);
+      expect(actionLabels).toEqual(['✓ Add Trusty Squire']);
+      expect(card.root.findAllByProps({ testID: 'connector-offer-offer-1-workbench' })).toHaveLength(
+        0,
+      );
+      act(() => accept.props.onPress());
+      expect(onAccept).toHaveBeenCalledWith('offer-1');
+    });
+
+    it('lets a Workspace manager who is not the addressee accept (Q4)', () => {
+      const card = render(
+        <ConnectorOfferCard
+          message={pending}
+          viewerIsAgent={false}
+          viewerPubkey="mara"
+          viewerRole="admin"
+          actionId={null}
+          onAccept={vi.fn()}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-accept' })).toBeDefined();
+    });
+
+    it('gives a bystander no action and names who it waits for; an agent viewer never acts', () => {
+      const bystander = render(
+        <ConnectorOfferCard
+          message={pending}
+          viewerIsAgent={false}
+          viewerPubkey="bystander"
+          viewerRole="member"
+          actionId={null}
+          onAccept={vi.fn()}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      expect(
+        bystander.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
+      ).toHaveLength(0);
+      expect(
+        bystander.root.findByProps({ testID: 'connector-offer-offer-1-waiting' }).props.children,
+      ).toBe('waiting for @zeke');
+
+      const agentViewer = render(
+        <ConnectorOfferCard
+          message={pending}
+          viewerIsAgent
+          viewerPubkey="zeke"
+          viewerRole="owner"
+          actionId={null}
+          onAccept={vi.fn()}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      expect(
+        agentViewer.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
+      ).toHaveLength(0);
+    });
+
+    it('settles in place naming WHO acted, with the Manage in Workbench door and no action left', () => {
+      const onOpenWorkbench = vi.fn();
+      const mara = { pubkey: 'mara', kind: 'human' as const, name: 'Mara', handle: 'mara' };
+      const settled = render(
+        <ConnectorOfferCard
+          message={message({
+            connectorOffer: {
+              ...pending.connectorOffer!,
+              status: 'accepted',
+              acceptedBy: mara,
+              acceptedAt: 1_756_900_060,
+              connectorId: 'connector-row-1',
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          viewerRole="member"
+          actionId={null}
+          onAccept={vi.fn()}
+          onOpenWorkbench={onOpenWorkbench}
+        />,
+      );
+      expect(settled.root.findByProps({ testID: 'connector-offer-settled' })).toBeDefined();
+      expect(settled.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' })).toHaveLength(
+        0,
+      );
+      // The record names the actor — a manager, not the addressee — because a
+      // Room has many possible tappers where the reference product had one.
+      const outcome = settled.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props
+        .children as string;
+      expect(outcome).toMatch(/^added by @mara · \d{1,2}:\d{2}/);
+      const door = settled.root.findByProps({ testID: 'connector-offer-offer-1-workbench' });
+      expect(door.props.accessibilityRole).toBe('link');
+      act(() => door.props.onPress());
+      expect(onOpenWorkbench).toHaveBeenCalledTimes(1);
+    });
+
+    it('is mounted by the one Room renderItem branch beside the grant card, with the accept operation and Workbench door wired', () => {
+      expect(conversationSource).toContain('if (item.connectorOffer) {');
+      expect(conversationSource).toContain("monolithPhoneOperation('acceptConnectorOffer', { offerId })");
+      expect(conversationSource).toContain("pathname: '/beeline/settings/workbench'");
+    });
   });
 
   it('shows the script an interpreter grant will run, because the command line does not (C94)', () => {

@@ -180,21 +180,47 @@ describe('isConfiguredReviewer', () => {
 describe('using-beeline "Tools and the Workbench" section', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 
-  it('gives the agent the tool/key vocabulary and what each known tool is FOR', () => {
+  it('gives the agent the tool/key vocabulary and where to learn what each tool is FOR', () => {
     expect(markdown).toContain('## Tools and the Workbench');
-    expect(markdown).toContain('A **tool** is something you can use once a human pairs it');
+    expect(markdown).toContain('A **tool** is something you can use once a human adds it');
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
-    expect(markdown).toContain('Trusty Squire - vaulted credentials and a browser that signs in');
-    expect(markdown).toContain('Wallet and Tailscale');
-    expect(markdown).toContain('not yet available');
+    expect(markdown).toContain('beeline-agent workbench_status');
+    expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
+    expect(markdown).toContain('Tailscale is not available yet');
   });
 
-  it('holds the never-pair / never-ask rule without walking the person to the Workbench', () => {
-    expect(markdown).toContain('You NEVER pair a tool and never ask for a raw credential in chat.');
-    expect(markdown).toContain(
-      'the person decides whether to add it, in their own Settings; you never walk them through it',
-    );
+  // R5: earlier skill text sent the person to Settings → Workbench → Tools
+  // (then told the agent to stop at naming the tool). The offer card replaces both.
+  it('teaches WHEN to offer a tool from the Room instead of routing the person to a settings page', () => {
+    expect(markdown).toContain('**Offer the tool at the moment you need it.**');
+    expect(markdown).toContain('do not send them to a settings page');
+    expect(markdown).toContain('Call workbench_status first');
+    expect(markdown).toContain('Then call offer_connector with the connectorType and one short reason');
+    expect(markdown).toContain('Only that person or a Workspace admin can accept it');
+    expect(markdown).toContain('Your turn pauses on the card');
     expect(markdown).not.toContain('Settings → Workbench → Tools');
+    expect(markdown).not.toContain('tell the person exactly where to go');
+    expect(markdown).not.toContain('you never walk them through it');
+  });
+
+  it('requires research-first prose before an unfamiliar tool is offered', () => {
+    expect(markdown).toContain('**Research before you offer, and say so.**');
+    expect(markdown).toContain('Never offer a tool you cannot describe');
+    expect(markdown).toContain('say plainly that you are looking it up first');
+    expect(markdown).toContain('state what you learned in your reply BEFORE the card appears');
+    expect(markdown).toContain('Refusing to act blind is part of being trusted with keys');
+  });
+
+  it('keeps the offer a setup affordance, never an authority escalation, and never a raw credential', () => {
+    expect(markdown).toContain('An offer is setup, never authority');
+    expect(markdown).toContain(
+      'does not replace a grant, write permission, target-branch confirmation, or the merge gate',
+    );
+    expect(markdown).toContain('never needs a raw credential in chat');
+    expect(markdown).toContain('You never pair a tool yourself and never ask anyone for a key value');
+    // The Workbench page survives as the place to MANAGE, reachable from Settings.
+    expect(markdown).toContain('(Settings → Workbench)');
+    expect(markdown).toContain('you point there to MANAGE what exists, not to add what you need');
   });
 
   it('holds the key-sovereignty rule', () => {

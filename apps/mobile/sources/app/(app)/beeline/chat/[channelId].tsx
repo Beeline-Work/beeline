@@ -234,6 +234,7 @@ import {
   DaemonFactCard,
   NotificationLifecycleCard,
   GrantRequestCard,
+  ConnectorOfferCard,
   WalletCards,
   OrdinaryLedgerMessage,
   RelayHandOff,
@@ -648,6 +649,7 @@ export default function BuzzChat() {
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
+  const [connectorOfferActionId, setConnectorOfferActionId] = useState<string | null>(null);
   /** Proposal currently being confirmed, and the last refusal/failure text. */
   const [targetBranchActionId, setTargetBranchActionId] = useState<string | null>(null);
   const [targetBranchNotice, setTargetBranchNotice] = useState<{
@@ -3097,6 +3099,39 @@ export default function BuzzChat() {
   );
 
   /**
+   * Accept a connector-offer card (R5). The server holds the authority (the
+   * person the agent addressed or a Workspace manager) and refuses anyone
+   * else with a 403; the card re-reads from the indexed Room and settles into
+   * `added by @who`, so nothing is decided on the phone.
+   */
+  const handleAcceptConnectorOffer = useCallback(
+    async (offerId: string) => {
+      if (viewerIsAgent || connectorOfferActionId) return;
+      setConnectorOfferActionId(offerId);
+      try {
+        await monolithPhoneOperation('acceptConnectorOffer', { offerId });
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (err) {
+        console.warn('Connector offer acceptance failed:', err);
+      } finally {
+        setConnectorOfferActionId(null);
+      }
+    },
+    [connectorOfferActionId, viewerIsAgent],
+  );
+
+  /** The settled offer card's door to the Workbench page (Q3: one of its three remaining paths). */
+  const openWorkbench = useCallback(() => {
+    router.push({
+      pathname: '/beeline/settings/workbench',
+      params: {
+        ...(activeCommunityId ? { workspaceId: activeCommunityId } : {}),
+        ...(cacheViewerPubkey ? { viewerId: cacheViewerPubkey } : {}),
+      },
+    } as Href);
+  }, [activeCommunityId, cacheViewerPubkey]);
+
+  /**
    * Confirm a proposed target-branch change.
    *
    * The republished Room→repository event is signed by THIS viewer, so a
@@ -3925,6 +3960,21 @@ export default function BuzzChat() {
         );
       }
 
+      if (item.connectorOffer) {
+        return (
+          <ConnectorOfferCard
+            message={item}
+            agent={agentByPubkey.get(item.connectorOffer.agent.pubkey)}
+            viewerIsAgent={viewerIsAgent}
+            viewerPubkey={cacheViewerPubkey}
+            viewerRole={viewerChannelRole}
+            actionId={connectorOfferActionId}
+            onAccept={handleAcceptConnectorOffer}
+            onOpenWorkbench={openWorkbench}
+          />
+        );
+      }
+
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {
         return <WalletCards message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
@@ -4088,6 +4138,9 @@ export default function BuzzChat() {
       cornerProposalAction,
       beginForward,
       grantActionId,
+      connectorOfferActionId,
+      handleAcceptConnectorOffer,
+      openWorkbench,
       handleConfirmTargetBranch,
       openCorner,
       participantsHydrated,

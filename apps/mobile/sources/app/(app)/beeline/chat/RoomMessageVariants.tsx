@@ -18,6 +18,12 @@ import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-part
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { emojiTextStyle } from '@/buzz/emoji-text';
 import { grantAskLine } from '@/buzz/agent-grant-copy';
+import {
+  connectorOfferActionLabel,
+  connectorOfferOutcomeLine,
+  connectorOfferTitle,
+  connectorOfferWaitingLine,
+} from '@/buzz/connector-offer-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
@@ -326,6 +332,108 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
         );
       })}
     </View>
+  );
+});
+
+export interface ConnectorOfferCardProps {
+  message: ChatDisplayMessage;
+  agent?: AgentPresentation;
+  viewerIsAgent: boolean;
+  viewerPubkey: string;
+  viewerRole: 'owner' | 'admin' | 'member' | null;
+  /** The offer whose acceptance is in flight. */
+  actionId: string | null;
+  onAccept(offerId: string): void;
+  /** Opens the Workbench page — the settled card is one of its three remaining doors. */
+  onOpenWorkbench(): void;
+}
+
+/**
+ * The connector-offer card (R5): the agent reaches for a Workbench tool it
+ * needs, at the moment of need. Same chassis as the grant card, a different
+ * question — `Add Trusty Squire as a tool?` — with ONE server-owned subtitle
+ * naming the consequence and the standing safety boundary together ("still no
+ * raw key in chat"). ONE affirmative action, with the check glyph, for the
+ * person the agent addressed (whose keys the tool will hold) or a Workspace
+ * manager; everyone else reads the ask and `waiting for @addressee`. It
+ * settles in place into `added by @who · 12:04` with a `Manage in Workbench ›`
+ * link: a Room has many possible tappers, so the record names the one who
+ * acted. The phone mirrors the server's authority; it never decides it.
+ */
+export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
+  message,
+  agent,
+  viewerIsAgent,
+  viewerPubkey,
+  viewerRole,
+  actionId,
+  onAccept,
+  onOpenWorkbench,
+}: ConnectorOfferCardProps) {
+  const offer = message.connectorOffer!;
+  const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
+  const agentName = agent ? display.name : offer.agent.name;
+  const pending = offer.status === 'pending';
+  const canAccept =
+    !viewerIsAgent &&
+    (viewerPubkey === offer.addressee.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+  const busy = actionId === offer.offerId;
+  const actions: TranscriptCardAction[] =
+    pending && canAccept
+      ? [
+          {
+            label: connectorOfferActionLabel(offer.connectorName),
+            primary: true,
+            disabled: actionId !== null,
+            loading: busy,
+            onPress: () => onAccept(offer.offerId),
+            testID: `connector-offer-${offer.offerId}-accept`,
+          },
+        ]
+      : !pending
+        ? [
+            {
+              label: 'Manage in Workbench ›',
+              accessibilityRole: 'link',
+              onPress: onOpenWorkbench,
+              testID: `connector-offer-${offer.offerId}-workbench`,
+            },
+          ]
+        : [];
+  return (
+    <TranscriptCard
+      tier={pending ? 'ask' : 'record'}
+      testID={`connector-offer-${pending ? 'pending' : 'settled'}`}
+      identity={
+        <IdentityMark
+          kind="agent"
+          seed={display.avatarSeed ?? offer.agent.pubkey}
+          avatarUrl={display.avatarUrl}
+          face={display.face}
+          name={agentName}
+          size={26}
+        />
+      }
+      title={connectorOfferTitle(offer.connectorName)}
+      subline={offer.consequence}
+      sublineTestID={`connector-offer-${offer.offerId}-line`}
+      stamp={ledgerStamp(message.timestamp)}
+      footerNote={
+        pending
+          ? canAccept
+            ? undefined
+            : connectorOfferWaitingLine(offer)
+          : (connectorOfferOutcomeLine(offer) ?? undefined)
+      }
+      footerNoteTestID={
+        pending
+          ? canAccept
+            ? undefined
+            : `connector-offer-${offer.offerId}-waiting`
+          : `connector-offer-${offer.offerId}-outcome`
+      }
+      actions={actions}
+    />
   );
 });
 

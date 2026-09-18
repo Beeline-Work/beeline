@@ -336,14 +336,21 @@ describe('system-line producers', () => {
         { workspaceId: WORKSPACE, visibility: 'public' },
         OWNER,
       );
-      expect((await lines(database)).map((line) => line.text)).toEqual([
-        "@owner changed @bee's model to Codex",
-      ]);
+      expect((await lines(database)).map((line) => line.text)).toEqual([]);
       await database.query(`UPDATE agents SET model_unavailable='model' WHERE agent_id=$1`, [
         AGENT,
       ]);
       expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.modelUnavailable).toBe('model');
-      expect(await workspaceLineCounts(database, ['member-role', 'workspace-visibility'])).toEqual([
+      // The model change is a Workspace fact: one @system DM per person, and
+      // nothing in the shared Room transcript it used to fan out across.
+      expect(
+        await workspaceLineCounts(database, ['agent-model', 'member-role', 'workspace-visibility']),
+      ).toEqual([
+        {
+          author_id: SYSTEM_IDENTITY_ID,
+          text: "@owner changed @bee's model to Codex",
+          count: 5,
+        },
         {
           author_id: SYSTEM_IDENTITY_ID,
           text: "@owner changed @member's role to admin",

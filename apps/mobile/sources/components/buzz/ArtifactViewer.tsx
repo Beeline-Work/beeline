@@ -75,6 +75,8 @@ function ArtifactViewerImage({ attachment }: { attachment: AttachmentReference }
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
+    setFailed(false);
+    setSource(null);
     void artifactImageSource(attachment)
       .then((nextSource) => {
         if (live) setSource(nextSource);

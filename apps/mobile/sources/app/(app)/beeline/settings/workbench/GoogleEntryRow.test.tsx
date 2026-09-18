@@ -155,4 +155,32 @@ describe('GoogleEntryRow', () => {
     expect(row.props.action).toBeUndefined();
     expect(row.props.description).toBeUndefined();
   });
+
+  it('does not paint a Trusty Squire browser-session failure as Google Workspace breakage', async () => {
+    const busy =
+      'another Trusty Squire session is already using the browser - close it first';
+    const onPressConnect = vi.fn();
+    const renderer = await render(
+      React.createElement(GoogleEntryRow, {
+        connectors: [
+          { ...tool('trusty-squire'), status: 'error', errorMessage: busy },
+          { ...tool('google-gmail'), status: 'error', errorMessage: busy },
+          tool('google-calendar'),
+          tool('google-drive'),
+          tool('google-youtube'),
+        ],
+        onPressConnect,
+      }),
+    );
+    const row = renderer.root.findByProps({ testID: 'google-entry-row' });
+    expect(row.props.action).toBeUndefined();
+    expect(row.props.trailingPress).toBeUndefined();
+    expect(row.props.descriptionTone).not.toBe('danger');
+    expect(row.props.description).toBe(
+      'Connect Trusty Squire first — its browser session is busy',
+    );
+    expect(row.props.description).not.toMatch(
+      /another Trusty Squire session is already using the browser/i,
+    );
+  });
 });

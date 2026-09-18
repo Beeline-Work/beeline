@@ -287,7 +287,13 @@ const stylesheet = StyleSheet.create((theme) => {
     attentionPill: { height: 10 },
     label: {
       position: 'absolute',
-      left: 62,
+      // The rail centres each `TILE_SIZE` tile in `RAIL_WIDTH`, so a slot's
+      // left edge sits `(RAIL_WIDTH - TILE_SIZE) / 2` in; a label hung at
+      // `RAIL_WIDTH` from the slot's origin therefore lands exactly on the
+      // rail's right edge with a zero-pixel gap and reads as glued to it.
+      // RAIL_WIDTH / 2 + TILE_SIZE / 2 is the slot-relative distance to that
+      // edge; one spacing step past it is the deliberate breathing room.
+      left: RAIL_WIDTH / 2 + TILE_SIZE / 2 + hull.space.sm,
       top: '50%',
       minWidth: 120,
       maxWidth: 260,

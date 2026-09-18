@@ -23,6 +23,10 @@ const theme = vi.hoisted(() => ({
     borderStrong: '#3b3048',
     textMuted: '#83838d',
     textPrimary: '#f0f0f3',
+    // The rail reads its descriptor offset from the one spacing scale
+    // (`buzz/groknight.ts`'s `space`); mirror the real steps here so a
+    // regression test can name the gap instead of a magic number.
+    space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     type: { hero: {}, meta: {} },
   },
 }));
@@ -142,6 +146,23 @@ describe('desktop Workspace rail', () => {
       'Bravo',
       ['1 Rooms', ''],
     ]);
+  });
+
+  it('steps the descriptor card off the rail edge instead of gluing it', () => {
+    const tree = renderRail();
+    act(() => tree.root.findByProps({ testID: 'desktop-workspace-tile-bravo' }).props.onHoverIn());
+
+    // The rail centres a TILE_SIZE tile in RAIL_WIDTH, so the label's slot
+    // origin is that much in from the rail's left edge. A label whose `left`
+    // reaches the rail edge exactly (the old `left: 62`) leaves a zero gap.
+    const railWidth = 76;
+    const tileSize = 48;
+    const slotLeft = (railWidth - tileSize) / 2;
+    const label = tree.root.findByProps({ testID: 'desktop-workspace-label' });
+    const gap = slotLeft + (label.props.style as { left: number }).left - railWidth;
+
+    expect(gap).toBe(theme.buzz.space.sm);
+    expect(gap).toBeGreaterThan(0);
   });
 
   it('closes from the scrim or current tile and picks another Workspace', () => {

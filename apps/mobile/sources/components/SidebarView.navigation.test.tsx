@@ -12,9 +12,10 @@ const route = vi.hoisted(() => ({
   pathname: '/beeline/channels',
 }));
 const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
+const workspaceRole = vi.hoisted(() => ({ current: 'owner' as 'owner' | 'admin' | 'member' }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
-    workspace: { id: workspaceId, name: workspaceId, role: 'owner' },
+    workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
     viewer: { kind: viewer.kind },
     chats:
       workspaceId === 'workspace-a'
@@ -188,6 +189,7 @@ describe('desktop Workspace navigation', () => {
     route.parent = undefined;
     route.pathname = '/beeline/channels';
     viewer.kind = 'human';
+    workspaceRole.current = 'owner';
     await act(async () => {
       tree = create(<SidebarView />);
     });
@@ -315,6 +317,66 @@ describe('desktop Workspace navigation', () => {
     });
   });
 
+  it('offers Workspace settings to a privileged member and routes with the Workspace id', () => {
+    // ChatListView.workspace.role is the manage axis: owner/admin ⇒
+    // viewer.permissions.manage, member ⇒ not. Same signal as workspace.tsx.
+    const settings = tree.root.findByProps({ testID: 'desktop-workspace-settings' });
+    expect(settings.props.accessibilityLabel).toBe('Open Workspace settings');
+    expect(
+      settings
+        .findAllByType('Text')
+        .some(
+          (node: { props: { children?: unknown } }) => node.props.children === 'Workspace settings',
+        ),
+    ).toBe(true);
+
+    act(() => settings.props.onPress());
+
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/settings/workspace',
+      params: { communityId: 'workspace-a' },
+    });
+  });
+
+  it('offers Workspace settings to a Workspace admin', async () => {
+    workspaceRole.current = 'admin';
+    await act(async () => {
+      tree.update(<SidebarView key="admin-viewer" />);
+    });
+    await settle();
+
+    expect(tree.root.findByProps({ testID: 'desktop-workspace-settings' })).toBeDefined();
+  });
+
+  it('does not offer Workspace settings to an ordinary member', async () => {
+    workspaceRole.current = 'member';
+    await act(async () => {
+      tree.update(<SidebarView key="member-viewer" />);
+    });
+    await settle();
+
+    expect(tree.root.findAllByProps({ testID: 'desktop-workspace-settings' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'desktop-workbench' })).toBeDefined();
+  });
+
+  it('keeps Workspace settings and profile settings from appearing selected together', async () => {
+    route.pathname = '/beeline/settings/workspace';
+    await act(async () => {
+      tree.update(<SidebarView key="workspace-settings-route" />);
+    });
+    await settle();
+
+    const selected = (style: unknown) =>
+      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
+    const workspaceSettings = tree.root.findByProps({ testID: 'desktop-workspace-settings' });
+    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
+
+    expect(selected(workspaceSettings.props.style({ pressed: false }))).toBe(true);
+    expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
+    expect(workspaceSettings.props.accessibilityState).toEqual({ selected: true });
+    expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
+  });
+
   it('separates Rooms and direct messages without section creation controls', () => {
     expect(
       tree.root
@@ -336,6 +398,7 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'desktop-workspace-settings' })).toBeDefined();
   });
 
   it('keeps Workbench and profile settings from appearing selected together', async () => {

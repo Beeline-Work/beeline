@@ -109,6 +109,13 @@ const PROFILES: Array<{ match: RegExp; profile: HarnessProfile }> = [
       note: 'buzz-agent sends session/request_permission for mutating tools',
     },
   },
+  {
+    match: /(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i,
+    profile: {
+      enforcement: 'permission-callback',
+      note: 'cursor-agent-acp is a third-party adapter that bridges the cursor-agent CLI to ACP; it sends standard session/request_permission requests for mutating tools in its default mode, unverified against the published adapter',
+    },
+  },
 ];
 
 /**

@@ -8,12 +8,13 @@ export const AGENT_KINDS = [
   'goose',
   'pi',
   'grok',
+  'cursor',
   'reference',
   'custom',
 ] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
-export const AUTO_DETECT_AGENT_KINDS = ['codex', 'claude', 'goose', 'pi', 'grok'] as const;
+export const AUTO_DETECT_AGENT_KINDS = ['codex', 'claude', 'goose', 'pi', 'grok', 'cursor'] as const;
 
 export interface AgentCommand {
   kind: AgentKind;
@@ -33,7 +34,7 @@ export type DetectedAgentCommand =
       agent: AgentCommand;
     }
   | {
-      kind: 'codex' | 'claude' | 'pi';
+      kind: 'codex' | 'claude' | 'pi' | 'cursor';
       status: 'missing-adapter';
       install: AdapterInstallCommand;
     };
@@ -44,9 +45,10 @@ const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string
   goose: 'goose',
   pi: 'pi',
   grok: 'grok',
+  cursor: 'cursor-agent',
 };
 
-const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
+const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi' | 'cursor', AdapterInstallCommand> = {
   codex: {
     command: 'npm',
     args: ['install', '-g', '@agentclientprotocol/codex-acp'],
@@ -58,6 +60,10 @@ const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstall
   pi: {
     command: 'npm',
     args: ['install', '-g', 'pi-acp'],
+  },
+  cursor: {
+    command: 'npm',
+    args: ['install', '-g', 'cursor-agent-acp'],
   },
 };
 
@@ -314,6 +320,25 @@ export function resolveAgentCommand(opts: {
       env,
       cwd,
       `Pi needs an ACP adapter. Install it with \`${adapterInstallHint('pi')}\`, then retry with \`--agent pi\`.`,
+    );
+    return { kind: typedKind, command, args: [] };
+  }
+
+  if (typedKind === 'cursor') {
+    // cursor-agent does not support ACP natively; it needs the cursor-agent-acp
+    // adapter to bridge ACP with its --print (script/non-interactive) mode.
+    // The cursor-agent binary is detected by its official name `cursor-agent`.
+    requireExecutable(
+      'cursor-agent',
+      env,
+      cwd,
+      'Cursor Agent CLI not found. Install it from https://cursor.com/docs/cli, then retry with `--agent cursor`.'
+    );
+    const command = requireExecutable(
+      'cursor-agent-acp',
+      env,
+      cwd,
+      `Cursor ACP adapter not found. Install it with \`${adapterInstallHint('cursor')}\`, then retry with \`--agent cursor\`.`
     );
     return { kind: typedKind, command, args: [] };
   }

@@ -277,15 +277,42 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('permission-denied');
   });
 
-  it('stopping with nothing recognised reports the nothing-recognised state', async () => {
-    const { speech, probe } = renderHook();
+  it('treats an explicit empty stop as neutral', async () => {
+    const { speech } = renderHook();
     await act(async () => {
       await speech().start();
     });
     await act(async () => {
       speech().stop();
     });
-    expect(speech().state).toBe('nothing-recognised');
+    expect(speech().state).toBe('idle');
+  });
+
+  it('commits the latest interim when Android ends a requested stop without a final', async () => {
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+      fireEvent('result', { results: [{ transcript: 'keep these words' }], isFinal: false });
+    });
+    await act(async () => {
+      speech().stop();
+      fireEvent('error', { error: 'client' });
+      fireEvent('end');
+    });
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(onResult).toHaveBeenCalledWith('keep these words');
+    expect(speech().state).toBe('idle');
+  });
+
+  it('ignores recognizer results after a stopped session has ended', async () => {
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+      speech().stop();
+      fireEvent('end');
+      fireEvent('result', { results: [{ transcript: 'stale words' }], isFinal: true });
+    });
+    expect(onResult).not.toHaveBeenCalled();
   });
 
   it('is unavailable off device platforms', async () => {

@@ -401,7 +401,9 @@ export function displayRoomMessage(
         }
       : {}),
     ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),
-    ...(message.walletInsufficient ? { walletInsufficient: { ...message.walletInsufficient } } : {}),
+    ...(message.walletInsufficient
+      ? { walletInsufficient: { ...message.walletInsufficient } }
+      : {}),
     ...(message.walletDelegation ? { walletDelegation: { ...message.walletDelegation } } : {}),
     ...(message.permission
       ? {
@@ -467,26 +469,61 @@ export function roomViewTranscriptMessages(
 
 /**
  * The helper posts each settled tool call as its own durable activity row so
- * the record survives a helper restart. The phone reads them back as ONE
- * collapsed group per turn: a run of adjacent settled activity rows from the
- * same agent folds into the first row (its id and stamp stay stable) with every
- * member's activity concatenated in order. A human steer, agent prose, or a
- * durable-fact card between two rows ends the run. The agent's own in-flight
- * draft lane is never swallowed and never breaks the run: it is re-emitted
- * directly below the group it interrupted.
+ * the record survives a helper restart. The phone reads every tool call with
+ * the same agent + request id back as ONE collapsed disclosure, even when the
+ * helper narrated between machine runs. Narration remains in transcript order;
+ * its tool items move into the turn's first tool row. Legacy rows without a
+ * request id retain the older adjacent-run folding. A human steer, agent prose,
+ * or durable-fact card therefore still bounds those legacy runs. The agent's
+ * own in-flight draft lane is never swallowed and never breaks a run: it is
+ * re-emitted directly below the group it interrupted.
  */
 export function foldSettledActivityRuns(
   messages: readonly ChatDisplayMessage[],
 ): ChatDisplayMessage[] {
+  type TurnTools = { anchor: number; activity: AgentActivityItem[] };
+  const isSettledTurnActivity = (message: ChatDisplayMessage): boolean =>
+    Boolean(
+      message.requestId &&
+      message.pubkey &&
+      message.isAgentActivity &&
+      !message.isAgentLiveTurn &&
+      !message.isAgentDraft &&
+      !message.durableFact,
+    );
+  const turnTools = new Map<string, TurnTools>();
+  for (const [index, message] of messages.entries()) {
+    if (!isSettledTurnActivity(message)) continue;
+    const tools = message.activity?.filter((item) => item.kind === 'tool') ?? [];
+    if (!tools.length) continue;
+    const key = `${message.pubkey}\0${message.requestId}`;
+    const turn = turnTools.get(key);
+    if (turn) turn.activity.push(...tools);
+    else turnTools.set(key, { anchor: index, activity: [...tools] });
+  }
+
+  const normalized = messages.flatMap((message, index): ChatDisplayMessage[] => {
+    if (!isSettledTurnActivity(message) || !message.activity?.length) return [message];
+    const turn = turnTools.get(`${message.pubkey}\0${message.requestId}`);
+    if (!turn) return [message];
+    const nonTools = message.activity.filter((item) => item.kind !== 'tool');
+    const activity = index === turn.anchor ? [...nonTools, ...turn.activity] : nonTools;
+    return activity.length ? [{ ...message, activity }] : [];
+  });
+
   const folded: ChatDisplayMessage[] = [];
-  let run: { pubkey: string; activity: AgentActivityItem[]; drafts: ChatDisplayMessage[] } | null =
-    null;
+  let run: {
+    pubkey: string;
+    requestId?: string;
+    activity: AgentActivityItem[];
+    drafts: ChatDisplayMessage[];
+  } | null = null;
   const close = () => {
     if (!run) return;
     folded.push(...run.drafts);
     run = null;
   };
-  for (const message of messages) {
+  for (const message of normalized) {
     if (run && message.isAgentDraft && message.pubkey === run.pubkey) {
       run.drafts.push(message);
       continue;
@@ -511,13 +548,19 @@ export function foldSettledActivityRuns(
       folded.push(message);
       continue;
     }
-    if (run && run.pubkey === message.pubkey) {
+    if (
+      run &&
+      run.pubkey === message.pubkey &&
+      // A known turn id is an exact disclosure boundary. Only old rows that
+      // predate request ids may fall back to adjacency alone.
+      run.requestId === message.requestId
+    ) {
       run.activity.push(...message.activity!);
       continue;
     }
     close();
     const activity = [...message.activity!];
-    run = { pubkey: message.pubkey!, activity, drafts: [] };
+    run = { pubkey: message.pubkey!, requestId: message.requestId, activity, drafts: [] };
     folded.push({ ...message, activity });
   }
   close();

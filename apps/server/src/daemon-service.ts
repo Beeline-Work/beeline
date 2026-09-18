@@ -1627,12 +1627,8 @@ export class DaemonService {
          LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
          LEFT JOIN rooms parent ON parent.id=room.parent_id
          LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-         LEFT JOIN memberships reviewer_membership
-           ON reviewer_membership.room_id=parent.id
-          AND reviewer_membership.identity_id=parent.reviewer_agent_id
-          AND reviewer_membership.removed_at IS NULL
          LEFT JOIN identities reviewer
-           ON reviewer.id=reviewer_membership.identity_id AND reviewer.kind='agent'
+           ON reviewer.id=parent.reviewer_agent_id AND reviewer.kind='agent'
          WHERE a.agent_id=$1`,
         [agentId, roomId],
       )

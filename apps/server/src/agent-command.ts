@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type {
   AgentCommand,
   AgentCommandAction,
@@ -7,6 +7,7 @@ import type {
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
+import { systemLine } from './system-line.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
 export const COMMAND_MAX_DEPTH = 3;
@@ -130,6 +131,43 @@ export async function repairReviewerCornerMembership(
     [cornerId, reviewerAgentId],
   );
   return member.rowCount > 0;
+}
+
+const REVIEWER_NOT_PARENT_MEMBER = 'not a current member of the parent Room';
+const REVIEWER_NOT_CORNER_MEMBER = 'not a current member of this corner';
+
+/**
+ * A configured reviewer that cannot be dispatched must be named in the corner,
+ * not collapsed into the no-reviewer author path. Deterministic id so a later
+ * retry of the same gap does not spam; leave command_check_state alone so the
+ * next transition can still wake them once membership is restored.
+ */
+async function noteUnreachableReviewer(
+  db: SqlDatabase,
+  input: {
+    cornerId: string;
+    sourceMessageId: string;
+    reviewerId: string;
+    reviewerKind: string | null;
+    reviewerName: string | null;
+    reason: string;
+  },
+): Promise<void> {
+  const id = createHash('sha256')
+    .update(`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`)
+    .digest('hex');
+  await systemLine(db, {
+    id,
+    roomId: input.cornerId,
+    subject: {
+      kind: input.reviewerKind === 'human' ? 'person' : 'agent',
+      id: input.reviewerId,
+      name: input.reviewerName ?? 'the configured reviewer',
+    },
+    verb: 'could not be reached',
+    consequence: input.reason,
+    afterMessageId: input.sourceMessageId,
+  });
 }
 
 export async function createAgentCommand(
@@ -472,11 +510,17 @@ export async function routeSystemCommand(
     const fact = (
       await db.query<{
         owner_agent_id: string;
+        configured_reviewer_id: string | null;
+        configured_reviewer_kind: string | null;
+        configured_reviewer_name: string | null;
         reviewer_agent_id: string | null;
         state: string;
         command_check_state: string | null;
       }>(
         `SELECT fact.owner_agent_id,
+                parent.reviewer_agent_id configured_reviewer_id,
+                configured.kind configured_reviewer_kind,
+                configured.name configured_reviewer_name,
                 (
                   SELECT reviewer_membership.identity_id
                   FROM memberships reviewer_membership
@@ -490,6 +534,7 @@ export async function routeSystemCommand(
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
          JOIN rooms parent ON parent.id=corner.parent_id
+         LEFT JOIN identities configured ON configured.id=parent.reviewer_agent_id
          WHERE fact.corner_id=$1
          FOR UPDATE OF fact`,
         [input.roomId],
@@ -502,7 +547,10 @@ export async function routeSystemCommand(
         fact.state === fact.command_check_state
       )
         return;
-      if (input.kind === 'check-failed' || !fact.reviewer_agent_id) {
+      // Failed checks still wake the opener. The author fallback is only for
+      // corners with no reviewer configured — a configured id whose parent
+      // membership is missing is not "no reviewer".
+      if (input.kind === 'check-failed' || !fact.configured_reviewer_id) {
         const fallbackCarrier =
           (
             await db.query<{ agent_id: string }>(
@@ -522,19 +570,40 @@ export async function routeSystemCommand(
         ]);
         return;
       }
+      const unreachable = {
+        cornerId: input.roomId,
+        sourceMessageId: input.sourceMessageId,
+        reviewerId: fact.configured_reviewer_id,
+        reviewerKind: fact.configured_reviewer_kind,
+        reviewerName: fact.configured_reviewer_name,
+      };
+      if (!fact.reviewer_agent_id) {
+        await noteUnreachableReviewer(db, {
+          ...unreachable,
+          reason: REVIEWER_NOT_PARENT_MEMBER,
+        });
+        return;
+      }
       // A green review belongs to the configured reviewer and to nobody else.
       // Dispatch it only when the reviewer can actually read the corner: the
       // missing corner-membership projection is repaired above (never an
       // explicitly removed one). If the reviewer stays unreachable, dispatch
       // NOTHING — the old reroute handed the review to the corner owner,
       // whose daemon posted the review text under the owner's name. Leave
-      // command_check_state alone so a later green transition retries.
+      // command_check_state alone so a later green transition retries, and
+      // name them in the corner instead of staying silent.
       const deliverable = await repairReviewerCornerMembership(
         db,
         input.roomId,
         fact.reviewer_agent_id,
       );
-      if (!deliverable) return;
+      if (!deliverable) {
+        await noteUnreachableReviewer(db, {
+          ...unreachable,
+          reason: REVIEWER_NOT_CORNER_MEMBER,
+        });
+        return;
+      }
       await createAgentCommand(db, {
         roomId: input.roomId,
         agentId: fact.reviewer_agent_id,

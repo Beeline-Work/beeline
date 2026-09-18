@@ -161,4 +161,121 @@ describe('corner message attribution', () => {
     expect(routed).toHaveLength(1);
     expect(routed[0]!.agent_id).toBe(B);
   });
+
+  it('does not wake the author or consume green when the reviewer is not a parent member', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+      R,
+      B,
+    ]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      [
+        C,
+        JSON.stringify({
+          checks: 'passing',
+          lifecycle: 'in-review',
+          pr: { number: 9, url: 'https://github.com/acme/repo/pull/9', headSha: '3'.repeat(40) },
+        }),
+      ],
+    );
+    await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'passed a check',
+      kind: 'check-passed',
+    });
+    const routed = (
+      await db.query<{ agent_id: string; reason: string }>(
+        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1`,
+        [C],
+      )
+    ).rows;
+    expect(routed).toEqual([]);
+    expect(
+      (
+        await db.query<{ command_check_state: string | null }>(
+          `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
+          [C],
+        )
+      ).rows[0]?.command_check_state,
+    ).toBeNull();
+    expect(
+      (
+        await db.query<{ text: string }>(
+          `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`,
+          [C],
+        )
+      ).rows.map((row) => row.text),
+    ).toEqual(['@goosy could not be reached · not a current member of the parent Room']);
+  });
+
+  it('names a parent-member reviewer it cannot deliver into the corner and still retries', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+      C,
+      B,
+    ]);
+    await db.query(`
+      CREATE FUNCTION keep_reviewer_off_corner() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.room_id='${C}' AND NEW.identity_id='${B}' THEN
+          NEW.removed_at := now();
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER keep_reviewer_off_corner BEFORE INSERT OR UPDATE ON memberships
+        FOR EACH ROW EXECUTE FUNCTION keep_reviewer_off_corner();
+    `);
+    try {
+      await db.query(
+        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+        [
+          C,
+          JSON.stringify({
+            checks: 'passing',
+            lifecycle: 'in-review',
+            pr: { number: 10, url: 'https://github.com/acme/repo/pull/10', headSha: '4'.repeat(40) },
+          }),
+        ],
+      );
+      await systemLine(db, {
+        roomId: C,
+        authorId: H,
+        subject: { kind: 'github', name: 'GitHub' },
+        verb: 'passed a check',
+        kind: 'check-passed',
+      });
+      expect(
+        (
+          await db.query<{ agent_id: string }>(
+            `SELECT agent_id FROM agent_commands WHERE room_id=$1`,
+            [C],
+          )
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (
+          await db.query<{ command_check_state: string | null }>(
+            `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
+            [C],
+          )
+        ).rows[0]?.command_check_state,
+      ).toBeNull();
+      expect(
+        (
+          await db.query<{ text: string }>(
+            `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`,
+            [C],
+          )
+        ).rows.map((row) => row.text),
+      ).toEqual(['@goosy could not be reached · not a current member of this corner']);
+    } finally {
+      await db.query(`
+        DROP TRIGGER IF EXISTS keep_reviewer_off_corner ON memberships;
+        DROP FUNCTION IF EXISTS keep_reviewer_off_corner();
+      `);
+    }
+  });
 });

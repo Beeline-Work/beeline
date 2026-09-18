@@ -115,6 +115,7 @@ describe('desktop layout mode', () => {
 
     expect(messages).toContain('<LedgerEntry');
     expect(messages).toContain('<LedgerSteer');
+    expect(messages).toContain('chronological={desktopLayout}');
     expect(room).toContain('<OrdinaryLedgerMessage');
     expect(inspector).toContain('<OrdinaryLedgerMessage');
     expect(inspector).toContain('desktopLayout');

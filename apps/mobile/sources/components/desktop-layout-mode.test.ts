@@ -93,7 +93,7 @@ describe('desktop layout mode', () => {
     expect(messages).not.toContain("if (Platform.OS === 'web') {");
     expect(messages).not.toContain('<Text style={styles.replyDesktopLabel}>REPLY</Text>');
     expect(room).toContain('const desktopExperience = isDesktopPlatform();');
-    expect(room).toContain('const desktopTranscript = isDesktop;');
+    expect(room).toContain('const desktopTranscript = desktopExperience;');
   });
 
   it('shares the Ledger turn rhythm between mobile and desktop transcripts', () => {

@@ -450,7 +450,7 @@ export async function collectConnectWizard(
       placeholder: 'Type to filter available models…',
       maxItems: 12,
     });
-    return picked.trim();
+    return (picked ?? '').trim();
   };
   /**
    * Reasoning effort, asked whenever the harness advertises the axis. Ladders
@@ -491,7 +491,7 @@ export async function collectConnectWizard(
         ? { initialValue: axis.currentValue! }
         : {}),
     });
-    return picked.trim();
+    return (picked ?? '').trim();
   };
   // One bounded attempt, and never a hard failure: a harness that times out,
   // refuses or crashes is simply one the wizard has to ask about.

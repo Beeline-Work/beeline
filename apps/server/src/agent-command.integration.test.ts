@@ -518,6 +518,44 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(await commands(B, C)).toHaveLength(1);
   expect((await commands(B, C))[0]?.reason).toBe('corner_check');
 });
+it('does not wake the author or consume a green transition when the configured reviewer is not a parent member', async () => {
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    R,
+    A,
+  ]);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    [C],
+  );
+  await systemLine(db, {
+    roomId: C,
+    subject: { kind: 'person', id: H, name: 'Human' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+  });
+  expect(await commands(A, C)).toHaveLength(0);
+  expect(await commands(B, C)).toHaveLength(0);
+  expect(
+    (
+      await db.query<{ command_check_state: string | null }>(
+        `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
+        [C],
+      )
+    ).rows[0]?.command_check_state,
+  ).toBeNull();
+  expect(
+    (
+      await db.query<{ text: string }>(
+        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`,
+        [C],
+      )
+    ).rows.map((row) => row.text),
+  ).toEqual(['@hoots could not be reached · not a current member of the parent Room']);
+  await expect(
+    daemon.execute('getAgentConfiguration', { agentId: B, roomId: C }, B),
+  ).resolves.toEqual(expect.objectContaining({ reviewerHandle: 'hoots' }));
+});
 it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green head', async () => {
   const headSha = '7'.repeat(40);
   await db.query(

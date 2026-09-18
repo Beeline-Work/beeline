@@ -2055,6 +2055,13 @@ describe('thin monolith corner turn', () => {
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
+        systemPrompt: expect.stringContaining(
+          'When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake',
+        ),
+      }),
+    );
+    expect(sessionNew).toHaveBeenCalledWith(
+      expect.objectContaining({
         systemPrompt: expect.stringContaining('Never restate server check or merge notes'),
       }),
     );

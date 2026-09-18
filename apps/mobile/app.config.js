@@ -68,7 +68,11 @@ export default {
         userInterfaceStyle: "automatic",
         ios: {
             runtimeVersion: runtimeVersionOverride || "25",
-            icon: "./sources/assets/images/icon-ios.png",
+            icon: {
+                light: "./sources/assets/images/icon-light.png",
+                dark: "./sources/assets/images/icon-ios.png",
+                tinted: "./sources/assets/images/icon-ios-tinted.png",
+            },
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
@@ -105,7 +109,8 @@ export default {
                 // Owner-final treatment: brass loop on a flat aubergine field. Keep the
                 // fallback in sync if a toolchain drops the generated background image.
                 backgroundImage: "./sources/assets/images/icon-adaptive-background.png",
-                backgroundColor: "#14091A"
+                backgroundColor: "#14091A",
+                monochromeImage: "./sources/assets/images/icon-adaptive-monochrome.png"
             },
             permissions: [
                 "android.permission.ACCESS_NETWORK_STATE",

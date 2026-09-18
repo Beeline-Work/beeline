@@ -144,6 +144,7 @@ describe('phone contract', () => {
     );
     expectTypeOf<PhoneOperationMap['answerChoice']['input']>().toHaveProperty('optionId');
     expectTypeOf<PhoneOperationMap['skipChoice']['input']>().toHaveProperty('choiceId');
+    expectTypeOf<PhoneOperationMap['acceptConnectorOffer']['input']>().toHaveProperty('offerId');
     expectTypeOf<PhoneOperationMap['requestCornerClose']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['closeChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['reopenChat']['input']>().toHaveProperty('roomId');

@@ -284,7 +284,6 @@ interface CornerRow extends RoomRow {
   latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
 }
-}
 // Correlated with the authorized Room and viewer in both Room read paths.
 const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
   'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),

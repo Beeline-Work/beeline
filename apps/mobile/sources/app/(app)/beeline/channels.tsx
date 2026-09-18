@@ -861,7 +861,6 @@ export default function BuzzChannels() {
                     {bookmarkCount} saved message{bookmarkCount === 1 ? '' : 's'}
                   </Text>
                 </View>
-                <Text style={styles.bookmarksOpen}>OPEN →</Text>
               </Pressable>
             ) : null
           }
@@ -1183,7 +1182,6 @@ const styles = StyleSheet.create((theme) => {
     bookmarksCopy: { flex: 1, minWidth: 0 },
     bookmarksTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
     bookmarksMeta: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, marginTop: 2 },
-    bookmarksOpen: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

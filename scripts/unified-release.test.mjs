@@ -475,6 +475,27 @@ test('reproduces #1088: a runtime pin bump cannot plan an OTA without store bina
   );
 });
 
+test('allowPinRestore ships an OTA-only pin restore without mobile-native and records pinRestore', () => {
+  const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
+    gitShow: (sha) => JSON.stringify(sha === OLD_SHA ? { runtimeVersion: '23' } : {
+      android: { runtimeVersion: '24' }, ios: { runtimeVersion: '24' },
+    }),
+  });
+  assert.equal(pins.changed, true);
+  const selected = selectReleaseComponents(['apps/mobile/sources/index.ts'], {
+    selection: 'auto', storeTrack: 'none', runtimePin: pins, allowPinRestore: true,
+  });
+  assert.ok(selected.includes('mobile-ota'));
+  assert.ok(!selected.includes('mobile-native'));
+  const state = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
+    selectedComponents: selected, runtimePin: pins,
+  });
+  state.plan.pinRestore = true;
+  assert.equal(state.plan.pinRestore, true);
+  assert.deepEqual(state.plan.nativePlatforms, ['android', 'ios']);
+});
+
 test('the path map has no duplicate matcher and names only real components', () => {
   const matchers = COMPONENT_PATH_RULES.map((rule) => rule.exact ?? `${rule.prefix}*`);
   assert.equal(new Set(matchers).size, matchers.length);
@@ -690,9 +711,10 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(inputs.selection.default, 'auto');
   assert.equal(inputs.store_track.default, 'none');
   assert.equal(inputs.plan_only.default, false);
-  assert.equal(inputs.skip_release_proof.default, false);
-  assert.equal(inputs.skip_release_proof.type, 'boolean');
-  for (const input of Object.values(inputs)) assert.match(input.description, /Recovery only/);
+  assert.equal(inputs.run_release_proof.default, false);
+  assert.equal(inputs.run_release_proof.type, 'boolean');
+  const consentOnly = ['release_sha', 'release_version', 'retry_attempt', 'selection', 'store_track', 'plan_only'];
+  for (const name of consentOnly) assert.match(inputs[name].description, /Recovery only|Opt-in only|routine releases keep/, `${name} description`);
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
@@ -986,19 +1008,19 @@ test('the emulator release proof gates OTA promotion', () => {
   assert.match(evidence.if, /always\(\) && steps\.proof\.conclusion != 'skipped'/);
   assert.match(evidence.with.path, /release-proof-out/);
 
-  // Promotion itself is gated, not just the job: the built checkpoint still
-  // lands when the proof fails, and any proof outcome short of success fails
-  // mobile_ota loudly — a proof that did not run is not a proof. The
-  // skip_release_proof input is the one recovery escape hatch when the
-  // rig is down; the refusal message names it and the actual outcome, and
-  // the release record is marked unproven.
+  // The proof is consent-gated: it runs only when the operator explicitly
+  // dispatches with run_release_proof=true. OTA promotion never depends on
+  // the proof; when the proof WAS requested and did not succeed, promotion
+  // is blocked loudly. Any OTA promoted without a proof is recorded UNPROVEN
+  // on the release.
+  assert.match(proof.if, /inputs\.run_release_proof == true/);
   const ota = workflow.jobs.mobile_ota;
   const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
-  assert.match(promote.if, /needs\.release_proof\.result == 'success' \|\| inputs\.skip_release_proof == true/);
+  assert.match(promote.if, /needs\.release_proof\.result == 'success' \|\| inputs\.run_release_proof != true/);
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
-  assert.equal(refuse.if, "needs.release_proof.result != 'success' && inputs.skip_release_proof != true");
+  assert.equal(refuse.if, "inputs.run_release_proof == true && needs.release_proof.result != 'success'");
   assert.match(refuse.run, /exit 1/);
-  assert.match(refuse.run, /skip_release_proof=true/);
+  assert.match(refuse.run, /The proof was explicitly requested for this release, so promotion stays blocked/);
   assert.match(refuse.run, /result: \$\{\{ needs\.release_proof\.result \}\}/);
   for (const step of ota.steps.filter((step) =>
     [
@@ -1007,17 +1029,17 @@ test('the emulator release proof gates OTA promotion', () => {
       'Require rollback evidence and write checkpoint',
     ].includes(step.name),
   )) {
-    assert.match(step.if, /needs\.release_proof\.result == 'success' \|\| inputs\.skip_release_proof == true/);
+    assert.match(step.if, /needs\.release_proof\.result == 'success' \|\| inputs\.run_release_proof != true/);
   }
 
-  // The bypass records the unproven promotion on the release itself.
+  // An unrequested proof records the unproven promotion on the release.
   const result = workflow.jobs.release_result;
   const fin = result.steps.find((step) => step.name === 'Finalize successful delivery after every selected promotion and record');
-  assert.match(fin.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
+  assert.match(fin.env.RELEASE_PROOF_UNPROVEN, /needs\.initialize\.outputs\.run_mobile_ota == 'true' && inputs\.run_release_proof != true/);
   assert.match(fin.run, /--unproven/);
   const record = result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
-  assert.match(record.env.RELEASE_PROOF_UNPROVEN, /inputs\.skip_release_proof == true && needs\.release_proof\.result != 'success'/);
-  assert.match(record.run, /Promoted with skip_release_proof=true/);
+  assert.match(record.env.RELEASE_PROOF_UNPROVEN, /needs\.initialize\.outputs\.run_mobile_ota == 'true' && inputs\.run_release_proof != true/);
+  assert.match(record.run, /Promoted without a device proof/);
 });
 
 test('the proof reinstalls over a foreign signature and signs in through the review bypass', () => {
@@ -1132,7 +1154,7 @@ function githubGate(condition, values) {
   return result;
 }
 
-test('a skipped release proof blocks promotion and fails mobile_ota; success or the override still promotes', () => {
+test('the release proof is consent-gated; a requested proof that fails blocks promotion', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
@@ -1141,9 +1163,9 @@ test('a skipped release proof blocks promotion and fails mobile_ota; success or 
   const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
 
-  const proofEnv = ({ native_android = 'true', native_result = 'success', run_mobile_ota = 'true', skip = false } = {}) => ({
+  const proofEnv = ({ native_android = 'true', native_result = 'success', run_mobile_ota = 'true', requested = false } = {}) => ({
     'inputs.plan_only': false,
-    'inputs.skip_release_proof': skip,
+    'inputs.run_release_proof': requested,
     'needs.initialize.result': 'success',
     'needs.initialize.outputs.run_mobile_ota': run_mobile_ota,
     'needs.initialize.outputs.native_android': native_android,
@@ -1156,45 +1178,43 @@ test('a skipped release proof blocks promotion and fails mobile_ota; success or 
     'needs.release_proof.result': 'success',
   });
 
-  // The proof must run whenever an update will be promoted. Run
-  // 34972989027's exact shape: the native Android build was carried forward
-  // (skipped, not failed) while native_android stayed true — the proof used
-  // to skip there, silently stranding the built OTA.
-  const carried = proofEnv({ native_result: 'skipped' });
-  assert.equal(githubGate(proofIf, carried), true, 'a skipped native build must not stop the proof');
+  // The proof is opt-in: it never runs for a default OTA-only release.
+  assert.equal(githubGate(proofIf, proofEnv({})), false, 'the proof is off by default');
+  assert.equal(githubGate(proofIf, proofEnv({ requested: true })), true, 'an explicitly requested proof runs');
+  // When requested, a carried (skipped) native build must not stop the proof:
+  // run 34972989027's exact shape.
+  const carried = proofEnv({ native_result: 'skipped', requested: true });
+  assert.equal(githubGate(proofIf, carried), true, 'a skipped native build must not stop a requested proof');
   assert.equal(githubGate(ota.if, carried), true, 'mobile_ota runs its build phase for the carried shape');
-  assert.equal(githubGate(proofIf, proofEnv({})), true, 'a successful native build keeps the proof running');
   assert.equal(
-    githubGate(proofIf, proofEnv({ native_android: 'false', native_result: 'skipped' })),
+    githubGate(proofIf, proofEnv({ native_android: 'false', native_result: 'skipped', requested: true })),
     true,
     'an OTA-only release has no native build to wait for',
   );
-  // Only a native build that genuinely FAILED stops the proof, and the
-  // explicit override still suppresses it.
-  assert.equal(githubGate(proofIf, proofEnv({ native_result: 'failure' })), false);
-  assert.equal(githubGate(proofIf, proofEnv({ skip: true })), false);
+  // Only a native build that genuinely FAILED stops a requested proof.
+  assert.equal(githubGate(proofIf, proofEnv({ native_result: 'failure', requested: true })), false);
 
-  // Promotion truth table: only a successful proof — or the explicit
-  // override — promotes; every other proof outcome blocks promotion AND
-  // fails the job at the refusal step, naming the outcome.
-  const gateEnv = (proof, skip) => ({
+  // Promotion truth table: OTA promotes whenever the proof was not requested;
+  // when it WAS requested, only a successful proof promotes and every other
+  // outcome blocks promotion AND fails the job at the refusal step.
+  const gateEnv = (proof, requested) => ({
     'needs.initialize.outputs.stage_mobile_ota': 'pending',
     'needs.release_proof.result': proof,
-    'inputs.skip_release_proof': skip,
+    'inputs.run_release_proof': requested,
   });
-  for (const [proof, skip] of [
-    ['success', false], ['success', true],
-    ['failure', false], ['failure', true],
-    ['skipped', false], ['skipped', true],
-    ['cancelled', false], ['cancelled', true],
-  ]) {
-    const promotes = proof === 'success' || skip;
-    assert.equal(githubGate(promote.if, gateEnv(proof, skip)), promotes, `promote(${proof}, skip=${skip})`);
-    assert.equal(githubGate(refuse.if, gateEnv(proof, skip)), !promotes, `refuse(${proof}, skip=${skip})`);
+  for (const proof of ['success', 'failure', 'skipped', 'cancelled']) {
+    assert.equal(githubGate(promote.if, gateEnv(proof, false)), true, `promote(${proof}, not requested)`);
+    assert.equal(githubGate(refuse.if, gateEnv(proof, false)), false, `refuse(${proof}, not requested)`);
+  }
+  assert.equal(githubGate(promote.if, gateEnv('success', true)), true, 'promote(success, requested)');
+  assert.equal(githubGate(refuse.if, gateEnv('success', true)), false, 'refuse(success, requested)');
+  for (const proof of ['failure', 'skipped', 'cancelled']) {
+    assert.equal(githubGate(promote.if, gateEnv(proof, true)), false, `promote(${proof}, requested)`);
+    assert.equal(githubGate(refuse.if, gateEnv(proof, true)), true, `refuse(${proof}, requested)`);
   }
 });
 
-test('a skipped release proof classifies the attempt as a failed mobile-ota component, not a clean release', () => {
+test('a built-but-never-promoted mobile OTA classifies the attempt as a failed component, not a clean release', () => {
   // With the refusal step failing mobile_ota, only the built checkpoint
   // lands, so release_result's apply-checkpoints must leave mobile-ota
   // incomplete and the attempt classifies `component:mobile-ota` — never a

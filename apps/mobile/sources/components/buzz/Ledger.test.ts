@@ -198,11 +198,12 @@ describe('the ledger — an agent turn', () => {
     expect(renderedText(renderer).join(' ')).toContain('And rebuilt the index afterwards.');
   });
 
-  it('keeps opening and continued messages on one compact divider-free rhythm', () => {
+  it('gives speaker-changing bylines twice the same-speaker chunk spacing', () => {
     const opens = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
         luminous: true,
+        byline: { name: 'Ox', role: 'agent', stamp: '16:41' },
         bodyText: 'A paragraph.',
         bodyTestID: 'body',
       }),
@@ -223,11 +224,18 @@ describe('the ledger — an agent turn', () => {
       .findByProps({ testID: 'chat-message-b' })
       .props.style.filter(Boolean);
     const resolved = (row: Record<string, unknown>[]) => Object.assign({}, ...row);
-    expect(resolved(opensRow)).toMatchObject({ paddingVertical: 6, marginBottom: 0 });
-    expect(resolved(continuedRow)).toMatchObject({ paddingVertical: 6, marginBottom: 0 });
+    const opener = resolved(opensRow) as Record<string, number>;
+    const follower = resolved(continuedRow) as Record<string, number>;
+    const sameSpeakerGap = follower.paddingBottom + follower.paddingTop;
+    const speakerChangeGap = follower.paddingBottom + opener.paddingTop;
+    expect(sameSpeakerGap).toBe(12);
+    expect(speakerChangeGap).toBe(24);
+    expect(speakerChangeGap).toBe(sameSpeakerGap * 2);
+    expect(opener).toMatchObject({ paddingTop: 18, paddingBottom: 6, marginBottom: 0 });
+    expect(follower).toMatchObject({ paddingTop: 6, paddingBottom: 6, marginBottom: 0 });
 
-    // The sender header carries the run boundary; no message row adds another
-    // rule, frame, fill, or opener-only gap.
+    // Proximity alone carries the run boundary; no message row adds a rule,
+    // frame, or fill.
     for (const style of [...opensRow, ...continuedRow]) {
       expect(style).not.toHaveProperty('borderRadius');
       expect(style).not.toHaveProperty('backgroundColor');
@@ -381,13 +389,18 @@ describe('the ledger — a human turn is plain body text', () => {
       return Object.assign({}, ...styles) as Record<string, number | undefined>;
     };
 
-    // The sender byline opens the run. Its first message and every continuation
-    // use the same compact row spacing, without a divider or opener-only gap.
+    // The sender byline opens the run at twice the compact same-speaker gap,
+    // without adding a divider, frame, or fill.
     const opener = rowStyle(opens, 'b1');
     const follower = rowStyle(continued, 'b2');
-    expect(follower.paddingVertical).toBe(6);
+    expect(opener.paddingTop).toBe(18);
+    expect(opener.paddingBottom).toBe(6);
+    expect(follower.paddingTop).toBe(6);
+    expect(follower.paddingBottom).toBe(6);
     expect(follower.marginBottom).toBe(0);
-    expect(opener).toMatchObject(follower);
+    expect(follower.paddingBottom! + opener.paddingTop!).toBe(
+      (follower.paddingBottom! + follower.paddingTop!) * 2,
+    );
     expect(opener.borderTopWidth).toBeUndefined();
     expect(opener.borderBottomWidth).toBeUndefined();
     expect(renderedText(continued).join(' ')).toContain('And rerun the suite.');

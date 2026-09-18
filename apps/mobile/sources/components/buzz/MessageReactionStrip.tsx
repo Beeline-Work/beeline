@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { MESSAGE_REACTION_EMOJIS, type MessageReactionEmoji } from '@beeline/buzz-client';
-import { Typography } from '@/constants/Typography';
+import { emojiTextStyle } from '@/buzz/emoji-text';
 import { HULL_SHEET_INSET } from './HullActionSheet';
 
 /** The strip's cap. It scrolls, so the vocabulary may grow — it never grows
@@ -59,10 +59,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     choicePressed: { backgroundColor: groknight.bgHighlight },
-    emoji: {
-      ...Typography.default(),
-      ...groknight.type.body,
-      lineHeight: 22,
-    },
+    emoji: emojiTextStyle(groknight.type.body),
   };
 });

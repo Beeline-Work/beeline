@@ -5,7 +5,7 @@
  * emulator rig (emulator-5554 by default).
  *
  * What it proves, per flow:
- *   room-renders       a repo-bound Room renders its transcript AND composer
+ *   room-renders       a Room on the deck renders its transcript AND composer
  *                      (the flow that would have caught the 2026-09-14
  *                      blank-screen release)
  *   corner-opens       a corner opens and renders its objective line
@@ -82,7 +82,10 @@ function run(cmd, args, opts = {}) {
     timeout: opts.timeout ?? 10 * 60 * 1000,
     env: opts.env ?? process.env,
   });
-  const stdout = res.stdout ? res.stdout.toString() : '';
+  // Binary output (adb exec-out screencap PNGs) must not be decoded as UTF-8:
+  // decoding replaces every non-ASCII byte with U+FFFD and silently corrupts
+  // the file. Binary callers keep the raw Buffer; text callers decode here.
+  const stdout = opts.binary ? (res.stdout ?? Buffer.alloc(0)) : res.stdout ? res.stdout.toString() : '';
   const stderr = res.stderr ? res.stderr.toString() : '';
   if (opts.allowFailure) return { ok: res.status === 0, stdout, stderr, status: res.status };
   if (res.status !== 0) {
@@ -292,6 +295,16 @@ function installArtifact(device, args) {
     adb(device, ['install', '-r', '-d', args.apk], { timeout: 10 * 60 * 1000 });
     return 'apk';
   }
+  const apks = buildUniversalApks(args);
+  run('java', ['-jar', ensureBundletool(), 'install-apks', '--apks=' + apks, '--device-id=' + device], { timeout: 10 * 60 * 1000 });
+  rmSync(apks, { force: true });
+  return 'aab';
+}
+
+// Build the universal sideload APKs from the proof AAB and return the path.
+// Used both by installArtifact and by the signed-out flow, which must
+// provision the same artifact version for user 0 before install-existing.
+function buildUniversalApks(args) {
   const ks = sideloadKeystore();
   const jar = ensureBundletool();
   const apks = '/tmp/release-proof-universal.apks';
@@ -307,9 +320,7 @@ function installArtifact(device, args) {
     '--ks-pass=pass:' + ks.storePass,
     '--key-pass=pass:' + (ks.keyPass ?? ks.storePass),
   ], { timeout: 15 * 60 * 1000 });
-  run('java', ['-jar', jar, 'install-apks', '--apks=' + apks, '--device-id=' + device], { timeout: 10 * 60 * 1000 });
-  rmSync(apks, { force: true });
-  return 'aab';
+  return apks;
 }
 
 // ---------------------------------------------------------------------------
@@ -369,11 +380,13 @@ function pickRoom(xml) {
     if (!match) fail(`RELEASE_PROOF_ROOM=${override} has no row on the current room list.`);
     return { id: match, roomIds: ids };
   }
-  // A repo-bound room is the one carrying a corners toggle (corners exist only there).
+  // A room carrying a corners toggle is one with a live corner; the review
+  // identity's seeded proof room (review-proof-fixture.ts) carries one, so the
+  // pick no longer depends on transient production corners.
   const repoBound = new RegExp(`resource-id="room-corners-toggle-(${UUID})"`, 'g');
   const bound = [...xml.matchAll(repoBound)].map((m) => m[1]);
   if (bound.length) return { id: bound[0], roomIds: ids };
-  console.log('release-proof: WARNING — no repo-bound room on the deck; corner discovery will likely fail.');
+  console.log('release-proof: WARNING — no room with a live corner on the deck; corner discovery will likely fail.');
   return { id: ids[0], roomIds: ids };
 }
 
@@ -401,7 +414,7 @@ function runMaestro(device, yamlPath, env = {}, outDir, tag) {
 }
 
 function screenshot(device, outPath) {
-  const res = adb(device, ['exec-out', 'screencap', '-p'], { allowFailure: true });
+  const res = adb(device, ['exec-out', 'screencap', '-p'], { allowFailure: true, binary: true });
   if (res.ok && res.stdout?.length) {
     writeFileSync(outPath, res.stdout);
     return true;
@@ -428,6 +441,13 @@ async function runSignedOutFlow(device, args, outDir) {
     await sleep(3000);
   }
   const created = adbShell(device, 'pm create-user beeline-proof', { allowFailure: true });
+  // A stale install on ANY user profile pins the package version on the
+  // device: provisioning an older proof build for a fresh secondary user then
+  // fails with INSTALL_FAILED_VERSION_DOWNGRADE (run 35274684695 hit exactly
+  // this: a version-70 install survived while the proof artifact carried
+  // version 27). Strip the app from every profile before provisioning, then
+  // reinstall the proof artifact fresh for user 0 so install-existing clones
+  // the right version.
   if (!created.ok || !/Success.*user id (\d+)/.test(created.stdout)) {
     return {
       ok: false,
@@ -437,6 +457,23 @@ async function runSignedOutFlow(device, args, outDir) {
   const userId = Number(created.stdout.match(/user id (\d+)/)[1]);
   console.log(`release-proof: created secondary user ${userId} for the signed-out proof`);
   try {
+    for (const [existingUserId] of listAndroidUsers(device)) {
+      const removed = adbShell(device, `pm uninstall --user ${existingUserId} ${APP_ID}`, { allowFailure: true });
+      if (/Success/.test(removed.stdout)) {
+        console.log(`release-proof: removed stale ${APP_ID} install from user ${existingUserId}`);
+      }
+    }
+    const reinstalled = args.apk
+      ? adb(device, ['install', '-r', '-d', args.apk], { allowFailure: true, timeout: 10 * 60 * 1000 })
+      : (() => { const p = buildUniversalApks(args); return run('java', ['-jar', ensureBundletool(), 'install-apks', '--apks=' + p, '--device-id=' + device], { allowFailure: true, timeout: 10 * 60 * 1000 }); })();
+    if (!reinstalled.ok || reinstalled.status !== 0) {
+      return { ok: false, output: `could not reinstall ${APP_ID} for user 0 before the signed-out proof:\n${reinstalled.stderr}` };
+    }
+    // Run 35281590377: install-existing hit INSTALL_FAILED_VERSION_DOWNGRADE
+    // (v27 proof vs a stale v71 copy still visible to the fresh secondary
+    // user), and the fallback then reinstalled without -d so it failed the
+    // same way. Clear that user's copy explicitly and allow downgrades.
+    adbShell(device, `pm uninstall --user ${userId} ${APP_ID}`, { allowFailure: true });
     const install = adbShell(device, `pm install-existing --user ${userId} ${APP_ID}`, { allowFailure: true });
     if (!install.ok || !/Success/.test(install.stdout)) {
       // Fall back to a full install for that user.
@@ -444,8 +481,13 @@ async function runSignedOutFlow(device, args, outDir) {
       if (!push.ok) {
         return { ok: false, output: `could not provision the app for secondary user ${userId}:\n${install.stdout}` };
       }
-      const inst = adbShell(device, `pm install --user ${userId} -r /data/local/tmp/release-proof.apk`, { allowFailure: true });
-      if (!inst.ok) return { ok: false, output: `could not install the app for secondary user ${userId}:\n${inst.stdout}` };
+      const inst = adbShell(device, `pm install --user ${userId} -r -d /data/local/tmp/release-proof.apk`, { allowFailure: true });
+      if (!inst.ok) {
+        return {
+          ok: false,
+          output: `could not install the app for secondary user ${userId} (install-existing said: ${install.stdout} ${install.stderr}):\n${inst.stdout}\n${inst.stderr}`,
+        };
+      }
     }
     const switched = adbShell(device, `am switch-user ${userId}`, { allowFailure: true });
     if (!switched.ok) return { ok: false, output: `could not switch to secondary user ${userId}:\n${switched.stderr}` };
@@ -645,7 +687,7 @@ async function main() {
     if (!cornerId) {
       console.error(
         'release-proof: no corner could be opened — the corner-opens proof cannot run.\n' +
-        'Open (or point RELEASE_PROOF_CORNER at) a corner in the proof workspace and re-run.',
+        'Open (or point RELEASE_PROOF_CORNER at) a corner in the signed-in workspace and re-run.',
       );
       process.exit(2);
     }
@@ -672,7 +714,29 @@ async function main() {
       adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
       await sleep(2000);
       const started = Date.now();
-      const r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, flow.name);
+      // The Maestro Android driver occasionally fails to start up within its
+      // budget on the shared rig (settings-workbench in run 35281590377), and
+      // adb/emulator "device offline" blips kill Maestro mid-launch with no
+      // error output at all (room-renders and corner-opens in run
+      // 35290591194). Both are rig flakes, not app defects: wait for the
+      // device and retry them. Real flow assertion failures still fail the
+      // proof - they print "Error:" plus completed steps and never retry.
+      const RIG_FLAKE = /did not start up in time|device (offline|not found)/i;
+      adb(device, ['wait-for-device'], { allowFailure: true, timeout: 60 * 1000 });
+      let r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, flow.name);
+      let attempt = 1;
+      // A real flow failure prints "Error:" plus its completed steps; a rig
+      // flake can kill Maestro before any step, leaving silent output. Retry
+      // only that silent shape, so genuine assertion failures still fail.
+      const flakey = () => RIG_FLAKE.test(r.output) || !/Error|COMPLETED/.test(r.output);
+      while (!r.ok && flakey() && attempt < 3) {
+        attempt += 1;
+        console.log(`release-proof: ${flow.name}: rig flake (attempt ${attempt - 1}) - retrying`);
+        adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
+        await sleep(2000);
+        adb(device, ['wait-for-device'], { allowFailure: true, timeout: 60 * 1000 });
+        r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, `${flow.name}-retry${attempt - 1}`);
+      }
       const seconds = (Date.now() - started) / 1000;
       const screenshotPath = join(outDir, `${flow.name}.png`);
       screenshot(device, screenshotPath);

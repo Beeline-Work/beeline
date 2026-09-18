@@ -17,8 +17,9 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * Grotesk prose with IBM Plex Mono reserved for bylines, code, tool readouts,
  * and system lines. Hierarchy on a long agent turn comes from weight and
  * brightness — a medium-weight bright lead line, then regular secondary
- * prose — never from size. Messages use one compact vertical rhythm beneath
- * their sender byline; there are no speaker rails, bubbles, dividers, or boxes.
+ * prose — never from size. Same-speaker chunks use one compact vertical
+ * rhythm; a new byline gets exactly twice that separation so a voice change
+ * reads without speaker rails, bubbles, dividers, or boxes.
  *
  * Identity lives in the byline above every agent prose message and the first
  * message in a human run: the speaker's
@@ -455,7 +456,7 @@ export function LedgerEntry({
     </>
   );
   return (
-    <View style={[styles.entry]} testID={`chat-message-${itemId}`}>
+    <View style={[styles.entry, byline && styles.entryWithByline]} testID={`chat-message-${itemId}`}>
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {settleFrom && (leadText || remainingText) ? (
@@ -494,7 +495,7 @@ export function LedgerSteer({
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
   // body's; ownership reads from the byline alone.
   return (
-    <View style={[styles.entry]} testID={`chat-message-${itemId}`}>
+    <View style={[styles.entry, byline && styles.entryWithByline]} testID={`chat-message-${itemId}`}>
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
       {bodyText ? (
@@ -748,8 +749,15 @@ const styles = StyleSheet.create((theme) => ({
   entry: {
     width: '100%',
     minWidth: 0,
-    paddingVertical: theme.buzz.messagePaddingVertical,
+    paddingTop: theme.buzz.messagePaddingVertical,
+    paddingBottom: theme.buzz.messagePaddingVertical,
     marginBottom: theme.buzz.messageGap,
+  },
+  // Adjacent compact rows contribute 6px each for a 12px same-speaker gap.
+  // A bylined row contributes 18px above instead, so the preceding row's 6px
+  // makes the speaker-change boundary exactly 24px on phone and desktop.
+  entryWithByline: {
+    paddingTop: theme.buzz.messagePaddingVertical * 3,
   },
   byline: {
     flexDirection: 'row',

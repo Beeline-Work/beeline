@@ -3,6 +3,23 @@
 `Unified production release` is the only workflow that releases current
 `main`. It is manually dispatched; merges do not trigger a production release.
 
+## Release policy (consent gates)
+
+- **OTA is the default delivery.** A routine release promotes mobile OTA
+  updates only. It never publishes to the App Store or Play Store and never
+  requires the emulator device proof.
+- **Store publishing is explicit and consent-gated.** `store_track` stays
+  `none` unless the project owner explicitly dispatches with a track
+  (`internal`, `beta`, or `production`). The one exception the planner enforces
+  is a runtime-pin change: a new runtime needs a new store binary as its
+  anchor, so planning refuses until a store track is named - and naming it is
+  still an explicit operator decision.
+- **The device proof is opt-in.** `run_release_proof=true` runs the emulator
+  release proof before OTA promotion; the default is `false`. An OTA promoted
+  without a proof is recorded as UNPROVEN in the release record. Request the
+  proof when a release changes signing, install, or cold-start behavior; skip
+  it for ordinary OTA-only JS changes.
+
 ## Routine release
 
 Firstmate runs one command directly, without creating a release worker:
@@ -13,10 +30,12 @@ gh-axi workflow run unified-release.yml --ref main
 
 Pass no inputs. The workflow pins current `main`, includes every merge at that
 HEAD, keeps automatic component selection, uses the established `store_track=none`
-policy, publishes one release record, runs component checks, and reports the
-result in the workflow summary. The visible workflow inputs are recovery-only:
-operators use them to continue an existing identity or make a deliberate
-exception, never for a routine release.
+policy, promotes the OTA without a device proof (recorded UNPROVEN unless
+`run_release_proof=true`), publishes one release record, runs component checks,
+and reports the result in the workflow summary. The visible workflow inputs are
+recovery- and consent-only: operators use them to continue an existing identity,
+explicitly request the device proof, or make a deliberate store submission -
+never for a routine release.
 
 The initializer compares the pinned main SHA with every component's own source
 SHA in the last successful `unified-release-index` and writes
@@ -35,6 +54,13 @@ platforms whose pins changed. Legacy release records with one global
 `runtimeVersion` still resolve that pin for both platforms. OTA promotion waits
 until the selected store binaries have been submitted. A retry with the same
 pinned release identity resumes both components from their saved stages.
+
+Exception - pin RESTORE: a pin change that reverts to runtime versions whose
+store binaries already exist needs no new store submission. Planning such a
+release as OTA-only requires the explicit `allow_pin_restore` workflow input
+(or `--allow-pin-restore`): it ships only `mobile-ota`, records
+`plan.pinRestore: true`, and never builds or submits store binaries. It is a
+deliberate consent gate, never inferred from pin direction.
 
 iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
 and are submitted to TestFlight from its generated IPA. Android store binaries

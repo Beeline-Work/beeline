@@ -137,7 +137,8 @@ export function ConversationComposer({
   const showMic = speechAvailable && (isListening || !hasSomethingToSend);
   const showSend = !showMic;
 
-  // When listening, show the status line with optional partial text.
+  // The live words belong in the input itself. The status line only names the
+  // microphone state, avoiding a second transcript underneath the composer.
   const statusLine: string =
     speech.state === 'permission-denied'
       ? 'microphone off in settings \u00b7 tap to open settings'
@@ -146,7 +147,8 @@ export function ConversationComposer({
         : speech.state === 'listening'
           ? '\u25cf listening \u00b7 tap mic to stop'
           : '';
-  const statusIsError = speech.state === 'permission-denied' || speech.state === 'nothing-recognised';
+  const statusIsError =
+    speech.state === 'permission-denied' || speech.state === 'nothing-recognised';
 
   React.useEffect(() => {
     if (!onDesktopPaste) return;
@@ -264,17 +266,21 @@ export function ConversationComposer({
             scrollEnabled={height >= maxHeight}
             submitBehavior="newline"
             testID={`${testIDPrefix}-input`}
+            accessibilityLabel="Message"
           />
           {isListening && speech.partialText ? (
-            <View style={styles.interimOverlay} pointerEvents="none">
+            <View
+              style={styles.interimOverlay}
+              pointerEvents="none"
+              testID={`${testIDPrefix}-speech-interim`}
+            >
               <Text
-                numberOfLines={1}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
                 style={[
                   styles.input,
                   styles.interimText,
-                  Platform.OS === 'ios'
-                    ? undefined
-                    : { height: undefined, maxHeight: undefined },
+                  Platform.OS === 'ios' ? undefined : { height: undefined, maxHeight: undefined },
                   Platform.OS === 'android' && styles.interimTextAndroid,
                 ]}
               >
@@ -282,7 +288,7 @@ export function ConversationComposer({
                   {value}
                   {value ? ' ' : ''}
                 </Text>
-                <Text style={{ color: theme.buzz.textMuted }}>
+                <Text style={[{ color: theme.buzz.textMuted }, styles.interimPartial]}>
                   {speech.partialText}
                 </Text>
               </Text>
@@ -299,6 +305,13 @@ export function ConversationComposer({
                   : 'Start speech input'
             }
             accessibilityRole="button"
+            accessibilityHint={isListening ? 'Stops dictation' : 'Dictates into the message field'}
+            accessibilityState={{ selected: isListening }}
+            accessibilityValue={
+              isListening && speech.partialText
+                ? { text: `Listening: ${speech.partialText}` }
+                : undefined
+            }
             hitSlop={9}
             onPress={() => {
               if (speech.state === 'permission-denied') {
@@ -320,6 +333,8 @@ export function ConversationComposer({
           >
             <MicGlyph
               animating={isListening}
+              level={speech.volumeLevel}
+              testID={`${testIDPrefix}-mic-glyph`}
               color={
                 isListening
                   ? theme.buzz.accent
@@ -336,7 +351,11 @@ export function ConversationComposer({
             accessibilityRole="button"
             disabled={sendDisabled}
             hitSlop={9}
-            onPress={onSend}
+            // Never pass the responder event itself: the Room's handleSend
+            // reads its first argument as a MessageShortcut, and a PressEvent
+            // (truthy, no `.text`) made it skip the composer-clear block so
+            // the field kept its text after every send.
+            onPress={() => onSend?.()}
             style={styles.sendButton}
             testID={`${testIDPrefix}-send`}
           >
@@ -348,7 +367,9 @@ export function ConversationComposer({
       </View>
       {statusLine ? (
         <TouchableOpacity
-          accessibilityRole="button"
+          accessibilityLabel={statusLine}
+          accessibilityLiveRegion="polite"
+          accessibilityRole={speech.state === 'permission-denied' ? 'button' : 'text'}
           activeOpacity={speech.state === 'permission-denied' ? 0.7 : 1}
           disabled={speech.state !== 'permission-denied'}
           onPress={
@@ -365,9 +386,6 @@ export function ConversationComposer({
             ]}
           >
             {statusLine}
-            {speech.state === 'listening' && speech.partialText ? (
-              <Text style={styles.statusPartial}> \u201c{speech.partialText}\u201d</Text>
-            ) : null}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -406,20 +424,23 @@ const styles = StyleSheet.create((theme) => ({
   },
   inputTransparent: {
     color: 'transparent',
-  } as any,
-  interimOverlay: {
     position: 'absolute',
     left: 0,
     right: 0,
     top: 0,
     bottom: 0,
-    justifyContent: 'center',
+  } as any,
+  interimOverlay: {
+    justifyContent: 'flex-start',
+    minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+    maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
     pointerEvents: 'none',
   },
   interimText: {
     color: theme.buzz.textSecondary,
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
   },
+  interimPartial: { fontStyle: 'italic' },
   interimTextAndroid: { textAlignVertical: 'center' },
   statusLine: {
     paddingHorizontal: 12,
@@ -427,7 +448,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: 6,
   },
   statusText: {
-    ...theme.buzz.type.machine as any,
+    ...(theme.buzz.type.machine as any),
     color: theme.buzz.ledgerQuiet,
     textTransform: 'uppercase',
   },
@@ -436,10 +457,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusTextListening: {
     color: theme.buzz.accent,
-  },
-  statusPartial: {
-    color: theme.buzz.ledgerQuiet,
-    textTransform: 'none',
   },
   // End speech recognition styles
   composer: {

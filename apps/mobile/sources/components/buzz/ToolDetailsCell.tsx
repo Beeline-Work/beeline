@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { SettingsRow, type SettingsRowActionControl } from './SettingsRow';
+import { SettingsRow } from './SettingsRow';
 
 /**
  * ToolDetailsCell — the ONE expandable/collapsible tool row for the
@@ -9,48 +9,41 @@ import { SettingsRow, type SettingsRowActionControl } from './SettingsRow';
  * Wallet cell; a second divergent expandable implementation is a
  * regression, not a variant).
  *
- * Collapsed it is exactly a `SettingsRow` with a down chevron. Expanded it
- * reveals a detail body under the same hairline rhythm — the value
- * proposition of the tool as a small list of named facts, plus any affordance
- * the tool needs (`children`, e.g. a Connect action). No box: the expansion
- * reads as indentation under the row, the way the theme wraps nothing the
- * user need not act on.
+ * Collapsed it is exactly a `SettingsRow`, with no disclosure glyph competing
+ * with its state/action. Tapping the row reveals the tool's existing one-line
+ * capability copy beneath it.
  *
  * Controlled or uncontrolled: pass `expanded`/`onToggle` to lift the state
  * (a parent that shows one tool's details at a time), or neither to let the
  * cell own it.
  */
 export type ToolDetailsCellProps = {
-  /** Named facts of the expanded body, each rendered as `NAME — line`. */
-  details?: readonly { readonly name: string; readonly line: string }[];
-  /** Affordances under the facts (a Connect button, a link row). */
-  children?: React.ReactNode;
-  /** The compact bordered Connect control on the collapsed row's side. */
-  actionControl?: SettingsRowActionControl;
+  action?: string;
+  actionDisabled?: boolean;
+  actionTestID?: string;
+  detailText: string;
+  errorText?: string;
+  onAction?: () => void;
   value?: string;
   /** Tone for the trailing value (an erroring tool reads danger, work in
    *  flight reads accent). */
   valueTone?: 'danger' | 'accent';
-  /** The state dot beside the trailing value, when the state carries one. */
-  statusGlyph?: 'live' | 'pulse' | 'failed';
-  description?: string;
   expanded?: boolean;
-  leading?: React.ReactNode;
   onToggle?: (expanded: boolean) => void;
   testID: string;
   title: string;
 };
 
 export function ToolDetailsCell({
-  children,
-  actionControl,
+  action,
+  actionDisabled,
+  actionTestID,
+  detailText,
+  errorText,
+  onAction,
   value,
   valueTone,
-  statusGlyph,
-  description,
-  details,
   expanded: expandedProp,
-  leading,
   onToggle,
   testID,
   title,
@@ -65,25 +58,28 @@ export function ToolDetailsCell({
   return (
     <View testID={testID}>
       <SettingsRow
-        actionControl={actionControl}
-        chevron={expanded ? 'up' : 'down'}
-        description={description}
+        action={action}
+        description={errorText}
+        descriptionTone={errorText ? 'danger' : undefined}
         onPress={toggle}
-        statusGlyph={statusGlyph}
         testID={`${testID}-head`}
         title={title}
         value={value}
         valueTone={valueTone}
+        trailingPress={
+          action && onAction
+            ? {
+                accessibilityLabel: action,
+                ...(actionDisabled !== undefined ? { disabled: actionDisabled } : {}),
+                onPress: onAction,
+                testID: actionTestID,
+              }
+            : undefined
+        }
       />
       {expanded ? (
         <View style={styles.body} testID={`${testID}-details`}>
-          {(details ?? []).map((detail) => (
-            <View key={detail.name} style={styles.detail}>
-              <Text style={styles.detailName}>{detail.name}</Text>
-              <Text style={styles.detailLine}>{detail.line}</Text>
-            </View>
-          ))}
-          {children ? <View style={styles.actions}>{children}</View> : null}
+          <Text style={styles.detailLine}>{detailText}</Text>
         </View>
       ) : null}
     </View>
@@ -94,15 +90,11 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     body: {
-      gap: hull.space.sm,
       paddingBottom: hull.space.md,
       paddingLeft: hull.space.xl,
       paddingRight: hull.space.sm,
       paddingTop: hull.space.sm,
     },
-    detail: { gap: 2 },
-    detailName: { ...hull.type.meta, color: hull.textPrimary },
     detailLine: { ...hull.type.meta, color: hull.textSecondary },
-    actions: { marginTop: hull.space.xs },
   };
 });

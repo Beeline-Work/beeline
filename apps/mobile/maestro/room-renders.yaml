@@ -1,4 +1,4 @@
-# Release proof: a repo-bound Room must render its transcript AND its composer.
+# Release proof: a Room on the deck must render its transcript AND its composer.
 #
 # This is the flow that would have caught the 2026-09-14 blank-screen release:
 # the app cold-started to an empty surface, so `chat-messages` never appeared.

@@ -305,6 +305,20 @@ describe('one composer', () => {
     await act(async () => f.button().props.onPress());
     expect(f.onSend).toHaveBeenCalledOnce();
   });
+  it('invokes onSend with no arguments, even when Pressable hands over its press event', async () => {
+    // RN's Pressable calls onPress with the PressEvent. #1340 wired
+    // `onPress={onSend}` directly, so the Room's handleSend(shortcut?) read
+    // that truthy event as a MessageShortcut: the typed text still sent
+    // (`shortcut?.text ?? inputTextRef.current`) but the `!shortcut` guard
+    // skipped the composer-clear block — the field kept its text after every
+    // send and the send button stayed enabled for duplicate sends. The
+    // button must call onSend with zero arguments; a real shortcut is only
+    // ever passed by dedicated call sites.
+    const f = render('next instruction');
+    await act(async () => f.button().props.onPress({ nativeEvent: {}, touchHistory: {} }));
+    expect(f.onSend).toHaveBeenCalledOnce();
+    expect(f.onSend).toHaveBeenCalledWith();
+  });
   it('an empty composer disables the send control', () => {
     const f = render('');
     expect(f.button().props.disabled).toBe(true);

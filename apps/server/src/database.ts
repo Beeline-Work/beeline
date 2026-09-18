@@ -984,12 +984,15 @@ CREATE TABLE IF NOT EXISTS workspace_join_notification_devices (
 CREATE TABLE IF NOT EXISTS push_delivery_claims (
   message_id text NOT NULL,
   device_token text NOT NULL REFERENCES push_devices(token) ON DELETE CASCADE,
-  status text NOT NULL CHECK (status IN ('claimed', 'delivered', 'failed')),
+  status text NOT NULL,
   claimed_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz,
   error text,
   PRIMARY KEY (message_id, device_token)
 );
+ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_status_check;
+ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
+  CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed'));
 
 -- At most one latest unseen release candidate per device registration.
 CREATE TABLE IF NOT EXISTS push_release_catchups (

@@ -61,6 +61,7 @@ import {
 } from '@/buzz/room-view-presentation';
 import {
   buildChannelReferenceIndex,
+  isUnavailableChannelReferenceError,
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
@@ -561,6 +562,23 @@ export default function BuzzChat() {
   } | null>(null);
   const failedOutboxIds = outbox.failedIds;
   const [pendingAttachments, setPendingAttachments] = useState<PickedChatAttachment[]>([]);
+  // Paste/drop and Enter can land in one browser event batch. Keep the staged
+  // files current synchronously so dispatch does not read the previous render
+  // and then clear a screenshot it never uploaded.
+  const pendingAttachmentsRef = useRef<PickedChatAttachment[]>([]);
+  const replacePendingAttachments = useCallback(
+    (
+      update:
+        | PickedChatAttachment[]
+        | ((current: PickedChatAttachment[]) => PickedChatAttachment[]),
+    ) => {
+      const next =
+        typeof update === 'function' ? update(pendingAttachmentsRef.current) : update;
+      pendingAttachmentsRef.current = next;
+      setPendingAttachments(next);
+    },
+    [],
+  );
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
@@ -620,7 +638,7 @@ export default function BuzzChat() {
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
-  const [directMessageListItem, setDirectMessageListItem] = useState<ChatListItem | null>(null);
+  const [workspaceChats, setWorkspaceChats] = useState<readonly ChatListItem[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
@@ -812,6 +830,9 @@ export default function BuzzChat() {
   const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
     return buildChannelReferenceIndex(
       [
+        ...workspaceChats
+          .filter((item) => !item.directMessage)
+          .map((item) => ({ channelId: item.room.id, name: item.room.name })),
         ...(roomSurface?.parent
           ? [{ channelId: roomSurface.parent.id, name: roomSurface.parent.name }]
           : []),
@@ -843,6 +864,7 @@ export default function BuzzChat() {
     resolvedChannelName,
     roomSurface?.parent,
     routeChannelTitle,
+    workspaceChats,
   ]);
   const openDesktopCorner = useCallback(
     (roomId: string, cornerId: string) => {
@@ -880,13 +902,44 @@ export default function BuzzChat() {
   }, [desktopExperience, openDesktopArtifact]);
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
+  const openingChannelReferenceRef = useRef<string | null>(null);
   const handleOpenChannelReference = useCallback(
-    (target: ChannelReferenceTarget) => {
+    async (target: ChannelReferenceTarget, text?: string) => {
       if (!target.channelId || target.channelId === decodedId) return;
-      if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
-      else router.push(roomHref(target.channelId));
+      if (openingChannelReferenceRef.current) return;
+      const referenceLabel = text ?? 'this destination';
+      if (!roomClient) {
+        Modal.alert(
+          'Destination unavailable',
+          `Beeline is still connecting. Try ${referenceLabel} again in a moment.`,
+        );
+        return;
+      }
+      openingChannelReferenceRef.current = target.channelId;
+      try {
+        // The list that made this token linkable can be stale after a leave,
+        // removal, or deletion. The Room read is the current authorization
+        // verdict; only a successful read earns navigation.
+        await roomClient.room(target.channelId);
+        if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
+        else router.push(roomHref(target.channelId));
+      } catch (error) {
+        if (isUnavailableChannelReferenceError(error)) {
+          Modal.alert(
+            'Access denied',
+            `${referenceLabel} is unavailable or you no longer have access.`,
+          );
+        } else {
+          Modal.alert(
+            'Could not open destination',
+            `Beeline could not verify access to ${referenceLabel}. Check your connection and try again.`,
+          );
+        }
+      } finally {
+        openingChannelReferenceRef.current = null;
+      }
     },
-    [decodedId, openDesktopCorner],
+    [decodedId, openDesktopCorner, roomClient],
   );
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
@@ -1439,8 +1492,8 @@ export default function BuzzChat() {
   const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
   useEffect(() => {
-    if (!isDirectMessage || !roomClient || !activeCommunityId || !userPubkey) {
-      setDirectMessageListItem(null);
+    if (!roomClient || !activeCommunityId || !userPubkey) {
+      setWorkspaceChats([]);
       return;
     }
     let cancelled = false;
@@ -1455,9 +1508,7 @@ export default function BuzzChat() {
       const apply = (view: { readonly chats: readonly ChatListItem[] }) => {
         if (cancelled) return;
         painted = true;
-        setDirectMessageListItem(
-          view.chats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
-        );
+        setWorkspaceChats(view.chats);
       };
       const cached = await mobileSurfaceCache.read(address, isChatListView);
       if (cached) apply(cached);
@@ -1465,12 +1516,16 @@ export default function BuzzChat() {
       apply(fresh);
       void mobileSurfaceCache.write(address, fresh, isChatListView);
     })().catch(() => {
-      if (!cancelled && !painted) setDirectMessageListItem(null);
+      if (!cancelled && !painted) setWorkspaceChats([]);
     });
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, decodedId, isDirectMessage, roomClient, userPubkey]);
+  }, [activeCommunityId, roomClient, userPubkey]);
+  const directMessageListItem = useMemo(
+    () => workspaceChats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
+    [decodedId, workspaceChats],
+  );
   const memberManagement = roomMemberManagementState({
     isDirectMessage,
     participantsHydrated,
@@ -2545,9 +2600,14 @@ export default function BuzzChat() {
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
   const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
-    const rawText = (shortcut?.text ?? inputTextRef.current).trim();
-    const activeReplyTarget = shortcut?.replyTarget ?? replyTarget;
-    const activePendingAttachments = shortcut ? [] : pendingAttachments;
+    // A leaked responder event must never read as a shortcut (#1340's
+    // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
+    // skipped the composer-clear block and the field kept its text after
+    // every send). Only a real shortcut — it always carries text — qualifies.
+    const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
+    const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
+    const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
+    const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
     if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
@@ -2580,9 +2640,9 @@ export default function BuzzChat() {
     const mentionedPubkeys = resolveComposerMentions(
       text,
       roomParticipants,
-      shortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
+      sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
     ).pubkeys;
-    const selectedMentionedAgent = shortcut
+    const selectedMentionedAgent = sendShortcut
       ? undefined
       : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
     const mentionedAgent =
@@ -2679,7 +2739,7 @@ export default function BuzzChat() {
         ...(attachments.length ? { attachments } : {}),
       });
       addMessages([optimistic]);
-      if (!shortcut) {
+      if (!sendShortcut) {
         const nextInputRevision = composerInputRevisionRef.current + 1;
         composerInputRevisionRef.current = nextInputRevision;
         // Clear both owners of the controlled field. `clear()` removes the
@@ -2691,7 +2751,9 @@ export default function BuzzChat() {
         setComposerInputRevision(nextInputRevision);
         setComposerHeight(COMPOSER_MIN_HEIGHT);
         setInputSelection({ start: 0, end: 0 });
-        setPendingAttachments([]);
+        replacePendingAttachments((current) =>
+          current.filter((attachment) => !activePendingAttachments.includes(attachment)),
+        );
         setReplyTarget(null);
         if (desktopExperience) void saveDesktopDraft(decodedId, '');
       }
@@ -2757,7 +2819,7 @@ export default function BuzzChat() {
     }
   }, [
     activeCommunityId,
-    pendingAttachments,
+    replacePendingAttachments,
     transport,
     decodedId,
     addMessages,
@@ -2829,11 +2891,11 @@ export default function BuzzChat() {
       exif: false,
     });
     if (result.canceled || result.assets.length === 0) return;
-    setPendingAttachments((current) => [
+    replacePendingAttachments((current) => [
       ...current,
       ...pickedPhotoAttachments(result.assets).slice(0, MAX_MESSAGE_ATTACHMENTS - current.length),
     ]);
-  }, [pendingAttachments.length]);
+  }, [pendingAttachments.length, replacePendingAttachments]);
 
   const pickDocument = useCallback(async () => {
     if (pendingAttachments.length >= MAX_MESSAGE_ATTACHMENTS) {
@@ -2850,7 +2912,7 @@ export default function BuzzChat() {
     });
     const asset = result.canceled ? undefined : result.assets[0];
     if (!asset) return;
-    setPendingAttachments((current) => [
+    replacePendingAttachments((current) => [
       ...current,
       {
         uri: asset.uri,
@@ -2859,7 +2921,7 @@ export default function BuzzChat() {
         size: asset.size ?? 0,
       },
     ]);
-  }, [pendingAttachments.length]);
+  }, [pendingAttachments.length, replacePendingAttachments]);
 
   const pasteImage = useCallback(async () => {
     if (pendingAttachments.length >= MAX_MESSAGE_ATTACHMENTS) {
@@ -2876,8 +2938,8 @@ export default function BuzzChat() {
     const image = await Clipboard.getImageAsync({ format: 'png' });
     if (!image) return;
     const attachment = await pastedImageAttachment(image);
-    setPendingAttachments((current) => [...current, attachment]);
-  }, [pendingAttachments.length]);
+    replacePendingAttachments((current) => [...current, attachment]);
+  }, [pendingAttachments.length, replacePendingAttachments]);
 
   const chooseAttachment = useCallback(() => {
     setAttachmentPickerVisible(true);
@@ -3606,7 +3668,7 @@ export default function BuzzChat() {
         MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length,
       );
       if (!files.length) return;
-      setPendingAttachments((current) => [
+      replacePendingAttachments((current) => [
         ...current,
         ...files.map((file) => ({
           uri: URL.createObjectURL(file),
@@ -3616,7 +3678,7 @@ export default function BuzzChat() {
         })),
       ]);
     },
-    [desktopExperience, pendingAttachments.length, sending],
+    [desktopExperience, pendingAttachments.length, replacePendingAttachments, sending],
   );
 
   const handleDesktopPaste = useCallback(
@@ -3628,7 +3690,7 @@ export default function BuzzChat() {
       );
       if (!files.length) return;
       event.preventDefault();
-      setPendingAttachments((current) => [
+      replacePendingAttachments((current) => [
         ...current,
         ...files.map((file) => ({
           uri: URL.createObjectURL(file),
@@ -3638,7 +3700,7 @@ export default function BuzzChat() {
         })),
       ]);
     },
-    [desktopExperience, pendingAttachments.length, sending],
+    [desktopExperience, pendingAttachments.length, replacePendingAttachments, sending],
   );
 
   const clearSlashComposer = useCallback(() => {
@@ -4842,7 +4904,7 @@ export default function BuzzChat() {
                 }))}
                 attachmentsUploading={sending}
                 onRemoveAttachment={(index) =>
-                  setPendingAttachments((current) =>
+                  replacePendingAttachments((current) =>
                     current.filter((_, attachmentIndex) => attachmentIndex !== index),
                   )
                 }

@@ -298,8 +298,193 @@ async function activateGrokLaunchArgv(): Promise<string[]> {
   return capturedArgs ?? [];
 }
 
-describe('Room session activation model/effort selection', () => {
-  it('falls back to the persisted effort when only the model is overridden', async () => {
+/**
+ * Drive TWO real turns with a phone-side model/effort selection between them,
+ * optionally delivering the wake the server's `config-changed` push produces
+ * (`scheduler.suspendIdle()`, exactly what `RoomRuntimeCoordinator` runs when
+ * `DaemonApiClient` reports the push). Returns how many sessions were opened
+ * and what each turn applied via `setConfigOption`, so both directions of the
+ * hot restart are observable: a change must retire the retained session (the
+ * next turn cold-activates and re-reads the saved selection), and no wake
+ * must not restart anything.
+ */
+async function activateAcrossSelectionChange(
+  suspendBetween: boolean,
+): Promise<{ sessionNewCalls: number; turns: Array<Array<[string, string]>> }> {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-room-model-hot-restart-'));
+  roots.push(root);
+  const identity = identityFromKey(AGENT_HEX, 'Bee');
+  const agent = {
+    name: 'Bee',
+    publicKey: identity.publicKey,
+    secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+  };
+  const runtime = {
+    agent,
+    rooms: [],
+    supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+  } as unknown as AgentRuntimeRecord;
+  // The same object `config` holds, so the phone-side change is a mutation of
+  // what the next activation reads — exactly what the server write does.
+  const modelSelection: { model?: string; effort?: string } = {
+    model: 'default-model',
+    effort: 'medium',
+  };
+  const config: BodyConfig = {
+    agentBinary: '/fake-agent',
+    agentKind: 'codex',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+    readonlyMcpCommand: '/fake-beeline-mcp',
+    agentEnv: {},
+    workspaceRoot: join(root, 'room'),
+    autoApprovePermissions: true,
+    accessPolicy: 'everyone',
+    agentHomeRoot: join(root, 'agent-home'),
+    operatorHome: join(root, 'operator-home'),
+    modelSelection,
+  } as BodyConfig;
+
+  let bootstrapped = false;
+  let turn = 0;
+  // Holds the second message until the wake has been delivered, so the race
+  // between "turn 2 reused the warm session" and "the wake retired it" is
+  // decided by the test, not the poll interval.
+  let releaseSecond = () => {};
+  const secondGate = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  const receipts: Array<Record<string, unknown>> = [];
+  const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+    if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+    if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+    if (name === 'getWorkspaceRoster') {
+      return {
+        members: [
+          { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+        ],
+      };
+    }
+    if (name === 'postAgentTurnReceipt') receipts.push(input);
+    if (name === 'getRoomInbox') {
+      if (!bootstrapped) {
+        bootstrapped = true;
+        return { items: [], cursor: 'latest' };
+      }
+      turn += 1;
+      if (turn <= 2) {
+        if (turn === 2) await secondGate;
+        return {
+          items: [
+            {
+              id: `ask-${turn}`,
+              authorId: HUMAN,
+              createdAt: turn,
+              type: 'message',
+              body: `hello ${turn}`,
+              attachments: [],
+            },
+          ],
+          cursor: `ask-${turn}`,
+        };
+      }
+      return { items: [], cursor: 'latest' };
+    }
+    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+    return { id: 'write-id', createdAt: 1 };
+  });
+  const api = {
+    execute,
+    connection: () => ({
+      baseUrl: 'https://server.example',
+      daemonToken: 'daemon-token',
+      agentId: agent.publicKey,
+    }),
+  } as unknown as DaemonApiClient;
+
+  const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
+  vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+  const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+    sessionId: 'room-session',
+    raw: {
+      configOptions: [
+        {
+          id: 'model-axis',
+          category: 'model',
+          currentValue: 'default-model',
+          options: [{ id: 'default-model' }, { id: 'changed-model' }],
+        },
+        {
+          id: 'effort-axis',
+          category: 'effort',
+          currentValue: 'medium',
+          options: [{ id: 'medium' }, { id: 'high' }],
+        },
+      ],
+    },
+  });
+  vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
+  vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
+  const configCalls: Array<[string, string]> = [];
+  vi.spyOn(acp, 'setConfigOption').mockImplementation(async (_sid, configId, value) => {
+    configCalls.push([configId, value]);
+  });
+  vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+  vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+    stopReason: 'end_turn',
+    updates: [],
+    agentText: 'hi',
+    toolCalls: [],
+  });
+
+  const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+  const abort = new AbortController();
+  const loop = new MonolithRoomTurnLoop({
+    roomId: 'room-id',
+    workspaceId: 'workspace',
+    cwd: config.workspaceRoot,
+    runtime,
+    config,
+    api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
+    scheduler,
+    health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+    signal: abort.signal,
+    pollMs: 5,
+    createAcpClient: () => acp,
+  });
+  const running = loop.run();
+  try {
+    await vi.waitFor(
+      () => expect(receipts.length).toBeGreaterThanOrEqual(1),
+      { timeout: 10_000 },
+    );
+    if (suspendBetween) {
+      // Let the first turn fully settle (its run must leave the scheduler's
+      // busy set) before the phone writes a new selection and the
+      // `config-changed` wake retires every retained session.
+      await vi.waitFor(() => expect(scheduler.snapshot().busy).toBe(0), { timeout: 10_000 });
+      modelSelection.model = 'changed-model';
+      modelSelection.effort = 'high';
+      await scheduler.suspendIdle();
+    }
+    releaseSecond();
+    await vi.waitFor(
+      () => expect(receipts.length).toBeGreaterThanOrEqual(2),
+      { timeout: 10_000 },
+    );
+  } finally {
+    abort.abort();
+    await running.catch(() => undefined);
+    await scheduler.dispose();
+  }
+  return { sessionNewCalls: sessionNew.mock.calls.length, configCalls };
+}
+
+describe('Room session activation model/effort selection', () => {  it('falls back to the persisted effort when only the model is overridden', async () => {
     const calls = await activateWith(
       { model: 'override-model' },
       { model: 'default-model', effort: 'high' },
@@ -337,6 +522,33 @@ describe('Room session activation model/effort selection', () => {
       '--reasoning-effort',
       'high',
       'stdio',
+    ]);
+  });
+
+  it('hot-restarts: the config-change wake retires the session and the next turn re-reads the selection', async () => {
+    const { sessionNewCalls, configCalls } = await activateAcrossSelectionChange(true);
+
+    expect(sessionNewCalls).toBe(2);
+    // The first activation applied the selection as it was, and the second —
+    // after the wake retired the warm session — applied the SAVED new one,
+    // the same way session start reads it.
+    expect(configCalls.slice(0, 2)).toEqual([
+      ['model-axis', 'default-model'],
+      ['effort-axis', 'medium'],
+    ]);
+    expect(configCalls.slice(2)).toEqual([
+      ['model-axis', 'changed-model'],
+      ['effort-axis', 'high'],
+    ]);
+  });
+
+  it('keeps one session across two turns when no selection change arrives', async () => {
+    const { sessionNewCalls, configCalls } = await activateAcrossSelectionChange(false);
+
+    expect(sessionNewCalls).toBe(1);
+    expect(configCalls).toEqual([
+      ['model-axis', 'default-model'],
+      ['effort-axis', 'medium'],
     ]);
   });
 });

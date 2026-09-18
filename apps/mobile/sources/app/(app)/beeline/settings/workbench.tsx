@@ -1,16 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
+import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { getWalletSource } from '@/buzz/wallet-source';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
 import {
   connectionHostsLine,
   connectionsForViewer,
-  connectorDescription,
   connectorInstrument,
   isGoogleToolConnectorId,
   type WorkbenchView,
@@ -20,37 +21,10 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** The expanded value proposition of the Coinbase Wallet tool (captain copy,
- *  2026-09): what it subsidizes and what it reaches. */
-const WALLET_DETAILS = [
-  {
-    name: 'Gas Subsidies',
-    line: 'USDC transactions are subsidized on Base L2.',
-  },
-  {
-    name: 'Multi-Chain Support',
-    line: '16 EVM-compatible chains (Base, Arbitrum, Avalanche, Robinhood Chain, and more) plus Solana.',
-  },
-] as const;
-
-/** The expanded value proposition of the Trusty Squire tool (PR 1338):
- *  what sign-in covers and what spending it enables. Same vocabulary as
- *  `WALLET_DETAILS` — the one `ToolDetailsCell` detail shape. */
-const SQUIRE_DETAILS = [
-  {
-    name: 'Authentication',
-    line: 'Handles auth for your agents: you sign in once with Google and Trusty Squire grants access to your other services on their behalf.',
-  },
-  {
-    name: 'Payments',
-    line: 'Enables payments when a card is stored or uploaded to Trusty Squire. Agents can only spend within the grants you set.',
-  },
-] as const;
-
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
  * lists of `SettingsRow`s under small-caps heads: the tools this build knows
- * about (Trusty Squire live, Wallet and Tailscale as `soon`), and the
+ * about (Trusty Squire and Wallet live, Tailscale as `soon`), and the
  * viewer's OWN keys. Captain ruling 2026-09-15 (mock 91aa0358328d716e): a
  * tool is what your agents can use; a key is what that tool holds for you.
  * Like `schedules`, the screen draws no header of its own: the stack header
@@ -61,17 +35,21 @@ const SQUIRE_DETAILS = [
  * their vocabulary; only user-visible copy speaks Tools and Keys.
  */
 export default function WorkbenchScreen() {
-  const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    workspaceId?: string | string[];
+    viewerId?: string | string[];
+  }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const viewerId = firstParam(params.viewerId) ?? '';
   const [view, setView] = useState<WorkbenchView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
   const load = useCallback(async () => {
     try {
       setView(await getWorkbenchSource().readWorkbench({ workspaceId, viewerId }));
-      setError(null);
+      setNetworkFailure(null);
     } catch {
-      setError('Workbench is unavailable right now');
+      setNetworkFailure('load');
     }
   }, [workspaceId, viewerId]);
 
@@ -92,30 +70,40 @@ export default function WorkbenchScreen() {
     [workspaceId, viewerId],
   );
 
+  const openWallet = useCallback(() => {
+    router.push({
+      pathname: '/beeline/settings/workbench/wallet',
+      params: { workspaceId },
+    } as unknown as Href);
+  }, [workspaceId]);
+
+  const connectWallet = useCallback(async () => {
+    if (walletConnecting) return;
+    setWalletConnecting(true);
+    setNetworkFailure(null);
+    try {
+      await getWalletSource().createWallet({ workspaceId });
+      openWallet();
+    } catch {
+      setNetworkFailure('wallet');
+    } finally {
+      setWalletConnecting(false);
+    }
+  }, [openWallet, walletConnecting, workspaceId]);
+
   // The screen has three states, and they must not bleed into each other. A
   // failed load used to still render the section chrome and the "None yet"
   // empty state with a red banner pinned to the very bottom (behind the
   // system nav bar), so an error read as a populated-but-empty page. Gate the
   // sections on a real load; show a centered error or loader otherwise.
-  const loading = view === null && error === null;
+  const loading = view === null && networkFailure === null;
 
-  if (error) {
+  if (networkFailure) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text accessibilityRole="alert" style={styles.centeredMessage} testID="workbench-error">
-          {error}
-        </Text>
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={() => {
-            setError(null);
-            void load();
-          }}
-          testID="workbench-retry"
-        >
-          <Text style={styles.retry}>Tap to try again</Text>
-        </TouchableOpacity>
-      </View>
+      <NetworkUnavailableState
+        onRetry={() => void (networkFailure === 'wallet' ? connectWallet() : load())}
+        testID="workbench-network-unavailable"
+      />
     );
   }
 
@@ -137,42 +125,19 @@ export default function WorkbenchScreen() {
             Tools
           </Text>
           {connectors.map((connector, index) => {
-            // Board revision 2 (PR #1351): every tool cell carries ONE
-            // compact Connect button on the row's side while it is not
-            // connected — the large full-width Connect button that used to
-            // live in the expanded pane is gone. The accordion mechanics
-            // (facts in the pane) are unchanged.
-            const instrument = connectorInstrument(
-              connector.available ? connector.status : 'soon',
-            );
-            const connectControl =
-              instrument.connect && connector.available
-                ? {
-                    label: 'Connect',
-                    onPress: () => connectConnector(connector.id),
-                    testID: `workbench-connector-${connector.id}-connect`,
-                  }
-                : undefined;
+            const instrument = connectorInstrument(connector.available ? connector.status : 'soon');
+            const canConnect = instrument.connect && connector.available;
             const isWallet = connector.id === 'wallet';
             if (isWallet) {
               return (
                 <ToolDetailsCell
                   key={connector.id}
-                  actionControl={
-                    // The wallet opens its own dashboard rather than the
-                    // shared connect pipeline.
-                    connectControl && {
-                      ...connectControl,
-                      onPress: () =>
-                        router.push({
-                          pathname: '/beeline/settings/workbench/wallet',
-                          params: { workspaceId },
-                        } as unknown as Href),
-                    }
-                  }
-                  description={connectorDescription(connector)}
-                  details={WALLET_DETAILS}
-                  statusGlyph={instrument.glyph}
+                  action={canConnect ? (walletConnecting ? 'Connecting' : 'Connect') : undefined}
+                  actionDisabled={walletConnecting}
+                  actionTestID="workbench-connector-wallet-connect"
+                  detailText={connector.description}
+                  onAction={canConnect ? () => void connectWallet() : undefined}
+                  onToggle={connector.status === 'connected' ? openWallet : undefined}
                   testID={`workbench-connector-${connector.id}`}
                   title={connector.name}
                   value={instrument.value}
@@ -186,9 +151,7 @@ export default function WorkbenchScreen() {
             // off with the logical `google` id, which the source resolves to
             // the first not-yet-connected tool.
             if (isGoogleToolConnectorId(connector.id)) {
-              if (
-                connectors.findIndex((entry) => isGoogleToolConnectorId(entry.id)) !== index
-              ) {
+              if (connectors.findIndex((entry) => isGoogleToolConnectorId(entry.id)) !== index) {
                 return null;
               }
               return (
@@ -204,10 +167,15 @@ export default function WorkbenchScreen() {
               return (
                 <ToolDetailsCell
                   key={connector.id}
-                  actionControl={connectControl}
-                  description={connectorDescription(connector)}
-                  details={SQUIRE_DETAILS}
-                  statusGlyph={instrument.glyph}
+                  action={canConnect ? 'Connect' : undefined}
+                  actionTestID={`workbench-connector-${connector.id}-connect`}
+                  detailText={connector.description}
+                  errorText={
+                    connector.status === 'error'
+                      ? (connector.errorMessage ?? 'Connection failed')
+                      : undefined
+                  }
+                  onAction={canConnect ? () => connectConnector(connector.id) : undefined}
                   testID={`workbench-connector-${connector.id}`}
                   title={connector.name}
                   value={instrument.value}
@@ -216,16 +184,17 @@ export default function WorkbenchScreen() {
               );
             }
             return (
-              <SettingsRow
+              <ToolDetailsCell
                 key={connector.id}
-                actionControl={connectControl}
-                chevron={connectControl ? 'right' : undefined}
-                description={connectorDescription(connector)}
-                disabled={!connector.available}
-                onPress={
-                  connectControl ? undefined : connector.available ? () => connectConnector(connector.id) : undefined
+                action={canConnect ? 'Connect' : undefined}
+                actionTestID={`workbench-connector-${connector.id}-connect`}
+                detailText={connector.description}
+                errorText={
+                  connector.status === 'error'
+                    ? (connector.errorMessage ?? 'Connection failed')
+                    : undefined
                 }
-                statusGlyph={instrument.glyph}
+                onAction={canConnect ? () => connectConnector(connector.id) : undefined}
                 testID={`workbench-connector-${connector.id}`}
                 title={connector.name}
                 value={instrument.value}
@@ -274,15 +243,23 @@ const styles = StyleSheet.create((theme) => {
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     content: { flex: 1 },
-    contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
+    contentInner: {
+      padding: hull.space.md,
+      gap: hull.layout.sectionGap,
+      paddingBottom: hull.space.xxl,
+    },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
-    centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl, gap: hull.space.md },
+    centered: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: hull.space.xl,
+      gap: hull.space.md,
+    },
     centeredMessage: {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.textMuted,
       textAlign: 'center',
     },
-    retry: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
   };
 });

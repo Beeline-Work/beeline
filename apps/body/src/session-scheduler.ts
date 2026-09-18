@@ -356,6 +356,29 @@ export class SessionScheduler {
   }
 
   /**
+   * Retire every RETAINED session — the warm processes holding no turn — in
+   * one pass. This is the config-change hot restart: a phone-side model/effort
+   * selection change must not wait for each Room's next hand-back currency
+   * check to notice. A busy, draining, queued, or still-spawning session is
+   * deliberately left alone: interrupting a live turn buys nothing, and its
+   * next hand-back runs the ordinary `isCurrent` check, which cold-activates
+   * against the new selection. Suspending a key that is no longer live is a
+   * no-op, so overlapping wakes coalesce safely.
+   */
+  async suspendIdle(): Promise<void> {
+    for (const [key, session] of [...this.live.entries()]) {
+      if (
+        session.pending ||
+        this.busy.has(key) ||
+        this.drainingKeys.has(key) ||
+        (this.queues.get(key)?.length ?? 0) > 0
+      )
+        continue;
+      await this.suspend(key);
+    }
+  }
+
+  /**
    * Tear down a poisoned session even when its task is still marked busy.
    * The watchdog uses this only after a Room has stopped making progress; the
    * killed ACP client rejects its pending request and releases the old queue.

@@ -10,6 +10,7 @@ const inspector = readFileSync(
   'utf8',
 );
 const navigator = readFileSync(join(here, '../../../../components/SidebarNavigator.tsx'), 'utf8');
+import { desktopWorkPaneEventApplies } from '../../../../buzz/desktop-workbench-state';
 
 describe('desktop workbench wiring', () => {
   it('keeps drafts, send status, file drop, and desktop key semantics on the Room composer', () => {
@@ -44,6 +45,36 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain('observedCornerCardsRef');
     expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner', cornerId: opened })");
     expect(room).toContain(".filter((corner) => corner.state !== 'archived')");
+  });
+
+  it('collapses the work pane entirely on a direct message', () => {
+    // A direct message is refused corners by the server, restates its own
+    // title as MEMBERS, and has no repository for a Reviewer, so the pane is
+    // gone — not an empty shell — and nothing can reopen it.
+    expect(room).toContain('const desktopWorkPaneMounted =');
+    expect(room).toContain(
+      "desktopExperience && !isDirectMessage && workPaneMode === 'present'",
+    );
+    expect(room).toContain('? desktopWorkRoom\n      : null;');
+    expect(room).toContain("desktopExperience && !isDirectMessage && workPaneMode === 'dismissed'");
+    expect(room).toContain('{desktopWorkPaneMounted && (');
+    expect(room).toContain('{desktopWorkHandleMounted && (');
+    // Pane events are no-ops there, so the person's persisted preference is
+    // never overwritten by a channel that has nothing to show.
+    expect(room).toContain('desktopWorkPaneEventApplies(event, isDirectMessage)');
+    // The helper itself: a Room takes every pane event, a direct message only
+    // hydration and window resizes.
+    expect(desktopWorkPaneEventApplies({ type: 'open-overview' }, true)).toBe(false);
+    expect(desktopWorkPaneEventApplies({ type: 'dismiss' }, true)).toBe(false);
+    expect(desktopWorkPaneEventApplies({ type: 'hydrate', preference: 'present' }, true)).toBe(
+      true,
+    );
+    expect(desktopWorkPaneEventApplies({ type: 'resize', width: 1400 }, true)).toBe(true);
+    expect(desktopWorkPaneEventApplies({ type: 'toggle' }, false)).toBe(true);
+    // An artifact Open press in a direct message always lands in the browser.
+    expect(room).toMatch(
+      /if \(isDirectMessage\) \{\s*void openArtifactInBrowserOrExplain\(selection\.attachment\);/,
+    );
   });
 
   it('re-presents the work pane when an artifact opens while it is dismissed', () => {
@@ -91,7 +122,7 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain('router.push(cornerHref(cornerId, desktopWorkRoomId))');
     expect(inspector).toContain('desktop-work-open-in-main');
     expect(inspector).toContain('label="Open in the main pane"');
-    expect(inspector).toContain("title: label");
+    expect(inspector).toContain('title: label');
     expect(inspector).not.toMatch(/maximize|maximized/i);
   });
 

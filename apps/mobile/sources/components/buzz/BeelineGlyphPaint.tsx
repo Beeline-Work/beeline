@@ -29,7 +29,7 @@ import {
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
-export type BeelineGlyphPaintLoop = 'once' | 'release';
+type BeelineGlyphPaintLoop = 'once' | 'release';
 
 /**
  * The app icon's loop, painting itself. Two loops, one geometry:

@@ -17,7 +17,6 @@ export const RELEASE_PAINT_MS = 720;
 export const RELEASE_UNWIND_MS = 880;
 /** Brief rest at empty so the loop returns to nothing instead of restarting at the finish. */
 export const RELEASE_REST_MS = 280;
-export const RELEASE_CYCLE_MS = RELEASE_PAINT_MS + RELEASE_UNWIND_MS + RELEASE_REST_MS;
 
 /**
  * Icon artwork colours, not the UI accent. Brass on aubergine is the dark icon;

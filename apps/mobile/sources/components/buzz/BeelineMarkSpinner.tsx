@@ -1,10 +1,8 @@
 import React from 'react';
 import { BeelineGlyphPaint } from './BeelineGlyphPaint';
-import { MARK_CELL, RELEASE_CYCLE_MS, ribbon } from '@/buzz/beeline-glyph';
+import { MARK_CELL } from '@/buzz/beeline-glyph';
 
-export { MARK_CELL, ribbon };
-/** One paint + one release + the rest at empty. */
-export const RIBBON_CYCLE_MS = RELEASE_CYCLE_MS;
+export { MARK_CELL };
 
 /**
  * The Beeline mark as the thinking line's glyph. Live, the icon's own stroke

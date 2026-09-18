@@ -99,6 +99,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import {
   connectorCatalog,
   connectorDisplayName,
+  connectorIdentityIds,
   defaultConnectorSteps,
   dmParticipantsIncludeConnectorIdentity,
   ensureConnectorDirectMessageRoom,
@@ -106,10 +107,7 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
-import {
-  GOOGLE_CONNECTOR_KINDS,
-  isGoogleToolConnectorKind,
-} from '@beeline/api-contract/workbench';
+import { GOOGLE_CONNECTOR_KINDS, isGoogleToolConnectorKind } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -986,15 +984,24 @@ export class PhoneService {
         )) closed
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (
+        SELECT * FROM messages
+        WHERE room_id=r.id AND presentation IN ('message','system','card')
+          AND card_type IS DISTINCT FROM 'grant-decision'
+        ORDER BY created_at DESC,id DESC LIMIT 1
+      ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
         ) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
+        AND (
+          r.direct_participants IS NULL OR peer.id IS NULL
+          OR NOT (peer.id = ANY($3::text[])) OR lm.id IS NOT NULL
+        )
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
-      [workspaceId, viewerId],
+      [workspaceId, viewerId, connectorIdentityIds()],
     );
     const roomIds = rooms.rows.map((room) => room.id);
     const [presence, cursors] = await Promise.all([
@@ -1038,7 +1045,8 @@ export class PhoneService {
            LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
            LEFT JOIN LATERAL(
              SELECT id,created_at FROM messages
-             WHERE room_id=room.id AND presentation IN ('message','system')
+             WHERE room_id=room.id AND presentation IN ('message','system','card')
+               AND card_type IS DISTINCT FROM 'grant-decision'
                AND author_id IS DISTINCT FROM $2
              ORDER BY created_at DESC,id DESC LIMIT 1
            ) latest ON true
@@ -1267,9 +1275,7 @@ export class PhoneService {
       : [];
     await this.enrichMessageTags(briefingRows);
     const briefing = collapsePermissionCards(
-      briefingRows
-        .map((row) => projectedMessage(row, this.publicOrigin))
-        .sort(messageOrder),
+      briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     );
     const attachmentFacts = await measured(
       'media',
@@ -1285,9 +1291,7 @@ export class PhoneService {
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages: decorateAttachments(messages, attachmentFacts),
-      ...(toolRows.length
-        ? { toolRows: decorateAttachments(toolRows, attachmentFacts) }
-        : {}),
+      ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
       latestAgentTurns,
       viewer: {
@@ -3868,10 +3872,7 @@ export class PhoneService {
         await database.query<{
           visibility: 'public' | 'invite-only';
           reviewer_agent_id: string | null;
-        }>(
-          'SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE',
-          [input.roomId],
-        )
+        }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
       if (input.reviewerAgentId !== undefined && input.reviewerAgentId !== null) {
         const reviewer = await database.query(
@@ -5469,7 +5470,10 @@ export class PhoneService {
    * per workspace. Read both halves by owner. `input.workspaceId` is accepted
    * and ignored for wire compatibility with clients that still send it.
    */
-  async readWorkbench(input: Input<'readWorkbench'>, viewerId: string): Promise<Output<'readWorkbench'>> {
+  async readWorkbench(
+    input: Input<'readWorkbench'>,
+    viewerId: string,
+  ): Promise<Output<'readWorkbench'>> {
     void input;
     const connectors = (
       await this.database.query<{
@@ -5722,25 +5726,24 @@ export class PhoneService {
         );
       }
     }
-    const existing =
-      (
-        await this.database.query<{
-          id: string;
-          status: ConnectorStatus['status'];
-          status_steps: ConnectorStep[] | null;
-          status_error: string | null;
-        }>(
-          `SELECT id,status,status_steps,status_error FROM workspace_connectors
+    const existing = (
+      await this.database.query<{
+        id: string;
+        status: ConnectorStatus['status'];
+        status_steps: ConnectorStep[] | null;
+        status_error: string | null;
+      }>(
+        `SELECT id,status,status_steps,status_error FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
-        )
-      ).rows[0] ?? {
-        id,
-        status: 'installing' as const,
-        status_steps: defaultConnectorSteps() as ConnectorStep[],
-        status_error: null,
-      };
+        [ws.workspace_id, viewerId, input.connectorType, machineId],
+      )
+    ).rows[0] ?? {
+      id,
+      status: 'installing' as const,
+      status_steps: defaultConnectorSteps() as ConnectorStep[],
+      status_error: null,
+    };
     // The helper sees the install assignment on its next poll.
     await ensureConnectorDirectMessageRoom(
       this.database,
@@ -5779,10 +5782,9 @@ export class PhoneService {
     await this.assertWorkbenchViewer(input.workspaceId, viewerId);
     const connector = await this.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.
-    await this.database.query(
-      `DELETE FROM workspace_connections WHERE connector_id=$1::uuid`,
-      [input.connectorId],
-    );
+    await this.database.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
+      input.connectorId,
+    ]);
     await this.database.query(
       `UPDATE workspace_connectors
        SET status='disconnected', status_steps='[]'::jsonb, status_error=NULL,
@@ -5902,10 +5904,10 @@ export class PhoneService {
     const updated = (connection.grants ?? []).map((grant) =>
       grant.revokedAt ? grant : { ...grant, revokedAt },
     );
-    await this.database.query(`UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`, [
-      connection.id,
-      JSON.stringify(updated),
-    ]);
+    await this.database.query(
+      `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
+      [connection.id, JSON.stringify(updated)],
+    );
     if (live.length)
       await this.database.query(
         `UPDATE workspace_connectors

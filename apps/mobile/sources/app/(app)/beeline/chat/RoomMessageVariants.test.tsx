@@ -142,6 +142,7 @@ import {
   RelayHandOff,
   TargetBranchProposalCard,
   WritePermissionCard,
+  WalletCards,
   type OrdinaryLedgerMessageProps,
 } from './RoomMessageVariants';
 
@@ -175,6 +176,32 @@ function render(element: React.ReactElement): ReactTestRenderer {
 function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
   return { id: 'message', text: 'hello', isUser: false, timestamp: 1, ...overrides };
 }
+
+describe('Workbench identities', () => {
+  it('uses the indexed Wallet identity and connector logo on wallet cards', () => {
+    const renderer = render(
+      <WalletCards
+        message={message({
+          authorIdentity: {
+            pubkey: 'wallet-id',
+            kind: 'human',
+            name: 'Wallet',
+            handle: 'wallet',
+            avatar: 'https://api.example.test/v1/connectors/logo/wallet.svg',
+          },
+          walletDelegation: { expiresAt: 1_800_000_000, ttlHours: 24 },
+        })}
+        stamp="12:00"
+      />,
+    );
+    const mark = renderer.root.findByType('IdentityMark' as never);
+    expect(mark.props).toMatchObject({
+      seed: 'wallet-id',
+      name: 'Wallet',
+      avatarUrl: 'https://api.example.test/v1/connectors/logo/wallet.svg',
+    });
+  });
+});
 
 describe('Room message variant components', () => {
   it('replaces the AGENT label with the model, falling back when no model is known', () => {
@@ -369,7 +396,9 @@ describe('Room message variant components', () => {
         title: `Change ${index}`,
         state: index === 3 ? ('Checks failed' as const) : ('Merged' as const),
         kindLine: `PR #${1130 + index}`,
-        ...(index === 3 ? { danger: true, url: `https://github.test/pr/${1130 + index}` as const } : {}),
+        ...(index === 3
+          ? { danger: true, url: `https://github.test/pr/${1130 + index}` as const }
+          : {}),
       })),
     ];
     const renderer = render(

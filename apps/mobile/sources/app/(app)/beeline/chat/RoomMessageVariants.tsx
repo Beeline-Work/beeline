@@ -8,6 +8,7 @@ import {
   type AttachmentReference,
   type MessageReactionEmoji,
 } from '@beeline/buzz-client';
+import { formatChoiceClock } from '@beeline/api-contract/phone';
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -448,11 +449,6 @@ export interface ChoiceCardProps {
   onSkip(choiceId: string): void;
 }
 
-function choiceClock(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
 function choiceHandle(identity?: { handle?: string; name: string; pubkey: string }): string {
   const handle = identity?.handle?.replace(/^@/, '');
   return handle || identity?.name?.replace(/^@/, '') || 'someone';
@@ -483,7 +479,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
     (card.mode === 'question' || card.electorate.includes(viewerPubkey));
   const busy = actionId === card.choiceId;
   const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
-  const clock = card.closesAt ? `closes ${choiceClock(card.closesAt)}` : undefined;
+  const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
   const subline =
     card.mode === 'poll'
       ? [clock, turnout].filter(Boolean).join(' · ')

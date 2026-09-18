@@ -4,6 +4,7 @@ import {
   CHOICE_CARD_TYPE,
   CHOICE_POLL_ELECTORATE_MAX,
   CHOICE_POLL_ELECTORATE_MIN,
+  CHOICE_WAKE_CARD_TYPES,
   choiceClosedFooter,
   decorateChoiceOptions,
   normalizeChoiceConstraint,
@@ -14,6 +15,7 @@ import {
   type ChoiceMode,
   type ChoiceOptionRecord,
   type ChoiceStatus,
+  type ChoiceWakeCardType,
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { typedMentionHandles } from './message-mentions.js';
@@ -30,9 +32,7 @@ export function hiddenWakeCardSql(alias?: string): string {
   return (
     `${column} IS DISTINCT FROM 'grant-decision' ` +
     `AND ${column} IS DISTINCT FROM 'connector-offer-decision' ` +
-    `AND ${column} IS DISTINCT FROM 'choice-answered' ` +
-    `AND ${column} IS DISTINCT FROM 'choice-skipped' ` +
-    `AND ${column} IS DISTINCT FROM 'poll-closed'`
+    CHOICE_WAKE_CARD_TYPES.map((kind) => ` AND ${column} IS DISTINCT FROM '${kind}'`).join('')
   );
 }
 
@@ -346,7 +346,7 @@ async function wakeChoice(
     verb: string;
     object?: string;
     consequence?: string;
-    kind: 'choice-answered' | 'choice-skipped' | 'poll-closed';
+    kind: ChoiceWakeCardType;
     card: Record<string, unknown>;
   },
 ): Promise<void> {

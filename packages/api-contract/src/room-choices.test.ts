@@ -6,6 +6,7 @@ import {
   choiceClosedFooter,
   choiceOptionShare,
   decorateChoiceOptions,
+  formatChoiceClock,
   isChoiceTtlSeconds,
   normalizeChoiceConstraint,
   normalizeChoiceOptions,
@@ -121,5 +122,9 @@ describe('a closed poll tally is width, not permission', () => {
   it('keeps the poll electorate caps the server refuses on', () => {
     expect(CHOICE_POLL_ELECTORATE_MIN).toBe(2);
     expect(CHOICE_POLL_ELECTORATE_MAX).toBe(50);
+  });
+
+  it('formats a still close clock without travelling', () => {
+    expect(formatChoiceClock(Date.UTC(2026, 8, 18, 16, 4) / 1000)).toMatch(/^\d{2}:\d{2}$/);
   });
 });

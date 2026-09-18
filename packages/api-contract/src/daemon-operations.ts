@@ -6,6 +6,7 @@ import type {
   CommandGrantScript,
 } from './agent-grants.js';
 import type { CornerLifecycleView } from './phone-types.js';
+import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type {
   WalletPayInput,
@@ -562,11 +563,7 @@ export type CreateCornerInput = TurnOutputAuthority &
 export type CornerResult = { readonly cornerId: string };
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
-export type ChoiceOptionArg = {
-  readonly label: string;
-  readonly consequence: string;
-  readonly costly?: boolean;
-};
+export type ChoiceOptionArg = ChoiceOptionInput;
 export type AskRoomChoiceInput = TurnOutputAuthority &
   RoomInput & {
     readonly prompt: string;

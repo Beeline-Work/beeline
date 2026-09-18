@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useSpeechInput } from './speech-input';
+import { SPEECH_SILENCE_TIMEOUT_MS, useSpeechInput } from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
 
 vi.mock('react-native', () => ({
@@ -173,7 +173,7 @@ describe('useSpeechInput', () => {
     expect(probe().speechRef.volumeLevel).toBe(1);
   });
 
-  it('auto-stops after ~2 s of silence', async () => {
+  it('auto-stops after silence with nothing recognised', async () => {
     vi.useFakeTimers();
     const { speech, probe } = renderHook();
     await act(async () => {
@@ -181,10 +181,102 @@ describe('useSpeechInput', () => {
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(2100);
+      vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS + 100);
     });
     expect(speech().state).toBe('nothing-recognised');
     expect(mockMod.stop).toHaveBeenCalled();
+  });
+
+  it('does not pair captured text with a nothing-caught error', async () => {
+    vi.useFakeTimers();
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS + 100);
+    });
+    expect(speech().state).toBe('nothing-recognised');
+
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'Sally sell' }], isFinal: false });
+      fireEvent('end');
+    });
+
+    expect(onResult).toHaveBeenCalledWith('Sally sell');
+    expect(speech().state).toBe('idle');
+    expect(speech().partialText).toBe('');
+  });
+
+  it('does not stop mid-utterance when interim results are sparse', async () => {
+    vi.useFakeTimers();
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'Sally sell' }], isFinal: false });
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(speech().state).toBe('listening');
+
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'Sally sells seashells by the seashore' }],
+        isFinal: true,
+      });
+    });
+    expect(onResult).toHaveBeenCalledWith('Sally sells seashells by the seashore');
+    expect(speech().state).toBe('listening');
+  });
+
+  it('gives a short phrase time to produce its first hypothesis', async () => {
+    vi.useFakeTimers();
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(speech().state).toBe('listening');
+  });
+
+  it('does not treat silent volume as speech', async () => {
+    vi.useFakeTimers();
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+
+    await act(async () => {
+      fireEvent('volumechange', { value: -2 });
+      vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS + 100);
+    });
+    expect(speech().state).toBe('nothing-recognised');
+    expect(speech().partialText).toBe('');
+  });
+
+  it('keeps listening while speech volume continues without new hypotheses', async () => {
+    vi.useFakeTimers();
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+
+    await act(async () => {
+      fireEvent('volumechange', { value: 4 });
+      vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS - 500);
+      fireEvent('volumechange', { value: 6 });
+      vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS - 500);
+    });
+    expect(speech().state).toBe('listening');
   });
 
   it('interim results keep resetting the silence timer', async () => {
@@ -203,7 +295,7 @@ describe('useSpeechInput', () => {
     }
 
     await act(async () => {
-      vi.advanceTimersByTime(2100);
+      vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS + 100);
     });
     expect(speech().state).not.toBe('listening');
   });

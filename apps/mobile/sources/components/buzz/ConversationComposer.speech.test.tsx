@@ -102,6 +102,7 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
 
+import { SPEECH_SILENCE_TIMEOUT_MS } from '@/buzz/speech-input';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -418,9 +419,49 @@ describe('listening flow', () => {
       });
     });
 
-    await act(async () => vi.advanceTimersByTime(2100));
+    await act(async () => vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS + 100));
 
     expect(onChangeText).toHaveBeenCalledWith('final words');
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
+    vi.useRealTimers();
+  });
+
+  it('does not show did-not-catch after a late partial from a silence stop', async () => {
+    vi.useFakeTimers();
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState('');
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={setValue}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={vi.fn()}
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />);
+    });
+    renderers.push(renderer);
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS + 100));
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'Sally sell' }], isFinal: false });
+      fireEvent('end');
+    });
+
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('Sally sell');
+    expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
     vi.useRealTimers();
   });
 

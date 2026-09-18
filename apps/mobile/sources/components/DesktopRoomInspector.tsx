@@ -21,6 +21,7 @@ import {
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
+import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import { buildChannelReferenceIndex } from '@/buzz/channel-reference';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -65,6 +66,8 @@ type Props = {
   onClose(): void;
   onNewCorner(): void;
   onOpenRoster(): void;
+  /** Scroll the cockpit transcript to this durable id and inscribe it. */
+  focusMessageId?: string | null;
 };
 
 const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
@@ -114,6 +117,7 @@ export function DesktopRoomInspector({
   onClose,
   onNewCorner,
   onOpenRoster,
+  focusMessageId,
 }: Props) {
   const [detail, setDetail] = React.useState<RoomView | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -282,9 +286,12 @@ export function DesktopRoomInspector({
         />
       ) : selectedCornerId ? (
         <CornerCockpit
+          client={client}
+          roomId={selectedCornerId}
           detail={detail}
           loading={loading}
           summary={summary}
+          focusMessageId={focusMessageId}
           onOpenInMain={() => onOpenInMain(selectedCornerId)}
           onClose={onClose}
           onOpenCorner={onSelectCorner}
@@ -563,23 +570,40 @@ function WorkflowRow({
   );
 }
 
+function scheduleFrame(callback: () => void) {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(callback);
+  else callback();
+}
+
+function messageMatchesFocus(message: ChatDisplayMessage, focusMessageId: string): boolean {
+  return message.id === focusMessageId || message.relayId === focusMessageId;
+}
+
 function CornerCockpit({
+  client,
+  roomId,
   detail,
   loading,
   summary,
+  focusMessageId,
   onOpenInMain,
   onClose,
   onOpenCorner,
   onRefresh,
 }: {
+  client: RoomViewClient | null;
+  roomId: string;
   detail: RoomView | null;
   loading: boolean;
   summary?: CornerListItem;
+  focusMessageId?: string | null;
   onOpenInMain(): void;
   onClose(): void;
   onOpenCorner(cornerId: string): void;
   onRefresh(): Promise<void>;
 }) {
+  const transcriptRef = React.useRef<FlatList<ChatDisplayMessage>>(null);
+  const focusedAnchorRef = React.useRef<string | null>(null);
   const [input, setInput] = React.useState('');
   const [focused, setFocused] = React.useState(false);
   const [height, setHeight] = React.useState(COMPOSER_MIN_HEIGHT);
@@ -587,6 +611,17 @@ function CornerCockpit({
   const [sendError, setSendError] = React.useState<string | null>(null);
   const [stopping, setStopping] = React.useState(false);
   const [now, setNow] = React.useState(Date.now);
+  const {
+    olderPages,
+    status: historyStatus,
+    loadOlder,
+  } = useRoomTranscriptHistory({
+    roomId,
+    tailMessages: detail?.room.id === roomId ? detail.messages : undefined,
+    roomClient: client,
+    enabled: Boolean(focusMessageId && client),
+    initialVisibleCount: 200,
+  });
   React.useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -631,11 +666,41 @@ function CornerCockpit({
     () =>
       detail
         ? foldSystemLines(
-            projector.project(roomViewTranscriptMessages(detail), detail.viewer.identity.pubkey),
+            projector.project(
+              roomViewTranscriptMessages({
+                messages: [...olderPages.flat(), ...detail.messages],
+                toolRows: detail.toolRows,
+              }),
+              detail.viewer.identity.pubkey,
+            ),
           )
         : [],
-    [detail, projector],
+    [detail, olderPages, projector],
   );
+  React.useEffect(() => {
+    focusedAnchorRef.current = null;
+  }, [focusMessageId, roomId]);
+  React.useEffect(() => {
+    if (!focusMessageId || !detail || loading) return;
+    const found = messages.some((message) => messageMatchesFocus(message, focusMessageId));
+    if (found) return;
+    if (historyStatus === 'idle') loadOlder(messages.length);
+  }, [detail, focusMessageId, historyStatus, loadOlder, loading, messages]);
+  React.useEffect(() => {
+    if (!focusMessageId) return;
+    const key = `${roomId}:${focusMessageId}`;
+    if (focusedAnchorRef.current === key) return;
+    const index = messages.findIndex((message) => messageMatchesFocus(message, focusMessageId));
+    if (index < 0) return;
+    focusedAnchorRef.current = key;
+    scheduleFrame(() =>
+      transcriptRef.current?.scrollToIndex({
+        index,
+        viewPosition: 0.35,
+        animated: false,
+      }),
+    );
+  }, [focusMessageId, messages, roomId]);
   const channelIndex = React.useMemo(
     () =>
       buildChannelReferenceIndex(
@@ -676,32 +741,27 @@ function CornerCockpit({
     ({ item }: { item: ChatDisplayMessage }) => {
       const openUrl = (url: string) => void openExternalUrl(url).catch(() => undefined);
       if (item.corner) return null;
-      if (item.roomUpdate)
-        return (
-          <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
-        );
-      if (item.notificationLifecycleRun)
-        return (
-          <NotificationLifecycleCard
-            message={item}
-            onOpenCorner={onOpenCorner}
-            onOpenUrl={openUrl}
-          />
-        );
-      if (item.githubEvent) return <GitHubEventCard message={item} onOpenUrl={openUrl} />;
-      if (item.daemonFact)
-        return <DaemonFactCard message={item} onOpenCorner={() => undefined} onOpenUrl={openUrl} />;
-      if (item.isSystemNotice)
-        return (
-          <LedgerSystemLine
-            id={item.id}
-            text={item.text}
-            {...(item.systemEvent ? { event: item.systemEvent } : {})}
-            stamp={ledgerStamp(item.timestamp)}
-            onOpenUrl={openUrl}
-          />
-        );
-      return (
+      const node = item.roomUpdate ? (
+        <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
+      ) : item.notificationLifecycleRun ? (
+        <NotificationLifecycleCard
+          message={item}
+          onOpenCorner={onOpenCorner}
+          onOpenUrl={openUrl}
+        />
+      ) : item.githubEvent ? (
+        <GitHubEventCard message={item} onOpenUrl={openUrl} />
+      ) : item.daemonFact ? (
+        <DaemonFactCard message={item} onOpenCorner={() => undefined} onOpenUrl={openUrl} />
+      ) : item.isSystemNotice ? (
+        <LedgerSystemLine
+          id={item.id}
+          text={item.text}
+          {...(item.systemEvent ? { event: item.systemEvent } : {})}
+          stamp={ledgerStamp(item.timestamp)}
+          onOpenUrl={openUrl}
+        />
+      ) : (
         <OrdinaryLedgerMessage
           message={item}
           participantsHydrated
@@ -721,8 +781,16 @@ function CornerCockpit({
           desktopLayout
         />
       );
+      if (focusMessageId && messageMatchesFocus(item, focusMessageId)) {
+        return (
+          <View style={styles.focusedMessage} testID="desktop-work-focused-message">
+            {node}
+          </View>
+        );
+      }
+      return node;
     },
-    [channelIndex, detail, onOpenCorner],
+    [channelIndex, detail, focusMessageId, onOpenCorner],
   );
   const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
   const objective = summary?.corner.about ?? detail?.room.about ?? title;
@@ -771,11 +839,21 @@ function CornerCockpit({
         </Text>
       ) : (
         <FlatList
+          ref={transcriptRef}
           data={messages}
           keyExtractor={(message) => message.id}
           renderItem={renderMessage}
           style={styles.transcript}
           contentContainerStyle={styles.transcriptContent}
+          onScrollToIndexFailed={({ index }) => {
+            scheduleFrame(() =>
+              transcriptRef.current?.scrollToIndex({
+                index,
+                viewPosition: 0.35,
+                animated: false,
+              }),
+            );
+          }}
           testID="desktop-work-corner-transcript"
         />
       )}
@@ -940,6 +1018,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   transcript: { flex: 1 },
   transcriptContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 12 },
+  focusedMessage: { backgroundColor: theme.buzz.bgHighlight },
   cockpitComposer: { paddingHorizontal: 16, paddingBottom: 12 },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, padding: 16 },
   error: {

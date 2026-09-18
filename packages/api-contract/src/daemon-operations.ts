@@ -192,6 +192,8 @@ export type DaemonOperationMap = {
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
+  askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;
+  openRoomPoll: Operation<OpenRoomPollInput, AskRoomChoiceResult>;
   listAgentGrants: Operation<AgentInput, AgentGrantListResult>;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   /** R5: what the Workbench can add, and what the person this turn answers already has. */
@@ -558,6 +560,34 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly targetBranch?: string;
   };
 export type CornerResult = { readonly cornerId: string };
+
+/** ask_choice / open_poll: a lettered preference, never a grant. */
+export type ChoiceOptionArg = {
+  readonly label: string;
+  readonly consequence: string;
+  readonly costly?: boolean;
+};
+export type AskRoomChoiceInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly prompt: string;
+    readonly constraint?: string;
+    readonly options: readonly ChoiceOptionArg[];
+    readonly ttlSeconds?: number;
+  };
+export type OpenRoomPollInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly prompt: string;
+    readonly constraint?: string;
+    readonly options: readonly ChoiceOptionArg[];
+    readonly ttlSeconds: number;
+  };
+export type AskRoomChoiceResult = {
+  readonly choiceId: string;
+  readonly messageId: string;
+  readonly mode: 'question' | 'poll';
+  readonly electorateCount: number;
+  readonly closesAt?: number;
+};
 
 /** request_grant: the agent raises its hand for one kind of reach in one Room. */
 export type RequestAgentGrantInput = TurnOutputAuthority &

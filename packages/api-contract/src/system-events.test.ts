@@ -86,6 +86,9 @@ describe('the event kinds beside the prose', () => {
       'grant-decided',
       'connector-offer-decided',
       'turn-cancelled',
+      'choice-answered',
+      'choice-skipped',
+      'poll-closed',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
     expect(isServerEventKind('agent:handoff')).toBe(false);
@@ -113,6 +116,8 @@ describe('the event kinds beside the prose', () => {
     expect(isResumeKind('grant-decided')).toBe(true);
     expect(isResumeKind('connector-offer-decided')).toBe(true);
     expect(isResumeKind('joined')).toBe(false);
+    expect(isResumeKind('choice-answered')).toBe(false);
+    expect(isResumeKind('poll-closed')).toBe(false);
   });
 
   it('keeps a stop on the control path, so it can never start the turn it ends', () => {

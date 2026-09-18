@@ -195,6 +195,88 @@
       .rows {
         margin-top: 10px;
       }
+      .choices {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px 16px 0;
+      }
+      .plate {
+        position: relative;
+        overflow: hidden;
+        min-height: 52px;
+        border: 1px solid var(--strong);
+        border-radius: 3px;
+        background: var(--highlight);
+      }
+      .plate.closed {
+        background: transparent;
+        border-color: var(--border);
+      }
+      .plate.selected {
+        border-color: var(--brass);
+      }
+      .wash {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        background: rgba(176, 138, 74, 0.18);
+      }
+      .wash.leader {
+        background: rgba(176, 138, 74, 0.28);
+      }
+      .plate-inner {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 12px;
+      }
+      .letter {
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--strong);
+        border-radius: 3px;
+        font-weight: 500;
+      }
+      .letter.selected {
+        border-color: var(--brass);
+        background: rgba(176, 138, 74, 0.18);
+        color: var(--brass);
+      }
+      .letter.costly {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      .plate-copy {
+        flex: 1;
+        min-width: 0;
+      }
+      .plate-label {
+        font-size: 16px;
+      }
+      .plate-label.leader {
+        font-weight: 500;
+      }
+      .plate-consequence {
+        margin-top: 1px;
+        color: var(--quiet);
+        font-size: 13px;
+      }
+      .count {
+        min-width: 16px;
+        padding-top: 4px;
+        color: var(--quiet);
+        font: 13px var(--mono);
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+      .count.leader {
+        color: var(--brass);
+      }
       .row {
         display: grid;
         grid-template-columns: 92px 1fr;
@@ -463,6 +545,76 @@
               <span class="action">No</span><span class="action">Once</span
               ><span class="action primary">Always</span>
             </div>
+          </article>
+          <article class="card ask">
+            <div class="head">
+              <span class="tile agent">◈</span>
+              <div class="headcopy">
+                <div class="titleline">
+                  <h2>How do you want to push the desk past this?</h2>
+                  <span class="stamp">19:42</span>
+                </div>
+                <div class="sub">CDP AgentKit needs JWT signing the current egress proxy can't do.</div>
+              </div>
+            </div>
+            <div class="choices">
+              <div class="plate selected">
+                <div class="plate-inner">
+                  <span class="letter selected">A</span>
+                  <div class="plate-copy">
+                    <div class="plate-label">Kraken paper / live API</div>
+                    <div class="plate-consequence">Works with plugin auth, no CDP JWT</div>
+                  </div>
+                </div>
+              </div>
+              <div class="plate">
+                <div class="plate-inner">
+                  <span class="letter costly">B</span>
+                  <div class="plate-copy">
+                    <div class="plate-label">Keep waiting on CDP JWT</div>
+                    <div class="plate-consequence">Blocked until egress can sign</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="footer"><span class="action">Skip</span></div>
+          </article>
+          <article class="card">
+            <div class="head">
+              <span class="tile agent">◈</span>
+              <div class="headcopy">
+                <div class="titleline">
+                  <h2>Which paper API?</h2>
+                  <span class="stamp">19:43</span>
+                </div>
+                <div class="sub">closed · 3 of 4 voted</div>
+              </div>
+            </div>
+            <div class="choices">
+              <div class="plate closed">
+                <span class="wash leader" style="width: 100%"></span>
+                <div class="plate-inner">
+                  <span class="letter">A</span>
+                  <div class="plate-copy">
+                    <div class="plate-label leader">Kraken paper</div>
+                    <div class="plate-consequence">Works with plugin auth</div>
+                  </div>
+                  <span class="count leader">2</span>
+                </div>
+              </div>
+              <div class="plate closed">
+                <span class="wash" style="width: 50%"></span>
+                <div class="plate-inner">
+                  <span class="letter">B</span>
+                  <div class="plate-copy">
+                    <div class="plate-label">Keep waiting</div>
+                    <div class="plate-consequence">Blocked on CDP JWT</div>
+                  </div>
+                  <span class="count">1</span>
+                </div>
+              </div>
+            </div>
+            <div class="footer"><span class="note">closed · 3 of 4 voted</span></div>
           </article>
           <article class="card">
             <div class="head">

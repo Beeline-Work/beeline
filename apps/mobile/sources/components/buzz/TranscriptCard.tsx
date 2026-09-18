@@ -54,6 +54,19 @@ export type TranscriptCardAction = {
   accessibilityRole?: 'button' | 'link';
 };
 
+export type TranscriptCardChoice = {
+  id: string;
+  letter: string;
+  label: string;
+  consequence: string;
+  costly?: boolean;
+  votes?: number;
+  share?: number;
+  leader?: boolean;
+  selected?: boolean;
+  onPress?(): void;
+};
+
 export type TranscriptCardProps = {
   tier: TranscriptCardTier;
   title: ReactNode;
@@ -64,6 +77,7 @@ export type TranscriptCardProps = {
   body?: ReactNode;
   quietBody?: boolean;
   rows?: readonly TranscriptCardRow[];
+  choices?: readonly TranscriptCardChoice[];
   code?: ReactNode;
   codeTestID?: string;
   codePath?: string;
@@ -197,6 +211,7 @@ export function TranscriptCard({
   body,
   quietBody = false,
   rows = [],
+  choices = [],
   code,
   codeTestID,
   codePath,
@@ -396,6 +411,17 @@ export function TranscriptCard({
               ))}
             </View>
           ) : null}
+          {choices.length ? (
+            <View style={styles.choices} testID={testID ? `${testID}-choices` : undefined}>
+              {choices.map((choice) => (
+                <TranscriptCardChoicePlate
+                  key={choice.id}
+                  choice={choice}
+                  closed={tier === 'record'}
+                />
+              ))}
+            </View>
+          ) : null}
           {hasFooter ? (
             <View style={styles.footer}>
               {footerNote !== undefined ? (
@@ -432,6 +458,89 @@ export function TranscriptCard({
           ) : null}
         </View>
       </Animated.View>
+    </View>
+  );
+}
+
+function TranscriptCardChoicePlate({
+  choice,
+  closed,
+}: {
+  choice: TranscriptCardChoice;
+  closed: boolean;
+}) {
+  const washWidth = closed ? Math.max(0, Math.min(1, choice.share ?? 0)) : 0;
+  const inner = (
+    <>
+      {washWidth > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.choiceWash,
+            choice.leader ? styles.choiceWashLeader : null,
+            { width: `${Math.round(washWidth * 100)}%` },
+          ]}
+          testID={`transcript-card-choice-wash-${choice.id}`}
+        />
+      ) : null}
+      <View style={styles.choiceInner}>
+        <View
+          style={[
+            styles.choiceLetter,
+            choice.selected ? styles.choiceLetterSelected : null,
+            choice.costly ? styles.choiceLetterCostly : null,
+          ]}
+        >
+          <Text
+            style={[
+              styles.choiceLetterText,
+              choice.selected ? styles.choiceLetterTextSelected : null,
+              choice.costly ? styles.choiceLetterTextCostly : null,
+            ]}
+          >
+            {choice.letter}
+          </Text>
+        </View>
+        <View style={styles.choiceCopy}>
+          <Text style={[styles.choiceLabel, choice.leader ? styles.choiceLabelLeader : null]}>
+            {choice.label}
+          </Text>
+          {choice.consequence ? (
+            <Text style={styles.choiceConsequence}>{choice.consequence}</Text>
+          ) : null}
+        </View>
+        {closed && choice.votes !== undefined ? (
+          <Text
+            style={[styles.choiceCount, choice.leader ? styles.choiceCountLeader : null]}
+            testID={`transcript-card-choice-count-${choice.id}`}
+          >
+            {choice.votes}
+          </Text>
+        ) : null}
+      </View>
+    </>
+  );
+  const plateStyle = [
+    styles.choicePlate,
+    closed ? styles.choicePlateClosed : null,
+    choice.selected ? styles.choicePlateSelected : null,
+  ];
+  if (choice.onPress) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${choice.letter}. ${choice.label}. ${choice.consequence}`}
+        onPress={choice.onPress}
+        style={({ pressed }) => [plateStyle, pressed && styles.choicePlatePressed]}
+        testID={`transcript-card-choice-${choice.id}`}
+      >
+        {inner}
+      </Pressable>
+    );
+  }
+  return (
+    <View style={plateStyle} testID={`transcript-card-choice-${choice.id}`}>
+      {inner}
     </View>
   );
 }
@@ -702,6 +811,72 @@ const styles = StyleSheet.create((theme) => {
       color: card.textPrimary,
     },
     rowKind: { ...card.type.machine, fontSize: metric.rowKindSize, color: card.ledgerGhost },
+    choices: {
+      gap: card.space.sm,
+      paddingTop: metric.rowVertical,
+      paddingHorizontal: metric.side,
+    },
+    choicePlate: {
+      position: 'relative',
+      overflow: 'hidden',
+      minHeight: 52,
+      borderWidth: 1,
+      borderColor: card.borderStrong,
+      borderRadius: card.radius,
+      backgroundColor: card.bgHighlight,
+    },
+    choicePlateClosed: {
+      backgroundColor: 'transparent',
+      borderColor: card.border,
+    },
+    choicePlateSelected: { borderColor: card.accent },
+    choicePlatePressed: { backgroundColor: card.bgPressed },
+    choiceWash: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: card.brassWash,
+    },
+    choiceWashLeader: { backgroundColor: card.brassWashStrong },
+    choiceInner: {
+      position: 'relative',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    choiceLetter: {
+      width: metric.identitySize,
+      height: metric.identitySize,
+      borderWidth: 1,
+      borderColor: card.borderStrong,
+      borderRadius: card.radius,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    choiceLetterSelected: {
+      borderColor: card.accent,
+      backgroundColor: card.brassWash,
+    },
+    choiceLetterCostly: { borderColor: card.diffRemoved },
+    choiceLetterText: { ...card.type.bodyStrong, color: card.textPrimary },
+    choiceLetterTextSelected: { color: card.accent },
+    choiceLetterTextCostly: { color: card.diffRemoved },
+    choiceCopy: { flex: 1, minWidth: 0 },
+    choiceLabel: { ...card.type.body, color: card.textPrimary },
+    choiceLabelLeader: { ...card.type.bodyStrong, color: card.textPrimary },
+    choiceConsequence: { ...card.type.meta, color: card.ledgerQuiet, marginTop: 1 },
+    choiceCount: {
+      ...card.type.machine,
+      color: card.ledgerQuiet,
+      fontVariant: ['tabular-nums'],
+      paddingTop: 4,
+      minWidth: 16,
+      textAlign: 'right',
+    },
+    choiceCountLeader: { color: card.accent, fontFamily: card.proseMedium },
     footer: {
       minHeight: metric.footerMinHeight,
       marginTop: metric.footerTop,

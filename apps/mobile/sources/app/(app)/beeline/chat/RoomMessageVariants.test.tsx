@@ -145,6 +145,7 @@ import {
   NotificationLifecycleCard,
   GrantRequestCard,
   ConnectorOfferCard,
+  ChoiceCard,
   agentBylineLabel,
   OrdinaryLedgerMessage,
   RelayHandOff,
@@ -225,6 +226,8 @@ describe('Room message variant components', () => {
     expect(composerSource).toContain('testID={`${testIDPrefix}-input`}');
     expect(conversationSource.match(/<AttachmentPickerSheet/g)).toHaveLength(1);
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
+    expect(conversationSource).toContain('<ChoiceCard');
+    expect(conversationSource).toContain('<ConnectorOfferCard');
     expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
     expect(conversationSource).toContain('agentModel={item.agentModel}');
     // The byline renders the model stamped at generation time; the roster
@@ -2054,6 +2057,120 @@ describe('Room message variant components', () => {
       />,
     );
     expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
+  });
+
+  it('paints choice options as plates with Skip in the footer, never TranscriptCard rows', () => {
+    const onAnswer = vi.fn();
+    const onSkip = vi.fn();
+    const open = message({
+      choice: {
+        choiceId: 'c-1',
+        mode: 'question',
+        status: 'open',
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Foxy' },
+        prompt: 'How do you want to push the desk past this?',
+        constraint: 'CDP AgentKit needs JWT signing.',
+        options: [
+          {
+            optionId: 'A',
+            letter: 'A',
+            label: 'Kraken paper',
+            consequence: 'Works with plugin auth',
+          },
+          {
+            optionId: 'B',
+            letter: 'B',
+            label: 'Keep waiting',
+            consequence: 'Blocked on CDP JWT',
+            costly: true,
+          },
+        ],
+        electorate: ['human'],
+        votedCount: 0,
+        electorateCount: 1,
+        responses: [],
+      },
+    });
+    const renderer = render(
+      <ChoiceCard
+        message={open}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={onAnswer}
+        onSkip={onSkip}
+      />,
+    );
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain('How do you want to push the desk past this?');
+    expect(json).toContain('Kraken paper');
+    expect(json).toContain('Skip');
+    expect(renderer.root.findAllByProps({ testID: 'transcript-card-row-A' })).toHaveLength(0);
+    act(() => renderer.root.findByProps({ testID: 'transcript-card-choice-A' }).props.onPress());
+    expect(onAnswer).toHaveBeenCalledWith('c-1', 'A');
+    act(() => renderer.root.findByProps({ testID: 'choice-c-1-skip' }).props.onPress());
+    expect(onSkip).toHaveBeenCalledWith('c-1');
+  });
+
+  it('shows a still tally wash on a closed poll and no Skip', () => {
+    const renderer = render(
+      <ChoiceCard
+        message={message({
+          choice: {
+            choiceId: 'c-2',
+            mode: 'poll',
+            status: 'closed',
+            agent: { pubkey: 'agent', kind: 'agent', name: 'Foxy' },
+            prompt: 'Which paper API?',
+            options: [
+              {
+                optionId: 'A',
+                letter: 'A',
+                label: 'Kraken paper',
+                consequence: 'Works with plugin auth',
+                votes: 2,
+                share: 1,
+                leader: true,
+              },
+              {
+                optionId: 'B',
+                letter: 'B',
+                label: 'Keep waiting',
+                consequence: 'Blocked on CDP JWT',
+                votes: 1,
+                share: 0.5,
+              },
+            ],
+            electorate: ['human', 'member'],
+            votedCount: 3,
+            electorateCount: 4,
+            responses: [
+              { identityId: 'human', optionId: 'A' },
+              { identityId: 'member', optionId: 'B' },
+            ],
+            outcome: 'winner',
+            footer: 'closed · 3 of 4 voted',
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={vi.fn()}
+        onSkip={vi.fn()}
+      />,
+    );
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain('closed · 3 of 4 voted');
+    expect(json).not.toContain('Skip');
+    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-wash-A' }).props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ width: '100%' })]),
+    );
+    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-wash-B' }).props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ width: '50%' })]),
+    );
+    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-count-A' }).props.children).toBe(
+      2,
+    );
   });
 
   it('opens the message actions sheet on long press while retaining tap dismissal', () => {

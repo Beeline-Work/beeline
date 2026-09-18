@@ -41,6 +41,7 @@ describe('ledger attribution runs', () => {
       { durableFact: { kind: 'merge' } },
       { grantRequest: { id: 'grant' } },
       { connectorOffer: { offerId: 'offer' } },
+      { choice: { choiceId: 'choice' } },
     ];
 
     for (const [index, card] of cards.entries()) {

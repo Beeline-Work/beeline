@@ -106,6 +106,10 @@ describe('The quiet tier holds a WCAG-AA floor', () => {
   it('lifts ledgerQuiet above 4.5:1 on every resting ground in both themes', () => {
     expect(beelineThemes.obsidian.ledgerQuiet).toBe('#90909B');
     expect(beelineThemes.bone.ledgerQuiet).toBe('#6F6455');
+    expect(beelineThemes.obsidian.brassWash).toBe('rgba(176,138,74,0.18)');
+    expect(beelineThemes.obsidian.brassWashStrong).toBe('rgba(176,138,74,0.28)');
+    expect(beelineThemes.bone.brassWash).toBe('rgba(138,99,35,0.18)');
+    expect(beelineThemes.bone.brassWashStrong).toBe('rgba(138,99,35,0.28)');
     for (const set of Object.values(beelineThemes)) {
       for (const ground of [set.bgBase, set.bgRaised, set.bgCode, set.bgUnread]) {
         expect(contrast(set.ledgerQuiet, ground)).toBeGreaterThanOrEqual(4.5);

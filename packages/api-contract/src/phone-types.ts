@@ -1,5 +1,6 @@
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
+import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
 
@@ -234,6 +235,8 @@ export type RoomViewMessage = {
   readonly grantRequest?: GrantRequestCardView;
   /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
   readonly connectorOffer?: ConnectorOfferCardView;
+  /** One preference card: a lettered question or a Room poll. Never authority. */
+  readonly choice?: ChoiceCardView;
   readonly targetBranch?: {
     readonly proposalId: string;
     readonly from: string;
@@ -356,6 +359,28 @@ export type GrantRequestCardView = {
   readonly owner: RoomViewIdentity;
   readonly requester: RoomViewIdentity;
   readonly grants: readonly AgentGrantView[];
+};
+
+/** One lettered question or Room poll. Options are plates, never ledger rows. */
+export type ChoiceCardView = {
+  readonly choiceId: string;
+  readonly mode: ChoiceMode;
+  readonly status: ChoiceStatus;
+  readonly agent: RoomViewIdentity;
+  readonly requester?: RoomViewIdentity;
+  readonly prompt: string;
+  readonly constraint?: string;
+  readonly options: readonly ChoiceOptionView[];
+  readonly electorate: readonly string[];
+  readonly mentionIds?: readonly string[];
+  readonly closesAt?: number;
+  readonly votedCount: number;
+  readonly electorateCount: number;
+  readonly responses: readonly { readonly identityId: string; readonly optionId: string }[];
+  readonly answeredBy?: RoomViewIdentity;
+  readonly selectedOptionId?: string;
+  readonly outcome?: 'winner' | 'tie' | 'no-votes';
+  readonly footer?: string;
 };
 
 export type RoomViewer = {

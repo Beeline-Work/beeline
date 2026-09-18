@@ -323,6 +323,7 @@ export function DesktopRoomInspector({
               <CornerRow
                 corner={item}
                 parentRoomName={room.room.name}
+                viewerPubkey={room.viewer.identity.pubkey}
                 onPress={() => onSelectCorner(item.corner.id)}
               />
             )}
@@ -460,14 +461,17 @@ function SectionHeader({
 function CornerRow({
   corner,
   parentRoomName,
+  viewerPubkey,
   onPress,
 }: {
   corner: CornerListItem;
   parentRoomName: string;
+  viewerPubkey: string;
   onPress(): void;
 }) {
   const display = cornerDisplayState(corner);
   const title = displayGroupedCornerTitle(parentRoomName, corner.corner.name, corner.corner.id);
+  const openedByViewer = corner.agent?.pubkey === viewerPubkey;
   return (
     <Pressable
       accessibilityRole="button"
@@ -492,6 +496,11 @@ function CornerRow({
         >
           {display.word}
         </Text>
+        {openedByViewer ? (
+          <Text style={styles.cornerMe} testID={`desktop-work-corner-me-${corner.corner.id}`}>
+            ME
+          </Text>
+        ) : null}
         <Text style={styles.chevron}>›</Text>
       </View>
       <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
@@ -862,6 +871,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
+  cornerMe: {
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.accent,
+    includeFontPadding: false,
+  },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
   cornerStatus: {
     ...theme.buzz.type.sectionHead,

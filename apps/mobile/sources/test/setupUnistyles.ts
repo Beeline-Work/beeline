@@ -30,16 +30,22 @@ vi.mock('react-native-reanimated', () => ({
   default: {
     Text: (props: Record<string, unknown>) => React.createElement('Text', props),
     View: (props: Record<string, unknown>) => React.createElement('View', props),
+    createAnimatedComponent: (component: unknown) => component,
   },
-  Easing: { cubic: 'cubic', out: (value: unknown) => value },
+  Easing: { cubic: 'cubic', inOut: (value: unknown) => value, out: (value: unknown) => value },
   FadeOut: animationBuilder,
   ReduceMotion: { System: 'system' },
+  cancelAnimation: vi.fn(),
   interpolateColor: (value: number, _input: number[], output: string[]) =>
     value >= 1 ? output[output.length - 1] : output[0],
+  runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
+  useAnimatedProps: (factory: () => unknown) => factory(),
   useAnimatedStyle: (factory: () => unknown) => factory(),
   useReducedMotion: () => false,
   useSharedValue: (value: unknown) => ({ value }),
   withDelay: (_delay: number, value: unknown) => value,
+  withRepeat: (value: unknown) => value,
+  withSequence: (...steps: unknown[]) => steps[0],
   withTiming: (value: unknown) => value,
 }));
 

@@ -62,6 +62,7 @@ import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
+import { BootPaint } from '@/components/buzz/BootPaint';
 
 // Foreground banner policy: suppress banners while the app is active, and
 // always for the Room the person currently has open. Background display and
@@ -115,10 +116,13 @@ export {
   ErrorBoundary,
 } from 'expo-router';
 
-// Configure splash screen
+// The OS splash is a static image and cannot animate. Keep it up until
+// BootPaint has laid out on the SAME ground, then hide with no fade so the
+// handoff is a colour match rather than a flash. The glyph paints itself
+// on that first screen.
 SplashScreen.setOptions({
-  fade: true,
-  duration: 300,
+  fade: false,
+  duration: 0,
 });
 SplashScreen.preventAutoHideAsync();
 
@@ -304,6 +308,13 @@ export default function RootLayout() {
   // Init sequence
   //
   const [initialized, setInitialized] = React.useState(false);
+  const [painted, setPainted] = React.useState(false);
+  const splashHidden = React.useRef(false);
+  const hideNativeSplash = React.useCallback(() => {
+    if (splashHidden.current) return;
+    splashHidden.current = true;
+    void SplashScreen.hideAsync();
+  }, []);
   React.useEffect(() => {
     (async () => {
       try {
@@ -314,14 +325,6 @@ export default function RootLayout() {
       }
     })();
   }, []);
-
-  React.useEffect(() => {
-    if (initialized) {
-      setTimeout(() => {
-        SplashScreen.hideAsync();
-      }, 100);
-    }
-  }, [initialized]);
 
   const handledNotificationIds = React.useRef<Set<string>>(new Set());
   const handleNotificationResponse = React.useCallback(
@@ -366,8 +369,13 @@ export default function RootLayout() {
   // Not inited
   //
 
-  if (!initialized) {
-    return null;
+  if (!initialized || !painted) {
+    return (
+      <BootPaint
+        onPainted={() => setPainted(true)}
+        onReady={hideNativeSplash}
+      />
+    );
   }
 
   //

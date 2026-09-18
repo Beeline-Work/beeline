@@ -30,7 +30,7 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { default: host('Svg'), Path: host('Path') };
+  return { default: host('Svg'), Path: host('Path'), G: host('G') };
 });
 
 const motion = vi.hoisted(() => ({ reducedMotion: false }));
@@ -53,6 +53,8 @@ vi.mock('react-native-reanimated', async () => {
       poly: (n: number) => n,
     },
     ReduceMotion: { System: 'system' },
+    cancelAnimation: vi.fn(),
+    runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
     useAnimatedProps: (factory: () => unknown) => factory(),
     useAnimatedStyle: (factory: () => unknown) => factory(),
     useReducedMotion: () => motion.reducedMotion,
@@ -60,13 +62,13 @@ vi.mock('react-native-reanimated', async () => {
     withDelay: (_ms: number, value: unknown) => value,
     withRepeat: (value: unknown) => value,
     withTiming: (value: number) => value,
-    withSequence: (value: unknown) => value,
+    withSequence: (...steps: unknown[]) => steps,
     FadeInDown: { duration: () => ({}) },
   };
 });
 
 import { groknight } from '@/buzz/groknight';
-import { MARK_CELL, ribbon } from './BeelineMarkSpinner';
+import { GLYPH_PAINT, MARK_CELL, ribbon } from '@/buzz/beeline-glyph';
 import { TurnProgressLine, TurnSettledLine } from './TurnProgressLine';
 
 const originalConsoleError = console.error;
@@ -304,17 +306,21 @@ describe('the per-turn progress indicator', () => {
     expect(cell.findAllByType('Text')).toHaveLength(0);
     expect(cell.findAllByType('Svg')).toHaveLength(1);
     const ribbons = cell.findAllByType('AnimatedPath');
-    expect(ribbons.length).toBeGreaterThanOrEqual(1);
+    expect(ribbons.length).toBe(1);
     for (const path of ribbons) {
-      // The authoritative geometry, stroked in the one accent: no fill, no
-      // second colour, and a dash as long as the outline so it can draw itself.
+      // The icon's own loop, painting itself: brass on aubergine, never the
+      // UI accent and never a row of dots.
       expect(path.props.d).toBe(ribbon.path);
-      expect(path.props.stroke).toBe(groknight.accent);
+      expect(path.props.stroke).toBe(GLYPH_PAINT.darkInk);
+      expect(path.props.stroke).not.toBe(groknight.accent);
       expect(path.props.fill).toBe('none');
       expect(path.props.strokeDasharray).toEqual([ribbon.length, ribbon.length]);
     }
-    // Live means drawing: the static completed outline is not what is shown.
+    // Live means drawing: the static completed mark is not what is shown.
     expect(cell.findAllByType('Path')).toHaveLength(0);
+    expect(cell.findAllByType('View').filter((node) => node.props.style?.width === 5)).toHaveLength(
+      0,
+    );
     expect(renderer.root.findAllByType('Text')[0].props.children).toBe('beebee Thinking\u2026');
   });
 
@@ -350,7 +356,7 @@ describe('the per-turn progress indicator', () => {
     expect(cell.findAllByType('AnimatedPath')).toHaveLength(0);
     const [mark] = cell.findAllByType('Path');
     expect(mark.props.d).toBe(ribbon.path);
-    expect(mark.props.stroke).toBe(groknight.accent);
+    expect(mark.props.fill).toBe(GLYPH_PAINT.darkInk);
     expect(mark.props.strokeDasharray).toBeUndefined();
   });
 
@@ -373,7 +379,7 @@ describe('the per-turn progress indicator', () => {
     expect(cell.findAllByType('AnimatedPath')).toHaveLength(0);
     const [mark] = cell.findAllByType('Path');
     expect(mark.props.d).toBe(ribbon.path);
-    expect(mark.props.stroke).toBe(groknight.accent);
-    expect(mark.props.fill).toBe('none');
+    expect(mark.props.fill).toBe(GLYPH_PAINT.darkInk);
+    expect(mark.props.strokeDasharray).toBeUndefined();
   });
 });

@@ -9,12 +9,23 @@ const loadLastViewedChannel = vi.hoisted(() => vi.fn(async () => null));
 const route = vi.hoisted(() => ({
   communityId: undefined as string | undefined,
   parent: undefined as string | undefined,
+  pathname: '/beeline/channels',
 }));
+const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
-    workspace: { id: workspaceId, name: workspaceId },
+    workspace: { id: workspaceId, name: workspaceId, role: 'owner' },
+    viewer: { kind: viewer.kind },
     chats:
-      workspaceId === 'workspace-a' ? [{ room: { id: 'room-a', workspaceId, name: 'Alpha' } }] : [],
+      workspaceId === 'workspace-a'
+        ? [
+            { room: { id: 'room-a', workspaceId, name: 'Alpha' } },
+            {
+              room: { id: 'dm-a', workspaceId, name: 'Direct' },
+              directMessage: { peer: { name: 'Mina' } },
+            },
+          ]
+        : [],
   })),
 );
 const windowListeners = new Map<string, (event: any) => void>();
@@ -45,6 +56,7 @@ const theme = vi.hoisted(() => ({
     textSecondary: '#aaa',
   },
   buzz: {
+    accent: '#b08a4a',
     type: { bodyStrong: {}, machine: {}, meta: {}, sectionHead: {} },
   },
 }));
@@ -61,7 +73,7 @@ vi.mock('@expo/vector-icons', async () => {
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock('expo-router', () => ({
   useGlobalSearchParams: () => route,
-  usePathname: () => '/beeline/channels',
+  usePathname: () => route.pathname,
   useRouter: () => ({ push: routerPush }),
 }));
 vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 0, useIsDesktop: () => true }));
@@ -91,8 +103,18 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 vi.mock('@/buzz/room-list-row', () => ({
   displayGroupedCornerTitle: vi.fn(() => ''),
   NO_ACTIVITY_PREVIEW: 'No activity',
-  roomListSections: vi.fn((items) => (items.length ? [{ kind: 'rooms', data: items }] : [])),
-  roomRowName: vi.fn((item) => ({ name: item.room.name, sigil: '#' })),
+  roomListSections: vi.fn((items) => {
+    const rooms = items.filter((item: any) => !item.directMessage);
+    const directMessages = items.filter((item: any) => item.directMessage);
+    return [
+      ...(rooms.length ? [{ kind: 'rooms', data: rooms }] : []),
+      ...(directMessages.length ? [{ kind: 'messages', data: directMessages }] : []),
+    ];
+  }),
+  roomRowName: vi.fn((item) => ({
+    name: item.directMessage?.peer.name ?? item.room.name,
+    sigil: item.directMessage ? '@' : '#',
+  })),
   roomRowNeedsAttention: vi.fn(() => false),
   roomRowPreview: vi.fn(() => ({ text: 'No activity' })),
 }));
@@ -164,6 +186,8 @@ describe('desktop Workspace navigation', () => {
     windowListeners.clear();
     route.communityId = undefined;
     route.parent = undefined;
+    route.pathname = '/beeline/channels';
+    viewer.kind = 'human';
     await act(async () => {
       tree = create(<SidebarView />);
     });
@@ -208,7 +232,10 @@ describe('desktop Workspace navigation', () => {
     expect(
       tree.root
         .findAllByType('Text')
-        .some((node: { props: { children?: unknown } }) => node.props.children === 'No rooms yet.'),
+        .some(
+          (node: { props: { children?: unknown } }) =>
+            node.props.children === 'No rooms or direct messages yet.',
+        ),
     ).toBe(true);
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/channels',
@@ -247,6 +274,100 @@ describe('desktop Workspace navigation', () => {
     expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
   });
 
+  it('gives search a visible focus state without announcing decorative chrome', () => {
+    const search = tree.root.findByProps({ testID: 'desktop-room-search' });
+    const searchWrap = search.parent;
+
+    expect(search.props.accessibilityLabel).toBe('Search Rooms and direct messages');
+    expect(searchWrap?.props.style).not.toContainEqual({ borderColor: '#b08a4a' });
+
+    act(() => search.props.onFocus());
+    expect(searchWrap?.props.style).toContainEqual({ borderColor: '#b08a4a' });
+
+    const hiddenChrome = tree.root.findAll(
+      (node: { props: { 'aria-hidden'?: boolean } }) => node.props['aria-hidden'] === true,
+    );
+    expect(
+      hiddenChrome.some((node: { props: { name?: string } }) => node.props.name === 'search'),
+    ).toBe(true);
+    expect(
+      hiddenChrome.some((node: { props: { children?: unknown } }) => node.props.children === '⌘K'),
+    ).toBe(true);
+  });
+
+  it('routes the persistent New Room, Workbench, and Bookmarks actions', () => {
+    act(() => tree.root.findByProps({ testID: 'desktop-new-room' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/channels',
+      params: { communityId: 'workspace-a', newRoom: expect.any(String) },
+    });
+
+    act(() => tree.root.findByProps({ testID: 'desktop-workbench' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/settings/workbench',
+      params: { workspaceId: 'workspace-a', viewerId: 'viewer' },
+    });
+
+    act(() => tree.root.findByProps({ testID: 'desktop-bookmarks' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/bookmarks',
+      params: { communityId: 'workspace-a' },
+    });
+  });
+
+  it('separates Rooms and direct messages without section creation controls', () => {
+    expect(
+      tree.root
+        .findAllByType('RoomListSectionHeader')
+        .map((header: { props: { title: string } }) => header.props.title),
+    ).toEqual(['Rooms', 'Direct messages']);
+    expect(
+      tree.root
+        .findAllByType('Text')
+        .some((node: { props: { children?: unknown } }) => node.props.children === 'New section'),
+    ).toBe(false);
+  });
+
+  it('does not offer New Room to an agent even with an elevated Workspace role', async () => {
+    viewer.kind = 'agent';
+    await act(async () => {
+      tree.update(<SidebarView key="agent-viewer" />);
+    });
+    await settle();
+
+    expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
+  });
+
+  it('keeps Workbench and profile settings from appearing selected together', async () => {
+    route.pathname = '/beeline/settings/workbench';
+    await act(async () => {
+      tree.update(<SidebarView key="workbench-route" />);
+    });
+    await settle();
+
+    const selected = (style: unknown) =>
+      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
+    const workbench = tree.root.findByProps({ testID: 'desktop-workbench' });
+    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
+
+    expect(selected(workbench.props.style({ pressed: false }))).toBe(true);
+    expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
+    expect(workbench.props.accessibilityState).toEqual({ selected: true });
+    expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
+  });
+
+  it('exposes the active conversation to assistive technology', async () => {
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="active-room-route" />);
+    });
+    await settle();
+
+    expect(
+      tree.root.findByProps({ testID: 'desktop-room-room-a' }).props.accessibilityState,
+    ).toEqual({ selected: true });
+  });
+
   it('closes without routing when the current Workspace is picked', () => {
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
     act(() => tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-a'));
@@ -269,7 +390,10 @@ describe('desktop Workspace navigation', () => {
     expect(
       tree.root
         .findAllByType('Text')
-        .some((node: { props: { children?: unknown } }) => node.props.children === 'No rooms yet.'),
+        .some(
+          (node: { props: { children?: unknown } }) =>
+            node.props.children === 'No rooms or direct messages yet.',
+        ),
     ).toBe(true);
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
   });

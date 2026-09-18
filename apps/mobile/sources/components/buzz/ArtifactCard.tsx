@@ -76,13 +76,17 @@ export const ArtifactCard = React.memo(function ArtifactCard({
 
   // Android hands the whole PDF to the system viewer (phase one); desktop
   // previews and opens through the browser. iOS renders the first page here.
-  if (format === 'document' || (format === 'pdf' && Platform.OS !== 'ios')) {
-    const pdfActions = format === 'pdf' ? (['browser', 'open'] as const) : (['browser'] as const);
+  // Raster images keep the file-style card but open in the native phone viewer.
+  if (format === 'document' || format === 'image' || (format === 'pdf' && Platform.OS !== 'ios')) {
+    const actions =
+      format === 'document' || (format === 'image' && isDesktop)
+        ? (['browser'] as const)
+        : (['browser', 'open'] as const);
     return (
       <ArtifactCardShell
         title={title}
         kindLine={kindLine}
-        actions={pdfActions}
+        actions={actions}
         onOpenInBrowser={openInBrowser}
         onOpenFull={openFull}
         testID={`artifact-document-${attachment.name}`}

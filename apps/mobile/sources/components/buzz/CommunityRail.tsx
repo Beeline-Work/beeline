@@ -269,9 +269,9 @@ export function CommunityRail({
       )}
       <View style={styles.railDivider} />
       <RailCommand
-        accessibilityLabel="Your settings"
+        accessibilityLabel="Settings"
         glyph={viewerPubkey ? undefined : '⚙'}
-        label="YOU"
+        label="SETTINGS"
         onPress={onSettings}
         testID="community-rail-settings"
         presentation={presentation}

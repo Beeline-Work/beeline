@@ -9,6 +9,7 @@ const loadLastViewedChannel = vi.hoisted(() => vi.fn(async () => null));
 const route = vi.hoisted(() => ({
   communityId: undefined as string | undefined,
   parent: undefined as string | undefined,
+  pathname: '/beeline/channels',
 }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
@@ -61,7 +62,7 @@ vi.mock('@expo/vector-icons', async () => {
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock('expo-router', () => ({
   useGlobalSearchParams: () => route,
-  usePathname: () => '/beeline/channels',
+  usePathname: () => route.pathname,
   useRouter: () => ({ push: routerPush }),
 }));
 vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 0, useIsDesktop: () => true }));
@@ -164,6 +165,7 @@ describe('desktop Workspace navigation', () => {
     windowListeners.clear();
     route.communityId = undefined;
     route.parent = undefined;
+    route.pathname = '/beeline/channels';
     await act(async () => {
       tree = create(<SidebarView />);
     });
@@ -208,7 +210,10 @@ describe('desktop Workspace navigation', () => {
     expect(
       tree.root
         .findAllByType('Text')
-        .some((node: { props: { children?: unknown } }) => node.props.children === 'No rooms yet.'),
+        .some(
+          (node: { props: { children?: unknown } }) =>
+            node.props.children === 'No rooms or direct messages yet.',
+        ),
     ).toBe(true);
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/channels',
@@ -267,6 +272,22 @@ describe('desktop Workspace navigation', () => {
     });
   });
 
+  it('keeps Workbench and profile settings from appearing selected together', async () => {
+    route.pathname = '/beeline/settings/workbench';
+    await act(async () => {
+      tree.update(<SidebarView key="workbench-route" />);
+    });
+    await settle();
+
+    const selected = (style: unknown) =>
+      Array.isArray(style) && style.some((value) => value?.backgroundColor === '#24132f');
+    const workbench = tree.root.findByProps({ testID: 'desktop-workbench' });
+    const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
+
+    expect(selected(workbench.props.style({ pressed: false }))).toBe(true);
+    expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
+  });
+
   it('closes without routing when the current Workspace is picked', () => {
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
     act(() => tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-a'));
@@ -289,7 +310,10 @@ describe('desktop Workspace navigation', () => {
     expect(
       tree.root
         .findAllByType('Text')
-        .some((node: { props: { children?: unknown } }) => node.props.children === 'No rooms yet.'),
+        .some(
+          (node: { props: { children?: unknown } }) =>
+            node.props.children === 'No rooms or direct messages yet.',
+        ),
     ).toBe(true);
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
   });

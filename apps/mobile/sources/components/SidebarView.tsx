@@ -399,6 +399,8 @@ export const SidebarView = React.memo(function SidebarView() {
   );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   const canCreateRoom = surface?.workspace.role === 'owner' || surface?.workspace.role === 'admin';
+  const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
+  const profileSettingsSelected = pathname.startsWith('/beeline/settings') && !workbenchSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
@@ -563,8 +565,7 @@ export const SidebarView = React.memo(function SidebarView() {
                 }
                 style={({ pressed }) => [
                   styles.primaryAction,
-                  (pathname.startsWith('/beeline/settings/workbench') || pressed) &&
-                    styles.roomRowSelected,
+                  (workbenchSelected || pressed) && styles.roomRowSelected,
                 ]}
                 testID="desktop-workbench"
               >
@@ -638,8 +639,8 @@ export const SidebarView = React.memo(function SidebarView() {
               {surface
                 ? query.trim()
                   ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
-                  : `No ${ROOMS_LABEL.toLowerCase()} yet.`
-                : `Loading ${ROOMS_LABEL.toLowerCase()}…`}
+                  : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`
+                : `Loading ${ROOMS_LABEL.toLowerCase()} and direct messages…`}
             </Text>
           ) : (
             filteredChatSections.map((section) => (
@@ -775,7 +776,7 @@ export const SidebarView = React.memo(function SidebarView() {
           onPress={() => router.push('/beeline/settings' as Href)}
           style={({ pressed }) => [
             styles.settingsRow,
-            (pathname.startsWith('/beeline/settings') || pressed) && styles.roomRowSelected,
+            (profileSettingsSelected || pressed) && styles.roomRowSelected,
           ]}
           testID="profile-settings-navigation"
         >

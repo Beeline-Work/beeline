@@ -950,8 +950,12 @@ describe('connect wizard', () => {
     const announced: string[] = [];
     const seam = catalogSeam({
       configured: {
-        // Simulate what cursor-agent-acp returns: no model options at all
-        options: [],
+        // Simulate what cursor-agent-acp returns: no model options at all.
+        // connectModelPickerFromAxes then produces the fallback catalog with
+        // the explanatory note and default model as the single option.
+        currentValue: 'claude-sonnet-4',
+        options: [{ id: 'claude-sonnet-4' }],
+        note: 'cursor did not enumerate models; offering the provider default',
       },
     });
 
@@ -1027,8 +1031,6 @@ describe('connect wizard', () => {
     ).resolves.toBeDefined();
     expect(fixture.calls[1]).toContain('Choose reasoning effort');
   });
-
-  it('collapses any connect finish failure into one plain sentence without a stack', () => {
 
   it('sends the chosen effort with the claim, and omits it when nothing was chosen', async () => {
     const fetchImpl = vi.fn(

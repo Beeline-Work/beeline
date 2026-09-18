@@ -355,12 +355,26 @@ describe('applyAgentModelSelection — the set path', () => {
     expect(setConfigOption).not.toHaveBeenCalled();
   });
 
-  it('rejects a selection whose axis category is missing entirely from the catalog', async () => {
+  it('is a no-op when the axis category is missing entirely from the catalog', async () => {
+    // A harness that advertises no axis runs its own default (cursor-agent-acp
+    // exposes neither model nor effort): the selection is skipped, not failed.
     const setConfigOption = vi.fn().mockResolvedValue({});
     const modelOnly = raw.filter((option) => option.category !== 'effort');
     await expect(
       applyAgentModelSelection({ setConfigOption }, 'sess-1', modelOnly, { effort: 'high' }),
-    ).rejects.toMatchObject({ label: 'effort', reason: 'axis-missing' });
+    ).resolves.toBeUndefined();
+    expect(setConfigOption).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for a model selection when the harness advertises no model axis', async () => {
+    // The cursor connect case: cursor-agent-acp advertises no model axis at
+    // session/new, so a persisted model must not block the session from ever
+    // starting.
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const effortOnly = raw.filter((option) => option.category !== 'model');
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', effortOnly, { model: 'auto' }),
+    ).resolves.toBeUndefined();
     expect(setConfigOption).not.toHaveBeenCalled();
   });
 
@@ -410,10 +424,16 @@ describe('assertModelSelectionAdvertised — shared strict validation', () => {
     );
   });
 
-  it('rejects a missing axis rather than inventing one', () => {
+  it('skips a missing axis rather than inventing one', () => {
+    // cursor-agent-acp advertises no axes at all; a selection the harness
+    // cannot express is skipped so the session still starts.
     const modelOnly = raw.filter((option) => option.category !== 'effort');
-    expect(() => assertModelSelectionAdvertised(modelOnly, { effort: 'high' })).toThrow(
-      /does not advertise a selectable effort axis/,
+    expect(() => assertModelSelectionAdvertised(modelOnly, { effort: 'high' })).not.toThrow();
+  });
+
+  it('still refuses a value the harness advertises no option for', () => {
+    expect(() => assertModelSelectionAdvertised(raw, { model: 'gpt-nonexistent' })).toThrow(
+      /model "gpt-nonexistent" is unavailable/,
     );
   });
 

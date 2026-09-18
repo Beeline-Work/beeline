@@ -368,8 +368,10 @@ export default function BuzzIdentitySettings() {
     setGitHubNotice(null);
     setError(null);
     markSignInInFlight(true);
+    let startedState: string | undefined;
     try {
       const state = randomState();
+      startedState = state;
       const redirectUri = githubSignInRedirectUri();
       const monolith = getBuzzRuntimeConfig().monolithEnabled;
       const challenge = monolith
@@ -427,7 +429,7 @@ export default function BuzzIdentitySettings() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
       if (getBuzzRuntimeConfig().monolithEnabled) {
-        await cancelPendingGitHubSignIn().catch(() => undefined);
+        await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
         router.replace({
           pathname: '/beeline/settings',
           params: {

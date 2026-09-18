@@ -146,17 +146,19 @@ function walletInsufficient(value: unknown): boolean {
     typeof item.needed === 'string' &&
     typeof item.asset === 'string' &&
     typeof item.chain === 'string' &&
-    (item.available === undefined || typeof item.available === 'string' || item.available === null) &&
-    (item.agentName === undefined || typeof item.agentName === 'string' || item.agentName === null) &&
+    (item.available === undefined ||
+      typeof item.available === 'string' ||
+      item.available === null) &&
+    (item.agentName === undefined ||
+      typeof item.agentName === 'string' ||
+      item.agentName === null) &&
     (item.reason === undefined || typeof item.reason === 'string'),
   );
 }
 
 function walletDelegation(value: unknown): boolean {
   const item = record(value);
-  return Boolean(
-    item && integer(item.expiresAt) && integer(item.ttlHours),
-  );
+  return Boolean(item && integer(item.expiresAt) && integer(item.ttlHours));
 }
 
 function activity(value: unknown): boolean {
@@ -458,7 +460,10 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
               reaction.emoji === '✅') &&
             integer(reaction.count) &&
             Number(reaction.count) > 0 &&
-            typeof reaction.reacted === 'boolean',
+            typeof reaction.reacted === 'boolean' &&
+            Array.isArray(reaction.members) &&
+            reaction.members.length === reaction.count &&
+            reaction.members.every(identity),
           );
         }))) &&
     (item.activity === undefined ||

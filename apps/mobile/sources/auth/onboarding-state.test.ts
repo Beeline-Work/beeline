@@ -106,4 +106,26 @@ describe('provider onboarding completion', () => {
       }),
     ).rejects.toMatchObject({ code: 'browser_canceled' });
   });
+
+  it('keeps a desktop browser-open result alive until its callback arrives', async () => {
+    const redirectUri = 'beeline://beeline/github-callback';
+    const callbackUrl = `${redirectUri}?state=${'s'.repeat(43)}`;
+    let onUrl: ((url: string) => void) | null = null;
+
+    const completion = waitForAuthCallback({
+      redirectUri,
+      openAuthSession: async () => {
+        setTimeout(() => onUrl?.(callbackUrl), 10);
+        return { type: 'opened' };
+      },
+      subscribeToUrls: (listener) => {
+        onUrl = listener;
+        return { remove: () => (onUrl = null) };
+      },
+      callbackGraceMs: 0,
+      openedCallbackWaitMs: 100,
+    });
+
+    await expect(completion).resolves.toBe(callbackUrl);
+  });
 });

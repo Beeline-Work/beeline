@@ -541,7 +541,7 @@ esac
       fakeEas,
       `#!/bin/sh
 case "$1" in
-  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"production-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"production-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"production-android","platforms":"android","runtimeVersion":"24"},{"group":"production-android-23","platforms":"android","runtimeVersion":"23"},{"group":"production-android-25","platforms":"android","runtimeVersion":"25"},{"group":"production-ios-26","platforms":"ios","runtimeVersion":"26"}]}\\n' ;;
+  update:list) printf '{"name":"production","id":"branch-id","currentPage":[{"group":"production-ios-25","platforms":"ios","runtimeVersion":"25"},{"group":"production-ios-23","platforms":"ios","runtimeVersion":"23"},{"group":"production-android","platforms":"android","runtimeVersion":"25"},{"group":"production-android-23","platforms":"android","runtimeVersion":"23"},{"group":"production-android-24","platforms":"android","runtimeVersion":"24"},{"group":"production-ios-26","platforms":"ios","runtimeVersion":"26"}]}\\n' ;;
   *) exit 9 ;;
 esac
 `,
@@ -553,7 +553,7 @@ esac
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      'listed_production_targets=android@24,android@23,android@25,ios@23,ios@26,ios@25',
+      'listed_production_targets=android@25,android@23,android@24,ios@23,ios@25,ios@26',
     );
     expect(workflow).toContain('ota-release.mjs assert-production-list');
 

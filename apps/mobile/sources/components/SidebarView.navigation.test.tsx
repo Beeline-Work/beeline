@@ -286,6 +286,20 @@ describe('desktop Workspace navigation', () => {
 
     expect(selected(workbench.props.style({ pressed: false }))).toBe(true);
     expect(selected(profileSettings.props.style({ pressed: false }))).toBe(false);
+    expect(workbench.props.accessibilityState).toEqual({ selected: true });
+    expect(profileSettings.props.accessibilityState).toEqual({ selected: false });
+  });
+
+  it('exposes the active conversation to assistive technology', async () => {
+    route.pathname = '/beeline/chat/room-a';
+    await act(async () => {
+      tree.update(<SidebarView key="active-room-route" />);
+    });
+    await settle();
+
+    expect(tree.root.findByProps({ testID: 'desktop-room-room-a' }).props.accessibilityState).toEqual(
+      { selected: true },
+    );
   });
 
   it('closes without routing when the current Workspace is picked', () => {

@@ -400,6 +400,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   const canCreateRoom = surface?.workspace.role === 'owner' || surface?.workspace.role === 'admin';
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
+  const bookmarksSelected = pathname.startsWith('/beeline/bookmarks');
   const profileSettingsSelected = pathname.startsWith('/beeline/settings') && !workbenchSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
@@ -557,6 +558,7 @@ export const SidebarView = React.memo(function SidebarView() {
               <Pressable
                 accessibilityLabel="Open Workbench"
                 accessibilityRole="button"
+                accessibilityState={{ selected: workbenchSelected }}
                 onPress={() =>
                   router.push({
                     pathname: '/beeline/settings/workbench',
@@ -582,6 +584,7 @@ export const SidebarView = React.memo(function SidebarView() {
               <Pressable
                 accessibilityLabel={`Bookmarks, ${bookmarkCount} saved message${bookmarkCount === 1 ? '' : 's'}`}
                 accessibilityRole="button"
+                accessibilityState={{ selected: bookmarksSelected }}
                 onPress={() =>
                   router.push({
                     pathname: '/beeline/bookmarks',
@@ -590,7 +593,7 @@ export const SidebarView = React.memo(function SidebarView() {
                 }
                 style={({ pressed }) => [
                   styles.primaryAction,
-                  (pathname.startsWith('/beeline/bookmarks') || pressed) && styles.roomRowSelected,
+                  (bookmarksSelected || pressed) && styles.roomRowSelected,
                 ]}
                 testID="desktop-bookmarks"
               >
@@ -658,6 +661,7 @@ export const SidebarView = React.memo(function SidebarView() {
                       <Pressable
                         accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
                         accessibilityRole="button"
+                        accessibilityState={{ selected: activeRoomId === item.room.id }}
                         onPress={() => openRoom(item.room.id)}
                         style={({ pressed }) => [
                           styles.roomRow,
@@ -773,6 +777,7 @@ export const SidebarView = React.memo(function SidebarView() {
         <Pressable
           accessibilityLabel="Open profile settings"
           accessibilityRole="button"
+          accessibilityState={{ selected: profileSettingsSelected }}
           onPress={() => router.push('/beeline/settings' as Href)}
           style={({ pressed }) => [
             styles.settingsRow,

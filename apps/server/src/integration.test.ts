@@ -77,7 +77,10 @@ describe('monolith integration', () => {
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
+    installationToken: ReturnType<typeof vi.fn>;
+    readCommitCheckRollup: ReturnType<typeof vi.fn>;
   };
+  let githubRollupState: 'pending' | 'passed' | 'failed';
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
@@ -100,9 +103,20 @@ describe('monolith integration', () => {
       const login = proof === 'proof' ? 'owner' : proof === 'recipient-proof' ? 'recipient' : proof;
       return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
     });
+    githubRollupState = 'pending';
     githubApp = {
       deleteBranch: vi.fn(async () => undefined),
       mergePullRequest: vi.fn(async () => undefined),
+      installationToken: vi.fn(async () => ({
+        token: 'github-room-token',
+        expiresAt: '2030-01-01T00:00:00Z',
+      })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: githubRollupState,
+        total: 1,
+        failing: githubRollupState === 'failed' ? ['typecheck'] : [],
+        checks: [{ name: 'typecheck', status: githubRollupState }],
+      })),
     };
     githubOperations = new GitHubOperations(
       database,
@@ -1236,9 +1250,7 @@ describe('monolith integration', () => {
       .daemonToken;
 
     // Admins and members cannot delete the Workspace, only its owner can.
-    expect(
-      (await operation('deleteWorkspace', { workspaceId }, aliceToken)).status,
-    ).toBe(403);
+    expect((await operation('deleteWorkspace', { workspaceId }, aliceToken)).status).toBe(403);
     expect((await operation('deleteWorkspace', { workspaceId }, bobToken)).status).toBe(403);
 
     const deleted = await operation('deleteWorkspace', { workspaceId });
@@ -1257,8 +1269,7 @@ describe('monolith integration', () => {
         .rowCount,
     ).toBe(0);
     expect(
-      (await database.query(`SELECT 1 FROM invites WHERE workspace_id=$1`, [workspaceId]))
-        .rowCount,
+      (await database.query(`SELECT 1 FROM invites WHERE workspace_id=$1`, [workspaceId])).rowCount,
     ).toBe(0);
     expect(
       (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [room.id])).rowCount,
@@ -1283,9 +1294,7 @@ describe('monolith integration', () => {
     const aliceWorkspaces = (await (
       await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
     ).json()) as { deletedNotices?: Array<{ workspaceId: string; workspaceName: string }> };
-    expect(aliceWorkspaces.deletedNotices).toEqual([
-      { workspaceId, workspaceName: 'Doomed' },
-    ]);
+    expect(aliceWorkspaces.deletedNotices).toEqual([{ workspaceId, workspaceName: 'Doomed' }]);
     // Consumed once: a second read carries no notice.
     const aliceWorkspacesAgain = (await (
       await request('/v1/phone/workspaces', 'GET', undefined, aliceToken)
@@ -1554,9 +1563,9 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(200);
     expect(
-      (await (
-        await operation('listMessageBookmarks', { workspaceId: WORKSPACE })
-      ).json()) as { bookmarks: unknown[] },
+      (await (await operation('listMessageBookmarks', { workspaceId: WORKSPACE })).json()) as {
+        bookmarks: unknown[];
+      },
     ).toEqual({ bookmarks: [] });
   });
 
@@ -4098,7 +4107,12 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
        VALUES($1,$2,$3,'text/plain','notes.txt',$4)`,
-      [mediaId, AGENT, Buffer.from('agent-file-bytes'), createHash('sha256').update('agent-file-bytes').digest('hex')],
+      [
+        mediaId,
+        AGENT,
+        Buffer.from('agent-file-bytes'),
+        createHash('sha256').update('agent-file-bytes').digest('hex'),
+      ],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -4188,7 +4202,12 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
        VALUES($1,$2,$3,'video/mp4','clip.mp4',$4)`,
-      [mediaId, AGENT, Buffer.from('video-bytes'), createHash('sha256').update('video-bytes').digest('hex')],
+      [
+        mediaId,
+        AGENT,
+        Buffer.from('video-bytes'),
+        createHash('sha256').update('video-bytes').digest('hex'),
+      ],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -4906,6 +4925,7 @@ describe('monolith integration', () => {
         check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
       },
     });
+    githubRollupState = 'failed';
     await webhook('check_suite', 'corner-checks-failed', {
       ...base,
       action: 'completed',
@@ -4924,7 +4944,7 @@ describe('monolith integration', () => {
     });
     expect(redApproval.status).toBe(409);
     expect(await redApproval.json()).toEqual({
-      error: 'corner checks are failing: Beeline CI check suite; retry with force=true',
+      error: 'corner checks are failing: typecheck; retry with force=true',
     });
     const forcedApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,
@@ -4964,6 +4984,7 @@ describe('monolith integration', () => {
        WHERE corner_id=$1`,
       [cornerId, '1'.repeat(40)],
     );
+    githubRollupState = 'passed';
     await webhook('check_suite', 'corner-checks-passed', {
       ...base,
       action: 'completed',
@@ -5045,7 +5066,7 @@ describe('monolith integration', () => {
       checksSummary: {
         failing: [],
         checks: expect.arrayContaining([
-          expect.objectContaining({ name: 'Beeline CI check suite', status: 'passed' }),
+          expect.objectContaining({ name: 'typecheck', status: 'passed' }),
         ]),
       },
     });
@@ -5076,7 +5097,7 @@ describe('monolith integration', () => {
       checksSummary: {
         status: 'passing',
         checks: expect.arrayContaining([
-          expect.objectContaining({ name: 'Beeline CI check suite', status: 'passed' }),
+          expect.objectContaining({ name: 'typecheck', status: 'passed' }),
         ]),
       },
     });

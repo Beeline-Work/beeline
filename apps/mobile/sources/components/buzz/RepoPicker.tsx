@@ -38,6 +38,9 @@ export type RepoPickerProps = {
   onAddAccount?: (owner?: string) => void;
   onManageInstallation?: (installation: GitHubInstallationAccess) => void;
   onCreateRepository?: (installationId: number, name: string) => Promise<void> | void;
+  /** Present only when the current viewer may unlink a bound Room repository. */
+  onUnlink?: () => void;
+  unlinkRepositoryName?: string | null;
   /**
    * The pasted repository's OWNER is not among this viewer's installations:
    * offer the share-with-owner path (the host probes the typed grant state
@@ -71,6 +74,8 @@ export const RepoPicker = memo(function RepoPicker({
   onAddAccount,
   onManageInstallation,
   onCreateRepository,
+  onUnlink,
+  unlinkRepositoryName,
   onAskOwnerGrant,
   uncoveredOwners,
   testIDPrefix = 'repo-picker',
@@ -339,6 +344,19 @@ export const RepoPicker = memo(function RepoPicker({
           <Text style={styles.actionText}>＋ Add an account or organization</Text>
         </TouchableOpacity>
       )}
+      {onUnlink && unlinkRepositoryName ? (
+        <TouchableOpacity
+          accessibilityLabel={`Unlink repo, currently ${unlinkRepositoryName}`}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: busy }}
+          disabled={busy}
+          onPress={onUnlink}
+          style={styles.actionRow}
+          testID={`${testIDPrefix}-unlink`}
+        >
+          <Text style={[styles.actionText, styles.destructiveActionText]}>Unlink repo</Text>
+        </TouchableOpacity>
+      ) : null}
       {notice && !error && (
         <Text accessibilityLiveRegion="polite" style={styles.notice}>
           {notice}
@@ -407,6 +425,7 @@ const styles = StyleSheet.create((theme) => {
       borderTopColor: groknight.border,
     },
     actionText: { ...Typography.mono(), color: groknight.textPrimary, fontSize: 12 },
+    destructiveActionText: { color: groknight.dialogDanger },
     connectCard: {
       borderWidth: 1,
       borderColor: groknight.border,

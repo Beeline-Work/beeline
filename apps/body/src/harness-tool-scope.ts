@@ -147,6 +147,13 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
       note: 'buzz-agent mounts only the MCP servers the daemon passes; it has no operator-global tool config',
     },
   },
+  {
+    match: /(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i,
+    profile: {
+      enforcement: 'config-isolated',
+      note: "cursor-agent-acp bridges cursor-agent to ACP; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session",
+    },
+  },
 ];
 
 /** Classify the configured ACP command. Unknown commands fail closed. */

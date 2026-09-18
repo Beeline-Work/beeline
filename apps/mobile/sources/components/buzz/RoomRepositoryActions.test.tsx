@@ -70,51 +70,19 @@ describe('RoomRepositoryActions', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it('offers the destructive unlink affordance only for a bound repo the viewer may manage', () => {
-    const onUnlink = vi.fn();
+  it('keeps unlink out of the standalone Room-menu rows', () => {
     const renderer = render(
       <RoomRepositoryActions
         busy={false}
         canManage
         onToggle={vi.fn()}
-        onUnlink={onUnlink}
         picker={<Picker testID="room-repo-picker" />}
         pickerVisible={false}
         repositoryName="beeline"
       />,
     );
-    const unlink = renderer.root.findByProps({ testID: 'room-repo-unlink' });
-    expect(unlink.props.label).toBe('Unlink repo');
-    expect(unlink.props.destructive).toBe(true);
-    act(() => unlink.props.onPress());
-    expect(onUnlink).toHaveBeenCalledTimes(1);
-
-    // No repo bound: nothing to unassign.
-    const empty = render(
-      <RoomRepositoryActions
-        busy={false}
-        canManage
-        onToggle={vi.fn()}
-        onUnlink={onUnlink}
-        picker={<Picker testID="room-repo-picker" />}
-        pickerVisible={false}
-        repositoryName={null}
-      />,
-    );
-    expect(empty.root.findAllByProps({ testID: 'room-repo-unlink' })).toHaveLength(0);
-
-    // No handler: the affordance never renders.
-    const handlerless = render(
-      <RoomRepositoryActions
-        busy={false}
-        canManage
-        onToggle={vi.fn()}
-        picker={<Picker testID="room-repo-picker" />}
-        pickerVisible={false}
-        repositoryName="beeline"
-      />,
-    );
-    expect(handlerless.root.findAllByProps({ testID: 'room-repo-unlink' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-repo-unlink' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-repo-picker' })).toHaveLength(0);
   });
 
   it('renders only a read-only repository fact for a non-manager', () => {

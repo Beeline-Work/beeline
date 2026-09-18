@@ -367,7 +367,7 @@ describe('Room list layout contract', () => {
       desktopHeadlineStart,
       desktopInspectorSource.indexOf('</View>', desktopHeadlineStart),
     );
-    expect(desktopHeadline.match(/<Text\b/g)).toHaveLength(3);
+    expect(desktopHeadline.match(/<Text\b/g)).toHaveLength(4);
     expect(desktopHeadline).toContain('{display.word}');
     expect(styleBlock(desktopInspectorSource, 'cornerHeadline', '  ')).toContain(
       "alignItems: 'center'",
@@ -375,7 +375,7 @@ describe('Room list layout contract', () => {
 
     for (const [text, indent, styles] of [
       [source, '    ', ['cornerName', 'cornerStatus', 'cornerChevron']],
-      [desktopInspectorSource, '  ', ['cornerTitle', 'cornerStatus', 'chevron']],
+      [desktopInspectorSource, '  ', ['cornerTitle', 'cornerStatus', 'cornerMe', 'chevron']],
     ] as const) {
       for (const style of styles) {
         const block = styleBlock(text, style, indent);

@@ -82,7 +82,10 @@ function run(cmd, args, opts = {}) {
     timeout: opts.timeout ?? 10 * 60 * 1000,
     env: opts.env ?? process.env,
   });
-  const stdout = res.stdout ? res.stdout.toString() : '';
+  // Binary output (adb exec-out screencap PNGs) must not be decoded as UTF-8:
+  // decoding replaces every non-ASCII byte with U+FFFD and silently corrupts
+  // the file. Binary callers keep the raw Buffer; text callers decode here.
+  const stdout = opts.binary ? (res.stdout ?? Buffer.alloc(0)) : res.stdout ? res.stdout.toString() : '';
   const stderr = res.stderr ? res.stderr.toString() : '';
   if (opts.allowFailure) return { ok: res.status === 0, stdout, stderr, status: res.status };
   if (res.status !== 0) {
@@ -411,7 +414,7 @@ function runMaestro(device, yamlPath, env = {}, outDir, tag) {
 }
 
 function screenshot(device, outPath) {
-  const res = adb(device, ['exec-out', 'screencap', '-p'], { allowFailure: true });
+  const res = adb(device, ['exec-out', 'screencap', '-p'], { allowFailure: true, binary: true });
   if (res.ok && res.stdout?.length) {
     writeFileSync(outPath, res.stdout);
     return true;
@@ -466,6 +469,11 @@ async function runSignedOutFlow(device, args, outDir) {
     if (!reinstalled.ok || reinstalled.status !== 0) {
       return { ok: false, output: `could not reinstall ${APP_ID} for user 0 before the signed-out proof:\n${reinstalled.stderr}` };
     }
+    // Run 35281590377: install-existing hit INSTALL_FAILED_VERSION_DOWNGRADE
+    // (v27 proof vs a stale v71 copy still visible to the fresh secondary
+    // user), and the fallback then reinstalled without -d so it failed the
+    // same way. Clear that user's copy explicitly and allow downgrades.
+    adbShell(device, `pm uninstall --user ${userId} ${APP_ID}`, { allowFailure: true });
     const install = adbShell(device, `pm install-existing --user ${userId} ${APP_ID}`, { allowFailure: true });
     if (!install.ok || !/Success/.test(install.stdout)) {
       // Fall back to a full install for that user.
@@ -473,8 +481,13 @@ async function runSignedOutFlow(device, args, outDir) {
       if (!push.ok) {
         return { ok: false, output: `could not provision the app for secondary user ${userId}:\n${install.stdout}` };
       }
-      const inst = adbShell(device, `pm install --user ${userId} -r /data/local/tmp/release-proof.apk`, { allowFailure: true });
-      if (!inst.ok) return { ok: false, output: `could not install the app for secondary user ${userId}:\n${inst.stdout}` };
+      const inst = adbShell(device, `pm install --user ${userId} -r -d /data/local/tmp/release-proof.apk`, { allowFailure: true });
+      if (!inst.ok) {
+        return {
+          ok: false,
+          output: `could not install the app for secondary user ${userId} (install-existing said: ${install.stdout} ${install.stderr}):\n${inst.stdout}\n${inst.stderr}`,
+        };
+      }
     }
     const switched = adbShell(device, `am switch-user ${userId}`, { allowFailure: true });
     if (!switched.ok) return { ok: false, output: `could not switch to secondary user ${userId}:\n${switched.stderr}` };
@@ -701,7 +714,29 @@ async function main() {
       adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
       await sleep(2000);
       const started = Date.now();
-      const r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, flow.name);
+      // The Maestro Android driver occasionally fails to start up within its
+      // budget on the shared rig (settings-workbench in run 35281590377), and
+      // adb/emulator "device offline" blips kill Maestro mid-launch with no
+      // error output at all (room-renders and corner-opens in run
+      // 35290591194). Both are rig flakes, not app defects: wait for the
+      // device and retry them. Real flow assertion failures still fail the
+      // proof - they print "Error:" plus completed steps and never retry.
+      const RIG_FLAKE = /did not start up in time|device (offline|not found)/i;
+      adb(device, ['wait-for-device'], { allowFailure: true, timeout: 60 * 1000 });
+      let r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, flow.name);
+      let attempt = 1;
+      // A real flow failure prints "Error:" plus its completed steps; a rig
+      // flake can kill Maestro before any step, leaving silent output. Retry
+      // only that silent shape, so genuine assertion failures still fail.
+      const flakey = () => RIG_FLAKE.test(r.output) || !/Error|COMPLETED/.test(r.output);
+      while (!r.ok && flakey() && attempt < 3) {
+        attempt += 1;
+        console.log(`release-proof: ${flow.name}: rig flake (attempt ${attempt - 1}) - retrying`);
+        adbShell(device, 'am force-stop ' + APP_ID, { allowFailure: true });
+        await sleep(2000);
+        adb(device, ['wait-for-device'], { allowFailure: true, timeout: 60 * 1000 });
+        r = runMaestro(device, flow.yaml, flowEnvs[flow.name] ?? {}, outDir, `${flow.name}-retry${attempt - 1}`);
+      }
       const seconds = (Date.now() - started) / 1000;
       const screenshotPath = join(outDir, `${flow.name}.png`);
       screenshot(device, screenshotPath);

@@ -52,12 +52,6 @@ BEGIN
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id)
       );
-    WHEN 'corner_check_facts' THEN
-      payload = jsonb_build_object(
-        'table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
-        'cornerId', COALESCE(NEW.corner_id, OLD.corner_id)
-      );
     WHEN 'permission_authority' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
@@ -97,7 +91,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'corner_check_facts', 'permission_authority',
+    'corner_facts', 'permission_authority',
     'agent_grants', 'agent_schedules', 'agent_commands'
   ] LOOP
     IF NOT EXISTS (
@@ -320,6 +314,19 @@ export class PostgresLiveListener {
         });
         return;
       }
+      return;
+    }
+    if (payload.table === 'agent_config' && payload.agentId) {
+      // A phone-side model/effort selection change. The synthetic payload is
+      // written by PhoneService with a direct pg_notify inside the selection
+      // transaction (the agents table carries no Room, so it has no trigger);
+      // every daemon subscription of that Room filters on the target agent.
+      this.live.publish({
+        type: 'invalidate',
+        roomId: payload.roomId,
+        reason: 'agent-config',
+        targetAgentId: payload.agentId,
+      });
       return;
     }
     const event: LiveEvent = {

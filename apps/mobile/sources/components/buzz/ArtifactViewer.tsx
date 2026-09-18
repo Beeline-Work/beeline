@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/buzz/artifact';
 import {
+  artifactImageSource,
   artifactPdfLocalUri,
   fetchArtifactBytes,
   fetchArtifactText,
@@ -57,6 +58,8 @@ export function ArtifactViewerScreen({
       <View style={styles.body}>
         {format === 'markdown' ? (
           <ArtifactViewerMarkdown attachment={attachment} />
+        ) : format === 'image' ? (
+          <ArtifactViewerImage attachment={attachment} />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
           <ArtifactSystemHandoff attachment={attachment} onClose={onClose} />
         ) : (
@@ -64,6 +67,51 @@ export function ArtifactViewerScreen({
         )}
       </View>
     </View>
+  );
+}
+
+function ArtifactViewerImage({ attachment }: { attachment: AttachmentReference }) {
+  const [source, setSource] = useState<Awaited<ReturnType<typeof artifactImageSource>> | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setFailed(false);
+    setSource(null);
+    void artifactImageSource(attachment)
+      .then((nextSource) => {
+        if (live) setSource(nextSource);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [attachment]);
+  if (failed) {
+    return (
+      <View style={styles.placeholder} testID="artifact-viewer-failed">
+        <Text style={styles.placeholderText}>The image could not be loaded. Try again.</Text>
+      </View>
+    );
+  }
+  if (!source) {
+    return (
+      <View style={styles.placeholder} testID="artifact-viewer-loading">
+        <Text style={styles.placeholderText}>Loading…</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      accessibilityIgnoresInvertColors
+      accessibilityLabel={attachment.title ?? attachment.name}
+      onError={() => setFailed(true)}
+      resizeMode="contain"
+      source={source}
+      style={styles.image}
+      testID="artifact-viewer-image"
+    />
   );
 }
 
@@ -216,6 +264,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerClose: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   body: { flex: 1 },
+  image: { flex: 1, height: '100%', width: '100%' },
   webview: { flex: 1, backgroundColor: 'transparent' },
   markdownBody: { padding: theme.buzz.space.md },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },

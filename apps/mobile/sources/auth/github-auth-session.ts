@@ -17,16 +17,92 @@ import { desktopAuthRedirectUri } from './desktop-auth-redirect';
 const PENDING_GITHUB_PURPOSE_KEY = 'buzzy.github-purpose.v1';
 
 export async function isPendingGitHubReconnect(): Promise<boolean> {
-  return (await AsyncStorage.getItem(PENDING_GITHUB_PURPOSE_KEY)) === 'reconnect';
+  return (await readPendingSession())?.purpose === 'reconnect';
 }
 
 const PENDING_SIGN_IN_STATE_KEY = 'buzzy.github-sign-in-state.v1';
 const PENDING_SIGN_IN_CALLBACK_KEY = 'buzzy.github-sign-in-callback.v1';
 const PENDING_SIGN_IN_RECOVERY_KEY = 'buzzy.github-sign-in-recovery.v1';
+const PENDING_SIGN_IN_SESSION_KEY = 'buzzy.github-sign-in-session.v2';
 const PENDING_INSTALLATION_RETURN_KEY = 'buzzy.github-installation-return.v1';
 const PENDING_INSTALLATION_COMPLETED_KEY = 'buzzy.github-installation-completed.v1';
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
 const GITHUB_RECOVERY_WAIT_MS = 120_000;
+
+interface PendingGitHubSignInSession {
+  state: string;
+  purpose: 'signin' | 'reconnect';
+  recoveryToken?: string;
+  callbackUrl?: string;
+}
+
+let pendingSessionMutation: Promise<void> = Promise.resolve();
+
+function validPendingSession(value: unknown): value is PendingGitHubSignInSession {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.state === 'string' &&
+    STATE_RE.test(record.state) &&
+    (record.purpose === 'signin' || record.purpose === 'reconnect') &&
+    (record.recoveryToken === undefined ||
+      (typeof record.recoveryToken === 'string' && STATE_RE.test(record.recoveryToken))) &&
+    (record.callbackUrl === undefined || typeof record.callbackUrl === 'string')
+  );
+}
+
+async function readPendingSessionInsideMutation(): Promise<PendingGitHubSignInSession | null> {
+  const encoded = await AsyncStorage.getItem(PENDING_SIGN_IN_SESSION_KEY);
+  if (encoded) {
+    try {
+      const parsed: unknown = JSON.parse(encoded);
+      if (validPendingSession(parsed)) return parsed;
+    } catch {
+      // Fall through to the v1 keys written by an older app release.
+    }
+  }
+  const [state, purpose, recoveryToken, callbackUrl] = await Promise.all([
+    AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY),
+    AsyncStorage.getItem(PENDING_GITHUB_PURPOSE_KEY),
+    AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY),
+    AsyncStorage.getItem(PENDING_SIGN_IN_CALLBACK_KEY),
+  ]);
+  if (!state || !STATE_RE.test(state)) return null;
+  return {
+    state,
+    purpose: purpose === 'reconnect' ? 'reconnect' : 'signin',
+    ...(recoveryToken && STATE_RE.test(recoveryToken) ? { recoveryToken } : {}),
+    ...(callbackUrl ? { callbackUrl } : {}),
+  };
+}
+
+async function readPendingSession(): Promise<PendingGitHubSignInSession | null> {
+  await pendingSessionMutation;
+  return readPendingSessionInsideMutation();
+}
+
+function mutatePendingSession(operation: () => Promise<void>): Promise<void> {
+  const result = pendingSessionMutation.then(operation, operation);
+  pendingSessionMutation = result.catch(() => undefined);
+  return result;
+}
+
+async function persistPendingCallback(callbackUrl: string, expectedState: string): Promise<void> {
+  await mutatePendingSession(async () => {
+    const session = await readPendingSessionInsideMutation();
+    if (!session || session.state !== expectedState) {
+      throw new OidcBindError(
+        'state_mismatch',
+        'This GitHub callback does not match the current sign-in.',
+      );
+    }
+    await AsyncStorage.setItem(
+      PENDING_SIGN_IN_SESSION_KEY,
+      JSON.stringify({ ...session, callbackUrl }),
+    );
+    await AsyncStorage.setItem(PENDING_SIGN_IN_CALLBACK_KEY, callbackUrl);
+  });
+}
 
 async function githubAuthFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isDesktopShell()) return fetch(input, init);
@@ -189,23 +265,38 @@ export async function persistGitHubSignInState(
   if (recoveryToken !== undefined && !STATE_RE.test(recoveryToken)) {
     throw new OidcBindError('invalid_state', 'GitHub recovery token must be 32 random bytes');
   }
-  await Promise.all([
-    AsyncStorage.setItem(PENDING_GITHUB_PURPOSE_KEY, purpose),
-    AsyncStorage.setItem(PENDING_SIGN_IN_STATE_KEY, state),
-    AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
-    recoveryToken
-      ? AsyncStorage.setItem(PENDING_SIGN_IN_RECOVERY_KEY, recoveryToken)
-      : AsyncStorage.removeItem(PENDING_SIGN_IN_RECOVERY_KEY),
-  ]);
+  await mutatePendingSession(async () => {
+    await AsyncStorage.setItem(
+      PENDING_SIGN_IN_SESSION_KEY,
+      JSON.stringify({ state, purpose, ...(recoveryToken ? { recoveryToken } : {}) }),
+    );
+    // Keep the old keys during the upgrade window. New code reads the single
+    // record above, so it can never combine fields from two overlapping flows.
+    await Promise.all([
+      AsyncStorage.setItem(PENDING_GITHUB_PURPOSE_KEY, purpose),
+      AsyncStorage.setItem(PENDING_SIGN_IN_STATE_KEY, state),
+      AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
+      recoveryToken
+        ? AsyncStorage.setItem(PENDING_SIGN_IN_RECOVERY_KEY, recoveryToken)
+        : AsyncStorage.removeItem(PENDING_SIGN_IN_RECOVERY_KEY),
+    ]);
+  });
 }
 
-export async function clearPendingGitHubSignInState(): Promise<void> {
-  await Promise.all([
-    AsyncStorage.removeItem(PENDING_GITHUB_PURPOSE_KEY),
-    AsyncStorage.removeItem(PENDING_SIGN_IN_STATE_KEY),
-    AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
-    AsyncStorage.removeItem(PENDING_SIGN_IN_RECOVERY_KEY),
-  ]);
+export async function clearPendingGitHubSignInState(expectedState?: string): Promise<void> {
+  await mutatePendingSession(async () => {
+    if (expectedState) {
+      const session = await readPendingSessionInsideMutation();
+      if (!session || session.state !== expectedState) return;
+    }
+    await Promise.all([
+      AsyncStorage.removeItem(PENDING_SIGN_IN_SESSION_KEY),
+      AsyncStorage.removeItem(PENDING_GITHUB_PURPOSE_KEY),
+      AsyncStorage.removeItem(PENDING_SIGN_IN_STATE_KEY),
+      AsyncStorage.removeItem(PENDING_SIGN_IN_CALLBACK_KEY),
+      AsyncStorage.removeItem(PENDING_SIGN_IN_RECOVERY_KEY),
+    ]);
+  });
 }
 
 function authBaseUrl(runtime: BuzzRuntimeConfig): string {
@@ -308,32 +399,31 @@ async function cancelGitHubRecovery(
 export async function cancelPendingGitHubSignIn(
   runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
   fetchImpl: typeof fetch = githubAuthFetch,
+  expectedState?: string,
 ): Promise<void> {
-  const recoveryToken = await AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY);
+  const session = await readPendingSession();
+  if (expectedState && session?.state !== expectedState) return;
+  const recoveryToken = session?.recoveryToken;
   if (recoveryToken && STATE_RE.test(recoveryToken)) {
     // Deliberately leave storage intact on failure. The next attempt must retry
     // this revocation before it may replace the old token.
     await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl);
   }
-  await clearPendingGitHubSignInState();
+  await clearPendingGitHubSignInState(expectedState);
 }
 
 export async function recoverPendingGitHubBindChallenge(
   runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
   fetchImpl: typeof fetch = githubAuthFetch,
 ): Promise<OidcBindChallenge | null> {
-  const [recoveryToken, state] = await Promise.all([
-    AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY),
-    AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY),
-  ]);
+  const session = await readPendingSession();
+  const recoveryToken = session?.recoveryToken;
+  const state = session?.state;
   if (!recoveryToken || !STATE_RE.test(recoveryToken) || !state || !STATE_RE.test(state))
     return null;
   const challenge = await fetchGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl);
   if (challenge) {
-    await AsyncStorage.setItem(
-      PENDING_SIGN_IN_CALLBACK_KEY,
-      challengeCallbackUrl(challenge, state),
-    );
+    await persistPendingCallback(challengeCallbackUrl(challenge, state), state);
   }
   return challenge;
 }
@@ -366,7 +456,7 @@ export async function runResilientGitHubSignInSession({
   recoveryPollMs = 200,
   callbackGraceMs,
 }: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
-  const previousRecoveryToken = await AsyncStorage.getItem(PENDING_SIGN_IN_RECOVERY_KEY);
+  const previousRecoveryToken = (await readPendingSession())?.recoveryToken;
   if (
     previousRecoveryToken &&
     previousRecoveryToken !== recoveryToken &&
@@ -412,10 +502,7 @@ export async function runResilientGitHubSignInSession({
         fetchImpl,
       );
       if (recovered) {
-        await AsyncStorage.setItem(
-          PENDING_SIGN_IN_CALLBACK_KEY,
-          challengeCallbackUrl(recovered, state),
-        );
+        await persistPendingCallback(challengeCallbackUrl(recovered, state), state);
         return recovered;
       }
     } catch (error) {
@@ -438,10 +525,9 @@ export async function runResilientGitHubSignInSession({
 export async function loadPendingGitHubBindChallenge(
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): Promise<OidcBindChallenge | null> {
-  const [callbackUrl, expectedState] = await Promise.all([
-    AsyncStorage.getItem(PENDING_SIGN_IN_CALLBACK_KEY),
-    AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY),
-  ]);
+  const session = await readPendingSession();
+  const callbackUrl = session?.callbackUrl;
+  const expectedState = session?.state;
   if (!callbackUrl || !expectedState || !STATE_RE.test(expectedState)) return null;
   const challenge = parseOidcBindCallback(callbackUrl, expectedState);
   if (challenge.expires_at <= nowSeconds) {
@@ -463,7 +549,7 @@ export async function resumeInitialGitHubSignIn(
   const callbackUrl = await getInitialUrl();
   if (!callbackUrl || !isCallbackFor(callbackUrl, githubSignInRedirectUri())) return null;
 
-  const expectedState = await AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY);
+  const expectedState = (await readPendingSession())?.state;
   if (expectedState && recoverySignal(callbackUrl, expectedState)) {
     return recoverPendingGitHubBindChallenge();
   }
@@ -478,7 +564,7 @@ export async function resumeGitHubSignInCallback(
   if (!isCallbackFor(callbackUrl, githubSignInRedirectUri())) {
     throw new OidcBindError('invalid_callback', 'Unexpected GitHub sign-in callback');
   }
-  const expectedState = await AsyncStorage.getItem(PENDING_SIGN_IN_STATE_KEY);
+  const expectedState = (await readPendingSession())?.state;
   if (!expectedState || !STATE_RE.test(expectedState)) {
     throw new OidcBindError(
       'state_mismatch',
@@ -490,7 +576,7 @@ export async function resumeGitHubSignInCallback(
     await clearPendingGitHubSignInState();
     throw new OidcBindError('ticket_expired', 'The bind ticket expired', 410);
   }
-  await AsyncStorage.setItem(PENDING_SIGN_IN_CALLBACK_KEY, callbackUrl);
+  await persistPendingCallback(callbackUrl, expectedState);
   return challenge;
 }
 

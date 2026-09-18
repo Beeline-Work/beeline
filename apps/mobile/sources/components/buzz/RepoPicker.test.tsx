@@ -74,6 +74,41 @@ function searchFor(renderer: ReactTestRenderer, query: string): void {
 }
 
 describe('RepoPicker', () => {
+  it('offers unlink inside the picker only when a permitted bound repository is supplied', () => {
+    const onUnlink = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker
+          candidates={[]}
+          onSelect={() => {}}
+          onUnlink={onUnlink}
+          testIDPrefix="room-repo-picker"
+          unlinkRepositoryName="beeline/mobile"
+        />,
+      );
+    });
+
+    const unlink = renderer.root.findByProps({ testID: 'room-repo-picker-unlink' });
+    expect(unlink.props.accessibilityLabel).toBe('Unlink repo, currently beeline/mobile');
+    expect(unlink.props.accessibilityRole).toBe('button');
+    act(() => unlink.props.onPress());
+    expect(onUnlink).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+
+    act(() => {
+      renderer = create(<RepoPicker candidates={[]} onSelect={() => {}} />);
+    });
+    expect(renderer.root.findAllByProps({ testID: 'repo-picker-unlink' })).toHaveLength(0);
+    act(() => renderer.unmount());
+
+    act(() => {
+      renderer = create(<RepoPicker candidates={[]} onSelect={() => {}} onUnlink={onUnlink} />);
+    });
+    expect(renderer.root.findAllByProps({ testID: 'repo-picker-unlink' })).toHaveLength(0);
+    act(() => renderer.unmount());
+  });
+
   it('says why a named organization repository is absent instead of showing an empty list', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

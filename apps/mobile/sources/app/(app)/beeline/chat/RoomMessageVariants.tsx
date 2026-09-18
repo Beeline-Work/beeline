@@ -16,6 +16,7 @@ import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/
 import { fallbackMemberName } from '@/buzz/member-display';
 import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
+import { emojiTextStyle } from '@/buzz/emoji-text';
 import { grantAskLine } from '@/buzz/agent-grant-copy';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
@@ -48,6 +49,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MessageReactionRoster } from '@/components/buzz/MessageReactionRoster';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { isCornerProposalText } from '@/buzz/corner-proposal';
 import {
@@ -342,16 +344,25 @@ export const WalletCards = React.memo(function WalletCards({
   const tx = message.walletTx;
   const refusal = message.walletInsufficient;
   const delegation = message.walletDelegation;
+  const walletIdentity = message.authorIdentity;
+  const identity = (
+    <IdentityMark
+      kind="human"
+      seed={walletIdentity?.pubkey ?? 'wallet'}
+      name={walletIdentity?.name ?? 'Wallet'}
+      avatarUrl={walletIdentity?.avatar}
+      face={walletIdentity?.face}
+      size={26}
+    />
+  );
   if (tx) {
     const actor = tx.agentName ? `@${tx.agentName.replace(/^@/, '')}` : 'You';
     return (
       <TranscriptCard
         tier="record"
-        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        identity={identity}
         title={
-          tx.direction === 'out'
-            ? `${actor} sent ${tx.amountText}`
-            : `Received ${tx.amountText}`
+          tx.direction === 'out' ? `${actor} sent ${tx.amountText}` : `Received ${tx.amountText}`
         }
         subline={`${tx.counterparty} · ${tx.chain} · ${tx.balanceAfterUsd} left`}
         sublineTestID="wallet-tx-subline"
@@ -365,11 +376,9 @@ export const WalletCards = React.memo(function WalletCards({
     return (
       <TranscriptCard
         tier="record"
-        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        identity={identity}
         title={
-          refusal.reason
-            ? `${actor} could not pay · ${refusal.reason}`
-            : `${actor} could not pay`
+          refusal.reason ? `${actor} could not pay · ${refusal.reason}` : `${actor} could not pay`
         }
         subline={`Needed ${refusal.needed} ${refusal.asset} on ${refusal.chain}${
           refusal.available ? ` · ${refusal.available} available` : ''
@@ -384,7 +393,7 @@ export const WalletCards = React.memo(function WalletCards({
     return (
       <TranscriptCard
         tier="record"
-        identity={<IdentityMark kind="human" seed="wallet" name="Wallet" size={26} />}
+        identity={identity}
         title="Granted agents permission to sign"
         subline={`Until ${new Date(delegation.expiresAt).toLocaleString()} · renews in the app`}
         sublineTestID="wallet-delegation-subline"
@@ -644,9 +653,9 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
       const word = headerSummaryState(item.state, isCheck);
       stateCounts.set(word, (stateCounts.get(word) ?? 0) + 1);
     }
-    const parts = Array.from(stateCounts.entries()).sort().map(
-      ([state, count]) => `${count} ${state}`,
-    );
+    const parts = Array.from(stateCounts.entries())
+      .sort()
+      .map(([state, count]) => `${count} ${state}`);
     const kind = isCheck ? 'Check' : 'PR';
     return `${kind} · ${parts.join(', ')}`;
   }, [items]);
@@ -671,15 +680,12 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   }, [items]);
 
   // Present a contracted cell (accordion contract the previously presented one).
-  const handlePresent = useCallback(
-    (itemId: string) => {
-      setPresentedId(itemId);
-      setAnimatedCells(new Set([itemId]));
-      const timer = setTimeout(() => setAnimatedCells(new Set()), TRANSCRIPT_SETTLE_MS);
-      return () => clearTimeout(timer);
-    },
-    [],
-  );
+  const handlePresent = useCallback((itemId: string) => {
+    setPresentedId(itemId);
+    setAnimatedCells(new Set([itemId]));
+    const timer = setTimeout(() => setAnimatedCells(new Set()), TRANSCRIPT_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   const presentedState = cellDisplayState(presentedItem.state);
   const presentedTone = cellTone(presentedItem.state);
@@ -725,9 +731,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
               </Text>
               <Text style={styles.ncStamp}>{ledgerStamp(message.timestamp)}</Text>
             </View>
-            {run.subline ? (
-              <Text style={styles.ncSubline}>{cardMeta(run.subline)}</Text>
-            ) : null}
+            {run.subline ? <Text style={styles.ncSubline}>{cardMeta(run.subline)}</Text> : null}
           </View>
         </View>
 
@@ -741,7 +745,10 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
             </View>
             <View style={styles.ncCellCopy}>
               <Animated.Text
-                style={[styles.ncCellTitle, presentedIsAnimated ? { color: animState.waitingColor } : undefined]}
+                style={[
+                  styles.ncCellTitle,
+                  presentedIsAnimated ? { color: animState.waitingColor } : undefined,
+                ]}
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
@@ -753,7 +760,10 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
               ) : null}
               {presentedItem.actor ? (
                 <Text style={styles.ncAuthor}>
-                  by <Text style={styles.ncAuthorHighlight}>@{presentedItem.actor.replace(/^@/, '')}</Text>
+                  by{' '}
+                  <Text style={styles.ncAuthorHighlight}>
+                    @{presentedItem.actor.replace(/^@/, '')}
+                  </Text>
                 </Text>
               ) : null}
             </View>
@@ -806,11 +816,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
                   </Text>
                 </View>
                 <View style={styles.ncCellCopy}>
-                  <Text
-                    style={styles.ncCellTitleContracted}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
+                  <Text style={styles.ncCellTitleContracted} numberOfLines={1} ellipsizeMode="tail">
                     {item.title}
                   </Text>
                   <Text style={styles.ncKindLine}>{kindWithAuthor}</Text>
@@ -829,9 +835,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
             style={styles.ncMoreStrip}
             testID={`notification-run-expand-${message.id}`}
           >
-            <Text style={styles.ncMoreText}>
-              {expanded ? 'less ▴' : `${hiddenCount} more ▾`}
-            </Text>
+            <Text style={styles.ncMoreText}>{expanded ? 'less ▴' : `${hiddenCount} more ▾`}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -1192,7 +1196,9 @@ function SwipeToReply({
                 testID={`bookmark-button-${messageId}`}
               >
                 <Ionicons
-                  color={bookmarked ? styles.replyDesktopBookmark.color : styles.replyDesktopGlyph.color}
+                  color={
+                    bookmarked ? styles.replyDesktopBookmark.color : styles.replyDesktopGlyph.color
+                  }
                   name={bookmarked ? 'bookmark' : 'bookmark-outline'}
                   size={14}
                 />
@@ -1421,7 +1427,9 @@ export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
       <Text style={styles.connectorReceiptLine}>
         {[
           receipt.grant ? `grant ${receipt.grant}` : undefined,
-          receipt.calls !== undefined ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}` : undefined,
+          receipt.calls !== undefined
+            ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}`
+            : undefined,
           receipt.bytes,
         ]
           .filter(Boolean)
@@ -1434,7 +1442,9 @@ export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
           receipt.operation,
           receipt.helper,
           receipt.grant ? `grant ${receipt.grant}` : undefined,
-          receipt.calls !== undefined ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}` : undefined,
+          receipt.calls !== undefined
+            ? `${receipt.calls} ${receipt.calls === 1 ? 'call' : 'calls'}`
+            : undefined,
           receipt.bytes,
         ]
           .filter(Boolean)
@@ -1477,6 +1487,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
   const speakerFace = indexedAuthor?.face ?? agent?.face;
+  const speakerAvatar = indexedAuthor?.avatar ?? agent?.avatar;
   const currentAgent =
     indexedAuthor?.kind === 'agent'
       ? {
@@ -1532,6 +1543,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                   seed: markSeed,
                   kind: isAgent ? ('agent' as const) : ('human' as const),
                   ...(speakerFace ? { face: speakerFace } : {}),
+                  ...(speakerAvatar ? { avatarUrl: speakerAvatar } : {}),
                   ...(isAgent ? { alive: speakerWorking } : {}),
                 },
               }),
@@ -1748,18 +1760,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
             {message.reactions.map((reaction) => (
-              <Pressable
-                accessibilityLabel={`${reaction.emoji}, ${reaction.count} reaction${reaction.count === 1 ? '' : 's'}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: reaction.reacted }}
+              <MessageReactionRoster
+                desktop={desktopLayout}
                 key={reaction.emoji}
-                onPress={() => onReact(message, reaction.emoji)}
-                style={[styles.reactionChip, reaction.reacted && styles.reactionChipMine]}
-                testID={`reaction-chip-${message.id}-${reaction.emoji}`}
-              >
-                <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
-                <Text style={styles.reactionCount}>{reaction.count}</Text>
-              </Pressable>
+                messageId={message.id}
+                onReact={() => onReact(message, reaction.emoji)}
+                reaction={reaction}
+              />
             ))}
           </View>
         ) : null}
@@ -1917,26 +1924,7 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: 6,
     marginLeft: 8,
   },
-  reactionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    minHeight: 28,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgBase,
-  },
-  reactionChipMine: {
-    borderColor: theme.buzz.accent,
-    backgroundColor: theme.buzz.bgHighlight,
-  },
-  reactionEmoji: { ...theme.buzz.type.body, lineHeight: 19 },
-  reactionCount: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
-  },
+  reactionEmoji: emojiTextStyle(theme.buzz.type.body),
   cornerProposalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',

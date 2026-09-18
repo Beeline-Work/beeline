@@ -243,6 +243,7 @@ import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   forwardMessageToRoom,
   forwardTargets,
+  resolveForwardTargetRoom,
   type ForwardTarget,
 } from '@/buzz/message-forward';
 import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
@@ -1841,8 +1842,10 @@ export default function BuzzChat() {
   const continuedAttributionIds = useStable(rawContinuedAttributionIds, sameStringSet);
   // Native keeps the established inverted list. React Native Web implements
   // `inverted` with scale transforms, which can leave variable-height rows at
-  // stale coordinates after a send. Desktop uses ordinary chronological flow.
-  const desktopTranscript = isDesktop;
+  // stale coordinates after a send. Every desktop-platform transcript uses
+  // ordinary chronological flow, including a packaged Windows window resized
+  // below the persistent-sidebar breakpoint.
+  const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
   // A live message/card change follows only when the reader is already at the
@@ -2561,8 +2564,11 @@ export default function BuzzChat() {
       setForwardRooms(null);
       setForwardError(null);
       try {
-        const list = await roomClient.chats(activeCommunityId);
-        setForwardRooms(forwardTargets(list.chats, decodedId));
+        const [list, workspace] = await Promise.all([
+          roomClient.chats(activeCommunityId),
+          roomClient.workspace(activeCommunityId),
+        ]);
+        setForwardRooms(forwardTargets(list.chats, workspace, decodedId));
       } catch (error) {
         setForwardError(error instanceof Error ? error.message : String(error));
         setForwardRooms([]);
@@ -2572,14 +2578,20 @@ export default function BuzzChat() {
   );
 
   const forwardToRoom = useCallback(
-    async (room: { id: string; label: string }) => {
+    async (target: ForwardTarget) => {
       if (!forwardTarget || forwardBusyRoomId) return;
-      setForwardBusyRoomId(room.id);
+      setForwardBusyRoomId(target.id);
       setForwardError(null);
       try {
+        if (!transport || !activeCommunityId) throw new Error('Beeline is still connecting.');
+        const roomId = await resolveForwardTargetRoom(
+          target,
+          activeCommunityId,
+          (workspaceId, memberId) => transport.resolveDirectMessage(workspaceId, memberId),
+        );
         await forwardMessageToRoom(
           (input) => monolithPhoneOperation('sendRoomMessage', input),
-          room.id,
+          roomId,
           { text: forwardTarget.text, attachments: forwardTarget.attachments },
           displayRoomName,
         );
@@ -2592,7 +2604,7 @@ export default function BuzzChat() {
         setForwardBusyRoomId(null);
       }
     },
-    [displayRoomName, forwardBusyRoomId, forwardTarget],
+    [activeCommunityId, displayRoomName, forwardBusyRoomId, forwardTarget, transport],
   );
 
   const markOutboxFailed = outbox.markFailed;
@@ -4120,7 +4132,9 @@ export default function BuzzChat() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
-        <Text style={styles.loadingText}>LOADING {ROOM_LABEL.toUpperCase()}</Text>
+        <Text style={styles.loadingText}>
+          LOADING {(isCorner ? CORNER_LABEL : ROOM_LABEL).toUpperCase()}
+        </Text>
       </View>
     );
   }
@@ -5133,29 +5147,29 @@ export default function BuzzChat() {
           setForwardRooms(null);
           setForwardError(null);
         }}
-        subtitle="Choose a Room in this Workspace"
+        subtitle="Choose a Room or member in this Workspace"
         testID="forward-room-picker"
         title="Forward message"
         visible={Boolean(forwardTarget)}
       >
         <ScrollView style={styles.forwardRoomList}>
           {forwardRooms === null ? (
-            <Text style={styles.forwardRoomStatus}>LOADING ROOMS…</Text>
+            <Text style={styles.forwardRoomStatus}>LOADING DESTINATIONS…</Text>
           ) : forwardRooms.length ? (
-            forwardRooms.map((room) => (
+            forwardRooms.map((target) => (
               <HullActionSheetRow
                 chevron="right"
                 disabled={Boolean(forwardBusyRoomId)}
-                key={room.id}
-                label={room.label}
-                metadata={forwardBusyRoomId === room.id ? 'SENDING' : undefined}
-                onPress={() => void forwardToRoom(room)}
-                testID={`forward-room-${room.id}`}
+                key={`${target.kind}:${target.id}`}
+                label={target.label}
+                metadata={forwardBusyRoomId === target.id ? 'SENDING' : undefined}
+                onPress={() => void forwardToRoom(target)}
+                testID={`forward-${target.kind}-${target.id}`}
               />
             ))
           ) : (
             <Text style={styles.forwardRoomStatus}>
-              {forwardError ?? 'NO OTHER ROOMS AVAILABLE'}
+              {forwardError ?? 'NO OTHER DESTINATIONS AVAILABLE'}
             </Text>
           )}
         </ScrollView>
@@ -5315,7 +5329,6 @@ export default function BuzzChat() {
             ) : null
           }
           onToggle={() => void handleToggleRoomRepoPicker()}
-          onUnlink={roomRepository ? () => void handleUnlinkRoomRepository() : undefined}
           picker={
             <View style={styles.roomSheetInset}>
               <RepoPicker
@@ -5334,7 +5347,13 @@ export default function BuzzChat() {
                   void handleManageGitHubInstallation(installation)
                 }
                 onSelect={handleSelectRoomRepoCandidate}
+                onUnlink={
+                  canManageWorkspace && roomRepository
+                    ? () => void handleUnlinkRoomRepository()
+                    : undefined
+                }
                 testIDPrefix="room-repo-picker"
+                unlinkRepositoryName={roomRepository?.binding.name}
               />
             </View>
           }

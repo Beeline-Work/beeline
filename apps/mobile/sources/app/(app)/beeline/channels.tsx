@@ -168,8 +168,12 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
-  const params = useLocalSearchParams<{ communityId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    communityId?: string | string[];
+    newRoom?: string | string[];
+  }>();
   const requestedWorkspaceId = firstParam(params.communityId);
+  const requestedNewRoom = firstParam(params.newRoom);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
@@ -201,6 +205,7 @@ export default function BuzzChannels() {
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const [bookmarkCount, setBookmarkCount] = useState(0);
+  const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
 
@@ -217,6 +222,21 @@ export default function BuzzChannels() {
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
   const canLeaveRooms = chatList?.workspace.role === 'member';
   const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
+
+  useEffect(() => {
+    if (
+      !isDesktop ||
+      !requestedNewRoom ||
+      requestedNewRoom === handledNewRoomRequest.current ||
+      !chatList ||
+      viewerIsAgent ||
+      !canManageWorkspace
+    ) {
+      return;
+    }
+    handledNewRoomRequest.current = requestedNewRoom;
+    setShowCreateRoom(true);
+  }, [canManageWorkspace, chatList, isDesktop, requestedNewRoom, viewerIsAgent]);
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
@@ -861,7 +881,6 @@ export default function BuzzChannels() {
                     {bookmarkCount} saved message{bookmarkCount === 1 ? '' : 's'}
                   </Text>
                 </View>
-                <Text style={styles.bookmarksOpen}>OPEN →</Text>
               </Pressable>
             ) : null
           }
@@ -1183,7 +1202,6 @@ const styles = StyleSheet.create((theme) => {
     bookmarksCopy: { flex: 1, minWidth: 0 },
     bookmarksTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
     bookmarksMeta: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, marginTop: 2 },
-    bookmarksOpen: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

@@ -71,6 +71,7 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -98,6 +99,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import {
   connectorCatalog,
   connectorDisplayName,
+  connectorIdentityIds,
   defaultConnectorSteps,
   dmParticipantsIncludeConnectorIdentity,
   ensureConnectorDirectMessageRoom,
@@ -105,10 +107,7 @@ import {
   isMetadataStale,
 } from './workbench.js';
 import type { ConnectorStatus, ConnectorStep } from '@beeline/api-contract/workbench';
-import {
-  GOOGLE_CONNECTOR_KINDS,
-  isGoogleToolConnectorKind,
-} from '@beeline/api-contract/workbench';
+import { GOOGLE_CONNECTOR_KINDS, isGoogleToolConnectorKind } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -214,6 +213,14 @@ interface MessageRow {
   bookmarked?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
+  reaction_identities?: Array<{
+    id: string;
+    kind: 'human' | 'agent';
+    name: string;
+    handle: string | null;
+    avatar: string | null;
+    face_id: string | null;
+  }>;
   /** Derived on read from the row's text and the Room's membership, not stored. */
   tagged_ids: string[];
   reply_to_message_id: string | null;
@@ -443,6 +450,9 @@ function projectedMessage(
     },
     publicOrigin,
   );
+  const reactionIdentityById = new Map(
+    (row.reaction_identities ?? []).map((reactor) => [reactor.id, reactor]),
+  );
   const base: RoomViewMessage = {
     id: row.id,
     text: row.text,
@@ -493,6 +503,10 @@ function projectedMessage(
                     emoji,
                     count: reactors.length,
                     reacted: viewerId ? reactors.includes(viewerId) : false,
+                    members: reactors.flatMap((reactorId) => {
+                      const reactor = reactionIdentityById.get(reactorId);
+                      return reactor ? [identity(reactor, publicOrigin)] : [];
+                    }),
                   },
                 ]
               : [];
@@ -543,6 +557,26 @@ function projectedMessage(
     default:
       return base;
   }
+}
+
+/** Canonical reactor identities, kept beside each bounded message row so every
+ * Room/history projection can paint the same roster without a client lookup. */
+function reactionIdentitiesSql(messageAlias: string): string {
+  return `COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'id',reactor.id,
+      'kind',reactor.kind,
+      'name',reactor.name,
+      'handle',reactor.handle,
+      'avatar',reactor.avatar,
+      'face_id',reactor.face_id
+    ) ORDER BY reactor.id)
+    FROM identities reactor
+    WHERE reactor.id IN (
+      SELECT jsonb_array_elements_text(reaction.value)
+      FROM jsonb_each(${messageAlias}.reactions) reaction
+    )
+  ),'[]'::jsonb)`;
 }
 
 /**
@@ -675,6 +709,7 @@ export class PhoneService {
       await this.database.query<MessageRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+           ${reactionIdentitiesSql('message')} reaction_identities,
            ${taggedIdentityIdsSql('message')} tagged_ids
          FROM rooms room
          JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
@@ -985,15 +1020,24 @@ export class PhoneService {
         )) closed
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=r.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (
+        SELECT * FROM messages
+        WHERE room_id=r.id AND presentation IN ('message','system','card')
+          AND card_type IS DISTINCT FROM 'grant-decision'
+        ORDER BY created_at DESC,id DESC LIMIT 1
+      ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
         ) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
+        AND (
+          r.direct_participants IS NULL OR peer.id IS NULL
+          OR NOT (peer.id = ANY($3::text[])) OR lm.id IS NOT NULL
+        )
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
-      [workspaceId, viewerId],
+      [workspaceId, viewerId, connectorIdentityIds()],
     );
     const roomIds = rooms.rows.map((room) => room.id);
     const [presence, cursors] = await Promise.all([
@@ -1037,7 +1081,8 @@ export class PhoneService {
            LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
            LEFT JOIN LATERAL(
              SELECT id,created_at FROM messages
-             WHERE room_id=room.id AND presentation IN ('message','system')
+             WHERE room_id=room.id AND presentation IN ('message','system','card')
+               AND card_type IS DISTINCT FROM 'grant-decision'
                AND author_id IS DISTINCT FROM $2
              ORDER BY created_at DESC,id DESC LIMIT 1
            ) latest ON true
@@ -1247,6 +1292,7 @@ export class PhoneService {
             `SELECT m.*,
                i.kind author_kind,i.name author_name,i.handle author_handle,
                i.avatar author_avatar,i.face_id author_face,
+               ${reactionIdentitiesSql('m')} reaction_identities,
                '{}'::text[] tagged_ids
              FROM messages m JOIN identities i ON i.id=m.author_id
              WHERE m.room_id=$1 AND m.created_at<=$2
@@ -1266,9 +1312,7 @@ export class PhoneService {
       : [];
     await this.enrichMessageTags(briefingRows);
     const briefing = collapsePermissionCards(
-      briefingRows
-        .map((row) => projectedMessage(row, this.publicOrigin))
-        .sort(messageOrder),
+      briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     );
     const attachmentFacts = await measured(
       'media',
@@ -1284,9 +1328,7 @@ export class PhoneService {
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages: decorateAttachments(messages, attachmentFacts),
-      ...(toolRows.length
-        ? { toolRows: decorateAttachments(toolRows, attachmentFacts) }
-        : {}),
+      ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
       latestAgentTurns,
       viewer: {
@@ -1500,6 +1542,7 @@ export class PhoneService {
          ), transcript_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
@@ -1515,6 +1558,7 @@ export class PhoneService {
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
              '{}'::text[] tagged_ids
@@ -3867,10 +3911,7 @@ export class PhoneService {
         await database.query<{
           visibility: 'public' | 'invite-only';
           reviewer_agent_id: string | null;
-        }>(
-          'SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE',
-          [input.roomId],
-        )
+        }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
       if (input.reviewerAgentId !== undefined && input.reviewerAgentId !== null) {
         const reviewer = await database.query(
@@ -4414,26 +4455,47 @@ export class PhoneService {
         name: context.actor_name,
         handle: context.actor_handle,
       };
+      // Hot-restart wake: every daemon live subscription of these Rooms filters
+      // on the target agent, so its retained sessions retire at once and the
+      // next turn cold-activates against the saved selection — exactly what
+      // session start reads. A change that wrote nothing sends no wake, and a
+      // plain reconnect never sees one. The direct pg_notify rides this same
+      // transaction (delivered on commit, dropped on rollback) to every server
+      // machine's live listener, since the agents table carries no Room for a
+      // row trigger to name.
+      for (const room of rooms.rows) {
+        await database.query(`SELECT pg_notify($1, $2)`, [
+          POSTGRES_LIVE_CHANNEL,
+          JSON.stringify({
+            table: 'agent_config',
+            operation: 'UPDATE',
+            roomId: room.room_id,
+            agentId: input.agentId,
+          }),
+        ]);
+      }
       const agentMention = systemIdentityMention({
         id: context.agent_id,
         kind: context.agent_kind,
         name: context.agent_name,
         handle: context.agent_handle,
       });
+      // A model/effort change is a Workspace-scoped configuration fact, not
+      // Room activity: one fact routed through workspaceSystemLine into each
+      // person's @system DM, the same lane as role and visibility changes.
       for (const change of changes) {
         const value =
           change.axis === 'model' && change.value
             ? selectedModelLabel(change.value, context.model_catalog ?? [])
             : change.value;
-        for (const room of rooms.rows)
-          await systemLine(database, {
-            roomId: room.room_id,
-            subject: identitySubject(actor),
-            verb: 'changed',
-            object: `${agentMention}'s ${change.axis} to ${value ?? 'default'}`,
-            cardType: 'agent-model',
-            card: { agentId: input.agentId, axis: change.axis, value },
-          });
+        await workspaceSystemLine(database, {
+          workspaceId: input.workspaceId,
+          subject: identitySubject(actor),
+          verb: 'changed',
+          object: `${agentMention}'s ${change.axis} to ${value ?? 'default'}`,
+          cardType: 'agent-model',
+          card: { agentId: input.agentId, axis: change.axis, value },
+        });
       }
     });
   }
@@ -5447,7 +5509,10 @@ export class PhoneService {
    * per workspace. Read both halves by owner. `input.workspaceId` is accepted
    * and ignored for wire compatibility with clients that still send it.
    */
-  async readWorkbench(input: Input<'readWorkbench'>, viewerId: string): Promise<Output<'readWorkbench'>> {
+  async readWorkbench(
+    input: Input<'readWorkbench'>,
+    viewerId: string,
+  ): Promise<Output<'readWorkbench'>> {
     void input;
     const connectors = (
       await this.database.query<{
@@ -5700,25 +5765,24 @@ export class PhoneService {
         );
       }
     }
-    const existing =
-      (
-        await this.database.query<{
-          id: string;
-          status: ConnectorStatus['status'];
-          status_steps: ConnectorStep[] | null;
-          status_error: string | null;
-        }>(
-          `SELECT id,status,status_steps,status_error FROM workspace_connectors
+    const existing = (
+      await this.database.query<{
+        id: string;
+        status: ConnectorStatus['status'];
+        status_steps: ConnectorStep[] | null;
+        status_error: string | null;
+      }>(
+        `SELECT id,status,status_steps,status_error FROM workspace_connectors
            WHERE workspace_id=$1 AND owner_identity_id=$2
              AND connector_type=$3 AND machine_id=$4`,
-          [ws.workspace_id, viewerId, input.connectorType, machineId],
-        )
-      ).rows[0] ?? {
-        id,
-        status: 'installing' as const,
-        status_steps: defaultConnectorSteps() as ConnectorStep[],
-        status_error: null,
-      };
+        [ws.workspace_id, viewerId, input.connectorType, machineId],
+      )
+    ).rows[0] ?? {
+      id,
+      status: 'installing' as const,
+      status_steps: defaultConnectorSteps() as ConnectorStep[],
+      status_error: null,
+    };
     // The helper sees the install assignment on its next poll.
     await ensureConnectorDirectMessageRoom(
       this.database,
@@ -5757,10 +5821,9 @@ export class PhoneService {
     await this.assertWorkbenchViewer(input.workspaceId, viewerId);
     const connector = await this.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.
-    await this.database.query(
-      `DELETE FROM workspace_connections WHERE connector_id=$1::uuid`,
-      [input.connectorId],
-    );
+    await this.database.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
+      input.connectorId,
+    ]);
     await this.database.query(
       `UPDATE workspace_connectors
        SET status='disconnected', status_steps='[]'::jsonb, status_error=NULL,
@@ -5880,10 +5943,10 @@ export class PhoneService {
     const updated = (connection.grants ?? []).map((grant) =>
       grant.revokedAt ? grant : { ...grant, revokedAt },
     );
-    await this.database.query(`UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`, [
-      connection.id,
-      JSON.stringify(updated),
-    ]);
+    await this.database.query(
+      `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
+      [connection.id, JSON.stringify(updated)],
+    );
     if (live.length)
       await this.database.query(
         `UPDATE workspace_connectors
@@ -6113,6 +6176,7 @@ export class PhoneService {
         `SELECT m.*,
            i.kind author_kind,i.name author_name,i.handle author_handle,
            i.avatar author_avatar,i.face_id author_face,
+           ${reactionIdentitiesSql('m')} reaction_identities,
            '{}'::text[] tagged_ids
          FROM messages m JOIN identities i ON i.id=m.author_id
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -6197,6 +6261,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -6209,6 +6274,7 @@ export class PhoneService {
       `SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
@@ -6221,6 +6287,7 @@ export class PhoneService {
           `SELECT m.*,
              i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
              '{}'::text[] tagged_ids
            FROM messages m JOIN identities i ON i.id=m.author_id
            WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL

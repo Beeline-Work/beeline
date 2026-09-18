@@ -130,6 +130,50 @@ describe('agent command selection', () => {
     });
   });
 
+  it('resolves the Cursor Agent CLI with its ACP adapter to an exact command', async () => {
+    const cursorAgent = await executable('cursor-agent');
+    const adapter = await executable('cursor-agent-acp');
+    const selected = resolveAgentCommand({
+      kind: 'cursor',
+      env: {
+        HOME: await hermeticHome(),
+        PATH: [cursorAgent.directory, adapter.directory].join(delimiter),
+      },
+    });
+    expect(selected).toEqual({ kind: 'cursor', command: adapter.path, args: [] });
+  });
+
+  it('gives an actionable adapter-install error when Cursor Agent CLI needs an ACP adapter', async () => {
+    const cursorAgent = await executable('cursor-agent');
+    const home = await hermeticHome();
+    expect(() =>
+      resolveAgentCommand({
+        kind: 'cursor',
+        env: { HOME: home, PATH: cursorAgent.directory },
+      }),
+    ).toThrow('npm install -g cursor-agent-acp');
+  });
+
+  it('gives an actionable install error when the Cursor Agent CLI is missing', async () => {
+    const home = await hermeticHome();
+    expect(() =>
+      resolveAgentCommand({ kind: 'cursor', env: { HOME: home, PATH: '' } }),
+    ).toThrow('Cursor Agent CLI not found');
+  });
+
+  it('detects a cursor-agent install as missing-adapter when the ACP adapter is absent', async () => {
+    const cursorAgent = await executable('cursor-agent');
+    const home = await hermeticHome();
+    const detected = detectInstalledAgentCommands({
+      env: { HOME: home, PATH: cursorAgent.directory },
+    });
+    expect(detected).toContainEqual({
+      kind: 'cursor',
+      status: 'missing-adapter',
+      install: { command: 'npm', args: ['install', '-g', 'cursor-agent-acp'] },
+    });
+  });
+
   it('resolves a Cursor community-bridge custom command through the custom path', async () => {
     // Cursor's CLI has no native ACP mode; the documented path is the
     // third-party `cursor-acp` bridge driven through `--agent custom`.

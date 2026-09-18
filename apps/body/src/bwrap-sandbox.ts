@@ -195,6 +195,10 @@ export const HARNESS_HOME_STATE_DIRS: Array<{ match: RegExp; dirs: string[] }> =
     match: /(^|[/\\])grok(\.[a-z]+)?$/i,
     dirs: ['.grok'],
   },
+  {
+    match: /(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i,
+    dirs: ['.cursor'],
+  },
 ];
 
 /**

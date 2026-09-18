@@ -6,7 +6,7 @@ import { GITHUB_IDENTITY_AUDIENCE } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
 
 const DEVICE_TTL_MS = 10 * 60_000;
-const SUPPORTED_HARNESSES = new Set(['codex', 'claude', 'goose', 'pi', 'grok']);
+const SUPPORTED_HARNESSES = new Set(['codex', 'claude', 'goose', 'pi', 'grok', 'cursor']);
 const PROVIDER_REQUIRED = new Set(['goose', 'pi']);
 const SUPPORTED_PROVIDERS = new Set(['openrouter', 'openai', 'anthropic', 'google', 'xai']);
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

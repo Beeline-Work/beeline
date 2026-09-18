@@ -424,7 +424,10 @@ function modelSelectionTargets(selection: {
 /**
  * The one value-level authority for pair-time, daemon-start, and live-session
  * application. A selection is valid only when the selected harness advertises
- * both its axis and its exact value in the current credential-filtered catalog.
+ * its exact value in the current credential-filtered catalog. A harness that
+ * advertises NO axis for a target runs its own default: the selection is
+ * skipped, not refused, so a connect that could not enumerate an axis (cursor)
+ * still starts.
  */
 export function assertModelSelectionAdvertised(
   advertisedOptions: AgentModelConfigOption[],
@@ -434,12 +437,12 @@ export function assertModelSelectionAdvertised(
     if (!target.value) continue;
     const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
     if (!axis) {
-      throw new ModelSelectionUnavailableError({
-        label: target.label as ModelSelectionLabel,
-        value: target.value,
-        reason: 'axis-missing',
-        guidance: `This harness does not advertise a selectable ${target.label} axis.`,
-      });
+      // A harness that advertises no axis (cursor-agent-acp exposes neither
+      // model nor effort at `session/new`) runs its own default; there is
+      // nothing to apply and nothing to refuse, so the selection is skipped
+      // rather than failed. A persisted value is still honored the moment the
+      // harness advertises the axis again.
+      continue;
     }
     assertModelConfigAxisAllowed(axis.id, advertisedOptions);
     if (!axis.options.some((choice) => choice.id === target.value)) {

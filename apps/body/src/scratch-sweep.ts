@@ -10,7 +10,7 @@
  *
  * The root also holds every harness's own state/credential directories
  * (`HOME_SUBDIRS` in `agent-home.ts`: `user`/`claude`/`codex`/`goose`/`grok`/
- * `pi`/`state`/`cache` — the very things `harnessStateDirsFromEnv` and
+ * `cursor`/`pi`/`state`/`cache` — the very things `harnessStateDirsFromEnv` and
  * `harnessHomeStateDirs` protect from the OS sandbox). Only `tmp` — the one
  * subdir env-mapped to `TMPDIR`, where deliveries and scratch writes actually
  * land — is swept; every other top-level name is skipped outright, whole,

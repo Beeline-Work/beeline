@@ -59,6 +59,13 @@ describe('Room deck bootstrap', () => {
     expect(source).toContain('onCopyPairCommand={(command) => void copyPairCommand(command)}');
   });
 
+  it('opens the existing Room dialog for a fresh desktop navigation request', () => {
+    expect(source).toContain('requestedNewRoom === handledNewRoomRequest.current');
+    expect(source).toContain('handledNewRoomRequest.current = requestedNewRoom');
+    expect(source).toContain('setShowCreateRoom(true)');
+    expect(source).toContain('!canManageWorkspace');
+  });
+
   it('refetches an acknowledged Room write without leaving the refreshed deck', () => {
     const createPath = source.slice(
       source.indexOf('const createRoom = useCallback'),

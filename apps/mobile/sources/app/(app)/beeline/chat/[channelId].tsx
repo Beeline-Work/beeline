@@ -5329,7 +5329,6 @@ export default function BuzzChat() {
             ) : null
           }
           onToggle={() => void handleToggleRoomRepoPicker()}
-          onUnlink={roomRepository ? () => void handleUnlinkRoomRepository() : undefined}
           picker={
             <View style={styles.roomSheetInset}>
               <RepoPicker
@@ -5348,7 +5347,13 @@ export default function BuzzChat() {
                   void handleManageGitHubInstallation(installation)
                 }
                 onSelect={handleSelectRoomRepoCandidate}
+                onUnlink={
+                  canManageWorkspace && roomRepository
+                    ? () => void handleUnlinkRoomRepository()
+                    : undefined
+                }
                 testIDPrefix="room-repo-picker"
+                unlinkRepositoryName={roomRepository?.binding.name}
               />
             </View>
           }

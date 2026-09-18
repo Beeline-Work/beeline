@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+const layout = vi.hoisted(() => ({ desktop: false }));
 const searchParams = vi.hoisted(() => ({
   params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } as Record<string, string>,
 }));
@@ -16,6 +17,12 @@ vi.mock('expo-router', () => ({
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
+
+vi.mock('@/utils/responsive', () => ({
+  useIsDesktop: () => layout.desktop,
+}));
+
+vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -76,6 +83,7 @@ afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  layout.desktop = false;
   setWorkbenchSource(new MockWorkbenchSource());
   setWalletSource(new MockWalletSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
@@ -93,6 +101,18 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Workbench settings screen', () => {
+  it('draws the shared page header on desktop and leaves the stack header to phones', async () => {
+    layout.desktop = true;
+    const desktopRenderer = await render();
+    expect(desktopRenderer.root.findByProps({ testID: 'workbench-header' }).props.title).toBe(
+      'Workbench',
+    );
+
+    layout.desktop = false;
+    const phoneRenderer = await render();
+    expect(phoneRenderer.root.findAllByProps({ testID: 'workbench-header' })).toHaveLength(0);
+  });
+
   it('renders one state or action for each tool row', async () => {
     const renderer = await render();
     const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
@@ -213,6 +233,30 @@ describe('Workbench settings screen', () => {
       'another Trusty Squire session is already using the browser — close it first',
     );
     expect(squire.props.descriptionTone).toBe('danger');
+  });
+
+  it('does not paint the Trusty Squire browser-session failure on Google Workspace', async () => {
+    const source = new MockWorkbenchSource();
+    source.failNextPair('trusty-squire');
+    source.failNextPair('google-gmail');
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
+    expect(squire.props.description).toContain(
+      'another Trusty Squire session is already using the browser',
+    );
+    expect(squire.props.action).toBe('Connect');
+    const google = renderer.root.findByProps({ testID: 'google-entry-row' });
+    expect(google.props.title).toBe('Google Workspace');
+    expect(google.props.action).toBeUndefined();
+    expect(google.props.trailingPress).toBeUndefined();
+    expect(google.props.descriptionTone).not.toBe('danger');
+    expect(google.props.description).toBe(
+      'Connect Trusty Squire first — its browser session is busy',
+    );
+    expect(google.props.description).not.toMatch(
+      /another Trusty Squire session is already using the browser/i,
+    );
   });
 
   it('creates a wallet from Connect and opens the dashboard', async () => {

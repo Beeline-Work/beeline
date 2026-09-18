@@ -177,6 +177,10 @@ describe('PR-scoped check gate', () => {
       approvalPending: false,
       reviewer: null,
       reviewerIsAuthor: false,
+      reviewerWake: {
+        status: 'unconfigured',
+        detail: 'This Room has no configured reviewer, so no agent is woken for review.',
+      },
       rule: 'This Room has no configured reviewer, so no agent approval gates this pull request.',
     });
     expect(graphqlRequests()).toHaveLength(1);
@@ -243,6 +247,69 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ approvalPending: false });
     head = '9'.repeat(40);
     expect(await gate()).toMatchObject({ approvalPending: true, headSha: head });
+  });
+
+  it('names a configured reviewer who is not a parent member and does not drop the gate', async () => {
+    await ownPr();
+    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+      R,
+      A,
+    ]);
+    expect(await gate(AUTHOR)).toMatchObject({
+      checks: 'passed',
+      approvalPending: true,
+      reviewer: '@reviewer',
+      reviewerIsAuthor: false,
+      reviewerWake: {
+        status: 'unreachable',
+        detail:
+          '@reviewer is configured as reviewer but is not a current member of the parent Room, so the checks-passed transition cannot wake them.',
+      },
+    });
+    expect((await gate(AUTHOR)).rule).toContain('cannot wake them');
+  });
+
+  it('reports waiting while checks are still pending so the author does not invent a missed wake', async () => {
+    await ownPr();
+    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      [
+        AUTHOR,
+        JSON.stringify({
+          lifecycle: 'in-review',
+          checks: 'pending',
+          pr: { number: 614, url: URL, headSha: SHA, title: 'Work', targetBranch: 'main' },
+        }),
+      ],
+    );
+    rollupState = 'PENDING';
+    expect(await gate(AUTHOR)).toMatchObject({
+      checks: 'pending',
+      reviewer: '@reviewer',
+      reviewerWake: {
+        status: 'waiting',
+        detail: 'Checks are still pending, so @reviewer has not been woken yet.',
+      },
+    });
+  });
+
+  it('reports dispatched after the green transition consumed the reviewer wake', async () => {
+    await ownPr();
+    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await db.query(`UPDATE corner_facts SET command_check_state='passing' WHERE corner_id=$1`, [
+      AUTHOR,
+    ]);
+    expect(await gate(AUTHOR)).toMatchObject({
+      reviewerWake: {
+        status: 'dispatched',
+        detail: 'The checks-passed transition woke @reviewer.',
+      },
+    });
   });
 
   it('refuses other repositories and nonmembers before accessing PR data', async () => {

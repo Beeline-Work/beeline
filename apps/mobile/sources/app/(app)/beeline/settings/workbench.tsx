@@ -3,6 +3,8 @@ import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
+import { useIsDesktop } from '@/utils/responsive';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
@@ -27,8 +29,10 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * about (Trusty Squire and Wallet live, Tailscale as `soon`), and the
  * viewer's OWN keys. Captain ruling 2026-09-15 (mock 91aa0358328d716e): a
  * tool is what your agents can use; a key is what that tool holds for you.
- * Like `schedules`, the screen draws no header of its own: the stack header
- * is the one back control, and the layout names the screen Workbench.
+ * On a phone the stack header remains the one back control. On desktop the
+ * stack header's centered legacy column does not line up with the other
+ * sections, so the page draws the shared `PageHeader` (which the layout
+ * hides the stack header for).
  * Sovereignty is per human: the projection in `connectionsForViewer` paints
  * only rows the viewer provisioned, matching the server's own enforcement
  * in PR 2. Data-model names (`WorkbenchConnector`, `connections`, …) keep
@@ -41,6 +45,7 @@ export default function WorkbenchScreen() {
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const viewerId = firstParam(params.viewerId) ?? '';
+  const desktop = useIsDesktop();
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
@@ -97,28 +102,36 @@ export default function WorkbenchScreen() {
   // system nav bar), so an error read as a populated-but-empty page. Gate the
   // sections on a real load; show a centered error or loader otherwise.
   const loading = view === null && networkFailure === null;
+  const header = desktop ? <PageHeader testID="workbench-header" title="Workbench" /> : null;
 
   if (networkFailure) {
     return (
-      <NetworkUnavailableState
-        onRetry={() => void (networkFailure === 'wallet' ? connectWallet() : load())}
-        testID="workbench-network-unavailable"
-      />
+      <View style={styles.container}>
+        {header}
+        <NetworkUnavailableState
+          onRetry={() => void (networkFailure === 'wallet' ? connectWallet() : load())}
+          testID="workbench-network-unavailable"
+        />
+      </View>
     );
   }
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text style={styles.centeredMessage} testID="workbench-loading">
-          Loading…
-        </Text>
+      <View style={styles.container}>
+        {header}
+        <View style={styles.centered}>
+          <Text style={styles.centeredMessage} testID="workbench-loading">
+            Loading…
+          </Text>
+        </View>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      {header}
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         <View testID="workbench-connectors">
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
@@ -250,6 +263,7 @@ const styles = StyleSheet.create((theme) => {
     },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     centered: {
+      flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
       padding: hull.space.xl,

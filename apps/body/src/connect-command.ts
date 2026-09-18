@@ -342,9 +342,8 @@ export async function loadConnectModelCatalog(
     input.harness,
     catalog.raw,
   );
-  // cursor-agent-acp advertises no model axis at `session/new`, but the
-  // cursor-agent CLI does: enumerate real models there instead of offering a
-  // single invented default. Any CLI failure keeps the fallback picker.
+  // cursor-agent advertises models through Beeline's ACP bridge at
+  // `session/new`; this CLI read remains the fallback when that catalog is empty.
   if (
     input.harness === 'cursor' &&
     !catalog.catalog.some((axis) => axis.category === 'model' && axis.options.length) &&

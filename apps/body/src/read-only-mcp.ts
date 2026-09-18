@@ -527,7 +527,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the reviewer approval gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result names the Room’s configured reviewer and states which actor’s approve_merge clears the gate — when you opened this corner and are also that reviewer, self-review is not required and approvalPending is false. Never infer passing checks from local git, gh output, or chat prose.',
+      'Read GitHub checks and the reviewer approval gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result names the Room’s configured reviewer, states which actor’s approve_merge clears the gate, and reports reviewerWake so you can say whether that reviewer was woken — when you opened this corner and are also that reviewer, self-review is not required and approvalPending is false. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1368,6 +1368,10 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const reviewer = typeof verdict?.reviewer === 'string' ? verdict.reviewer : null;
   const reviewerIsAuthor = verdict?.reviewerIsAuthor === true;
   const reviewerRule = typeof verdict?.rule === 'string' ? verdict.rule : undefined;
+  const reviewerWake =
+    verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'
+      ? verdict.reviewerWake
+      : undefined;
   const mergeConditionsRule =
     "Merge only when checks is passed, held is false, and approvalPending is false — then YOU merge it yourself with gh; the server never merges a corner's pull request and never sends a closing request of any kind, so waiting for one will wait forever. A local or gh checks result is not authorization on its own. approvalPending reflects only whether the reviewer's recorded PASS covers this exact head sha; it is not a hold on you merging once it is false. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
   return JSON.stringify({
@@ -1378,6 +1382,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     approvalPending: verdict?.approvalPending ?? false,
     reviewer,
     reviewerIsAuthor,
+    ...(reviewerWake ? { reviewerWake } : {}),
     archived: authority.archived === true,
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest

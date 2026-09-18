@@ -148,6 +148,54 @@ function challenge(value: string): string {
   return createHash('sha256').update(value).digest('base64url');
 }
 
+export type ReviewerWakeStatus = 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
+
+/** Whether the configured reviewer can be / was woken for this corner's current check state. */
+export function reviewerWakeFromFacts(input: {
+  configuredReviewerId: string | null;
+  reviewerHandle: string | null;
+  parentMember: boolean;
+  cornerMember: boolean;
+  lifecycleChecks: string | undefined;
+  commandCheckState: string | null;
+}): { status: ReviewerWakeStatus; detail: string } {
+  const label = input.reviewerHandle ? `@${input.reviewerHandle}` : 'the configured reviewer';
+  if (!input.configuredReviewerId) {
+    return {
+      status: 'unconfigured',
+      detail: 'This Room has no configured reviewer, so no agent is woken for review.',
+    };
+  }
+  if (!input.parentMember) {
+    return {
+      status: 'unreachable',
+      detail: `${label} is configured as reviewer but is not a current member of the parent Room, so the checks-passed transition cannot wake them.`,
+    };
+  }
+  if (!input.cornerMember) {
+    return {
+      status: 'unreachable',
+      detail: `${label} is configured as reviewer but is not a current member of this corner, so the checks-passed transition cannot wake them.`,
+    };
+  }
+  if (input.lifecycleChecks === 'passing' && input.commandCheckState === 'passing') {
+    return {
+      status: 'dispatched',
+      detail: `The checks-passed transition woke ${label}.`,
+    };
+  }
+  if (input.lifecycleChecks === 'pending' || input.lifecycleChecks === 'unknown') {
+    return {
+      status: 'waiting',
+      detail: `Checks are still ${input.lifecycleChecks}, so ${label} has not been woken yet.`,
+    };
+  }
+  return {
+    status: 'waiting',
+    detail: `A review turn has not been dispatched to ${label} yet.`,
+  };
+}
+
 export class GitHubOperations {
   readonly #key: Buffer;
   constructor(
@@ -518,17 +566,28 @@ export class GitHubOperations {
         parent_id: string;
         lifecycle: CornerLifecycleView;
         owner_agent_id: string | null;
-        reviewer_agent_id: string | null;
+        command_check_state: string | null;
+        configured_reviewer_id: string | null;
+        reviewer_identity_id: string | null;
+        parent_reviewer_id: string | null;
+        corner_reviewer_id: string | null;
         reviewer_handle: string | null;
       }>(
-        `SELECT r.parent_id,f.lifecycle,f.owner_agent_id,reviewer.identity_id reviewer_agent_id,
+        `SELECT r.parent_id,f.lifecycle,f.owner_agent_id,f.command_check_state,
+                parent.reviewer_agent_id configured_reviewer_id,
+                reviewer_identity.id reviewer_identity_id,
+                parent_member.identity_id parent_reviewer_id,
+                corner_member.identity_id corner_reviewer_id,
                 reviewer_identity.handle reviewer_handle
          FROM rooms r
          JOIN corner_facts f ON f.corner_id=r.id
          JOIN rooms parent ON parent.id=r.parent_id
-         LEFT JOIN memberships reviewer ON reviewer.room_id=parent.id
-           AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
-         LEFT JOIN identities reviewer_identity ON reviewer_identity.id=reviewer.identity_id
+         LEFT JOIN identities reviewer_identity ON reviewer_identity.id=parent.reviewer_agent_id
+           AND reviewer_identity.kind='agent'
+         LEFT JOIN memberships parent_member ON parent_member.room_id=parent.id
+           AND parent_member.identity_id=parent.reviewer_agent_id AND parent_member.removed_at IS NULL
+         LEFT JOIN memberships corner_member ON corner_member.room_id=r.id
+           AND corner_member.identity_id=parent.reviewer_agent_id AND corner_member.removed_at IS NULL
          WHERE r.id=$1`,
         [input.cornerId],
       )
@@ -551,31 +610,46 @@ export class GitHubOperations {
     const checks = (
       await this.app.readCommitCheckRollup(target.token, target.repository, pr.headSha)
     ).state;
+    const configuredReviewerId = corner.configured_reviewer_id;
     const approval = await this.database.query(
       `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
        WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
          AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
-      [corner.parent_id, number, pr.headSha, corner.reviewer_agent_id],
+      [corner.parent_id, number, pr.headSha, configuredReviewerId],
     );
     // The parent Room's reviewer opened this very corner: no OTHER agent's
     // approve_merge can ever exist for it, so requiring one is a permanent
     // deadlock, not a real gate.
     const reviewerIsAuthor = Boolean(
-      corner.reviewer_agent_id &&
+      configuredReviewerId &&
       corner.owner_agent_id &&
-      corner.reviewer_agent_id === corner.owner_agent_id,
+      configuredReviewerId === corner.owner_agent_id,
     );
     const approvalPending = reviewerIsAuthor
       ? false
-      : corner.reviewer_agent_id
+      : configuredReviewerId
         ? approval.rowCount === 0
         : approval.rowCount > 0;
     const reviewer = corner.reviewer_handle ? `@${corner.reviewer_handle}` : null;
     const reviewerLabel = reviewer ?? 'the configured reviewer';
+    const reviewerWake = reviewerWakeFromFacts({
+      configuredReviewerId,
+      reviewerHandle: corner.reviewer_handle,
+      parentMember: Boolean(
+        configuredReviewerId && corner.reviewer_identity_id && corner.parent_reviewer_id,
+      ),
+      cornerMember: Boolean(
+        configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id,
+      ),
+      lifecycleChecks: corner.lifecycle.checks,
+      commandCheckState: corner.command_check_state,
+    });
     const rule = reviewerIsAuthor
       ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. approvalPending is false; merge once checks pass.`
-      : corner.reviewer_agent_id
-        ? `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
+      : configuredReviewerId
+        ? reviewerWake.status === 'unreachable'
+          ? `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
+          : `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
         : 'This Room has no configured reviewer, so no agent approval gates this pull request.';
     return {
       checks,
@@ -584,6 +658,7 @@ export class GitHubOperations {
       approvalPending,
       reviewer,
       reviewerIsAuthor,
+      reviewerWake,
       rule,
     };
   }

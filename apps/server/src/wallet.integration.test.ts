@@ -12,6 +12,7 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { walletSource } from './wallet.js';
+import { connectorIdentityId } from './workbench.js';
 import type { FakeWalletState } from './cdp-fake.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -199,6 +200,47 @@ describe('wallet over the fake CDP seam', () => {
       totalUsd: string;
     };
     expect(after.totalUsd).toBe(view.totalUsd === '$0.00' ? '$380.00' : after.totalUsd);
+  });
+
+  it('every @wallet DM line is authored by the wallet connector identity, never the agent', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
+    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
+    await daemonOperation('walletPay', {
+      agentId: HELPER,
+      chain: 'base',
+      asset: 'usdc',
+      amount: '120',
+      to: '0xabc',
+    });
+
+    // The wallet connector identity is a hidden `kind='human'` row.
+    const identity = (
+      await database.query<{ kind: string; hidden_from_roster: boolean }>(
+        `SELECT kind,hidden_from_roster FROM identities WHERE id=$1`,
+        [connectorIdentityId('wallet')],
+      )
+    ).rows[0];
+    expect(identity).toMatchObject({ kind: 'human', hidden_from_roster: true });
+
+    // The wallet DM exists and EVERY line in it comes from @wallet itself —
+    // the same receipt-ledger shape the Trusty Squire DM holds.
+    const dm = (
+      await database.query<{ room_id: string }>(
+        `SELECT r.id room_id FROM rooms r
+         WHERE r.direct_participants @> to_jsonb(ARRAY[$1::text])`,
+        [connectorIdentityId('wallet')],
+      )
+    ).rows;
+    expect(dm).toHaveLength(1);
+    const lines = (
+      await database.query<{ author_id: string; card_type: string | null }>(
+        `SELECT author_id,card_type FROM messages WHERE room_id=$1 ORDER BY created_at`,
+        [dm[0]!.room_id],
+      )
+    ).rows;
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines.every((line) => line.author_id === connectorIdentityId('wallet'))).toBe(true);
   });
 
   it('the only spending refusal is insufficient funds', async () => {

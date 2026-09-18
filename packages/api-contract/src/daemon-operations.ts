@@ -136,6 +136,15 @@ export type DaemonOperationMap = {
       reviewer: string | null;
       /** True when `reviewer` is also this corner's opener/author — self-review is not required. */
       reviewerIsAuthor: boolean;
+      /**
+       * Whether the configured reviewer was or can be woken for this corner's
+       * current check state. Distinguishes "no reviewer" from "configured but
+       * not a current parent-Room member", and pending checks from a dispatch.
+       */
+      reviewerWake: {
+        status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
+        detail: string;
+      };
       /** States which actor's approve_merge clears the gate, and the human fallback path. */
       rule: string;
     }

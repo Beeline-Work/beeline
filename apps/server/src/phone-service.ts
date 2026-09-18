@@ -1599,7 +1599,7 @@ export class PhoneService {
              SELECT status,created_at FROM agent_turns WHERE room_id=corner.id
              ORDER BY created_at DESC LIMIT 1
            ) turn ON true
-           WHERE corner.archived_at IS NULL AND EXISTS(
+           WHERE EXISTS(
              SELECT 1 FROM memberships viewer WHERE viewer.room_id=corner.id
                AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
            )
@@ -1617,10 +1617,15 @@ export class PhoneService {
            COALESCE((SELECT jsonb_agg(to_jsonb(activity_rows)
              ORDER BY activity_rows.created_at DESC,activity_rows.id DESC)
              FROM activity_rows),'[]'::jsonb) activity,
-           COALESCE((SELECT jsonb_agg((to_jsonb(corner_rows) - 'github_installation_id')
-             || jsonb_build_object(
-               'github_installation_id',corner_rows.github_installation_id::text
-             )) FROM corner_rows),'[]'::jsonb) corners
+           COALESCE((SELECT jsonb_agg(
+             (
+               (to_jsonb(corner_rows) - 'github_installation_id')
+               || jsonb_build_object(
+                 'github_installation_id',corner_rows.github_installation_id::text
+               )
+             )
+             ORDER BY corner_rows.archived_at NULLS FIRST, corner_rows.updated_at DESC, corner_rows.id
+           ) FROM corner_rows),'[]'::jsonb) corners
          FROM authorized_room`,
         [roomId, viewerId],
       )
@@ -1742,8 +1747,10 @@ export class PhoneService {
         turnRunning: hasLiveWorkingTurn,
         lifecycle,
       });
+      const header = roomHeader(corner, this.publicOrigin);
+      const about = header.about ?? (corner.objective?.trim() || undefined);
       return {
-        corner: roomHeader(corner, this.publicOrigin),
+        corner: about ? { ...header, about } : header,
         lifecycle,
         ...derived,
         stateAt:

@@ -55,6 +55,13 @@ platforms whose pins changed. Legacy release records with one global
 until the selected store binaries have been submitted. A retry with the same
 pinned release identity resumes both components from their saved stages.
 
+Exception - pin RESTORE: a pin change that reverts to runtime versions whose
+store binaries already exist needs no new store submission. Planning such a
+release as OTA-only requires the explicit `allow_pin_restore` workflow input
+(or `--allow-pin-restore`): it ships only `mobile-ota`, records
+`plan.pinRestore: true`, and never builds or submits store binaries. It is a
+deliberate consent gate, never inferred from pin direction.
+
 iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
 and are submitted to TestFlight from its generated IPA. Android store binaries
 continue to build on EAS cloud and use the existing Google Play authentication

@@ -475,6 +475,27 @@ test('reproduces #1088: a runtime pin bump cannot plan an OTA without store bina
   );
 });
 
+test('allowPinRestore ships an OTA-only pin restore without mobile-native and records pinRestore', () => {
+  const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
+    gitShow: (sha) => JSON.stringify(sha === OLD_SHA ? { runtimeVersion: '23' } : {
+      android: { runtimeVersion: '24' }, ios: { runtimeVersion: '24' },
+    }),
+  });
+  assert.equal(pins.changed, true);
+  const selected = selectReleaseComponents(['apps/mobile/sources/index.ts'], {
+    selection: 'auto', storeTrack: 'none', runtimePin: pins, allowPinRestore: true,
+  });
+  assert.ok(selected.includes('mobile-ota'));
+  assert.ok(!selected.includes('mobile-native'));
+  const state = initializeRelease({
+    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
+    selectedComponents: selected, runtimePin: pins,
+  });
+  state.plan.pinRestore = true;
+  assert.equal(state.plan.pinRestore, true);
+  assert.deepEqual(state.plan.nativePlatforms, ['android', 'ios']);
+});
+
 test('the path map has no duplicate matcher and names only real components', () => {
   const matchers = COMPONENT_PATH_RULES.map((rule) => rule.exact ?? `${rule.prefix}*`);
   assert.equal(new Set(matchers).size, matchers.length);

@@ -192,7 +192,7 @@ function runtimePinChangeMessage(runtimePin, requirement) {
   return `runtime pin changed ${changes}: ${requirement}`;
 }
 
-export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none', runtimePin } = {}) {
+export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none', runtimePin, allowPinRestore = false } = {}) {
   if (!['none', 'internal', 'beta', 'production'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
   const explicit = selection !== 'auto' && selection !== '';
   if (runtimePin?.changed && explicit && selection !== 'all'
@@ -204,8 +204,8 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
   // as store-necessary (a new runtime needs a new store binary as its anchor),
   // and that store submission is a deliberate operator choice via --store-track
   // that requires the project owner's explicit consent. It is never inferred.
-  if (runtimePin?.changed && storeTrack === 'none') {
-    fail(runtimePinChangeMessage(runtimePin, '--store-track must name the store submission track; set internal, beta, or production (store publishing is explicit, consent-gated: a pin change is the one release that requires it)'));
+  if (runtimePin?.changed && storeTrack === 'none' && !allowPinRestore) {
+    fail(runtimePinChangeMessage(runtimePin, '--store-track must name the store submission track (internal, beta, or production; store publishing is explicit, consent-gated) or pass --allow-pin-restore to assert this is an OTA-only pin RESTORE whose runtime already has store binaries'));
   }
   let selected;
   if (selection === 'all') selected = new Set(RELEASE_COMPONENTS);
@@ -220,19 +220,19 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
     selected = new Set(selection.split(',').map((value) => value.trim()).filter(Boolean));
     for (const component of selected) assertComponent(component);
   }
-  if (runtimePin?.changed) selected.add('mobile-native');
+  if (runtimePin?.changed && !(storeTrack === 'none' && allowPinRestore)) selected.add('mobile-native');
   if (storeTrack !== 'none') selected.add('mobile-native');
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
 }
 
 export function selectReleaseComponentsFromPublishedInputs(
   pathsByComponent,
-  { selection = 'auto', storeTrack = 'none', runtimePin } = {},
+  { selection = 'auto', storeTrack = 'none', runtimePin, allowPinRestore = false } = {},
 ) {
   if (selection !== 'auto' && selection !== '') {
-    return selectReleaseComponents([], { selection, storeTrack, runtimePin });
+    return selectReleaseComponents([], { selection, storeTrack, runtimePin, allowPinRestore });
   }
-  const selected = new Set(selectReleaseComponents([], { storeTrack, runtimePin }));
+  const selected = new Set(selectReleaseComponents([], { storeTrack, runtimePin, allowPinRestore }));
   for (const component of RELEASE_COMPONENTS) {
     const paths = pathsByComponent?.[component];
     if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
@@ -533,7 +533,8 @@ async function main(argv) {
     const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
     const selection = args.selection ?? (command === 'init' && !args.paths ? 'all' : 'auto');
     const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
-    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', runtimePin };
+    const allowPinRestore = args['allow-pin-restore'] === 'true';
+    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', runtimePin, allowPinRestore };
     const selectedComponents = componentPaths
       ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
       : selectReleaseComponents(paths, selectOptions);
@@ -541,6 +542,7 @@ async function main(argv) {
     state.plan.paths = paths;
     if (componentPaths) state.plan.componentPaths = componentPaths;
     state.plan.selection = selection;
+    if (allowPinRestore && runtimePin?.changed) state.plan.pinRestore = true;
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
     else if (command === 'plan') console.log(JSON.stringify(releasePlanSummary(state)));

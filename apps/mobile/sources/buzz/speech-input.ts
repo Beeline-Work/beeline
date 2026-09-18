@@ -42,7 +42,9 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
   const onResultRef = React.useRef(onResult);
   onResultRef.current = onResult;
   const listeningRef = React.useRef(false);
+  const stopRequestedRef = React.useRef(false);
   const sessionGotResultRef = React.useRef(false);
+  const pendingPartialRef = React.useRef('');
   const restartCountRef = React.useRef(0);
   const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const modRef = React.useRef<SpeechRecognitionInterface | null>(getRecognitionModule());
@@ -62,6 +64,7 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
   const doStop = React.useCallback(() => {
     clearSilenceTimer();
     listeningRef.current = false;
+    stopRequestedRef.current = true;
     restartCountRef.current = 0;
     setVolumeLevel(0);
     try {
@@ -133,6 +136,7 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     const subs: Array<{ remove(): void }> = [];
 
     const onResult = (event: any) => {
+      if (!listeningRef.current && !stopRequestedRef.current) return;
       if (!event.results?.length) return;
       const best = event.results[0];
       const transcript = typeof best.transcript === 'string' ? best.transcript : '';
@@ -140,13 +144,15 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
 
       // Any result — interim or final — counts as recent speech.
       sessionGotResultRef.current = true;
-      armSilenceTimer();
+      if (listeningRef.current) armSilenceTimer();
 
       if (event.isFinal) {
         // Commit immediately — the text is finalised by the recogniser.
-        onResultRef.current(transcript);
+        pendingPartialRef.current = '';
         setPartialText('');
+        onResultRef.current(transcript);
       } else {
+        pendingPartialRef.current = transcript;
         setPartialText(transcript);
       }
     };
@@ -155,7 +161,10 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
       if (event.error === 'not-allowed') {
         setState('permission-denied');
         listeningRef.current = false;
+        stopRequestedRef.current = false;
+        pendingPartialRef.current = '';
         clearSilenceTimer();
+        setPartialText('');
         setVolumeLevel(0);
         return;
       }
@@ -166,6 +175,17 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     const onNoMatch = () => {};
 
     const onEnd = () => {
+      if (stopRequestedRef.current) {
+        stopRequestedRef.current = false;
+        const pendingPartial = pendingPartialRef.current;
+        pendingPartialRef.current = '';
+        setPartialText('');
+        // Android continuous recognition can end a requested stop with a
+        // client error instead of a final result. Preserve the last real
+        // hypothesis rather than losing captured speech or showing an error.
+        if (pendingPartial.trim()) onResultRef.current(pendingPartial);
+        return;
+      }
       if (listeningRef.current) restartIfStillListening();
     };
 
@@ -220,9 +240,11 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
       }
 
       setPartialText('');
+      pendingPartialRef.current = '';
       setVolumeLevel(0);
       sessionGotResultRef.current = false;
       restartCountRef.current = 0;
+      stopRequestedRef.current = false;
       listeningRef.current = true;
       setState('listening');
       armSilenceTimer();
@@ -239,13 +261,12 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     startAttemptRef.current += 1;
     clearSilenceTimer();
     listeningRef.current = false;
+    stopRequestedRef.current = true;
     restartCountRef.current = 0;
 
-    if (!sessionGotResultRef.current) {
-      setState('nothing-recognised');
-    } else {
-      setState('idle');
-    }
+    // Stopping is an explicit user action, not a failed capture. The silence
+    // timer remains the only path to the "didn't catch that" state.
+    setState('idle');
 
     setPartialText('');
     setVolumeLevel(0);
@@ -261,6 +282,8 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
       clearSilenceTimer();
       startAttemptRef.current += 1;
       listeningRef.current = false;
+      stopRequestedRef.current = false;
+      pendingPartialRef.current = '';
       try {
         modRef.current?.abort();
       } catch {

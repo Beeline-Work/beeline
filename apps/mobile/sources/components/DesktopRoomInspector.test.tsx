@@ -532,6 +532,7 @@ describe('DesktopRoomInspector work pane', () => {
       );
     });
     expect(tree.root.findByProps({ testID: 'desktop-work-cockpit' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'desktop-inspector-resizer' })).toBeTruthy();
     expect(text(tree)).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
     );

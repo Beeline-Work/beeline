@@ -266,6 +266,21 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
   });
 
+  it('marks the corner the viewer opened with gold ME text, not an identity bubble', () => {
+    const ownRoom = room();
+    ownRoom.corners = [{ ...corners[0], agent: person }, corners[1]];
+    const tree = render(props({ room: ownRoom }));
+    const meMark = tree.root.findByProps({ testID: 'desktop-work-corner-me-working' });
+    expect(meMark.props.children).toBe('ME');
+    const ownRow = tree.root.findByProps({ testID: 'desktop-work-corner-working' });
+    expect(ownRow.findAllByType('IdentityMark' as any)).toHaveLength(0);
+    const otherRow = tree.root.findByProps({ testID: 'desktop-work-corner-review' });
+    const otherSeeds = otherRow
+      .findAllByType('IdentityMark' as any)
+      .map((node: any) => node.props.seed);
+    expect(otherSeeds).toContain(agent.pubkey);
+  });
+
   it('shows only corner titles beneath the parent Room in the overview', () => {
     const prefixedRoom = room();
     prefixedRoom.corners = [

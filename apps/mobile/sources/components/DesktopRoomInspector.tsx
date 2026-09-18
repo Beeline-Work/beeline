@@ -323,6 +323,7 @@ export function DesktopRoomInspector({
               <CornerRow
                 corner={item}
                 parentRoomName={room.room.name}
+                viewerPubkey={room.viewer.identity.pubkey}
                 onPress={() => onSelectCorner(item.corner.id)}
               />
             )}
@@ -460,14 +461,17 @@ function SectionHeader({
 function CornerRow({
   corner,
   parentRoomName,
+  viewerPubkey,
   onPress,
 }: {
   corner: CornerListItem;
   parentRoomName: string;
+  viewerPubkey: string;
   onPress(): void;
 }) {
   const display = cornerDisplayState(corner);
   const title = displayGroupedCornerTitle(parentRoomName, corner.corner.name, corner.corner.id);
+  const openedByViewer = corner.agent?.pubkey === viewerPubkey;
   return (
     <Pressable
       accessibilityRole="button"
@@ -496,14 +500,20 @@ function CornerRow({
       </View>
       <Text style={styles.objective}>{corner.corner.about ?? corner.corner.name}</Text>
       <View style={styles.cornerAgent}>
-        <IdentityMark
-          kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
-          seed={corner.agent?.pubkey ?? corner.corner.id}
-          avatarUrl={corner.agent?.avatar}
-          face={corner.agent?.face}
-          name={corner.agent?.name ?? 'Unassigned'}
-          size={18}
-        />
+        {openedByViewer ? (
+          <Text style={styles.cornerMe} testID={`desktop-work-corner-me-${corner.corner.id}`}>
+            ME
+          </Text>
+        ) : (
+          <IdentityMark
+            kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
+            seed={corner.agent?.pubkey ?? corner.corner.id}
+            avatarUrl={corner.agent?.avatar}
+            face={corner.agent?.face}
+            name={corner.agent?.name ?? 'Unassigned'}
+            size={18}
+          />
+        )}
         <Text style={styles.cornerMeta}>
           {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
           {age(corner)}
@@ -862,6 +872,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
   cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
+  cornerMe: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent, width: 18 },
   cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
   cornerStatus: {
     ...theme.buzz.type.sectionHead,

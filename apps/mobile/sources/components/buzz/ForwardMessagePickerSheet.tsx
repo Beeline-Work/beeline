@@ -136,10 +136,8 @@ const styles = StyleSheet.create((theme) => {
     listViewport: { maxHeight: 360, flexGrow: 0 },
     list: { paddingBottom: 4 },
     section: {
-      ...Typography.mono('semiBold'),
+      ...groknight.type.sectionHead,
       color: groknight.chrome,
-      fontSize: 9,
-      letterSpacing: 0.6,
       paddingTop: 14,
       paddingBottom: 4,
       paddingHorizontal: HULL_SHEET_INSET,

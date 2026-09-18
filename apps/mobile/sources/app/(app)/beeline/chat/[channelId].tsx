@@ -103,8 +103,10 @@ import {
   loadDesktopWorkPanePreference,
   saveDesktopDraft,
   saveDesktopWorkPanePreference,
+  desktopWorkPaneEventApplies,
   transitionDesktopWorkPane,
   type DesktopWorkPaneEvent,
+  type DesktopWorkPaneTransition,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
@@ -639,6 +641,8 @@ export default function BuzzChat() {
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
   const directMessage = roomSurface?.directMessage ?? null;
+  // Hoisted above the pane handlers that need it in their dependency arrays.
+  const isDirectMessage = Boolean(directMessage);
   const [workspaceChats, setWorkspaceChats] = useState<readonly ChatListItem[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
@@ -686,12 +690,23 @@ export default function BuzzChat() {
     return () => clearTimeout(timer);
   }, [decodedId, desktopExperience, inputText]);
 
-  const commitDesktopWorkPane = useCallback((event: DesktopWorkPaneEvent) => {
-    const transition = transitionDesktopWorkPane(desktopWorkPaneRef.current, event);
-    desktopWorkPaneRef.current = transition.state;
-    setDesktopWorkPane(transition.state);
-    return transition;
-  }, []);
+  const commitDesktopWorkPane = useCallback(
+    (event: DesktopWorkPaneEvent) => {
+      // A direct message renders no work pane at all, so its pane events are
+      // no-ops (see `desktopWorkPaneEventApplies`): the pane cannot be opened,
+      // toggled or dismissed there, and the person's persisted preference is
+      // never overwritten by a channel that has nothing to show.
+      if (!desktopWorkPaneEventApplies(event, isDirectMessage)) {
+        const held: DesktopWorkPaneTransition = { state: desktopWorkPaneRef.current };
+        return held;
+      }
+      const transition = transitionDesktopWorkPane(desktopWorkPaneRef.current, event);
+      desktopWorkPaneRef.current = transition.state;
+      setDesktopWorkPane(transition.state);
+      return transition;
+    },
+    [isDirectMessage],
+  );
 
   useEffect(() => {
     if (!desktopExperience) return;
@@ -751,6 +766,15 @@ export default function BuzzChat() {
     };
   }, [desktopExperience, parentChannelId, roomClient]);
   const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
+  // A direct message renders no second pane at all (see the pane-event gate in
+  // `commitDesktopWorkPane`): the transcript takes the space it occupied, and
+  // neither the inspector nor its reopen handle ever mounts over a DM.
+  const desktopWorkPaneMounted =
+    desktopExperience && !isDirectMessage && workPaneMode === 'present'
+      ? desktopWorkRoom
+      : null;
+  const desktopWorkHandleMounted =
+    desktopExperience && !isDirectMessage && workPaneMode === 'dismissed';
   const channelKind: ChannelKind = roomSurface
     ? roomSurface.parent
       ? 'corner'
@@ -888,12 +912,18 @@ export default function BuzzChat() {
   // the same boundary the pane uses for formats it cannot sandbox.
   const openDesktopArtifact = useCallback(
     (selection: DesktopArtifactSelection) => {
+      // A direct message has no work pane to host the artifact, so the press
+      // always hands off to the browser, exactly like a suppressed pane.
+      if (isDirectMessage) {
+        void openArtifactInBrowserOrExplain(selection.attachment);
+        return;
+      }
       const transition = commitDesktopWorkPane({ type: 'open-artifact' });
       void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
       if (transition.placement === 'main')
         void openArtifactInBrowserOrExplain(selection.attachment);
     },
-    [commitDesktopWorkPane, workPaneWindowClass],
+    [commitDesktopWorkPane, isDirectMessage, workPaneWindowClass],
   );
   useEffect(() => {
     if (!desktopExperience) return;
@@ -1491,7 +1521,6 @@ export default function BuzzChat() {
   // read the first of them; the transcript and the gold ring take them all.
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
-  const isDirectMessage = Boolean(directMessage);
   useEffect(() => {
     if (!roomClient || !activeCommunityId || !userPubkey) {
       setWorkspaceChats([]);
@@ -5028,9 +5057,9 @@ export default function BuzzChat() {
             </View>
           )}
         </KeyboardAvoidingView>
-        {desktopExperience && workPaneMode === 'present' && desktopWorkRoom && (
+        {desktopWorkPaneMounted && (
           <DesktopRoomInspector
-            room={desktopWorkRoom}
+            room={desktopWorkPaneMounted}
             client={roomClient}
             selectedCornerId={desktopWorkPane.selectedCornerId}
             onSelectCorner={(cornerId) =>
@@ -5044,7 +5073,7 @@ export default function BuzzChat() {
             onOpenRoster={() => setRosterVisible(true)}
           />
         )}
-        {desktopExperience && workPaneMode === 'dismissed' && (
+        {desktopWorkHandleMounted && (
           <DesktopWorkPaneHandle
             ref={workPaneHandleRef}
             roomId={desktopWorkRoomId}

@@ -2338,11 +2338,11 @@ export default function BuzzChat() {
   ]);
 
   // C97: the fixed chrome below the inverted list changes independently of
-  // transcript rows. A send collapses the composer/keyboard, while the
-  // server's later claim mounts TurnProgressLine and a corner lease mounts
-  // CornerLiveBar. Native layout can update the pinned ref before an effect
-  // runs, preserving the old offset as an empty gap. Capture the verdict in
-  // render, including the two independently mounted status lines.
+  // transcript rows. A send resets the composer's height while retaining the
+  // keyboard, the server's later claim mounts TurnProgressLine, and a corner
+  // lease mounts CornerLiveBar. Native layout can update the pinned ref before
+  // an effect runs, preserving the old offset as an empty gap. Capture the
+  // verdict in render, including the two independently mounted status lines.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);
   const composerFootprint = composerHeight + keyboardHeight;

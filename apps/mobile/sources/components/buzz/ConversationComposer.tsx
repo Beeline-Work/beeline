@@ -250,6 +250,10 @@ export function ConversationComposer({
           <TextInput
             key={inputRevision}
             ref={inputRef}
+            // A successful send replaces this native input to fence off stale
+            // text events. If the consumed input was focused, transfer focus
+            // to its empty replacement so consecutive messages need no tap.
+            autoFocus={focused}
             style={[
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },

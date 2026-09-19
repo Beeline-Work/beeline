@@ -87,7 +87,7 @@ import {
   selectComposerAckPresentation,
   type ComposerAckPresentation,
 } from '@/buzz/room-indicators';
-import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn-clock';
+import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
@@ -2466,14 +2466,19 @@ export default function BuzzChat() {
     );
     if (!terminal) return;
     lastActiveTurnRef.current = null;
+    const status = terminal.status;
+    if (status === 'working') return;
+    const line = formatTerminalTurnOverlay(
+      status,
+      last.verb,
+      last.startedAt,
+      terminal.createdAt * 1_000,
+    );
+    if (!line) return;
     setSettledTurn({
       // A stopped turn is not a finished one: the same shape, without the word
       // `done`, because no answer arrived. The Room carries who stopped it.
-      line: (terminal.status === 'cancelled' ? formatStoppedLine : formatSettledLine)(
-        last.verb,
-        last.startedAt,
-        terminal.createdAt * 1_000,
-      ),
+      line,
     });
   }, [activeAgentTurn, agentTurnMarkers, composerAck]);
   useEffect(() => {

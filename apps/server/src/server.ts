@@ -458,6 +458,21 @@ export function createBeelineServer(options: ServerOptions): Server {
                     }
                     return;
                   }
+                  if (event.reason === 'hiccup-restart') {
+                    if (
+                      event.targetAgentId === principal.identityId &&
+                      client.readyState === client.OPEN
+                    ) {
+                      client.send(
+                        JSON.stringify({
+                          type: 'hiccup-restart',
+                          roomId,
+                          attempt: event.hiccupAttempt ?? 1,
+                        }),
+                      );
+                    }
+                    return;
+                  }
                   if (event.reason === 'postgres:agent_commands') {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
                     return;

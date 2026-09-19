@@ -94,43 +94,21 @@ import {
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { agentWalletTool } from './wallet.js';
+import { noteFirstSilence, TURN_FAILURE_REASON_MAX } from './turn-silence-notice.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
-
-/** Server-side cap on the daemon's distilled failure reason (matches the daemon's own cap). */
-const TURN_FAILURE_REASON_MAX = 200;
 export const INBOX_REPLAY_REWIND_MS = 5_000;
 
-/** A durable success after a failed line settles that line in place. */
+/** A durable silence line stays in the transcript; a later answer does not rewrite it. */
 async function settleTurnFailureLine(
-  database: SqlDatabase,
-  roomId: string,
-  requestId: string,
-  agentId: string,
+  _database: SqlDatabase,
+  _roomId: string,
+  _requestId: string,
+  _agentId: string,
 ) {
-  const failed = await database.query<{
-    id: string;
-    card: Record<string, unknown>;
-    agent_name: string;
-  }>(
-    `SELECT message.id,message.card,COALESCE(NULLIF(agent.name,''),'The agent') agent_name
-     FROM messages message JOIN identities agent ON agent.id=$3
-     WHERE message.room_id=$1 AND message.card_type='turn-failed' AND message.card->>'requestId'=$2
-       AND message.card->>'agentId'=$3 AND message.card->>'state'='failed'`,
-    [roomId, requestId, agentId],
-  );
-  for (const row of failed.rows)
-    await restateSystemLine(
-      database,
-      row.id,
-      {
-        subject: { kind: 'agent', id: agentId, name: row.agent_name },
-        verb: 'answered after a retry',
-      },
-      { ...row.card, state: 'recovered' },
-    );
+  return;
 }
 /**
  * Corner operations that stay with the opener. Membership authorizes every
@@ -326,7 +304,12 @@ export class DaemonService {
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
               [command.id],
             );
-          else
+          else if (
+            candidate.status === 'failed' &&
+            (result as { hiccupRestart?: boolean }).hiccupRestart
+          ) {
+            // noteFirstSilence already reopened this command for re-delivery.
+          } else
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
@@ -2064,7 +2047,7 @@ export class DaemonService {
              FROM settled,identities agent
              WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
                AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
-               AND failure.card->>'state'='failed'
+               AND failure.card->>'state'='failed' AND false
              RETURNING failure.*
            ), recovered_public AS (
              SELECT recovered.*,author.kind author_kind,author.name author_name,
@@ -2290,6 +2273,7 @@ export class DaemonService {
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
     let committedTurn: CommittedTurnLiveRow | undefined;
+    let silence: { hiccupRestart: boolean; attempt: number } | undefined;
     await this.database.transaction(async (database) => {
       if (input.heartbeat) {
         committedTurn = (
@@ -2342,7 +2326,7 @@ export class DaemonService {
         committedTurn = written.rows[0];
       }
       if (input.status === 'failed') {
-        await this.inscribeTurnFailure(
+        silence = await this.inscribeTurnFailure(
           database,
           input.roomId,
           input.requestId,
@@ -2372,20 +2356,17 @@ export class DaemonService {
       requestId: input.requestId,
       ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
     });
-    return this.writeResult();
+    return this.writeResult(
+      silence?.hiccupRestart
+        ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
+        : undefined,
+    );
   }
   /**
-   * A failed turn is a fact the Room must carry. When a human asked, ONE
-   * `presentation='system'` line names the agent and the reason; retries of
-   * the same request within ten minutes update that line in place. A later
-   * success settles the same row to "answered after a retry" — an inscribed
-   * record that stays true, never a stamped stale failure.
-   *
-   * The line carries NO mention. A push comes from exactly three sources — a
-   * person tags you, a corner opens or closes, one push per member join — and
-   * a system line never claims one through a synthetic mention (captain
-   * report C68: "Candy could not answer" pushed to the requester's phone).
-   * `background.ts` also excludes `turn-failed` rows outright.
+   * A failed turn is a fact the Room must carry. The approved first-silence
+   * line is inscribed here; a hiccup reopens the original command so the
+   * recovered helper answers without another human request. The line carries
+   * NO mention — `background.ts` also excludes `turn-failed` rows outright.
    */
   private async inscribeTurnFailure(
     database: SqlDatabase,
@@ -2393,55 +2374,14 @@ export class DaemonService {
     requestId: string,
     agentId: string,
     reason: string | null,
-    reasonKind?: 'model-selection-unavailable',
+    reasonKind?: string,
   ) {
-    const trigger = (
-      await database.query<{ author_id: string; agent_name: string; agent_handle: string | null }>(
-        `SELECT message.author_id,COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
-                agent.handle agent_handle
-         FROM messages message
-         JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
-         JOIN identities agent ON agent.id=$3
-         WHERE message.id=$2 AND message.presentation IN ('message','system')
-           AND (message.room_id=$1 OR message.room_id=(SELECT parent_id FROM rooms WHERE id=$1))`,
-        [roomId, requestId, agentId],
-      )
-    ).rows[0];
-    if (!trigger) return;
-    const phrase: SystemPhrase =
-      reasonKind === 'model-selection-unavailable'
-        ? {
-            subject: {
-              kind: 'agent',
-              id: agentId,
-              name: trigger.agent_handle ? `@${trigger.agent_handle}` : trigger.agent_name,
-            },
-            verb: 'is not available',
-            consequence: 'ask its owner',
-          }
-        : {
-            subject: { kind: 'agent', id: agentId, name: trigger.agent_name },
-            verb: 'could not answer',
-            ...(reason ? { consequence: reason } : {}),
-          };
-    const recent = (
-      await database.query<{ id: string }>(
-        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
-           AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
-           AND created_at>now()-interval '10 minutes'
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [roomId, requestId, agentId],
-      )
-    ).rows[0];
-    if (recent) {
-      await restateSystemLine(database, recent.id, phrase);
-      return;
-    }
-    await systemLine(database, {
+    return noteFirstSilence(database, this.live, {
       roomId,
-      ...phrase,
-      cardType: 'turn-failed',
-      card: { requestId, agentId, state: 'failed' },
+      requestId,
+      agentId,
+      reason,
+      reasonKind,
     });
   }
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
@@ -3791,8 +3731,8 @@ export class DaemonService {
     const opener = corner.rows[0]?.owner_agent_id;
     if (corner.rowCount && opener !== agentId) throw new Error('daemon corner access denied');
   }
-  private writeResult() {
-    return { id: id(), createdAt: Math.floor(Date.now() / 1000) };
+  private writeResult(extra?: { hiccupRestart?: boolean; hiccupAttempt?: number }) {
+    return { id: id(), createdAt: Math.floor(Date.now() / 1000), ...extra };
   }
 }
 

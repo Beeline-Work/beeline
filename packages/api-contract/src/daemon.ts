@@ -4,3 +4,4 @@ export * from './upload-object.js';
 export * from './agent-access.js';
 export * from './system-events.js';
 export * from './corner-text.js';
+export * from './turn-silence.js';

@@ -432,14 +432,14 @@ describe('system-line producers', () => {
       expect(failed).toEqual([
         {
           author_id: AGENT,
-          text: '@bee is not available · ask its owner',
+          text: "@bee could not answer · she's set to a model that isn't available. Pick another in her settings.",
           presentation: 'system',
           woke: [],
           card_type: 'turn-failed',
           system_event: {
             subject: { kind: 'agent', id: AGENT, name: '@bee' },
-            verb: 'is not available',
-            consequence: 'ask its owner',
+            verb: 'could not answer',
+            consequence: "she's set to a model that isn't available. Pick another in her settings.",
           },
         },
       ]);

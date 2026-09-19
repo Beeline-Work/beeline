@@ -2466,8 +2466,10 @@ export default function BuzzChat() {
     );
     if (!terminal) return;
     lastActiveTurnRef.current = null;
+    const status = terminal.status;
+    if (status === 'working') return;
     const line = formatTerminalTurnOverlay(
-      terminal.status,
+      status,
       last.verb,
       last.startedAt,
       terminal.createdAt * 1_000,

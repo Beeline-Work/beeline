@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
  * - the server side independently refuses to count viewer-authored rows
  *   toward `unread` (apps/server/src/phone-service.ts).
  */
-const chatSource = readFileSync(path.join(__dirname, 'chat-surface.tsx'), 'utf8');
+const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
 const sessionSource = readFileSync(path.join(__dirname, 'useRoomSurfaceSession.ts'), 'utf8');
 
 describe('the chat surface read-mark contract', () => {

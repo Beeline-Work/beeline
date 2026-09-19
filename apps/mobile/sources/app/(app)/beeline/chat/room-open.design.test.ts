@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = path.join(__dirname, '..');
 const chat = readFileSync(path.join(root, 'chat/[channelId].tsx'), 'utf8');
-const surface = readFileSync(path.join(root, 'chat/chat-surface.tsx'), 'utf8');
+const surface = readFileSync(path.join(root, 'chat/_chat-surface.tsx'), 'utf8');
 const layout = readFileSync(path.join(root, '../_layout.tsx'), 'utf8');
 const session = readFileSync(path.join(root, 'chat/useRoomSurfaceSession.ts'), 'utf8');
 const channels = readFileSync(path.join(root, 'channels.tsx'), 'utf8');
@@ -28,11 +28,11 @@ describe('Room open-to-pixel occupancy', () => {
   });
 
   it('imports the 6k chrome module only after the newest-row shell commits', () => {
-    expect(chat).toContain("import('./chat-surface')");
-    expect(chat).not.toContain("from './chat-surface'");
-    expect(chat).not.toContain('from "./chat-surface"');
+    expect(chat).toContain("import('./_chat-surface')");
+    expect(chat).not.toContain("from './_chat-surface'");
+    expect(chat).not.toContain('from "./_chat-surface"');
     expect(chat.indexOf("markRoomOpen('route-mount', decodedId)")).toBeLessThan(
-      chat.indexOf("import('./chat-surface')"),
+      chat.indexOf("import('./_chat-surface')"),
     );
   });
 

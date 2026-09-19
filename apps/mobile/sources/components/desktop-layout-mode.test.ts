@@ -94,7 +94,7 @@ describe('desktop layout mode', () => {
 
   it('reveals existing message actions on hover or focus without changing compact web', () => {
     const messages = source('app/(app)/beeline/chat/RoomMessageVariants.tsx');
-    const room = source('app/(app)/beeline/chat/chat-surface.tsx');
+    const room = source('app/(app)/beeline/chat/_chat-surface.tsx');
 
     expect(room).toContain('const isDesktop = useIsDesktop();');
     expect(room).toContain('desktopLayout={isDesktop}');
@@ -111,7 +111,7 @@ describe('desktop layout mode', () => {
 
   it('shares the Ledger turn rhythm between mobile and desktop transcripts', () => {
     const messages = source('app/(app)/beeline/chat/RoomMessageVariants.tsx');
-    const room = source('app/(app)/beeline/chat/chat-surface.tsx');
+    const room = source('app/(app)/beeline/chat/_chat-surface.tsx');
     const inspector = source('components/DesktopRoomInspector.tsx');
 
     expect(messages).toContain('<LedgerEntry');

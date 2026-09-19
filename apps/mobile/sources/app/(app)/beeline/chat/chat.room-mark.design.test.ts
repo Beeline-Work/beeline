@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
  * - the pinned corner line composes `#<room>/<corner>` through
  *   `displayCornerTitle`, the same derivation every other surface uses.
  */
-const chatSource = readFileSync(path.join(__dirname, 'chat-surface.tsx'), 'utf8');
+const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
 const sessionSource = readFileSync(
   path.join(__dirname, '..', '..', '..', '..', 'buzz', 'corner-session.ts'),
   'utf8',

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 const sources = [
   '../../app/(app)/beeline/MembersScreen.tsx',
   '../../app/(app)/beeline/channels.tsx',
-  '../../app/(app)/beeline/chat/chat-surface.tsx',
+  '../../app/(app)/beeline/chat/_chat-surface.tsx',
   '../../app/(app)/beeline/corners/[roomId].tsx',
   '../../app/(app)/beeline/community.tsx',
   '../../app/(app)/beeline/onboarding.tsx',

@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
  * DESIGN.md (repo root) is the authority they encode.
  */
 const chatSource = readFileSync(
-  path.join(__dirname, '../../app/(app)/beeline/chat/chat-surface.tsx'),
+  path.join(__dirname, '../../app/(app)/beeline/chat/_chat-surface.tsx'),
   'utf8',
 );
 const ladderSource = readFileSync(path.join(__dirname, './HeaderLadder.tsx'), 'utf8');

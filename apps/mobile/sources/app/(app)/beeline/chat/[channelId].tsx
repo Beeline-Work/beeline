@@ -156,7 +156,7 @@ export default function BuzzChat() {
   useEffect(() => {
     let cancelled = false;
     markRoomOpen('surface-import-start');
-    void import('./chat-surface').then((mod) => {
+    void import('./_chat-surface').then((mod) => {
       if (cancelled) return;
       markRoomOpen('surface-import-end');
       setChrome(() => mod.BuzzChatSurface);

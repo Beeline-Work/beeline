@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const chatSource = readFileSync(
-  new URL('../app/(app)/beeline/chat/chat-surface.tsx', import.meta.url),
+  new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
   'utf8',
 );
 

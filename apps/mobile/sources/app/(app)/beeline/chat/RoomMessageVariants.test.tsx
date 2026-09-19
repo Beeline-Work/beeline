@@ -13,7 +13,7 @@ import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
-const conversationSource = readFileSync(new URL('./chat-surface.tsx', import.meta.url), 'utf8');
+const conversationSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const composerSource = readFileSync(
   new URL('../../../../components/buzz/ConversationComposer.tsx', import.meta.url),
   'utf8',

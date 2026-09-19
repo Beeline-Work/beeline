@@ -354,7 +354,7 @@ describe('one composer', () => {
     expect(desktopComposerKeyAction('web', 'Enter', false)).toBe('send');
     expect(desktopComposerKeyAction('web', 'Enter', true)).not.toBe('send');
     for (const file of [
-      '../../app/(app)/beeline/chat/chat-surface.tsx',
+      '../../app/(app)/beeline/chat/_chat-surface.tsx',
       '../DesktopRoomInspector.tsx',
     ]) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');

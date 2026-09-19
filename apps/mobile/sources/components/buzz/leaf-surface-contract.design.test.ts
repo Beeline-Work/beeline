@@ -15,7 +15,7 @@ const sources = {
     'utf8',
   ),
   '[channelId].tsx': readFileSync(
-    new URL('../../app/(app)/beeline/chat/chat-surface.tsx', import.meta.url),
+    new URL('../../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
     'utf8',
   ),
   'TranscriptCard.tsx': readFileSync(new URL('./TranscriptCard.tsx', import.meta.url), 'utf8'),

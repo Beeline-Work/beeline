@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
  * structural guarantees are checked as text — same technique
  * `no-foreground-blocking.test.ts` uses for the hydration contract.
  */
-const chatSource = readFileSync(new URL('./chat-surface.tsx', import.meta.url), 'utf8');
+const chatSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const subtitleSource = readFileSync(
   new URL('../../../../components/buzz/RoomRepositorySubtitle.tsx', import.meta.url),
   'utf8',

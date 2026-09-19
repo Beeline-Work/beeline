@@ -14,7 +14,7 @@ const buzzChatRouteSource = readFileSync(
   'utf8',
 );
 const buzzChatSurfaceSource = readFileSync(
-  new URL('../app/(app)/beeline/chat/chat-surface.tsx', import.meta.url),
+  new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
   'utf8',
 );
 const buzzChatSource = `${buzzChatRouteSource}\n${buzzChatSurfaceSource}`;

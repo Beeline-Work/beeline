@@ -10,7 +10,7 @@ import {
 } from './room-scroll-follow';
 
 const chatSource = readFileSync(
-  path.join(__dirname, '..', 'app', '(app)', 'beeline', 'chat', 'chat-surface.tsx'),
+  path.join(__dirname, '..', 'app', '(app)', 'beeline', 'chat', '_chat-surface.tsx'),
   'utf8',
 );
 

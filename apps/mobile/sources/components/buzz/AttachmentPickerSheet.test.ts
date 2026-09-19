@@ -36,7 +36,7 @@ const { AttachmentPickerSheet } = await import('./AttachmentPickerSheet');
 
 const source = readFileSync(new URL('./AttachmentPickerSheet.tsx', import.meta.url), 'utf8');
 const chatSource = readFileSync(
-  new URL('../../app/(app)/beeline/chat/chat-surface.tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
   'utf8',
 );
 const composerSource = readFileSync(new URL('./ConversationComposer.tsx', import.meta.url), 'utf8');

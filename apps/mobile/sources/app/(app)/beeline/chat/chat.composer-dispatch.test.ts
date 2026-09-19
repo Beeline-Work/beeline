@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const chatSource = readFileSync(new URL('./chat-surface.tsx', import.meta.url), 'utf8');
+const chatSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 
 function blockFrom(source: string, marker: string, label: string): string {
   const start = source.indexOf(marker);

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const room = readFileSync(join(here, 'chat-surface.tsx'), 'utf8');
+const room = readFileSync(join(here, '_chat-surface.tsx'), 'utf8');
 const inspector = readFileSync(
   join(here, '../../../../components/DesktopRoomInspector.tsx'),
   'utf8',

@@ -1,4 +1,4 @@
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { formatAgentCommand } from './agent-command.js';
@@ -10,88 +10,81 @@ import {
   runtimeAgentCommand,
   runtimeDaemonPid,
   selectRuntimeConfigPaths,
-  stopRuntimeDaemon,
 } from './runtime.js';
+import { runUpdateCommand } from './self-update-cli.js';
 import { installAgentService } from './systemd.js';
 
-/**
- * How long a restart waits for the running daemon to finish its graceful
- * drain before giving up. SIGTERM asks the daemon to stop; it finishes any
- * in-flight agent turn first (supervisor `stopAll` → `Body.dispose` awaits
- * every running task), exactly as the self-update busy gate never interrupts
- * work. The budget mirrors self-update's idle wait; if the daemon is still
- * alive past it, the restart fails loudly and leaves the daemon running —
- * nothing is ever force-killed mid-turn.
- */
-export const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 30 * 60_000;
+export type AgentStartStatus = 'started' | 'already-running' | 'failed';
 
-/**
- * How often a long drain reports that the restart is still waiting (the wait
- * itself is healthy — see `stopRuntimeDaemon`'s `onWait`).
- */
-const RESTART_WAIT_REPORT_INTERVAL_MS = 30_000;
+export interface AgentStartOutcome {
+  status: Exclude<AgentStartStatus, 'failed'>;
+  pid: number;
+}
+
+export interface AgentStartReport {
+  id: string;
+  path: string;
+  status: AgentStartStatus;
+  pid?: number;
+  reason?: string;
+}
 
 export interface StartRuntimeDependencies {
   readPid: typeof runtimeDaemonPid;
-  stop: typeof stopRuntimeDaemon;
   launch: typeof launchRuntimeDaemon;
   log: (message: string) => void;
 }
 
-const defaults: StartRuntimeDependencies = {
+const startDefaults: StartRuntimeDependencies = {
   readPid: runtimeDaemonPid,
-  stop: stopRuntimeDaemon,
   launch: launchRuntimeDaemon,
   log: console.log,
 };
 
+export interface StartCommandDependencies {
+  updateBundle: () => Promise<void>;
+  startOne: (
+    configPath: string,
+    spinnerHandle?: ReturnType<typeof clack.spinner>,
+  ) => Promise<AgentStartOutcome>;
+  log: (message: string) => void;
+}
+
+function defaultUpdateBundle(): Promise<void> {
+  return runUpdateCommand([]);
+}
+
 /**
- * Launch one stored runtime daemon — restarting it first when it is already
- * running.
- *
- * `beeline start`'s documented contract is "restart this repo's (or host's)
- * durable agent", and it now means it: a running daemon is stopped (graceful
- * drain, never interrupting an in-flight turn) and a replacement is launched
- * through the same `launchRuntimeDaemon` handover the self-update path uses.
- * There is deliberately no silent "already running" early return left — that
- * behaviour made the documented restart path a no-op.
+ * Launch one stored runtime daemon when it is not already alive.
+ * A live daemon for this runtime is a no-op.
  */
 export async function startStoredRuntime(
   configPath: string,
   opts: {
-    /** Drain budget override (tests). Default `DEFAULT_RESTART_DRAIN_TIMEOUT_MS`. */
-    drainTimeoutMs?: number;
     report?: (message: string) => void;
   } = {},
   dependencyOverrides: Partial<StartRuntimeDependencies> = {},
-): Promise<number> {
-  const deps = { ...defaults, ...dependencyOverrides };
+): Promise<AgentStartOutcome> {
+  const deps = { ...startDefaults, ...dependencyOverrides };
   const report = opts.report ?? deps.log;
   const existingPid = await deps.readPid(configPath);
   if (existingPid) {
-    report(`[beeline] agent daemon is running (pid ${existingPid}); restarting it`);
-    let lastWaitReportAt = Date.now();
-    const stoppedPid = await deps.stop(configPath, {
-      timeoutMs: opts.drainTimeoutMs ?? DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
-      onWait: (pid) => {
-        if (Date.now() - lastWaitReportAt < RESTART_WAIT_REPORT_INTERVAL_MS) return;
-        lastWaitReportAt = Date.now();
-        report(
-          `[beeline] waiting for agent ${pid} to finish its in-flight work before stopping it…`,
-        );
-      },
-    });
-    if (stoppedPid) report(`[beeline] stopped previous daemon (pid ${stoppedPid})`);
+    report(`[beeline] agent already running (pid ${existingPid})`);
+    return { status: 'already-running', pid: existingPid };
   }
   const pid = await deps.launch(configPath);
-  report(`[beeline] agent daemon ${existingPid ? 'restarted' : 'started'} (pid ${pid})`);
-  return pid;
+  report(`[beeline] agent started (pid ${pid})`);
+  return { status: 'started', pid };
+}
+
+export function agentStartId(configPath: string): string {
+  return basename(dirname(configPath));
 }
 
 async function startRuntime(
   configPath: string,
   spinnerHandle?: ReturnType<typeof clack.spinner>,
-): Promise<void> {
+): Promise<AgentStartOutcome> {
   const report = (text: string) =>
     spinnerHandle ? spinnerHandle.message(text) : console.log(text);
   const runtime = await readRuntimeRecord(configPath);
@@ -100,20 +93,36 @@ async function startRuntime(
   if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
     const existingPid = await runtimeDaemonPid(configPath);
     if (existingPid) {
-      report(
-        `[beeline] agent daemon is running (pid ${existingPid}); draining it before supervision`,
-      );
-      await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
+      report(`[beeline] agent already running (pid ${existingPid})`);
+      return { status: 'already-running', pid: existingPid };
     }
     const pid = await installAgentService(runtime.agent.publicKey);
     report(`[beeline] agent daemon supervised by systemd (pid ${pid})`);
-    return;
+    return { status: 'started', pid };
   }
-  await startStoredRuntime(configPath, { report });
+  return startStoredRuntime(configPath, { report });
+}
+
+function formatAgentReport(report: AgentStartReport): string {
+  if (report.status === 'failed') {
+    return `[beeline] ${report.id}: failed (${report.reason ?? 'unknown error'})`;
+  }
+  const label = report.status === 'already-running' ? 'already running' : 'started';
+  return `[beeline] ${report.id}: ${label} (pid ${report.pid})`;
 }
 
 /** Select and start the runtimes addressed by one `beeline start` invocation. */
-export async function runStartCommand(args: string[], interactiveUi: boolean): Promise<void> {
+export async function runStartCommand(
+  args: string[],
+  interactiveUi: boolean,
+  dependencyOverrides: Partial<StartCommandDependencies> = {},
+): Promise<AgentStartReport[]> {
+  const deps: StartCommandDependencies = {
+    updateBundle: defaultUpdateBundle,
+    startOne: startRuntime,
+    log: console.log,
+    ...dependencyOverrides,
+  };
   const allFlag = args.includes('--all');
   const agentFlag = args.indexOf('--agent');
   const flagPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
@@ -122,6 +131,12 @@ export async function runStartCommand(args: string[], interactiveUi: boolean): P
     .slice(1)
     .find((token) => !token.startsWith('--') && token !== flagPubkey);
   const requestedPubkey = flagPubkey ?? positionalPubkey;
+  try {
+    await deps.updateBundle();
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    deps.log(`[beeline] helper update failed (${reason}); starting agents on the current bundle`);
+  }
   const { paths: unique } = await selectRuntimeConfigPaths({
     cwd: process.cwd(),
     all: allFlag,
@@ -138,22 +153,37 @@ export async function runStartCommand(args: string[], interactiveUi: boolean): P
       'multiple paired agents match that pubkey; pass the full agent pubkey shown by `beeline pair`',
   });
   if (interactiveUi) clack.intro(pc.bold('beeline start'));
+  const reports: AgentStartReport[] = [];
   for (const path of unique) {
-    if (!interactiveUi) {
-      await startRuntime(path);
-      continue;
-    }
-    const spinnerHandle = clack.spinner();
-    spinnerHandle.start(`Starting ${dirname(path)}…`);
+    const id = agentStartId(path);
+    const spinnerHandle = interactiveUi ? clack.spinner() : undefined;
+    spinnerHandle?.start(`Starting ${dirname(path)}…`);
     try {
-      await startRuntime(path, spinnerHandle);
-      spinnerHandle.stop(pc.green('Started.'));
+      const outcome = await deps.startOne(path, spinnerHandle);
+      const report: AgentStartReport = { id, path, ...outcome };
+      reports.push(report);
+      const line = formatAgentReport(report);
+      if (spinnerHandle) spinnerHandle.stop(pc.green(line));
+      else deps.log(line);
     } catch (error) {
-      spinnerHandle.stop(pc.red('Failed.'));
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      const report: AgentStartReport = { id, path, status: 'failed', reason };
+      reports.push(report);
+      const line = formatAgentReport(report);
+      if (spinnerHandle) spinnerHandle.stop(pc.red(line));
+      else deps.log(line);
     }
   }
+  const failed = reports.filter((report) => report.status === 'failed').length;
   if (interactiveUi) {
-    clack.outro(pc.green(unique.length > 1 ? 'All agents started.' : 'Done.'));
+    clack.outro(
+      failed > 0
+        ? pc.red(`${failed} of ${reports.length} agents failed.`)
+        : pc.green(unique.length > 1 ? 'All agents started.' : 'Done.'),
+    );
   }
+  if (failed > 0) {
+    throw new Error(`failed to start ${failed} of ${reports.length} agent(s)`);
+  }
+  return reports;
 }

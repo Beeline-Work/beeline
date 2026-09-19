@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   desktopOpenLandingOnContentSizeChange,
+  phoneTranscriptTailPadding,
   scrollFollowOnArrival,
   scrollFollowOnLayoutChange,
 } from './room-scroll-follow';
@@ -12,6 +13,34 @@ const chatSource = readFileSync(
   path.join(__dirname, '..', 'app', '(app)', 'beeline', 'chat', '[channelId].tsx'),
   'utf8',
 );
+
+describe('phoneTranscriptTailPadding', () => {
+  it('keeps thinking + live-Corner WAITING spacing at exact idle parity', () => {
+    const idleWithWaitingCorner = phoneTranscriptTailPadding({
+      turnChromeVisible: false,
+      pushedChromeVisible: true,
+    });
+    const thinkingWithWaitingCorner = phoneTranscriptTailPadding({
+      turnChromeVisible: true,
+      pushedChromeVisible: true,
+    });
+
+    expect(thinkingWithWaitingCorner).toBe(idleWithWaitingCorner);
+  });
+
+  it('reserves the hanging line when no Corner or offline bar pushes the transcript', () => {
+    const idle = phoneTranscriptTailPadding({
+      turnChromeVisible: false,
+      pushedChromeVisible: false,
+    });
+    const thinking = phoneTranscriptTailPadding({
+      turnChromeVisible: true,
+      pushedChromeVisible: false,
+    });
+
+    expect(thinking - idle).toBe(30);
+  });
+});
 
 /**
  * The captain's scroll rule (2026-09): a new message or live draft in the
@@ -313,13 +342,14 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('bottomChromeLayoutKey');
   });
 
-  it('does not reserve the phone turn line in the composer footprint', () => {
+  it('keeps the phone turn reserve in the transcript rather than the composer footprint', () => {
     expect(chatSource).toContain('const composerFootprint = composerHeight + keyboardHeight;');
     expect(chatSource).toContain('styles.hangingTurnChrome');
-    expect(chatSource).toContain('HANGING_TURN_CHROME_HEIGHT');
-    expect(chatSource).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
+    expect(chatSource).toContain('paddingTop: phoneTranscriptTailPadding({');
+    expect(chatSource).toContain(
+      'pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline)',
+    );
     expect(chatSource).toContain('styles.bottomChromeStack');
-    expect(chatSource).not.toContain('!(cornerLiveBar && !isCorner)');
   });
 
   /**

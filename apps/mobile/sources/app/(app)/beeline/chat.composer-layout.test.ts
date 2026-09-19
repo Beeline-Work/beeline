@@ -71,8 +71,10 @@ describe('Room composer status layout', () => {
     expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<CornerLiveBar'));
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
-    expect(source).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
-    expect(source).not.toContain('!(cornerLiveBar && !isCorner)');
+    expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
+    expect(source).toContain(
+      'pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline)',
+    );
   });
 
   it('keeps the send arrow separated from the text field', () => {

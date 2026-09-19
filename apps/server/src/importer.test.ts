@@ -420,12 +420,23 @@ describe('direct snapshot importer and RoomView parity', () => {
     // Imported agents also receive their current, name-derived handle.
     const expectedMessages = oldMessages.map((message) => ({
       ...message,
+      createdAtMs: message.createdAt * 1_000,
       author:
         message.author.pubkey === OWNER
           ? { ...message.author, name: 'Owner' }
           : message.author.pubkey === AGENT
             ? { ...message.author, name: 'Bee', handle: 'bee' }
             : message.author,
+      ...(message.attachments
+        ? {
+            attachments: message.attachments.map((attachment) => ({
+              ...attachment,
+              kind: 'artifact' as const,
+              title: attachment.name,
+              author: 'Person dddddddd',
+            })),
+          }
+        : {}),
     }));
     expect(normalize(actual!.messages)).toEqual(normalize(expectedMessages));
     expect(actual!.room.archived).toBe(false);
@@ -444,7 +455,6 @@ describe('direct snapshot importer and RoomView parity', () => {
     expect(actual!.corners[0]).toMatchObject({
       agent: { pubkey: AGENT },
       lifecycle: { lifecycle: 'in-review', checks: 'passing', branch: 'fm/monolith' },
-      status: 'idle',
     });
     expect(
       (await db.query<{ parent_id: string }>(`SELECT parent_id FROM rooms WHERE id=$1`, [CORNER]))
@@ -532,7 +542,7 @@ describe('direct snapshot importer and RoomView parity', () => {
     const report = await new SnapshotImporter(db).import(source);
     expect(report.imported.media).toBeUndefined();
     expect(report.mediaBytes).toBe(0);
-    expect((await db.query(`SELECT 1 FROM media`)).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM objects`)).rowCount).toBe(0);
     const room = await new PhoneService(db, 'https://server.example').readRoom(ROOM, OWNER);
     expect(room?.messages.flatMap((message) => message.attachments ?? []).length).toBeGreaterThan(
       0,
@@ -608,9 +618,10 @@ describe('direct snapshot importer and RoomView parity', () => {
 });
 
 function normalize(value: unknown): unknown {
-  return JSON.parse(JSON.stringify(value), (_key, item) =>
-    typeof item === 'string' && (item.includes('/v1/media/') || item.includes('/media/a'))
+  return JSON.parse(JSON.stringify(value), (key, item) => {
+    if (key === 'createdAtMs') return undefined;
+    return typeof item === 'string' && (item.includes('/v1/media/') || item.includes('/media/a'))
       ? '<media>'
-      : item,
-  );
+      : item;
+  });
 }

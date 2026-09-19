@@ -64,7 +64,7 @@ export interface ServerOptions {
   connectionPresence?: ConnectionPresence;
   mediaMaximumBytes: number;
   /** Absent when no S3 env is configured: object writes then refuse with a
-   *  clear 503 and every read keeps the legacy bytea path. */
+   *  clear 503. */
   objectService?: ObjectService;
   github?: GitHubServerHooks;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
@@ -991,31 +991,15 @@ async function route(
         return;
       }
     }
-    const media = (
-      await options.database.query<{ bytes: Uint8Array; mime_type: string; name: string }>(
-        `SELECT bytes,mime_type,name FROM media WHERE id=$1`,
-        [mediaId],
-      )
-    ).rows[0];
-    if (!media) {
-      // Bytes past the media TTL are gone for good, and say so: a client that
-      // reads 410 renders "expired" instead of retrying a 404 forever.
-      const expired = (
-        await options.database.query(`SELECT 1 FROM media_expirations WHERE id=$1`, [mediaId])
-      ).rows.length;
-      json(response, expired ? 410 : 404, {
-        error: expired ? 'media_expired' : 'media_not_found',
-        ...(expired ? { ttlHours: mediaTtlHours() } : {}),
-      });
-      return;
-    }
-    response.writeHead(200, {
-      'content-type': media.mime_type,
-      'content-length': String(media.bytes.length),
-      'cache-control': 'public, max-age=31536000, immutable',
-      'content-disposition': `inline; filename="${media.name.replaceAll('"', '')}"`,
+    // No bytea fallback: every file lives in `objects`. A tombstone is
+    // expired; anything else never existed for readers.
+    const expired = (
+      await options.database.query(`SELECT 1 FROM object_expirations WHERE id=$1`, [mediaId])
+    ).rows.length;
+    json(response, expired ? 410 : 404, {
+      error: expired ? 'media_expired' : 'media_not_found',
+      ...(expired ? { ttlHours: mediaTtlHours() } : {}),
     });
-    response.end(Buffer.from(media.bytes));
     return;
   }
   if (url.pathname.startsWith('/v1/phone/') && !identityId) {
@@ -1078,6 +1062,10 @@ async function route(
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/media') {
+    if (!options.objectService) {
+      json(response, 503, { error: 'object_storage_unavailable' });
+      return;
+    }
     const raw = await bytes(request, options.mediaMaximumBytes + 1);
     const mime =
       typeof request.headers['content-type'] === 'string'
@@ -1087,11 +1075,20 @@ async function route(
       typeof request.headers['x-file-name'] === 'string'
         ? request.headers['x-file-name']
         : 'upload';
-    json(
-      response,
-      201,
-      await options.phone.uploadMedia(identityId!, raw, mime, name, options.mediaMaximumBytes),
-    );
+    try {
+      json(
+        response,
+        201,
+        await options.phone.uploadMedia(identityId!, raw, mime, name, options.mediaMaximumBytes),
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'invalid upload';
+      if (reason.includes('object storage is not configured')) {
+        json(response, 503, { error: 'object_storage_unavailable' });
+        return;
+      }
+      json(response, 400, { error: 'upload_rejected', reason });
+    }
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/github\/room-token\/([0-9a-f-]+)$/);

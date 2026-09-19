@@ -136,7 +136,7 @@ describe('object sweep', () => {
     }
   });
 
-  it('without storage configured the loop sweeps only legacy media', async () => {
+  it('without storage configured the loop sweeps nothing', async () => {
     const db = await fixture();
     try {
       const s = storage();

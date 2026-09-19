@@ -5,6 +5,7 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import type { GrantRunnerEndpoint } from './grant-runner.js';
 import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
+import { YOUTUBE_MCP_SERVER_NAME, YOUTUBE_MCP_SURFACE } from './youtube-mcp.js';
 
 export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
@@ -99,6 +100,28 @@ export function readOnlyMcpServer(
       ...(agentMemoryDir
         ? [{ name: 'BEELINE_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) }]
         : []),
+    ],
+  };
+}
+
+/**
+ * Local YouTube Data/Analytics MCP. Mounted only when this helper already
+ * holds the Workbench Google grant — the token stays in this process env
+ * and is never sent to a third-party host. Reuses the same beeline MCP
+ * binary as the agent/read-only surfaces (`BEELINE_MCP_SURFACE=youtube`).
+ */
+export function youtubeMcpServer(
+  config: BodyConfig,
+  accessToken: string | undefined,
+): McpServerWire | undefined {
+  if (!accessToken || !config.readonlyMcpCommand) return undefined;
+  return {
+    name: YOUTUBE_MCP_SERVER_NAME,
+    command: config.readonlyMcpCommand,
+    args: [...(config.readonlyMcpArgs ?? [])],
+    env: [
+      { name: 'BEELINE_MCP_SURFACE', value: YOUTUBE_MCP_SURFACE },
+      { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: accessToken },
     ],
   };
 }

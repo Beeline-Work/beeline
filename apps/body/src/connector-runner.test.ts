@@ -3,6 +3,7 @@ import {
   captureConnectionUsage,
   ConnectorUsageRecorder,
   squireUsageFromToolCall,
+  youtubeUsageFromToolCall,
   type ConnectionTurn,
 } from './connector-runner.js';
 import type { ConnectionUsageRecord } from '@beeline/api-contract/daemon-operations';
@@ -84,6 +85,23 @@ describe('squireUsageFromToolCall', () => {
 
   it('classes ordinary use_credential spending as ordinary use (no event class)', () => {
     expect(squireUsageFromToolCall(squireCall)).not.toHaveProperty('eventClass');
+  });
+
+  it('records a local YouTube MCP call as ordinary Workbench usage', () => {
+    expect(
+      youtubeUsageFromToolCall({
+        title: 'mcp.youtube.youtube_analytics_overview',
+        status: 'completed',
+        rawInput: {},
+        content: { views: 12 },
+      }),
+    ).toMatchObject({
+      ref: 'google-youtube',
+      service: 'youtube',
+      operation: 'youtube_analytics_overview',
+      statusCode: 200,
+    });
+    expect(youtubeUsageFromToolCall(unrelatedCall)).toBeUndefined();
   });
 
   it('classes a credential read in clear as an approval request', () => {

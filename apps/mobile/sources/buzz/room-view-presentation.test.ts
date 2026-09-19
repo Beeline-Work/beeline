@@ -91,6 +91,30 @@ describe('Room view presentation', () => {
     expect(reconcileRoomView(deltaFirst, full)).toEqual(full);
   });
 
+  it('does not let a stale full snapshot drop a newer committed live delta', () => {
+    const older: RoomViewMessage = {
+      id: 'older',
+      text: 'older',
+      createdAt: 1,
+      author: { pubkey: 'human', kind: 'human', name: 'Captain' },
+      presentation: 'message',
+    };
+    const newest: RoomViewMessage = {
+      id: 'newest',
+      text: 'just posted',
+      createdAt: 2,
+      author: { pubkey: 'human', kind: 'human', name: 'Captain' },
+      presentation: 'message',
+    };
+    const openRoom = reconcileRoomMessageDelta({ ...emptyRoom(), messages: [older] }, newest);
+    const staleRead = { ...emptyRoom(), messages: [older] };
+
+    expect(reconcileRoomView(openRoom, staleRead).messages.map((message) => message.id)).toEqual([
+      'older',
+      'newest',
+    ]);
+  });
+
   it('uses the child turn receipt time for a working corner instead of stale metadata', () => {
     const receiptAt = Math.floor(Date.now() / 1_000);
     const [corner] = cornerSummaries({

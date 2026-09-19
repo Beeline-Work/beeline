@@ -496,8 +496,14 @@ export function useRoomSurfaceSession({
               // authoritative read instead of placing it behind ordinary
               // surface coalescing, where a short turn can complete first.
               if (['message', 'turn', 'activity', 'phone-write'].includes(live.reason)) {
-                // The committed-row delta follows this same-process hint. The
-                // periodic/reconnect read remains the lossless fallback.
+                // A same-process committed-row delta follows only when the
+                // invalidation names its row. A targetless phone-write is the
+                // whole hint — swallowing it leaves the newest message
+                // unpainted until remount or the 30s poll.
+                const namedRow =
+                  typeof live.messageId === 'string' ||
+                  (typeof live.agentId === 'string' && typeof live.requestId === 'string');
+                if (!namedRow) scheduler?.signal();
               } else if (live.reason === 'postgres:agent_turns') {
                 scheduler?.force();
               } else {

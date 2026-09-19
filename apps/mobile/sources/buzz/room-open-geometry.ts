@@ -21,9 +21,13 @@ export const ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT = 44;
 /** ConversationComposer `composer.borderWidth`. */
 export const ROOM_OPEN_COMPOSER_BOX_BORDER = 1;
 
-/** Ledger `entry.paddingBottom` — newest row’s own bottom pad above the list tail. */
+/**
+ * Ledger `entryWithByline.paddingBottom` — the newest committed agent row
+ * always carries a byline, and an inverted phone list puts its three rhythm
+ * units on the visual tail edge.
+ */
 export function roomOpenMessagePadding(): number {
-  return groknight.messagePaddingVertical;
+  return groknight.messagePaddingVertical * 3;
 }
 
 /** Ledger `ledgerText` / `steerText`. `type.body` uses lineHeight 23; chrome is 25. */

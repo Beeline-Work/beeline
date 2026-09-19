@@ -75,7 +75,7 @@ describe('Room open-to-pixel occupancy', () => {
     expect(pixel).toContain('pixel-layout-newest');
     expect(channels).toContain('beginRoomOpenPrefetch');
     expect(channels).toContain('seedRoomOpenPixel');
-    expect(chat).toContain('roomOpenPixelSeed(decodedId)');
+    expect(chat).toContain('roomOpenPixelSnapshot(decodedId)');
   });
 
   it('reserves the chrome composer stack without importing ConversationComposer', () => {

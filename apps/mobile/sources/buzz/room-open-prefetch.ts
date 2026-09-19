@@ -7,17 +7,27 @@ type Inflight = {
 };
 
 let inflight: Inflight | null = null;
-let pixelSeed: { roomId: string; text: string } | null = null;
+export type RoomOpenPixelSeed = {
+  roomId: string;
+  text: string;
+  agentsOffline: boolean;
+};
+
+let pixelSeed: RoomOpenPixelSeed | null = null;
 
 /** Deck already shows the newest line; paint it on the first Room frame. */
-export function seedRoomOpenPixel(roomId: string, text: string): void {
+export function seedRoomOpenPixel(roomId: string, text: string, agentsOffline = false): void {
   const trimmed = text.trim();
   if (!trimmed) return;
-  pixelSeed = { roomId, text: trimmed.slice(0, 280) };
+  pixelSeed = { roomId, text: trimmed.slice(0, 280), agentsOffline };
 }
 
 export function roomOpenPixelSeed(roomId: string): string | null {
   return pixelSeed?.roomId === roomId ? pixelSeed.text : null;
+}
+
+export function roomOpenPixelSnapshot(roomId: string): RoomOpenPixelSeed | null {
+  return pixelSeed?.roomId === roomId ? pixelSeed : null;
 }
 
 /** Deck tap: seed + navigate. Never start chrome `import()` here — a pending
@@ -26,12 +36,13 @@ export function dispatchRoomOpenTap(
   roomId: string,
   newestLine: string | undefined,
   next: {
+    agentsOffline?: boolean;
     prefetch?: (roomId: string) => void;
     navigate: (roomId: string) => void;
   },
 ): void {
   markRoomOpen('nav-dispatch', roomId);
-  if (newestLine) seedRoomOpenPixel(roomId, newestLine);
+  if (newestLine) seedRoomOpenPixel(roomId, newestLine, next.agentsOffline);
   next.prefetch?.(roomId);
   next.navigate(roomId);
 }

@@ -31,8 +31,8 @@ describe('Room-open bottom chrome geometry', () => {
     expect(surface).toContain(`borderTopWidth: ${ROOM_OPEN_INPUT_BAR_BORDER_TOP}`);
     expect(composer).toContain(`minHeight: ${ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT}`);
     expect(composer).toContain(`borderWidth: ${ROOM_OPEN_COMPOSER_BOX_BORDER}`);
-    expect(ledger).toContain('paddingBottom: theme.buzz.messagePaddingVertical,');
-    expect(roomOpenMessagePadding()).toBe(groknight.messagePaddingVertical);
+    expect(ledger).toContain('paddingBottom: theme.buzz.messagePaddingVertical * 3,');
+    expect(roomOpenMessagePadding()).toBe(groknight.messagePaddingVertical * 3);
     expect(ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT).toBeGreaterThan(26);
     const newest = roomOpenNewestTextMetrics();
     expect(newest.fontFamily).toBe(groknight.proseRegular);
@@ -47,7 +47,7 @@ describe('Room-open bottom chrome geometry', () => {
     expect(roomOpenComposerSafePadding('android', safeAreaBottom)).toBe(safeAreaBottom + 8);
     expect(roomOpenBottomChromeHeight('android', safeAreaBottom)).toBe(
       ROOM_OPEN_LIST_TAIL_PADDING +
-        groknight.messagePaddingVertical +
+        groknight.messagePaddingVertical * 3 +
         ROOM_OPEN_INPUT_BAR_PADDING_TOP +
         ROOM_OPEN_INPUT_BAR_BORDER_TOP +
         ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT +

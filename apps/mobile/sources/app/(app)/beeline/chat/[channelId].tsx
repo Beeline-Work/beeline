@@ -10,7 +10,7 @@ import React, {
 import { useIsFocused } from '@react-navigation/native';
 import { useLocalSearchParams } from 'expo-router';
 import { afterPixelIdle } from '@/buzz/defer-interaction';
-import { roomOpenPixelSeed } from '@/buzz/room-open-prefetch';
+import { roomOpenPixelSnapshot } from '@/buzz/room-open-prefetch';
 import { attachChatSurfaceAfterPaint } from './_chat-surface-load';
 import { RoomOpenPixel } from './_room-open-pixel';
 import {
@@ -37,6 +37,7 @@ export default function BuzzChat() {
   const [Chrome, setChrome] = useState<ComponentType<ChatSurfaceProps> | null>(null);
   const [surfaceReady, setSurfaceReady] = useState(false);
   const importCancelRef = useRef<(() => void) | null>(null);
+  const pixelSeed = roomOpenPixelSnapshot(decodedId);
 
   useLayoutEffect(() => {
     markRoomOpen('route-mount', decodedId);
@@ -59,7 +60,8 @@ export default function BuzzChat() {
         <RoomOpenPixel
           key={decodedId}
           roomSurface={null}
-          seedText={roomOpenPixelSeed(decodedId)}
+          seedText={pixelSeed?.text ?? null}
+          agentsOffline={pixelSeed?.agentsOffline}
           onFirstPaint={() => {
             if (importCancelRef.current) return;
             importCancelRef.current = attachChatSurfaceAfterPaint(
@@ -138,4 +140,3 @@ function RoomSessionHost({
   if (!surfaceReady || !Chrome) return null;
   return <Chrome session={session} bindingsRef={bindingsRef} />;
 }
-

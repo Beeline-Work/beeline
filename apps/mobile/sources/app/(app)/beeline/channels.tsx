@@ -211,7 +211,10 @@ export default function BuzzChannels() {
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
-  const [openingSeed, setOpeningSeed] = useState<string | null>(null);
+  const [openingSeed, setOpeningSeed] = useState<{
+    text: string;
+    agentsOffline: boolean;
+  } | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
@@ -511,10 +514,11 @@ export default function BuzzChannels() {
   );
 
   const openRoom = useCallback(
-    (roomId: string, newestLine?: string) => {
-      if (newestLine) setOpeningSeed(newestLine);
+    (roomId: string, newestLine?: string, agentsOffline = false) => {
+      if (newestLine) setOpeningSeed({ text: newestLine, agentsOffline });
       const go = () => {
         dispatchRoomOpenTap(roomId, newestLine, {
+          agentsOffline,
           prefetch: prefetchRoom,
           navigate: (id) => {
             if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
@@ -941,11 +945,21 @@ export default function BuzzChannels() {
                   testID={`room-${item.room.id}`}
                   onPressIn={() => {
                     prefetchRoom(item.room.id);
-                    if (hasPreview) seedRoomOpenPixel(item.room.id, preview.text);
+                    if (hasPreview) {
+                      setOpeningSeed({
+                        text: preview.text,
+                        agentsOffline: Boolean(item.agentsOffline),
+                      });
+                      seedRoomOpenPixel(item.room.id, preview.text, item.agentsOffline);
+                    }
                   }}
                   onPress={() => {
                     swipeableRefs.current.get(item.room.id)?.close();
-                    openRoom(item.room.id, hasPreview ? preview.text : undefined);
+                    openRoom(
+                      item.room.id,
+                      hasPreview ? preview.text : undefined,
+                      item.agentsOffline,
+                    );
                   }}
                   style={styles.rowMain}
                 >
@@ -1002,6 +1016,7 @@ export default function BuzzChannels() {
                       else swipeableRefs.current.delete(item.room.id);
                     }}
                     friction={1}
+                    onSwipeableWillOpen={() => setOpeningSeed(null)}
                     overshootRight={false}
                     rightThreshold={ROW_HEIGHT}
                     renderRightActions={() => (
@@ -1168,7 +1183,8 @@ export default function BuzzChannels() {
       >
         <RoomOpenPixel
           roomSurface={null}
-          seedText={openingSeed}
+          seedText={openingSeed.text}
+          agentsOffline={openingSeed.agentsOffline}
           onFirstPaint={() => undefined}
         />
       </View>

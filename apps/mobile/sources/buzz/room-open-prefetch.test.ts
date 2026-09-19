@@ -5,6 +5,7 @@ import {
   beginRoomOpenPrefetch,
   dispatchRoomOpenTap,
   roomOpenPixelSeed,
+  roomOpenPixelSnapshot,
   seedRoomOpenPixel,
   takeRoomOpenPrefetch,
 } from './room-open-prefetch';
@@ -25,16 +26,26 @@ describe('room-open prefetch', () => {
   });
 
   it('seeds the newest deck line for the first Room frame', () => {
-    seedRoomOpenPixel('room-a', 'PIXEL-450 NEWEST ROW');
+    seedRoomOpenPixel('room-a', 'PIXEL-450 NEWEST ROW', true);
     expect(roomOpenPixelSeed('room-a')).toBe('PIXEL-450 NEWEST ROW');
+    expect(roomOpenPixelSnapshot('room-a')).toEqual({
+      roomId: 'room-a',
+      text: 'PIXEL-450 NEWEST ROW',
+      agentsOffline: true,
+    });
     expect(roomOpenPixelSeed('room-b')).toBeNull();
   });
 
   it('dispatches navigation without evaluating the chrome module', () => {
     const prefetch = vi.fn();
     const navigate = vi.fn();
-    dispatchRoomOpenTap('room-b', 'newest line', { prefetch, navigate });
+    dispatchRoomOpenTap('room-b', 'newest line', {
+      agentsOffline: true,
+      prefetch,
+      navigate,
+    });
     expect(roomOpenPixelSeed('room-b')).toBe('newest line');
+    expect(roomOpenPixelSnapshot('room-b')?.agentsOffline).toBe(true);
     expect(prefetch).toHaveBeenCalledWith('room-b');
     expect(navigate).toHaveBeenCalledWith('room-b');
   });

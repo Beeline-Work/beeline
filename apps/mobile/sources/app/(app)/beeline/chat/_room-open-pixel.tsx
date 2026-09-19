@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RoomView } from '@beeline/buzz-client';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { AgentOfflineHint } from '@/components/buzz/AgentOfflineHint';
 import {
   ROOM_OPEN_COMPOSER_BOX_BORDER,
   ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT,
@@ -20,10 +21,12 @@ import { markRoomOpen } from '@/buzz/room-open-trace';
 export function RoomOpenPixel({
   roomSurface,
   seedText,
+  agentsOffline = false,
   onFirstPaint,
 }: {
   roomSurface: RoomView | null;
   seedText: string | null;
+  agentsOffline?: boolean;
   onFirstPaint: () => void;
 }) {
   const { theme } = useUnistyles();
@@ -80,6 +83,7 @@ export function RoomOpenPixel({
       }}
     >
       <View
+        testID="room-open-pixel-list-reserve"
         style={{
           flex: 1,
           justifyContent: 'flex-end',
@@ -95,6 +99,7 @@ export function RoomOpenPixel({
           {newestText}
         </Text>
       </View>
+      {agentsOffline ? <AgentOfflineHint hidden /> : null}
       <View
         testID="room-open-pixel-composer-reserve"
         style={{

@@ -299,6 +299,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
+import { AgentOfflineHint } from '@/components/buzz/AgentOfflineHint';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
@@ -4925,12 +4926,7 @@ export function BuzzChatSurface({
                 with nothing being asked of it. Both may show at once; neither
                 implies the other. */}
               {agentsOffline && (
-                <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-                  <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-                  <Text style={styles.agentOfflineHintText}>
-                    Messages stay in this Room and will be answered when the Agent is back.
-                  </Text>
-                </View>
+                <AgentOfflineHint />
               )}
               {isReadOnlyDirectMessage ? (
                 <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
@@ -6075,29 +6071,6 @@ const styles = StyleSheet.create((theme) => {
       bottom: '100%',
       left: 0,
       backgroundColor: groknight.bgTerminal,
-    },
-    agentOfflineHint: {
-      minWidth: 0,
-      marginBottom: 7,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgBase,
-    },
-    agentOfflineHintTitle: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 10,
-      lineHeight: 14,
-      letterSpacing: 0.55,
-    },
-    agentOfflineHintText: {
-      ...Typography.default(),
-      marginTop: 3,
-      color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
     },
     previewLinkRow: {
       marginTop: 6,

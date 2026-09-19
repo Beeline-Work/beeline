@@ -1,7 +1,6 @@
 import React from 'react';
 import { Text, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
 /**
@@ -43,10 +42,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 28,
     },
     loading: {
-      ...Typography.mono('semiBold'),
+      ...hull.type.sectionHead,
       color: hull.textMuted,
-      fontSize: 10,
-      letterSpacing: 1.2,
     },
   };
 });

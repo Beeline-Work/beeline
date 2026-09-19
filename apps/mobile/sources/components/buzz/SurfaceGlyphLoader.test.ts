@@ -197,7 +197,6 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { BootPaint } from './BootPaint';
-import { RoomDeckLoadingView } from './RoomDeckLoadingView';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
 const originalConsoleError = console.error;
@@ -292,6 +291,7 @@ describe('cold start paints the mark once', () => {
   it('does not paint the Room-deck glyph on the first post-BootPaint mount', async () => {
     vi.resetModules();
     const { consumeFirstRoomDeckAfterBoot } = await import('@/buzz/boot-paint-handoff');
+    const { RoomDeckLoadingView } = await import('./RoomDeckLoadingView');
     const boot = render(
       React.createElement(BootPaint, { onPainted: () => undefined, testID: 'boot-paint' }),
     );

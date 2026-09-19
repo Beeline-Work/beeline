@@ -84,6 +84,46 @@ describe('startStoredRuntime (beeline start restart semantics)', () => {
     // against the same runtime.
     expect(f.deps.launch).not.toHaveBeenCalled();
   });
+
+  it('discards a reused pid and starts the selected runtime without signalling that process', async () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'beeline-start-stale-pid-'));
+    const selectedConfigPath = resolve(root, 'runtime.json');
+    const otherConfigPath = resolve(root, 'other-runtime.json');
+    const scriptPath = resolve(root, 'other-daemon.mjs');
+    writeFileSync(selectedConfigPath, '{}\n');
+    writeFileSync(otherConfigPath, '{}\n');
+    writeFileSync(scriptPath, 'setInterval(() => {}, 1_000);\n');
+    const otherDaemon = spawn(
+      process.execPath,
+      [scriptPath, 'daemon', '--config', otherConfigPath],
+      { stdio: 'ignore' },
+    );
+    try {
+      const pidPath = resolve(root, 'daemon.pid');
+      await new Promise<void>((resolveSpawn, reject) => {
+        otherDaemon.once('spawn', resolveSpawn);
+        otherDaemon.once('error', reject);
+      });
+      writeFileSync(pidPath, `${otherDaemon.pid}\n`);
+      const stop = vi.fn(async () => null);
+      const launch = vi.fn(async () => 1001);
+
+      await expect(
+        startStoredRuntime(selectedConfigPath, {}, { stop, launch, log: vi.fn() }),
+      ).resolves.toBe(1001);
+
+      expect(stop).not.toHaveBeenCalled();
+      expect(launch).toHaveBeenCalledWith(selectedConfigPath);
+      expect(existsSync(pidPath)).toBe(false);
+      expect(process.kill(otherDaemon.pid!, 0)).toBe(true);
+    } finally {
+      otherDaemon.kill('SIGTERM');
+      if (otherDaemon.exitCode === null) {
+        await new Promise((resolveExit) => otherDaemon.once('exit', resolveExit));
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('stopRuntimeDaemon waits out a graceful drain', () => {
@@ -141,14 +181,15 @@ describe('stopRuntimeDaemon waits out a graceful drain', () => {
     expect(existsSync(markerPath)).toBe(true);
   }, 20_000);
 
-  it("refuses to stop a process that is not this runtime's daemon", async () => {
+  it("discards a pid reused by a process that is not this runtime's daemon", async () => {
     root = mkdtempSync(resolve(tmpdir(), 'beeline-stop-refuse-'));
     const configPath = resolve(root, 'runtime.json');
     writeFileSync(configPath, '{}\n');
     // This process's argv names vitest, not `daemon --config <path>`.
     writeFileSync(resolve(root, 'daemon.pid'), `${process.pid}\n`);
-    await expect(stopRuntimeDaemon(configPath)).rejects.toThrow(/does not belong to the daemon/);
-    // And it was not signalled.
+    await expect(stopRuntimeDaemon(configPath)).resolves.toBeNull();
+    expect(existsSync(resolve(root, 'daemon.pid'))).toBe(false);
+    // The unrelated process was not signalled.
     expect(process.kill(process.pid, 0)).toBe(true);
   });
 });

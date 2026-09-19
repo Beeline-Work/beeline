@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
@@ -271,28 +271,72 @@ export async function selectRuntimeConfigPaths(options: {
   return { paths, hostScope };
 }
 
-export async function runtimeDaemonPid(configPath: string): Promise<number | null> {
+export interface RuntimeDaemonProcess {
+  pid: number;
+  selector: 'config' | 'agent';
+}
+
+export async function runtimeDaemonProcess(
+  configPath: string,
+): Promise<RuntimeDaemonProcess | null> {
+  const pidPath = resolve(dirname(configPath), 'daemon.pid');
+  let recorded = '';
   try {
-    const pid = Number((await readFile(resolve(dirname(configPath), 'daemon.pid'), 'utf8')).trim());
-    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+    recorded = await readFile(pidPath, 'utf8');
+    const pid = Number(recorded.trim());
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      await discardRecordedDaemonPid(pidPath, recorded);
+      return null;
+    }
     process.kill(pid, 0);
-    return pid;
+    const selector = await daemonRuntimeSelector(pid, configPath);
+    if (!selector) {
+      await discardRecordedDaemonPid(pidPath, recorded);
+      return null;
+    }
+    return { pid, selector };
   } catch {
+    if (recorded) await discardRecordedDaemonPid(pidPath, recorded);
     return null;
   }
 }
 
-async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boolean> {
+export async function runtimeDaemonPid(configPath: string): Promise<number | null> {
+  return (await runtimeDaemonProcess(configPath))?.pid ?? null;
+}
+
+async function discardRecordedDaemonPid(pidPath: string, expected: string): Promise<void> {
+  const current = await readFile(pidPath, 'utf8').catch(() => '');
+  if (current === expected) await unlink(pidPath).catch(() => undefined);
+}
+
+async function daemonRuntimeSelector(
+  pid: number,
+  configPath: string,
+): Promise<RuntimeDaemonProcess['selector'] | null> {
   try {
     const argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean);
-    const flag = argv.lastIndexOf('--config');
-    return flag > 0 && argv[flag - 1] === 'daemon' && resolve(argv[flag + 1]!) === resolve(configPath);
+    const daemon = argv.lastIndexOf('daemon');
+    const configFlag = argv.lastIndexOf('--config');
+    const agentFlag = argv.lastIndexOf('--agent');
+    if (daemon <= 0) return null;
+    if (configFlag > daemon && resolve(argv[configFlag + 1] ?? '') === resolve(configPath)) {
+      return 'config';
+    }
+    if (agentFlag > daemon && argv[agentFlag + 1] === basename(dirname(configPath))) {
+      return 'agent';
+    }
+    return null;
   } catch {
     try {
       const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
-      return stdout.includes(' daemon ') && stdout.includes(resolve(configPath));
+      const agentPubkey = basename(dirname(configPath));
+      if (!stdout.includes(' daemon ')) return null;
+      if (stdout.includes(`--config ${resolve(configPath)}`)) return 'config';
+      if (stdout.includes(`--agent ${agentPubkey}`)) return 'agent';
+      return null;
     } catch {
-      return false;
+      return null;
     }
   }
 }
@@ -302,11 +346,9 @@ export async function stopRuntimeDaemon(
   opts: { timeoutMs?: number; pollMs?: number; onWait?: (pid: number, waitedMs: number) => void } = {},
 ): Promise<number | null> {
   const configPath = await resolveRuntimeConfigPath(path);
-  const pid = await runtimeDaemonPid(configPath);
-  if (!pid) return null;
-  if (!(await daemonIsThisRuntime(pid, configPath))) {
-    throw new Error(`pid ${pid} does not belong to the daemon for ${configPath}`);
-  }
+  const daemon = await runtimeDaemonProcess(configPath);
+  if (!daemon) return null;
+  const { pid } = daemon;
   process.kill(pid, 'SIGTERM');
   const started = Date.now();
   const timeout = opts.timeoutMs ?? 10_000;

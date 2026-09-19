@@ -8,6 +8,7 @@ import {
   launchRuntimeDaemon,
   readRuntimeRecord,
   runtimeAgentCommand,
+  runtimeDaemonProcess,
   runtimeDaemonPid,
   selectRuntimeConfigPaths,
   stopRuntimeDaemon,
@@ -98,10 +99,10 @@ async function startRuntime(
   const selectedAgent = runtimeAgentCommand(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
   if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
-    const existingPid = await runtimeDaemonPid(configPath);
-    if (existingPid) {
+    const existing = await runtimeDaemonProcess(configPath);
+    if (existing?.selector === 'config') {
       report(
-        `[beeline] agent daemon is running (pid ${existingPid}); draining it before supervision`,
+        `[beeline] agent daemon is running (pid ${existing.pid}); draining it before supervision`,
       );
       await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
     }

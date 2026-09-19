@@ -2,10 +2,7 @@ import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
-import type {
-  GrantWalletDelegationInput,
-  GrantWalletDelegationResult,
-} from './wallet.js';
+import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
   AgentModelSelection,
   AgentPairingClaimView,
@@ -49,7 +46,7 @@ export type PhoneOperationMap = {
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
-  /** R5: the one affirmative tap on a connector-offer card; pairs the connector on the offering agent's machine. */
+  /** Starts the offered connector's full sign-in ceremony on the offering agent's machine. */
   acceptConnectorOffer: { input: AcceptConnectorOfferInput; output: AcceptConnectorOfferResult };
   answerChoice: { input: AnswerChoiceInput; output: ChoiceDecisionResult };
   skipChoice: { input: SkipChoiceInput; output: ChoiceDecisionResult };
@@ -248,7 +245,8 @@ export type AgentGrantDecisionResult = {
 export type AcceptConnectorOfferInput = { readonly offerId: string };
 export type AcceptConnectorOfferResult = {
   readonly offerId: string;
-  readonly status: 'accepted';
+  /** The offer settles only after the helper reports the connector connected. */
+  readonly status: 'connecting';
   readonly roomId: string;
   /** The Workbench connector row the acceptance created or re-armed. */
   readonly connectorId: string;

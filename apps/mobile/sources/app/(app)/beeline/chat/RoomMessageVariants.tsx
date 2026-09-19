@@ -21,6 +21,7 @@ import { emojiTextStyle } from '@/buzz/emoji-text';
 import { grantAskLine } from '@/buzz/agent-grant-copy';
 import {
   connectorOfferActionLabel,
+  connectorOfferConnectingLine,
   connectorOfferOutcomeLine,
   connectorOfferTitle,
   connectorOfferWaitingLine,
@@ -345,7 +346,16 @@ export interface ConnectorOfferCardProps {
   viewerRole: 'owner' | 'admin' | 'member' | null;
   /** The offer whose acceptance is in flight. */
   actionId: string | null;
-  onAccept(offerId: string): void;
+  onAccept(
+    offerId: string,
+    connectorType: NonNullable<ChatDisplayMessage['connectorOffer']>['connectorType'],
+  ): void;
+  /** Reopens an accepted ceremony that has not reached connected yet. */
+  onContinue?(
+    offerId: string,
+    connectorType: NonNullable<ChatDisplayMessage['connectorOffer']>['connectorType'],
+    connectorId: string,
+  ): void;
   /** Opens the Workbench page — the settled card is one of its three remaining doors. */
   onOpenWorkbench(): void;
 }
@@ -358,9 +368,9 @@ export interface ConnectorOfferCardProps {
  * raw key in chat"). ONE affirmative action, with the check glyph, for the
  * person the agent addressed (whose keys the tool will hold) or a Workspace
  * manager; everyone else reads the ask and `waiting for @addressee`. It
- * settles in place into `added by @who · 12:04` with a `Manage in Workbench ›`
- * link: a Room has many possible tappers, so the record names the one who
- * acted. The phone mirrors the server's authority; it never decides it.
+ * enters `connecting for @who` while the existing Workbench ceremony runs,
+ * then settles into `added by @who · 12:04` only after the helper reports
+ * connected. The phone mirrors the server's authority; it never decides it.
  */
 export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   message,
@@ -370,12 +380,14 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   viewerRole,
   actionId,
   onAccept,
+  onContinue,
   onOpenWorkbench,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
   const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
   const agentName = agent ? display.name : offer.agent.name;
   const pending = offer.status === 'pending';
+  const connecting = offer.status === 'connecting';
   const canAccept =
     !viewerIsAgent &&
     (viewerPubkey === offer.addressee.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
@@ -388,24 +400,33 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             primary: true,
             disabled: actionId !== null,
             loading: busy,
-            onPress: () => onAccept(offer.offerId),
+            onPress: () => onAccept(offer.offerId, offer.connectorType),
             testID: `connector-offer-${offer.offerId}-accept`,
           },
         ]
-      : !pending
+      : connecting && offer.connectorId && onContinue
         ? [
             {
-              label: 'Manage in Workbench ›',
-              accessibilityRole: 'link',
-              onPress: onOpenWorkbench,
-              testID: `connector-offer-${offer.offerId}-workbench`,
+              label: 'Continue sign-in ›',
+              primary: true,
+              onPress: () => onContinue(offer.offerId, offer.connectorType, offer.connectorId!),
+              testID: `connector-offer-${offer.offerId}-continue`,
             },
           ]
-        : [];
+        : !pending && !connecting
+          ? [
+              {
+                label: 'Manage in Workbench ›',
+                accessibilityRole: 'link',
+                onPress: onOpenWorkbench,
+                testID: `connector-offer-${offer.offerId}-workbench`,
+              },
+            ]
+          : [];
   return (
     <TranscriptCard
-      tier={pending ? 'ask' : 'record'}
-      testID={`connector-offer-${pending ? 'pending' : 'settled'}`}
+      tier={pending || connecting ? 'ask' : 'record'}
+      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
       identity={
         <IdentityMark
           kind="agent"
@@ -421,18 +442,22 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
       sublineTestID={`connector-offer-${offer.offerId}-line`}
       stamp={ledgerStamp(message.timestamp)}
       footerNote={
-        pending
-          ? canAccept
-            ? undefined
-            : connectorOfferWaitingLine(offer)
-          : (connectorOfferOutcomeLine(offer) ?? undefined)
+        connecting
+          ? (connectorOfferConnectingLine(offer) ?? undefined)
+          : pending
+            ? canAccept
+              ? undefined
+              : connectorOfferWaitingLine(offer)
+            : (connectorOfferOutcomeLine(offer) ?? undefined)
       }
       footerNoteTestID={
-        pending
-          ? canAccept
-            ? undefined
-            : `connector-offer-${offer.offerId}-waiting`
-          : `connector-offer-${offer.offerId}-outcome`
+        connecting
+          ? `connector-offer-${offer.offerId}-connecting`
+          : pending
+            ? canAccept
+              ? undefined
+              : `connector-offer-${offer.offerId}-waiting`
+            : `connector-offer-${offer.offerId}-outcome`
       }
       actions={actions}
     />
@@ -474,9 +499,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
   const open = card.status === 'open';
   const viewerVote = card.responses.find((response) => response.identityId === viewerPubkey);
   const canAct =
-    open &&
-    !viewerIsAgent &&
-    (card.mode === 'question' || card.electorate.includes(viewerPubkey));
+    open && !viewerIsAgent && (card.mode === 'question' || card.electorate.includes(viewerPubkey));
   const busy = actionId === card.choiceId;
   const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
   const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;

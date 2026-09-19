@@ -1332,9 +1332,7 @@ export class DaemonService {
     }
     if (!ids.size) return ids;
     const expired = await this.database.query<{ id: string }>(
-      `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])
-       UNION
-       SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+      `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
       [[...ids]],
     );
     return new Set(expired.rows.map((row) => row.id));

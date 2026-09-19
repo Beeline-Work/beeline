@@ -137,11 +137,6 @@ describe('deleteAccount', () => {
       [OWNER, createHash('sha256').update('notes').digest('hex'), `media/${OWNER}/${'n'.repeat(64)}`],
     );
     await database.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES
-         ('99999999-9999-4999-8999-999999999999',$1,'x'::bytea,'text/plain','old.txt',$2)`,
-      [OWNER, createHash('sha256').update('old-notes').digest('hex')],
-    );
-    await database.query(
       `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
        VALUES('perm-1',$1,$2,'req-perm','{}'::jsonb,'authorized')`,
       [ROOM, AGENT],
@@ -283,17 +278,10 @@ describe('deleteAccount', () => {
       await expectRowCount(sql, values, 0);
     }
 
-    // Object bytes and leftover bytea media are gone; tombstones keep the
-    // "expired" story honest for both stores.
+    // Object bytes are gone; the tombstone keeps the "expired" story honest.
     await expectRowCount(`SELECT 1 FROM objects WHERE owner_id=ANY($1)`, [[OWNER, AGENT]], 0);
     await expectRowCount(
       `SELECT 1 FROM object_expirations WHERE id='88888888-8888-4888-8888-888888888888'`,
-      [],
-      1,
-    );
-    await expectRowCount(`SELECT 1 FROM media WHERE owner_id=ANY($1)`, [[OWNER, AGENT]], 0);
-    await expectRowCount(
-      `SELECT 1 FROM media_expirations WHERE id='99999999-9999-4999-8999-999999999999'`,
       [],
       1,
     );

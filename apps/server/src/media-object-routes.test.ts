@@ -86,7 +86,7 @@ describe('media object routes', () => {
     await expect(response.json()).resolves.toMatchObject({ error: 'media_expired' });
   });
 
-  it('never exposes a pending object and falls through to legacy media otherwise', async () => {
+  it('never exposes a pending object and a missing id is 404', async () => {
     const pending = objectService({ readMediaObject: vi.fn(async () => ({ kind: 'pending' })) } as never);
     const origin = await start({ objectService: pending as ObjectService });
     expect((await fetch(`${origin}/v1/media/${UUID}`)).status).toBe(404);
@@ -96,66 +96,6 @@ describe('media object routes', () => {
     const legacy = await fetch(`${origin2}/v1/media/${MEDIA_UUID}`);
     expect(legacy.status).toBe(404);
     await expect(legacy.json()).resolves.toMatchObject({ error: 'media_not_found' });
-  });
-
-  it('serves a still-live bytea row when the object store has no match', async () => {
-    const bytes = Buffer.from('legacy-png');
-    const database = {
-      query: vi.fn(async (sql: string) => {
-        if (sql.includes('FROM media ')) {
-          return { rows: [{ bytes, mime_type: 'image/png', name: 'old.png' }], rowCount: 1 };
-        }
-        return { rows: [], rowCount: 0 };
-      }),
-    } as unknown as SqlDatabase;
-    const objects = objectService({ readMediaObject: vi.fn(async () => undefined) } as never);
-    const server = createBeelineServer({
-      database,
-      auth,
-      phone: {} as PhoneService,
-      daemon: {} as DaemonService,
-      live: {} as LiveHub,
-      mediaMaximumBytes: 1024,
-      objectService: objects as ObjectService,
-    });
-    servers.push(server);
-    const origin = await new Promise<string>((resolve) =>
-      server.listen(0, '127.0.0.1', () =>
-        resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
-      ),
-    );
-    const response = await fetch(`${origin}/v1/media/${MEDIA_UUID}`);
-    expect(response.status).toBe(200);
-    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('legacy-png');
-    expect(response.headers.get('content-type')).toBe('image/png');
-  });
-
-  it('answers 410 for a swept bytea row', async () => {
-    const database = {
-      query: vi.fn(async (sql: string) => {
-        if (sql.includes('media_expirations')) return { rows: [{}], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      }),
-    } as unknown as SqlDatabase;
-    const objects = objectService({ readMediaObject: vi.fn(async () => undefined) } as never);
-    const server = createBeelineServer({
-      database,
-      auth,
-      phone: {} as PhoneService,
-      daemon: {} as DaemonService,
-      live: {} as LiveHub,
-      mediaMaximumBytes: 1024,
-      objectService: objects as ObjectService,
-    });
-    servers.push(server);
-    const origin = await new Promise<string>((resolve) =>
-      server.listen(0, '127.0.0.1', () =>
-        resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
-      ),
-    );
-    const response = await fetch(`${origin}/v1/media/${MEDIA_UUID}`);
-    expect(response.status).toBe(410);
-    await expect(response.json()).resolves.toMatchObject({ error: 'media_expired', ttlHours: 24 });
   });
 
   it('the link endpoint is authenticated, object-backed, and ours to host', async () => {

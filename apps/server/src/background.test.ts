@@ -923,57 +923,6 @@ describe('background advisory-lock ownership', () => {
   });
 });
 
-describe('legacy bytea media TTL sweep', () => {
-  const owner = 'c'.repeat(64);
-  const fresh = '33333333-3333-4333-8333-333333333333';
-  const stale = '44444444-4444-4444-8444-444444444444';
-
-  async function seed() {
-    const db = new PgliteDatabase();
-    await migrate(db);
-    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
-    await db.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256,created_at)
-       VALUES($1,$3,'\\x00','image/png','fresh.png',$4,now()-interval '23 hours'),
-             ($2,$3,'\\x01','image/png','stale.png',$5,now()-interval '25 hours')`,
-      [fresh, stale, owner, 'a'.repeat(64), 'b'.repeat(64)],
-    );
-    return db;
-  }
-
-  it('deletes only media past the TTL and tombstones exactly what it deleted', async () => {
-    const db = await seed();
-    try {
-      expect(MEDIA_TTL_HOURS).toBe(24);
-      expect(await new MediaExpiryLoop(db).runOnce()).toBe(1);
-      expect((await db.query<{ id: string }>(`SELECT id::text id FROM media`)).rows).toEqual([
-        { id: fresh },
-      ]);
-      expect(
-        (await db.query<{ id: string }>(`SELECT id::text id FROM media_expirations`)).rows,
-      ).toEqual([{ id: stale }]);
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('sweeps hourly, not on every one-second background cycle', async () => {
-    const db = await seed();
-    try {
-      const loop = new MediaExpiryLoop(db);
-      const started = Date.now();
-      expect(await loop.runOnce(started)).toBe(1);
-      await db.query(`UPDATE media SET created_at=now()-interval '48 hours'`);
-      expect(await loop.runOnce(started + MEDIA_SWEEP_INTERVAL_MS - 1)).toBe(0);
-      expect((await db.query(`SELECT id FROM media`)).rows).toHaveLength(1);
-      expect(await loop.runOnce(started + MEDIA_SWEEP_INTERVAL_MS)).toBe(1);
-      expect((await db.query(`SELECT id FROM media`)).rows).toHaveLength(0);
-    } finally {
-      await db.close();
-    }
-  });
-});
-
 describe('media TTL sweep', () => {
   const owner = 'c'.repeat(64);
   const fresh = '33333333-3333-4333-8333-333333333333';

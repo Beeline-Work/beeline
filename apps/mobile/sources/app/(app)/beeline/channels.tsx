@@ -513,13 +513,20 @@ export default function BuzzChannels() {
   const openRoom = useCallback(
     (roomId: string, newestLine?: string) => {
       if (newestLine) setOpeningSeed(newestLine);
-      dispatchRoomOpenTap(roomId, newestLine, {
-        prefetch: prefetchRoom,
-        navigate: (id) => {
-          if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
-          router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
-        },
-      });
+      const go = () => {
+        dispatchRoomOpenTap(roomId, newestLine, {
+          prefetch: prefetchRoom,
+          navigate: (id) => {
+            if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
+            router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+          },
+        });
+      };
+      if (newestLine && typeof globalThis.requestAnimationFrame === 'function') {
+        globalThis.requestAnimationFrame(() => go());
+        return;
+      }
+      go();
     },
     [activeCommunityId, identity, prefetchRoom],
   );

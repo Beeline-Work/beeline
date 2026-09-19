@@ -25,6 +25,8 @@ describe('using-beeline Room guidance', () => {
     );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
+    expect(beelinePrimer()).toContain('beeline-agent fetch_image');
+    expect(beelinePrimer()).toContain('embed as a data: URL');
     // The primer asks for the corner's NAME as well as its objective (C89).
     expect(beelinePrimer()).toContain(
       'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
@@ -254,5 +256,19 @@ describe('using-beeline "Showing a mock" section', () => {
     expect(markdown).toContain('#d7af5f');
     expect(markdown).toContain('<script>');
     expect(markdown).toContain('http(s) URL');
+  });
+});
+
+describe('using-beeline "Showing a photograph" section', () => {
+  const markdown = usingBeelineSkillMarkdown('test-release');
+
+  it('teaches fetch_image next to Showing a mock, and keeps the validator closed', () => {
+    expect(markdown).toContain('## Showing a photograph');
+    expect(markdown.indexOf('## Showing a photograph')).toBeGreaterThan(markdown.indexOf('## Showing a mock'));
+    expect(markdown).toContain('beeline-agent fetch_image');
+    expect(markdown).toContain('data:image/jpeg;base64');
+    expect(markdown).toContain('do not draw an SVG stand-in');
+    expect(markdown).toContain('The validator still refuses every http(s) image reference');
+    expect(markdown).toContain('The artifact is a snapshot');
   });
 });

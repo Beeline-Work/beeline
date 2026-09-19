@@ -22,6 +22,7 @@ import {
   ROOM_OPEN_LIST_TAIL_PADDING,
   roomOpenComposerSafePadding,
   roomOpenMessagePadding,
+  roomOpenNewestTextMetrics,
 } from '@/buzz/room-open-geometry';
 import { roomOpenPixelSeed } from '@/buzz/room-open-prefetch';
 import {
@@ -96,7 +97,7 @@ function RoomOpenPixel({
       >
         <Text
           testID="chat-open-pixel-newest"
-          style={[theme.buzz.type.body, { color: theme.buzz.textPrimary }]}
+          style={[roomOpenNewestTextMetrics(), { color: theme.buzz.textPrimary }]}
         >
           {newestText}
         </Text>

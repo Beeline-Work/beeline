@@ -45,6 +45,7 @@ describe('Room open-to-pixel occupancy', () => {
       'initialNumToRender={\n              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined\n            }',
     );
     expect(surface).toContain('formatTerminalTurnOverlay');
+    expect(chat).toContain('roomOpenNewestTextMetrics()');
     expect(chat).toContain('color: theme.buzz.textPrimary');
     expect(chat).toContain('pixel-layout-newest');
     expect(channels).toContain('beginRoomOpenPrefetch');

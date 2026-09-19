@@ -26,6 +26,19 @@ export function roomOpenMessagePadding(): number {
   return groknight.messagePaddingVertical;
 }
 
+/** Ledger `ledgerText` / `steerText`. `type.body` uses lineHeight 23; chrome is 25. */
+export function roomOpenNewestTextMetrics(): {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+} {
+  return {
+    fontFamily: groknight.proseRegular,
+    fontSize: groknight.proseSize,
+    lineHeight: groknight.proseLineHeight,
+  };
+}
+
 /** Closed-keyboard padding under the composer box (same worklet chrome uses). */
 export function roomOpenComposerSafePadding(os: string, safeAreaBottom: number): number {
   return composerBottomPadding(os, safeAreaBottom, 0);

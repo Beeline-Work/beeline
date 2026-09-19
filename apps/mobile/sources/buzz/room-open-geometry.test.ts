@@ -11,6 +11,7 @@ import {
   roomOpenBottomChromeHeight,
   roomOpenComposerSafePadding,
   roomOpenMessagePadding,
+  roomOpenNewestTextMetrics,
 } from './room-open-geometry';
 
 const surface = readFileSync(
@@ -33,6 +34,12 @@ describe('Room-open bottom chrome geometry', () => {
     expect(ledger).toContain('paddingBottom: theme.buzz.messagePaddingVertical,');
     expect(roomOpenMessagePadding()).toBe(groknight.messagePaddingVertical);
     expect(ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT).toBeGreaterThan(26);
+    const newest = roomOpenNewestTextMetrics();
+    expect(newest.fontFamily).toBe(groknight.proseRegular);
+    expect(newest.fontSize).toBe(groknight.proseSize);
+    expect(newest.lineHeight).toBe(groknight.proseLineHeight);
+    expect(newest.lineHeight).toBe(25);
+    expect(ledger).toContain('lineHeight: theme.buzz.proseLineHeight');
   });
 
   it('reserves list tail + message pad + input bar + composer box + closed-keyboard inset', () => {

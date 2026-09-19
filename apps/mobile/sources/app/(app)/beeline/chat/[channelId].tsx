@@ -2349,9 +2349,9 @@ export default function BuzzChat() {
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
   // keyboard, and a corner lease mounts CornerLiveBar. The phone turn line
-  // hangs over the tail instead of growing this footprint. Native layout can
-  // update the pinned ref before an effect runs, preserving the old offset as
-  // an empty gap. Capture the verdict in render.
+  // hangs above the whole bottom stack instead of growing this footprint.
+  // Native layout can update the pinned ref before an effect runs, preserving
+  // the old offset as an empty gap. Capture the verdict in render.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -4537,16 +4537,13 @@ export default function BuzzChat() {
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail, above the composer.
-              // Reserve the hanging turn line there so it cannot cover the last
-              // message. Skip when CornerLiveBar / offline already occupy that
-              // band — those stay in-flow, and a second inset would open a new
-              // gap. Do not grow the composer stack (that was the dead band).
+              // Inverted list: paddingTop is the visual tail. Reserve the
+              // hanging turn line there whenever it is shown so it covers
+              // nothing — last message, CornerLiveBar, or the offline hint.
+              // The line fills this inset; do not grow the composer stack.
               !desktopTranscript &&
                 !isArchived &&
-                (composerAck || settledTurn) &&
-                !(cornerLiveBar && !isCorner) &&
-                !agentsOffline && {
+                (composerAck || settledTurn) && {
                   paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT,
                 },
             ]}
@@ -4847,33 +4844,6 @@ export default function BuzzChat() {
             }
           />
 
-          {/* The Room's only active-corner affordance: one pinned line naming
-            who is working and what on, bright ink breathing while the work is
-            live and still brass while waiting. Never a scroll element — see
-            CornerLiveBar. */}
-          {!isCorner && !isArchived && cornerLiveBar && (
-            <CornerLiveBar
-              label={cornerLiveBar.label}
-              live={cornerLiveBar.live}
-              state={cornerLiveBar.state}
-              // A Room bar always acts. Corrupt/missing lifecycle data is
-              // explained by openCorner instead of disappearing in a guard.
-              onPress={() => openCorner(cornerLiveBar.cornerId)}
-            />
-          )}
-          {/* The ordinary per-turn indicator, independent of the line above: a
-            Room can be thinking with no corner open, or hold an open corner
-            with nothing being asked of it. Both may show at once; neither
-            implies the other. */}
-          {!isArchived && agentsOffline && (
-            <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-              <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-              <Text style={styles.agentOfflineHintText}>
-                Messages stay in this Room and will be answered when the Agent is back.
-              </Text>
-            </View>
-          )}
-
           {/* P2: Archived channels are read-only */}
           {isArchived ? (
             <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
@@ -4881,13 +4851,64 @@ export default function BuzzChat() {
                 {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
               </Text>
             </View>
-          ) : isReadOnlyDirectMessage ? (
-            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
-              <Text style={styles.archivedInputText}>
-                Announcements only · you can't reply here
-              </Text>
-            </View>
           ) : (
+            <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
+              {/* Phone turn chrome hangs above the whole bottom stack
+                (corner, offline, composer) so it cannot cover any of them.
+                The inverted list reserves this height; the line fills it.
+                Desktop keeps the reserved slot inside inputBar. */}
+              {!desktopExperience && composerAck && (
+                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
+                  <TurnProgressLine
+                    label={composerAck.label}
+                    startedAt={composerAck.startedAt}
+                    received={composerAck.received}
+                    stopping={stoppingThisTurn}
+                    onStop={
+                      composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                    }
+                    testID="turn-progress-line"
+                  />
+                </View>
+              )}
+              {!desktopExperience && !composerAck && settledTurn && (
+                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
+                  <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                </View>
+              )}
+              {/* The Room's only active-corner affordance: one pinned line naming
+                who is working and what on, bright ink breathing while the work is
+                live and still brass while waiting. Never a scroll element — see
+                CornerLiveBar. */}
+              {!isCorner && cornerLiveBar && (
+                <CornerLiveBar
+                  label={cornerLiveBar.label}
+                  live={cornerLiveBar.live}
+                  state={cornerLiveBar.state}
+                  // A Room bar always acts. Corrupt/missing lifecycle data is
+                  // explained by openCorner instead of disappearing in a guard.
+                  onPress={() => openCorner(cornerLiveBar.cornerId)}
+                />
+              )}
+              {/* The ordinary per-turn indicator, independent of the line above: a
+                Room can be thinking with no corner open, or hold an open corner
+                with nothing being asked of it. Both may show at once; neither
+                implies the other. */}
+              {agentsOffline && (
+                <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+                  <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+                  <Text style={styles.agentOfflineHintText}>
+                    Messages stay in this Room and will be answered when the Agent is back.
+                  </Text>
+                </View>
+              )}
+              {isReadOnlyDirectMessage ? (
+                <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
+                  <Text style={styles.archivedInputText}>
+                    Announcements only · you can't reply here
+                  </Text>
+                </View>
+              ) : (
             <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
               {slashMenuVisible &&
                 (() => {
@@ -5043,11 +5064,6 @@ export default function BuzzChat() {
                   </TouchableOpacity>
                 </View>
               )}
-              {/* Phone turn chrome hangs over the transcript tail instead of
-                growing the composer stack. Emulator measurement: last-message
-                → composer grew by the thinking-line height itself (30pt), not
-                a double-counted footprint or an extra follow offset. Hanging
-                keeps that idle gap; desktop keeps the reserved slot. */}
               {desktopExperience ? (
                 <View
                   style={styles.desktopStatusSlot}
@@ -5082,29 +5098,7 @@ export default function BuzzChat() {
                     <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
                   ) : null}
                 </View>
-              ) : (
-                <>
-                  {!isArchived && composerAck && (
-                    <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
-                      <TurnProgressLine
-                        label={composerAck.label}
-                        startedAt={composerAck.startedAt}
-                        received={composerAck.received}
-                        stopping={stoppingThisTurn}
-                        onStop={
-                          composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                        }
-                        testID="turn-progress-line"
-                      />
-                    </View>
-                  )}
-                  {!isArchived && !composerAck && settledTurn && (
-                    <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
-                      <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                    </View>
-                  )}
-                </>
-              )}
+              ) : null}
               <ConversationComposer
                 onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
                 inputRef={composerRef}
@@ -5233,6 +5227,8 @@ export default function BuzzChat() {
                 }
               />
             </Animated.View>
+              )}
+            </View>
           )}
         </KeyboardAvoidingView>
         {desktopWorkPaneMounted && (
@@ -6026,6 +6022,9 @@ const styles = StyleSheet.create((theme) => {
     // ── Composer ────────────────────────────────────────────────────
     emptyState: {
       flexGrow: 1,
+    },
+    bottomChromeStack: {
+      position: 'relative',
     },
     inputBar: {
       paddingHorizontal: 16,

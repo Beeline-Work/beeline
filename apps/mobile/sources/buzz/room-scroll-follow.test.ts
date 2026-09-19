@@ -318,8 +318,8 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('styles.hangingTurnChrome');
     expect(chatSource).toContain('HANGING_TURN_CHROME_HEIGHT');
     expect(chatSource).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
-    expect(chatSource).toContain('!(cornerLiveBar && !isCorner)');
-    expect(chatSource).toContain('!agentsOffline');
+    expect(chatSource).toContain('styles.bottomChromeStack');
+    expect(chatSource).not.toContain('!(cornerLiveBar && !isCorner)');
   });
 
   /**

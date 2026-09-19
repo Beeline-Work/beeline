@@ -12,9 +12,10 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { chmod, lstat, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
-import { resolve as resolvePath } from 'node:path';
+import { basename, dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { enumerateCursorModels, type CursorModelCatalog } from './cursor-models.js';
@@ -39,6 +40,20 @@ export const CURSOR_AGENT_FORCE_FLAG = '--force';
 
 /** Skips the Workspace Trust gate that otherwise wedges a fresh worktree. */
 export const CURSOR_AGENT_TRUST_FLAG = '--trust';
+
+/**
+ * Approves every MCP server in the isolated home so cursor-agent does not
+ * silently skip the session servers the bridge just wrote.
+ */
+export const CURSOR_AGENT_APPROVE_MCPS_FLAG = '--approve-mcps';
+
+/** Session MCP servers `session/new` hands this bridge. Same wire as ACP. */
+export type CursorMcpServer = {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Array<{ name: string; value: string }>;
+};
 
 /** Match the owned bridge and the retired stub so leftover labels still classify. */
 export const CURSOR_HARNESS_COMMAND =
@@ -119,14 +134,127 @@ export function cursorAgentArgv(input: { prompt: string; model?: string }): stri
     'stream-json',
     CURSOR_AGENT_TRUST_FLAG,
     CURSOR_AGENT_FORCE_FLAG,
+    CURSOR_AGENT_APPROVE_MCPS_FLAG,
   ];
   if (input.model && input.model !== 'auto') argv.push('--model', input.model);
   argv.push(input.prompt);
   return argv;
 }
 
+/**
+ * Isolated Beeline homes set HOME and CURSOR_HOME as siblings under one
+ * agent-home root. That is the only layout this bridge will write: operator
+ * `~/.cursor` is never a sibling of `$HOME` in that way.
+ */
+export function isolatedCursorHome(env: NodeJS.ProcessEnv): string | undefined {
+  const cursorHome = typeof env.CURSOR_HOME === 'string' ? env.CURSOR_HOME.trim() : '';
+  const home = typeof env.HOME === 'string' ? env.HOME.trim() : '';
+  if (!cursorHome || !home) return undefined;
+  const resolvedCursor = resolvePath(cursorHome);
+  const resolvedHome = resolvePath(home);
+  if (dirname(resolvedCursor) !== dirname(resolvedHome)) return undefined;
+  return resolvedCursor;
+}
+
+/** The `mcp.json` cursor-agent actually loads: `$HOME/.cursor/mcp.json`. */
+export function isolatedHomeCursorMcpPath(env: NodeJS.ProcessEnv): string | undefined {
+  if (!isolatedCursorHome(env)) return undefined;
+  const home = typeof env.HOME === 'string' ? env.HOME.trim() : '';
+  if (!home) return undefined;
+  return resolvePath(home, '.cursor', 'mcp.json');
+}
+
+/**
+ * Replace one generated file without following a symlink already occupying
+ * the target — same rule as `writeIsolatedHarnessFile` in `agent-home.ts`,
+ * kept local so this module does not import the home overlay (that graph
+ * loads this file).
+ */
+async function writeIsolatedCursorFile(path: string, content: string): Promise<void> {
+  const parent = dirname(path);
+  const parentStats = await lstat(parent);
+  if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
+    throw new Error(`isolated cursor parent is not a real directory: ${parent}`);
+  }
+  const temporary = resolvePath(parent, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, content, { mode: 0o600, flag: 'wx' });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
+}
+
+export function cursorSessionMcpConfig(servers: readonly CursorMcpServer[]): {
+  mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+} {
+  const mcpServers: Record<
+    string,
+    { command: string; args: string[]; env: Record<string, string> }
+  > = {};
+  for (const server of servers) {
+    mcpServers[server.name] = {
+      command: server.command,
+      args: server.args ?? [],
+      env: Object.fromEntries((server.env ?? []).map((entry) => [entry.name, entry.value])),
+    };
+  }
+  return { mcpServers };
+}
+
+/**
+ * Write this session's MCP servers into the isolated CURSOR_HOME, and into
+ * the `$HOME/.cursor/mcp.json` cursor-agent reads. Never writes the operator's
+ * own cursor config.
+ */
+export async function installCursorSessionMcp(input: {
+  env: NodeJS.ProcessEnv;
+  servers: readonly CursorMcpServer[];
+}): Promise<string | undefined> {
+  const cursorHome = isolatedCursorHome(input.env);
+  if (!cursorHome || !input.servers.length) return undefined;
+  const path = resolvePath(cursorHome, 'mcp.json');
+  try {
+    await mkdir(cursorHome, { recursive: true, mode: 0o700 });
+    const body = `${JSON.stringify(cursorSessionMcpConfig(input.servers), null, 2)}\n`;
+    await writeIsolatedCursorFile(path, body);
+    const homeMirror = isolatedHomeCursorMcpPath(input.env);
+    if (homeMirror) {
+      await mkdir(dirname(homeMirror), { recursive: true, mode: 0o700 });
+      await writeIsolatedCursorFile(homeMirror, body);
+    }
+    return path;
+  } catch (error) {
+    console.error('[body] cursor session MCP could not be written', path, error);
+    return undefined;
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+function parseMcpServers(value: unknown): CursorMcpServer[] {
+  if (!Array.isArray(value)) return [];
+  const servers: CursorMcpServer[] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    if (!record || typeof record.name !== 'string' || !record.name) continue;
+    if (typeof record.command !== 'string' || !record.command) continue;
+    const args = Array.isArray(record.args)
+      ? record.args.filter((arg): arg is string => typeof arg === 'string')
+      : [];
+    const env = Array.isArray(record.env)
+      ? record.env.flatMap((entry) => {
+          const row = asRecord(entry);
+          if (!row || typeof row.name !== 'string' || typeof row.value !== 'string') return [];
+          return [{ name: row.name, value: row.value }];
+        })
+      : [];
+    servers.push({ name: record.name, command: record.command, args, env });
+  }
+  return servers;
 }
 
 function textChunksFromContent(content: unknown): string[] {
@@ -339,6 +467,10 @@ export class CursorAcpServer {
     const record = asRecord(params);
     const cwd = typeof record?.cwd === 'string' && record.cwd ? record.cwd : process.cwd();
     const systemPrompt = typeof record?.systemPrompt === 'string' ? record.systemPrompt : undefined;
+    await installCursorSessionMcp({
+      env: this.env,
+      servers: parseMcpServers(record?.mcpServers),
+    });
     const catalog = await this.loadModels();
     const session: BridgeSession = {
       id: randomUUID(),

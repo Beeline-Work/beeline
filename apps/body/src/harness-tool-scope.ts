@@ -156,7 +156,7 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
     match: CURSOR_HARNESS_COMMAND,
     profile: {
       enforcement: 'config-isolated',
-      note: 'cursor-acp-bridge drives cursor-agent; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session',
+      note: 'cursor-acp-bridge writes session/new mcpServers into the isolated CURSOR_HOME mcp.json and the isolated $HOME/.cursor/mcp.json cursor-agent loads; it never writes the operator ~/.cursor',
     },
   },
 ];

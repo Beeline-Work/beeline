@@ -980,6 +980,49 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('does not render its Room owner or replace its structural overlay array for draft text', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renders = 0;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => {
+            renders += 1;
+            current = result;
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emit = (text: string) =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'draft',
+          roomId: 'room-a',
+          agentId: 'agent-a',
+          turnId: 'turn-local',
+          text,
+        },
+      });
+    await act(async () => emit('one'));
+    const structuralOverlays = current.liveOverlays;
+    const rendersAfterOpen = renders;
+
+    await act(async () => {
+      emit('one two');
+      emit('one two three');
+    });
+
+    expect(current.liveOverlays).toBe(structuralOverlays);
+    expect(renders).toBe(rendersAfterOpen);
+    expect(current.liveDraftStore.getReceived('agent-a:turn-local')).toBe('one two three');
+    await act(async () => renderer.unmount());
+  });
+
   it('settles a retracted corner draft in place instead of blanking streamed chunks', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;

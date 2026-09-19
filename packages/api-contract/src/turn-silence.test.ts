@@ -4,6 +4,7 @@ import {
   hiccupBackoffMs,
   HICCUP_ATTEMPT_LIMIT,
   phraseTurnSilence,
+  shouldCompletePendingFailedCommand,
   shouldRestartHiccup,
   TURN_SILENCE_LINE_MAX,
 } from './turn-silence.js';
@@ -46,6 +47,11 @@ describe('turn silence classification', () => {
       kind: 'workspace-failure',
       repo: 'acme/widgets',
     });
+    expect(
+      classifyTurnSilence(
+        'Command failed: git clone https://github.example/acme/widgets.git fatal: unable to access repository',
+      ).kind,
+    ).toBe('workspace-failure');
     expect(
       classifyTurnSilence('corner parent Room repository state is not verified yet').kind,
     ).toBe('workspace-failure');
@@ -114,6 +120,40 @@ describe('turn silence phrasing', () => {
         { givingUp: true },
       ).consequence,
     ).toBe('ACP agent exited (code 1). Stopped restarting after three tries.');
+  });
+
+  it('does not promise a helper restart when none was authorized', () => {
+    const line = phraseTurnSilence(
+      'Candy',
+      {
+        kind: 'hiccup',
+        fault: 'Command failed: git clone https://github.example/acme/widgets.git',
+      },
+      { restarting: false },
+    );
+    expect(line.consequence).toBe(
+      'Command failed: git clone https://github.example/acme/widgets.git.',
+    );
+    expect(line.consequence).not.toMatch(/restarting|resending/i);
+  });
+});
+
+describe('pending failed-command completion', () => {
+  it('completes standing configuration and leaves transient clone recoverable', () => {
+    expect(
+      shouldCompletePendingFailedCommand(
+        'workspace-failure',
+        'corner parent Room repository state is not verified yet',
+      ),
+    ).toBe(true);
+    expect(
+      shouldCompletePendingFailedCommand(
+        'workspace-failure',
+        'Command failed: git clone https://github.example/acme/widgets.git',
+      ),
+    ).toBe(false);
+    expect(shouldCompletePendingFailedCommand('hiccup', 'the turn stalled')).toBe(false);
+    expect(shouldCompletePendingFailedCommand('wrong-model')).toBe(true);
   });
 });
 

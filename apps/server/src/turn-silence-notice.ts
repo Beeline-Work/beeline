@@ -95,7 +95,8 @@ async function inscribeSilence(
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
   const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt));
   const phrase = phraseTurnSilence(agentName, classified, {
-    givingUp: classified.kind === 'hiccup' && attempt >= 3,
+    givingUp: classified.kind === 'hiccup' && canIncrement && attempt >= 3,
+    restarting: restart,
   });
   const systemPhrase: SystemPhrase = {
     subject: { kind: 'agent', id: input.agentId, name: agentName },

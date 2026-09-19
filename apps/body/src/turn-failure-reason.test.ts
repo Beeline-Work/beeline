@@ -104,5 +104,12 @@ describe('distillTurnFailureReason', () => {
     expect(
       distillTurnFailureReason(new Error('corner has no authoritative objective fact')).kind,
     ).toBe('workspace-failure');
+    expect(
+      distillTurnFailureReason(
+        new Error(
+          'Command failed: git clone https://github.example/acme/widgets.git\nfatal: unable to access repository',
+        ),
+      ).kind,
+    ).toBe('workspace-failure');
   });
 });

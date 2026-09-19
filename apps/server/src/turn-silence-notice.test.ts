@@ -417,6 +417,41 @@ describe('silence detector ownership', () => {
     });
   });
 
+  it('keeps a pending corner-start command redeliverable after a transient clone failure', async () => {
+    const requestId = '8'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`,
+      [requestId, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: requestId,
+      reason: 'human_tag',
+    });
+    const result = await new DaemonService(database, new LiveHub()).execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        requestId,
+        status: 'failed',
+        reason:
+          'Command failed: git clone https://github.example/acme/widgets.git\nfatal: unable to access repository',
+        reasonKind: 'workspace-failure',
+      },
+      AGENT,
+    );
+    expect(result.hiccupRestart).toBeUndefined();
+    const line = await failureLine(database, requestId);
+    expect(line).toMatchObject({ silence: 'workspace-failure', state: 'failed' });
+    expect(line!.text).not.toMatch(/restarting|resending/i);
+    expect(await commandState(database, command!.id)).toEqual({
+      state: 'pending',
+      hiccup_attempts: 0,
+      generation_id: null,
+    });
+  });
+
   it('coalesces concurrent silence detectors into one restart', async () => {
     const requestId = 'f'.repeat(64);
     const command = await ask(database, requestId);

@@ -6,7 +6,11 @@ import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import type { CornerRestoreResult, RoomRepositoryStateResult } from '@beeline/api-contract/daemon';
+import {
+  isStandingWorkspaceConfigurationFault,
+  type CornerRestoreResult,
+  type RoomRepositoryStateResult,
+} from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
@@ -97,11 +101,7 @@ export function cornerStartConfigKey(
 
 export function isStandingCornerStartFault(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
-  return (
-    /repository state is not verified/i.test(text) ||
-    /incomplete repository binding/i.test(text) ||
-    /no authoritative objective fact/i.test(text)
-  );
+  return isStandingWorkspaceConfigurationFault(text);
 }
 
 /**

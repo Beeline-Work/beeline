@@ -18,8 +18,10 @@ import type {
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
+  classifyTurnSilence,
   cornerTextRefusal,
   normalizeCornerText,
+  shouldCompletePendingFailedCommand,
 } from '@beeline/api-contract/daemon';
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
@@ -324,6 +326,20 @@ export class DaemonService {
             (result as { hiccupRestart?: boolean }).hiccupRestart
           ) {
             // noteFirstSilence already reopened this command for re-delivery.
+          } else if (
+            candidate.status === 'failed' &&
+            command.state === 'pending' &&
+            !shouldCompletePendingFailedCommand(
+              classifyTurnSilence(
+                typeof candidate.reason === 'string' ? candidate.reason : undefined,
+                typeof candidate.reasonKind === 'string' ? candidate.reasonKind : undefined,
+              ).kind,
+              typeof candidate.reason === 'string' ? candidate.reason : '',
+            )
+          ) {
+            // Transient corner-start clone/network: the helper retries startCorner.
+            // Leave the original pending command for that attempt; do not ask
+            // systemd to restart, and do not consume the request.
           } else
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,

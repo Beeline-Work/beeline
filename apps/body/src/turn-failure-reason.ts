@@ -48,11 +48,11 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
           : error == null
             ? ''
             : String(error);
-  const firstLine =
-    raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line && !/^at\s/.test(line)) ?? '';
+  const informative = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^at\s/.test(line));
+  const firstLine = informative[0] ?? '';
   const stripped = firstLine.replace(/^(?:[A-Za-z]*Error|Error):\s*/, '').replace(/\s+/g, ' ');
   const clean = redactToolDetail(stripped).trim();
   const text = !clean
@@ -60,7 +60,9 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
     : clean.length > TURN_FAILURE_REASON_MAX
       ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
       : clean;
-  const classified = classifyTurnSilence(text);
+  const classified = classifyTurnSilence(
+    redactToolDetail(informative.join(' ')).replace(/\s+/g, ' ') || text,
+  );
   const kind: TurnReceiptReasonKind =
     classified.kind === 'wrong-model' ? 'model-selection-unavailable' : classified.kind;
   return { text, kind };

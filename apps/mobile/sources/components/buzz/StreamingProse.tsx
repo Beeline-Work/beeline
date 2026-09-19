@@ -144,7 +144,13 @@ export function StreamingProse({
       : undefined;
 
   return (
-    <MonoMarkdown markdown={presentation.text} tail={tail} testID={testID} textStyle={textStyle} />
+    <MonoMarkdown
+      incremental
+      markdown={presentation.text}
+      tail={tail}
+      testID={testID}
+      textStyle={textStyle}
+    />
   );
 }
 

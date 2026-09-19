@@ -120,10 +120,10 @@ export async function installAgentService(
   if (options.start === false) return 0;
 
   const before = await serviceStatus(run, service);
-  // restart is intentional: `beeline start` has always meant restart, while
-  // an inactive/new unit is started by the same operation. `--no-block`
-  // leaves the unit's ten-minute graceful drain under systemd rather than the
-  // generic 15-second subprocess timeout used for individual control calls.
+  // Used when start found no live daemon for this agent. A running unit is
+  // started by the same operation. `--no-block` leaves the unit's ten-minute
+  // graceful drain under systemd rather than the generic 15-second subprocess
+  // timeout used for individual control calls.
   await run(['restart', '--no-block', service]);
   const deadline = Date.now() + (options.waitTimeoutMs ?? SYSTEMD_RESTART_WAIT_MS);
   do {

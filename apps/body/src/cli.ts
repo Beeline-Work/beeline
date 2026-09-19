@@ -16,7 +16,6 @@
  */
 import './network-family-bootstrap.js';
 import { dirname, resolve } from 'node:path';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
@@ -34,12 +33,14 @@ import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import {
+  clearDaemonPidRecordIfPid,
   findAgentRuntimeConfigPaths,
   migrateRuntimeRecordAccessPolicy,
   readRuntimeRecord,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
   stopRuntimeDaemon,
+  writeDaemonPidRecord,
 } from './runtime.js';
 import { retireRemovedAgent } from './agent-retirement.js';
 import { runStartCommand } from './start-command.js';
@@ -105,11 +106,12 @@ ${pc.dim('Usage:')}
                                             event kinds it reacts to (e.g. joined);
                                             --access is everyone|creator|allowlist
                                             (default creator)
-  beeline start [agent-pubkey]              Start — or RESTART when already running,
-                                            stopping cleanly after in-flight work —
-                                            this repo's (or, outside a repo, this
-                                            host's) durable agent
-  beeline start --agent <agent-pubkey>      Same, from anywhere (no repo needed)
+  beeline start                             Update the helper, then start every
+                                            paired agent on this host. Already-
+                                            running agents are left untouched.
+                                            Reports started, already running, or
+                                            failed for each.
+  beeline start --agent <agent-pubkey>      Same, for one agent only
   beeline stop --agent <agent-pubkey>       Stop and disable the supervised agent
   beeline update [--check|--status|--rollback|--force]
                                             Self-update the installed bundle
@@ -163,7 +165,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   runtime = activated.runtime;
   const daemonApi = activated.client;
   const agent = runtimeAgentCommand(runtime);
-  await writeFile(resolve(dirname(configPath), 'daemon.pid'), `${process.pid}\n`, { mode: 0o600 });
+  await writeDaemonPidRecord(configPath, process.pid);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BUZZ_AGENT_BIN: agent.command,
@@ -452,13 +454,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   } finally {
     clearInterval(scratchSweepTimer);
     await notifier.stopping(stoppingStatus).catch(() => undefined);
-    // Only clear the pid file while it still names THIS process — a
+    // Only clear the pid record while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.
-    const pidPath = resolve(dirname(configPath), 'daemon.pid');
-    const recorded = Number((await readFile(pidPath, 'utf8').catch(() => '')).trim());
-    if (recorded === process.pid) {
-      await unlink(pidPath).catch(() => undefined);
-    }
+    await clearDaemonPidRecordIfPid(configPath, process.pid);
   }
 }
 

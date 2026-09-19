@@ -113,7 +113,8 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 
 ```text
 beeline connect [XXXXXXXX-XXXXXXXX]   Install and connect an app-authorized agent
-beeline start [agent-pubkey]          Start — or cleanly restart — this repo's agent
+beeline start                         Update the helper, then start every paired agent
+beeline start --agent <agent-pubkey>  Start one agent (already-running is a no-op)
 beeline stop --agent <agent-pubkey>   Stop and disable the supervised agent
 beeline update [--check|--status|--rollback|--force]
                                       Self-update the installed bundle

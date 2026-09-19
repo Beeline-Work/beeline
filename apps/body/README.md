@@ -22,7 +22,7 @@ back to their parent Room; their Room-facing output is server-owned cards.
 
 - `beeline connect [code]`
 - `beeline connect-finish <grant>`
-- `beeline start [--agent <pubkey>]`
+- `beeline start [--agent <pubkey>]` — update the helper, then start every paired host agent (already-running is a no-op)
 - `beeline stop --agent <pubkey>`
 - `beeline daemon --config <runtime.json>`
 - `beeline update ...`

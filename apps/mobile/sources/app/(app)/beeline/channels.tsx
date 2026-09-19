@@ -1157,7 +1157,7 @@ export default function BuzzChannels() {
       <View
         pointerEvents="none"
         testID="room-open-deck-overlay"
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 30 }}
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 30, elevation: 30 }}
       >
         <RoomOpenPixel
           roomSurface={null}

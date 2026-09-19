@@ -223,6 +223,54 @@ describe('stale pid recovery (gone vs recycled birth)', () => {
     await expect(stopRuntimeDaemon(configPath)).resolves.toBeNull();
     expect(process.kill(process.pid, 0)).toBe(true);
   });
+
+  it('starts only the selected agent when its stale pid now belongs to another runtime', async () => {
+    root = mkdtempSync(resolve(tmpdir(), 'beeline-start-selected-stale-'));
+    const selected = 'aa'.repeat(32);
+    const other = 'bb'.repeat(32);
+    const selectedConfig = resolve(root, 'beeline', 'agents', selected, 'runtime.json');
+    const otherConfig = resolve(root, 'beeline', 'agents', other, 'runtime.json');
+    mkdirSync(resolve(selectedConfig, '..'), { recursive: true });
+    mkdirSync(resolve(otherConfig, '..'), { recursive: true });
+    writeFileSync(selectedConfig, '{}\n');
+    writeFileSync(otherConfig, '{}\n');
+    const { pid, child } = await spawnStubDaemon(otherConfig);
+    writeFileSync(resolve(selectedConfig, '..', 'daemon.pid'), `${pid}\n`);
+    const previousStateHome = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = root;
+    try {
+      const launched: string[] = [];
+      const reports = await runStartCommand(['start', '--agent', selected], false, {
+        updateBundle: async () => undefined,
+        startOne: (configPath) =>
+          startStoredRuntime(
+            configPath,
+            {},
+            {
+              readPid: runtimeDaemonPid,
+              launch: async (path) => {
+                launched.push(path);
+                return 99;
+              },
+              log: () => undefined,
+            },
+          ),
+        log: () => undefined,
+      });
+
+      expect(reports).toEqual([
+        { id: selected, path: selectedConfig, status: 'started', pid: 99 },
+      ]);
+      expect(launched).toEqual([selectedConfig]);
+      expect(existsSync(resolve(selectedConfig, '..', 'daemon.pid'))).toBe(false);
+      expect(process.kill(pid, 0)).toBe(true);
+    } finally {
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+      child.kill('SIGTERM');
+      await waitForExit(child);
+    }
+  });
 });
 
 describe('stopRuntimeDaemon waits out a graceful drain', () => {

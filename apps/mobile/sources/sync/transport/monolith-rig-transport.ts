@@ -374,7 +374,8 @@ export class MonolithRigTransport {
         next.onopen = () => {
           if (closed || socket !== next) return;
           reconnectDelayMs = 1_000;
-          for (const roomId of roomIds) next.send(JSON.stringify({ type: 'subscribe', roomId }));
+          if (roomIds.size === 0) return;
+          next.send(JSON.stringify({ type: 'subscribe', roomIds: [...roomIds] }));
         };
         next.onmessage = (message) => {
           if (closed || socket !== next) return;

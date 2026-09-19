@@ -857,6 +857,72 @@ process.exit(1);
   return binary;
 }
 
+async function fakeRpcInternalErrorAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-rpc-internal-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'claude-agent-acp.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    process.stderr.write('ENOENT: no such file, open \\'{"disableClaudeAiConnectors":true}\\'\\n');
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: {
+        code: -32603,
+        message: 'Internal error',
+        data: { details: 'ENOENT: no such file, open \\'{"disableClaudeAiConnectors":true}\\'' },
+      },
+    });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+async function fakeClaudeSettingsShapeAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-claude-settings-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'claude-agent-acp.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    const settings = message.params?._meta?.claudeCode?.options?.settings;
+    if (typeof settings === 'string') process.exit(73);
+    if (!settings || settings.disableClaudeAiConnectors !== true) process.exit(74);
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'claude-settings-session' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakePersistentConversationAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-persistent-'));
   temporaryDirectories.push(directory);
@@ -1211,6 +1277,44 @@ describe('AcpClient live steering', () => {
     await expect(client.start()).rejects.toThrow(
       /ACP agent .* exited code=1 signal=null: Error: ANTHROPIC_API_KEY is not set\. Please run `claude login`\./,
     );
+  });
+
+  it('carries the harness stderr tail into a JSON-RPC Internal error', async () => {
+    // claude-agent-acp answers session/new with -32603 and the real cause on
+    // stderr. The daemon used to reject with only "ACP error -32603: Internal
+    // error", so a corner turn could not name the adapter's own reason.
+    const client = new AcpClient({
+      agentCommand: await fakeRpcInternalErrorAgent(),
+      agentLabel: 'claude-agent-acp',
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      await expect(client.sessionNew({ cwd: tmpdir() })).rejects.toThrow(
+        /ACP error -32603: Internal error; ENOENT: no such file, open '{"disableClaudeAiConnectors":true}'; harness stderr: ENOENT: no such file, open '{"disableClaudeAiConnectors":true}'/,
+      );
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('sends Claude session settings as an object, not a --settings JSON string', async () => {
+    // The Claude Agent SDK treats a string settings value as a file path. The
+    // previous JSON.stringify blob therefore became a missing-file Internal
+    // error at session/new for every claude-kind corner.
+    const client = new AcpClient({
+      agentCommand: await fakeClaudeSettingsShapeAgent(),
+      agentLabel: 'claude-agent-acp',
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      await expect(client.sessionNew({ cwd: tmpdir() })).resolves.toMatchObject({
+        sessionId: 'claude-settings-session',
+      });
+    } finally {
+      await client.stop();
+    }
   });
 
   it('injects ordered follow-ups into the active prompt run', async () => {

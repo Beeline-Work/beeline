@@ -1105,8 +1105,16 @@ export class AcpClient extends EventEmitter {
       this.pending.delete(n);
       this.clearTimer(p);
       if (msg.error) {
-        const err = msg.error as { code?: number; message?: string };
-        p.reject(new Error(`ACP error ${err.code}: ${err.message}`));
+        const err = msg.error as { code?: number; message?: string; data?: { details?: unknown } };
+        const details =
+          typeof err.data?.details === 'string' && err.data.details.trim()
+            ? err.data.details.trim()
+            : '';
+        const meaningful = meaningfulHarnessStderr(this.stderrTail);
+        const extra = [details, meaningful ? `harness stderr: ${meaningful}` : '']
+          .filter(Boolean)
+          .join('; ');
+        p.reject(new Error(`ACP error ${err.code}: ${err.message}${extra ? `; ${extra}` : ''}`));
       } else {
         p.resolve(msg.result);
       }

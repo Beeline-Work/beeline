@@ -98,9 +98,14 @@ const SHARED_CREDENTIALS: Array<{
   // shape as codex).
   { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
   { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
-  // Cursor CLI stores auth state under ~/.cursor/; cursor-agent reads
-  // CURSOR_HOME to relocate the data directory.
+  // Cursor CLI stores chat/MCP state under ~/.cursor/; cursor-agent reads
+  // CURSOR_HOME to relocate that data directory. The login is NOT there:
+  // cursor-agent reads ~/.config/cursor/auth.json (XDG config). Beeline
+  // remaps HOME to the isolated user/ dir, so the login has to be linked
+  // into that HOME or every Room/corner except one that was patched by
+  // hand fails with "Authentication required".
   { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
+  { dir: 'user', source: '.config/cursor/auth.json', target: '.config/cursor/auth.json' },
 ];
 
 /**
@@ -310,6 +315,8 @@ export async function prepareRoomAgentHome(
     const source = resolve(operatorHome, credential.source);
     const target = resolve(root, credential.dir, credential.target);
     if (!existsSync(source) || existsSync(target)) continue;
+    // Nested targets (Cursor's XDG login) need their parent created first.
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 }).catch(() => undefined);
     // Symlink, not copy: a refreshed token written through the link stays
     // shared with every other room-instance and with the operator's own CLI.
     await symlink(source, target).catch(() => undefined);

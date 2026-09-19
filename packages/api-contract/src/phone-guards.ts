@@ -50,6 +50,18 @@ function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
 }
 
+/**
+ * A Room role is descriptive paint, not the authority boundary: every write
+ * is re-authorized by the server. Older stores have emitted named role aliases
+ * (notably `master`) while still returning an otherwise complete transcript.
+ * Keep those Rooms readable and let role comparisons fail closed until the
+ * producer returns to the canonical vocabulary. Non-string roles remain an
+ * invalid transport shape.
+ */
+function readableRoomRole(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0;
+}
+
 function stringArray(value: unknown, itemGuard: (item: string) => boolean = () => true): boolean {
   return Array.isArray(value) && value.every((item) => typeof item === 'string' && itemGuard(item));
 }
@@ -358,7 +370,7 @@ function member(value: unknown): value is RoomViewMember {
   return Boolean(
     item &&
     identity(item.identity) &&
-    (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
+    readableRoomRole(item.role) &&
     (presence === undefined ||
       (presence &&
         (presence.status === 'online' || presence.status === 'offline') &&
@@ -639,7 +651,7 @@ function viewer(value: unknown): boolean {
         (readCursor.messageId === null || typeof readCursor.messageId === 'string') &&
         (readCursor.firstUnreadMessageId === null ||
           typeof readCursor.firstUnreadMessageId === 'string'))) &&
-    (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
+    readableRoomRole(item.role) &&
     permissions &&
     typeof permissions.send === 'boolean' &&
     typeof permissions.manage === 'boolean',

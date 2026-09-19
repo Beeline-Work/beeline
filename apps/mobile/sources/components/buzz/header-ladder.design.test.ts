@@ -122,14 +122,14 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    // Back, Room corners, corner overflow, Room overflow.
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(4);
+    // Back and lone corner overflow keep the 44-chrome + 4 slop edge.
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(2);
   });
 
-  it('puts a corner glyph beside Room overflow that opens the dedicated corners list', () => {
+  it('puts a brass corner glyph beside Room overflow that opens the dedicated corners list', () => {
     expect(chatSource).toContain('testID="room-corners-menu"');
     expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
-    expect(chatSource).toContain('<Text style={styles.roomActionsGlyph}>◇</Text>');
+    expect(chatSource).toContain('<Text style={styles.roomCornersGlyph}>◇</Text>');
     expect(chatSource).toContain('router.push(roomCornersHref(decodedId))');
     expect(chatSource).toContain("from '@/buzz/corner-navigation'");
     expect(chatSource).toContain('roomCornersHref');
@@ -139,6 +139,29 @@ describe('Chat header — one language for Room and Corner', () => {
       chatSource.indexOf('testID="room-corners-menu"'),
     );
     expect(glyph).toContain('!parentChannelId && !isDirectMessage');
+    // Option E: brass of the corner lifecycle family, slightly larger than
+    // the steel dots, clustered by hit slop rather than two 44pt boxes.
+    const diamond = chatSource.match(/roomCornersGlyph:\s*\{[\s\S]*?\n    \},/);
+    expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
+    expect(diamond![0]).toContain('color: groknight.accent');
+    expect(diamond![0]).toContain('fontSize: groknight.type.meta.fontSize');
+    expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\n    \},/);
+    expect(dots![0]).toContain('color: groknight.steel');
+    expect(dots![0]).toContain('fontSize: 12');
+    const diamondButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
+    expect(diamondButton![0]).toContain('marginLeft: 12');
+    expect(diamondButton![0]).not.toContain('minWidth: 44');
+    const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
+    expect(clustered, 'missing clustered overflow style').toBeTruthy();
+    expect(clustered![0]).toContain('marginLeft: groknight.space.xs');
+    expect(clustered![0]).not.toContain('minWidth: 44');
+    expect(chatSource).toContain(
+      'const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',
+    );
+    expect(chatSource.match(/hitSlop=\{HEADER_TRAILING_HIT_SLOP\}/g)).toHaveLength(2);
+    expect(chatSource).not.toMatch(/roomCorners(?:Badge|Count|Plate)/);
+    expect(chatSource).not.toContain('backgroundColor: groknight.brassWash');
   });
 
   it('leaves one quiet, overlaid tab when the desktop work pane is dismissed', () => {

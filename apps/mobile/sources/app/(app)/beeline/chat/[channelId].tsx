@@ -391,6 +391,12 @@ const INITIAL_CORNER_MESSAGE_WINDOW = 200;
  * pixel of chrome.
  */
 const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
+/**
+ * The Room diamond and overflow sit at glyph size so they read as one
+ * trailing cluster; 14 all round restores a 44pt target on a ~16pt glyph
+ * without the stacked 12+44 boxes that used to float the diamond away.
+ */
+const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -4427,20 +4433,20 @@ export default function BuzzChat() {
             </View>
             {/* Membership still consumes no header width: the Members row lives
               in the overflow sheet (corner) or the inspector (desktop Room).
-              The trailing slot carries the corner glyph `◇` beside overflow —
-              a second door onto the Room's dedicated corners list, not a
-              second live-corner jump. The pinned line below the transcript
-              stays the one active-corner affordance. */}
+              The trailing slot carries the corner glyph `◇` in brass beside
+              overflow — a second door onto the Room's dedicated corners list,
+              not a second live-corner jump. The pinned line below the
+              transcript stays the one active-corner affordance. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
                 accessibilityRole="button"
-                hitSlop={HEADER_EDGE_HIT_SLOP}
+                hitSlop={HEADER_TRAILING_HIT_SLOP}
                 onPress={() => router.push(roomCornersHref(decodedId))}
-                style={styles.roomActionsButton}
+                style={styles.roomCornersButton}
                 testID="room-corners-menu"
               >
-                <Text style={styles.roomActionsGlyph}>◇</Text>
+                <Text style={styles.roomCornersGlyph}>◇</Text>
               </TouchableOpacity>
             )}
             {isCorner && !viewerIsAgent && !isArchived && (
@@ -4463,14 +4469,14 @@ export default function BuzzChat() {
                 <TouchableOpacity
                   accessibilityLabel={`${ROOM_LABEL} actions`}
                   accessibilityRole="button"
-                  hitSlop={HEADER_EDGE_HIT_SLOP}
+                  hitSlop={HEADER_TRAILING_HIT_SLOP}
                   onPress={() => {
                     setMembershipError(null);
                     setRenameEditing(false);
                     setRenameError(null);
                     setRoomActionsVisible(true);
                   }}
-                  style={styles.roomActionsButton}
+                  style={styles.roomClusteredActionsButton}
                   testID="room-actions-menu"
                 >
                   <Text style={styles.roomActionsGlyph}>•••</Text>
@@ -5726,12 +5732,30 @@ const styles = StyleSheet.create((theme) => {
     cornerHeaderWaiting: { color: groknight.accent },
     cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
+    // Corner overflow stays a lone 44pt edge control; the Room diamond and
+    // menu cluster below, colour-separated, and restore 44pt via hit slop.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
       marginLeft: 12,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    roomCornersButton: {
+      marginLeft: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomClusteredActionsButton: {
+      marginLeft: groknight.space.xs,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomCornersGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.accent,
+      fontSize: groknight.type.meta.fontSize,
+      lineHeight: groknight.type.meta.lineHeight,
     },
     roomActionsGlyph: {
       ...Typography.default('semiBold'),

@@ -312,7 +312,8 @@ check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
-trailing slot carries the corner glyph `◇` beside overflow; it is a second door
+trailing slot carries the corner glyph `◇` in brass, slightly larger than the
+steel overflow dots and close enough that colour separates them; it is a second door
 onto the Room's dedicated corners list (`corners/[roomId]`, windowed with the
 same cap and archived fallback as the desktop work-pane corner list), not a second
 live-corner jump. The pinned line below the transcript remains the one

@@ -17,6 +17,7 @@ const C = '4c21aefc-a9e9-457b-918e-b26306253ac8';
 const AUTHOR = '33333333-3333-4333-8333-333333333333';
 const H = 'a'.repeat(64);
 const A = 'b'.repeat(64);
+const REVIEWER = 'c'.repeat(64);
 const URL = 'https://github.com/owner/widgets/pull/614';
 const SHA = 'bcaa310a' + '1'.repeat(32);
 
@@ -33,13 +34,19 @@ beforeEach(async () => {
   db = new PgliteDatabase();
   await migrate(db);
   await db.query(
-    `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Reviewer')`,
-    [H, A],
+    `INSERT INTO identities(id,kind,name,handle)
+     VALUES($1,'human','Owner','owner'),($2,'agent','Author','author'),($3,'agent','Reviewer','reviewer')`,
+    [H, A, REVIEWER],
+  );
+  await db.query(
+    `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$3,false),($2,$3,false)`,
+    [A, REVIEWER, H],
   );
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [W]);
   await db.query(
-    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`,
-    [W, H, A],
+    `INSERT INTO memberships(workspace_id,identity_id,role)
+     VALUES($1,$2,'owner'),($1,$3,'member'),($1,$4,'member')`,
+    [W, H, A, REVIEWER],
   );
   await db.query(
     `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type,status)
@@ -61,16 +68,16 @@ beforeEach(async () => {
       [corner, W, R, H],
     );
     await db.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Review PR 614',$2,'{"checks":"unknown","lifecycle":"working"}')`,
-      [corner, `corner/${corner}`],
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
+       VALUES($1,$3,'Review PR 614',$2,'{"checks":"unknown","lifecycle":"working"}')`,
+      [corner, `corner/${corner}`, A],
     );
   }
   for (const room of [R, C, AUTHOR]) {
     await db.query(
       `INSERT INTO memberships(room_id,identity_id,role,workspace_id)
-       VALUES($1,$2,'member',$4),($1,$3,'owner',$4)`,
-      [room, A, H, W],
+       VALUES($1,$2,'member',$5),($1,$3,'member',$5),($1,$4,'owner',$5)`,
+      [room, A, REVIEWER, H, W],
     );
   }
   head = SHA;
@@ -170,18 +177,12 @@ async function ownPr() {
 
 describe('PR-scoped check gate', () => {
   it('uses GitHub statusCheckRollup as the verdict', async () => {
-    await expect(gate()).resolves.toEqual({
+    await expect(gate()).resolves.toMatchObject({
       checks: 'passed',
       pullRequest: URL,
       headSha: SHA,
-      approvalPending: false,
+      approvalPending: true,
       reviewer: null,
-      reviewerIsAuthor: false,
-      reviewerWake: {
-        status: 'unconfigured',
-        detail: 'This Room has no configured reviewer, so no agent is woken for review.',
-      },
-      rule: 'This Room has no configured reviewer, so no agent approval gates this pull request.',
     });
     expect(graphqlRequests()).toHaveLength(1);
     expect(
@@ -223,30 +224,47 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ checks: 'pending' });
   });
 
-  it('lifts the self-review deadlock for the configured reviewer who opened the corner', async () => {
+  it('does not turn self-review into merge authority', async () => {
     await ownPr();
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
     await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
-      approvalPending: false,
+      approvalPending: true,
       reviewer: '@reviewer',
       reviewerIsAuthor: true,
     });
   });
 
-  it('keeps reviewer approval bound to the requested PR and exact head', async () => {
+  it('distinguishes human approval from an agent review and missing request state', async () => {
     await ownPr();
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
-    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
-    expect(await gate()).toMatchObject({ approvalPending: true, reviewer: '@reviewer' });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true, reviewer: null });
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true, reviewer: '@reviewer' });
     await expect(
-      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
-    ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
-    expect(await gate()).toMatchObject({ approvalPending: false });
+      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, REVIEWER),
+    ).rejects.toThrow('merge approval requires a human');
+    await db.query(
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force,pull_request_number,head_sha)
+       VALUES($1,$2,false,614,$3)`,
+      [AUTHOR, REVIEWER, SHA],
+    );
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
+    await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1`, [AUTHOR]);
+    await db.query(
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force,pull_request_number,head_sha)
+       VALUES($1,$2,false,614,$3)`,
+      [AUTHOR, H, SHA],
+    );
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
     head = '9'.repeat(40);
-    expect(await gate()).toMatchObject({ approvalPending: true, headSha: head });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true, headSha: head });
+  });
+
+  it('preserves owner-authorized automatic merge mode without per-PR approval', async () => {
+    await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
+    expect(await gate()).toMatchObject({ approvalPending: false });
   });
 
   it('names a configured reviewer who is not a parent member and does not drop the gate', async () => {

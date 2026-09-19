@@ -172,6 +172,7 @@ async function main() {
     live,
     false,
     enrichmentDatabase,
+    objectService,
   );
   const daemon = new DaemonService(
     database,

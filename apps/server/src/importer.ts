@@ -422,6 +422,7 @@ export class SnapshotImporter {
             );
           },
         );
+      const mediaByUrl = new Map<string, string>();
       for (const media of options.includeMedia ? snapshot.media : [])
         await one('media', media.legacyUrl, async (db) => {
           const bytes = media.bytesBase64
@@ -430,32 +431,33 @@ export class SnapshotImporter {
           mediaBytes += bytes.length;
           const digest = createHash('sha256').update(bytes).digest('hex');
           const mediaId = randomUUID();
+          const key = `media/${media.ownerId}/${digest}`;
           const stored = await db.query<{ id: string }>(
-            `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(owner_id,sha256) DO UPDATE SET name=EXCLUDED.name RETURNING id`,
-            [mediaId, media.ownerId, bytes, media.mimeType, media.name, digest],
+            `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+             VALUES($1,$2,'media',$3,$4,$5,$6,$7,'ready',now()+interval '24 hours')
+             ON CONFLICT(owner_id,sha256) DO UPDATE SET title=EXCLUDED.title,expires_at=EXCLUDED.expires_at
+             RETURNING id`,
+            [mediaId, media.ownerId, key, media.mimeType, media.name, bytes.length, digest],
           );
-          await db.query(
-            `INSERT INTO legacy_media_urls(legacy_url,media_id) VALUES($1,$2) ON CONFLICT(legacy_url) DO UPDATE SET media_id=EXCLUDED.media_id`,
-            [media.legacyUrl, stored.rows[0]!.id],
-          );
+          const storedId = stored.rows[0]!.id;
+          mediaByUrl.set(media.legacyUrl, storedId);
+          const path = mediaPath(media.legacyUrl);
+          if (path) mediaByUrl.set(path, storedId);
         });
-      await this.target.query(
-        `UPDATE identities i SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE i.avatar=l.legacy_url OR regexp_replace(i.avatar,'^https?://[^/]+','')=regexp_replace(l.legacy_url,'^https?://[^/]+','')`,
-      );
-      await this.target.query(
-        `UPDATE workspaces w SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE w.avatar=l.legacy_url OR regexp_replace(w.avatar,'^https?://[^/]+','')=regexp_replace(l.legacy_url,'^https?://[^/]+','')`,
-      );
-      await this.target.query(
-        `UPDATE rooms r SET avatar='/v1/media/'||l.media_id::text FROM legacy_media_urls l WHERE r.avatar=l.legacy_url OR regexp_replace(r.avatar,'^https?://[^/]+','')=regexp_replace(l.legacy_url,'^https?://[^/]+','')`,
-      );
-      const mediaMappings = await this.target.query<{ legacy_url: string; media_id: string }>(
-        `SELECT legacy_url,media_id FROM legacy_media_urls`,
-      );
-      const mediaByUrl = new Map<string, string>();
-      for (const row of mediaMappings.rows) {
-        mediaByUrl.set(row.legacy_url, row.media_id);
-        const path = mediaPath(row.legacy_url);
-        if (path) mediaByUrl.set(path, row.media_id);
+      for (const [legacyUrl, mediaId] of mediaByUrl) {
+        const path = mediaPath(legacyUrl) ?? legacyUrl;
+        await this.target.query(
+          `UPDATE identities SET avatar=$1 WHERE avatar=$2 OR regexp_replace(avatar,'^https?://[^/]+','')=$3`,
+          [`/v1/media/${mediaId}`, legacyUrl, path],
+        );
+        await this.target.query(
+          `UPDATE workspaces SET avatar=$1 WHERE avatar=$2 OR regexp_replace(avatar,'^https?://[^/]+','')=$3`,
+          [`/v1/media/${mediaId}`, legacyUrl, path],
+        );
+        await this.target.query(
+          `UPDATE rooms SET avatar=$1 WHERE avatar=$2 OR regexp_replace(avatar,'^https?://[^/]+','')=$3`,
+          [`/v1/media/${mediaId}`, legacyUrl, path],
+        );
       }
       const importedMediaUrl = (value: string | undefined) => {
         if (!value) return undefined;

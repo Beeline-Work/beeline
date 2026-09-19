@@ -9,10 +9,9 @@
  * then calls `finalizeUpload`, which checks the stored size with one
  * `headObject` before flipping `pending → ready`.
  *
- * Dedupe mirrors `media`: identical bytes from the same owner resolve onto the
- * existing row and restart its TTL window. A storage-less server (no S3 env)
- * refuses every write with a clear error; reads and the legacy bytea path are
- * unaffected.
+ * Dedupe is per owner+sha256: identical bytes from the same owner resolve onto
+ * the existing row and restart its TTL window. A storage-less server (no S3
+ * env) refuses every write with a clear error.
  */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type {
@@ -104,7 +103,7 @@ export class ObjectService {
   /**
    * Pass-through artifact upload: validate, stream to storage, write the row
    * as `ready` in one step. Identical bytes from the same owner restart the
-   * existing row's TTL window and return it, exactly like `uploadMedia`.
+   * existing row's TTL window and return it, exactly like a person file share.
    */
   async uploadArtifact(
     agentId: string,
@@ -117,7 +116,54 @@ export class ObjectService {
     if (!bytes.length || bytes.length > ARTIFACT_MAXIMUM_BYTES)
       throw new Error(`artifact size must be between 1 and ${ARTIFACT_MAXIMUM_BYTES} bytes`);
     if (!title.trim()) throw new Error('artifact title is required');
-    const normalizedTitle = title.slice(0, 200);
+    return this.#putReadyObject(agentId, bytes, mimeType, title.slice(0, 200), 'artifact');
+  }
+
+  /**
+   * Person Room/corner file share: the same Tigris pass-through as artifacts,
+   * any mime, capped at the media ceiling. Filename is stored as the title
+   * so the card and capability link have a name.
+   */
+  async uploadSharedFile(
+    ownerId: string,
+    bytes: Uint8Array,
+    mimeType: string,
+    name: string,
+  ): Promise<UploadArtifactResult> {
+    if (!mimeType || mimeType.length > 255) throw new Error('upload mimeType is invalid');
+    if (!bytes.length || bytes.length > this.maximumBytes)
+      throw new Error(`upload size must be between 1 and ${this.maximumBytes} bytes`);
+    const title = name.trim() || 'upload';
+    return this.#putReadyObject(ownerId, bytes, mimeType, title.slice(0, 200), 'media');
+  }
+
+  /**
+   * Bytes this owner uploaded, for the avatar promotion path. Missing or
+   * pending objects return undefined so the caller can say "choose again".
+   */
+  async readOwnedBytes(
+    ownerId: string,
+    objectId: string,
+    database: SqlDatabase = this.database,
+  ): Promise<Uint8Array | undefined> {
+    const row = (
+      await database.query<{ key: string }>(
+        `SELECT key FROM objects WHERE id=$1 AND owner_id=$2 AND state='ready'`,
+        [objectId, ownerId],
+      )
+    ).rows[0];
+    if (!row) return undefined;
+    const bytes = await this.#requireStorage().getObject(row.key);
+    return bytes ?? undefined;
+  }
+
+  async #putReadyObject(
+    ownerId: string,
+    bytes: Uint8Array,
+    mimeType: string,
+    title: string,
+    kind: 'media' | 'artifact',
+  ): Promise<UploadArtifactResult> {
     const digest = createHash('sha256').update(bytes).digest('hex');
     const existing = await this.database.query<{
       id: string;
@@ -126,23 +172,23 @@ export class ObjectService {
       title: string | null;
       size: string;
     }>(`SELECT id,kind,mime,title,size FROM objects WHERE owner_id=$1 AND sha256=$2`, [
-      agentId,
+      ownerId,
       digest,
     ]);
     if (existing.rows[0]) {
       // Same bytes again is an upload: restart the TTL window and clear any
       // tombstone so the read path's invariant holds.
       await this.database.query(
-        `UPDATE objects SET expires_at=now()+($2 || ' hours')::interval WHERE id=$1`,
-        [existing.rows[0].id, String(this.ttlHours)],
+        `UPDATE objects SET expires_at=now()+($2 || ' hours')::interval,title=$3,mime=$4 WHERE id=$1`,
+        [existing.rows[0].id, String(this.ttlHours), title, mimeType],
       );
       await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [
         existing.rows[0].id,
       ]);
-      return this.#result(existing.rows[0], agentId, digest);
+      return this.#result({ ...existing.rows[0], title, mime: mimeType }, ownerId, digest);
     }
     const storage = this.#requireStorage();
-    const key = `artifact/${agentId}/${digest}`;
+    const key = `${kind}/${ownerId}/${digest}`;
     await storage.putObject(key, bytes, mimeType);
     const id = randomUUID();
     const stored = await this.database.query<{
@@ -153,13 +199,13 @@ export class ObjectService {
       size: string;
     }>(
       `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
-       VALUES ($1,$2,'artifact',$3,$4,$5,$6,$7,'ready',now()+($8 || ' hours')::interval)
-       ON CONFLICT(owner_id,sha256) DO UPDATE SET expires_at=EXCLUDED.expires_at
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ready',now()+($9 || ' hours')::interval)
+       ON CONFLICT(owner_id,sha256) DO UPDATE SET expires_at=EXCLUDED.expires_at,title=EXCLUDED.title,mime=EXCLUDED.mime
        RETURNING id,kind,mime,title,size`,
-      [id, agentId, key, mimeType, normalizedTitle, bytes.length, digest, String(this.ttlHours)],
+      [id, ownerId, kind, key, mimeType, title, bytes.length, digest, String(this.ttlHours)],
     );
     await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [stored.rows[0]!.id]);
-    return this.#result(stored.rows[0]!, agentId, digest);
+    return this.#result(stored.rows[0]!, ownerId, digest);
   }
 
   #result(
@@ -304,7 +350,7 @@ export class ObjectService {
    * browser has no bearer token for `/v1/media/<id>`. The token is an HMAC
    * over the object id and expiry (`mediaLinkKey`), so raw storage hosts
    * never appear in a shareable link; `openMediaLink` redeems it. Only stored
-   * objects have a link; legacy media answers undefined.
+   * objects have a link; a missing or pending id answers undefined.
    */
   async mediaLink(mediaId: string): Promise<{ url: string; expiresIn: number } | undefined> {
     const row = (

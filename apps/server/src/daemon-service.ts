@@ -1332,7 +1332,7 @@ export class DaemonService {
     }
     if (!ids.size) return ids;
     const expired = await this.database.query<{ id: string }>(
-      `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+      `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
       [[...ids]],
     );
     return new Set(expired.rows.map((row) => row.id));
@@ -2218,16 +2218,8 @@ export class DaemonService {
       throw new Error('attachment mimeType is invalid');
     const mediaId = MEDIA_URL_PATTERN.exec(attachment.url)?.[1];
     if (!mediaId) throw new Error('attachment url is not a server media reference');
-    // An artifact lives in `objects`, not `media`, yet `uploadArtifact` hands
-    // the agent the same `/v1/media/<id>` reference, so `post_artifact` used to
-    // fail here with "attachment media is not owned by this agent" (captain,
-    // 2026-09-15, every artifact rejected once storage was wired). Accept a
-    // reference the agent owns in EITHER store; an object still has to be
-    // `ready` and unexpired, the same bar the media read path applies.
     const owned = await this.database.query(
-      `SELECT 1 FROM media WHERE id=$1 AND owner_id=$2
-       UNION ALL
-       SELECT 1 FROM objects
+      `SELECT 1 FROM objects
         WHERE id=$1 AND owner_id=$2 AND state='ready' AND expires_at > now()`,
       [mediaId, agentId],
     );

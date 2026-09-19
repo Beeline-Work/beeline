@@ -30,8 +30,8 @@ export async function normalizeAvatar(input: Uint8Array): Promise<Buffer> {
 }
 
 /** Runs in the workspace setter transaction after manager authorization.
- * No caller URL is fetched. Installed clients can keep uploading through
- * /media: committing the setter retains a small re-encoded avatar durably.
+ * No caller URL is fetched. Installed clients upload through /media onto
+ * Tigris; committing the setter retains a small re-encoded avatar durably.
  */
 export async function storeWorkspaceAvatar(
   database: SqlDatabase,
@@ -39,6 +39,7 @@ export async function storeWorkspaceAvatar(
   viewerId: string,
   source: string,
   publicOrigin: string,
+  readOwnedBytes?: (id: string, ownerId: string) => Promise<Uint8Array | undefined>,
 ): Promise<string> {
   if (!source) {
     await database.query('DELETE FROM avatars WHERE workspace_id=$1', [workspaceId]);
@@ -53,7 +54,8 @@ export async function storeWorkspaceAvatar(
   const match = url.pathname.match(/^\/v1\/(media|avatars)\/([^/]+)$/);
   if (url.origin !== new URL(publicOrigin).origin || !match || !isMediaId(match[2]!))
     throw new Error('avatar must name an image uploaded to this server; external URLs are invalid');
-  const [, kind, id] = match;
+  const kind = match[1]!;
+  const id = match[2]!;
   if (kind === 'avatars') {
     const existing = await database.query('SELECT 1 FROM avatars WHERE id=$1 AND workspace_id=$2', [
       id,
@@ -62,14 +64,9 @@ export async function storeWorkspaceAvatar(
     if (!existing.rowCount) throw new Error('avatar not found for this workspace');
     return `/v1/avatars/${id}`;
   }
-  const media = (
-    await database.query<{ bytes: Uint8Array }>(
-      'SELECT bytes FROM media WHERE id=$1 AND owner_id=$2',
-      [id, viewerId],
-    )
-  ).rows[0];
-  if (!media) throw new Error('avatar upload not found; choose the picture again');
-  const bytes = await normalizeAvatar(media.bytes);
+  const uploaded = readOwnedBytes ? await readOwnedBytes(id, viewerId) : undefined;
+  if (!uploaded) throw new Error('avatar upload not found; choose the picture again');
+  const bytes = await normalizeAvatar(uploaded);
   const avatarId = randomUUID();
   // One bounded object per workspace. A replacement changes the URL so a
   // device/CDN cache cannot keep showing the previous picture.

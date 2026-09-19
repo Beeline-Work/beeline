@@ -86,7 +86,7 @@ describe('media object routes', () => {
     await expect(response.json()).resolves.toMatchObject({ error: 'media_expired' });
   });
 
-  it('never exposes a pending object and falls through to legacy media otherwise', async () => {
+  it('never exposes a pending object and a missing id is 404', async () => {
     const pending = objectService({ readMediaObject: vi.fn(async () => ({ kind: 'pending' })) } as never);
     const origin = await start({ objectService: pending as ObjectService });
     expect((await fetch(`${origin}/v1/media/${UUID}`)).status).toBe(404);

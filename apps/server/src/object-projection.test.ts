@@ -44,7 +44,7 @@ async function fixture() {
 }
 
 describe('artifact attachment projection', () => {
-  it('stamps kind, title and author onto artifact attachments and leaves legacy media alone', async () => {
+  it('stamps kind, title and author onto every ready object, including person file shares', async () => {
     const { database, objects } = await fixture();
     try {
       const artifact = await objects.uploadArtifact(
@@ -53,10 +53,11 @@ describe('artifact attachment projection', () => {
         'text/html',
         'Mock Page',
       );
-      const legacy = '66666666-6666-4666-8666-666666666666';
-      await database.query(
-        `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES($1,$2,'x','image/png','pic.png',$3)`,
-        [legacy, AGENT, 'f'.repeat(64)],
+      const shared = await objects.uploadSharedFile(
+        AGENT,
+        Buffer.from('pic'),
+        'image/png',
+        'pic.png',
       );
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,attachments)
@@ -67,7 +68,7 @@ describe('artifact attachment projection', () => {
           AGENT,
           JSON.stringify([
             { url: artifact.url, name: 'mock.html', mimeType: 'text/html', size: artifact.size },
-            { url: `/v1/media/${legacy}`, name: 'pic.png', mimeType: 'image/png', size: 1 },
+            { url: shared.url, name: 'pic.png', mimeType: 'image/png', size: shared.size },
           ]),
         ],
       );
@@ -76,7 +77,7 @@ describe('artifact attachment projection', () => {
       const view = await phone.readRoom(ROOM, VIEWER);
       const message = view?.messages.find((row) => row.text === 'here');
       expect(message?.attachments).toHaveLength(2);
-      const [artifactAttachment, legacyAttachment] = message!.attachments!;
+      const [artifactAttachment, sharedAttachment] = message!.attachments!;
       expect(artifactAttachment).toMatchObject({
         kind: 'artifact',
         title: 'Mock Page',
@@ -84,7 +85,13 @@ describe('artifact attachment projection', () => {
         mimeType: 'text/html',
         size: artifact.size,
       });
-      expect(legacyAttachment).not.toHaveProperty('kind');
+      expect(sharedAttachment).toMatchObject({
+        kind: 'artifact',
+        title: 'pic.png',
+        author: 'hoots',
+        mimeType: 'image/png',
+        size: shared.size,
+      });
     } finally {
       await database.close();
     }

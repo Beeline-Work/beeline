@@ -25,34 +25,6 @@ import type { ConnectionPresence } from './connection-presence.js';
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
-/** Product interaction target for the cross-process miss path. Same-process
- * committed deltas skip this path and force immediately. The client
- * SurfaceRefreshScheduler default stays at 500 ms (pool-safe ~2 GETs/s); do
- * not assume deadline + scheduler + GET/paint compose under this target
- * without a measured GET+paint budget (audit F5). */
-const LIVE_INTERACTION_TARGET_MS = 150;
-/** Bound for cross-process / DB fallback row projection — at or under the
- * interaction target so the server wait alone cannot exceed it. */
-const LIVE_DELTA_DEADLINE_MS = LIVE_INTERACTION_TARGET_MS;
-
-async function withinLiveDeltaDeadline<T>(work: Promise<T>): Promise<T> {
-  let deadline: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_resolve, reject) => {
-        deadline = setTimeout(
-          () => reject(new Error('committed row delivery deadline exceeded')),
-          LIVE_DELTA_DEADLINE_MS,
-        );
-        deadline.unref?.();
-      }),
-    ]);
-  } finally {
-    if (deadline) clearTimeout(deadline);
-  }
-}
-
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
@@ -546,7 +518,6 @@ export function createBeelineServer(options: ServerOptions): Server {
             // first; replacing it with the older row would show the reader the
             // answer going backwards.
             const streamed = new Set<string>();
-            let deltaDelivery = Promise.resolve();
             releases.set(
               roomId,
               options.live.subscribe(roomId, (event) => {
@@ -582,9 +553,12 @@ export function createBeelineServer(options: ServerOptions): Server {
                   ...(wireTrace ? { trace: wireTrace } : {}),
                   reason: `delta-fallback:${event.reason}`,
                 };
-                // Begin every bounded row read immediately. Only delivery is
-                // serialized, preserving commit-notification order without a
-                // slow lookup preventing later reads from making progress.
+                // Cross-process notifications carry only the committed row
+                // identity. Resolve every row independently: the result stays
+                // on the direct socket-delta path even when the app pool takes
+                // longer than an arbitrary UI deadline, and one slow/bad read
+                // cannot hold later committed messages behind it. The client
+                // reconciler restores causal order from createdAt/id.
                 let projectionError: unknown;
                 let committedDelta;
                 try {
@@ -604,20 +578,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                     ? Promise.reject(projectionError)
                     : committedDelta
                       ? Promise.resolve(committedDelta)
-                      : withinLiveDeltaDeadline(
-                          options.phone.readLiveDelta(
-                            roomId,
-                            principal.identityId,
-                            target,
-                          ),
-                        )
+                      : options.phone.readLiveDelta(roomId, principal.identityId, target)
                 ).then(
                   (delta) => ({ delta }) as const,
                   (error: unknown) => ({ error }) as const,
                 );
-                deltaDelivery = deltaDelivery
-                  .then(async () => {
-                    const result = await pendingDelta;
+                void pendingDelta
+                  .then((result) => {
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
                     rememberPaintTrace(wireTrace);

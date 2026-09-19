@@ -110,7 +110,7 @@ export function connectorPurpose(kind: ConnectorKind): string {
     case 'google-drive':
       return 'Read and organise Drive files through the person’s own Google sign-in.';
     case 'google-youtube':
-      return 'Read YouTube channel and video data through the person’s own Google sign-in.';
+      return 'Read YouTube channel, video, and playlist data through the person’s own Google sign-in. Analytics (watch time, traffic, demographics) requires the channel owner account, not a manager.';
   }
 }
 

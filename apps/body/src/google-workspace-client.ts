@@ -2,20 +2,13 @@
  * Google Workspace client — the typed seam every Google tool connector
  * (gmail / calendar / drive / youtube) speaks through.
  *
- * MCP strategy decision (Workbench Google tools, 2026-09): WRAP, don't adopt.
- * The well-documented open-source Google Workspace MCP servers (e.g.
- * `@gongrzhe/server-gmail-autoauth-mcp`, `google-workspace-mcp`) assume a
- * local OAuth token file and mount one all-scope server; they bypass the
- * Workbench usage ledger, the Squire vault's masked-credential boundary, and
- * the scope minimization the connector model exists for. Beeline already
- * wraps every external capability behind a typed client interface
- * (`SquireMcpClient`) and records usage per turn (`ConnectorUsageRecorder`),
- * so the same shape is applied here: a typed `GoogleWorkspaceClient` over
- * Google's REST APIs with a pluggable `GoogleTokenSource` (Squire vault via
- * the typed seam in `connector-google.ts`, or manually pasted credentials).
- * Exposing these capabilities to agent sessions later reuses the existing
- * `McpServerWire` session-mount pattern (`room-session.ts`) — the same path
- * the Squire broker takes — rather than a raw stdio server the harness owns.
+ * MCP strategy decision (Workbench Google tools, 2026-09): WRAP, don't adopt
+ * a third-party host. YouTube is the one Data/Analytics surface we vendor
+ * in-tree (`youtube-mcp.ts`, locked from pauling-ai/youtube-mcp-server) and
+ * run on this helper with the Workbench Google grant. Other Google Workspace
+ * MCP servers assume their own OAuth file and an all-scope mount; they bypass
+ * the usage ledger and scope minimization. The typed `GoogleWorkspaceClient`
+ * is the REST seam; `youtubeMcpServer` is the session mount.
  *
  * Tests never touch Google: they drive a fake transport.
  */
@@ -40,6 +33,82 @@ export function credentialsTokenSource(credentials: GoogleCredentials): GoogleTo
   return {
     accessToken: () => Promise.resolve(credentials.accessToken),
     accountEmail: credentials.accountEmail ? () => credentials.accountEmail : undefined,
+  };
+}
+
+/**
+ * Beeline's own Google Cloud OAuth client refreshes a grant locally. The
+ * access token never leaves this helper — there is no third-party YouTube
+ * host. Client id/secret come from the operator-configured
+ * `BEELINE_GOOGLE_CLIENT_ID` / `BEELINE_GOOGLE_CLIENT_SECRET`.
+ */
+const googleOAuthTokenTransport: GoogleApiTransport = {
+  async request(method, url, body) {
+    const fields = body && typeof body === 'object' ? (body as Record<string, string>) : {};
+    const response = await fetch(url, {
+      method,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+    });
+    let json: unknown = null;
+    const text = await response.text();
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = { raw: text };
+      }
+    }
+    return { status: response.status, json };
+  },
+};
+
+export async function refreshGoogleAccessToken(
+  credentials: GoogleCredentials,
+  clientId: string,
+  clientSecret: string,
+  transport: GoogleApiTransport = googleOAuthTokenTransport,
+): Promise<GoogleCredentials> {
+  if (!credentials.refreshToken) {
+    throw new GoogleApiError(401, 'Google grant has no refresh token; reconnect Google Workspace');
+  }
+  const response = await transport.request('POST', 'https://oauth2.googleapis.com/token', {
+    client_id: clientId,
+    client_secret: clientSecret,
+    refresh_token: credentials.refreshToken,
+    grant_type: 'refresh_token',
+  });
+  if (response.status >= 300) {
+    throw new GoogleApiError(response.status, 'Google refused to refresh the access token');
+  }
+  const payload = response.json as { access_token?: string; expires_in?: number };
+  if (!payload.access_token) {
+    throw new GoogleApiError(401, 'Google refresh returned no access token');
+  }
+  return {
+    ...credentials,
+    accessToken: payload.access_token,
+    expiresAt:
+      typeof payload.expires_in === 'number' ? Date.now() + payload.expires_in * 1000 : undefined,
+  };
+}
+
+export function refreshableTokenSource(
+  credentials: GoogleCredentials,
+  clientId: string | undefined,
+  clientSecret: string | undefined,
+  transport: GoogleApiTransport = defaultGoogleApiTransport,
+): GoogleTokenSource {
+  let current = credentials;
+  return {
+    async accessToken() {
+      const stale = current.expiresAt !== undefined && current.expiresAt <= Date.now() + 30_000;
+      if (stale && clientId && clientSecret && current.refreshToken) {
+        current = await refreshGoogleAccessToken(current, clientId, clientSecret, transport);
+      }
+      return current.accessToken;
+    },
+    accountEmail: current.accountEmail ? () => current.accountEmail : undefined,
   };
 }
 
@@ -125,12 +194,61 @@ export type DriveCapability = {
   readFile(fileId: string): Promise<{ id: string; name?: string; content: string }>;
 };
 
-/** YouTube: access transcripts/playlists. */
+/** One Analytics reports.query. Dates default to the last 28 days. */
+export type YouTubeAnalyticsQuery = {
+  readonly metrics: string;
+  readonly dimensions?: string;
+  readonly filters?: string;
+  readonly sort?: string;
+  readonly maxResults?: number;
+  readonly startDate?: string;
+  readonly endDate?: string;
+};
+
+export type YouTubeAnalyticsResult = {
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly columns: readonly string[];
+  readonly results: readonly Record<string, unknown>[];
+  readonly totalRows: number;
+};
+
+/**
+ * YouTube Data API v3 plus Analytics API reports.query.
+ * Analytics is owner-account only — a Brand Account manager grant is refused
+ * by Google; the MCP restates that limit rather than treating it as a
+ * broken connector (`YOUTUBE_ANALYTICS_OWNER_LIMIT`).
+ */
 export type YouTubeCapability = {
+  getChannel(mine?: boolean): Promise<{
+    id: string;
+    title?: string;
+    handle?: string;
+    subscriberCount?: string;
+  }>;
+  listVideos(): Promise<{ videoId: string; title?: string }[]>;
+  getVideo(videoId: string): Promise<{
+    id: string;
+    title?: string;
+    description?: string;
+    viewCount?: string;
+  }>;
   listPlaylists(mine?: boolean): Promise<{ id: string; title?: string }[]>;
   listPlaylistItems(playlistId: string): Promise<{ videoId: string; title?: string }[]>;
   getTranscript(videoId: string): Promise<{ videoId: string; transcript: string }>;
+  analyticsQuery(input: YouTubeAnalyticsQuery): Promise<YouTubeAnalyticsResult>;
 };
+
+/** Locked from pauling-ai/youtube-mcp-server analytics.py (MIT). */
+export const YOUTUBE_ANALYTICS_OWNER_LIMIT =
+  'YouTube Analytics requires the Google account that owns the channel, not a manager.';
+
+export function defaultAnalyticsDateRange(days = 28, now = new Date()): { startDate: string; endDate: string } {
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - days);
+  return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+}
 
 export type GoogleWorkspaceClient = {
   readonly gmail: GmailCapability;
@@ -296,6 +414,68 @@ export function googleWorkspaceClient(
       },
     },
     youtube: {
+      async getChannel(mine = true) {
+        const params = new URLSearchParams({
+          part: 'snippet,statistics',
+          maxResults: '1',
+          ...(mine ? { mine: 'true' } : {}),
+        });
+        const { status, json } = await authorized.request(
+          'GET',
+          `https://www.googleapis.com/youtube/v3/channels?${params}`,
+        );
+        assertOk(status, json);
+        const item = ((json as { items?: Record<string, unknown>[] }).items ?? [])[0];
+        if (!item) throw new GoogleApiError(404, 'no YouTube channel on this Google account');
+        const snippet = (item.snippet as Record<string, unknown> | undefined) ?? {};
+        const statistics = (item.statistics as Record<string, unknown> | undefined) ?? {};
+        return {
+          id: String(item.id),
+          ...(typeof snippet.title === 'string' ? { title: snippet.title } : {}),
+          ...(typeof snippet.customUrl === 'string' ? { handle: snippet.customUrl } : {}),
+          ...(typeof statistics.subscriberCount === 'string'
+            ? { subscriberCount: statistics.subscriberCount }
+            : {}),
+        };
+      },
+      async listVideos() {
+        const params = new URLSearchParams({
+          part: 'snippet',
+          forMine: 'true',
+          type: 'video',
+          maxResults: String(MAX_RESULTS),
+        });
+        const { status, json } = await authorized.request(
+          'GET',
+          `https://www.googleapis.com/youtube/v3/search?${params}`,
+        );
+        assertOk(status, json);
+        return ((json as { items?: Record<string, unknown>[] }).items ?? []).map((item) => ({
+          videoId: String((item.id as { videoId?: string } | undefined)?.videoId ?? item.id),
+          title: (item.snippet as { title?: string } | undefined)?.title,
+        }));
+      },
+      async getVideo(videoId) {
+        const params = new URLSearchParams({
+          part: 'snippet,statistics',
+          id: videoId,
+        });
+        const { status, json } = await authorized.request(
+          'GET',
+          `https://www.googleapis.com/youtube/v3/videos?${params}`,
+        );
+        assertOk(status, json);
+        const item = ((json as { items?: Record<string, unknown>[] }).items ?? [])[0];
+        if (!item) throw new GoogleApiError(404, `video ${videoId} was not found`);
+        const snippet = (item.snippet as Record<string, unknown> | undefined) ?? {};
+        const statistics = (item.statistics as Record<string, unknown> | undefined) ?? {};
+        return {
+          id: String(item.id),
+          ...(typeof snippet.title === 'string' ? { title: snippet.title } : {}),
+          ...(typeof snippet.description === 'string' ? { description: snippet.description } : {}),
+          ...(typeof statistics.viewCount === 'string' ? { viewCount: statistics.viewCount } : {}),
+        };
+      },
       async listPlaylists(mine = true) {
         const params = new URLSearchParams({
           part: 'snippet',
@@ -349,6 +529,49 @@ export function googleWorkspaceClient(
           throw new GoogleApiError(404, `video ${videoId} has no fetchable captions`);
         }
         return { videoId, transcript };
+      },
+      async analyticsQuery(input) {
+        const range =
+          input.startDate && input.endDate
+            ? { startDate: input.startDate, endDate: input.endDate }
+            : defaultAnalyticsDateRange();
+        const params = new URLSearchParams({
+          ids: 'channel==MINE',
+          startDate: range.startDate,
+          endDate: range.endDate,
+          metrics: input.metrics,
+        });
+        if (input.dimensions) params.set('dimensions', input.dimensions);
+        if (input.filters) params.set('filters', input.filters);
+        if (input.sort) params.set('sort', input.sort);
+        if (input.maxResults) params.set('maxResults', String(input.maxResults));
+        const { status, json } = await authorized.request(
+          'GET',
+          `https://youtubeanalytics.googleapis.com/v2/reports?${params}`,
+        );
+        if (status === 403) {
+          throw new GoogleApiError(403, YOUTUBE_ANALYTICS_OWNER_LIMIT);
+        }
+        assertOk(status, json);
+        const report = json as {
+          columnHeaders?: { name: string }[];
+          rows?: unknown[][];
+        };
+        const columns = (report.columnHeaders ?? []).map((header) => header.name);
+        const results = (report.rows ?? []).map((row) => {
+          const record: Record<string, unknown> = {};
+          columns.forEach((column, index) => {
+            record[column] = row[index];
+          });
+          return record;
+        });
+        return {
+          startDate: range.startDate,
+          endDate: range.endDate,
+          columns,
+          results,
+          totalRows: results.length,
+        };
       },
     },
     async verify() {

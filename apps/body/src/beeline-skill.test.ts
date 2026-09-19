@@ -191,6 +191,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
+    expect(markdown).toContain('YouTube Analytics answers only the channel owner account, not a manager');
     expect(markdown).toContain('Tailscale is not available yet');
   });
 

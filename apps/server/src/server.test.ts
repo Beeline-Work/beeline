@@ -405,6 +405,60 @@ describe('daemon live command push', () => {
     // system line, and the daemon needs no inbox replay to retire sessions.
     expect(inboxCalls()).toBe(1);
   });
+
+  it('pushes hiccup-restart only to the stalled agent, without an inbox replay', async () => {
+    const roomId = 'room-hiccup';
+    const agentId = 'agent-hiccup';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'hiccup-restart',
+      targetAgentId: 'another-agent',
+      hiccupAttempt: 1,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+    const restart = nextSocketMessage(socket, 'hiccup-restart');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'hiccup-restart',
+      targetAgentId: agentId,
+      hiccupAttempt: 2,
+    });
+    await expect(restart).resolves.toEqual({ type: 'hiccup-restart', roomId, attempt: 2 });
+    expect(inboxCalls()).toBe(1);
+  });
 });
 
 describe('daemon operation presence evidence', () => {
@@ -594,7 +648,7 @@ describe('phone committed-row live delivery', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('bounds a stalled lookup while preserving burst delivery order', async () => {
+  it('keeps later committed deltas direct when an earlier lookup stalls', async () => {
     const read = vi.fn(
       async (_roomId: string, _viewerId: string, target: { messageId: string }) => {
         if (target.messageId === 'message-1') return new Promise<never>(() => undefined);
@@ -612,7 +666,7 @@ describe('phone committed-row live delivery', () => {
       },
     );
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const received = nextSocketMessages(socket, 3);
+    const received = nextSocketMessages(socket, 2);
     const startedAt = Date.now();
 
     for (const messageId of ['message-1', 'message-2', 'message-3']) {
@@ -620,23 +674,45 @@ describe('phone committed-row live delivery', () => {
     }
 
     const messages = await received;
-    expect(Date.now() - startedAt).toBeLessThan(800);
+    expect(Date.now() - startedAt).toBeLessThan(150);
     expect(
       messages.map((message) =>
         message.type === 'message-delta'
           ? (message.message as { id: string }).id
           : message.messageId,
       ),
-    ).toEqual(['message-1', 'message-2', 'message-3']);
-    expect(messages[0]).toMatchObject({
-      type: 'invalidate',
-      reason: 'delta-fallback:postgres:messages',
-    });
-    expect(messages.slice(1).map((message) => message.type)).toEqual([
-      'message-delta',
-      'message-delta',
-    ]);
+    ).toEqual(['message-2', 'message-3']);
+    expect(messages.map((message) => message.type)).toEqual(['message-delta', 'message-delta']);
     expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not downgrade a slow committed row to the refetch scheduler', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'message-slow',
+        text: 'slow but direct',
+        createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      return delta;
+    });
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const received = nextSocketMessage(socket, 'message-delta');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:messages',
+      messageId: 'message-slow',
+    });
+
+    await expect(received).resolves.toEqual(delta);
   });
 
   it('diagnoses the same-process committed-row delivery boundary', async () => {

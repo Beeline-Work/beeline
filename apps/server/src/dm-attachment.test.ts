@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -21,6 +22,7 @@ const PNG_BYTES = Buffer.from('89504e470d0a1a0a', 'hex');
 describe('DM attachments', () => {
   let database: PgliteDatabase;
   let auth: TokenAuth;
+  let objectStorage: MemoryObjectStorage;
   let origin: string;
   let server: ReturnType<typeof createBeelineServer>;
   let accessToken: string;
@@ -62,7 +64,24 @@ describe('DM attachments', () => {
     );
     vi.spyOn(githubOperations, 'refresh').mockResolvedValue({});
     const live = new LiveHub();
-    const phone = new PhoneService(database, 'http://placeholder', githubOperations, vi.fn());
+    objectStorage = new MemoryObjectStorage();
+    await objectStorage.listen();
+    const objectService = new ObjectService(
+      database,
+      objectStorage.asStorage(),
+      'http://placeholder',
+      1024 * 1024,
+    );
+    const phone = new PhoneService(
+      database,
+      'http://placeholder',
+      githubOperations,
+      vi.fn(),
+      live,
+      false,
+      database,
+      objectService,
+    );
     const daemon = new DaemonService(database, live, async () => ({
       token: 'github-room-token',
       expiresAt: Date.now() + 60_000,
@@ -74,10 +93,12 @@ describe('DM attachments', () => {
       daemon,
       live,
       mediaMaximumBytes: 1024 * 1024,
+      objectService,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     (phone as unknown as { publicOrigin: string }).publicOrigin = origin;
+    (objectService as unknown as { publicOrigin: string }).publicOrigin = origin;
     accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
     const exchange = await auth.createDaemonExchange(AGENT);
     daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
@@ -85,6 +106,7 @@ describe('DM attachments', () => {
 
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (objectStorage) await objectStorage.close();
     if (database) await database.close();
   });
 

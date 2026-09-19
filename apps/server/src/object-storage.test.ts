@@ -117,17 +117,19 @@ describe('object-storage golden signatures (fixed clock)', () => {
     );
   });
 
-  it('maps head and delete: 404 is null/success, other errors surface', async () => {
+  it('maps get, head and delete: 404 is null/success, other errors surface', async () => {
     const fetchMock = vi.fn(async (_url: unknown, init?: { method?: string }) => {
       if (init?.method === 'HEAD')
         return new Response(null, {
           status: 200,
           headers: { 'content-length': '2048', etag: '"etag-1"' },
         });
+      if (init?.method === 'GET') return new Response(Buffer.from('bytes'), { status: 200 });
       return new Response(null, { status: 204 });
     });
     const storage = new ObjectStorage(config, { now: () => FIXED_NOW, fetch: fetchMock as never });
     await expect(storage.headObject('k')).resolves.toEqual({ size: 2048, etag: '"etag-1"' });
+    await expect(storage.getObject('k')).resolves.toEqual(new Uint8Array(Buffer.from('bytes')));
     await expect(storage.deleteObject('k')).resolves.toBeUndefined();
 
     const missing = new ObjectStorage(config, {
@@ -135,6 +137,7 @@ describe('object-storage golden signatures (fixed clock)', () => {
       fetch: (async () => new Response(null, { status: 404 })) as never,
     });
     await expect(missing.headObject('k')).resolves.toBeNull();
+    await expect(missing.getObject('k')).resolves.toBeNull();
     await expect(missing.deleteObject('k')).resolves.toBeUndefined();
 
     const failing = new ObjectStorage(config, {
@@ -142,6 +145,7 @@ describe('object-storage golden signatures (fixed clock)', () => {
       fetch: (async () => new Response(null, { status: 500 })) as never,
     });
     await expect(failing.headObject('k')).rejects.toThrow('HTTP 500');
+    await expect(failing.getObject('k')).rejects.toThrow('HTTP 500');
     await expect(failing.deleteObject('k')).rejects.toThrow('HTTP 500');
   });
 });

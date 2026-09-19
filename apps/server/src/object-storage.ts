@@ -9,8 +9,8 @@
  *
  * The credentials come from the environment exactly as `fly secrets` stages
  * them: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`
- * and `BUCKET_NAME`. Absent any of them there is no storage: the server runs,
- * media keeps its legacy bytea path, and object uploads answer a clear 503.
+ * and `BUCKET_NAME`. Absent any of them there is no storage: the server runs
+ * and every object write answers a clear 503.
  *
  * Presigning is HMAC-only and needs no storage round-trip; the injected clock
  * keeps the golden-signature tests deterministic.
@@ -167,6 +167,14 @@ export class ObjectStorage {
       size: length !== null ? Number(length) : 0,
       ...(response.headers.has('etag') ? { etag: response.headers.get('etag') ?? undefined } : {}),
     };
+  }
+
+  /** 404 is null; other errors surface. Used when promoting an upload into avatars. */
+  async getObject(key: string): Promise<Uint8Array | null> {
+    const response = await this.#client.fetch(this.objectUrl(key), { method: 'GET' });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`object storage get failed: HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /** Deleting a missing object is success: the sweep is idempotent on reruns. */

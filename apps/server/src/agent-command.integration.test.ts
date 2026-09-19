@@ -1031,14 +1031,14 @@ it('accepts and settles draft, thought, activity, attachment and final under one
     A,
   );
   const media = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const mediaDigest = id();
   await db.query(
-    `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES($1,$2,$3,'text/plain','result.txt',$4) ON CONFLICT(id) DO NOTHING`,
-    [media, A, Buffer.from('ok'), id()],
+    `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+     VALUES($1,$2,'media',$3,'text/plain','result.txt',2,$4,'ready',now()+interval '24 hours')
+     ON CONFLICT(id) DO NOTHING`,
+    [media, A, `media/${A}/${mediaDigest}`, mediaDigest],
   );
-  // An artifact lives in `objects` and is handed to the agent as the same
-  // /v1/media/<id> reference; the ownership check used to look only in `media`
-  // and rejected every artifact with "attachment media is not owned by this
-  // agent" (captain, 2026-09-15). Attaching one must work the same way.
+  // Person files and artifacts both live in `objects` and share /v1/media/<id>.
   const artifact = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   await db.query(
     `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)

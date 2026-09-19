@@ -185,10 +185,12 @@ describe('per-room harness state isolation', () => {
     await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
     await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
     await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.config/cursor'), { recursive: true });
     await writeFile(resolve(operatorHome, '.claude/.credentials.json'), '{"token":"claude"}');
     await writeFile(resolve(operatorHome, '.codex/auth.json'), '{"token":"codex"}');
     await writeFile(resolve(operatorHome, '.grok/auth.json'), '{"token":"grok"}');
     await writeFile(resolve(operatorHome, '.pi/agent/auth.json'), '{"token":"pi"}');
+    await writeFile(resolve(operatorHome, '.config/cursor/auth.json'), '{"token":"cursor"}');
 
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const roomB = resolve(await scratch('beeline-room-b-'), 'agent-home');
@@ -200,16 +202,19 @@ describe('per-room harness state isolation', () => {
       const codex = resolve(root, 'codex/auth.json');
       const grok = resolve(root, 'grok/auth.json');
       const pi = resolve(root, 'pi/auth.json');
+      const cursor = resolve(root, 'user/.config/cursor/auth.json');
       expect(readFileSync(claude, 'utf8')).toBe('{"token":"claude"}');
       expect(readFileSync(codex, 'utf8')).toBe('{"token":"codex"}');
       expect(readFileSync(grok, 'utf8')).toBe('{"token":"grok"}');
       expect(readFileSync(pi, 'utf8')).toBe('{"token":"pi"}');
+      expect(readFileSync(cursor, 'utf8')).toBe('{"token":"cursor"}');
       // Symlinked, not copied: a refreshed token stays shared with every other
       // room-instance and with the operator's own CLI.
       expect(lstatSync(claude).isSymbolicLink()).toBe(true);
       expect(lstatSync(codex).isSymbolicLink()).toBe(true);
       expect(lstatSync(grok).isSymbolicLink()).toBe(true);
       expect(lstatSync(pi).isSymbolicLink()).toBe(true);
+      expect(lstatSync(cursor).isSymbolicLink()).toBe(true);
     }
   });
 

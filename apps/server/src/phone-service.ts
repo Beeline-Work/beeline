@@ -681,6 +681,26 @@ export class PhoneService {
     return this.hasRoomAccess(roomId, identityId);
   }
 
+  /** One membership query for a live subscribe batch (Room deck watchFilters). */
+  async canReadRooms(roomIds: readonly string[], identityId: string): Promise<ReadonlySet<string>> {
+    const unique = [...new Set(roomIds.filter((id) => typeof id === 'string' && id.length > 0))];
+    if (unique.length === 0) return new Set();
+    const result = await this.database.query<{ room_id: string }>(
+      `SELECT room_member.room_id::text AS room_id FROM memberships room_member
+       JOIN rooms room ON room.id=room_member.room_id
+       WHERE room_member.room_id = ANY($1::uuid[]) AND room_member.identity_id=$2
+         AND room_member.removed_at IS NULL
+         AND ($2=$3 OR EXISTS(
+           SELECT 1 FROM memberships workspace_member
+           WHERE workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+         ))`,
+      [unique, identityId, SYSTEM_IDENTITY_ID],
+    );
+    return new Set(result.rows.map((row) => row.room_id));
+  }
+
   /** Project a row the daemon's committing transaction already returned. The
    * socket subscription performed the Room access check; cross-process hints
    * still use readLiveDelta, which rechecks current membership. */

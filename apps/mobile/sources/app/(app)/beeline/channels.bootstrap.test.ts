@@ -97,4 +97,12 @@ describe('Room deck bootstrap', () => {
     expect(bootstrap).not.toContain('welcomeRoomHref');
     expect(bootstrap).not.toContain('/beeline/chat/');
   });
+
+  it('reinstalls Room-deck watches from chats watchFilters and never seeds a Workspace #h', () => {
+    expect(source).toContain('installChatWatch');
+    expect(source).toContain('nextWatchKey !== chatWatchKey');
+    expect(source).toContain('cachedChats?.watchFilters ?? []');
+    expect(source).not.toContain("'#h': [selectedId]");
+    expect(source).toContain('if (filters.length === 0) return');
+  });
 });

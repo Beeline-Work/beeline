@@ -377,6 +377,10 @@ async function broadcastAgentPresence(
   live: LiveHub,
   agentId: string,
 ): Promise<void> {
+  // Production arms listener-owned fanout so the NOTIFY path alone expands one
+  // durable row across memberships. A second writer-local query would duplicate
+  // that work on every evidence write.
+  if (live.listenerOwnsPresenceFanout()) return;
   const result = await database.query<{
     room_id: string;
     body: { status: 'online' | 'offline'; observedAt: number };

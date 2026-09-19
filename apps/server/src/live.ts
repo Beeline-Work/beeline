@@ -96,6 +96,19 @@ export class LiveHub {
   readonly #events = new EventEmitter();
   readonly #presence = new Map<string, Map<string, Extract<LiveEvent, { type: 'presence' }>>>();
   readonly #humanConnections = new Map<string, { count: number; observedAt: number }>();
+  /** When true, writers skip local membership fanout — the PostgreSQL LISTEN
+   * path is the sole presence authority (production). Unit tests keep the
+   * default so a LiveHub without a listener still receives presence. */
+  #listenerOwnsPresenceFanout = false;
+
+  /** Production wires PostgresLiveListener before evidence writes; call once. */
+  useListenerPresenceFanout(): void {
+    this.#listenerOwnsPresenceFanout = true;
+  }
+
+  listenerOwnsPresenceFanout(): boolean {
+    return this.#listenerOwnsPresenceFanout;
+  }
 
   humanConnected(identityId: string, now = Date.now()): boolean {
     const previous = this.#humanConnections.get(identityId);
@@ -134,7 +147,8 @@ export class LiveHub {
       if (
         previous &&
         (previous.observedAt > event.observedAt ||
-          (previous.observedAt === event.observedAt && previous.status === 'offline'))
+          (previous.observedAt === event.observedAt &&
+            (previous.status === event.status || previous.status === 'offline')))
       )
         return;
       room.set(event.agentId, event);

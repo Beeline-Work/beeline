@@ -36,6 +36,12 @@ export class SurfaceRefreshScheduler<T> {
   private expectations: SurfaceExpectation<T>[] = [];
 
   constructor(private readonly options: SurfaceRefreshOptions<T>) {
+    // 500 ms caps saturated refresh near two physical GETs/s so a busy
+    // Workspace cannot flood the 10-slot app pool. Forced refreshes still
+    // bypass this floor so same-process committed deltas stay immediate.
+    // The 150 ms miss-path product target is not closed by this floor alone;
+    // see the fanout audit and monolith-client-paint-budgets for measured
+    // GET+paint (F5) before any further floor change.
     this.minimumIntervalMs = options.minimumIntervalMs ?? 500;
     this.maximumWaitMs = options.maximumWaitMs ?? 1_000;
     this.now = options.now ?? Date.now;

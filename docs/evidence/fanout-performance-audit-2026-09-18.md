@@ -1,9 +1,12 @@
 # Fanout and client performance audit
 
 Date: 2026-09-18  
-Authors: Sol (initial), Nerd (independent verification + ranking)  
+Authors: Sol (initial), Nerd (independent verification + ranking + implementation)  
 Scope: server live fanout, Room/deck hot reads, push delivery, client paint evidence  
-Constraint: findings only — no product fixes in this change
+
+## Status
+
+Implementation landed on this branch for the reconciled priority list (subscription batching, 150 ms floors, presence fanout, width coverage, push concurrency, monolith paint proof). The original finding write-up below is retained as the audit record.
 
 ## Targets (source of truth for this audit)
 
@@ -13,7 +16,8 @@ Constraint: findings only — no product fixes in this change
 | Route p95 | 500 ms |
 | Route p99 | 1,000 ms |
 | Route maximum | 2,000 ms |
-| Live-delta fallback deadline | 400 ms (`LIVE_DELTA_DEADLINE_MS` in `apps/server/src/server.ts`) |
+| Live-delta fallback deadline | 150 ms (`LIVE_DELTA_DEADLINE_MS` in `apps/server/src/server.ts`; was 400) |
+| Surface refresh floor | 150 ms (`SurfaceRefreshScheduler` default `minimumIntervalMs`; was 500) |
 
 ## Ranking (Nerd)
 

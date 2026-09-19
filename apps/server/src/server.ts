@@ -25,7 +25,11 @@ import type { ConnectionPresence } from './connection-presence.js';
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
-const LIVE_DELTA_DEADLINE_MS = 400;
+/** Bound for cross-process / DB fallback row projection. Same-process
+ * committed deltas skip this path and force immediately. Keep at or under
+ * the 150 ms interaction target so invalidation fallback cannot impose a
+ * longer floor than the surface scheduler. */
+const LIVE_DELTA_DEADLINE_MS = 150;
 
 async function withinLiveDeltaDeadline<T>(work: Promise<T>): Promise<T> {
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -353,14 +357,26 @@ export function createBeelineServer(options: ServerOptions): Server {
             );
             return;
           }
-          if (
-            item.type === 'subscribe' &&
-            typeof item.roomId === 'string' &&
-            (await options.phone.canReadRoom(item.roomId, principal.identityId)) &&
-            !releases.has(item.roomId)
-          ) {
+          if (item.type === 'subscribe') {
+            const requestedRoomIds = Array.isArray(item.roomIds)
+              ? [
+                  ...new Set(
+                    (item.roomIds as unknown[]).filter(
+                      (id): id is string => typeof id === 'string' && id.length > 0,
+                    ),
+                  ),
+                ]
+              : typeof item.roomId === 'string'
+                ? [item.roomId]
+                : [];
+            if (requestedRoomIds.length === 0) return;
+            const readableRooms = await options.phone.canReadRooms(
+              requestedRoomIds,
+              principal.identityId,
+            );
+            for (const roomId of requestedRoomIds) {
+              if (!readableRooms.has(roomId) || releases.has(roomId)) continue;
             if (principal.kind === 'daemon') {
-              const roomId = item.roomId;
               let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
               let replaying = false;
               let replayRequested = false;
@@ -504,7 +520,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 }),
               );
               await Promise.all([replay(), pushCommands()]);
-              return;
+              continue;
             }
             // Agents whose draft this socket has already been handed live.
             // The snapshot below is read asynchronously, so a delta can land
@@ -513,8 +529,8 @@ export function createBeelineServer(options: ServerOptions): Server {
             const streamed = new Set<string>();
             let deltaDelivery = Promise.resolve();
             releases.set(
-              item.roomId,
-              options.live.subscribe(item.roomId, (event) => {
+              roomId,
+              options.live.subscribe(roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
                 if (event.type !== 'invalidate') {
                   if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
@@ -554,7 +570,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 let committedDelta;
                 try {
                   committedDelta = committedRow
-                    ? options.phone.projectCommittedLiveDelta(item.roomId as string, committedRow)
+                    ? options.phone.projectCommittedLiveDelta(roomId, committedRow)
                     : undefined;
                 } catch (error) {
                   projectionError = error;
@@ -571,7 +587,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       ? Promise.resolve(committedDelta)
                       : withinLiveDeltaDeadline(
                           options.phone.readLiveDelta(
-                            item.roomId as string,
+                            roomId,
                             principal.identityId,
                             target,
                           ),
@@ -606,21 +622,22 @@ export function createBeelineServer(options: ServerOptions): Server {
                   });
               }),
             );
-            client.send(JSON.stringify({ type: 'subscribed', roomId: item.roomId }));
+            client.send(JSON.stringify({ type: 'subscribed', roomId: roomId }));
             // A live lane carries only what is written after this point, so a
             // reader who joins a turn already in progress has missed the draft
             // it is writing. Hand over the running one now; every later delta
             // arrives through the subscription above and replaces it. A read
             // that fails leaves the lane exactly as it was before.
             const snapshot = await options.phone
-              .liveDraftSnapshot(item.roomId)
+              .liveDraftSnapshot(roomId)
               .catch(() => [] as LiveEvent[]);
             for (const event of snapshot) {
               if (event.type === 'draft' && streamed.has(event.agentId)) continue;
               if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
             }
-            for (const event of options.live.presenceSnapshot(item.roomId)) {
+            for (const event of options.live.presenceSnapshot(roomId)) {
               if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+            }
             }
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {

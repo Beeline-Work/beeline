@@ -130,13 +130,13 @@ describe('monolith Room send path', () => {
     );
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
-    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM] })]);
 
     sockets[0]!.onclose?.();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.onopen?.();
-    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
+    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM] })]);
     sockets[1]!.onmessage?.({
       data: JSON.stringify({
         type: 'invalidate',
@@ -252,7 +252,7 @@ describe('monolith Room send path', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
-    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomId: ROOM })]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM] })]);
     received[0]!.acknowledgePaint?.();
     expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'trace-paint', id: trace.id }));
 

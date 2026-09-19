@@ -8,6 +8,17 @@ import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 
+
+function canReadRoomsFrom(canReadRoom: (roomId: string, identityId: string) => Promise<boolean>) {
+  return async (roomIds: readonly string[], identityId: string) => {
+    const allowed = new Set<string>();
+    for (const roomId of roomIds) {
+      if (await canReadRoom(roomId, identityId)) allowed.add(roomId);
+    }
+    return allowed;
+  };
+}
+
 describe('server readiness', () => {
   const servers: ReturnType<typeof createBeelineServer>[] = [];
 
@@ -233,7 +244,7 @@ describe('daemon live command push', () => {
       auth: {
         authenticateDaemon: vi.fn().mockResolvedValue(agentId),
       } as unknown as TokenAuth,
-      phone: { canReadRoom: vi.fn().mockResolvedValue(true) } as unknown as PhoneService,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
       live,
       mediaMaximumBytes: 1,
@@ -319,7 +330,7 @@ describe('daemon live command push', () => {
       auth: {
         authenticateDaemon: vi.fn().mockResolvedValue(agentId),
       } as unknown as TokenAuth,
-      phone: { canReadRoom: vi.fn().mockResolvedValue(true) } as unknown as PhoneService,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
       live,
       mediaMaximumBytes: 1,
@@ -441,6 +452,7 @@ describe('phone committed-row live delivery', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
         canReadRoom,
+        canReadRooms: canReadRoomsFrom(canReadRoom),
         liveDraftSnapshot: vi.fn().mockResolvedValue([]),
         readLiveDelta,
         projectCommittedLiveDelta,
@@ -579,7 +591,7 @@ describe('phone committed-row live delivery', () => {
       },
     };
     const read = vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 170));
+      await new Promise((resolve) => setTimeout(resolve, 120));
       return delta;
     });
     const project = vi.fn().mockReturnValue(delta);
@@ -634,7 +646,7 @@ describe('phone committed-row live delivery', () => {
         queryCount: read.mock.calls.length,
       }),
     );
-    expect(Math.min(...queriedDurations)).toBeGreaterThanOrEqual(160);
+    expect(Math.min(...queriedDurations)).toBeGreaterThanOrEqual(110);
     expect(Math.max(...directDurations)).toBeLessThan(25);
     expect(read).toHaveBeenCalledTimes(20);
     expect(project).toHaveBeenCalledTimes(20);
@@ -792,6 +804,7 @@ describe('phone committed-row live delivery', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
         canReadRoom: vi.fn().mockResolvedValue(false),
+        canReadRooms: canReadRoomsFrom(async () => false),
         liveDraftSnapshot: vi.fn().mockResolvedValue([]),
         readLiveDelta: read,
         projectCommittedLiveDelta: project,

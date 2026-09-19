@@ -36,7 +36,9 @@ export class SurfaceRefreshScheduler<T> {
   private expectations: SurfaceExpectation<T>[] = [];
 
   constructor(private readonly options: SurfaceRefreshOptions<T>) {
-    this.minimumIntervalMs = options.minimumIntervalMs ?? 500;
+    // 150 ms matches the product interaction target; forced refreshes still
+    // bypass this floor so same-process committed deltas stay immediate.
+    this.minimumIntervalMs = options.minimumIntervalMs ?? 150;
     this.maximumWaitMs = options.maximumWaitMs ?? 1_000;
     this.now = options.now ?? Date.now;
     this.setTimer = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay));

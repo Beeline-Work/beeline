@@ -12,6 +12,10 @@ import {
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 export const PUSH_DELIVERY_MIN_INTERVAL_MS = 5_000;
+/** Bound concurrent device sends after serial claim/suppress. APNS can take
+ * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
+ * sole background leader otherwise stalls attention delivery. */
+export const PUSH_DELIVERY_CONCURRENCY = 8;
 
 export interface PushSender {
   send(
@@ -300,6 +304,28 @@ export class PushDeliveryLoop {
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
+    type ClaimedDelivery = {
+      candidate: (typeof candidates.rows)[number];
+      message:
+        | {
+            messageId: string;
+            workspaceId: string;
+            roomId?: string;
+            type: 'workspace-join';
+            text: string;
+          }
+        | {
+            messageId: string;
+            workspaceId: string;
+            roomId: string;
+            channelId: string;
+            cornerId?: string;
+            target: 'message' | 'corner';
+            type: 'message';
+            text: string;
+          };
+    };
+    const claimedDeliveries: ClaimedDelivery[] = [];
     for (const candidate of candidates.rows) {
       // The candidate query and delivery claims are separate statements. A
       // corner-open and its PR-open note can therefore be selected in one
@@ -361,8 +387,9 @@ export class PushDeliveryLoop {
             ).rowCount,
           );
       if (!claimed) continue;
-      try {
-        const message =
+      claimedDeliveries.push({
+        candidate,
+        message:
           candidate.notification_type === 'workspace-join'
             ? {
                 messageId: candidate.message_id,
@@ -380,32 +407,51 @@ export class PushDeliveryLoop {
                 target: candidate.target,
                 type: 'message' as const,
                 text: candidate.text,
-              };
-        const sender = candidate.platform === 'ios' ? this.iosSender! : this.sender;
-        await sender.send(candidate.token, message);
-        await this.database.query(
-          `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
-          [candidate.message_id, candidate.token],
-        );
-        if (candidate.is_release_catchup)
-          await this.database.query(
-            `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
-            [candidate.token, candidate.message_id],
-          );
-        delivered += 1;
-      } catch (error) {
-        await this.database.query(
-          `UPDATE push_delivery_claims SET status='failed',completed_at=now(),error=$3 WHERE message_id=$1 AND device_token=$2`,
-          [
-            candidate.message_id,
-            candidate.token,
-            error instanceof Error ? error.message : String(error),
-          ],
-        );
-        if (isUnregisteredPushToken(error))
-          await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [candidate.token]);
-      }
+              },
+      });
     }
+    let nextClaim = 0;
+    const workerResults = await Promise.all(
+      Array.from(
+        { length: Math.min(PUSH_DELIVERY_CONCURRENCY, claimedDeliveries.length) },
+        async () => {
+          let localDelivered = 0;
+          while (nextClaim < claimedDeliveries.length) {
+            const index = nextClaim++;
+            const { candidate, message } = claimedDeliveries[index]!;
+            try {
+              const sender = candidate.platform === 'ios' ? this.iosSender! : this.sender;
+              await sender.send(candidate.token, message);
+              await this.database.query(
+                `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
+                [candidate.message_id, candidate.token],
+              );
+              if (candidate.is_release_catchup)
+                await this.database.query(
+                  `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
+                  [candidate.token, candidate.message_id],
+                );
+              localDelivered += 1;
+            } catch (error) {
+              await this.database.query(
+                `UPDATE push_delivery_claims SET status='failed',completed_at=now(),error=$3 WHERE message_id=$1 AND device_token=$2`,
+                [
+                  candidate.message_id,
+                  candidate.token,
+                  error instanceof Error ? error.message : String(error),
+                ],
+              );
+              if (isUnregisteredPushToken(error))
+                await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [
+                  candidate.token,
+                ]);
+            }
+          }
+          return localDelivered;
+        },
+      ),
+    );
+    delivered = workerResults.reduce((sum, count) => sum + count, 0);
     return delivered;
   }
 

@@ -12,6 +12,16 @@ describe('distillTurnFailureReason', () => {
     expect(distillTurnFailureReason(error).text).not.toMatch(/\n|\bat\s/);
   });
 
+  it('keeps a Codex quota and reset time that rode in on a flattened stderr tail', () => {
+    expect(
+      distillTurnFailureReason(
+        new Error(
+          "ACP error -32603: Codex process has exited with code 0; harness stderr: You've hit your usage limit. Upgrade to Pro for more usage, or try again at Sep 19th, 2026 4:09 AM.",
+        ),
+      ).text,
+    ).toMatch(/usage limit.*Sep 19th, 2026 4:09 AM/);
+  });
+
   it('takes the first informative line of a multi-line message and strips the Error: prefix', () => {
     expect(
       distillTurnFailureReason(

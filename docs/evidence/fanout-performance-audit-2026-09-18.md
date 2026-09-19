@@ -6,7 +6,12 @@ Scope: server live fanout, Room/deck hot reads, push delivery, client paint evid
 
 ## Status
 
-Implementation landed on this branch for the reconciled priority list (subscription batching, listener-owned presence fanout, push concurrency, 200-Room width corpus with explainHotRead, multi-Room batch auth). Latency floors: live-delta deadline 150 ms (under the interaction target for the server wait alone); SurfaceRefreshScheduler stays at 500 ms (~2 GETs/s) so a busy Workspace cannot flood the app pool. The 150 ms e2e miss path is **not** claimed via coalesce-floor arithmetic — same-process force stays immediate, and GET+paint is measured by the client paint benchmark (F5).
+**PARTIAL — returned without closing two product gaps.** Landed and accepted: F1 subscription batching, F2 listener-owned presence fanout, F3 200-Room width corpus + many-corner gate + `explainHotRead`, F4 push concurrency, multi-Room batch auth. Latency floors: live-delta deadline 150 ms (server wait alone); `SurfaceRefreshScheduler` 500 ms (~2 GETs/s, pool-safe). Same-process force stays immediate.
+
+**Still open (not implemented on this branch):**
+
+1. **P1 live interaction miss path (150 ms e2e).** Measured composed miss path with the pool-safe scheduler is ~662 ms (`150` deadline + `500` floor + measured GET+paint). Restoring the 500 ms floor does not meet the product interaction target.
+2. **F5 client page-load paint proof (450 ms).** `monolith-client-paint-budgets.test.ts` is an in-process projection microbench (mocked fetch, JSON clone, pure helpers, `minimumIntervalMs: 0`). It does **not** exercise navigation, React Native render/layout, or a real cold/warm client route, so it cannot prove the 450 ms page-load target.
 
 ## Targets (source of truth for this audit)
 
@@ -94,7 +99,7 @@ Evidence:
 - Current monolith client coverage includes structural `FRAME-BUDGET` tests (`surface-runtime.frame-budget.test.ts`), not monolith cold/warm Room-deck or transcript paint benchmarks.
 - `monolith-paint-budgets.test.ts` measures in-process `PhoneService.readChats` / `readRoom` only — useful as a server hot-path floor, not as client cold/warm paint proof.
 
-Follow-up on this branch: `monolith-client-paint-budgets.test.ts` measures cold/warm Room-deck (200 Rooms) and transcript (30 messages) through `RoomViewClient` transport+guard, JSON cache hydration, `SurfaceRefreshScheduler` apply, and the phone's `room-list-row` / `room-view-presentation` paint path under 450 ms, and prints measured GET+paint separately from the pool-safe 500 ms scheduler floor.
+Follow-up on this branch (partial): `monolith-client-paint-budgets.test.ts` adds an in-process projection microbench through `RoomViewClient` + row/transcript helpers. It is **not** accepted as proof of the 450 ms cold/warm page-load target; a real navigation/RN paint measurement remains open.
 
 ## Challenges / nuances (Nerd)
 

@@ -16,7 +16,11 @@ import {
 } from './room-list-row';
 import { createRoomMessageProjector, reconcileRoomView } from './room-view-presentation';
 
-/** Client cold/warm deck + transcript paint target (audit F5 / 450 ms finding). */
+/**
+ * In-process projection microbench only (mocked fetch, JSON clone, pure row/
+ * transcript helpers). Not a React Native navigation/layout page-load proof;
+ * audit F5 450 ms cold/warm route target remains open.
+ */
 const CLIENT_PAINT_TARGET_MS = 450;
 const DECK_ROOM_COUNT = 200;
 const TRANSCRIPT_MESSAGE_COUNT = 30;
@@ -164,8 +168,8 @@ function paintTranscript(view: RoomView): number {
  * apply, and the same row/transcript projection the phone paints — not in-process
  * PhoneService alone.
  */
-describe('monolith client paint budgets (deck + transcript)', () => {
-  it('cold and warm deck/transcript client paints stay under 450 ms and measure GET+paint', async () => {
+describe('monolith client paint projection microbench (not RN page-load)', () => {
+  it('in-process deck/transcript path stays under 450 ms and prints composed miss path as unmet', async () => {
     const deck = deckView();
     const transcript = transcriptView();
     const identity = createIdentity('monolith-client-paint');
@@ -257,7 +261,7 @@ describe('monolith client paint budgets (deck + transcript)', () => {
         liveDeltaDeadlineMs: 150,
         interactionTargetMs: 150,
         composedMissPathMs: 150 + 500 + Math.round(getPlusPaintMs),
-        note: 'composed miss path exceeds 150 ms with pool-safe scheduler; same-process force stays immediate',
+        note: 'PARTIAL: composed miss path exceeds 150 ms interaction target with pool-safe scheduler; microbench is not RN page-load proof',
       }),
     );
 

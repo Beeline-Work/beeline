@@ -46,14 +46,15 @@ function check(id, ok, detail) {
 }
 
 check(
-  'F5.client-paint-benchmark',
+  'F5.client-paint-microbench-partial',
   clientPaint.includes('CLIENT_PAINT_TARGET_MS = 450') &&
+    clientPaint.includes('Not a React Native navigation/layout page-load proof') &&
     clientPaint.includes('DECK_ROOM_COUNT = 200') &&
     clientPaint.includes('client-get-plus-paint') &&
     clientPaint.includes('RoomViewClient') &&
     clientPaint.includes('paintDeck') &&
     clientPaint.includes('paintTranscript'),
-  'monolith client cold/warm deck+transcript paint under 450 ms with measured GET+paint',
+  'in-process projection microbench present; F5 page-load proof explicitly not claimed',
 );
 
 check(

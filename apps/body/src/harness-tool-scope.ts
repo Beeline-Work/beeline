@@ -67,9 +67,12 @@ export type ToolScopeEnforcement =
   | 'unknown';
 
 /**
- * Settings Beeline forces on every Claude Code session, as a `--settings` JSON
- * string. `disableClaudeAiConnectors` is any-source-true, so an operator whose
- * own settings leave it false cannot re-widen a Beeline session.
+ * Settings Beeline forces on every Claude Code session. Passed as an inline
+ * object: claude-agent-acp forwards `_meta.claudeCode.options.settings` to the
+ * Claude Agent SDK, where a string is a settings *file path* and a JSON blob
+ * is therefore read as a missing file (ACP -32603 Internal error at
+ * session/new). `disableClaudeAiConnectors` is any-source-true, so an operator
+ * whose own settings leave it false cannot re-widen a Beeline session.
  */
 export const CLAUDE_TOOL_SCOPE_SETTINGS = { disableClaudeAiConnectors: true } as const;
 
@@ -112,7 +115,7 @@ const CLAUDE_PROFILE: ToolScopeProfile = {
         // never a repository's .mcp.json, local settings, or plugins.
         settingSources: ['user'],
         // Account-bound claude.ai cloud connectors are not fetched at all.
-        settings: JSON.stringify(CLAUDE_TOOL_SCOPE_SETTINGS),
+        settings: CLAUDE_TOOL_SCOPE_SETTINGS,
       },
     },
   },
@@ -153,7 +156,7 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
     match: CURSOR_HARNESS_COMMAND,
     profile: {
       enforcement: 'config-isolated',
-      note: 'cursor-acp-bridge drives cursor-agent; cursor-agent loads MCP servers from ~/.cursor/mcp.json, so an isolated CURSOR_HOME scopes the session',
+      note: 'cursor-acp-bridge writes session/new mcpServers into the isolated CURSOR_HOME mcp.json and the isolated $HOME/.cursor/mcp.json cursor-agent loads; it never writes the operator ~/.cursor',
     },
   },
 ];

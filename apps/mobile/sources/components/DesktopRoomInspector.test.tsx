@@ -106,6 +106,12 @@ vi.mock('@/components/buzz/DesktopArtifactPane', async () => {
     DesktopArtifactPane: (props: any) => ReactModule.createElement('DesktopArtifactPane', props),
   };
 });
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn() }));
 vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));

@@ -27,7 +27,15 @@ export type LiveWireTrace = {
 };
 
 type LiveWireEvent =
-  | { type: 'invalidate'; roomId: string; reason: string; trace?: LiveWireTrace }
+  | {
+      type: 'invalidate';
+      roomId: string;
+      reason: string;
+      messageId?: string;
+      agentId?: string;
+      requestId?: string;
+      trace?: LiveWireTrace;
+    }
   | { type: 'subscribed'; roomId: string }
   | { type: 'message-delta'; roomId: string; message: RoomViewMessage; trace?: LiveWireTrace }
   | { type: 'turn-delta'; roomId: string; turn: RoomViewAgentTurn; trace?: LiveWireTrace }
@@ -366,7 +374,8 @@ export class MonolithRigTransport {
         next.onopen = () => {
           if (closed || socket !== next) return;
           reconnectDelayMs = 1_000;
-          for (const roomId of roomIds) next.send(JSON.stringify({ type: 'subscribe', roomId }));
+          if (roomIds.size === 0) return;
+          next.send(JSON.stringify({ type: 'subscribe', roomIds: [...roomIds] }));
         };
         next.onmessage = (message) => {
           if (closed || socket !== next) return;

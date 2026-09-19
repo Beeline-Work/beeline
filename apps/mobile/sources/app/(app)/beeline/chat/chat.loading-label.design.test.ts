@@ -16,9 +16,11 @@ describe('the pre-surface loading label', () => {
     const start = chatSource.indexOf('if (!roomSurface) {');
     const end = chatSource.indexOf('<BuzzCommunityShell', start);
     const preSurface = chatSource.slice(start, end);
+    expect(preSurface).toContain('<SurfaceGlyphLoader');
     expect(preSurface).toContain(
       'LOADING {(isCorner ? CORNER_LABEL : ROOM_LABEL).toUpperCase()}',
     );
     expect(preSurface).not.toContain('LOADING {ROOM_LABEL.toUpperCase()}');
+    expect(preSurface).not.toContain('PixelLoader');
   });
 });

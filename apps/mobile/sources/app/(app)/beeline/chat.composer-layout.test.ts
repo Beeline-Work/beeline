@@ -49,12 +49,43 @@ describe('Room composer status layout', () => {
     expect(inputStyle).toContain('maxHeight: COMPOSER_MAX_INPUT_HEIGHT');
   });
 
-  it('keeps turn progress inside the growing composer stack, above the field', () => {
-    const inputBar = source.slice(source.indexOf('<View style={[styles.inputBar'));
+  it('keeps turn progress inside the composer stack, above the field', () => {
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
     const composer = inputBar.indexOf('<ConversationComposer');
     expect(progress).toBeGreaterThanOrEqual(0);
     expect(composer).toBeGreaterThan(progress);
+  });
+
+  it('hangs the phone turn line over the transcript so it does not open a composer gap', () => {
+    const hanging = source.slice(
+      source.indexOf('hangingTurnChrome: {'),
+      source.indexOf('agentOfflineHint: {'),
+    );
+    expect(hanging).toContain("position: 'absolute'");
+    expect(hanging).toContain("bottom: '100%'");
+    expect(source).toContain('styles.bottomChromeStack');
+    const stack = source.slice(source.indexOf('styles.bottomChromeStack'));
+    expect(stack.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);
+    expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<ConversationComposer'));
+    expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<CornerLiveBar'));
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
+    expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
+    expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
+    expect(source).toContain(
+      'pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline)',
+    );
+  });
+
+  it('keeps the Room header outside the Android keyboard translation surface', () => {
+    const conversation = source.slice(
+      source.indexOf('<View style={styles.desktopConversationFrame}>'),
+    );
+    const header = conversation.indexOf('{/* Header. No surface of its own');
+    const keyboardSurface = conversation.indexOf('<KeyboardAvoidingView');
+
+    expect(header).toBeGreaterThanOrEqual(0);
+    expect(keyboardSurface).toBeGreaterThan(header);
   });
 
   it('keeps the send arrow separated from the text field', () => {
@@ -144,10 +175,10 @@ describe('Room composer keyboard inset', () => {
     expect(source).not.toContain('keyboardVerticalOffset=');
   });
 
-  it('keeps the safe-area inset only while the software keyboard is closed', () => {
+  it('moves the safe-area inset with keyboard progress instead of snapping at event boundaries', () => {
     expect(source).toContain(
-      'const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);',
+      'paddingBottom: composerBottomPadding(Platform.OS, insets.bottom, keyboardProgress.value)',
     );
-    expect(source).toContain('{ paddingBottom: composerBottomInset }');
+    expect(source).toContain('<Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>');
   });
 });

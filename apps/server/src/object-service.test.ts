@@ -12,6 +12,7 @@ interface FakeStorage {
   put: ReturnType<typeof vi.fn>;
   post: ReturnType<typeof vi.fn>;
   get: ReturnType<typeof vi.fn>;
+  getObject: ReturnType<typeof vi.fn>;
   head: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
 }
@@ -21,6 +22,7 @@ function fakeStorage(): { storage: ObjectStorage; fake: FakeStorage } {
     put: vi.fn(async () => undefined),
     post: vi.fn(async () => ({ url: 'https://s3/post', fields: { policy: 'p' } })),
     get: vi.fn(async () => 'https://s3/signed-get'),
+    getObject: vi.fn(async () => new Uint8Array(Buffer.from('owned-bytes'))),
     head: vi.fn(async () => null),
     delete: vi.fn(async () => undefined),
   };
@@ -28,6 +30,7 @@ function fakeStorage(): { storage: ObjectStorage; fake: FakeStorage } {
     putObject: fake.put,
     presignPost: fake.post,
     presignGet: fake.get,
+    getObject: fake.getObject,
     headObject: fake.head,
     deleteObject: fake.delete,
   } as unknown as ObjectStorage;
@@ -115,6 +118,45 @@ describe('ObjectService', () => {
     ).rows[0];
     expect(row).toMatchObject({ state: 'ready' });
     expect(row!.state).toBe('ready');
+  });
+
+  it('streams a person file share: any mime, kind=media, same TTL restart', async () => {
+    const bytes = Buffer.from('notes');
+    const result = await service.uploadSharedFile(AGENT, bytes, 'text/plain', 'notes.txt');
+    expect(result).toMatchObject({
+      url: `https://server.usebeeline.app/v1/media/${result.objectId}`,
+      title: 'notes.txt',
+      mimeType: 'text/plain',
+      size: bytes.length,
+      sha256: sha256(bytes),
+    });
+    expect(fake.put).toHaveBeenCalledWith(
+      `media/${AGENT}/${sha256(bytes)}`,
+      expect.anything(),
+      'text/plain',
+    );
+    const row = (
+      await database.query<{ kind: string; state: string }>(
+        `SELECT kind,state FROM objects WHERE id=$1`,
+        [result.objectId],
+      )
+    ).rows[0];
+    expect(row).toEqual({ kind: 'media', state: 'ready' });
+    await database.query(`UPDATE objects SET expires_at = now() - interval '1 minute' WHERE id=$1`, [
+      result.objectId,
+    ]);
+    const again = await service.uploadSharedFile(AGENT, bytes, 'text/plain', 'notes.txt');
+    expect(again.objectId).toBe(result.objectId);
+    expect(fake.put).toHaveBeenCalledTimes(1);
+  });
+
+  it('readOwnedBytes returns storage bytes for a ready object this owner uploaded', async () => {
+    const result = await service.uploadSharedFile(AGENT, Buffer.from('pic'), 'image/png', 'pic.png');
+    await expect(service.readOwnedBytes(AGENT, result.objectId)).resolves.toEqual(
+      new Uint8Array(Buffer.from('owned-bytes')),
+    );
+    expect(fake.getObject).toHaveBeenCalledWith(`media/${AGENT}/${sha256(Buffer.from('pic'))}`);
+    await expect(service.readOwnedBytes(OTHER, result.objectId)).resolves.toBeUndefined();
   });
 
   it('keeps per-owner dedupe: the same bytes from another owner is a new object', async () => {

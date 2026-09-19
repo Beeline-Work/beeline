@@ -100,6 +100,63 @@ describe('monolith phone session', () => {
     expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-2');
   });
 
+  it('keeps the rotated refresh credential in memory for later access renewals', async () => {
+    const storage = {
+      getItemAsync: vi.fn(async (key: string) =>
+        key === 'buzzy.monolith.refresh.v1' ? 'refresh-old' : null,
+      ),
+      setItemAsync: vi.fn(async () => undefined),
+      deleteItemAsync: vi.fn(async () => undefined),
+    };
+    let generation = 1;
+    const fetcher = vi.fn(async () => {
+      const issued = {
+        ...tokens(generation),
+        accessExpiresAt: Date.now() + 31_000,
+      };
+      generation += 1;
+      return new Response(JSON.stringify(issued), { status: 200 });
+    });
+    const session = new MonolithSession(
+      'https://server.example',
+      fetcher as typeof fetch,
+      async () => storage,
+    );
+
+    await expect(session.authorization()).resolves.toBe('access-1');
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(session.authorization()).resolves.toBe('access-2');
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(
+      storage.getItemAsync.mock.calls.filter(([key]) => key === 'buzzy.monolith.refresh.v1'),
+    ).toHaveLength(1);
+    expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-1' }));
+  });
+
+  it('evicts the rotated in-memory refresh credential on clear, so later reads require sign-in', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1)), { status: 200 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+
+    // Warm the rotated refresh token into memory via a successful renewal.
+    await expect(session.authorization()).resolves.toBe('access-1');
+    expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-1');
+
+    await session.clear();
+
+    await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
+    // The cleared session must not fall back to the rotated in-memory token:
+    // no extra refresh call, and the only refresh used the pre-rotation token.
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-old' }));
+  });
+
   it('aborts a hung phone read only when it opts into the bounded deadline', async () => {
     let hang = false;
     const fetcher = vi.fn(
@@ -168,11 +225,11 @@ describe('monolith phone session', () => {
 
   it('clears a rejected refresh so launch routes to one sign-in', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'stale');
-    const session = new MonolithSession(
-      'https://server.example',
-      vi.fn(async () => new Response('{}', { status: 401 })) as typeof fetch,
-    );
+    const fetcher = vi.fn(async () => new Response('{}', { status: 401 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
     expect(secure.has('buzzy.monolith.refresh.v1')).toBe(false);
+    await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

@@ -14,13 +14,15 @@ describe('Workspace Members entry point', () => {
     expect(source).not.toContain('/beeline/agents?communityId=');
   });
 
-  it('draws that header entry as a people glyph with an accessible name', () => {
-    expect(source).toContain('name="people-outline"');
+  it('draws that header entry as MembersGlyph with an accessible name', () => {
+    expect(source).toContain('<MembersGlyph');
+    expect(source).toContain('testID="workspace-members-glyph"');
     expect(source).toContain(
       'accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}',
     );
     expect(source).not.toContain('MEMBERS_LABEL.toUpperCase()');
     expect(source).not.toContain('headerActionText');
+    expect(source).not.toContain('people-outline');
   });
 
   it('redirects legacy agent-management links to Members', () => {

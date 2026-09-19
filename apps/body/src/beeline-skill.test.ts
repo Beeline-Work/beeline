@@ -25,6 +25,8 @@ describe('using-beeline Room guidance', () => {
     );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
+    expect(beelinePrimer()).toContain('beeline-agent fetch_image');
+    expect(beelinePrimer()).toContain('embed as a data: URL');
     // The primer asks for the corner's NAME as well as its objective (C89).
     expect(beelinePrimer()).toContain(
       'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
@@ -147,6 +149,28 @@ describe('using-beeline merge ownership', () => {
   });
 });
 
+describe('using-beeline human instruction ranking', () => {
+  // Soft prompt only: no hold ledger, no refusal check. Independent same-tier
+  // holds cannot collapse because this design adds no holder state; the agent
+  // reasons from the conversation.
+  it('ranks owner then workspace master/admin then member, and forbids field syntax in Room replies', () => {
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).toContain('## Conflicting human instructions');
+    expect(markdown).toMatch(/your own owner first/i);
+    expect(markdown).toMatch(/workspace'?s master and admins/i);
+    expect(markdown).toMatch(/then members/i);
+    expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
+    expect(markdown).toContain("A human at the same standing cannot clear another human's hold");
+    expect(markdown).toMatch(/only that holder or someone of higher standing can/i);
+    expect(markdown).toContain('Never tell a higher-tier human that a lower-tier hold binds them');
+    expect(markdown).toMatch(/name the person and their standing in ordinary words/i);
+    expect(markdown).toContain('workspaceRole=');
+    expect(markdown).toContain('agentOwner');
+    expect(markdown).toMatch(/Never write field names or field=value syntax/i);
+    expect(beelinePrimer()).not.toContain('## Conflicting human instructions');
+  });
+});
+
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
 
@@ -255,5 +279,19 @@ describe('using-beeline "Showing a mock" section', () => {
     expect(markdown).toContain('#d7af5f');
     expect(markdown).toContain('<script>');
     expect(markdown).toContain('http(s) URL');
+  });
+});
+
+describe('using-beeline "Showing a photograph" section', () => {
+  const markdown = usingBeelineSkillMarkdown('test-release');
+
+  it('teaches fetch_image next to Showing a mock, and keeps the validator closed', () => {
+    expect(markdown).toContain('## Showing a photograph');
+    expect(markdown.indexOf('## Showing a photograph')).toBeGreaterThan(markdown.indexOf('## Showing a mock'));
+    expect(markdown).toContain('beeline-agent fetch_image');
+    expect(markdown).toContain('data:image/jpeg;base64');
+    expect(markdown).toContain('do not draw an SVG stand-in');
+    expect(markdown).toContain('The validator still refuses every http(s) image reference');
+    expect(markdown).toContain('The artifact is a snapshot');
   });
 });

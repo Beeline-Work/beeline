@@ -605,6 +605,51 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('signals a targetless phone-write so an open Room can paint without remounting', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' },
+      });
+    });
+
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('still waits for the committed-row delta when a phone-write names its message', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: 'room-a',
+          reason: 'phone-write',
+          messageId: 'posted-message',
+        },
+      });
+    });
+
+    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
   it('reconciles immediately when a committed delta cannot be delivered', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;

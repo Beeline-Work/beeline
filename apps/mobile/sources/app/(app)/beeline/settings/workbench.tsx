@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
@@ -120,10 +121,8 @@ export default function WorkbenchScreen() {
     return (
       <View style={styles.container}>
         {header}
-        <View style={styles.centered}>
-          <Text style={styles.centeredMessage} testID="workbench-loading">
-            Loading…
-          </Text>
+        <View style={styles.centered} testID="workbench-loading">
+          <SurfaceGlyphLoader testID="workbench-loader" />
         </View>
       </View>
     );
@@ -268,12 +267,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       padding: hull.space.xl,
       gap: hull.space.md,
-    },
-    centeredMessage: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textMuted,
-      textAlign: 'center',
     },
   };
 });

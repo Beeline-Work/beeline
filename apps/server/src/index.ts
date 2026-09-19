@@ -72,6 +72,9 @@ async function main() {
     database,
     live,
   );
+  // Listener expands one presence NOTIFY across memberships; writers must not
+  // also run broadcastAgentPresence against the same LiveHub.
+  live.useListenerPresenceFanout();
   void liveListener.run();
   const githubConfigured =
     process.env.GITHUB_CLIENT_ID &&
@@ -172,6 +175,7 @@ async function main() {
     live,
     false,
     enrichmentDatabase,
+    objectService,
   );
   const daemon = new DaemonService(
     database,

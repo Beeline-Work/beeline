@@ -40,7 +40,13 @@ describe('composer bottom padding', () => {
   });
 
   it('does not stack the device safe area above an open software keyboard', () => {
-    expect(composerBottomPadding('android', 24, 301)).toBe(8);
-    expect(composerBottomPadding('ios', 34, 301)).toBe(8);
+    expect(composerBottomPadding('android', 24, 1)).toBe(8);
+    expect(composerBottomPadding('ios', 34, 1)).toBe(8);
+  });
+
+  it('follows keyboard progress instead of snapping at summon and dismissal boundaries', () => {
+    expect(composerBottomPadding('android', 24, 0.25)).toBe(26);
+    expect(composerBottomPadding('android', 24, 0.5)).toBe(20);
+    expect(composerBottomPadding('android', 24, 0.75)).toBe(14);
   });
 });

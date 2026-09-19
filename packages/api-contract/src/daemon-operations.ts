@@ -436,7 +436,13 @@ export type RequestCompletionResult = {
   readonly openedCornerId?: string;
   readonly completed: boolean;
 };
-export type WriteResult = { readonly id: string; readonly createdAt: number };
+export type WriteResult = {
+  readonly id: string;
+  readonly createdAt: number;
+  /** Set on a failed hiccup receipt the helper should exit so systemd restarts it. */
+  readonly hiccupRestart?: boolean;
+  readonly hiccupAttempt?: number;
+};
 export type PostRoomMessageResult = WriteResult;
 export type PostRoomMessageInput = TurnOutputAuthority &
   RoomInput & {
@@ -484,7 +490,15 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
   /** Typed Room-safe classification; detail stays in the daemon log. */
-  readonly reasonKind?: 'model-selection-unavailable';
+  readonly reasonKind?:
+    | 'hiccup'
+    | 'wrong-model'
+    | 'allowance-spent'
+    | 'not-signed-in'
+    | 'workspace-failure'
+    | 'helper-out-of-date'
+    | 'offline'
+    | 'model-selection-unavailable';
 };
 export type PostAgentActivityInput = TurnOutputAuthority &
   AgentRoomInput & {

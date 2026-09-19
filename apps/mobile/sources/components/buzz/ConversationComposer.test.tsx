@@ -259,6 +259,24 @@ describe('one composer', () => {
     expect(replacementInput.props.value).toBe('');
   });
 
+  it('transfers focus to the empty replacement input after dispatch', () => {
+    const f = render('first message');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props} focused />));
+    const consumedInput = f.renderer.root.findByType('TextInput');
+
+    act(() =>
+      f.renderer.update(
+        <ConversationComposer {...props} focused inputRevision={1} value="" />,
+      ),
+    );
+
+    const replacementInput = f.renderer.root.findByType('TextInput');
+    expect(replacementInput).not.toBe(consumedInput);
+    expect(replacementInput.props.value).toBe('');
+    expect(replacementInput.props.autoFocus).toBe(true);
+  });
+
   it('keeps measured multiline sizing on web', () => {
     const f = render('first line\nsecond line\nthird line');
     // Read the numbers from the constants the harness passes in. Spelling them

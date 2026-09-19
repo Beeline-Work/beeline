@@ -22,7 +22,12 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Notifications from 'expo-notifications';
-import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
+import {
+  KeyboardAvoidingView,
+  useKeyboardState,
+  useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   useFocusEffect,
@@ -82,7 +87,7 @@ import {
   selectComposerAckPresentation,
   type ComposerAckPresentation,
 } from '@/buzz/room-indicators';
-import { formatSettledLine, formatStoppedLine, type TurnVerb } from '@/buzz/turn-clock';
+import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
@@ -173,6 +178,7 @@ import {
 import { displayCornerTitle } from '@/buzz/room-list-row';
 import {
   desktopOpenLandingOnContentSizeChange,
+  phoneTranscriptTailPadding,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
   desktopTailLanding,
@@ -307,10 +313,12 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
-import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -390,6 +398,12 @@ const INITIAL_CORNER_MESSAGE_WINDOW = 200;
  * pixel of chrome.
  */
 const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
+/**
+ * The Room diamond and overflow sit at glyph size so they read as one
+ * trailing cluster; 14 all round restores a 44pt target on a ~16pt glyph
+ * without the stacked 12+44 boxes that used to float the diamond away.
+ */
+const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -2330,13 +2344,19 @@ export default function BuzzChat() {
   ]);
 
   // C97: the fixed chrome below the inverted list changes independently of
-  // transcript rows. A send collapses the composer/keyboard, while the
-  // server's later claim mounts TurnProgressLine and a corner lease mounts
-  // CornerLiveBar. Native layout can update the pinned ref before an effect
-  // runs, preserving the old offset as an empty gap. Capture the verdict in
-  // render, including the two independently mounted status lines.
+  // transcript rows. A send resets the composer's height while retaining the
+  // keyboard, and a corner lease mounts CornerLiveBar. The phone turn line
+  // hangs above the whole bottom stack instead of growing this footprint.
+  // Native layout can update the pinned ref before an effect runs, preserving
+  // the old offset as an empty gap. Capture the verdict in render.
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);
+  const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
+  const composerBottomInsetStyle = useAnimatedStyle(
+    () => ({
+      paddingBottom: composerBottomPadding(Platform.OS, insets.bottom, keyboardProgress.value),
+    }),
+    [insets.bottom],
+  );
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
     cornerLiveBar ? 'corner' : 'no-corner',
@@ -2443,14 +2463,19 @@ export default function BuzzChat() {
     );
     if (!terminal) return;
     lastActiveTurnRef.current = null;
+    const status = terminal.status;
+    if (status === 'working') return;
+    const line = formatTerminalTurnOverlay(
+      status,
+      last.verb,
+      last.startedAt,
+      terminal.createdAt * 1_000,
+    );
+    if (!line) return;
     setSettledTurn({
       // A stopped turn is not a finished one: the same shape, without the word
       // `done`, because no answer arrived. The Room carries who stopped it.
-      line: (terminal.status === 'cancelled' ? formatStoppedLine : formatSettledLine)(
-        last.verb,
-        last.startedAt,
-        terminal.createdAt * 1_000,
-      ),
+      line,
     });
   }, [activeAgentTurn, agentTurnMarkers, composerAck]);
   useEffect(() => {
@@ -4288,7 +4313,7 @@ export default function BuzzChat() {
     }
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <PixelLoader />
+        <SurfaceGlyphLoader testID="room-surface-loader" />
         <Text style={styles.loadingText}>
           LOADING {(isCorner ? CORNER_LABEL : ROOM_LABEL).toUpperCase()}
         </Text>
@@ -4314,10 +4339,7 @@ export default function BuzzChat() {
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-        >
+        <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
           <View
@@ -4425,21 +4447,21 @@ export default function BuzzChat() {
               ) : null}
             </View>
             {/* Membership still consumes no header width: the Members row lives
-              in the overflow sheet (corner) or the inspector (desktop Room).
-              The trailing slot carries the corner glyph `◇` beside overflow —
-              a second door onto the Room's dedicated corners list, not a
-              second live-corner jump. The pinned line below the transcript
-              stays the one active-corner affordance. */}
+              in the Room and corner overflow sheets. The desktop work pane
+              does not carry it. The trailing slot is the corner glyph `◇` in
+              brass beside overflow — a door onto the Room's corners list, not
+              members. The pinned line below the transcript stays the one
+              active-corner affordance. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
                 accessibilityRole="button"
-                hitSlop={HEADER_EDGE_HIT_SLOP}
+                hitSlop={HEADER_TRAILING_HIT_SLOP}
                 onPress={() => router.push(roomCornersHref(decodedId))}
-                style={styles.roomActionsButton}
+                style={styles.roomCornersButton}
                 testID="room-corners-menu"
               >
-                <Text style={styles.roomActionsGlyph}>◇</Text>
+                <Text style={styles.roomCornersGlyph}>◇</Text>
               </TouchableOpacity>
             )}
             {isCorner && !viewerIsAgent && !isArchived && (
@@ -4462,14 +4484,14 @@ export default function BuzzChat() {
                 <TouchableOpacity
                   accessibilityLabel={`${ROOM_LABEL} actions`}
                   accessibilityRole="button"
-                  hitSlop={HEADER_EDGE_HIT_SLOP}
+                  hitSlop={HEADER_TRAILING_HIT_SLOP}
                   onPress={() => {
                     setMembershipError(null);
                     setRenameEditing(false);
                     setRenameError(null);
                     setRoomActionsVisible(true);
                   }}
-                  style={styles.roomActionsButton}
+                  style={styles.roomClusteredActionsButton}
                   testID="room-actions-menu"
                 >
                   <Text style={styles.roomActionsGlyph}>•••</Text>
@@ -4482,6 +4504,10 @@ export default function BuzzChat() {
             )}
           </View>
 
+          <KeyboardAvoidingView
+            style={styles.keyboardBody}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
+          >
           {/* What the corner is for, held under the header for its whole life:
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
@@ -4514,6 +4540,18 @@ export default function BuzzChat() {
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
+              // Inverted list: paddingTop is the visual tail. Corner/offline
+              // chrome already pushes that tail above the composer; reserve
+              // the hanging line only when neither is present. This keeps the
+              // WAITING + thinking gap identical to the Room's idle gap.
+              !desktopTranscript &&
+                !isArchived &&
+                (composerAck || settledTurn) && {
+                  paddingTop: phoneTranscriptTailPadding({
+                    turnChromeVisible: true,
+                    pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline),
+                  }),
+                },
             ]}
             maintainVisibleContentPosition={
               desktopTranscript
@@ -4812,33 +4850,6 @@ export default function BuzzChat() {
             }
           />
 
-          {/* The Room's only active-corner affordance: one pinned line naming
-            who is working and what on, bright ink breathing while the work is
-            live and still brass while waiting. Never a scroll element — see
-            CornerLiveBar. */}
-          {!isCorner && !isArchived && cornerLiveBar && (
-            <CornerLiveBar
-              label={cornerLiveBar.label}
-              live={cornerLiveBar.live}
-              state={cornerLiveBar.state}
-              // A Room bar always acts. Corrupt/missing lifecycle data is
-              // explained by openCorner instead of disappearing in a guard.
-              onPress={() => openCorner(cornerLiveBar.cornerId)}
-            />
-          )}
-          {/* The ordinary per-turn indicator, independent of the line above: a
-            Room can be thinking with no corner open, or hold an open corner
-            with nothing being asked of it. Both may show at once; neither
-            implies the other. */}
-          {!isArchived && agentsOffline && (
-            <View style={styles.agentOfflineHint} testID="agent-offline-hint">
-              <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
-              <Text style={styles.agentOfflineHintText}>
-                Messages stay in this Room and will be answered when the Agent is back.
-              </Text>
-            </View>
-          )}
-
           {/* P2: Archived channels are read-only */}
           {isArchived ? (
             <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
@@ -4846,14 +4857,65 @@ export default function BuzzChat() {
                 {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
               </Text>
             </View>
-          ) : isReadOnlyDirectMessage ? (
-            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
-              <Text style={styles.archivedInputText}>
-                Announcements only · you can't reply here
-              </Text>
-            </View>
           ) : (
-            <View style={[styles.inputBar, { paddingBottom: composerBottomInset }]}>
+            <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
+              {/* Phone turn chrome hangs above the whole bottom stack
+                (corner, offline, composer) so it cannot cover any of them.
+                The inverted list reserves this height; the line fills it.
+                Desktop keeps the reserved slot inside inputBar. */}
+              {!desktopExperience && composerAck && (
+                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
+                  <TurnProgressLine
+                    label={composerAck.label}
+                    startedAt={composerAck.startedAt}
+                    received={composerAck.received}
+                    stopping={stoppingThisTurn}
+                    onStop={
+                      composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                    }
+                    testID="turn-progress-line"
+                  />
+                </View>
+              )}
+              {!desktopExperience && !composerAck && settledTurn && (
+                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
+                  <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                </View>
+              )}
+              {/* The Room's only active-corner affordance: one pinned line naming
+                who is working and what on, bright ink breathing while the work is
+                live and still brass while waiting. Never a scroll element — see
+                CornerLiveBar. */}
+              {!isCorner && cornerLiveBar && (
+                <CornerLiveBar
+                  label={cornerLiveBar.label}
+                  live={cornerLiveBar.live}
+                  state={cornerLiveBar.state}
+                  // A Room bar always acts. Corrupt/missing lifecycle data is
+                  // explained by openCorner instead of disappearing in a guard.
+                  onPress={() => openCorner(cornerLiveBar.cornerId)}
+                />
+              )}
+              {/* The ordinary per-turn indicator, independent of the line above: a
+                Room can be thinking with no corner open, or hold an open corner
+                with nothing being asked of it. Both may show at once; neither
+                implies the other. */}
+              {agentsOffline && (
+                <View style={styles.agentOfflineHint} testID="agent-offline-hint">
+                  <Text style={styles.agentOfflineHintTitle}>□ AGENT OFFLINE</Text>
+                  <Text style={styles.agentOfflineHintText}>
+                    Messages stay in this Room and will be answered when the Agent is back.
+                  </Text>
+                </View>
+              )}
+              {isReadOnlyDirectMessage ? (
+                <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
+                  <Text style={styles.archivedInputText}>
+                    Announcements only · you can't reply here
+                  </Text>
+                </View>
+              ) : (
+            <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
               {slashMenuVisible &&
                 (() => {
                   const mentionAgent = mentionSlashAgentPubkey
@@ -5008,9 +5070,6 @@ export default function BuzzChat() {
                   </TouchableOpacity>
                 </View>
               )}
-              {/* Keep this in the composer stack, directly above the field. A
-                growing multiline field then takes room from the transcript,
-                never from the only live progress signal. */}
               {desktopExperience ? (
                 <View
                   style={styles.desktopStatusSlot}
@@ -5045,25 +5104,7 @@ export default function BuzzChat() {
                     <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
                   ) : null}
                 </View>
-              ) : (
-                <>
-                  {!isArchived && composerAck && (
-                    <TurnProgressLine
-                      label={composerAck.label}
-                      startedAt={composerAck.startedAt}
-                      received={composerAck.received}
-                      stopping={stoppingThisTurn}
-                      onStop={
-                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                      }
-                      testID="turn-progress-line"
-                    />
-                  )}
-                  {!isArchived && !composerAck && settledTurn && (
-                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                  )}
-                </>
-              )}
+              ) : null}
               <ConversationComposer
                 onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
                 inputRef={composerRef}
@@ -5191,9 +5232,12 @@ export default function BuzzChat() {
                     : handleSend
                 }
               />
+            </Animated.View>
+              )}
             </View>
           )}
-        </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
         {desktopWorkPaneMounted && (
           <DesktopRoomInspector
             room={desktopWorkPaneMounted}
@@ -5367,6 +5411,21 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
+        <HullActionSheetRow
+          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+          chevron="right"
+          disabled={!memberManagement.canOpenRoster}
+          label="Members"
+          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
+          metadata={
+            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+          }
+          onPress={() => {
+            setRoomActionsVisible(false);
+            setRosterVisible(true);
+          }}
+          testID="room-participant-roster-trigger"
+        />
         {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">
@@ -5550,6 +5609,7 @@ export default function BuzzChat() {
           chevron="right"
           disabled={!memberManagement.canOpenRoster}
           label="Members"
+          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
           metadata={
             participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
           }
@@ -5600,6 +5660,9 @@ const styles = StyleSheet.create((theme) => {
     container: {
       flex: 1,
       backgroundColor: groknight.bgTerminal,
+    },
+    keyboardBody: {
+      flex: 1,
     },
     desktopConversationFrame: {
       flex: 1,
@@ -5665,6 +5728,7 @@ const styles = StyleSheet.create((theme) => {
 
     // ── Header ──────────────────────────────────────────────────────
     header: {
+      zIndex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,
@@ -5724,12 +5788,30 @@ const styles = StyleSheet.create((theme) => {
     cornerHeaderWaiting: { color: groknight.accent },
     cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
+    // Corner overflow stays a lone 44pt edge control; the Room diamond and
+    // menu cluster below, colour-separated, and restore 44pt via hit slop.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
       marginLeft: 12,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    roomCornersButton: {
+      marginLeft: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomClusteredActionsButton: {
+      marginLeft: groknight.space.xs,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomCornersGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.accent,
+      fontSize: groknight.type.meta.fontSize,
+      lineHeight: groknight.type.meta.lineHeight,
     },
     roomActionsGlyph: {
       ...Typography.default('semiBold'),
@@ -5952,11 +6034,22 @@ const styles = StyleSheet.create((theme) => {
     emptyState: {
       flexGrow: 1,
     },
+    bottomChromeStack: {
+      position: 'relative',
+    },
     inputBar: {
       paddingHorizontal: 16,
+      position: 'relative',
       paddingTop: 8,
       borderTopWidth: 1,
       borderTopColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    hangingTurnChrome: {
+      position: 'absolute',
+      right: 0,
+      bottom: '100%',
+      left: 0,
       backgroundColor: groknight.bgTerminal,
     },
     agentOfflineHint: {

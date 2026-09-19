@@ -312,7 +312,8 @@ check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
-trailing slot carries the corner glyph `◇` beside overflow; it is a second door
+trailing slot carries the corner glyph `◇` in brass, slightly larger than the
+steel overflow dots and close enough that colour separates them; it is a second door
 onto the Room's dedicated corners list (`corners/[roomId]`, windowed with the
 same cap and archived fallback as the desktop work-pane corner list), not a second
 live-corner jump. The pinned line below the transcript remains the one
@@ -412,8 +413,8 @@ accent is never the only thing carrying the fact.
 **The plus is a brass square.** Compose is one 44pt brass square floating at
 the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
 the slab its only affordance — opening the compose sheet. The header carries
-no plus: it is the Workspace name and nothing louder, with an outline people
-glyph (`people-outline`, the same Ionicons family as bookmarks) as the Members
+no plus: it is the Workspace name and nothing louder, with `MembersGlyph` —
+an open head circle on a wide body triangle, stroke only — as the Members
 door. The word remains the accessible name. The retired hexagon `⌬` never
 returns; a Speakeasy animal is an identity face, not a chrome mark for the
 roster.
@@ -533,13 +534,15 @@ header, and switcher, falling back to the generated Workspace mark when absent
 or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
 
 One concept gets one glyph, product-wide. Members chrome on the Room-list
-header and the desktop workspace heading is the outline people glyph, a peer of
-bookmarks, with `Members` as the accessible name (`MEMBERS_LABEL`,
+header, the desktop workspace heading, and the corner roster row is
+`MembersGlyph` (`components/buzz/MembersGlyph.tsx`), a peer of `RoomGlyph`:
+stroke-only circle over triangle, no fill, no second person. The desktop
+work pane no longer offers members. `Members` is the accessible name (`MEMBERS_LABEL`,
 `buzz/vocabulary.ts`). In-list titles (the Members page, Workspace settings, the
-roster sheet) keep the word. The retired hexagon `⌬` stays gone. That mark stays
-visually distinct from the corner
-lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on any
-Buzz surface means live corner work, never people.
+roster sheet) keep the word. The retired hexagon `⌬` and the Ionicons
+`people-outline` stand-in stay gone. That mark stays visually distinct from the
+corner lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on
+any Buzz surface means live corner work, never people.
 
 An agent's _name_ is human-authored and never guessed twice. Every surface
 resolves it through `resolveAgentDisplayIdentity` — validated soul overlay, then
@@ -612,7 +615,8 @@ is the transcript seam. Bricolage Grotesque is the logo lockup only.
 
 Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
 `HullSurface` (the lifted-region texture), `BrittlePress` (70ms in / 110ms out
-press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps), `HullWaveSignal`
+press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps — labeled-control busy
+only), `HullWaveSignal`
 (9-segment sin² live wave), `HullLivePulse` (the same wave reduced to one
 mark), `StatusGlyph`, `PixelGateReveal` (176ms strip reveal),
 `NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
@@ -651,12 +655,16 @@ leading option's votes (the leader fills the track). The fill does not animate,
 pulse, or sweep. Counts stay inscribed. Reduced motion changes nothing because
 nothing moves. This is not a license for progress bars elsewhere.
 
-The one drawn exception is the thinking line's glyph, `BeelineMarkSpinner`: a
-brass stroke draws the Beeline mark's outline from nothing, lingers complete,
-unwinds and redraws, on a 2s ping-pong. It is allowed because the loop returns
-to nothing every cycle — it never fills up towards a finish — and because the
-mark sits in a fixed 18px cell so nothing around it moves. Reduced motion, a
-backgrounded app, and the settled row all show the same completed static mark.
+The one drawn exception is the self-painting glyph: splash (`BootPaint`) paints
+once and holds because that load ends; in-app load gates (`SurfaceGlyphLoader`)
+and the thinking line (`BeelineMarkSpinner`) use the release loop — a brass
+stroke draws the Beeline mark, immediately unwinds, and rests empty before
+redrawing. It is allowed because the loop returns to nothing every cycle — it
+never fills up towards a finish — and because the mark sits in a fixed cell so
+nothing around it moves. Reduced motion, a backgrounded app, and a settled mark
+all show the same completed static glyph. `PixelLoader`'s four dots stay only
+on labeled-control busy (`MonoButton` / `BrassButton` / the Settings version
+check), never as a page or Room/Corner load gate.
 
 ## Color exceptions, stated so no one re-litigates them
 

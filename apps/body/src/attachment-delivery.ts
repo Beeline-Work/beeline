@@ -34,7 +34,49 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 export const MEDIA_TTL_HOURS = 24;
 const EXPIRED_REASON = `expired: attachments are kept for ${MEDIA_TTL_HOURS} hours and these bytes are past that window`;
 /** One download may not wedge a turn; a slow media read degrades to the URL line. */
-const FETCH_TIMEOUT_MS = 30_000;
+export const FETCH_TIMEOUT_MS = 30_000;
+
+/** A Content-Length or body past `MAX_ATTACHMENT_BYTES`. */
+export class BoundedSizeError extends Error {
+  readonly bytes: number;
+  constructor(bytes: number) {
+    super(`${bytes} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit`);
+    this.name = 'BoundedSizeError';
+    this.bytes = bytes;
+  }
+}
+
+export interface BoundedFetchResult {
+  readonly status: number;
+  readonly ok: boolean;
+  readonly bytes: Buffer;
+  readonly mimeType: string;
+}
+
+/**
+ * The one daemon-side download: 30 s timeout, 25 MB ceiling. A 410 or other
+ * non-OK status returns without reading the body so callers can name expiry
+ * separately from a failed fetch. Size is refused from Content-Length before
+ * the body is read.
+ */
+export async function fetchBoundedBytes(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<BoundedFetchResult> {
+  const response = await fetchImpl(url, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (response.status === 410 || !response.ok) {
+    return { status: response.status, ok: response.ok, bytes: Buffer.alloc(0), mimeType: '' };
+  }
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  if (declared > MAX_ATTACHMENT_BYTES) throw new BoundedSizeError(declared);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length > MAX_ATTACHMENT_BYTES) throw new BoundedSizeError(bytes.length);
+  const mimeType = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  return { status: response.status, ok: true, bytes, mimeType };
+}
+
 /**
  * The ceiling on ONE inline image. An inline block is base64 on a single
  * JSON-RPC line to the harness AND stays in that session's conversation
@@ -96,20 +138,15 @@ export async function deliverAttachments(
         return tooLarge(attachment.size);
       if (attachment.expired) return { attachment, reason: EXPIRED_REASON };
       try {
-        const response = await fetchImpl(attachment.url, {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
+        const fetched = await fetchBoundedBytes(attachment.url, fetchImpl);
         // 410 Gone is the server's own word for the TTL sweep, and the one
         // status that is never worth a retry.
-        if (response.status === 410) return { attachment, reason: EXPIRED_REASON };
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const declared = Number(response.headers.get('content-length') ?? 0);
-        if (declared > MAX_ATTACHMENT_BYTES) return tooLarge(declared);
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (bytes.length > MAX_ATTACHMENT_BYTES) return tooLarge(bytes.length);
+        if (fetched.status === 410) return { attachment, reason: EXPIRED_REASON };
+        if (!fetched.ok) throw new Error(`HTTP ${fetched.status}`);
         const path = join(dir, safeFileName(attachment, index, taken));
-        await writeFile(path, bytes);
-        const mimeType = attachment.mimeType ?? response.headers.get('content-type') ?? '';
+        await writeFile(path, fetched.bytes);
+        const bytes = fetched.bytes;
+        const mimeType = attachment.mimeType ?? fetched.mimeType;
         if (!mimeType.startsWith('image/')) return { attachment, path };
         if (bytes.length > MAX_INLINE_IMAGE_BYTES) {
           return {
@@ -120,6 +157,7 @@ export async function deliverAttachments(
         }
         return { attachment, path, image: { data: bytes.toString('base64'), mimeType } };
       } catch (error) {
+        if (error instanceof BoundedSizeError) return tooLarge(error.bytes);
         return {
           attachment,
           reason: `download failed: ${error instanceof Error ? error.message : String(error)}`,

@@ -135,6 +135,7 @@ import {
   walletHistory,
 } from './wallet.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
@@ -417,9 +418,10 @@ function withAttachmentExpiry<Message extends RoomViewMessage>(
 }
 
 /**
- * Stamp artifact facts onto attachments whose media id names a `kind='artifact'`
+ * Stamp artifact-card facts onto attachments whose media id names a ready
  * object row: `{ kind:'artifact', title, author }` alongside the mime and size
- * the attachment already carries. The message row is never edited.
+ * the attachment already carries. Person file shares and agent artifacts
+ * share this card. The message row is never edited.
  */
 function withArtifactFacts<Message extends RoomViewMessage>(
   messages: readonly Message[],
@@ -641,6 +643,7 @@ export class PhoneService {
     private readonly live?: LiveHub,
     private readonly routingTransaction = false,
     private readonly enrichmentDatabase: SqlDatabase = database,
+    private readonly objects?: ObjectService,
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -676,6 +679,26 @@ export class PhoneService {
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
     return this.hasRoomAccess(roomId, identityId);
+  }
+
+  /** One membership query for a live subscribe batch (Room deck watchFilters). */
+  async canReadRooms(roomIds: readonly string[], identityId: string): Promise<ReadonlySet<string>> {
+    const unique = [...new Set(roomIds.filter((id) => typeof id === 'string' && id.length > 0))];
+    if (unique.length === 0) return new Set();
+    const result = await this.database.query<{ room_id: string }>(
+      `SELECT room_member.room_id::text AS room_id FROM memberships room_member
+       JOIN rooms room ON room.id=room_member.room_id
+       WHERE room_member.room_id = ANY($1::uuid[]) AND room_member.identity_id=$2
+         AND room_member.removed_at IS NULL
+         AND ($2=$3 OR EXISTS(
+           SELECT 1 FROM memberships workspace_member
+           WHERE workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+         ))`,
+      [unique, identityId, SYSTEM_IDENTITY_ID],
+    );
+    return new Set(result.rows.map((row) => row.room_id));
   }
 
   /** Project a row the daemon's committing transaction already returned. The
@@ -2877,32 +2900,16 @@ export class PhoneService {
     name: string,
     maximumBytes: number,
   ) {
+    if (!this.objects) throw new Error('object storage is not configured');
     if (!bytes.length || bytes.length > maximumBytes)
       throw new Error('media size is outside the allowed range');
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    const id = randomUUID();
-    // Posting a file again is an upload: identical bytes deduplicate onto the
-    // existing row, and its TTL window restarts, so the second message never
-    // inherits the first one's remaining hours. The tombstone delete keeps the
-    // invariant a read depends on - a row in `media` is never also expired.
-    const result = await this.database.query<{ id: string }>(
-      `WITH stored AS (
-         INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT(owner_id,sha256) DO UPDATE SET name=EXCLUDED.name,created_at=now()
-         RETURNING id
-       ), revived AS (
-         DELETE FROM media_expirations WHERE id IN (SELECT id FROM stored)
-       )
-       SELECT id FROM stored`,
-      [id, viewerId, Buffer.from(bytes), mimeType, name, digest],
-    );
-    const storedId = result.rows[0]!.id;
+    const stored = await this.objects.uploadSharedFile(viewerId, bytes, mimeType, name);
     return {
-      url: `${this.publicOrigin}/v1/media/${storedId}`,
-      name,
-      mimeType,
-      size: bytes.length,
-      sha256: digest,
+      url: stored.url,
+      name: stored.title,
+      mimeType: stored.mimeType,
+      size: stored.size,
+      sha256: stored.sha256,
     };
   }
 
@@ -3796,6 +3803,9 @@ export class PhoneService {
               viewerId,
               input.avatar,
               this.publicOrigin,
+              this.objects
+                ? (id, ownerId) => this.objects!.readOwnedBytes(ownerId, id, database)
+                : undefined,
             );
       await database.query(
         `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
@@ -5318,11 +5328,11 @@ export class PhoneService {
         [gone],
       );
 
-      // Media bytes are personal data: the rows go, and a tombstone keeps the
+      // Object bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).
       await database.query(
-        `WITH swept AS (DELETE FROM media WHERE owner_id=ANY($1) RETURNING id)
-         INSERT INTO media_expirations(id) SELECT id FROM swept`,
+        `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id)
+         INSERT INTO object_expirations(id) SELECT id FROM swept ON CONFLICT(id) DO NOTHING`,
         [gone],
       );
 
@@ -6379,8 +6389,8 @@ export class PhoneService {
   }
   /**
    * Which media ids referenced by these messages have expired, and which name
-   * artifact object rows. Two queries per read, both over indexed id sets: expiry
-   * is a fact the sweep wrote, and artifact facts live on the `objects` row.
+   * ready object rows. Two queries per read, both over indexed id sets: expiry
+   * is a fact the sweep wrote, and card facts live on the `objects` row.
    */
   private async attachmentFacts(
     ...groups: readonly (readonly RoomViewMessage[])[]
@@ -6395,7 +6405,7 @@ export class PhoneService {
     if (!ids.size) return { expired: new Set(), artifacts: new Map() };
     const [expired, objectRows] = await Promise.all([
       this.database.query<{ id: string }>(
-        `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+        `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
         [[...ids]],
       ),
       this.database.query<{
@@ -6405,10 +6415,10 @@ export class PhoneService {
         size: string;
         author: string;
       }>(
-        `SELECT o.id::text id,o.title title,o.mime mime,o.size::text size,
+        `SELECT o.id::text id,COALESCE(o.title, '') title,o.mime mime,o.size::text size,
                 COALESCE(i.handle, i.name) author
          FROM objects o JOIN identities i ON i.id=o.owner_id
-         WHERE o.kind='artifact' AND o.state='ready' AND o.id=ANY($1::uuid[])`,
+         WHERE o.state='ready' AND o.id=ANY($1::uuid[])`,
         [[...ids]],
       ),
     ]);

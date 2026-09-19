@@ -41,7 +41,7 @@ describe('Buzz keyboard avoidance', () => {
     // it must never scroll with the transcript, and it must never be pushed
     // off-screen by a composer growing to its multiline maximum.
     const listEnd = chatSource.indexOf('<FlatList');
-    const inputBar = chatSource.indexOf('<View style={[styles.inputBar');
+    const inputBar = chatSource.indexOf('<Animated.View style={[styles.inputBar');
     expect(listEnd).toBeGreaterThanOrEqual(0);
     expect(inputBar).toBeGreaterThan(listEnd);
     expect(chatSource.indexOf('<CornerLiveBar')).toBeGreaterThan(listEnd);

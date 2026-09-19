@@ -22,6 +22,13 @@ describe('Room deck bootstrap', () => {
     );
   });
 
+  it('shows the Room loader whenever the Room deck itself is loading', () => {
+    expect(source).toContain('<RoomDeckLoadingView');
+    expect(source).not.toContain('consumeFirstRoomDeckAfterBoot');
+    expect(source).not.toContain('suppressFirstDeckPaint');
+    expect(source).not.toContain('suppressPaint=');
+  });
+
   it('renders a terminal state when the server returns zero Workspaces', () => {
     const emptyState = source.slice(
       source.indexOf('if (workspaceList?.workspaces.length === 0)'),
@@ -81,14 +88,21 @@ describe('Room deck bootstrap', () => {
     expect(createPath).not.toContain('openRoom(roomId)');
   });
 
-  it('opens #welcome once per identity before the stored Workspace is read', () => {
-    const landing = source.slice(
-      source.indexOf('claimFirstLaunchLanding(nextIdentity.publicKey)'),
+  it('does not auto-open a Room before the stored Workspace is read', () => {
+    const bootstrap = source.slice(
+      source.indexOf('const nextIdentity = await loadBuzzIdentity()'),
       source.indexOf('const storedWorkspaceId = await loadActiveCommunityId'),
     );
-    expect(landing).toContain('saveActiveCommunityId(nextIdentity.publicKey, landing.workspaceId)');
-    expect(landing).toContain('router.push(welcomeRoomHref(landing) as Href)');
-    // The deck keeps bootstrapping underneath; the claim is never a replace.
-    expect(landing).not.toContain('router.replace(welcomeRoomHref');
+    expect(bootstrap).not.toContain('claimFirstLaunchLanding');
+    expect(bootstrap).not.toContain('welcomeRoomHref');
+    expect(bootstrap).not.toContain('/beeline/chat/');
+  });
+
+  it('reinstalls Room-deck watches from chats watchFilters and never seeds a Workspace #h', () => {
+    expect(source).toContain('installChatWatch');
+    expect(source).toContain('nextWatchKey !== chatWatchKey');
+    expect(source).toContain('cachedChats?.watchFilters ?? []');
+    expect(source).not.toContain("'#h': [selectedId]");
+    expect(source).toContain('if (filters.length === 0) return');
   });
 });

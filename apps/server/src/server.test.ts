@@ -8,6 +8,17 @@ import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 
+
+function canReadRoomsFrom(canReadRoom: (roomId: string, identityId: string) => Promise<boolean>) {
+  return async (roomIds: readonly string[], identityId: string) => {
+    const allowed = new Set<string>();
+    for (const roomId of roomIds) {
+      if (await canReadRoom(roomId, identityId)) allowed.add(roomId);
+    }
+    return allowed;
+  };
+}
+
 describe('server readiness', () => {
   const servers: ReturnType<typeof createBeelineServer>[] = [];
 
@@ -86,6 +97,37 @@ describe('server readiness', () => {
     await expect(response.json()).resolves.toEqual({
       version: 'v1.2.3',
       sourceSha: '0123456789abcdef0123456789abcdef01234567',
+    });
+  });
+
+  it('names the committed message on a phone-write so an open Room can paint it', async () => {
+    const publish = vi.fn();
+    const execute = vi.fn().mockResolvedValue({ messageId: 'posted-message' });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: { execute } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: { publish } as unknown as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/sendRoomMessage`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId: 'room-open', text: 'hello' }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ messageId: 'posted-message' });
+    expect(publish).toHaveBeenCalledWith({
+      type: 'invalidate',
+      roomId: 'room-open',
+      reason: 'phone-write',
+      messageId: 'posted-message',
     });
   });
 
@@ -233,7 +275,7 @@ describe('daemon live command push', () => {
       auth: {
         authenticateDaemon: vi.fn().mockResolvedValue(agentId),
       } as unknown as TokenAuth,
-      phone: { canReadRoom: vi.fn().mockResolvedValue(true) } as unknown as PhoneService,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
       live,
       mediaMaximumBytes: 1,
@@ -319,7 +361,7 @@ describe('daemon live command push', () => {
       auth: {
         authenticateDaemon: vi.fn().mockResolvedValue(agentId),
       } as unknown as TokenAuth,
-      phone: { canReadRoom: vi.fn().mockResolvedValue(true) } as unknown as PhoneService,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
       live,
       mediaMaximumBytes: 1,
@@ -361,6 +403,60 @@ describe('daemon live command push', () => {
     await expect(changed).resolves.toEqual({ type: 'config-changed', roomId });
     // The wake carries no transcript: the durable fact is the agent-model
     // system line, and the daemon needs no inbox replay to retire sessions.
+    expect(inboxCalls()).toBe(1);
+  });
+
+  it('pushes hiccup-restart only to the stalled agent, without an inbox replay', async () => {
+    const roomId = 'room-hiccup';
+    const agentId = 'agent-hiccup';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'hiccup-restart',
+      targetAgentId: 'another-agent',
+      hiccupAttempt: 1,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+    const restart = nextSocketMessage(socket, 'hiccup-restart');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'hiccup-restart',
+      targetAgentId: agentId,
+      hiccupAttempt: 2,
+    });
+    await expect(restart).resolves.toEqual({ type: 'hiccup-restart', roomId, attempt: 2 });
     expect(inboxCalls()).toBe(1);
   });
 });
@@ -441,6 +537,7 @@ describe('phone committed-row live delivery', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
         canReadRoom,
+        canReadRooms: canReadRoomsFrom(canReadRoom),
         liveDraftSnapshot: vi.fn().mockResolvedValue([]),
         readLiveDelta,
         projectCommittedLiveDelta,
@@ -490,6 +587,36 @@ describe('phone committed-row live delivery', () => {
     },
   );
 
+  it('turns a named phone-write into a message-delta for an already-open Room', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'posted-message',
+        text: 'hello',
+        createdAt: 1,
+        author: { pubkey: 'human', kind: 'human' as const, name: 'Captain' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn().mockResolvedValue(delta);
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const painted = nextSocketMessage(socket, 'message-delta');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'phone-write',
+      messageId: 'posted-message',
+    });
+
+    await expect(painted).resolves.toEqual(delta);
+    expect(read).toHaveBeenCalledWith(roomId, 'viewer', {
+      type: 'message',
+      messageId: 'posted-message',
+    });
+  });
+
   it('falls back to an authoritative invalidation when committed-row projection fails', async () => {
     const read = vi.fn();
     const project = vi.fn(() => {
@@ -521,7 +648,7 @@ describe('phone committed-row live delivery', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('bounds a stalled lookup while preserving burst delivery order', async () => {
+  it('keeps later committed deltas direct when an earlier lookup stalls', async () => {
     const read = vi.fn(
       async (_roomId: string, _viewerId: string, target: { messageId: string }) => {
         if (target.messageId === 'message-1') return new Promise<never>(() => undefined);
@@ -539,7 +666,7 @@ describe('phone committed-row live delivery', () => {
       },
     );
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const received = nextSocketMessages(socket, 3);
+    const received = nextSocketMessages(socket, 2);
     const startedAt = Date.now();
 
     for (const messageId of ['message-1', 'message-2', 'message-3']) {
@@ -547,23 +674,45 @@ describe('phone committed-row live delivery', () => {
     }
 
     const messages = await received;
-    expect(Date.now() - startedAt).toBeLessThan(800);
+    expect(Date.now() - startedAt).toBeLessThan(150);
     expect(
       messages.map((message) =>
         message.type === 'message-delta'
           ? (message.message as { id: string }).id
           : message.messageId,
       ),
-    ).toEqual(['message-1', 'message-2', 'message-3']);
-    expect(messages[0]).toMatchObject({
-      type: 'invalidate',
-      reason: 'delta-fallback:postgres:messages',
-    });
-    expect(messages.slice(1).map((message) => message.type)).toEqual([
-      'message-delta',
-      'message-delta',
-    ]);
+    ).toEqual(['message-2', 'message-3']);
+    expect(messages.map((message) => message.type)).toEqual(['message-delta', 'message-delta']);
     expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not downgrade a slow committed row to the refetch scheduler', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'message-slow',
+        text: 'slow but direct',
+        createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      return delta;
+    });
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const received = nextSocketMessage(socket, 'message-delta');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:messages',
+      messageId: 'message-slow',
+    });
+
+    await expect(received).resolves.toEqual(delta);
   });
 
   it('diagnoses the same-process committed-row delivery boundary', async () => {
@@ -579,7 +728,7 @@ describe('phone committed-row live delivery', () => {
       },
     };
     const read = vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 170));
+      await new Promise((resolve) => setTimeout(resolve, 30));
       return delta;
     });
     const project = vi.fn().mockReturnValue(delta);
@@ -634,7 +783,7 @@ describe('phone committed-row live delivery', () => {
         queryCount: read.mock.calls.length,
       }),
     );
-    expect(Math.min(...queriedDurations)).toBeGreaterThanOrEqual(160);
+    expect(Math.min(...queriedDurations)).toBeGreaterThanOrEqual(25);
     expect(Math.max(...directDurations)).toBeLessThan(25);
     expect(read).toHaveBeenCalledTimes(20);
     expect(project).toHaveBeenCalledTimes(20);
@@ -792,6 +941,7 @@ describe('phone committed-row live delivery', () => {
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
         canReadRoom: vi.fn().mockResolvedValue(false),
+        canReadRooms: canReadRoomsFrom(async () => false),
         liveDraftSnapshot: vi.fn().mockResolvedValue([]),
         readLiveDelta: read,
         projectCommittedLiveDelta: project,
@@ -856,6 +1006,88 @@ describe('phone committed-row live delivery', () => {
     expect(delivered).toEqual({ type: 'invalidate', roomId, reason: 'message' });
     expect(JSON.stringify(delivered)).not.toContain('raw-secret');
     expect(project).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('authorizes a multi-Room subscribe batch with one canReadRooms call', async () => {
+    const allowedRoom = 'room-allowed';
+    const deniedRoom = 'room-denied';
+    const canReadRooms = vi.fn(async (roomIds: readonly string[]) => {
+      expect(roomIds).toEqual([allowedRoom, deniedRoom]);
+      return new Set([allowedRoom]);
+    });
+    const read = vi.fn();
+    const project = vi.fn().mockImplementation((_roomId: string, committed: { row: { id: string } }) => ({
+      type: 'message-delta' as const,
+      roomId: allowedRoom,
+      message: {
+        id: committed.row.id,
+        text: 'ok',
+        createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+        presentation: 'message' as const,
+      },
+    }));
+    const live = new LiveHub();
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: {
+        canReadRoom: vi.fn(),
+        canReadRooms,
+        liveDraftSnapshot: vi.fn().mockResolvedValue([]),
+        readLiveDelta: read,
+        projectCommittedLiveDelta: project,
+      } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    socket.send(JSON.stringify({ type: 'subscribe', roomIds: [allowedRoom, deniedRoom] }));
+    await expect(subscribed).resolves.toMatchObject({ type: 'subscribed', roomId: allowedRoom });
+    expect(canReadRooms).toHaveBeenCalledTimes(1);
+    expect(canReadRooms).toHaveBeenCalledWith([allowedRoom, deniedRoom], 'viewer');
+    await expectNoSocketMessage(socket);
+
+    const allowedDelta = nextSocketMessage(socket, 'message-delta');
+    live.publish({
+      type: 'invalidate',
+      roomId: allowedRoom,
+      reason: 'message',
+      messageId: 'allowed-message',
+      committedRow: {
+        type: 'message',
+        row: { room_id: allowedRoom, id: 'allowed-message' },
+      },
+    });
+    await expect(allowedDelta).resolves.toMatchObject({
+      type: 'message-delta',
+      roomId: allowedRoom,
+    });
+
+    live.publish({
+      type: 'invalidate',
+      roomId: deniedRoom,
+      reason: 'message',
+      messageId: 'secret-message',
+      committedRow: {
+        type: 'message',
+        row: { room_id: deniedRoom, id: 'secret-message', text: 'raw-secret' },
+      },
+    });
+    await expectNoSocketMessage(socket);
+    expect(project).toHaveBeenCalledTimes(1);
     expect(read).not.toHaveBeenCalled();
   });
 });

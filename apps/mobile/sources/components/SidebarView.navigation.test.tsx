@@ -165,6 +165,16 @@ vi.mock('@/components/buzz/DesktopWorkspaceRail', async () => {
 vi.mock('@/components/buzz/IdentityMark', () => ({
   IdentityMark: (props: any) => React.createElement('IdentityMark', props),
 }));
+vi.mock('@/components/buzz/MembersGlyph', () => ({
+  MEMBERS_GLYPH_STROKE_WIDTH: 1.25,
+  MembersGlyph: (props: any) => React.createElement('MembersGlyph', props),
+}));
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 
 import { SidebarView } from './SidebarView';
 
@@ -319,7 +329,7 @@ describe('desktop Workspace navigation', () => {
     const members = tree.root.findByProps({ testID: 'desktop-members' });
     expect(members.props.accessibilityLabel).toBe('Workspace members');
     expect(members.findAllByType('Text')).toHaveLength(0);
-    expect(members.findByType('Ionicons').props.name).toBe('people-outline');
+    expect(members.findByType('MembersGlyph').props.size).toBe(16);
 
     act(() => members.props.onPress());
     expect(routerPush).toHaveBeenCalledWith({

@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -75,6 +76,8 @@ describe('monolith integration', () => {
   let processWebhook: ReturnType<typeof vi.fn>;
   let githubOperations: GitHubOperations;
   let phone: PhoneService;
+  let objectStorage: MemoryObjectStorage;
+  let objectService: ObjectService;
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
@@ -147,7 +150,19 @@ describe('monolith integration', () => {
       defaultBranch: 'main',
     }));
     sendPushTest = vi.fn(async () => undefined);
-    phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
+    objectStorage = new MemoryObjectStorage();
+    await objectStorage.listen();
+    objectService = new ObjectService(database, objectStorage.asStorage(), 'http://placeholder', 1024 * 1024);
+    phone = new PhoneService(
+      database,
+      'http://placeholder',
+      githubOperations,
+      sendPushTest,
+      undefined,
+      false,
+      database,
+      objectService,
+    );
     const live = new LiveHub();
     const daemon = new DaemonService(database, live, async () => ({
       token: 'github-room-token',
@@ -188,6 +203,7 @@ describe('monolith integration', () => {
       }),
       authHandler: mountedAuth.handle,
       mediaMaximumBytes: 1024 * 1024,
+      objectService,
       github: {
         webhookSecret: 'webhook-secret',
         roomToken: async () => ({ token: 'github-room-token', expiresAt: Date.now() + 60_000 }),
@@ -198,6 +214,7 @@ describe('monolith integration', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     (phone as unknown as { publicOrigin: string }).publicOrigin = origin;
+    (objectService as unknown as { publicOrigin: string }).publicOrigin = origin;
     const phoneTokens = await auth.exchangeGitHubOidc('proof');
     accessToken = phoneTokens.accessToken;
     const exchange = await auth.createDaemonExchange(AGENT);
@@ -206,6 +223,7 @@ describe('monolith integration', () => {
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (mountedAuth) await mountedAuth.close();
+    if (objectStorage) await objectStorage.close();
     if (database) await database.close();
   });
   const request = async (path: string, method = 'GET', payload?: unknown, token = accessToken) =>
@@ -4047,8 +4065,13 @@ describe('monolith integration', () => {
     });
     expect(sent.status).toBe(200);
 
-    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
-    expect(await new MediaExpiryLoop(database).runOnce()).toBeGreaterThan(0);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBeGreaterThan(0);
 
     // The bytes are gone for good, and the endpoint says so in one status.
     const gone = await fetch(attachment.url, {
@@ -4105,9 +4128,14 @@ describe('monolith integration', () => {
         })
       ).json()) as { url: string };
     const reposted = await repost();
-    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
     expect((await repost()).url).toBe(reposted.url);
-    expect(await new MediaExpiryLoop(database).runOnce()).toBe(0);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBe(0);
     expect(
       (await fetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
     ).toBe(200);
@@ -4137,15 +4165,12 @@ describe('monolith integration', () => {
     // Attachment queueing and the final-reply drain survive the retirement:
     // post_artifact rows land in the same bounded pending-attachment lane.
     const mediaId = '22222222-2222-4222-8222-222222222222';
+    const notesDigest = createHash('sha256').update('agent-file-bytes').digest('hex');
+    await objectStorage.putObject(`media/${AGENT}/${notesDigest}`, Buffer.from('agent-file-bytes'), 'text/plain');
     await database.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
-       VALUES($1,$2,$3,'text/plain','notes.txt',$4)`,
-      [
-        mediaId,
-        AGENT,
-        Buffer.from('agent-file-bytes'),
-        createHash('sha256').update('agent-file-bytes').digest('hex'),
-      ],
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/plain','notes.txt',$4,$5,'ready',now()+interval '24 hours')`,
+      [mediaId, AGENT, `media/${AGENT}/${notesDigest}`, 16, notesDigest],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -4232,15 +4257,12 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
     const mediaId = '66666666-6666-4666-8666-666666666666';
+    const clipDigest = createHash('sha256').update('video-bytes').digest('hex');
+    await objectStorage.putObject(`media/${AGENT}/${clipDigest}`, Buffer.from('video-bytes'), 'video/mp4');
     await database.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
-       VALUES($1,$2,$3,'video/mp4','clip.mp4',$4)`,
-      [
-        mediaId,
-        AGENT,
-        Buffer.from('video-bytes'),
-        createHash('sha256').update('video-bytes').digest('hex'),
-      ],
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'video/mp4','clip.mp4',$4,$5,'ready',now()+interval '24 hours')`,
+      [mediaId, AGENT, `media/${AGENT}/${clipDigest}`, 11, clipDigest],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -6019,7 +6041,7 @@ describe('monolith integration', () => {
     ).toEqual([expect.objectContaining({ woke: [AGENT], request_id: requestId })]);
   });
 
-  it('inscribes a failed turn once and does not retry its terminal command', async () => {
+  it('inscribes a hiccup, reopens the original command, and keeps the durable line', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -6033,8 +6055,10 @@ describe('monolith integration', () => {
       requestId,
       status: 'failed',
       reason: 'provider error 429 concurrency_limit',
+      reasonKind: 'hiccup',
     });
     expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
     expect(
       (
         await database.query(
@@ -6059,11 +6083,67 @@ describe('monolith integration', () => {
     expect(first).toEqual([
       expect.objectContaining({
         author_id: AGENT,
-        text: '@bee could not answer · provider error 429 concurrency_limit',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
         tagged_ids: [],
-        card: { requestId, agentId: AGENT, state: 'failed' },
+        card: { requestId, agentId: AGENT, state: 'failed', silenceKind: 'hiccup' },
       }),
     ]);
+    expect(
+      (
+        await database.query<{ state: string; hiccup_attempts: number }>(
+          `SELECT state,hiccup_attempts FROM agent_commands WHERE turn_request_id=$1 AND agent_id=$2`,
+          [requestId, AGENT],
+        )
+      ).rows[0],
+    ).toEqual({ state: 'pending', hiccup_attempts: 1 });
+    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(room.messages).toContainEqual(
+      expect.objectContaining({
+        id: first[0]!.id,
+        presentation: 'system',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
+      }),
+    );
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: '9'.repeat(64),
+      status: 'failed',
+      reason: 'ACP agent exited (code 1)',
+    });
+    expect((await lines()).rows).toHaveLength(1);
+  });
+
+  it('does not restart a standing wrong-model failure', async () => {
+    const requestId = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee pick a model',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    const failed = await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'failed',
+      reason: 'model selection unavailable',
+      reasonKind: 'wrong-model',
+    });
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).not.toMatchObject({ hiccupRestart: true });
+    expect(
+      (
+        await database.query<{ text: string; state: string }>(
+          `SELECT message.text,command.state FROM agent_commands command
+           JOIN messages message ON message.card_type='turn-failed' AND message.card->>'requestId'=command.turn_request_id
+           WHERE command.turn_request_id=$1`,
+          [requestId],
+        )
+      ).rows[0],
+    ).toEqual({
+      text: "@bee could not answer · she's set to a model that isn't available. Pick another in her settings.",
+      state: 'complete',
+    });
     expect(
       (
         await daemonOperation('postAgentTurnReceipt', {
@@ -6073,13 +6153,6 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(403);
-    const repeated = await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId,
-      status: 'failed',
-      reason: 'stale retry',
-    });
-    expect(repeated.status).toBe(403);
     const lateReply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
       requestId,
@@ -6087,40 +6160,6 @@ describe('monolith integration', () => {
       text: 'Not much!',
     });
     expect(lateReply.status).toBe(403);
-    expect((await lines()).rows).toEqual(first);
-    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
-    expect(room.messages).toContainEqual(
-      expect.objectContaining({
-        id: first[0]!.id,
-        presentation: 'system',
-        text: '@bee could not answer · provider error 429 concurrency_limit',
-      }),
-    );
-    expect(room.latestAgentTurns).toContainEqual(
-      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'failed' }),
-    );
-    // A failure with no human trigger (an unknown request id) carries no Room line.
-    await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId: '9'.repeat(64),
-      status: 'failed',
-      reason: 'ACP agent exited (code 1)',
-    });
-    expect((await lines()).rows).toHaveLength(1);
-    // Aging the line does not revive the completed command.
-    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
-      first[0]!.id,
-    ]);
-    await database.query(`UPDATE messages SET card=card||'{"state":"failed"}'::jsonb WHERE id=$1`, [
-      first[0]!.id,
-    ]);
-    await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId,
-      status: 'failed',
-      reason: 'ACP agent exited (code 1)',
-    });
-    expect((await lines()).rows).toHaveLength(1);
   });
 
   it('keeps cached repositories usable without a reconnect flag during a transient refresh failure', async () => {

@@ -28,12 +28,20 @@ const fs = require('node:fs');
 const mark = require('./sources/buzz/beeline-mark.json');
 const brand = require('./sources/buzz/brand.json');
 
+const insetSources = ['icon-adaptive.svg', 'icon-monochrome.svg'];
+const unmaskedSources = ['icon.svg', 'icon-light.svg', 'mark.svg'];
+
+for (const file of [...insetSources, ...unmaskedSources]) {
+  const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
+  const wantsInset = insetSources.includes(file);
+  if (!svg.includes(mark.path) || svg.includes(mark.transform) !== wantsInset) {
+    throw new Error(`${file} has the wrong masked/unmasked framing`);
+  }
+}
+
 for (const file of ['mark.svg', 'icon.svg', 'icon-adaptive.svg']) {
   const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
-  const hasApprovedInset = file === 'mark.svg' || svg.includes(mark.transform);
-  if (!svg.includes(mark.path) || !hasApprovedInset || !svg.includes(brand.mark)) {
-    throw new Error(`${file} does not match beeline-mark.json / brand.json`);
-  }
+  if (!svg.includes(brand.mark)) throw new Error(`${file} does not use the approved mark color`);
 }
 
 for (const file of ['icon.svg', 'icon-adaptive-background.svg']) {
@@ -47,6 +55,16 @@ NODE
 render_svg() {
   # $1 source svg, $2 size, $3 outfile
   rsvg-convert -w "$2" -h "$2" "$1" >"$3"
+}
+
+render_favicon_svg() {
+  # Browser tabs render this at 16–24px. Keep the same loop, colors, and
+  # unmasked canvas, but give the loop a dedicated 1.5x optical scale so it
+  # remains as legible as neighboring favicons at that tiny size.
+  sed \
+    -e 's|<path |<g transform="translate(124.745 123) scale(1.5) translate(-124.745 -123)"><path |' \
+    -e 's|</svg>|</g></svg>|' \
+    "$image_dir/icon.svg" | rsvg-convert -w 1024 -h 1024 >"$image_dir/favicon.png"
 }
 
 render_notification_svg() {
@@ -85,11 +103,16 @@ render_lockup() {
     "$destination"
 }
 
-# App icons: Expo consumes a 1024px source and emits every native density during
-# prebuild. Keep a distinct iOS file so app.config.js proves both platforms are
-# intentionally wired to this treatment.
+# Unmasked icon surfaces use the natural loop framing. Expo consumes 1024px
+# sources and emits every native density during prebuild.
 render_svg "$image_dir/icon.svg" 1024 "$image_dir/icon.png"
+render_svg "$image_dir/icon-light.svg" 1024 "$image_dir/icon-light.png"
 cp "$image_dir/icon.png" "$image_dir/icon-ios.png"
+
+# Android's foreground is masked down to the central safe zone and deliberately
+# keeps the hand-tuned inset in icon-monochrome.svg. iOS uses the full-color
+# icon above in every appearance mode so the brand does not become a grey tile.
+render_svg "$image_dir/icon-monochrome.svg" 1024 "$image_dir/icon-adaptive-monochrome.png"
 
 # Android adaptive icon: flat aubergine background layer + brass loop foreground.
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
@@ -97,12 +120,16 @@ rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive.svg" \
   -o "$image_dir/icon-adaptive.png"
 
-# Favicon + splash share the app icon's framing: brass loop on the aubergine
-# field. The splash screens' backgroundColor in app.config.js must stay #14091A
-# so the opaque tile blends in.
-cp "$image_dir/icon.png" "$image_dir/favicon.png"
-cp "$image_dir/icon.png" "$image_dir/splash-android-light.png"
+# Splash uses the natural, unmasked framing. The favicon has a separate optical
+# scale because its 16–24px browser surface is not an app-icon canvas.
+render_favicon_svg
+cp "$image_dir/icon-light.png" "$image_dir/splash-android-light.png"
 cp "$image_dir/icon.png" "$image_dir/splash-android-dark.png"
+
+# Play listing art is unmasked at source; keep its 512px upload in lockstep.
+convert "$image_dir/icon.png" -resize 512x512 \
+  -define png:exclude-chunk=date,time \
+  fastlane/metadata/android/en-US/images/icon.png
 
 # Notification status-bar icon: white silhouette on transparent.
 render_notification_svg 512 "$image_dir/icon-notification.png"

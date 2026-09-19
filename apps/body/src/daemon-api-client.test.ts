@@ -268,4 +268,27 @@ describe('DaemonApiClient', () => {
     release();
     vi.useRealTimers();
   });
+
+  it('delivers a hiccup-restart push to the one registered listener', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const hiccup = vi.fn();
+    client.setHiccupRestartListener(hiccup);
+    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.message({ type: 'subscribed', roomId: 'room-1' });
+    socket.message({ type: 'hiccup-restart', roomId: 'somewhere-else', attempt: 2 });
+    expect(hiccup).toHaveBeenCalledTimes(1);
+    expect(hiccup).toHaveBeenCalledWith(2);
+    release();
+    vi.useRealTimers();
+  });
 });

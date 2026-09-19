@@ -297,14 +297,14 @@ describe('agent reply completion latency', () => {
       (await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
         command!.id,
       ])).rows[0],
-    ).toEqual({ state: 'complete' });
+    ).toEqual({ state: 'pending' });
     await expect(
       daemon.execute(
         'postRoomMessage',
         { roomId: ROOM, requestId: request, generationId: generation, text: 'Late reply' },
         AGENT,
       ),
-    ).rejects.toThrow('command already completed');
+    ).rejects.toThrow('command output authority rejected');
     expect(publish).toHaveBeenCalled();
     expect(
       (
@@ -314,7 +314,12 @@ describe('agent reply completion latency', () => {
           [ROOM, request],
         )
       ).rows,
-    ).toEqual([{ text: '@agent could not answer · temporary failure', state: 'failed' }]);
+    ).toEqual([
+      {
+        text: '@agent could not answer · temporary failure. Restarting her and resending your message.',
+        state: 'failed',
+      },
+    ]);
   });
 
   it('commits a claimed turn in one representative database round trip', async () => {

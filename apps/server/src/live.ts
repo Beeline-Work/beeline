@@ -74,6 +74,7 @@ export type LiveEvent =
       messageId?: string;
       requestId?: string;
       operation?: string;
+      hiccupAttempt?: number;
       trace?: LiveTrace;
       /** Same-process only. PostgreSQL notifications deliberately remain ID-only. */
       committedRow?:

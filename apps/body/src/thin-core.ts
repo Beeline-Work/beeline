@@ -41,6 +41,7 @@ export class ThinDaemonCore {
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
+      onHiccupRestart?: (attempt: number) => void;
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');

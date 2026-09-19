@@ -32,6 +32,7 @@ import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
+import { hiccupBackoffMs } from '@beeline/api-contract/daemon';
 import {
   clearDaemonPidRecordIfPid,
   findAgentRuntimeConfigPaths,
@@ -296,7 +297,21 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let connectorLoop: ConnectorAssignmentLoop | undefined;
   let stoppingStatus = 'daemon stopped';
   try {
-    const core = new ThinDaemonCore(runtime, configPath, config, { daemonApi });
+    const core = new ThinDaemonCore(runtime, configPath, config, {
+      daemonApi,
+      onHiccupRestart: (attempt) => {
+        const delay = hiccupBackoffMs(attempt);
+        console.warn(
+          `[thin-core] hiccup restart attempt ${attempt}; exiting so systemd can start a fresh helper`,
+        );
+        if (delay <= 0) {
+          process.exit(0);
+          return;
+        }
+        const timer = setTimeout(() => process.exit(0), delay);
+        timer.unref?.();
+      },
+    });
     // Busy means a turn is executing right now. An idle helper restarts on the
     // tick that arms the update; a busy one at the earlier of its last turn's
     // end or the absolute drain deadline, which the drain's own timer enforces.

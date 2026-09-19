@@ -391,6 +391,7 @@ export class RoomRuntimeCoordinator {
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
+      onHiccupRestart?: (attempt: number) => void;
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
@@ -419,6 +420,9 @@ export class RoomRuntimeCoordinator {
       void this.scheduler.suspendIdle().catch((error) =>
         console.error('[body] config-change session restart failed', error),
       );
+    });
+    this.options.daemonApi.setHiccupRestartListener?.((attempt) => {
+      this.options.onHiccupRestart?.(attempt);
     });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;

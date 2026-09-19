@@ -6041,7 +6041,7 @@ describe('monolith integration', () => {
     ).toEqual([expect.objectContaining({ woke: [AGENT], request_id: requestId })]);
   });
 
-  it('inscribes a failed turn once and does not retry its terminal command', async () => {
+  it('inscribes a hiccup, reopens the original command, and keeps the durable line', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -6055,8 +6055,10 @@ describe('monolith integration', () => {
       requestId,
       status: 'failed',
       reason: 'provider error 429 concurrency_limit',
+      reasonKind: 'hiccup',
     });
     expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
     expect(
       (
         await database.query(
@@ -6081,11 +6083,67 @@ describe('monolith integration', () => {
     expect(first).toEqual([
       expect.objectContaining({
         author_id: AGENT,
-        text: '@bee could not answer · provider error 429 concurrency_limit',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
         tagged_ids: [],
-        card: { requestId, agentId: AGENT, state: 'failed' },
+        card: { requestId, agentId: AGENT, state: 'failed', silenceKind: 'hiccup' },
       }),
     ]);
+    expect(
+      (
+        await database.query<{ state: string; hiccup_attempts: number }>(
+          `SELECT state,hiccup_attempts FROM agent_commands WHERE turn_request_id=$1 AND agent_id=$2`,
+          [requestId, AGENT],
+        )
+      ).rows[0],
+    ).toEqual({ state: 'pending', hiccup_attempts: 1 });
+    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(room.messages).toContainEqual(
+      expect.objectContaining({
+        id: first[0]!.id,
+        presentation: 'system',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
+      }),
+    );
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: '9'.repeat(64),
+      status: 'failed',
+      reason: 'ACP agent exited (code 1)',
+    });
+    expect((await lines()).rows).toHaveLength(1);
+  });
+
+  it('does not restart a standing wrong-model failure', async () => {
+    const requestId = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee pick a model',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    const failed = await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'failed',
+      reason: 'model selection unavailable',
+      reasonKind: 'wrong-model',
+    });
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).not.toMatchObject({ hiccupRestart: true });
+    expect(
+      (
+        await database.query<{ text: string; state: string }>(
+          `SELECT message.text,command.state FROM agent_commands command
+           JOIN messages message ON message.card_type='turn-failed' AND message.card->>'requestId'=command.turn_request_id
+           WHERE command.turn_request_id=$1`,
+          [requestId],
+        )
+      ).rows[0],
+    ).toEqual({
+      text: "@bee could not answer · she's set to a model that isn't available. Pick another in her settings.",
+      state: 'complete',
+    });
     expect(
       (
         await daemonOperation('postAgentTurnReceipt', {
@@ -6095,13 +6153,6 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(403);
-    const repeated = await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId,
-      status: 'failed',
-      reason: 'stale retry',
-    });
-    expect(repeated.status).toBe(403);
     const lateReply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
       requestId,
@@ -6109,40 +6160,6 @@ describe('monolith integration', () => {
       text: 'Not much!',
     });
     expect(lateReply.status).toBe(403);
-    expect((await lines()).rows).toEqual(first);
-    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
-    expect(room.messages).toContainEqual(
-      expect.objectContaining({
-        id: first[0]!.id,
-        presentation: 'system',
-        text: '@bee could not answer · provider error 429 concurrency_limit',
-      }),
-    );
-    expect(room.latestAgentTurns).toContainEqual(
-      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'failed' }),
-    );
-    // A failure with no human trigger (an unknown request id) carries no Room line.
-    await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId: '9'.repeat(64),
-      status: 'failed',
-      reason: 'ACP agent exited (code 1)',
-    });
-    expect((await lines()).rows).toHaveLength(1);
-    // Aging the line does not revive the completed command.
-    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
-      first[0]!.id,
-    ]);
-    await database.query(`UPDATE messages SET card=card||'{"state":"failed"}'::jsonb WHERE id=$1`, [
-      first[0]!.id,
-    ]);
-    await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId,
-      status: 'failed',
-      reason: 'ACP agent exited (code 1)',
-    });
-    expect((await lines()).rows).toHaveLength(1);
   });
 
   it('keeps cached repositories usable without a reconnect flag during a transient refresh failure', async () => {

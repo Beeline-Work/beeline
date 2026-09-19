@@ -405,6 +405,60 @@ describe('daemon live command push', () => {
     // system line, and the daemon needs no inbox replay to retire sessions.
     expect(inboxCalls()).toBe(1);
   });
+
+  it('pushes hiccup-restart only to the stalled agent, without an inbox replay', async () => {
+    const roomId = 'room-hiccup';
+    const agentId = 'agent-hiccup';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: { canReadRoom: vi.fn().mockResolvedValue(true), canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'hiccup-restart',
+      targetAgentId: 'another-agent',
+      hiccupAttempt: 1,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+    const restart = nextSocketMessage(socket, 'hiccup-restart');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'hiccup-restart',
+      targetAgentId: agentId,
+      hiccupAttempt: 2,
+    });
+    await expect(restart).resolves.toEqual({ type: 'hiccup-restart', roomId, attempt: 2 });
+    expect(inboxCalls()).toBe(1);
+  });
 });
 
 describe('daemon operation presence evidence', () => {

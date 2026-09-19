@@ -1,15 +1,16 @@
 import { ModelSelectionUnavailableError } from './model-config.js';
+import { classifyTurnSilence, type TurnReceiptReasonKind } from '@beeline/api-contract/daemon';
 
 /**
- * One distilled line for a failed turn receipt. The Room carries the fact
- * ("Candy could not answer · provider error 429"); the full error stays in the
- * daemon log. Never a stack trace, never a credential, at most 200 chars.
+ * One distilled line for a failed turn receipt. The Room carries the classified
+ * silence fact; the full error stays in the daemon log. Never a stack trace,
+ * never a credential, at most 200 chars.
  */
 export const TURN_FAILURE_REASON_MAX = 200;
 
 export interface DistilledTurnFailureReason {
   readonly text: string;
-  readonly kind?: 'model-selection-unavailable';
+  readonly kind?: TurnReceiptReasonKind;
 }
 
 /** Keep wire-visible tool detail useful without ever carrying credentials. */
@@ -54,11 +55,13 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
       .find((line) => line && !/^at\s/.test(line)) ?? '';
   const stripped = firstLine.replace(/^(?:[A-Za-z]*Error|Error):\s*/, '').replace(/\s+/g, ' ');
   const clean = redactToolDetail(stripped).trim();
-  if (!clean) return { text: 'turn failed' };
-  return {
-    text:
-      clean.length > TURN_FAILURE_REASON_MAX
-        ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
-        : clean,
-  };
+  const text = !clean
+    ? 'turn failed'
+    : clean.length > TURN_FAILURE_REASON_MAX
+      ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
+      : clean;
+  const classified = classifyTurnSilence(text);
+  const kind: TurnReceiptReasonKind =
+    classified.kind === 'wrong-model' ? 'model-selection-unavailable' : classified.kind;
+  return { text, kind };
 }

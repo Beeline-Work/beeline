@@ -27,13 +27,23 @@ describe('distillTurnFailureReason', () => {
       distillTurnFailureReason(
         new Error('\nTypeError: ACP session timed out after 120000ms of inactivity\n    at x'),
       ),
-    ).toEqual({ text: 'ACP session timed out after 120000ms of inactivity' });
+    ).toEqual({
+      text: 'ACP session timed out after 120000ms of inactivity',
+      kind: 'hiccup',
+    });
     expect(distillTurnFailureReason('ACP agent exited (code 1)')).toEqual({
       text: 'ACP agent exited (code 1)',
+      kind: 'hiccup',
     });
-    expect(distillTurnFailureReason({ message: 'exit 137' })).toEqual({ text: 'exit 137' });
-    expect(distillTurnFailureReason(undefined)).toEqual({ text: 'turn failed' });
-    expect(distillTurnFailureReason(new Error('   '))).toEqual({ text: 'turn failed' });
+    expect(distillTurnFailureReason({ message: 'exit 137' })).toEqual({
+      text: 'exit 137',
+      kind: 'hiccup',
+    });
+    expect(distillTurnFailureReason(undefined)).toEqual({ text: 'turn failed', kind: 'hiccup' });
+    expect(distillTurnFailureReason(new Error('   '))).toEqual({
+      text: 'turn failed',
+      kind: 'hiccup',
+    });
   });
 
   it('classifies model selection unavailability without sending its id or advice', () => {
@@ -65,5 +75,22 @@ describe('distillTurnFailureReason', () => {
     const reason = distillTurnFailureReason(new Error('x'.repeat(1_000)));
     expect(reason.text).toHaveLength(TURN_FAILURE_REASON_MAX);
     expect(reason.text.endsWith('…')).toBe(true);
+    expect(reason.kind).toBe('hiccup');
+  });
+
+  it('classifies standing conditions before they leave the daemon', () => {
+    expect(
+      distillTurnFailureReason(
+        new Error(
+          "ACP error -32603: Codex process has exited with code 0; harness stderr: You've hit your usage limit. Upgrade to Pro for more usage, or try again at Sep 19th, 2026 4:09 AM.",
+        ),
+      ).kind,
+    ).toBe('allowance-spent');
+    expect(distillTurnFailureReason(new Error('ACP error -32000: Authentication required')).kind).toBe(
+      'not-signed-in',
+    );
+    expect(distillTurnFailureReason(new Error('fatal: repository not found github.com/acme/widgets.git')).kind).toBe(
+      'workspace-failure',
+    );
   });
 });

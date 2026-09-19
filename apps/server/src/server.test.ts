@@ -89,6 +89,37 @@ describe('server readiness', () => {
     });
   });
 
+  it('names the committed message on a phone-write so an open Room can paint it', async () => {
+    const publish = vi.fn();
+    const execute = vi.fn().mockResolvedValue({ messageId: 'posted-message' });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: { execute } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: { publish } as unknown as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/sendRoomMessage`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId: 'room-open', text: 'hello' }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ messageId: 'posted-message' });
+    expect(publish).toHaveBeenCalledWith({
+      type: 'invalidate',
+      roomId: 'room-open',
+      reason: 'phone-write',
+      messageId: 'posted-message',
+    });
+  });
+
   it('serves daemon release readiness without a phone bearer', async () => {
     const releaseReadiness = vi.fn().mockResolvedValue({
       daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready' }],
@@ -489,6 +520,36 @@ describe('phone committed-row live delivery', () => {
       });
     },
   );
+
+  it('turns a named phone-write into a message-delta for an already-open Room', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'posted-message',
+        text: 'hello',
+        createdAt: 1,
+        author: { pubkey: 'human', kind: 'human' as const, name: 'Captain' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn().mockResolvedValue(delta);
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const painted = nextSocketMessage(socket, 'message-delta');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'phone-write',
+      messageId: 'posted-message',
+    });
+
+    await expect(painted).resolves.toEqual(delta);
+    expect(read).toHaveBeenCalledWith(roomId, 'viewer', {
+      type: 'message',
+      messageId: 'posted-message',
+    });
+  });
 
   it('falls back to an authoritative invalidation when committed-row projection fails', async () => {
     const read = vi.fn();

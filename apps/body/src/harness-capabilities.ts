@@ -115,7 +115,7 @@ const PROFILES: Array<{ match: RegExp; profile: HarnessProfile }> = [
     match: CURSOR_HARNESS_COMMAND,
     profile: {
       enforcement: 'none',
-      note: 'cursor-acp-bridge drives cursor-agent with --force in non-interactive stream-json mode, so cursor-agent never sends session/request_permission; Beeline already sandboxes the child',
+      note: 'cursor-acp-bridge drives cursor-agent with --force --approve-mcps in non-interactive stream-json mode, so cursor-agent never sends session/request_permission; Beeline already sandboxes the child',
     },
   },
 ];

@@ -49,12 +49,30 @@ describe('Room composer status layout', () => {
     expect(inputStyle).toContain('maxHeight: COMPOSER_MAX_INPUT_HEIGHT');
   });
 
-  it('keeps turn progress inside the growing composer stack, above the field', () => {
+  it('keeps turn progress inside the composer stack, above the field', () => {
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
     const composer = inputBar.indexOf('<ConversationComposer');
     expect(progress).toBeGreaterThanOrEqual(0);
     expect(composer).toBeGreaterThan(progress);
+  });
+
+  it('hangs the phone turn line over the transcript so it does not open a composer gap', () => {
+    const hanging = source.slice(
+      source.indexOf('hangingTurnChrome: {'),
+      source.indexOf('agentOfflineHint: {'),
+    );
+    expect(hanging).toContain("position: 'absolute'");
+    expect(hanging).toContain("bottom: '100%'");
+    expect(source).toContain('styles.bottomChromeStack');
+    const stack = source.slice(source.indexOf('styles.bottomChromeStack'));
+    expect(stack.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);
+    expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<ConversationComposer'));
+    expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<CornerLiveBar'));
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
+    expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
+    expect(source).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
+    expect(source).not.toContain('!(cornerLiveBar && !isCorner)');
   });
 
   it('keeps the send arrow separated from the text field', () => {

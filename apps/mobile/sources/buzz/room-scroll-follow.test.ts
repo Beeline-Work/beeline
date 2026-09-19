@@ -241,6 +241,39 @@ describe('scrollFollowOnLayoutChange', () => {
       }),
     ).toBe('scroll');
   });
+
+  it('asks to follow again for each independently mounted status line', () => {
+    expect(
+      scrollFollowOnLayoutChange({
+        previousFootprint: 340,
+        nextFootprint: 340,
+        previousLayoutKey: 'no-corner:no-turn:online',
+        nextLayoutKey: 'no-corner:turn:online',
+        isPinnedToTail: true,
+        isUserDragging: false,
+      }),
+    ).toBe('scroll');
+    expect(
+      scrollFollowOnLayoutChange({
+        previousFootprint: 340,
+        nextFootprint: 340,
+        previousLayoutKey: 'no-corner:turn:online',
+        nextLayoutKey: 'corner:turn:online',
+        isPinnedToTail: true,
+        isUserDragging: false,
+      }),
+    ).toBe('scroll');
+    expect(
+      scrollFollowOnLayoutChange({
+        previousFootprint: 340,
+        nextFootprint: 340,
+        previousLayoutKey: 'corner:turn:online',
+        nextLayoutKey: 'corner:turn:offline',
+        isPinnedToTail: true,
+        isUserDragging: false,
+      }),
+    ).toBe('scroll');
+  });
 });
 
 describe('the chat screen wires the scroll rule', () => {
@@ -278,6 +311,15 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('isPinnedToTailRef');
     expect(chatSource).toContain('useKeyboardState(');
     expect(chatSource).toContain('bottomChromeLayoutKey');
+  });
+
+  it('does not reserve the phone turn line in the composer footprint', () => {
+    expect(chatSource).toContain('const composerFootprint = composerHeight + keyboardHeight;');
+    expect(chatSource).toContain('styles.hangingTurnChrome');
+    expect(chatSource).toContain('HANGING_TURN_CHROME_HEIGHT');
+    expect(chatSource).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
+    expect(chatSource).toContain('styles.bottomChromeStack');
+    expect(chatSource).not.toContain('!(cornerLiveBar && !isCorner)');
   });
 
   /**

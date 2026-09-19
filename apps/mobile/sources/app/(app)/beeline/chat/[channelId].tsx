@@ -140,28 +140,15 @@ function RoomOpenPixel({
   );
 }
 
-/** First paint is only the newest cached/fetched row. The 6k-line chrome
- *  module is imported after that pixel and after the current interaction so
- *  a pending evaluation cannot steal the tap-to-pixel budget. */
+/** First paint is only the newest seeded row. Session hooks and the 6k chrome
+ *  module start after that pixel so they cannot steal the tap-to-pixel budget. */
 export default function BuzzChat() {
   const { channelId, notificationResponseId } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
-  const isFocused = useIsFocused();
-  const bindingsRef = useRef<RoomSurfaceSessionBindings>({
-    resetTranscript: () => undefined,
-    restoreOutboxMessages: () => undefined,
-    dismissOptimisticMessage: () => undefined,
-    observeRoomSurface: () => undefined,
-  });
-  const session = useRoomSurfaceSession({
-    channelId: decodedId,
-    isFocused,
-    ...(notificationResponseId ? { notificationResponseId } : {}),
-    bindingsRef,
-  });
+  const [sessionOn, setSessionOn] = useState(false);
   const [Chrome, setChrome] = useState<ComponentType<ChatSurfaceProps> | null>(null);
   const [surfaceReady, setSurfaceReady] = useState(false);
   const importCancelRef = useRef<(() => void) | null>(null);
@@ -179,6 +166,64 @@ export default function BuzzChat() {
       importCancelRef.current = null;
     };
   }, []);
+
+  const showPixel = !surfaceReady || !Chrome;
+  return (
+    <>
+      {showPixel ? (
+        <RoomOpenPixel
+          key={decodedId}
+          roomSurface={null}
+          seedText={roomOpenPixelSeed(decodedId)}
+          onFirstPaint={() => {
+            if (importCancelRef.current) return;
+            importCancelRef.current = attachChatSurfaceAfterPaint(
+              (mod) => setChrome(() => mod.BuzzChatSurface),
+              afterPixelIdle,
+            );
+            afterPixelIdle(() => setSessionOn(true));
+          }}
+        />
+      ) : null}
+      {sessionOn ? (
+        <RoomSessionHost
+          decodedId={decodedId}
+          notificationResponseId={notificationResponseId}
+          Chrome={Chrome}
+          surfaceReady={surfaceReady}
+          setSurfaceReady={setSurfaceReady}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function RoomSessionHost({
+  decodedId,
+  notificationResponseId,
+  Chrome,
+  surfaceReady,
+  setSurfaceReady,
+}: {
+  decodedId: string;
+  notificationResponseId?: string;
+  Chrome: ComponentType<ChatSurfaceProps> | null;
+  surfaceReady: boolean;
+  setSurfaceReady: (ready: boolean) => void;
+}) {
+  const isFocused = useIsFocused();
+  const bindingsRef = useRef<RoomSurfaceSessionBindings>({
+    resetTranscript: () => undefined,
+    restoreOutboxMessages: () => undefined,
+    dismissOptimisticMessage: () => undefined,
+    observeRoomSurface: () => undefined,
+  });
+  const session = useRoomSurfaceSession({
+    channelId: decodedId,
+    isFocused,
+    ...(notificationResponseId ? { notificationResponseId } : {}),
+    bindingsRef,
+  });
 
   useLayoutEffect(() => {
     if (!session.roomSurface) return;
@@ -203,23 +248,9 @@ export default function BuzzChat() {
         if (second) cancel(second);
       }
     };
-  }, [session.roomSurface, Chrome, surfaceReady]);
+  }, [session.roomSurface, Chrome, surfaceReady, setSurfaceReady]);
 
-  if (!surfaceReady || !Chrome) {
-    return (
-      <RoomOpenPixel
-        key={decodedId}
-        roomSurface={session.roomSurface}
-        seedText={roomOpenPixelSeed(decodedId)}
-        onFirstPaint={() => {
-          if (importCancelRef.current) return;
-          importCancelRef.current = attachChatSurfaceAfterPaint(
-            (mod) => setChrome(() => mod.BuzzChatSurface),
-            afterPixelIdle,
-          );
-        }}
-      />
-    );
-  }
+  if (!surfaceReady || !Chrome) return null;
   return <Chrome session={session} bindingsRef={bindingsRef} />;
 }
+

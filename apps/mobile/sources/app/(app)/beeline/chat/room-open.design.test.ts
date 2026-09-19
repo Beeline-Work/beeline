@@ -49,6 +49,12 @@ describe('Room open-to-pixel occupancy', () => {
       chat.lastIndexOf('attachChatSurfaceAfterPaint'),
     );
     expect(chat.indexOf('pixel-ui-frame')).toBeLessThan(chat.lastIndexOf('attachChatSurfaceAfterPaint'));
+    const gate = chat.slice(
+      chat.indexOf('export default function BuzzChat'),
+      chat.indexOf('function RoomSessionHost'),
+    );
+    expect(gate).not.toContain('useRoomSurfaceSession');
+    expect(gate).toContain('setSessionOn(true)');
   });
 
   it('keeps newest-row first paint aligned to header+composer and loads history only after a reader scroll', () => {

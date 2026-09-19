@@ -56,13 +56,13 @@
           <div class="tab"><i class="neighbor"></i>Neighbor</div>
           <div class="tab active"><img src="after/desktop/favicon-runtime26-27.png" />Beeline</div>
         </div>
-        <div class="viewport"><img src="after/desktop/favicon-runtime26-27.png" /><span>Browser favicon source<br />49% mark on the unmasked canvas<br /><small>magnified for inspection</small></span></div>
+        <div class="viewport"><img src="after/desktop/favicon-runtime26-27.png" /><span>Browser favicon source<br />71.7% mark on the tiny tab canvas<br /><small>magnified for inspection</small></span></div>
       </div>
       <div class="surface dock">
         <i class="dock-icon generic blue">A</i><img class="dock-icon" src="after/desktop/tauri-icon-runtime26-27.png" /><i class="dock-icon generic green">B</i><i class="dock-icon generic red">C</i>
       </div>
-      <div class="metrics">favicon: fixed raster, 24 px rendered<br />desktop bundle: regenerated fixed-geometry Tauri PNG, 76 px rendered</div>
+      <div class="metrics">favicon: optical-scale raster, 24 px rendered<br />desktop bundle: full-bleed plate + natural 47.5% mark, 76 px rendered</div>
     </article>
   </section>
-  <div class="callout">The browser surface gains the missing proportion. The desktop launcher bundle keeps its independent rounded plate and fixed mark geometry; it was regenerated only to keep antialiasing synchronized with the new canonical source.</div>
+  <div class="callout">The browser favicon uses a dedicated 1.5× optical scale for its 16–24 px surface. The desktop launcher removes the old 100 px transparent safe-zone inset, fills the tile like its neighbors, and carries the same natural mark proportion as the other unmasked app-icon surfaces.</div>
 </main>

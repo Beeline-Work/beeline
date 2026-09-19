@@ -65,6 +65,73 @@ describe('RoomViewClient', () => {
     expect(init.headers.authorization).toMatch(/^Nostr /);
   });
 
+  it('keeps a complete Room readable when a legacy named role is nested in the projection', async () => {
+    const asker = { pubkey: 'c'.repeat(64), kind: 'human' as const, name: 'Play Review' };
+    const agent = { pubkey: 'd'.repeat(64), kind: 'agent' as const, name: 'Echo' };
+    const requestId = 'e'.repeat(64);
+    const response = {
+      ...room,
+      messages: [
+        {
+          id: requestId,
+          text: 'Hey @echo, can you sign me up for Groq and get me an API key?',
+          createdAt: 3,
+          author: asker,
+          presentation: 'message',
+          reference: { channelId: room.room.id, eventId: requestId, rootId: requestId },
+          mentionPubkeys: [agent.pubkey],
+        },
+        {
+          id: 'f'.repeat(64),
+          text: 'Ready.',
+          createdAt: 4,
+          author: agent,
+          presentation: 'message',
+          requestId,
+          liveTurnId: `live-turn:${requestId}`,
+          reference: {
+            channelId: room.room.id,
+            eventId: 'f'.repeat(64),
+            rootId: 'f'.repeat(64),
+          },
+        },
+      ],
+      members: [
+        { identity: asker, role: 'master' },
+        { identity: agent, role: 'member' },
+      ],
+      latestAgentTurns: [
+        {
+          requestId,
+          agentPubkey: agent.pubkey,
+          status: 'complete',
+          startedAt: 3,
+          createdAt: 4,
+          requestedBy: asker.pubkey,
+        },
+      ],
+      viewer: { ...room.viewer, identity: asker, role: 'master' },
+    };
+    const identity = createIdentity('room-view-legacy-role');
+    const fetch = vi.fn(async () => Response.json(response));
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity,
+      fetch,
+    });
+    const value = await client.room(room.room.id);
+    const reopened = await client.room(room.room.id);
+
+    expect(value.messages.map((message) => message.text)).toEqual([
+      'Hey @echo, can you sign me up for Groq and get me an API key?',
+      'Ready.',
+    ]);
+    expect(reopened.messages).toEqual(value.messages);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect((value.viewer as { role: string }).role).toBe('master');
+    expect(isRoomView({ ...response, viewer: { ...response.viewer, role: 7 } })).toBe(false);
+  });
+
   it('signs the public origin when a local proxy canonicalizes the connection', async () => {
     const physicalFetch = vi.fn(async () => Response.json(room));
     const identity = createIdentity('room-view-explicit-host');

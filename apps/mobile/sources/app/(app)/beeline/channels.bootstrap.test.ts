@@ -81,14 +81,13 @@ describe('Room deck bootstrap', () => {
     expect(createPath).not.toContain('openRoom(roomId)');
   });
 
-  it('opens #welcome once per identity before the stored Workspace is read', () => {
-    const landing = source.slice(
-      source.indexOf('claimFirstLaunchLanding(nextIdentity.publicKey)'),
+  it('does not auto-open a Room before the stored Workspace is read', () => {
+    const bootstrap = source.slice(
+      source.indexOf('const nextIdentity = await loadBuzzIdentity()'),
       source.indexOf('const storedWorkspaceId = await loadActiveCommunityId'),
     );
-    expect(landing).toContain('saveActiveCommunityId(nextIdentity.publicKey, landing.workspaceId)');
-    expect(landing).toContain('router.push(welcomeRoomHref(landing) as Href)');
-    // The deck keeps bootstrapping underneath; the claim is never a replace.
-    expect(landing).not.toContain('router.replace(welcomeRoomHref');
+    expect(bootstrap).not.toContain('claimFirstLaunchLanding');
+    expect(bootstrap).not.toContain('welcomeRoomHref');
+    expect(bootstrap).not.toContain('/beeline/chat/');
   });
 });

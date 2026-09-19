@@ -187,6 +187,7 @@ import {
 import { displayCornerTitle } from '@/buzz/room-list-row';
 import {
   desktopOpenLandingOnContentSizeChange,
+  phoneTranscriptTailPadding,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
   desktopTailLanding,
@@ -359,10 +360,6 @@ const CHANNEL_MENTION_OPTION: RoomMemberOption = {
 
 const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
-/** TurnProgressLine / TurnSettledLine: 26pt row + 4pt margin. Reserved on
- *  the inverted list's visual tail so the hanging phone line does not cover
- *  the last message. */
-const HANGING_TURN_CHROME_HEIGHT = 30;
 // How close to the visual bottom counts as "already reading the newest end"
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
@@ -4364,10 +4361,7 @@ export function BuzzChatSurface({
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-        >
+        <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
           <View
@@ -4532,6 +4526,10 @@ export function BuzzChatSurface({
             )}
           </View>
 
+          <KeyboardAvoidingView
+            style={styles.keyboardBody}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
+          >
           {/* What the corner is for, held under the header for its whole life:
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
@@ -4564,14 +4562,17 @@ export function BuzzChatSurface({
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail. Reserve the
-              // hanging turn line there whenever it is shown so it covers
-              // nothing — last message, CornerLiveBar, or the offline hint.
-              // The line fills this inset; do not grow the composer stack.
+              // Inverted list: paddingTop is the visual tail. Corner/offline
+              // chrome already pushes that tail above the composer; reserve
+              // the hanging line only when neither is present. This keeps the
+              // WAITING + thinking gap identical to the Room's idle gap.
               !desktopTranscript &&
                 !isArchived &&
                 (composerAck || settledTurn) && {
-                  paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT,
+                  paddingTop: phoneTranscriptTailPadding({
+                    turnChromeVisible: true,
+                    pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline),
+                  }),
                 },
             ]}
             maintainVisibleContentPosition={
@@ -5257,7 +5258,8 @@ export function BuzzChatSurface({
               )}
             </View>
           )}
-        </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
         {desktopWorkPaneMounted && (
           <DesktopRoomInspector
             room={desktopWorkPaneMounted}
@@ -5681,6 +5683,9 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       backgroundColor: groknight.bgTerminal,
     },
+    keyboardBody: {
+      flex: 1,
+    },
     desktopConversationFrame: {
       flex: 1,
       minWidth: 0,
@@ -5745,6 +5750,7 @@ const styles = StyleSheet.create((theme) => {
 
     // ── Header ──────────────────────────────────────────────────────
     header: {
+      zIndex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,

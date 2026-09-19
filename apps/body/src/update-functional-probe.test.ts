@@ -107,6 +107,8 @@ async function probe(
     operatorHome,
     sharedSkills: [],
   } as unknown as BodyConfig;
+  const { configOverrides, ...rest } = extra as { configOverrides?: Record<string, unknown> };
+  Object.assign(config, configOverrides ?? {});
   return runUpdateFunctionalProbe({
     config,
     runtimeDir: join(root, 'runtime'),
@@ -116,8 +118,25 @@ async function probe(
     turnTimeoutMs: 10_000,
     // Tests never need the production pause before a retry.
     retryDelayMs: 10,
-    ...extra,
+    ...rest,
   });
+}
+
+/**
+ * The probe with a configured model the live catalog does not offer. Mirrors
+ * how cli.ts fills `config.modelUnavailable` before a successor may announce
+ * READY.
+ */
+function probeWithModelUnavailable(extra: Record<string, unknown>) {
+  return probe('served', {
+    configOverrides: {
+      modelUnavailable: {
+        detail: 'model "claude-opus-5-thinking-high" is unavailable',
+        unavailable: { label: 'claude-opus-5-thinking-high' },
+      },
+    },
+    ...extra,
+  } as never);
 }
 
 describe('runUpdateFunctionalProbe', () => {
@@ -155,6 +174,44 @@ describe('runUpdateFunctionalProbe', () => {
         'AppArmor denied unprivileged user namespaces for /usr/bin/bwrap; install the narrow bwrap profile',
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('preserving fail-closed sandboxing'));
+  });
+
+  it('does not roll a candidate back when the configured model is unavailable to both releases', async () => {
+    // Observed on the owner's host 2026-09-18: every `usebeeline update`
+    // installed v0.0.115 and reverted to v0.0.114 with
+    // `model-unavailable: model "claude-opus-5-thinking-high" is unavailable`,
+    // so a merged Cursor fix could never reach his phone. A missing model is
+    // account state the successor cannot cause and a rollback cannot cure.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const compare = vi.fn(async () => ({
+      kind: 'unavailable' as const,
+      reason: 'model "claude-opus-5-thinking-high" is unavailable',
+    }));
+    await expect(
+      probeWithModelUnavailable({ compareWithCurrentRelease: compare }),
+    ).resolves.toEqual(
+      expect.objectContaining({ modelAnswer: 'unavailable', turnCompleted: false }),
+    );
+    expect(compare).toHaveBeenCalledWith({
+      kind: 'model-unavailable',
+      reason: 'model "claude-opus-5-thinking-high" is unavailable',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('the account catalog, not the bundle'),
+    );
+    warn.mockRestore();
+  });
+
+  it('still rejects an unavailable model when the current release can serve it', async () => {
+    await expect(
+      probeWithModelUnavailable({ compareWithCurrentRelease: async () => ({ kind: 'served' }) }),
+    ).rejects.toThrow('claude-opus-5-thinking-high" is unavailable; the current release answered');
+  });
+
+  it('still rejects an unavailable model when no comparison is possible', async () => {
+    await expect(probeWithModelUnavailable({})).rejects.toThrow(
+      'claude-opus-5-thinking-high" is unavailable',
+    );
   });
 
   it('still rejects a sandbox failure when the current release can serve', async () => {

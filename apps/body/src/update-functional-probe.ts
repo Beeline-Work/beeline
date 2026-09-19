@@ -56,7 +56,8 @@ export type AcpTurnFailure =
 export type ProbeAppeal =
   | { kind: 'provider-refusal'; reason: string; refusal: ProviderRefusal }
   | { kind: 'acp-turn-failure'; reason: string; failure: AcpTurnFailure }
-  | { kind: 'sandbox-unavailable'; reason: string };
+  | { kind: 'sandbox-unavailable'; reason: string }
+  | { kind: 'model-unavailable'; reason: string };
 
 const ACP_ERROR_CODE = /\bACP error (-\d+):/;
 const ACP_PROMPT_INACTIVITY = /\bACP session\/prompt timed out after \d+ms of inactivity\b/;
@@ -98,6 +99,7 @@ export type CurrentReleaseProbeOutcome =
   | { kind: 'served' }
   | { kind: 'refused'; status: number; reason: string }
   | { kind: 'sandbox-unavailable'; reason: string }
+  | { kind: 'model-unavailable'; reason: string }
   /** The comparison could not run or the current release failed some other way. */
   | { kind: 'unavailable'; reason: string };
 
@@ -143,6 +145,8 @@ function describeCurrentReleaseOutcome(outcome: CurrentReleaseProbeOutcome): str
       return `the current release got a different refusal (${outcome.reason})`;
     case 'sandbox-unavailable':
       return `the current release has the same unavailable sandbox (${outcome.reason})`;
+    case 'model-unavailable':
+      return `the current release cannot serve that model either (${outcome.reason})`;
     case 'unavailable':
       return `the current release could not be compared (${outcome.reason})`;
   }
@@ -232,8 +236,43 @@ export async function runUpdateFunctionalProbe(input: {
     command,
   });
   const harness = input.config.agentKind ?? command;
+  // A configured model the live catalog does not offer is the ACCOUNT's state,
+  // not the bundle's: the successor cannot have caused it and rolling back
+  // cannot cure it, so blaming the bundle strands the host on its current
+  // release forever. Observed on the owner's host 2026-09-18: every
+  // `usebeeline update` installed v0.0.115 and reverted to v0.0.114 with
+  // `model-unavailable: model "claude-opus-5-thinking-high" is unavailable`,
+  // so a merged fix could never reach the phone. Appeal it exactly like an
+  // unavailable sandbox: only the current release being able to serve that
+  // model makes it the successor's fault.
   if (input.config.modelUnavailable) {
-    throw new UpdateFunctionalProbeError('model-unavailable', input.config.modelUnavailable.detail);
+    const detail = input.config.modelUnavailable.detail;
+    if (!input.compareWithCurrentRelease) {
+      throw new UpdateFunctionalProbeError('model-unavailable', detail);
+    }
+    const current = await input.compareWithCurrentRelease({
+      kind: 'model-unavailable',
+      reason: detail,
+    });
+    if (current.kind !== 'model-unavailable' && current.kind !== 'unavailable') {
+      throw new UpdateFunctionalProbeError(
+        'model-unavailable',
+        `${detail}; ${describeCurrentReleaseOutcome(current)}`,
+      );
+    }
+    console.warn(
+      '[body] update probe: the configured model is unavailable to this release and the current ' +
+        'release alike; that is the account catalog, not the bundle, so the probe passes without a model answer',
+    );
+    return {
+      harness,
+      sandboxed: false,
+      sessionStarted: false,
+      turnCompleted: false,
+      nativeTools: [],
+      modelAnswer: 'unavailable',
+      modelAnswerReason: `${detail} (the current release cannot serve that model either)`,
+    };
   }
   if (input.sandboxRequired && !input.config.bwrapPath) {
     const detail =

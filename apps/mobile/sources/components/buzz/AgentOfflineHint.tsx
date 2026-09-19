@@ -40,16 +40,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     ...Typography.mono('semiBold'),
+    ...theme.buzz.agentOfflineHintTypography.title,
     color: theme.buzz.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.55,
   },
   text: {
     ...Typography.default(),
+    ...theme.buzz.agentOfflineHintTypography.text,
     marginTop: 3,
     color: theme.buzz.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
   },
 }));

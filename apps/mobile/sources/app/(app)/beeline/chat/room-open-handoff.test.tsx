@@ -22,8 +22,10 @@ vi.mock('react-native', async () => {
   };
 });
 
-vi.mock('react-native-unistyles', () => {
+vi.mock('react-native-unistyles', async () => {
+  const { groknight: tokens } = await import('@/buzz/groknight');
   const buzz = {
+    agentOfflineHintTypography: tokens.agentOfflineHintTypography,
     bgBase: '#000',
     bgTerminal: '#000',
     borderStrong: '#555',
@@ -101,6 +103,23 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('Room-open thin/full handoff geometry', () => {
+  it('keeps the extracted offline typography metrics identical to the prior inline footer', () => {
+    const full = render(<AgentOfflineHint />);
+    const [title, text] = full.root.findAllByType('Text');
+
+    expect(flattened(title.props.style)).toMatchObject({
+      fontFamily: 'IBMPlexMono-SemiBold',
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.55,
+    });
+    expect(flattened(text.props.style)).toMatchObject({
+      fontFamily: 'IBMPlexSans-Regular',
+      fontSize: 11,
+      lineHeight: 15,
+    });
+  });
+
   it('keeps the newest row at the same fixed-viewport y when full chrome reveals AGENT OFFLINE', () => {
     const thin = render(
       <RoomOpenPixel

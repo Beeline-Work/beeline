@@ -1,7 +1,7 @@
 {
   "app/(app)/beeline/channels.tsx": 7,
   "app/(app)/beeline/chat/RoomMessageVariants.tsx": 17,
-  "app/(app)/beeline/chat/_chat-surface.tsx": 49,
+  "app/(app)/beeline/chat/_chat-surface.tsx": 47,
   "app/(app)/beeline/community.tsx": 9,
   "app/(app)/beeline/corners/[roomId].tsx": 8,
   "app/(app)/beeline/onboarding.tsx": 20,

@@ -74,6 +74,11 @@ export function meaningfulHarnessStderr(tail: string): string {
   return kept.join('\n').trim();
 }
 
+/** One Room line: a multiline quota dump must keep its reset time through first-line distill. */
+function flattenHarnessCause(tail: string): string {
+  return meaningfulHarnessStderr(tail).replace(/\s+/g, ' ').trim();
+}
+
 /** Stable startup failure surfaced by bounded functional-update probes. */
 export class AcpRequestTimeoutError extends Error {
   readonly code = 'ACP_REQUEST_TIMEOUT';
@@ -86,7 +91,7 @@ export class AcpRequestTimeoutError extends Error {
     /** What the request was carrying, so "inactivity" is not the whole cause. */
     detail = '',
   ) {
-    const meaningful = meaningfulHarnessStderr(stderrTail);
+    const meaningful = flattenHarnessCause(stderrTail);
     const suffix = meaningful ? `; harness stderr: ${meaningful}` : '';
     super(
       `ACP ${method} timed out after ${timeoutMs}ms${inactivity ? ' of inactivity' : ''}` +
@@ -669,7 +674,7 @@ export class AcpClient extends EventEmitter {
 
     this.child.on('exit', (code, signal) => {
       this.alive = false;
-      const meaningful = meaningfulHarnessStderr(this.stderrTail);
+      const meaningful = flattenHarnessCause(this.stderrTail);
       const stderrSuffix = meaningful ? `: ${meaningful}` : '';
       for (const [, p] of this.pending) {
         this.clearTimer(p);
@@ -1105,8 +1110,16 @@ export class AcpClient extends EventEmitter {
       this.pending.delete(n);
       this.clearTimer(p);
       if (msg.error) {
-        const err = msg.error as { code?: number; message?: string };
-        p.reject(new Error(`ACP error ${err.code}: ${err.message}`));
+        const err = msg.error as { code?: number; message?: string; data?: { details?: unknown } };
+        const details =
+          typeof err.data?.details === 'string' && err.data.details.trim()
+            ? err.data.details.replace(/\s+/g, ' ').trim()
+            : '';
+        const meaningful = flattenHarnessCause(this.stderrTail);
+        const extra = [details, meaningful ? `harness stderr: ${meaningful}` : '']
+          .filter(Boolean)
+          .join('; ');
+        p.reject(new Error(`ACP error ${err.code}: ${err.message}${extra ? `; ${extra}` : ''}`));
       } else {
         p.resolve(msg.result);
       }

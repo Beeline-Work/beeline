@@ -1,5 +1,6 @@
 import {
   authorizeCommandOutput,
+  authorizeFailedTurnOutput,
   claimAgentCommand,
   commandInbox,
   createAgentCommand,
@@ -17,8 +18,10 @@ import type {
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
+  classifyTurnSilence,
   cornerTextRefusal,
   normalizeCornerText,
+  shouldCompletePendingFailedCommand,
 } from '@beeline/api-contract/daemon';
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
@@ -94,7 +97,7 @@ import {
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { agentWalletTool } from './wallet.js';
-import { noteFirstSilence, TURN_FAILURE_REASON_MAX } from './turn-silence-notice.js';
+import { noteFirstSilence, TURN_FAILURE_REASON_MAX, turnSilenceLockKey } from './turn-silence-notice.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -214,6 +217,11 @@ export class DaemonService {
       };
       const output = await this.database.transaction(async (db) => {
         const requestId = candidate.requestId ?? candidate.turnId;
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
+          await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+            turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
+          ]);
+        }
         if (
           name === 'postAgentTurnReceipt' &&
           candidate.status === 'working' &&
@@ -241,14 +249,23 @@ export class DaemonService {
           (name === 'postRoomMessage' && candidate.relay === undefined) ||
           name === 'retractAgentLiveOutput' ||
           (name === 'postAgentTurnReceipt' && candidate.status === 'complete');
-        const command = await authorizeCommandOutput(
-          db,
-          scopedRoom,
-          authenticatedAgentId,
-          requestId,
-          candidate.generationId,
-          allowCompleted,
-        );
+        const command =
+          name === 'postAgentTurnReceipt' && candidate.status === 'failed'
+            ? await authorizeFailedTurnOutput(
+                db,
+                scopedRoom,
+                authenticatedAgentId,
+                requestId,
+                candidate.generationId,
+              )
+            : await authorizeCommandOutput(
+                db,
+                scopedRoom,
+                authenticatedAgentId,
+                requestId,
+                candidate.generationId,
+                allowCompleted,
+              );
         if (command.state === 'complete') {
           if (name === 'postRoomMessage' && command.result_message_id) {
             const saved = (
@@ -309,6 +326,20 @@ export class DaemonService {
             (result as { hiccupRestart?: boolean }).hiccupRestart
           ) {
             // noteFirstSilence already reopened this command for re-delivery.
+          } else if (
+            candidate.status === 'failed' &&
+            command.state === 'pending' &&
+            !shouldCompletePendingFailedCommand(
+              classifyTurnSilence(
+                typeof candidate.reason === 'string' ? candidate.reason : undefined,
+                typeof candidate.reasonKind === 'string' ? candidate.reasonKind : undefined,
+              ).kind,
+              typeof candidate.reason === 'string' ? candidate.reason : '',
+            )
+          ) {
+            // Transient corner-start clone/network: the helper retries startCorner.
+            // Leave the original pending command for that attempt; do not ask
+            // systemd to restart, and do not consume the request.
           } else
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,
@@ -1589,25 +1620,27 @@ export class DaemonService {
         repository_key: string | null;
         repository_remote: string | null;
         repository_target_branch: string;
+        repository_resolution: 'repository' | 'none' | 'unverified';
         direct_participants: string[] | null;
       }>(
-        `SELECT repository_key,repository_remote,repository_target_branch,direct_participants FROM rooms WHERE id=$1`,
+        `SELECT repository_key,repository_remote,repository_target_branch,repository_resolution,direct_participants FROM rooms WHERE id=$1`,
         [roomId],
       )
     ).rows[0];
-    return row?.repository_key
-      ? {
-          key: row.repository_key,
-          remote: row.repository_remote ?? undefined,
-          targetBranch: row.repository_target_branch,
-          resolution: 'repository' as const,
-        }
-      : {
-          resolution: 'none' as const,
-          ...(row?.direct_participants?.length === 2
-            ? { directParticipants: row.direct_participants }
-            : {}),
-        };
+    if (row?.repository_resolution === 'unverified') return { resolution: 'unverified' as const };
+    if (row?.repository_resolution === 'repository' || row?.repository_key)
+      return {
+        key: row.repository_key ?? undefined,
+        remote: row.repository_remote ?? undefined,
+        targetBranch: row.repository_target_branch,
+        resolution: 'repository' as const,
+      };
+    return {
+      resolution: 'none' as const,
+      ...(row?.direct_participants?.length === 2
+        ? { directParticipants: row.direct_participants }
+        : {}),
+    };
   }
   private async targetBranch(roomId: string, agentId: string) {
     await this.access(roomId, agentId);

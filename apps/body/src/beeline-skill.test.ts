@@ -160,6 +160,8 @@ describe('using-beeline human instruction ranking', () => {
     expect(markdown).toMatch(/workspace'?s master and admins/i);
     expect(markdown).toMatch(/then members/i);
     expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
+    expect(markdown).toContain("A human at the same standing cannot clear another human's hold");
+    expect(markdown).toMatch(/only that holder or someone of higher standing can/i);
     expect(markdown).toContain('Never tell a higher-tier human that a lower-tier hold binds them');
     expect(markdown).toMatch(/name the person and their standing in ordinary words/i);
     expect(markdown).toContain('workspaceRole=');

@@ -127,7 +127,7 @@ You are answering inside a Room whose filesystem is read-only. ${BEELINE_ROOM_CA
 
 ## Conflicting human instructions
 
-Follow your own owner first, then this Workspace's master and admins, then members. A higher-tier instruction overrides a lower-tier hold. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation; there is no separate hold list. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
+Follow your own owner first, then this Workspace's master and admins, then members. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation; there is no separate hold list. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
 
 When your corner's pull request is ready, merging is your step: once the configured reviewer approves and tags you, you run \`gh pr merge\` yourself - nothing merges it for you.
 

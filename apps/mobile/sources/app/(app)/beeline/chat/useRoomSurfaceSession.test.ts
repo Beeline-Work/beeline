@@ -28,6 +28,7 @@ const controls = vi.hoisted(() => ({
   transportCount: 0,
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
+  viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
@@ -79,6 +80,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
       controls.identityPromise ??
       Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
   ),
+  loadBuzzViewerPubkey: vi.fn(async () => controls.viewerPubkey),
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));
 
@@ -283,12 +285,24 @@ function LiveCornerHarness({ channelId }: { channelId: string }) {
     : null;
 }
 
-async function flushEffects() {
+async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+async function flushEffects() {
+  await flushMicrotasks();
+  await act(async () => {
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(0);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  });
+  await flushMicrotasks();
 }
 
 beforeAll(() => {
@@ -305,6 +319,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
   controls.cached = null;
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
@@ -312,6 +328,7 @@ beforeEach(() => {
   controls.reopenChat.mockClear();
   controls.replayEvents.length = 0;
   controls.identityPromise = null;
+  controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
   controls.roomError = null;
   controls.outboxFail.mockClear();
@@ -474,6 +491,81 @@ describe('useRoomSurfaceSession', () => {
     expect(current.roomSurface).toEqual(full);
     expect(current.roomSurface?.messages).toHaveLength(1);
     expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('yields a paint turn after cache apply before installing the live watch', async () => {
+    const queued: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) => queued.push(callback),
+    );
+    controls.cached = roomView('room-a');
+    controls.roomResponse = null;
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushMicrotasks();
+    expect(current.roomSurface?.room.id).toBe('room-a');
+    expect(controls.subscriptions).toHaveLength(0);
+    expect(controls.transportCount).toBe(0);
+
+    await act(async () => {
+      const first = queued.splice(0);
+      first.forEach((callback) => callback(0));
+      const second = queued.splice(0);
+      second.forEach((callback) => callback(0));
+    });
+    await flushMicrotasks();
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.transportCount).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('paints cached newest row before authorization occupies the session', async () => {
+    const queued: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) => queued.push(callback),
+    );
+    let resolveAuth!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
+    controls.identityPromise = new Promise((resolve) => {
+      resolveAuth = resolve;
+    });
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushMicrotasks();
+    expect(current.roomSurface?.room.id).toBe('room-a');
+    expect(controls.transportCount).toBe(0);
+
+    await act(async () => {
+      queued.splice(0).forEach((callback) => callback(0));
+      queued.splice(0).forEach((callback) => callback(0));
+    });
+    await flushMicrotasks();
+    expect(controls.transportCount).toBe(0);
+
+    await act(async () => {
+      resolveAuth({ publicKey: 'viewer', secretKey: new Uint8Array(32) });
+    });
+    await flushMicrotasks();
+    expect(controls.transportCount).toBe(1);
     await act(async () => renderer.unmount());
   });
 

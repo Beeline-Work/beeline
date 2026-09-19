@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const bookmarks = readFileSync(new URL('./bookmarks.tsx', import.meta.url), 'utf8');
 const channels = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
-const chat = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const chat = readFileSync(new URL('./chat/chat-surface.tsx', import.meta.url), 'utf8');
 const inspector = readFileSync(
   new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
   'utf8',

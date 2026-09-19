@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  * parent (every corner entry path passes `parent` on the first frame), and
  * "LOADING ROOM" otherwise — rather than always saying Room.
  */
-const chatSource = readFileSync(path.join(__dirname, '[channelId].tsx'), 'utf8');
+const chatSource = readFileSync(path.join(__dirname, 'chat-surface.tsx'), 'utf8');
 
 describe('the pre-surface loading label', () => {
   it('names the corner while a corner opens and the Room otherwise', () => {

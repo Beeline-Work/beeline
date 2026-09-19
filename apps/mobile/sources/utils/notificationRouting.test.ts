@@ -9,10 +9,15 @@ import {
   resolveBuzzNotificationTarget,
 } from './notificationRouting';
 
-const buzzChatSource = readFileSync(
+const buzzChatRouteSource = readFileSync(
   new URL('../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
+const buzzChatSurfaceSource = readFileSync(
+  new URL('../app/(app)/beeline/chat/chat-surface.tsx', import.meta.url),
+  'utf8',
+);
+const buzzChatSource = `${buzzChatRouteSource}\n${buzzChatSurfaceSource}`;
 const roomSurfaceSessionSource = readFileSync(
   new URL('../app/(app)/beeline/chat/useRoomSurfaceSession.ts', import.meta.url),
   'utf8',

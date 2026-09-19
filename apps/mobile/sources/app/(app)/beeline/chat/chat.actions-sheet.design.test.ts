@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
  * guarantees are checked as source text — the technique `roomRepo.design.test`
  * and `no-foreground-blocking.test` already use here.
  */
-const chat = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const chat = readFileSync(new URL('./chat-surface.tsx', import.meta.url), 'utf8');
 
 function sheet(marker: string, label: string): string {
   const start = chat.indexOf(marker);

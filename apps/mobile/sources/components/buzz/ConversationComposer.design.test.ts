@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const composer = readFileSync(new URL('./ConversationComposer.tsx', import.meta.url), 'utf8');
 const room = readFileSync(
-  new URL('../../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/chat/chat-surface.tsx', import.meta.url),
   'utf8',
 );
 const desktop = readFileSync(new URL('../DesktopRoomInspector.tsx', import.meta.url), 'utf8');

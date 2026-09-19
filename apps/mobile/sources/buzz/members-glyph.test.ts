@@ -13,7 +13,7 @@ const CHROME_ENTRY_POINTS = [
   '../components/SidebarView.tsx',
 ];
 
-const ROOM_ENTRY_POINTS = ['../app/(app)/beeline/chat/[channelId].tsx'];
+const ROOM_ENTRY_POINTS = ['../app/(app)/beeline/chat/chat-surface.tsx'];
 
 const WORD_ENTRY_POINTS = [
   '../app/(app)/beeline/MembersScreen.tsx',

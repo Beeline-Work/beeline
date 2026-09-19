@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./chat/chat-surface.tsx', import.meta.url), 'utf8');
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
 const ledger = readFileSync(
   new URL('../../../components/buzz/Ledger.tsx', import.meta.url),

@@ -23,7 +23,7 @@ const desktopInspectorSource = readFileSync(
   new URL('../../../components/DesktopRoomInspector.tsx', import.meta.url),
   'utf8',
 );
-const cornerHeaderSource = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const cornerHeaderSource = readFileSync(new URL('./chat/chat-surface.tsx', import.meta.url), 'utf8');
 const cornerListSource = readFileSync(new URL('./corners/[roomId].tsx', import.meta.url), 'utf8');
 const roomCornersListSource = readFileSync(
   new URL('../../../components/buzz/RoomCornersList.tsx', import.meta.url),

@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   SurfaceRefreshScheduler,
   isChatListView,
+  isRoomView,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -21,6 +22,8 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { markRoomOpen } from '@/buzz/room-open-trace';
+import { beginRoomOpenPrefetch, seedRoomOpenPixel } from '@/buzz/room-open-prefetch';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
@@ -488,12 +491,30 @@ export default function BuzzChannels() {
     };
   }, [activeCommunityId, identity, memberPickerVisible, relayUrl]);
 
-  const openRoom = useCallback(
+  const prefetchRoom = useCallback(
     (roomId: string) => {
+      if (!identity || !relayUrl) return;
+      const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${roomId}`);
+      void mobileSurfaceCache.read(address, isRoomView);
+      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
+      beginRoomOpenPrefetch(
+        roomId,
+        () => http.room(roomId),
+        (view) => mobileSurfaceCache.write(address, view, isRoomView),
+      );
+    },
+    [identity, relayUrl],
+  );
+
+  const openRoom = useCallback(
+    (roomId: string, newestLine?: string) => {
+      markRoomOpen('nav-dispatch', roomId);
+      if (newestLine) seedRoomOpenPixel(roomId, newestLine);
       if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, roomId);
+      prefetchRoom(roomId);
       router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href);
     },
-    [activeCommunityId, identity],
+    [activeCommunityId, identity, prefetchRoom],
   );
 
   const loadRoomCorners = useCallback(
@@ -906,9 +927,13 @@ export default function BuzzChannels() {
                 <TouchableOpacity
                   accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
                   testID={`room-${item.room.id}`}
+                  onPressIn={() => {
+                    prefetchRoom(item.room.id);
+                    if (hasPreview) seedRoomOpenPixel(item.room.id, preview.text);
+                  }}
                   onPress={() => {
                     swipeableRefs.current.get(item.room.id)?.close();
-                    openRoom(item.room.id);
+                    openRoom(item.room.id, hasPreview ? preview.text : undefined);
                   }}
                   style={styles.rowMain}
                 >

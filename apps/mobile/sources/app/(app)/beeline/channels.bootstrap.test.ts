@@ -22,6 +22,13 @@ describe('Room deck bootstrap', () => {
     );
   });
 
+  it('suppresses the Room-deck paint only on the first post-BootPaint mount', () => {
+    expect(source).toContain('consumeFirstRoomDeckAfterBoot');
+    expect(source).toContain('suppressFirstDeckPaint');
+    expect(source).toContain('<RoomDeckLoadingView');
+    expect(source).toContain('suppressPaint={suppressFirstDeckPaint}');
+  });
+
   it('renders a terminal state when the server returns zero Workspaces', () => {
     const emptyState = source.slice(
       source.indexOf('if (workspaceList?.workspaces.length === 0)'),

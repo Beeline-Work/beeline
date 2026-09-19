@@ -26,7 +26,8 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'thinking', file: 'components/buzz/TurnProgressLine.tsx', treatment: 'glyph' },
   { id: 'activity-working', file: 'components/buzz/ActivityTimeline.tsx', treatment: 'glyph' },
   { id: 'room-corner-entry', file: 'app/(app)/beeline/chat/[channelId].tsx', treatment: 'glyph' },
-  { id: 'room-deck', file: 'app/(app)/beeline/channels.tsx', treatment: 'glyph' },
+  { id: 'room-deck', file: 'components/buzz/RoomDeckLoadingView.tsx', treatment: 'glyph' },
+  { id: 'room-deck-corners', file: 'app/(app)/beeline/channels.tsx', treatment: 'glyph' },
   { id: 'changes-list', file: 'app/(app)/beeline/corners/[roomId].tsx', treatment: 'glyph' },
   { id: 'members', file: 'app/(app)/beeline/MembersScreen.tsx', treatment: 'glyph' },
   { id: 'workspace-settings', file: 'app/(app)/beeline/settings/workspace.tsx', treatment: 'glyph' },
@@ -42,6 +43,13 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'desktop-inspector', file: 'components/DesktopRoomInspector.tsx', treatment: 'glyph' },
   { id: 'invite-join', file: 'app/(app)/join/[token].tsx', treatment: 'glyph' },
   { id: 'review-signin', file: 'app/(app)/review/[secret].tsx', treatment: 'glyph' },
+  {
+    id: 'room-deck-first-after-boot',
+    file: 'components/buzz/RoomDeckLoadingView.tsx',
+    treatment: 'exception',
+    reason:
+      'First Room-deck mount after BootPaint is an empty wait so cold start paints the mark only once; later deck visits still show the glyph.',
+  },
   {
     id: 'button-busy',
     file: 'components/buzz/MonoHull.tsx',
@@ -126,6 +134,7 @@ vi.mock('react-native', async () => {
   return {
     AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+    Text: host('Text'),
     View: host('View'),
   };
 });
@@ -187,6 +196,8 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
+import { BootPaint } from './BootPaint';
+import { RoomDeckLoadingView } from './RoomDeckLoadingView';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
 const originalConsoleError = console.error;
@@ -274,6 +285,31 @@ describe('SurfaceGlyphLoader', () => {
     const renderer = render(React.createElement(SurfaceGlyphLoader, { compact: true }));
     expect(renderer.root.findByType('Svg').props.width).toBe(MARK_CELL);
     expect(dots(renderer)).toHaveLength(0);
+  });
+});
+
+describe('cold start paints the mark once', () => {
+  it('does not paint the Room-deck glyph on the first post-BootPaint mount', async () => {
+    vi.resetModules();
+    const { consumeFirstRoomDeckAfterBoot } = await import('@/buzz/boot-paint-handoff');
+    const boot = render(
+      React.createElement(BootPaint, { onPainted: () => undefined, testID: 'boot-paint' }),
+    );
+    expect(boot.root.findAllByType('Svg')).toHaveLength(1);
+
+    const first = consumeFirstRoomDeckAfterBoot();
+    expect(first).toBe(true);
+    const deck = render(React.createElement(RoomDeckLoadingView, { suppressPaint: first }));
+    expect(deck.root.findAllByProps({ testID: 'rooms-loader' })).toHaveLength(0);
+    expect(deck.root.findByProps({ testID: 'rooms-loader-suppressed' })).toBeTruthy();
+    expect(deck.root.findAllByType('Svg')).toHaveLength(0);
+    expect(boot.root.findAllByType('Svg').length + deck.root.findAllByType('Svg').length).toBe(1);
+
+    const later = consumeFirstRoomDeckAfterBoot();
+    expect(later).toBe(false);
+    const revisit = render(React.createElement(RoomDeckLoadingView, { suppressPaint: later }));
+    expect(revisit.root.findByProps({ testID: 'rooms-loader' })).toBeTruthy();
+    expect(revisit.root.findAllByType('Svg')).toHaveLength(1);
   });
 });
 

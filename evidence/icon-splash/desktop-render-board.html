@@ -1,0 +1,68 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Beeline desktop icon proportion proof</title>
+<style>
+  :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0c0b0d; color: #f3eee4; }
+  main { width: 1360px; margin: 0 auto; padding: 52px 44px 64px; }
+  h1 { margin: 0 0 10px; font: 650 29px/1.2 system-ui; letter-spacing: -.02em; }
+  .lede { margin: 0 0 34px; color: #aaa2ad; font: 15px/1.5 system-ui; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .card { border: 1px solid #312d34; border-radius: 18px; overflow: hidden; background: #151217; }
+  .head { padding: 18px 20px; border-bottom: 1px solid #312d34; }
+  .head strong { display: block; font: 650 18px/1.2 system-ui; }
+  .head span { color: #aaa2ad; font-size: 12px; }
+  .surface { margin: 20px; border-radius: 14px; overflow: hidden; }
+  .browser { background: #29262b; border: 1px solid #3c3840; }
+  .tabs { height: 58px; display: flex; align-items: end; gap: 2px; padding: 8px 10px 0; }
+  .tab { height: 42px; width: 170px; padding: 0 12px; border-radius: 10px 10px 0 0; display: flex; align-items: center; gap: 9px; color: #d8d2da; background: #211f23; font: 13px system-ui; }
+  .tab.active { background: #f5f3f6; color: #242126; }
+  .tab img { width: 24px; height: 24px; border-radius: 5px; image-rendering: auto; }
+  .neighbor { width: 24px; height: 24px; border-radius: 6px; background: linear-gradient(135deg,#4285f4,#34a853 48%,#fbbc05 49%,#ea4335); }
+  .viewport { height: 154px; background: #f5f3f6; color: #332f35; display: flex; align-items: center; justify-content: center; gap: 22px; text-align: left; font: 14px/1.5 system-ui; }
+  .viewport img { width: 112px; height: 112px; border-radius: 18px; box-shadow: 0 5px 14px #0003; }
+  .dock { height: 132px; background: linear-gradient(140deg,#554c61,#221b29); border: 1px solid #61586a; display: flex; align-items: center; justify-content: center; gap: 18px; }
+  .dock-icon { width: 76px; height: 76px; border-radius: 18px; box-shadow: 0 8px 18px #0008; }
+  .generic { display: grid; place-items: center; color: white; font: 700 26px system-ui; }
+  .blue { background: linear-gradient(145deg,#69a9ff,#1657c7); }
+  .green { background: linear-gradient(145deg,#5fd498,#167548); }
+  .red { background: linear-gradient(145deg,#ff826f,#a92d31); }
+  .metrics { padding: 0 20px 22px; color: #c0b8c3; font-size: 12px; line-height: 1.55; }
+  .callout { margin-top: 26px; padding: 18px 20px; border: 1px solid #6e5126; border-radius: 14px; background: #21180e; color: #e5c99b; font: 14px/1.55 system-ui; }
+</style>
+<main>
+  <h1>Desktop icon proportion proof</h1>
+  <p class="lede">Exact parent 17ffcc3a · fixed branch · Chromium 144 · Linux desktop render board</p>
+  <section class="grid">
+    <article class="card">
+      <div class="head"><strong>Before · shared inset</strong><span>runtime Android 24 / iOS 25 source tree</span></div>
+      <div class="surface browser">
+        <div class="tabs">
+          <div class="tab"><i class="neighbor"></i>Neighbor</div>
+          <div class="tab active"><img src="before/desktop/favicon-parent.png" />Beeline</div>
+        </div>
+        <div class="viewport"><img src="before/desktop/favicon-parent.png" /><span>Browser favicon source<br />40% mark on the unmasked canvas<br /><small>magnified for inspection</small></span></div>
+      </div>
+      <div class="surface dock">
+        <i class="dock-icon generic blue">A</i><img class="dock-icon" src="before/desktop/tauri-icon-parent.png" /><i class="dock-icon generic green">B</i><i class="dock-icon generic red">C</i>
+      </div>
+      <div class="metrics">favicon: parent raster, 24 px rendered<br />desktop bundle: parent Tauri PNG, 76 px rendered</div>
+    </article>
+    <article class="card">
+      <div class="head"><strong>After · surface-specific</strong><span>runtime Android 26 / iOS 27 source tree</span></div>
+      <div class="surface browser">
+        <div class="tabs">
+          <div class="tab"><i class="neighbor"></i>Neighbor</div>
+          <div class="tab active"><img src="after/desktop/favicon-runtime26-27.png" />Beeline</div>
+        </div>
+        <div class="viewport"><img src="after/desktop/favicon-runtime26-27.png" /><span>Browser favicon source<br />49% mark on the unmasked canvas<br /><small>magnified for inspection</small></span></div>
+      </div>
+      <div class="surface dock">
+        <i class="dock-icon generic blue">A</i><img class="dock-icon" src="after/desktop/tauri-icon-runtime26-27.png" /><i class="dock-icon generic green">B</i><i class="dock-icon generic red">C</i>
+      </div>
+      <div class="metrics">favicon: fixed raster, 24 px rendered<br />desktop bundle: regenerated fixed-geometry Tauri PNG, 76 px rendered</div>
+    </article>
+  </section>
+  <div class="callout">The browser surface gains the missing proportion. The desktop launcher bundle keeps its independent rounded plate and fixed mark geometry; it was regenerated only to keep antialiasing synchronized with the new canonical source.</div>
+</main>

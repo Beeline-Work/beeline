@@ -67,7 +67,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "25",
+            runtimeVersion: runtimeVersionOverride || "27",
             icon: {
                 light: "./sources/assets/images/icon-light.png",
                 dark: "./sources/assets/images/icon-ios.png",
@@ -102,7 +102,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "24",
+            runtimeVersion: runtimeVersionOverride || "26",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -202,7 +202,7 @@ export default {
                 {
                     ios: {
                         image: "./sources/assets/images/splash-android-light.png",
-                        imageWidth: 150,
+                        imageWidth: 125,
                         resizeMode: "contain",
                         backgroundColor: "#F3EEE4",
                         dark: {
@@ -212,7 +212,7 @@ export default {
                     },
                     android: {
                         image: "./sources/assets/images/splash-android-light.png",
-                        imageWidth: 150,
+                        imageWidth: 125,
                         resizeMode: "contain",
                         backgroundColor: "#F3EEE4",
                         dark: {

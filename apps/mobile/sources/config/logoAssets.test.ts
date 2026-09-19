@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import sharp from 'sharp';
 
 import { describe, expect, it } from 'vitest';
 
@@ -9,8 +10,8 @@ import brand from '../buzz/brand.json';
 const appConfig = (await import('../../app.config.js')).default.expo;
 
 const LOCKED_LOOP_SHA256 = '819b2abe3c00a1704c0857e88be2468f840a7a8d353f0e482bab03671c1d19f7';
-const LIGHT_SPLASH_SHA256 = 'a2d224d4309181456f8ca6f1d777efd95abcdb78cb650e339baa6653f6df6992';
-const DARK_SPLASH_SHA256 = 'ee8fbf35ab77d06c6b11c48158056e094315ff50c558f4ea4062702394e02fcf';
+const LIGHT_SPLASH_SHA256 = '5941f621854629123fc877f4bd9825cc9ae7249b9c527937244e7da93df7e697';
+const DARK_SPLASH_SHA256 = '5e396029b6af5a586d4259550b75a98c12071f78d3c2334ab9d92ef7e8f12b79';
 const vectorNames = [
   'icon.svg',
   'icon-adaptive.svg',
@@ -47,7 +48,7 @@ describe('Beeline continuous-line logo assets', () => {
     }
   });
 
-  it('keeps brass on aubergine across launcher and web surfaces', () => {
+  it('keeps brass on aubergine across icon and web surfaces', () => {
     expect(brand.mark).toBe('#E5A645');
     expect(vectors[0]).toContain('rect width="240" height="240" fill="#14091A"');
     expect(vectors[0]).toContain('fill="#E5A645"');
@@ -90,7 +91,7 @@ describe('Beeline continuous-line logo assets', () => {
     expect(splashPlugin?.[1]).toMatchObject({
       ios: {
         image: './sources/assets/images/splash-android-light.png',
-        imageWidth: 150,
+        imageWidth: 125,
         resizeMode: 'contain',
         backgroundColor: '#F3EEE4',
         dark: {
@@ -100,7 +101,7 @@ describe('Beeline continuous-line logo assets', () => {
       },
       android: {
         image: './sources/assets/images/splash-android-light.png',
-        imageWidth: 150,
+        imageWidth: 125,
         resizeMode: 'contain',
         backgroundColor: '#F3EEE4',
         dark: {
@@ -126,7 +127,7 @@ describe('Beeline continuous-line logo assets', () => {
     expect(lightSvg).toContain('rect width="1024" height="1024" fill="#F3EEE4"');
     expect(lightSvg).toContain('fill="#171310"');
     expect(lightSvg).toContain(adaptiveFraming);
-    expect(lightSvg).toContain(canonicalInset);
+    expect(lightSvg).not.toContain(canonicalInset);
 
     // Monochrome icon: white loop on transparent, no background rect
     expect(monoChromeSvg).not.toMatch(/<rect/);
@@ -168,12 +169,13 @@ describe('Beeline continuous-line logo assets', () => {
     expect(createHash('sha256').update(darkSplash).digest('hex')).toBe(DARK_SPLASH_SHA256);
   });
 
-  it('limits the owner-approved 26%-larger margin to home-screen marks', () => {
-    expect(vectors[0]).toContain(canonicalInset);
+  it('limits the safe-zone inset to Android adaptive foregrounds', () => {
+    expect(vectors[0]).not.toContain(canonicalInset);
     expect(vectors[1]).toContain(canonicalInset);
     expect(vectors[1]).toContain(adaptiveFraming);
-    // icon-light.svg and icon-monochrome.svg are adaptive home-screen marks
-    expect(vectors[2]).toContain(canonicalInset);
+    // iOS light is OS-masked from a full source; Android monochrome is an
+    // adaptive foreground and keeps the same safe zone as the brass twin.
+    expect(vectors[2]).not.toContain(canonicalInset);
     expect(vectors[2]).toContain(adaptiveFraming);
     expect(vectors[3]).toContain(canonicalInset);
     expect(vectors[3]).toContain(adaptiveFraming);
@@ -185,5 +187,38 @@ describe('Beeline continuous-line logo assets', () => {
     expect(appConfig.android.adaptiveIcon.foregroundImage).toBe(
       './sources/assets/images/icon-adaptive.png',
     );
+  });
+
+  it('ships full-size marks on unmasked rasters and preserves adaptive bounds', async () => {
+    const images = new URL('../assets/images/', import.meta.url);
+    const bounds = async (name: string, background: string | null) => {
+      const image = sharp(readFileSync(new URL(name, images)));
+      const { info } = await image
+        .trim(background ? { background, threshold: 8 } : { threshold: 1 })
+        .toBuffer({ resolveWithObject: true });
+      return [info.width, info.height] as const;
+    };
+
+    for (const [name, background] of [
+      ['icon.png', '#14091A'],
+      ['icon-ios.png', '#14091A'],
+      ['icon-light.png', '#F3EEE4'],
+      ['favicon.png', '#14091A'],
+      ['splash-android-light.png', '#F3EEE4'],
+      ['splash-android-dark.png', '#14091A'],
+      ['icon-ios-tinted.png', null],
+    ] as const) {
+      const [width, height] = await bounds(name, background);
+      expect(width, `${name} width`).toBeGreaterThanOrEqual(480);
+      expect(height, `${name} height`).toBeGreaterThanOrEqual(600);
+    }
+
+    for (const name of ['icon-adaptive.png', 'icon-adaptive-monochrome.png']) {
+      const [width, height] = await bounds(name, null);
+      expect(width, `${name} width`).toBeGreaterThanOrEqual(400);
+      expect(width, `${name} width`).toBeLessThan(420);
+      expect(height, `${name} height`).toBeGreaterThanOrEqual(500);
+      expect(height, `${name} height`).toBeLessThan(530);
+    }
   });
 });

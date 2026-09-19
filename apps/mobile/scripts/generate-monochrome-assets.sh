@@ -28,12 +28,20 @@ const fs = require('node:fs');
 const mark = require('./sources/buzz/beeline-mark.json');
 const brand = require('./sources/buzz/brand.json');
 
+const insetSources = ['icon-adaptive.svg', 'icon-monochrome.svg'];
+const unmaskedSources = ['icon.svg', 'icon-light.svg', 'mark.svg'];
+
+for (const file of [...insetSources, ...unmaskedSources]) {
+  const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
+  const wantsInset = insetSources.includes(file);
+  if (!svg.includes(mark.path) || svg.includes(mark.transform) !== wantsInset) {
+    throw new Error(`${file} has the wrong masked/unmasked framing`);
+  }
+}
+
 for (const file of ['mark.svg', 'icon.svg', 'icon-adaptive.svg']) {
   const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
-  const hasApprovedInset = file === 'mark.svg' || svg.includes(mark.transform);
-  if (!svg.includes(mark.path) || !hasApprovedInset || !svg.includes(brand.mark)) {
-    throw new Error(`${file} does not match beeline-mark.json / brand.json`);
-  }
+  if (!svg.includes(brand.mark)) throw new Error(`${file} does not use the approved mark color`);
 }
 
 for (const file of ['icon.svg', 'icon-adaptive-background.svg']) {
@@ -85,11 +93,17 @@ render_lockup() {
     "$destination"
 }
 
-# App icons: Expo consumes a 1024px source and emits every native density during
-# prebuild. Keep a distinct iOS file so app.config.js proves both platforms are
-# intentionally wired to this treatment.
+# Unmasked icon surfaces use the natural loop framing. Expo consumes 1024px
+# sources and emits every native density during prebuild.
 render_svg "$image_dir/icon.svg" 1024 "$image_dir/icon.png"
+render_svg "$image_dir/icon-light.svg" 1024 "$image_dir/icon-light.png"
 cp "$image_dir/icon.png" "$image_dir/icon-ios.png"
+
+# iOS applies its own icon mask, so its tinted glyph uses the natural framing.
+# Android's foreground is masked down to the central safe zone and deliberately
+# keeps the hand-tuned inset in icon-monochrome.svg.
+render_notification_svg 1024 "$image_dir/icon-ios-tinted.png"
+render_svg "$image_dir/icon-monochrome.svg" 1024 "$image_dir/icon-adaptive-monochrome.png"
 
 # Android adaptive icon: flat aubergine background layer + brass loop foreground.
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
@@ -97,12 +111,16 @@ rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive.svg" \
   -o "$image_dir/icon-adaptive.png"
 
-# Favicon + splash share the app icon's framing: brass loop on the aubergine
-# field. The splash screens' backgroundColor in app.config.js must stay #14091A
-# so the opaque tile blends in.
+# Favicon and splash use the natural, unmasked framing. Their configured
+# backgrounds must match the opaque source tiles so the edges disappear.
 cp "$image_dir/icon.png" "$image_dir/favicon.png"
-cp "$image_dir/icon.png" "$image_dir/splash-android-light.png"
+cp "$image_dir/icon-light.png" "$image_dir/splash-android-light.png"
 cp "$image_dir/icon.png" "$image_dir/splash-android-dark.png"
+
+# Play listing art is unmasked at source; keep its 512px upload in lockstep.
+convert "$image_dir/icon.png" -resize 512x512 \
+  -define png:exclude-chunk=date,time \
+  fastlane/metadata/android/en-US/images/icon.png
 
 # Notification status-bar icon: white silhouette on transparent.
 render_notification_svg 512 "$image_dir/icon-notification.png"

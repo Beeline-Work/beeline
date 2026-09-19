@@ -396,6 +396,36 @@ describe('useSpeechInput', () => {
     expect(speech().state).toBe('idle');
   });
 
+  it('commits a pending interim on explicit stop without waiting for end', async () => {
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+      fireEvent('result', { results: [{ transcript: 'send these words' }], isFinal: false });
+    });
+    await act(async () => {
+      speech().stop();
+    });
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(onResult).toHaveBeenCalledWith('send these words');
+    expect(speech().state).toBe('idle');
+    expect(speech().partialText).toBe('');
+  });
+
+  it('does not accept a late result after an explicit stop has already captured', async () => {
+    const { onResult, speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+      fireEvent('result', { results: [{ transcript: 'hello' }], isFinal: false });
+    });
+    await act(async () => {
+      speech().stop();
+      fireEvent('result', { results: [{ transcript: 'hello there' }], isFinal: true });
+      fireEvent('end');
+    });
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(onResult).toHaveBeenCalledWith('hello');
+  });
+
   it('ignores recognizer results after a stopped session has ended', async () => {
     const { onResult, speech } = renderHook();
     await act(async () => {

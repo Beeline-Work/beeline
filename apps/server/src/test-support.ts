@@ -1,4 +1,5 @@
-import { createServer, type AddressInfo, type Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { PGlite, type PGliteInterface, type Transaction } from '@electric-sql/pglite';
 import type { QueryResultRow } from 'pg';
 import type { SqlDatabase, QueryResult } from './database.js';

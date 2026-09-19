@@ -4,28 +4,18 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
 /**
- * The Room-deck page loader. After BootPaint, the first mount is an empty wait
- * so cold start paints the mark only once; later visits to the deck still
- * replace the old four-dot page.
+ * The Room-deck page loader. The native launch splash hands directly to the
+ * real app, so this treatment appears only when Rooms themselves are loading.
  */
 export function RoomDeckLoadingView({
-  suppressPaint,
   style,
 }: {
-  suppressPaint: boolean;
   style?: ViewStyle;
 }) {
   return (
-    <View
-      style={[styles.center, style]}
-      testID={suppressPaint ? 'rooms-loader-suppressed' : 'rooms-loader-gate'}
-    >
-      {suppressPaint ? null : (
-        <>
-          <SurfaceGlyphLoader testID="rooms-loader" />
-          <Text style={styles.loading}>LOADING ROOMS</Text>
-        </>
-      )}
+    <View style={[styles.center, style]} testID="rooms-loader-gate">
+      <SurfaceGlyphLoader testID="rooms-loader" />
+      <Text style={styles.loading}>LOADING ROOMS</Text>
     </View>
   );
 }

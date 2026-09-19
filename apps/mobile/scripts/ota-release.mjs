@@ -34,9 +34,11 @@ const PRODUCTION_LOOKUP_LIMIT = '10';
 // remove an entry once no live install carries that runtime.
 export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '23' },
+  { platform: 'android', runtimeVersion: '24' },
   { platform: 'android', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '23' },
   { platform: 'ios', runtimeVersion: '24' },
+  { platform: 'ios', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '26' },
 ];
 
@@ -520,10 +522,7 @@ function publish(options) {
     { dryRun: options.dryRun },
   );
   const previousProductionTargets = options.dryRun ? [] : newestTargets(previous, targets);
-  const compatKeys = new Set(COMPAT_RUNTIMES.map(targetKey));
-  const requiredRollbackTargets = targets.filter(
-    (target) => target.platform === 'android' || compatKeys.has(targetKey(target)),
-  );
+  const requiredRollbackTargets = targets;
   const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
   // Strand guard: every runtime that already has a production update (i.e. a
   // runtime live installs may carry) must remain in the target set. Publishing

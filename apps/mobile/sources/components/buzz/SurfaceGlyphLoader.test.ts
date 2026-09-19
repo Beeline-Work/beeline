@@ -22,7 +22,6 @@ type LoadingSurface = {
  * Paths are relative to `apps/mobile/sources`.
  */
 const LOADING_SURFACES: readonly LoadingSurface[] = [
-  { id: 'boot', file: 'components/buzz/BootPaint.tsx', treatment: 'glyph' },
   { id: 'thinking', file: 'components/buzz/TurnProgressLine.tsx', treatment: 'glyph' },
   { id: 'activity-working', file: 'components/buzz/ActivityTimeline.tsx', treatment: 'glyph' },
   { id: 'room-corner-entry', file: 'app/(app)/beeline/chat/[channelId].tsx', treatment: 'glyph' },
@@ -43,13 +42,6 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'desktop-inspector', file: 'components/DesktopRoomInspector.tsx', treatment: 'glyph' },
   { id: 'invite-join', file: 'app/(app)/join/[token].tsx', treatment: 'glyph' },
   { id: 'review-signin', file: 'app/(app)/review/[secret].tsx', treatment: 'glyph' },
-  {
-    id: 'room-deck-first-after-boot',
-    file: 'components/buzz/RoomDeckLoadingView.tsx',
-    treatment: 'exception',
-    reason:
-      'First Room-deck mount after BootPaint is an empty wait so cold start paints the mark only once; later deck visits still show the glyph.',
-  },
   {
     id: 'button-busy',
     file: 'components/buzz/MonoHull.tsx',
@@ -196,7 +188,6 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-import { BootPaint } from './BootPaint';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
 const originalConsoleError = console.error;
@@ -245,7 +236,6 @@ const GLYPH_MARKERS = [
   'SurfaceGlyphLoader',
   'BeelineGlyphPaint',
   'BeelineMarkSpinner',
-  'BootPaint',
 ] as const;
 
 function walkSourceFiles(dir: string): string[] {
@@ -287,29 +277,13 @@ describe('SurfaceGlyphLoader', () => {
   });
 });
 
-describe('cold start paints the mark once', () => {
-  it('does not paint the Room-deck glyph on the first post-BootPaint mount', async () => {
-    vi.resetModules();
-    const { consumeFirstRoomDeckAfterBoot } = await import('@/buzz/boot-paint-handoff');
+describe('Room loading boundary', () => {
+  it('paints only after the native splash hands off to a loading Room deck', async () => {
     const { RoomDeckLoadingView } = await import('./RoomDeckLoadingView');
-    const boot = render(
-      React.createElement(BootPaint, { onPainted: () => undefined, testID: 'boot-paint' }),
-    );
-    expect(boot.root.findAllByType('Svg')).toHaveLength(1);
-
-    const first = consumeFirstRoomDeckAfterBoot();
-    expect(first).toBe(true);
-    const deck = render(React.createElement(RoomDeckLoadingView, { suppressPaint: first }));
-    expect(deck.root.findAllByProps({ testID: 'rooms-loader' })).toHaveLength(0);
-    expect(deck.root.findByProps({ testID: 'rooms-loader-suppressed' })).toBeTruthy();
-    expect(deck.root.findAllByType('Svg')).toHaveLength(0);
-    expect(boot.root.findAllByType('Svg').length + deck.root.findAllByType('Svg').length).toBe(1);
-
-    const later = consumeFirstRoomDeckAfterBoot();
-    expect(later).toBe(false);
-    const revisit = render(React.createElement(RoomDeckLoadingView, { suppressPaint: later }));
-    expect(revisit.root.findByProps({ testID: 'rooms-loader' })).toBeTruthy();
-    expect(revisit.root.findAllByType('Svg')).toHaveLength(1);
+    const deck = render(React.createElement(RoomDeckLoadingView));
+    expect(deck.root.findByProps({ testID: 'rooms-loader-gate' })).toBeTruthy();
+    expect(deck.root.findByProps({ testID: 'rooms-loader' })).toBeTruthy();
+    expect(deck.root.findAllByType('Svg')).toHaveLength(1);
   });
 });
 

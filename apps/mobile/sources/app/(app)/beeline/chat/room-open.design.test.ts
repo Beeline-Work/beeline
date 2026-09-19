@@ -6,6 +6,7 @@ const root = path.join(__dirname, '..');
 const chat = readFileSync(path.join(root, 'chat/[channelId].tsx'), 'utf8');
 const surface = readFileSync(path.join(root, 'chat/_chat-surface.tsx'), 'utf8');
 const layout = readFileSync(path.join(root, '../_layout.tsx'), 'utf8');
+const load = readFileSync(path.join(root, 'chat/_chat-surface-load.ts'), 'utf8');
 const session = readFileSync(path.join(root, 'chat/useRoomSurfaceSession.ts'), 'utf8');
 const channels = readFileSync(path.join(root, 'channels.tsx'), 'utf8');
 const trace = readFileSync(path.join(root, '../../../buzz/room-open-trace.ts'), 'utf8');
@@ -27,12 +28,15 @@ describe('Room open-to-pixel occupancy', () => {
     expect(chatScreen).toContain("animation: 'none'");
   });
 
-  it('imports the 6k chrome module only after the newest-row shell commits', () => {
-    expect(chat).toContain("import('./_chat-surface')");
+  it('starts the 6k chrome chunk from the deck so first Room import is not behind the newest-row paint', () => {
+    expect(load).toContain("import('./_chat-surface')");
+    expect(load).toContain('surface-preload-start');
+    expect(chat).toContain('preloadChatSurface()');
     expect(chat).not.toContain("from './_chat-surface'");
     expect(chat).not.toContain('from "./_chat-surface"');
+    expect(channels).toContain('preloadChatSurface()');
     expect(chat.indexOf("markRoomOpen('route-mount', decodedId)")).toBeLessThan(
-      chat.indexOf("import('./_chat-surface')"),
+      chat.indexOf('preloadChatSurface()'),
     );
   });
 

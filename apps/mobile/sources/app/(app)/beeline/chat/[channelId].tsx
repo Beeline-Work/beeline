@@ -25,6 +25,7 @@ import {
   roomOpenNewestTextMetrics,
 } from '@/buzz/room-open-geometry';
 import { roomOpenPixelSeed } from '@/buzz/room-open-prefetch';
+import { preloadChatSurface } from './_chat-surface-load';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -157,7 +158,7 @@ export default function BuzzChat() {
   useEffect(() => {
     let cancelled = false;
     markRoomOpen('surface-import-start');
-    void import('./_chat-surface').then((mod) => {
+    void preloadChatSurface().then((mod) => {
       if (cancelled) return;
       markRoomOpen('surface-import-end');
       setChrome(() => mod.BuzzChatSurface);

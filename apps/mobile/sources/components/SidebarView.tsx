@@ -13,6 +13,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { seedRoomOpenPixel } from '@/buzz/room-open-prefetch';
+import { preloadChatSurface } from '@/app/(app)/beeline/chat/_chat-surface-load';
 import {
   loadActiveCommunityId,
   loadLastViewedChannel,
@@ -428,6 +429,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string, newestLine?: string) => {
+      void preloadChatSurface();
       markRoomOpen('nav-dispatch', roomId);
       if (newestLine) seedRoomOpenPixel(roomId, newestLine);
       router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href);

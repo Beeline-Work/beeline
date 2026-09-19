@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, Pressable, SectionList, Text, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Pressable, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
-import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -51,6 +50,7 @@ import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
+import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -777,11 +777,10 @@ export default function BuzzChannels() {
               style={styles.headerAction}
               testID="workspace-members"
             >
-              <Ionicons
-                name="people-outline"
-                size={16}
+              <MembersGlyph
                 color={styles.headerActionGlyph.color}
-                {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                size={16}
+                testID="workspace-members-glyph"
               />
             </TouchableOpacity>
           )}

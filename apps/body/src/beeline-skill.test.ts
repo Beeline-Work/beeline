@@ -106,6 +106,19 @@ describe('using-beeline Room guidance', () => {
     );
     expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
   });
+
+  it('puts ordinary account and credential asks on the connector path in the assembled turn context', () => {
+    for (const directMessage of [false, true]) {
+      const context = beelineCapabilityContextForHarness('codex-acp', undefined, directMessage);
+      expect(context.sessionPrompt).toContain(
+        'When someone asks you to sign up for an account, sign in, or get an API key or other credential',
+      );
+      expect(context.sessionPrompt).toContain(
+        'call beeline-agent workbench_status, then offer_connector when the needed tool is not already added',
+      );
+      expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
+    }
+  });
 });
 
 describe('beeline-triage request skill', () => {

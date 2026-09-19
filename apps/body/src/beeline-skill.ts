@@ -24,12 +24,16 @@ export function isConfiguredReviewer(
   );
 }
 
+const BEELINE_AMBIENT_CONNECTOR_CAPABILITY =
+  'When someone asks you to sign up for an account, sign in, or get an API key or other credential, call beeline-agent workbench_status, then offer_connector when the needed tool is not already added. Never stop at saying you are ready, and never ask for the credential in chat.';
+
 const BEELINE_ROOM_CAPABILITIES = [
   'The repository filesystem is read-only in this Room session.',
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
+  BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
   'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
@@ -49,6 +53,7 @@ const BEELINE_DM_CAPABILITIES = [
   'This Room is strictly conversational: there is no repository binding and no corner can be opened from here.',
   'The repository filesystem is read-only in this session.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
+  BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
   'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'Tag the person only when you need a decision or input, or when the task they asked for is finished.',

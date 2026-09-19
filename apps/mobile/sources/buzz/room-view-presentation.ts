@@ -98,7 +98,8 @@ function mergeNewerCommittedMessages(
   if (extras.length === 0) return next;
   return [...next, ...extras]
     .sort(
-      (left, right) => messageTimeMs(left) - messageTimeMs(right) || left.id.localeCompare(right.id),
+      (left, right) =>
+        messageTimeMs(left) - messageTimeMs(right) || left.id.localeCompare(right.id),
     )
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
@@ -255,6 +256,9 @@ export type ChatDisplayMessage = {
   relayId?: string;
   activity?: AgentActivityItem[];
   agentThought?: string;
+  /** Key of the row-local cumulative draft store; draft text never lives in FlatList data. */
+  agentMessageDraftKey?: string;
+  /** Legacy/static test seam. Live transport rows use `agentMessageDraftKey`. */
   agentMessageDraft?: string;
   durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];

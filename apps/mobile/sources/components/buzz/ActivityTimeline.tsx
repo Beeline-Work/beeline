@@ -31,6 +31,8 @@ type ActivityTimelineProps = {
   stamp?: string;
   testID?: string;
   messageDraft?: string;
+  /** Keyed row-local lane. Production streaming prose always uses this path. */
+  messageDraftKey?: string;
   /** The streaming speaker's identity mark — the SAME mark the settled row's
    *  byline renders (`Ledger.LedgerBylineView`), so the draft lane carries the
    *  agent tile and the byline never moves when the draft settles. The words
@@ -245,6 +247,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   stamp,
   testID,
   messageDraft,
+  messageDraftKey,
   mark,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
@@ -265,7 +268,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   // lane stops being live but the words the reader was reading stay on the
   // page, provisional, with the server's failure line beneath them — text a
   // person was mid-way through must never evaporate on its own.
-  if (!turn.narration.length && !runs.length && !messageDraft) return null;
+  if (!turn.narration.length && !runs.length && !messageDraft && !messageDraftKey) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -283,8 +286,14 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
       {runs.map((run) => (
         <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
       ))}
-      {messageDraft ? (
+      {messageDraftKey ? (
         <StreamingProse
+          streamKey={messageDraftKey}
+          textStyle={draftTextStyle}
+          testID="activity-message-draft"
+        />
+      ) : messageDraft ? (
+        <MonoMarkdown
           markdown={messageDraft}
           textStyle={draftTextStyle}
           testID="activity-message-draft"

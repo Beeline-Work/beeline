@@ -144,7 +144,14 @@ type MonoMarkdownProps = {
    * fence or a table closing the message simply does not fade — better than
    * animating a region the reader cannot see arrive.
    */
-  tail?: { readonly length: number; readonly style: TextStyle };
+  tail?: {
+    readonly length: number;
+    readonly style?: TextStyle;
+    /** Native Animated.Text or the web Web-Animations wrapper. */
+    readonly component?: React.ElementType;
+    /** Stable inside one reveal window; changes only when a new tail starts. */
+    readonly windowKey?: number;
+  };
   testID?: string;
 };
 
@@ -231,7 +238,12 @@ function InlineMarkdown({
   onMention?: (handle: string) => void;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
-  tail?: { readonly length: number; readonly style: TextStyle };
+  tail?: {
+    readonly length: number;
+    readonly style?: TextStyle;
+    readonly component?: React.ElementType;
+    readonly windowKey?: number;
+  };
 }) {
   // One funnel: every prose block (text, header, list items) renders its spans
   // here, so a mention or a channel reference glosses identically wherever it
@@ -242,28 +254,35 @@ function InlineMarkdown({
   );
   return (
     <>
-      {glossed.map((span, index) => (
-        <Text
-          accessibilityRole={
-            (span.mention && onMention) || (span.channelRef && onChannelReference) || span.url
-              ? 'link'
-              : undefined
-          }
-          key={`${span.text}-${index}`}
-          onPress={
-            span.mention && onMention
-              ? () => onMention(span.text.slice(1).normalize('NFKC').toLocaleLowerCase())
-              : span.channelRef && onChannelReference
-                ? () => onChannelReference(span.channelRef!, span.text)
-                : span.url
-                  ? () => onLink(span.url!)
-                  : undefined
-          }
-          style={spanStyle(span, base, tail?.style)}
-        >
-          {span.text}
-        </Text>
-      ))}
+      {glossed.map((span, index) => {
+        const SpanText = span.tail && tail?.component ? tail.component : Text;
+        return (
+          <SpanText
+            accessibilityRole={
+              (span.mention && onMention) || (span.channelRef && onChannelReference) || span.url
+                ? 'link'
+                : undefined
+            }
+            key={
+              span.tail && tail
+                ? `stream-tail-${tail.windowKey ?? 0}-${index}`
+                : `${span.text}-${index}`
+            }
+            onPress={
+              span.mention && onMention
+                ? () => onMention(span.text.slice(1).normalize('NFKC').toLocaleLowerCase())
+                : span.channelRef && onChannelReference
+                  ? () => onChannelReference(span.channelRef!, span.text)
+                  : span.url
+                    ? () => onLink(span.url!)
+                    : undefined
+            }
+            style={spanStyle(span, base, tail?.style)}
+          >
+            {span.text}
+          </SpanText>
+        );
+      })}
     </>
   );
 }
@@ -311,6 +330,8 @@ export function monoMarkdownPropsAreEqual(
     previous.testID === next.testID &&
     previous.tail?.length === next.tail?.length &&
     previous.tail?.style === next.tail?.style &&
+    previous.tail?.component === next.tail?.component &&
+    previous.tail?.windowKey === next.tail?.windowKey &&
     mentionHandlesEqual(previous.mentionHandles, next.mentionHandles)
   );
 }

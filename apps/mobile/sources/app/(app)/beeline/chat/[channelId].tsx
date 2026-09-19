@@ -176,6 +176,7 @@ import {
   selectWorkingAgents,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
+import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
@@ -3170,18 +3171,35 @@ export default function BuzzChat() {
     [choiceActionId, viewerIsAgent],
   );
 
+  const openConnectorOfferCeremony = useCallback(
+    (offerId: string, connectorType: string, pairedConnectorId: string, roomId = decodedId) => {
+      router.push(
+        connectorOfferCeremonyRoute({
+          workspaceId: activeCommunityId ?? '',
+          viewerId: cacheViewerPubkey,
+          roomId,
+          offerId,
+          connectorType,
+          pairedConnectorId,
+        }) as Href,
+      );
+    },
+    [activeCommunityId, cacheViewerPubkey, decodedId],
+  );
+
   /**
-   * Accept a connector-offer card (R5). The server holds the authority (the
-   * person the agent addressed or a Workspace manager) and refuses anyone
-   * else with a 403; the card re-reads from the indexed Room and settles into
-   * `added by @who`, so nothing is decided on the phone.
+   * Start a connector-offer ceremony. The server holds the authority, pairs
+   * the offering helper, and returns its row; the phone immediately routes
+   * that row through the existing Workbench install + sign-in screens. The
+   * card and paused agent settle only when the helper reports connected.
    */
   const handleAcceptConnectorOffer = useCallback(
-    async (offerId: string) => {
+    async (offerId: string, connectorType: string) => {
       if (viewerIsAgent || connectorOfferActionId) return;
       setConnectorOfferActionId(offerId);
       try {
-        await monolithPhoneOperation('acceptConnectorOffer', { offerId });
+        const accepted = await monolithPhoneOperation('acceptConnectorOffer', { offerId });
+        openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Connector offer acceptance failed:', err);
@@ -3189,7 +3207,7 @@ export default function BuzzChat() {
         setConnectorOfferActionId(null);
       }
     },
-    [connectorOfferActionId, viewerIsAgent],
+    [connectorOfferActionId, openConnectorOfferCeremony, viewerIsAgent],
   );
 
   /** The settled offer card's door to the Workbench page (Q3: one of its three remaining paths). */
@@ -4060,6 +4078,7 @@ export default function BuzzChat() {
             viewerRole={viewerChannelRole}
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
+            onContinue={openConnectorOfferCeremony}
             onOpenWorkbench={openWorkbench}
           />
         );
@@ -4232,6 +4251,7 @@ export default function BuzzChat() {
       grantActionId,
       connectorOfferActionId,
       handleAcceptConnectorOffer,
+      openConnectorOfferCeremony,
       openWorkbench,
       choiceActionId,
       handleConfirmTargetBranch,

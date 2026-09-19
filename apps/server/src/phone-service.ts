@@ -101,11 +101,7 @@ import {
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
-import {
-  answerRoomChoice,
-  hiddenWakeCardSql,
-  skipRoomChoice,
-} from './room-choice.js';
+import { answerRoomChoice, hiddenWakeCardSql, skipRoomChoice } from './room-choice.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -4737,26 +4733,24 @@ export class PhoneService {
     return grant;
   }
   /**
-   * The one affirmative tap on a connector-offer card (R5). Authorization is
+   * Start the connector offer's full sign-in ceremony. Authorization is
    * the captain's Q4 answer, decided here and never on the phone: the person
    * the agent ADDRESSED — whose keys the tool will hold — or a current
    * Workspace manager, who already owns Workspace configuration. Nobody else
    * can act on the card, whatever the phone shows.
    *
-   * Accepting is configuration, not authority: it pairs the connector on the
+   * Starting the ceremony is configuration, not authority: it pairs the connector on the
    * OFFERING agent's machine through the very row the Workbench page's own
    * Connect writes (`armConnectorPairing`), so every later credential use goes
    * through the connector's unchanged receipts and approvals, and the vault
-   * stays write-only. The card settles in place naming who acted, and one
-   * hidden `connector-offer-decided` line resumes the paused turn — kept for
-   * that wake and never shown, exactly like `grant-decision` (C101).
+   * stays write-only. The card remains `connecting`; the helper's connected
+   * report settles it and emits the hidden resume line.
    */
   private async acceptConnectorOffer(
     input: Input<'acceptConnectorOffer'>,
     viewerId: string,
   ): Promise<Output<'acceptConnectorOffer'>> {
-    if (typeof input.offerId !== 'string' || !input.offerId)
-      throw new Error('offerId is required');
+    if (typeof input.offerId !== 'string' || !input.offerId) throw new Error('offerId is required');
     const offer = (
       await this.database.query<{
         id: string;
@@ -4767,16 +4761,17 @@ export class PhoneService {
         connector_type: string;
         machine_id: string;
         status: ConnectorOfferStatus;
-        command_id: string | null;
+        accepted_by: string | null;
+        accepted_at: Date | null;
       }>(
-        `SELECT id,agent_id,workspace_id,room_id,addressee_id,connector_type,machine_id,status,command_id
+        `SELECT id,agent_id,workspace_id,room_id,addressee_id,connector_type,machine_id,status,
+                accepted_by,accepted_at
          FROM connector_offers WHERE id::text=$1`,
         [input.offerId],
       )
     ).rows[0];
     if (!offer) throw new Error('connector offer not found');
-    if (offer.status !== 'pending')
-      throw new Error('connector offer conflict: already accepted');
+    if (offer.status === 'accepted') throw new Error('connector offer conflict: already accepted');
     if (!isOfferableConnectorKind(offer.connector_type))
       throw new Error(`connector offer is invalid: ${offer.connector_type} cannot be added`);
     const connectorType: ConnectorKind = offer.connector_type;
@@ -4790,6 +4785,8 @@ export class PhoneService {
     }
     // The addressee decides only while they are still in the Workspace.
     await this.requireWorkspaceMember(offer.workspace_id, viewerId);
+    if (offer.status === 'connecting' && offer.accepted_by !== viewerId)
+      throw new Error('connector offer conflict: sign-in is already in progress');
     // The helper is the offering agent's machine; it must still be here to install.
     const helper = await this.database.query(
       `SELECT 1 FROM agents a
@@ -4801,15 +4798,16 @@ export class PhoneService {
     if (!helper.rowCount)
       throw new Error('connector offer conflict: the offering agent has left this Workspace');
     const acceptor = await this.requireIdentity(viewerId);
-    const connectorName = connectorDisplayName(connectorType);
     const paired = await this.database.transaction(async (database) => {
       const updated = await database.query<{ accepted_at: Date }>(
-        `UPDATE connector_offers SET status='accepted',accepted_by=$2,accepted_at=now()
+        `UPDATE connector_offers SET status='connecting',accepted_by=$2,
+             accepted_at=COALESCE(accepted_at,now())
          WHERE id::text=$1 AND status='pending' RETURNING accepted_at`,
         [input.offerId, viewerId],
       );
-      const acceptedAt = updated.rows[0]?.accepted_at;
-      if (!acceptedAt) throw new Error('connector offer conflict: already accepted');
+      const acceptedAt = updated.rows[0]?.accepted_at ?? offer.accepted_at;
+      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting'))
+        throw new Error('connector offer conflict: already accepted');
       const pairing = await this.armConnectorPairing(database, {
         workspaceId: offer.workspace_id,
         ownerIdentityId: viewerId,
@@ -4821,44 +4819,28 @@ export class PhoneService {
         input.offerId,
         pairing.connectorId,
       ]);
-      await this.settleConnectorOfferCard(database, {
+      await this.markConnectorOfferConnecting(database, {
         roomId: offer.room_id,
         offerId: input.offerId,
         acceptedBy: acceptor,
         acceptedAt,
         connectorId: pairing.connectorId,
       });
-      // `<@handle> added Trusty Squire`: exactly `formatConnectorOfferDecisionLine`'s
-      // shape, so the daemon recognises the answer structurally. A resume kind
-      // (`RESUME_KINDS`): it answers the paused turn and never starts a second.
-      await systemLine(database, {
-        roomId: offer.room_id,
-        authorId: viewerId,
-        subject: identitySubject({ id: acceptor.pubkey, kind: acceptor.kind, name: acceptor.name }),
-        verb: 'added',
-        object: connectorName,
-        kind: 'connector-offer-decided',
-        ...(offer.command_id ? { commandId: offer.command_id } : {}),
-        wakes: [offer.agent_id],
-        cardType: 'connector-offer-decision',
-        card: { offerId: input.offerId, status: 'accepted', connectorId: pairing.connectorId },
-      });
       return pairing;
     });
     return {
       offerId: input.offerId,
-      status: 'accepted',
+      status: 'connecting',
       roomId: offer.room_id,
       connectorId: paired.connectorId,
     };
   }
   /**
-   * Settle the offer card in place: the button goes, and the record names who
-   * acted and when — a Room has many people, and the simplification must not
-   * erase the actor. The Workbench row id rides along for the settled card's
-   * `Manage in Workbench ›` link.
+   * Mark the card as an in-progress ceremony. It still names who acted and
+   * carries the Workbench row id, but it cannot claim the tool was added until
+   * the helper's connected report settles it.
    */
-  private async settleConnectorOfferCard(
+  private async markConnectorOfferConnecting(
     database: SqlDatabase,
     input: {
       roomId: string;
@@ -4876,17 +4858,17 @@ export class PhoneService {
         [input.roomId, input.offerId],
       )
     ).rows[0];
-    if (!card || card.card.status !== 'pending') return;
-    const settled: ConnectorOfferCardView = {
+    if (!card || !['pending', 'connecting'].includes(card.card.status)) return;
+    const connecting: ConnectorOfferCardView = {
       ...card.card,
-      status: 'accepted',
+      status: 'connecting',
       acceptedBy: input.acceptedBy,
       acceptedAt: unix(input.acceptedAt),
       connectorId: input.connectorId,
     };
     await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [
       card.id,
-      JSON.stringify(settled),
+      JSON.stringify(connecting),
     ]);
   }
   /**

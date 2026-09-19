@@ -1121,8 +1121,9 @@ CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
 -- R5: an agent's offer to add one connector, made from a Room at the moment
 -- of need. The addressee is the person whose message woke the offering turn
 -- (whose keys the tool will hold); they or a Workspace manager accept it.
--- Accepting pairs the connector on the offering agent's machine through the
--- same row pairConnector writes, and settles the Room's card in place.
+-- Accepting starts the connector on the offering agent's machine through the
+-- same row pairConnector writes. The helper's connected report settles the
+-- Room card and resumes the paused turn.
 CREATE TABLE IF NOT EXISTS connector_offers (
   id uuid PRIMARY KEY,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -1132,7 +1133,8 @@ CREATE TABLE IF NOT EXISTS connector_offers (
   connector_type text NOT NULL,
   reason text NOT NULL,
   machine_id text NOT NULL,
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted')),
+  status text NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','connecting','accepted')),
   message_id text REFERENCES messages(id) ON DELETE SET NULL,
   command_id text,
   accepted_by text REFERENCES identities(id),
@@ -1142,8 +1144,12 @@ CREATE TABLE IF NOT EXISTS connector_offers (
 );
 CREATE INDEX IF NOT EXISTS connector_offers_room_idx
   ON connector_offers(room_id, connector_type, status, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS connector_offers_open_idx
-  ON connector_offers(room_id, connector_type) WHERE status='pending';
+ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_status_check;
+ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check
+  CHECK (status IN ('pending','connecting','accepted'));
+DROP INDEX IF EXISTS connector_offers_open_idx;
+CREATE UNIQUE INDEX connector_offers_open_idx
+  ON connector_offers(room_id, connector_type) WHERE status IN ('pending','connecting');
 
 
 

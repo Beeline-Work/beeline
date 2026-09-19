@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { AnimatedBlurBackdrop } from '@/components/AnimatedOverlay';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -33,11 +34,14 @@ export default function ConnectorSignInScreen() {
     connectorId?: string | string[];
     url?: string | string[];
     method?: string | string[];
+    offerId?: string | string[];
+    roomId?: string | string[];
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const connectorId = firstParam(params.connectorId) ?? 'trusty-squire';
   const url = firstParam(params.url) ?? '';
   const method = firstParam(params.method) ?? 'streamed';
+  const roomId = firstParam(params.roomId);
   const webView = useSandboxWebView();
   const [fellBack, setFellBack] = useState(false);
   const dismissedRef = useRef(false);
@@ -46,8 +50,8 @@ export default function ConnectorSignInScreen() {
   const dismiss = useCallback(() => {
     if (dismissedRef.current) return;
     dismissedRef.current = true;
-    router.replace('/beeline/settings/workbench' as unknown as Href);
-  }, []);
+    router.replace(connectorOfferCompletionRoute(roomId) as unknown as Href);
+  }, [roomId]);
 
   useEffect(() => {
     if (!workspaceId) return;

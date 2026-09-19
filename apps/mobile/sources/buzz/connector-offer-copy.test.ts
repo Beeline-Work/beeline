@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   connectorOfferActionLabel,
+  connectorOfferConnectingLine,
   connectorOfferOutcomeLine,
   connectorOfferTitle,
   connectorOfferWaitingLine,
@@ -17,7 +18,11 @@ describe('connector-offer copy (R5)', () => {
   it('names the actor by handle on the settled record, and nothing while the offer is open', () => {
     expect(connectorOfferOutcomeLine({ status: 'pending' })).toBeNull();
     expect(
-      connectorOfferOutcomeLine({ status: 'accepted', acceptedBy: zeke, acceptedAt: 1_756_900_060 }),
+      connectorOfferOutcomeLine({
+        status: 'accepted',
+        acceptedBy: zeke,
+        acceptedAt: 1_756_900_060,
+      }),
     ).toMatch(/^added by @zeke · \d{1,2}:\d{2}/);
     // A handle is an address and unique; a display name is neither. Only a
     // person with no handle at all is named by their name.
@@ -27,6 +32,14 @@ describe('connector-offer copy (R5)', () => {
         acceptedBy: { pubkey: 'x', kind: 'human', name: 'Nameless' },
       }),
     ).toBe('added by Nameless');
+  });
+
+  it('names the actor while the sign-in ceremony is still in progress', () => {
+    expect(connectorOfferConnectingLine({ status: 'connecting', acceptedBy: zeke })).toBe(
+      'connecting for @zeke',
+    );
+    expect(connectorOfferConnectingLine({ status: 'pending' })).toBeNull();
+    expect(connectorOfferConnectingLine({ status: 'accepted', acceptedBy: zeke })).toBeNull();
   });
 
   it('tells a reader who cannot act whom the card waits for', () => {

@@ -6012,8 +6012,8 @@ const styles = StyleSheet.create((theme) => {
       flexGrow: 1,
     },
     inputBar: {
-      position: 'relative',
       paddingHorizontal: 16,
+      position: 'relative',
       paddingTop: 8,
       borderTopWidth: 1,
       borderTopColor: groknight.border,

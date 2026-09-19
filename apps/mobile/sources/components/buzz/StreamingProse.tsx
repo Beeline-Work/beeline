@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useSyncExternalStore } from 'react';
+import React, { useEffect, useReducer, useRef, useSyncExternalStore } from 'react';
 import { type TextStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import {
   liveDraftStore,
@@ -89,6 +88,7 @@ export function StreamingProse({
 }) {
   const reducedMotion = useReducedMotion();
   const animate = !reducedMotion;
+  const [, renderSettlement] = useReducer((version: number) => version + 1, 0);
   const snapshot = useSyncExternalStore(
     (listener) => store.subscribe(streamKey, listener),
     () => store.getSnapshot(streamKey),
@@ -106,9 +106,8 @@ export function StreamingProse({
   const presentation = presentationRef.current;
   const tailLength = pendingTailLength(presentation);
 
-  // Logical settlement needs no paint: the native/web animation already ends
-  // at the exact provisional tone. This ref update only makes the NEXT text
-  // commit open a fresh suffix window instead of extending an expired one.
+  // One render at the end of the window restores the arrived suffix's parsed
+  // formatting. Reveal frames themselves stay entirely on the UI runtime.
   useEffect(() => {
     if (!animate || tailLength <= 0 || presentation.windowEndsAt <= 0) return;
     const delay = Math.max(0, presentation.windowEndsAt - now());
@@ -121,16 +120,13 @@ export function StreamingProse({
         progress: 1,
         windowEndsAt: 0,
       };
+      renderSettlement();
     }, delay);
     return () => clearTimeout(timer);
   }, [animate, presentation.windowEndsAt, presentation.windowKey, tailLength]);
 
-  const ground = String(styles.ground.color);
-  const tone = String(textStyle.color ?? ground);
   const tailAnimation = useStreamingTailAnimation({
     active: animate && tailLength > 0,
-    ground,
-    tone,
     windowKey: presentation.windowKey,
   });
   const tail =
@@ -153,7 +149,3 @@ export function StreamingProse({
     />
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  ground: { color: theme.buzz.bgBase },
-}));

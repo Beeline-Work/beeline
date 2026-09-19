@@ -8,6 +8,7 @@ import {
 } from '@/components/markdown/parseMarkdown';
 import {
   reconcileMarkdownTail,
+  STABLE_MARKDOWN_CHUNK_SIZE,
   type IncrementalMarkdownState,
 } from '@/components/markdown/reconcileMarkdownTail';
 import { Typography } from '@/constants/Typography';
@@ -226,8 +227,8 @@ function spanStyle(span: MentionSpan, base: TextStyle, tailStyle?: TextStyle) {
     // A resolved channel reference shares the tagged-token brass: the same
     // interactive-text vocabulary as a @mention, never a new accent or chip.
     (span.mention || span.channelRef) && styles.mention,
-    // Last, so the arriving tail's tone wins over the settled body's.
-    span.tail && tailStyle,
+    // Last when an individual span owns a reveal treatment.
+    tailStyle,
   ];
 }
 
@@ -262,37 +263,46 @@ function InlineMarkdown({
     glossChannelReferences(glossMentions(spans, liveMentionHandles), channelIndex),
     tail?.length ?? 0,
   );
+  const tailStart = glossed.findIndex((span) => span.tail);
+
+  const renderSpan = (span: MentionSpan, index: number) => (
+    <Text
+      accessibilityRole={
+        (span.mention && onMention) || (span.channelRef && onChannelReference) || span.url
+          ? 'link'
+          : undefined
+      }
+      key={`${span.text}-${index}`}
+      onPress={
+        span.mention && onMention
+          ? () => onMention(span.text.slice(1).normalize('NFKC').toLocaleLowerCase())
+          : span.channelRef && onChannelReference
+            ? () => onChannelReference(span.channelRef!, span.text)
+            : span.url
+              ? () => onLink(span.url!)
+              : undefined
+      }
+      style={spanStyle(span, base)}
+    >
+      {span.text}
+    </Text>
+  );
+
+  if (tailStart < 0 || !tail?.component) {
+    return <>{glossed.map(renderSpan)}</>;
+  }
+
+  const TailText = tail.component;
+
   return (
     <>
-      {glossed.map((span, index) => {
-        const SpanText = span.tail && tail?.component ? tail.component : Text;
-        return (
-          <SpanText
-            accessibilityRole={
-              (span.mention && onMention) || (span.channelRef && onChannelReference) || span.url
-                ? 'link'
-                : undefined
-            }
-            key={
-              span.tail && tail
-                ? `stream-tail-${tail.windowKey ?? 0}-${index}`
-                : `${span.text}-${index}`
-            }
-            onPress={
-              span.mention && onMention
-                ? () => onMention(span.text.slice(1).normalize('NFKC').toLocaleLowerCase())
-                : span.channelRef && onChannelReference
-                  ? () => onChannelReference(span.channelRef!, span.text)
-                  : span.url
-                    ? () => onLink(span.url!)
-                    : undefined
-            }
-            style={spanStyle(span, base, tail?.style)}
-          >
-            {span.text}
-          </SpanText>
-        );
-      })}
+      {glossed.slice(0, tailStart).map(renderSpan)}
+      <TailText key={`stream-tail-${tail.windowKey ?? 0}`} style={tail.style}>
+        {glossed
+          .slice(tailStart)
+          .map((span) => span.text)
+          .join('')}
+      </TailText>
     </>
   );
 }
@@ -575,6 +585,51 @@ const MarkdownBlockList = React.memo(function MarkdownBlockList({
 });
 
 const EMPTY_BLOCKS: readonly MarkdownBlock[] = [];
+const EMPTY_BLOCK_CHUNKS: readonly (readonly MarkdownBlock[])[] = [];
+
+type StableMarkdownBlockListsProps = Omit<
+  MarkdownBlockListProps,
+  'blocks' | 'hasFollowingBlocks' | 'startIndex' | 'tail'
+> & {
+  readonly chunks: readonly (readonly MarkdownBlock[])[];
+};
+
+/**
+ * A completed chunk keeps both its block array and child list identity. The
+ * currently filling chunk is the only settled prefix React walks again.
+ */
+const StableMarkdownBlockLists = React.memo(function StableMarkdownBlockLists({
+  base,
+  channelIndex,
+  chunks,
+  inlineHosted,
+  leadingInline,
+  liveMentionHandles,
+  onChannelReference,
+  onLink,
+  onMention,
+}: StableMarkdownBlockListsProps) {
+  return (
+    <>
+      {chunks.map((blocks, chunkIndex) => (
+        <MarkdownBlockList
+          key={chunkIndex}
+          base={base}
+          blocks={blocks}
+          channelIndex={channelIndex}
+          hasFollowingBlocks
+          inlineHosted={inlineHosted}
+          leadingInline={leadingInline}
+          liveMentionHandles={liveMentionHandles}
+          onChannelReference={onChannelReference}
+          onLink={onLink}
+          onMention={onMention}
+          startIndex={chunkIndex * STABLE_MARKDOWN_CHUNK_SIZE}
+        />
+      ))}
+    </>
+  );
+});
 
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
@@ -592,13 +647,18 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   const markdownState = useMemo(() => {
     if (!incremental) {
       const blocks = parseMarkdown(markdown);
-      return { blocks, stableBlocks: EMPTY_BLOCKS, tailBlocks: blocks };
+      return {
+        blocks,
+        stableBlocks: EMPTY_BLOCKS,
+        stableBlockChunks: EMPTY_BLOCK_CHUNKS,
+        tailBlocks: blocks,
+      };
     }
     const next = reconcileMarkdownTail(incrementalState.current, markdown);
     incrementalState.current = next;
     return next;
   }, [incremental, markdown]);
-  const { blocks, stableBlocks, tailBlocks } = markdownState;
+  const { blocks, stableBlocks, stableBlockChunks, tailBlocks } = markdownState;
   const liveMentionHandles = useMemo(
     () =>
       new Set((mentionHandles ?? []).map((handle) => handle.normalize('NFKC').toLocaleLowerCase())),
@@ -622,18 +682,16 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           {leadingInline}
         </Text>
       ) : null}
-      <MarkdownBlockList
+      <StableMarkdownBlockLists
         base={base}
-        blocks={stableBlocks}
+        chunks={stableBlockChunks}
         channelIndex={channelIndex}
-        hasFollowingBlocks={tailBlocks.length > 0}
         inlineHosted={inlineHosted}
         leadingInline={leadingInline}
         liveMentionHandles={liveMentionHandles}
         onChannelReference={onChannelReference}
         onLink={onLink}
         onMention={onMention}
-        startIndex={0}
       />
       <MarkdownBlockList
         base={base}

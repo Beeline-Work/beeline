@@ -138,6 +138,30 @@ describe('MonoMarkdown lists', () => {
   });
 });
 
+describe('MonoMarkdown streaming tail', () => {
+  it('drives one native animation node across a formatted tail suffix', () => {
+    const TailDriver = (props: React.ComponentProps<'span'>) =>
+      React.createElement('TailDriver', props, props.children);
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, {
+          markdown: 'settled **bold** [linked](https://example.com) tail',
+          tail: {
+            component: TailDriver,
+            length: 'bold linked tail'.length,
+            style: { color: '#f0f0f3' },
+            windowKey: 1,
+          },
+        }),
+      );
+    });
+
+    expect(renderer.root.findAllByType('TailDriver')).toHaveLength(1);
+    expect(renderedText(renderer)).toContain('settled bold linked tail');
+  });
+});
+
 /**
  * Regression guard for the enter-room/live-update freeze: MonoMarkdown
  * renders once per transcript row inside FlatList's renderItem, which the

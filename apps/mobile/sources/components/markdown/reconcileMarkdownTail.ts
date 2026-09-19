@@ -4,10 +4,41 @@ export type IncrementalMarkdownState = {
   readonly markdown: string;
   readonly blocks: readonly MarkdownBlock[];
   readonly stableBlocks: readonly MarkdownBlock[];
+  /** Fixed-size memo boundaries; completed chunks never change identity. */
+  readonly stableBlockChunks: readonly (readonly MarkdownBlock[])[];
   readonly tailBlocks: readonly MarkdownBlock[];
   readonly stableBlockCount: number;
   readonly tailStart: number;
 };
+
+export const STABLE_MARKDOWN_CHUNK_SIZE = 8;
+
+function chunkStableBlocks(blocks: readonly MarkdownBlock[]): readonly (readonly MarkdownBlock[])[] {
+  const chunks: MarkdownBlock[][] = [];
+  for (let index = 0; index < blocks.length; index += STABLE_MARKDOWN_CHUNK_SIZE) {
+    chunks.push(blocks.slice(index, index + STABLE_MARKDOWN_CHUNK_SIZE));
+  }
+  return chunks;
+}
+
+function appendStableBlocks(
+  chunks: readonly (readonly MarkdownBlock[])[],
+  blocks: readonly MarkdownBlock[],
+): readonly (readonly MarkdownBlock[])[] {
+  if (blocks.length === 0) return chunks;
+  const next = [...chunks];
+  let remaining = [...blocks];
+  const last = next.at(-1);
+  if (last && last.length < STABLE_MARKDOWN_CHUNK_SIZE) {
+    const take = Math.min(STABLE_MARKDOWN_CHUNK_SIZE - last.length, remaining.length);
+    next[next.length - 1] = [...last, ...remaining.slice(0, take)];
+    remaining = remaining.slice(take);
+  }
+  for (let index = 0; index < remaining.length; index += STABLE_MARKDOWN_CHUNK_SIZE) {
+    next.push(remaining.slice(index, index + STABLE_MARKDOWN_CHUNK_SIZE));
+  }
+  return next;
+}
 
 function sameBlock(left: MarkdownBlock, right: MarkdownBlock): boolean {
   if (left === right) return true;
@@ -22,6 +53,7 @@ function parseWhole(markdown: string): IncrementalMarkdownState {
     markdown,
     blocks: parsed.blocks,
     stableBlocks,
+    stableBlockChunks: chunkStableBlocks(stableBlocks),
     tailBlocks,
     stableBlockCount: parsed.mutableBlockIndex,
     tailStart: parsed.tailStart,
@@ -57,6 +89,7 @@ export function reconcileMarkdownTail(
     markdown,
     blocks,
     stableBlocks,
+    stableBlockChunks: appendStableBlocks(previous.stableBlockChunks, promoted),
     tailBlocks,
     stableBlockCount: stableBlocks.length,
     tailStart: previous.tailStart + parsed.tailStart,

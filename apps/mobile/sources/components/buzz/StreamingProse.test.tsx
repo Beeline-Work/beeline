@@ -123,7 +123,7 @@ function markdown(renderer: ReactTestRenderer) {
 }
 
 describe('StreamingProse row-local reveal', () => {
-  it('renders only on text commits while Reanimated owns every reveal frame', () => {
+  it('renders once at settlement while Reanimated owns every reveal frame', () => {
     const clock = new FrameClock();
     const store = createLiveDraftStore({ clock });
     const renderer = mount(store);
@@ -140,8 +140,8 @@ describe('StreamingProse row-local reveal', () => {
     const rendersAfterCommit = probes.markdownRenders;
 
     act(() => vi.advanceTimersByTime(160));
-    expect(probes.markdownRenders).toBe(rendersAfterCommit);
-    expect(markdown(renderer).markdown).toBe('The answer');
+    expect(probes.markdownRenders).toBe(rendersAfterCommit + 1);
+    expect(markdown(renderer)).toMatchObject({ markdown: 'The answer', tail: undefined });
   });
 
   it('extends one running tail without restarting it, then opens a later window', () => {

@@ -7,14 +7,22 @@ import React, {
   type ComponentType,
   type MutableRefObject,
 } from 'react';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import type { RoomView } from '@beeline/buzz-client';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT } from '@/components/buzz/ConversationComposer';
+import {
+  ROOM_OPEN_COMPOSER_BOX_BORDER,
+  ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT,
+  ROOM_OPEN_INPUT_BAR_BORDER_TOP,
+  ROOM_OPEN_INPUT_BAR_PADDING_TOP,
+  ROOM_OPEN_LIST_TAIL_PADDING,
+  roomOpenComposerSafePadding,
+  roomOpenMessagePadding,
+} from '@/buzz/room-open-geometry';
 import { roomOpenPixelSeed } from '@/buzz/room-open-prefetch';
 import {
   markRoomOpen,
@@ -22,8 +30,6 @@ import {
   type RoomSurfaceSessionBindings,
   type UseRoomSurfaceSessionResult,
 } from './useRoomSurfaceSession';
-
-const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 
 type ChatSurfaceProps = {
   session: UseRoomSurfaceSessionResult;
@@ -77,18 +83,43 @@ function RoomOpenPixel({
       style={{
         flex: 1,
         backgroundColor: theme.buzz.bgTerminal,
-        justifyContent: 'flex-end',
-        paddingTop: headerReserve,
-        paddingBottom: insets.bottom + COMPOSER_MIN_HEIGHT,
-        paddingHorizontal: 16,
       }}
     >
-      <Text
-        testID="chat-open-pixel-newest"
-        style={[theme.buzz.type.body, { color: theme.buzz.textPrimary }]}
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'flex-end',
+          paddingTop: headerReserve,
+          paddingHorizontal: ROOM_OPEN_LIST_TAIL_PADDING,
+          paddingBottom: ROOM_OPEN_LIST_TAIL_PADDING + roomOpenMessagePadding(),
+        }}
       >
-        {newestText}
-      </Text>
+        <Text
+          testID="chat-open-pixel-newest"
+          style={[theme.buzz.type.body, { color: theme.buzz.textPrimary }]}
+        >
+          {newestText}
+        </Text>
+      </View>
+      <View
+        testID="room-open-pixel-composer-reserve"
+        style={{
+          paddingHorizontal: 16,
+          paddingTop: ROOM_OPEN_INPUT_BAR_PADDING_TOP,
+          borderTopWidth: ROOM_OPEN_INPUT_BAR_BORDER_TOP,
+          borderTopColor: theme.buzz.bgTerminal,
+          paddingBottom: roomOpenComposerSafePadding(Platform.OS, insets.bottom),
+        }}
+      >
+        <View
+          style={{
+            minHeight: ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT,
+            borderWidth: ROOM_OPEN_COMPOSER_BOX_BORDER,
+            borderColor: theme.buzz.bgTerminal,
+            borderRadius: 10,
+          }}
+        />
+      </View>
     </View>
   );
 }

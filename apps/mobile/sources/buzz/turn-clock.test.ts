@@ -6,6 +6,7 @@ import {
   elapsedSeconds,
   formatSettledLine,
   formatStoppedLine,
+  formatTerminalTurnOverlay,
   formatWorkingCounter,
   pickTurnVerb,
   spinnerFrameAt,
@@ -85,5 +86,17 @@ describe('the thinking clock', () => {
     const line = formatStoppedLine({ gerund: 'Brewing', past: 'Brewed' }, 0, 14_000);
     expect(line).toMatch(/^Brewed for 14s \u00b7 stopped \d{1,2}:\d{2} (am|pm)$/);
     expect(line).not.toContain('done');
+  });
+
+  it('does not overlay a failed turn whose durable Room line already named the fault', () => {
+    expect(
+      formatTerminalTurnOverlay('failed', { gerund: 'Brewing', past: 'Brewed' }, 0, 14_000),
+    ).toBeNull();
+    expect(
+      formatTerminalTurnOverlay('complete', { gerund: 'Brewing', past: 'Brewed' }, 0, 14_000),
+    ).toMatch(/^Brewed for 14s \u00b7 done /);
+    expect(
+      formatTerminalTurnOverlay('cancelled', { gerund: 'Brewing', past: 'Brewed' }, 0, 14_000),
+    ).toMatch(/^Brewed for 14s \u00b7 stopped /);
   });
 });

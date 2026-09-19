@@ -111,3 +111,15 @@ export function formatStoppedLine(verb: TurnVerb, startedAtMs: number, endedAtMs
   const duration = formatElapsedDuration(elapsedSeconds(startedAtMs, endedAtMs));
   return `${verb.past} for ${duration} \u00b7 stopped ${formatDoneTime(endedAtMs)}`;
 }
+
+/** Failed turns leave a durable Room line; they do not wear the success overlay. */
+export function formatTerminalTurnOverlay(
+  status: 'complete' | 'failed' | 'cancelled',
+  verb: TurnVerb,
+  startedAtMs: number,
+  endedAtMs: number,
+): string | null {
+  if (status === 'failed') return null;
+  if (status === 'cancelled') return formatStoppedLine(verb, startedAtMs, endedAtMs);
+  return formatSettledLine(verb, startedAtMs, endedAtMs);
+}

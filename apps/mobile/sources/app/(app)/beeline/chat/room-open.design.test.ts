@@ -8,6 +8,7 @@ const surface = readFileSync(path.join(root, 'chat/chat-surface.tsx'), 'utf8');
 const layout = readFileSync(path.join(root, '../_layout.tsx'), 'utf8');
 const session = readFileSync(path.join(root, 'chat/useRoomSurfaceSession.ts'), 'utf8');
 const channels = readFileSync(path.join(root, 'channels.tsx'), 'utf8');
+const trace = readFileSync(path.join(root, '../../../buzz/room-open-trace.ts'), 'utf8');
 
 describe('Room open-to-pixel occupancy', () => {
   it('marks navigation dispatch, route mount, and cache-read separately from auth', () => {
@@ -41,10 +42,25 @@ describe('Room open-to-pixel occupancy', () => {
     expect(surface).toContain('if (!allowOlderHistoryRef.current) return');
     expect(surface).toContain('onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}');
     expect(surface).toContain('initialNumToRender={Math.max(1, transcriptMessages.length)}');
+    expect(surface).toContain('formatTerminalTurnOverlay');
     expect(chat).toContain('color: theme.buzz.textPrimary');
     expect(chat).toContain('pixel-layout-newest');
     expect(channels).toContain('beginRoomOpenPrefetch');
     expect(channels).toContain('seedRoomOpenPixel');
     expect(chat).toContain('roomOpenPixelSeed(decodedId)');
+  });
+
+  it('reserves the chrome composer stack without importing ConversationComposer', () => {
+    expect(chat).not.toContain('ConversationComposer');
+    expect(chat).not.toContain('COMPOSER_SINGLE_LINE_INPUT_HEIGHT');
+    expect(chat).toContain("from '@/buzz/room-open-geometry'");
+    expect(chat).toContain('room-open-pixel-composer-reserve');
+    expect(chat).toContain('ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT');
+    expect(chat).toContain('roomOpenComposerSafePadding(Platform.OS, insets.bottom)');
+  });
+
+  it('keeps ROOM_OPEN console probes out of release product', () => {
+    expect(trace).toContain('typeof __DEV__ !== \'undefined\' && !__DEV__');
+    expect(trace).toContain('[ROOM_OPEN]');
   });
 });

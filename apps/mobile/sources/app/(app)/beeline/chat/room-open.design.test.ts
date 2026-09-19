@@ -36,7 +36,7 @@ describe('Room open-to-pixel occupancy', () => {
     expect(load).toContain('surface-preload-error');
     expect(load).toContain('pending = null');
     expect(chat).toContain('attachChatSurfaceAfterPaint');
-    expect(chat).toContain('afterInteractions');
+    expect(chat).toContain('afterPixelIdle');
     expect(chat).not.toContain("from './_chat-surface'");
     expect(chat).not.toContain('from "./_chat-surface"');
     expect(channels).not.toContain('preloadChatSurface');

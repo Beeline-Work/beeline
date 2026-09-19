@@ -24,7 +24,7 @@ import {
   roomOpenMessagePadding,
   roomOpenNewestTextMetrics,
 } from '@/buzz/room-open-geometry';
-import { afterInteractions } from '@/buzz/defer-interaction';
+import { afterPixelIdle } from '@/buzz/defer-interaction';
 import { roomOpenPixelSeed } from '@/buzz/room-open-prefetch';
 import { attachChatSurfaceAfterPaint } from './_chat-surface-load';
 import {
@@ -164,21 +164,21 @@ export default function BuzzChat() {
   });
   const [Chrome, setChrome] = useState<ComponentType<ChatSurfaceProps> | null>(null);
   const [surfaceReady, setSurfaceReady] = useState(false);
-  const [pixelPainted, setPixelPainted] = useState(false);
+  const importCancelRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
     markRoomOpen('route-mount', decodedId);
-    setPixelPainted(false);
     setSurfaceReady(false);
+    importCancelRef.current?.();
+    importCancelRef.current = null;
   }, [decodedId]);
 
   useEffect(() => {
-    if (!pixelPainted || Chrome) return;
-    return attachChatSurfaceAfterPaint(
-      (mod) => setChrome(() => mod.BuzzChatSurface),
-      afterInteractions,
-    );
-  }, [pixelPainted, isFocused, Chrome]);
+    return () => {
+      importCancelRef.current?.();
+      importCancelRef.current = null;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (!session.roomSurface) return;
@@ -211,7 +211,13 @@ export default function BuzzChat() {
         key={decodedId}
         roomSurface={session.roomSurface}
         seedText={roomOpenPixelSeed(decodedId)}
-        onFirstPaint={() => setPixelPainted(true)}
+        onFirstPaint={() => {
+          if (importCancelRef.current) return;
+          importCancelRef.current = attachChatSurfaceAfterPaint(
+            (mod) => setChrome(() => mod.BuzzChatSurface),
+            afterPixelIdle,
+          );
+        }}
       />
     );
   }

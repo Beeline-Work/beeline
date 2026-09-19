@@ -1,7 +1,15 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
+import {
+  parseMarkdown,
+  type MarkdownBlock,
+  type MarkdownSpan,
+} from '@/components/markdown/parseMarkdown';
+import {
+  reconcileMarkdownTail,
+  type IncrementalMarkdownState,
+} from '@/components/markdown/reconcileMarkdownTail';
 import { Typography } from '@/constants/Typography';
 import { CodeBlock } from '@/components/buzz/CodeBlock';
 import {
@@ -106,6 +114,8 @@ export function glossChannelReferences(
 
 type MonoMarkdownProps = {
   markdown: string;
+  /** Keep the settled prefix parsed and mounted while a cumulative draft grows. */
+  incremental?: boolean;
   /**
    * The caller's own body style. Required in practice: the ledger owns every
    * transcript text tone (`components/buzz/Ledger.tsx`), so this component no
@@ -322,6 +332,7 @@ export function monoMarkdownPropsAreEqual(
 ): boolean {
   return (
     previous.markdown === next.markdown &&
+    previous.incremental === next.incremental &&
     previous.textStyle === next.textStyle &&
     previous.leadingInline === next.leadingInline &&
     previous.channelIndex === next.channelIndex &&
@@ -380,8 +391,194 @@ function MarkdownTable({ headers, rows }: { headers: MarkdownSpan[][]; rows: Mar
   );
 }
 
+type MarkdownBlockViewProps = {
+  readonly block: MarkdownBlock;
+  readonly base: TextStyle;
+  readonly channelIndex?: ChannelReferenceIndex;
+  readonly last: boolean;
+  readonly lead: React.ReactNode;
+  readonly liveMentionHandles: ReadonlySet<string>;
+  readonly onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  readonly onLink: (url: string) => void;
+  readonly onMention?: (handle: string) => void;
+  readonly tail?: MonoMarkdownProps['tail'];
+};
+
+/** One memo boundary per parser block keeps an unchanged streamed prefix asleep. */
+const MarkdownBlockView = React.memo(function MarkdownBlockView({
+  block,
+  base,
+  channelIndex,
+  last,
+  lead,
+  liveMentionHandles,
+  onChannelReference,
+  onLink,
+  onMention,
+  tail,
+}: MarkdownBlockViewProps) {
+  const blockStyle = [styles.block, last && styles.lastBlock];
+
+  if (block.type === 'text') {
+    return (
+      <Text selectable style={[base, blockStyle]}>
+        {lead}
+        <InlineMarkdown
+          spans={block.content}
+          base={base}
+          onLink={onLink}
+          liveMentionHandles={liveMentionHandles}
+          onMention={onMention}
+          channelIndex={channelIndex}
+          onChannelReference={onChannelReference}
+          tail={tail}
+        />
+      </Text>
+    );
+  }
+  if (block.type === 'header') {
+    return (
+      <Text selectable style={[base, styles.heading, blockStyle]}>
+        {lead}
+        <InlineMarkdown
+          spans={block.content}
+          base={base}
+          onLink={onLink}
+          liveMentionHandles={liveMentionHandles}
+          onMention={onMention}
+          channelIndex={channelIndex}
+          onChannelReference={onChannelReference}
+          tail={tail}
+        />
+      </Text>
+    );
+  }
+  if (block.type === 'list' || block.type === 'numbered-list') {
+    return (
+      <View style={[styles.list, blockStyle]}>
+        {block.items.map((item, itemIndex) => (
+          <Text
+            key={itemIndex}
+            selectable
+            style={[base, styles.listItem, { paddingLeft: Math.max(0, item.depth) * 12 }]}
+          >
+            {itemIndex === 0 ? lead : null}
+            <Text style={styles.listGlyph}>{'number' in item ? `${item.number}. ` : '· '}</Text>
+            <InlineMarkdown
+              spans={item.spans}
+              base={base}
+              onLink={onLink}
+              liveMentionHandles={liveMentionHandles}
+              onMention={onMention}
+              channelIndex={channelIndex}
+              onChannelReference={onChannelReference}
+              tail={itemIndex === block.items.length - 1 ? tail : undefined}
+            />
+          </Text>
+        ))}
+      </View>
+    );
+  }
+  if (block.type === 'code-block' || block.type === 'mermaid') {
+    const language = 'language' in block ? (block.language ?? null) : null;
+    return (
+      <View style={blockStyle}>
+        <CodeBlock code={block.content} language={language} />
+      </View>
+    );
+  }
+  if (block.type === 'horizontal-rule') {
+    return <View style={[styles.rule, blockStyle]} />;
+  }
+  if (block.type === 'table') {
+    return (
+      <View style={[styles.codeFrame, blockStyle]}>
+        <MarkdownTable headers={block.headers} rows={block.rows} />
+      </View>
+    );
+  }
+  if (block.type === 'options') {
+    return (
+      <Text selectable style={[base, blockStyle]}>
+        {block.items.map((item) => `· ${item}`).join('\n')}
+      </Text>
+    );
+  }
+  if (block.type === 'image') {
+    return (
+      <Text style={[base, styles.link, blockStyle]} onPress={() => onLink(block.url)}>
+        {block.alt || block.url}
+      </Text>
+    );
+  }
+  return null;
+});
+
+type MarkdownBlockListProps = {
+  readonly base: TextStyle;
+  readonly blocks: readonly MarkdownBlock[];
+  readonly channelIndex?: ChannelReferenceIndex;
+  readonly hasFollowingBlocks: boolean;
+  readonly inlineHosted: boolean;
+  readonly leadingInline?: React.ReactNode;
+  readonly liveMentionHandles: ReadonlySet<string>;
+  readonly onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
+  readonly onLink: (url: string) => void;
+  readonly onMention?: (handle: string) => void;
+  readonly startIndex: number;
+  readonly tail?: MonoMarkdownProps['tail'];
+};
+
+/**
+ * Two of these sit under a streaming document: one stable prefix and one
+ * mutable parser tail. A cumulative commit changes only the latter's props,
+ * so React does not walk the settled prefix at all.
+ */
+const MarkdownBlockList = React.memo(function MarkdownBlockList({
+  base,
+  blocks,
+  channelIndex,
+  hasFollowingBlocks,
+  inlineHosted,
+  leadingInline,
+  liveMentionHandles,
+  onChannelReference,
+  onLink,
+  onMention,
+  startIndex,
+  tail,
+}: MarkdownBlockListProps) {
+  return (
+    <>
+      {blocks.map((block, localIndex) => {
+        const index = startIndex + localIndex;
+        const last = !hasFollowingBlocks && localIndex === blocks.length - 1;
+        const lead = inlineHosted && index === 0 ? leadingInline : null;
+        return (
+          <MarkdownBlockView
+            key={index}
+            block={block}
+            base={base}
+            channelIndex={channelIndex}
+            last={last}
+            lead={lead}
+            liveMentionHandles={liveMentionHandles}
+            onChannelReference={onChannelReference}
+            onLink={onLink}
+            onMention={onMention}
+            tail={last ? tail : undefined}
+          />
+        );
+      })}
+    </>
+  );
+});
+
+const EMPTY_BLOCKS: readonly MarkdownBlock[] = [];
+
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
+  incremental = false,
   textStyle,
   leadingInline,
   mentionHandles,
@@ -391,7 +588,17 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   tail,
   testID,
 }: MonoMarkdownProps) {
-  const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
+  const incrementalState = useRef<IncrementalMarkdownState>(undefined);
+  const markdownState = useMemo(() => {
+    if (!incremental) {
+      const blocks = parseMarkdown(markdown);
+      return { blocks, stableBlocks: EMPTY_BLOCKS, tailBlocks: blocks };
+    }
+    const next = reconcileMarkdownTail(incrementalState.current, markdown);
+    incrementalState.current = next;
+    return next;
+  }, [incremental, markdown]);
+  const { blocks, stableBlocks, tailBlocks } = markdownState;
   const liveMentionHandles = useMemo(
     () =>
       new Set((mentionHandles ?? []).map((handle) => handle.normalize('NFKC').toLocaleLowerCase())),
@@ -415,114 +622,33 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           {leadingInline}
         </Text>
       ) : null}
-      {blocks.map((block, index) => {
-        const last = index === blocks.length - 1;
-        const blockStyle = [styles.block, last && styles.lastBlock];
-        const lead = inlineHosted && index === 0 ? leadingInline : null;
-        // The stream is always writing at the end of the message.
-        const trail = last ? tail : undefined;
-
-        if (block.type === 'text') {
-          return (
-            <Text key={index} selectable style={[base, blockStyle]}>
-              {lead}
-              <InlineMarkdown
-                spans={block.content}
-                base={base}
-                onLink={onLink}
-                liveMentionHandles={liveMentionHandles}
-                onMention={onMention}
-                channelIndex={channelIndex}
-                onChannelReference={onChannelReference}
-                tail={trail}
-              />
-            </Text>
-          );
-        }
-        if (block.type === 'header') {
-          return (
-            <Text key={index} selectable style={[base, styles.heading, blockStyle]}>
-              {lead}
-              <InlineMarkdown
-                spans={block.content}
-                base={base}
-                onLink={onLink}
-                liveMentionHandles={liveMentionHandles}
-                onMention={onMention}
-                channelIndex={channelIndex}
-                onChannelReference={onChannelReference}
-                tail={trail}
-              />
-            </Text>
-          );
-        }
-        if (block.type === 'list' || block.type === 'numbered-list') {
-          return (
-            <View key={index} style={[styles.list, blockStyle]}>
-              {block.items.map((item, itemIndex) => (
-                <Text
-                  key={itemIndex}
-                  selectable
-                  style={[base, styles.listItem, { paddingLeft: Math.max(0, item.depth) * 12 }]}
-                >
-                  {itemIndex === 0 ? lead : null}
-                  <Text style={styles.listGlyph}>
-                    {'number' in item ? `${item.number}. ` : '· '}
-                  </Text>
-                  <InlineMarkdown
-                    spans={item.spans}
-                    base={base}
-                    onLink={onLink}
-                    liveMentionHandles={liveMentionHandles}
-                    onMention={onMention}
-                    channelIndex={channelIndex}
-                    onChannelReference={onChannelReference}
-                    tail={itemIndex === block.items.length - 1 ? trail : undefined}
-                  />
-                </Text>
-              ))}
-            </View>
-          );
-        }
-        if (block.type === 'code-block' || block.type === 'mermaid') {
-          const code = block.content;
-          const language = 'language' in block ? (block.language ?? null) : null;
-          return (
-            <View key={index} style={blockStyle}>
-              <CodeBlock code={code} language={language} />
-            </View>
-          );
-        }
-        if (block.type === 'horizontal-rule') {
-          return <View key={index} style={[styles.rule, blockStyle]} />;
-        }
-        if (block.type === 'table') {
-          return (
-            <View key={index} style={[styles.codeFrame, blockStyle]}>
-              <MarkdownTable headers={block.headers} rows={block.rows} />
-            </View>
-          );
-        }
-        if (block.type === 'options') {
-          return (
-            <Text key={index} selectable style={[base, blockStyle]}>
-              {block.items.map((item) => `· ${item}`).join('\n')}
-            </Text>
-          );
-        }
-        if (block.type === 'image') {
-          return (
-            <Text
-              key={index}
-              style={[base, styles.link, blockStyle]}
-              onPress={() => onLink(block.url)}
-            >
-              {block.alt || block.url}
-            </Text>
-          );
-        }
-        return null;
-      })}
+      <MarkdownBlockList
+        base={base}
+        blocks={stableBlocks}
+        channelIndex={channelIndex}
+        hasFollowingBlocks={tailBlocks.length > 0}
+        inlineHosted={inlineHosted}
+        leadingInline={leadingInline}
+        liveMentionHandles={liveMentionHandles}
+        onChannelReference={onChannelReference}
+        onLink={onLink}
+        onMention={onMention}
+        startIndex={0}
+      />
+      <MarkdownBlockList
+        base={base}
+        blocks={tailBlocks}
+        channelIndex={channelIndex}
+        hasFollowingBlocks={false}
+        inlineHosted={inlineHosted}
+        leadingInline={leadingInline}
+        liveMentionHandles={liveMentionHandles}
+        onChannelReference={onChannelReference}
+        onLink={onLink}
+        onMention={onMention}
+        startIndex={stableBlocks.length}
+        tail={tail}
+      />
     </View>
   );
 }, monoMarkdownPropsAreEqual);

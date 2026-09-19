@@ -893,6 +893,40 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeCodexCleanExitQuotaAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-codex-quota-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'codex-acp.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const quota =
+  "You've hit your usage limit.\\nUpgrade to Pro for more usage, or try again at Sep 19th, 2026 4:09 AM.\\n";
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    process.stderr.write(quota);
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: -32603, message: 'Codex process has exited with code 0' },
+    });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakeClaudeSettingsShapeAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-claude-settings-'));
   temporaryDirectories.push(directory);
@@ -1298,6 +1332,25 @@ describe('AcpClient live steering', () => {
     }
   });
 
+  it('carries a Codex quota stderr dump through a clean-exit JSON-RPC error', async () => {
+    // codex-acp reports the inner process as "exited with code 0" and prints
+    // the real quota + reset time on stderr. A first-line distill used to keep
+    // only the success-shaped exit, so the Room read as if Codex had succeeded.
+    const client = new AcpClient({
+      agentCommand: await fakeCodexCleanExitQuotaAgent(),
+      agentLabel: 'codex-acp',
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      await expect(client.sessionNew({ cwd: tmpdir() })).rejects.toThrow(
+        /ACP error -32603: Codex process has exited with code 0; harness stderr: You've hit your usage limit\. Upgrade to Pro for more usage, or try again at Sep 19th, 2026 4:09 AM\./,
+      );
+    } finally {
+      await client.stop();
+    }
+  });
+
   it('sends Claude session settings as an object, not a --settings JSON string', async () => {
     // The Claude Agent SDK treats a string settings value as a file path. The
     // previous JSON.stringify blob therefore became a missing-file Internal
@@ -1549,6 +1602,25 @@ describe('AcpClient failure reporting', () => {
     await expect(client.start()).rejects.toThrow(/ACP agent pi-acp exited code=3/);
     // The stderr tail rides along, so the log carries the real reason.
     await expect(client.start()).rejects.toThrow(/missing API key/);
+  });
+
+  it('surfaces a quota stderr dump when the harness exits 0', async () => {
+    const client = new AcpClient({
+      agentCommand: '/bin/sh',
+      agentArgs: [
+        '-c',
+        [
+          'printf "%s\\n" "You\'ve hit your usage limit." "try again at Sep 19th, 2026 4:09 AM." >&2',
+          'sleep 0.4',
+          'exit 0',
+        ].join('; '),
+      ],
+      agentLabel: 'codex-acp',
+      agentEnv: {},
+    });
+    await expect(client.start()).rejects.toThrow(
+      /ACP agent codex-acp exited code=0 signal=null: You've hit your usage limit\. try again at Sep 19th, 2026 4:09 AM\./,
+    );
   });
 
   it('falls back to the spawned command when no label is given', async () => {

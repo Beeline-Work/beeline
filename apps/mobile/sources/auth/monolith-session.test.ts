@@ -139,6 +139,24 @@ describe('monolith phone session', () => {
     expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-1' }));
   });
 
+  it('evicts the rotated in-memory refresh credential on clear, so later reads require sign-in', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1)), { status: 200 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+
+    // Warm the rotated refresh token into memory via a successful renewal.
+    await expect(session.authorization()).resolves.toBe('access-1');
+    expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-1');
+
+    await session.clear();
+
+    await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
+    // The cleared session must not fall back to the rotated in-memory token:
+    // no extra refresh call, and the only refresh used the pre-rotation token.
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-old' }));
+  });
+
   it('aborts a hung phone read only when it opts into the bounded deadline', async () => {
     let hang = false;
     const fetcher = vi.fn(

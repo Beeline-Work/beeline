@@ -58,7 +58,6 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { CornerWorkingPulse } from '@/components/buzz/CornerLiveBar';
 import { MonoButton } from '@/components/buzz/MonoHull';
-import { consumeFirstRoomDeckAfterBoot } from '@/buzz/boot-paint-handoff';
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
@@ -171,7 +170,6 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
 
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
-  const suppressFirstDeckPaint = useRef(consumeFirstRoomDeckAfterBoot()).current;
   const isDesktop = useIsDesktop();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
@@ -765,10 +763,7 @@ export default function BuzzChannels() {
   }
   if (!chatList && !error) {
     return (
-      <RoomDeckLoadingView
-        style={{ paddingTop: insets.top }}
-        suppressPaint={suppressFirstDeckPaint}
-      />
+      <RoomDeckLoadingView style={{ paddingTop: insets.top }} />
     );
   }
   if (!chatList) {

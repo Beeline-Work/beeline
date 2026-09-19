@@ -50,7 +50,7 @@ describe('Room composer status layout', () => {
   });
 
   it('keeps turn progress inside the growing composer stack, above the field', () => {
-    const inputBar = source.slice(source.indexOf('<View style={[styles.inputBar'));
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
     const composer = inputBar.indexOf('<ConversationComposer');
     expect(progress).toBeGreaterThanOrEqual(0);
@@ -144,10 +144,10 @@ describe('Room composer keyboard inset', () => {
     expect(source).not.toContain('keyboardVerticalOffset=');
   });
 
-  it('keeps the safe-area inset only while the software keyboard is closed', () => {
+  it('moves the safe-area inset with keyboard progress instead of snapping at event boundaries', () => {
     expect(source).toContain(
-      'const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);',
+      'paddingBottom: composerBottomPadding(Platform.OS, insets.bottom, keyboardProgress.value)',
     );
-    expect(source).toContain('{ paddingBottom: composerBottomInset }');
+    expect(source).toContain('<Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>');
   });
 });

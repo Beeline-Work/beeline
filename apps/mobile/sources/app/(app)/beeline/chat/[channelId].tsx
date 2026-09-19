@@ -22,7 +22,12 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Notifications from 'expo-notifications';
-import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
+import {
+  KeyboardAvoidingView,
+  useKeyboardState,
+  useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   useFocusEffect,
@@ -2344,7 +2349,13 @@ export default function BuzzChat() {
   // an effect runs, preserving the old offset as an empty gap. Capture the
   // verdict in render, including the two independently mounted status lines.
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);
+  const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
+  const composerBottomInsetStyle = useAnimatedStyle(
+    () => ({
+      paddingBottom: composerBottomPadding(Platform.OS, insets.bottom, keyboardProgress.value),
+    }),
+    [insets.bottom],
+  );
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
     cornerLiveBar ? 'corner' : 'no-corner',
@@ -4861,7 +4872,7 @@ export default function BuzzChat() {
               </Text>
             </View>
           ) : (
-            <View style={[styles.inputBar, { paddingBottom: composerBottomInset }]}>
+            <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
               {slashMenuVisible &&
                 (() => {
                   const mentionAgent = mentionSlashAgentPubkey
@@ -5199,7 +5210,7 @@ export default function BuzzChat() {
                     : handleSend
                 }
               />
-            </View>
+            </Animated.View>
           )}
         </KeyboardAvoidingView>
         {desktopWorkPaneMounted && (

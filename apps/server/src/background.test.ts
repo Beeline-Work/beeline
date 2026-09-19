@@ -3,6 +3,7 @@ import {
   BackgroundLeader,
   createPushTestSender,
   MediaExpiryLoop,
+  PUSH_DELIVERY_CONCURRENCY,
   PushDeliveryLoop,
   runMaintenance,
   type LeaderConnection,
@@ -178,6 +179,60 @@ describe('background advisory-lock ownership', () => {
       expect(await loop.runOnce()).toBe(7);
       expect(send).toHaveBeenCalledTimes(7);
       expect(await loop.runOnce()).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('sends claimed push candidates with bounded concurrency', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64);
+      const agent = 'b'.repeat(64);
+      const workspace = '11111111-1111-4111-8111-111111111121';
+      const room = '22222222-2222-4222-8222-222222222221';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle)
+         VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Push concurrency')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         SELECT 'conc-token-' || n::text || '-12345678901234567890',$1,'android','physical',
+           now()-interval '2 days' FROM generate_series(1,12) n`,
+        [human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_floors(id,started_at)
+         VALUES('message-delivery',now()-interval '2 days')`,
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner concurrent')`,
+        ['e'.repeat(64), room, agent],
+      );
+      let inFlight = 0;
+      let peak = 0;
+      const send = vi.fn(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        inFlight -= 1;
+      });
+      expect(await new PushDeliveryLoop(db, { send }).runOnce()).toBe(12);
+      expect(send).toHaveBeenCalledTimes(12);
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(PUSH_DELIVERY_CONCURRENCY);
     } finally {
       await db.close();
     }

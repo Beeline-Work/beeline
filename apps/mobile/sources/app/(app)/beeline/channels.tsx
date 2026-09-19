@@ -382,7 +382,27 @@ export default function BuzzChannels() {
       });
       workspaceScheduler.current = workspaceRefresh;
 
+      let chatListenReady: Promise<void> = Promise.resolve();
       if (selectedId && chatCacheAddress) {
+        let chatWatchKey = '';
+        let chatWatchGeneration = 0;
+        const installChatWatch = async (
+          filters: ChatListView['watchFilters'],
+        ): Promise<void> => {
+          const generation = ++chatWatchGeneration;
+          chatWatchKey = JSON.stringify(filters);
+          unsubscribeChats?.();
+          unsubscribeChats = undefined;
+          // Cold deck without Room ids must not subscribe the Workspace UUID as
+          // #h — canReadRoom refuses it and live invalidation never lands.
+          if (filters.length === 0) return;
+          const stop = await relay.surfaceSubscribe(filters, () => chatsRefresh?.signal());
+          if (cancelled || generation !== chatWatchGeneration) {
+            stop();
+            return;
+          }
+          unsubscribeChats = stop;
+        };
         chatsRefresh = new SurfaceRefreshScheduler({
           fetch: () => http.chats(selectedId),
           apply: (value) => {
@@ -390,6 +410,8 @@ export default function BuzzChannels() {
             setRefreshing(false);
             setError(null);
             void mobileSurfaceCache.write(chatCacheAddress, value, isChatListView);
+            const nextWatchKey = JSON.stringify(value.watchFilters);
+            if (nextWatchKey !== chatWatchKey) void installChatWatch(value.watchFilters);
           },
           onError: (reason) => {
             setRefreshing(false);
@@ -397,6 +419,9 @@ export default function BuzzChannels() {
           },
         });
         chatScheduler.current = chatsRefresh;
+        // Seed from cache when present; otherwise the first chats GET apply
+        // reinstalls so the deck never watches a Workspace id.
+        chatListenReady = installChatWatch(cachedChats?.watchFilters ?? []);
       }
 
       const workspaceListenReady = relay
@@ -410,18 +435,6 @@ export default function BuzzChannels() {
           if (cancelled) stop();
           else unsubscribeWorkspaces = stop;
         });
-      const chatListenReady =
-        chatsRefresh && selectedId
-          ? relay
-              .surfaceSubscribe(
-                cachedChats?.watchFilters ?? [{ kinds: [9, 9000, 9001, 9007], '#h': [selectedId] }],
-                () => chatsRefresh?.signal(),
-              )
-              .then((stop) => {
-                if (cancelled) stop();
-                else unsubscribeChats = stop;
-              })
-          : Promise.resolve();
       await Promise.all([
         workspaceRefresh.startAfter(workspaceListenReady),
         chatsRefresh?.startAfter(chatListenReady),

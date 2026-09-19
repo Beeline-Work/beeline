@@ -19,6 +19,7 @@ import { cornerHref } from '@/buzz/corner-navigation';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -213,7 +214,9 @@ export default function BookmarksScreen() {
       keyExtractor={(bookmark) => bookmark.messageId}
       ListEmptyComponent={
         loading ? (
-          <Text style={styles.empty}>Loading bookmarks…</Text>
+          <View style={styles.loadingBlock} testID="bookmarks-loader">
+            <SurfaceGlyphLoader />
+          </View>
         ) : (
           <View style={styles.emptyBlock} testID="bookmarks-empty">
             <Ionicons color={styles.emptyIcon.color} name="bookmark-outline" size={22} />
@@ -331,7 +334,9 @@ export default function BookmarksScreen() {
             <Text style={styles.empty}>{inspectError}</Text>
           </View>
         ) : selected?.available ? (
-          <Text style={styles.empty}>Loading Corner…</Text>
+          <View style={styles.loadingBlock} testID="bookmark-corner-loader">
+            <SurfaceGlyphLoader />
+          </View>
         ) : null}
       </View>
     ) : null;
@@ -414,6 +419,7 @@ const styles = StyleSheet.create((theme) => ({
   remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
   removeText: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },
   paneFallback: { flex: 1, justifyContent: 'center' },
+  loadingBlock: { padding: 28, alignItems: 'center', justifyContent: 'center' },
   emptyBlock: { padding: 28, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },
   emptyTitle: {

@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { RoomScheduleCadence, RoomScheduleView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { Typography } from '@/constants/Typography';
-import { PixelLoader } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
@@ -109,7 +109,7 @@ export default function ScheduledWork() {
       </View>
       {loading ? (
         <View style={styles.loading}>
-          <PixelLoader />
+          <SurfaceGlyphLoader testID="schedules-loader" />
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">

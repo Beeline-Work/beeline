@@ -38,6 +38,7 @@ import {
 } from '@/buzz/room-list-row';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
@@ -183,6 +184,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: 18,
     paddingVertical: 24,
     color: theme.colors.textSecondary,
+  },
+  loading: {
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 24,
+    gap: 8,
   },
   settingsRow: {
     flexDirection: 'row',
@@ -657,13 +664,20 @@ export const SidebarView = React.memo(function SidebarView() {
               <Text style={styles.empty}>{navigationError} Select to retry.</Text>
             </Pressable>
           ) : !filteredChats.length ? (
-            <Text style={styles.empty}>
-              {surface
-                ? query.trim()
+            surface ? (
+              <Text style={styles.empty}>
+                {query.trim()
                   ? `No ${ROOMS_LABEL.toLowerCase()} or direct messages match this search.`
-                  : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`
-                : `Loading ${ROOMS_LABEL.toLowerCase()} and direct messages…`}
-            </Text>
+                  : `No ${ROOMS_LABEL.toLowerCase()} or direct messages yet.`}
+              </Text>
+            ) : (
+              <View style={styles.loading} testID="desktop-rooms-loader">
+                <SurfaceGlyphLoader compact />
+                <Text style={styles.empty}>
+                  Loading {ROOMS_LABEL.toLowerCase()} and direct messages…
+                </Text>
+              </View>
+            )
           ) : (
             filteredChatSections.map((section) => (
               <React.Fragment key={section.kind}>

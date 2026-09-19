@@ -614,7 +614,8 @@ is the transcript seam. Bricolage Grotesque is the logo lockup only.
 
 Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
 `HullSurface` (the lifted-region texture), `BrittlePress` (70ms in / 110ms out
-press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps), `HullWaveSignal`
+press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps — labeled-control busy
+only), `HullWaveSignal`
 (9-segment sin² live wave), `HullLivePulse` (the same wave reduced to one
 mark), `StatusGlyph`, `PixelGateReveal` (176ms strip reveal),
 `NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
@@ -653,12 +654,16 @@ leading option's votes (the leader fills the track). The fill does not animate,
 pulse, or sweep. Counts stay inscribed. Reduced motion changes nothing because
 nothing moves. This is not a license for progress bars elsewhere.
 
-The one drawn exception is the thinking line's glyph, `BeelineMarkSpinner`: a
-brass stroke draws the Beeline mark's outline from nothing, lingers complete,
-unwinds and redraws, on a 2s ping-pong. It is allowed because the loop returns
-to nothing every cycle — it never fills up towards a finish — and because the
-mark sits in a fixed 18px cell so nothing around it moves. Reduced motion, a
-backgrounded app, and the settled row all show the same completed static mark.
+The one drawn exception is the self-painting glyph: splash (`BootPaint`) paints
+once and holds because that load ends; in-app load gates (`SurfaceGlyphLoader`)
+and the thinking line (`BeelineMarkSpinner`) use the release loop — a brass
+stroke draws the Beeline mark, immediately unwinds, and rests empty before
+redrawing. It is allowed because the loop returns to nothing every cycle — it
+never fills up towards a finish — and because the mark sits in a fixed cell so
+nothing around it moves. Reduced motion, a backgrounded app, and a settled mark
+all show the same completed static glyph. `PixelLoader`'s four dots stay only
+on labeled-control busy (`MonoButton` / `BrassButton` / the Settings version
+check), never as a page or Room/Corner load gate.
 
 ## Color exceptions, stated so no one re-litigates them
 

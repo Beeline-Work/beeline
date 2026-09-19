@@ -25,7 +25,8 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
-import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -168,7 +169,7 @@ export default function BuzzCommunityCreateOrJoin() {
   if (!identity && !error) {
     return (
       <View style={[styles.loading, { paddingTop: insets.top }]}>
-        <PixelLoader />
+        <SurfaceGlyphLoader testID="community-loader" />
       </View>
     );
   }

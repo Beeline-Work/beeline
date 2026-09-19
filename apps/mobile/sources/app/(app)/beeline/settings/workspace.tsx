@@ -26,7 +26,8 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
-import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -334,7 +335,7 @@ export default function WorkspaceSettings() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <PixelLoader />
+        <SurfaceGlyphLoader testID="workspace-settings-loader" />
       </View>
     );
   }

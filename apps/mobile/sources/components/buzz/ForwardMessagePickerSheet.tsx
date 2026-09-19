@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, TextInput } from 'react-native';
+import { ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ForwardTarget, ForwardTargetGroup } from '@/buzz/message-forward';
 import { Typography } from '@/constants/Typography';
@@ -9,6 +9,7 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from './HullActionSheet';
+import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 
 type ForwardMessagePickerSheetProps = {
   busyRoomId: string | null;
@@ -77,9 +78,14 @@ export function ForwardMessagePickerSheet({
         testID="forward-room-list"
       >
         {targets === null ? (
-          <Text accessibilityLiveRegion="polite" style={styles.status}>
-            LOADING DESTINATIONS…
-          </Text>
+          <View
+            accessibilityLiveRegion="polite"
+            style={styles.loading}
+            testID="forward-destinations-loader"
+          >
+            <SurfaceGlyphLoader compact />
+            <Text style={styles.status}>LOADING DESTINATIONS…</Text>
+          </View>
         ) : filteredTargets.length ? (
           SECTIONS.map((section) => {
             const sectionTargets = filteredTargets.filter(
@@ -142,10 +148,14 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: 4,
       paddingHorizontal: HULL_SHEET_INSET,
     },
-    status: {
-      ...groknight.type.sectionHead,
+    loading: {
+      alignItems: 'center',
       paddingHorizontal: HULL_SHEET_INSET,
       paddingVertical: 18,
+      gap: 8,
+    },
+    status: {
+      ...groknight.type.sectionHead,
       color: groknight.textMuted,
       textAlign: 'center',
     },

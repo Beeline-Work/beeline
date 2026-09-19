@@ -88,6 +88,12 @@ vi.mock('@/components/DesktopRoomInspector', async () => {
       ReactModule.createElement('DesktopRoomInspector', props),
   };
 });
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 
 import BookmarksScreen from './bookmarks';
 

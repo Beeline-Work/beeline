@@ -4,7 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
@@ -206,7 +207,7 @@ export default function ConnectTrustySquireScreen() {
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         {helpers === null ? (
           <View style={styles.loading} testID="connect-loading">
-            <PixelLoader />
+            <SurfaceGlyphLoader testID="connect-loader" />
             <Text style={styles.note}>Looking for your machine…</Text>
           </View>
         ) : null}

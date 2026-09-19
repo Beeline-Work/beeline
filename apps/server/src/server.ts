@@ -25,14 +25,15 @@ import type { ConnectionPresence } from './connection-presence.js';
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
-/** Product interaction target for the cross-process miss path (deadline wait
- * + client scheduler delay + GET/paint). Same-process committed deltas skip
- * this path and force immediately. The server deadline (50 ms) and client
- * SurfaceRefreshScheduler floor (50 ms) must sum under this — never each
- * equal it — leaving 50 ms for GET/paint. */
+/** Product interaction target for the cross-process miss path. Same-process
+ * committed deltas skip this path and force immediately. The client
+ * SurfaceRefreshScheduler default stays at 500 ms (pool-safe ~2 GETs/s); do
+ * not assume deadline + scheduler + GET/paint compose under this target
+ * without a measured GET+paint budget (audit F5). */
 const LIVE_INTERACTION_TARGET_MS = 150;
-/** Bound for cross-process / DB fallback row projection. */
-const LIVE_DELTA_DEADLINE_MS = Math.floor(LIVE_INTERACTION_TARGET_MS / 3);
+/** Bound for cross-process / DB fallback row projection — at or under the
+ * interaction target so the server wait alone cannot exceed it. */
+const LIVE_DELTA_DEADLINE_MS = LIVE_INTERACTION_TARGET_MS;
 
 async function withinLiveDeltaDeadline<T>(work: Promise<T>): Promise<T> {
   let deadline: ReturnType<typeof setTimeout> | undefined;

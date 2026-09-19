@@ -84,14 +84,14 @@ describe('surface liveness scheduler', () => {
     expect(applied).toEqual([]);
 
     scheduler.force();
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(500);
     expect(fetch).toHaveBeenCalledTimes(2);
     second.resolve(2);
     await Promise.resolve();
     expect(applied).toEqual([2]);
   });
 
-  it('cannot starve under continuous signals or exceed about twenty physical GETs per second', async () => {
+  it('cannot starve under continuous signals or exceed two physical GETs per second', async () => {
     vi.useFakeTimers();
     let paints = 0;
     const fetch = vi.fn(async () => ++paints);
@@ -101,9 +101,8 @@ describe('surface liveness scheduler', () => {
       scheduler.signal();
       await vi.advanceTimersByTimeAsync(100);
     }
-    // 50 ms floor → ≤20 GETs/s when saturated; this 100 ms signal cadence caps nearer 10/s.
-    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(28);
-    expect(fetch.mock.calls.length).toBeLessThanOrEqual(35);
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(fetch.mock.calls.length).toBeLessThanOrEqual(7);
   });
 
   it('never paints a response that was overtaken by a live dirty signal', async () => {
@@ -118,7 +117,7 @@ describe('surface liveness scheduler', () => {
     first.resolve(1);
     await Promise.resolve();
     expect(applied).toEqual([]);
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(500);
     expect(applied).toEqual([2]);
   });
 
@@ -138,11 +137,11 @@ describe('surface liveness scheduler', () => {
     await scheduler.startAfter(Promise.resolve());
     await vi.advanceTimersByTimeAsync(0);
     scheduler.signalUntil((value) => value.messages.some((message) => message.id === 'live-message'));
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(500);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(applied.at(-1)?.messages).toEqual([]);
 
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(500);
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(applied.at(-1)?.messages).toEqual([{ id: 'live-message' }]);
   });

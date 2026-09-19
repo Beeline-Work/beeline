@@ -15,7 +15,7 @@ import { PgliteDatabase } from './test-support.js';
 const WORKSPACE = '10000000-0000-4000-8000-000000000101';
 const VIEWER = 'c'.repeat(64);
 const AGENT = 'd'.repeat(64);
-const ROOM_COUNT = 50;
+const ROOM_COUNT = 200;
 const CORNER_COUNT = 40;
 const WIDE_ROOM = '20000000-0000-4000-8000-000000000000';
 

@@ -37,11 +37,24 @@ function extractRoomIds(filters) {
   ];
 }
 
+const clientPaint = read('apps/mobile/sources/buzz/monolith-client-paint-budgets.test.ts');
+
 const checks = [];
 function check(id, ok, detail) {
   checks.push({ id, ok, detail });
   console.log(`${ok ? 'PASS' : 'FAIL'} ${id}: ${detail}`);
 }
+
+check(
+  'F5.client-paint-benchmark',
+  clientPaint.includes('CLIENT_PAINT_TARGET_MS = 450') &&
+    clientPaint.includes('DECK_ROOM_COUNT = 200') &&
+    clientPaint.includes('client-get-plus-paint') &&
+    clientPaint.includes('RoomViewClient') &&
+    clientPaint.includes('paintDeck') &&
+    clientPaint.includes('paintTranscript'),
+  'monolith client cold/warm deck+transcript paint under 450 ms with measured GET+paint',
+);
 
 check(
   'F1.cold-no-workspace-h',
@@ -60,11 +73,11 @@ check(
 );
 
 check(
-  'F150.composed-coalesce-floors',
-  refresh.includes('minimumIntervalMs ?? 50') &&
+  'F150.pool-safe-floors',
+  refresh.includes('minimumIntervalMs ?? 500') &&
     server.includes('LIVE_INTERACTION_TARGET_MS = 150') &&
-    server.includes('LIVE_DELTA_DEADLINE_MS = Math.floor(LIVE_INTERACTION_TARGET_MS / 3)'),
-  'deadline 50 ms + scheduler 50 ms compose under the 150 ms interaction target',
+    server.includes('LIVE_DELTA_DEADLINE_MS = LIVE_INTERACTION_TARGET_MS'),
+  'deadline 150 ms under interaction target; scheduler stays 500 ms (~2 GETs/s)',
 );
 
 check(

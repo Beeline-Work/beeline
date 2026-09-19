@@ -128,7 +128,7 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
     await vi.runOnlyPendingTimersAsync();
     const heldProof = frames[0]![0]!.reference;
     scheduler.signal();
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(500);
 
     expect(frames).toHaveLength(2);
     const refetchedParent = frames[1]!.find((message) => message.id === parentId);

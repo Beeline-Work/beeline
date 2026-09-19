@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path';
 import type { ConnectorKind, ConnectorStep } from '@beeline/api-contract/daemon';
 import {
   googleWorkspaceClient,
-  credentialsTokenSource,
+  refreshableTokenSource,
   type GoogleCredentials,
 } from './google-workspace-client.js';
 import {
@@ -290,7 +290,14 @@ export async function installGoogleTool(
 
   // Authorization: one verified call against the live grant.
   const client =
-    options.client ?? googleWorkspaceClient(credentialsTokenSource(resolved.credentials));
+    options.client ??
+    googleWorkspaceClient(
+      refreshableTokenSource(
+        resolved.credentials,
+        options.env?.BEELINE_GOOGLE_CLIENT_ID,
+        options.env?.BEELINE_GOOGLE_CLIENT_SECRET,
+      ),
+    );
   push(step('authorized with Google', 'running', { output: 'verifying the grant with Google…' }));
   const verify = await client.verify();
   if (!verify.ok) {

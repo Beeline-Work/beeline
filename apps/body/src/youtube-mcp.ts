@@ -40,7 +40,7 @@ export const YOUTUBE_VENDOR_LOCK = {
 
 type JsonObject = Record<string, unknown>;
 
-export type YoutubeMcpTool = {
+type YoutubeMcpTool = {
   name: string;
   description: string;
   inputSchema: JsonObject;
@@ -127,8 +127,6 @@ export const YOUTUBE_MCP_TOOLS: readonly YoutubeMcpTool[] = [
     inputSchema: { type: 'object', properties: dateProps, additionalProperties: false },
   },
 ];
-
-export const YOUTUBE_MCP_TOOL_NAMES = YOUTUBE_MCP_TOOLS.map((tool) => tool.name);
 
 function stringArg(args: JsonObject, key: string): string | undefined {
   const value = args[key];
@@ -257,7 +255,7 @@ function failure(id: JsonRpcRequest['id'], code: number, message: string): void 
   send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
 
-export async function handleYoutubeMcpLine(
+async function handleYoutubeMcpLine(
   line: string,
   clientFactory: () => GoogleWorkspaceClient = () => youtubeClientFromToken(youtubeAccessToken()),
 ): Promise<void> {
@@ -308,8 +306,8 @@ export async function handleYoutubeMcpLine(
   }
 }
 
-/** Stdio entry used when this file is the process main (bundle / tsx). */
-export function listenYoutubeMcpStdio(): void {
+/** Stdio entry used when this file is the process main (`beeline-youtube-mcp`). */
+function listenYoutubeMcpStdio(): void {
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   lines.on('line', (line) => void handleYoutubeMcpLine(line));
 }

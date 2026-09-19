@@ -97,7 +97,7 @@ export function refreshableTokenSource(
   credentials: GoogleCredentials,
   clientId: string | undefined,
   clientSecret: string | undefined,
-  transport: GoogleApiTransport = defaultGoogleApiTransport,
+  transport: GoogleApiTransport = googleOAuthTokenTransport,
 ): GoogleTokenSource {
   let current = credentials;
   return {

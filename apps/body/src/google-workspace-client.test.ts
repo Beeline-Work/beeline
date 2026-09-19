@@ -5,6 +5,7 @@ import {
   defaultAnalyticsDateRange,
   googleWorkspaceClient,
   refreshGoogleAccessToken,
+  refreshableTokenSource,
   type GoogleApiTransport,
 } from './google-workspace-client.js';
 
@@ -111,5 +112,29 @@ describe('refreshGoogleAccessToken', () => {
         throw new Error('must not call Google');
       })),
     ).rejects.toBeInstanceOf(GoogleApiError);
+  });
+});
+
+describe('refreshableTokenSource', () => {
+  it('refreshes a stale grant through Beeline’s OAuth client', async () => {
+    const source = refreshableTokenSource(
+      { accessToken: 'old', refreshToken: 'refresh-1', expiresAt: Date.now() - 1 },
+      'client-id',
+      'client-secret',
+      transport(async () => ({ status: 200, json: { access_token: 'new-token', expires_in: 3600 } })),
+    );
+    await expect(source.accessToken()).resolves.toBe('new-token');
+  });
+
+  it('keeps a live access token without calling Google', async () => {
+    const source = refreshableTokenSource(
+      { accessToken: 'live', refreshToken: 'refresh-1', expiresAt: Date.now() + 60_000 },
+      'client-id',
+      'client-secret',
+      transport(async () => {
+        throw new Error('must not call Google');
+      }),
+    );
+    await expect(source.accessToken()).resolves.toBe('live');
   });
 });

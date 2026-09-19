@@ -1,17 +1,11 @@
 #!/usr/bin/env node
 // Regenerates apps/mobile/src-tauri/icons from the one source of app identity,
-// sources/assets/images/icon.png. Every platform now ships the picked variant
-// B tile: the committed brass loop is lifted off its aubergine ground by a
-// channel projection (no redrawing — the exact vector shape and its
-// antialiasing survive), then composited onto a rounded aubergine plate with a
-// subtle diagonal gradient on a transparent canvas.
-//
-// macOS previously drew its own rounded plate with exactly this geometry
-// (824px plate, 185px radius, 100px inset, 528px mark), so the tile replaces
-// it one-for-one: macOS's only change is the plate's fill, flat aubergine to
-// the gradient. Linux PNGs and the Windows ICO gain the rounded plate together
-// with the gradient. Browser shortcut art reads icon.png directly via
-// app.config.js and keeps the committed square, untouched.
+// sources/assets/images/icon.png. The committed brass loop is lifted off its
+// aubergine ground by a channel projection (no redrawing — the exact vector
+// shape and antialiasing survive), then composited at its natural unmasked
+// proportion onto a full-bleed rounded gradient plate. Desktop launchers do
+// not use Android's adaptive safe zone, so the old 100px transparent inset and
+// fixed 528px loop treatment do not belong on this surface.
 //
 //   node scripts/generate-tauri-icons.mjs [--check]
 //
@@ -28,10 +22,9 @@ const ICONS = join(here, '..', 'src-tauri', 'icons');
 const EVIDENCE = join(here, '..', 'evidence', 'macos-app-icon');
 
 const CANVAS_SIZE = 1024;
-const PLATE_INSET = 100;
-const PLATE_SIZE = 824;
-const CORNER_RADIUS = 185;
-const MARK_WIDTH = 528;
+const PLATE_INSET = 0;
+const PLATE_SIZE = 1024;
+const CORNER_RADIUS = 230;
 const MARK_THRESHOLD = 8;
 
 // The committed vector's two inks (icon.svg: aubergine ground rect + brass loop).
@@ -237,11 +230,7 @@ function insideRoundedPlate(x, y) {
 // icon grid leaves 100px around the 824px plate; four-by-four coverage
 // sampling keeps the 185px rounded edge clean in the 1024px master, and the
 // box filter carries that antialiasing into every smaller payload.
-function tileSource(source, mask, bounds) {
-    const canvasCenter = CANVAS_SIZE / 2;
-    const scale = MARK_WIDTH / bounds.width;
-    const markCenterX = (bounds.left + bounds.right) / 2;
-    const markCenterY = (bounds.top + bounds.bottom) / 2;
+function tileSource(source, mask) {
     const pixels = Buffer.alloc(CANVAS_SIZE * CANVAS_SIZE * 4);
     const gradientSpan = PLATE_SIZE + PLATE_SIZE;
 
@@ -256,8 +245,8 @@ function tileSource(source, mask, bounds) {
             if (covered === 0) continue;
 
             const t = Math.max(0, Math.min(1, (x + y - PLATE_INSET * 2) / gradientSpan));
-            const sourceX = (x + 0.5 - canvasCenter) / scale + markCenterX - 0.5;
-            const sourceY = (y + 0.5 - canvasCenter) / scale + markCenterY - 0.5;
+            const sourceX = x;
+            const sourceY = y;
             const markA = sampleBilinear(mask, sourceX, sourceY, 3);
             const to = (y * CANVAS_SIZE + x) * 4;
             for (let c = 0; c < 3; c += 1) {
@@ -381,7 +370,7 @@ function encodeIcns(pngFor) {
 const source = decodePng(readFileSync(SOURCE));
 const bounds = markBounds(source);
 const mask = markMask(source);
-const tile = tileSource(source, mask, bounds);
+const tile = tileSource(source, mask);
 const scaled = new Map();
 const at = (size) => {
     if (!scaled.has(size)) scaled.set(size, size === tile.width ? tile : resize(tile, size));
@@ -413,8 +402,7 @@ const outputs = new Map([
 ]);
 
 const evidence = new Map([
-    // The previous shared desktop treatment, kept for comparison: the square
-    // full-bleed source is what browser shortcut art still ships.
+    // The shared flat source remains useful beside the desktop gradient tile.
     ['reproduced-square-128.png', encodePng(resize(source, 128))],
     ['demonstrated-rounded-1024.png', pngAt(1024)],
     ['demonstrated-rounded-128.png', pngAt(128)],

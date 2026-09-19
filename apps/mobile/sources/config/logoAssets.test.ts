@@ -53,8 +53,8 @@ describe('Beeline continuous-line logo assets', () => {
     expect(vectors[0]).toContain('rect width="240" height="240" fill="#14091A"');
     expect(vectors[0]).toContain('fill="#E5A645"');
     expect(vectors[1]).toContain('fill="#E5A645"');
-    // icon-light.svg and icon-monochrome.svg are the new light/monochrome icon
-    // variants; they do not carry brass or aubergine colors.
+    // icon-light.svg is the light splash source and icon-monochrome.svg is the
+    // Android themed-icon source; neither carries brass or aubergine colors.
     expect(vectors[4]).toContain('fill="#E5A645"');
     expect(vectors[5]).toContain('fill="#14091A"');
     expect(vectors[6]).toContain('rect width="240" height="240" fill="#14091A"');
@@ -67,11 +67,7 @@ describe('Beeline continuous-line logo assets', () => {
     );
 
     expect(appConfig.icon).toBe('./sources/assets/images/icon.png');
-    expect(appConfig.ios.icon).toMatchObject({
-      light: './sources/assets/images/icon-light.png',
-      dark: './sources/assets/images/icon-ios.png',
-      tinted: './sources/assets/images/icon-ios-tinted.png',
-    });
+    expect(appConfig.ios.icon).toBe('./sources/assets/images/icon-ios.png');
     expect(appConfig.android.adaptiveIcon).toEqual({
       foregroundImage: './sources/assets/images/icon-adaptive.png',
       backgroundImage: './sources/assets/images/icon-adaptive-background.png',
@@ -113,7 +109,7 @@ describe('Beeline continuous-line logo assets', () => {
     expect(JSON.stringify(appConfig)).not.toContain('#090909');
   });
 
-  it('uses ink on cream for the default iOS light icon and white on transparent for tinted/monochrome', () => {
+  it('uses ink on cream for the light splash source and white on transparent for Android monochrome', () => {
     const lightSvg = readFileSync(
       new URL('../assets/images/icon-light.svg', import.meta.url),
       'utf8',
@@ -123,32 +119,29 @@ describe('Beeline continuous-line logo assets', () => {
       'utf8',
     );
 
-    // Light icon: cream field (#F3EEE4), ink loop (#171310)
+    // Light splash source: cream field (#F3EEE4), ink loop (#171310)
     expect(lightSvg).toContain('rect width="1024" height="1024" fill="#F3EEE4"');
     expect(lightSvg).toContain('fill="#171310"');
     expect(lightSvg).toContain(adaptiveFraming);
     expect(lightSvg).not.toContain(canonicalInset);
 
-    // Monochrome icon: white loop on transparent, no background rect
+    // Android monochrome icon: white loop on transparent, no background rect
     expect(monoChromeSvg).not.toMatch(/<rect/);
     expect(monoChromeSvg).toContain('fill="#FFFFFF"');
     expect(monoChromeSvg).toContain(adaptiveFraming);
     expect(monoChromeSvg).toContain(canonicalInset);
   });
 
-  it('generates 1024x1024 PNGs for the new icon variants', () => {
+  it('generates 1024x1024 PNGs for the light splash and Android monochrome icon', () => {
     const lightPng = readFileSync(
       new URL('../assets/images/icon-light.png', import.meta.url),
-    );
-    const tintedPng = readFileSync(
-      new URL('../assets/images/icon-ios-tinted.png', import.meta.url),
     );
     const monoChromePng = readFileSync(
       new URL('../assets/images/icon-adaptive-monochrome.png', import.meta.url),
     );
 
     // Check PNG dimensions via the file header (IHDR chunk at bytes 16-20)
-    for (const png of [lightPng, tintedPng, monoChromePng]) {
+    for (const png of [lightPng, monoChromePng]) {
       expect(png[0]).toBe(0x89); // PNG magic byte
       const width = png.readUInt32BE(16);
       const height = png.readUInt32BE(20);
@@ -203,15 +196,21 @@ describe('Beeline continuous-line logo assets', () => {
       ['icon.png', '#14091A'],
       ['icon-ios.png', '#14091A'],
       ['icon-light.png', '#F3EEE4'],
-      ['favicon.png', '#14091A'],
       ['splash-android-light.png', '#F3EEE4'],
       ['splash-android-dark.png', '#14091A'],
-      ['icon-ios-tinted.png', null],
     ] as const) {
       const [width, height] = await bounds(name, background);
       expect(width, `${name} width`).toBeGreaterThanOrEqual(480);
       expect(height, `${name} height`).toBeGreaterThanOrEqual(600);
     }
+
+    // A browser renders this source at only 16–24 px. Its loop therefore has
+    // a dedicated optical scale instead of inheriting the app-icon framing.
+    const [faviconWidth, faviconHeight] = await bounds('favicon.png', '#14091A');
+    expect(faviconWidth).toBeGreaterThanOrEqual(720);
+    expect(faviconWidth).toBeLessThan(740);
+    expect(faviconHeight).toBeGreaterThanOrEqual(900);
+    expect(faviconHeight).toBeLessThan(950);
 
     for (const name of ['icon-adaptive.png', 'icon-adaptive-monochrome.png']) {
       const [width, height] = await bounds(name, null);
@@ -220,5 +219,34 @@ describe('Beeline continuous-line logo assets', () => {
       expect(height, `${name} height`).toBeGreaterThanOrEqual(500);
       expect(height, `${name} height`).toBeLessThan(530);
     }
+  });
+
+  it('keeps the desktop launcher full bleed with the natural unmasked loop proportion', async () => {
+    const desktopIcon = sharp(
+      readFileSync(new URL('../../src-tauri/icons/icon.png', import.meta.url)),
+    );
+    const { data, info } = await desktopIcon.raw().toBuffer({ resolveWithObject: true });
+    const brassPoints: Array<[number, number]> = [];
+    for (let y = 0; y < info.height; y += 1) {
+      for (let x = 0; x < info.width; x += 1) {
+        const at = (y * info.width + x) * info.channels;
+        const [r, g, b] = [data[at]!, data[at + 1]!, data[at + 2]!];
+        if (r > 150 && g > 90 && b < 120) brassPoints.push([x, y]);
+      }
+    }
+    const xs = brassPoints.map(([x]) => x);
+    const ys = brassPoints.map(([, y]) => y);
+    const markWidth = Math.max(...xs) - Math.min(...xs) + 1;
+    const markHeight = Math.max(...ys) - Math.min(...ys) + 1;
+    expect(markWidth).toBeGreaterThanOrEqual(480);
+    expect(markWidth).toBeLessThan(500);
+    expect(markHeight).toBeGreaterThanOrEqual(590);
+    expect(markHeight).toBeLessThan(620);
+
+    const { info: opaqueBounds } = await desktopIcon
+      .trim({ background: '#00000000', threshold: 1 })
+      .toBuffer({ resolveWithObject: true });
+    expect(opaqueBounds.width).toBe(1024);
+    expect(opaqueBounds.height).toBe(1024);
   });
 });

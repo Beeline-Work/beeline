@@ -57,6 +57,16 @@ render_svg() {
   rsvg-convert -w "$2" -h "$2" "$1" >"$3"
 }
 
+render_favicon_svg() {
+  # Browser tabs render this at 16–24px. Keep the same loop, colors, and
+  # unmasked canvas, but give the loop a dedicated 1.5x optical scale so it
+  # remains as legible as neighboring favicons at that tiny size.
+  sed \
+    -e 's|<path |<g transform="translate(124.745 123) scale(1.5) translate(-124.745 -123)"><path |' \
+    -e 's|</svg>|</g></svg>|' \
+    "$image_dir/icon.svg" | rsvg-convert -w 1024 -h 1024 >"$image_dir/favicon.png"
+}
+
 render_notification_svg() {
   # White loop silhouette on transparent, sized for the status bar.
   local size="$1" out="$2"
@@ -99,10 +109,9 @@ render_svg "$image_dir/icon.svg" 1024 "$image_dir/icon.png"
 render_svg "$image_dir/icon-light.svg" 1024 "$image_dir/icon-light.png"
 cp "$image_dir/icon.png" "$image_dir/icon-ios.png"
 
-# iOS applies its own icon mask, so its tinted glyph uses the natural framing.
 # Android's foreground is masked down to the central safe zone and deliberately
-# keeps the hand-tuned inset in icon-monochrome.svg.
-render_notification_svg 1024 "$image_dir/icon-ios-tinted.png"
+# keeps the hand-tuned inset in icon-monochrome.svg. iOS uses the full-color
+# icon above in every appearance mode so the brand does not become a grey tile.
 render_svg "$image_dir/icon-monochrome.svg" 1024 "$image_dir/icon-adaptive-monochrome.png"
 
 # Android adaptive icon: flat aubergine background layer + brass loop foreground.
@@ -111,9 +120,9 @@ rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive.svg" \
   -o "$image_dir/icon-adaptive.png"
 
-# Favicon and splash use the natural, unmasked framing. Their configured
-# backgrounds must match the opaque source tiles so the edges disappear.
-cp "$image_dir/icon.png" "$image_dir/favicon.png"
+# Splash uses the natural, unmasked framing. The favicon has a separate optical
+# scale because its 16–24px browser surface is not an app-icon canvas.
+render_favicon_svg
 cp "$image_dir/icon-light.png" "$image_dir/splash-android-light.png"
 cp "$image_dir/icon.png" "$image_dir/splash-android-dark.png"
 

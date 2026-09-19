@@ -68,11 +68,10 @@ export default {
         userInterfaceStyle: "automatic",
         ios: {
             runtimeVersion: runtimeVersionOverride || "27",
-            icon: {
-                light: "./sources/assets/images/icon-light.png",
-                dark: "./sources/assets/images/icon-ios.png",
-                tinted: "./sources/assets/images/icon-ios-tinted.png",
-            },
+            // Keep the launcher identity stable across system appearance modes.
+            // iOS masks this full-size source; only Android adaptive layers need
+            // the separately inset safe-zone treatment.
+            icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",

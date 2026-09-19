@@ -4591,7 +4591,9 @@ export function BuzzChatSurface({
             maxToRenderPerBatch={
               desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
             }
-            initialNumToRender={Math.max(1, transcriptMessages.length)}
+            initialNumToRender={
+              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined
+            }
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             onScroll={(event) => {

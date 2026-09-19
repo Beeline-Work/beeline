@@ -41,7 +41,9 @@ describe('Room open-to-pixel occupancy', () => {
     expect(surface).toContain('loadOlderTranscriptIfReaderAsked');
     expect(surface).toContain('if (!allowOlderHistoryRef.current) return');
     expect(surface).toContain('onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}');
-    expect(surface).toContain('initialNumToRender={Math.max(1, transcriptMessages.length)}');
+    expect(surface).toContain(
+      'initialNumToRender={\n              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined\n            }',
+    );
     expect(surface).toContain('formatTerminalTurnOverlay');
     expect(chat).toContain('color: theme.buzz.textPrimary');
     expect(chat).toContain('pixel-layout-newest');

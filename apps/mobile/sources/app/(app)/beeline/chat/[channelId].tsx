@@ -4339,10 +4339,7 @@ export default function BuzzChat() {
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-        >
+        <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
           <View
@@ -4507,6 +4504,10 @@ export default function BuzzChat() {
             )}
           </View>
 
+          <KeyboardAvoidingView
+            style={styles.keyboardBody}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
+          >
           {/* What the corner is for, held under the header for its whole life:
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
@@ -5235,7 +5236,8 @@ export default function BuzzChat() {
               )}
             </View>
           )}
-        </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
         {desktopWorkPaneMounted && (
           <DesktopRoomInspector
             room={desktopWorkPaneMounted}
@@ -5659,6 +5661,9 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       backgroundColor: groknight.bgTerminal,
     },
+    keyboardBody: {
+      flex: 1,
+    },
     desktopConversationFrame: {
       flex: 1,
       minWidth: 0,
@@ -5723,6 +5728,7 @@ const styles = StyleSheet.create((theme) => {
 
     // ── Header ──────────────────────────────────────────────────────
     header: {
+      zIndex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,

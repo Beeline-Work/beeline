@@ -77,6 +77,17 @@ describe('Room composer status layout', () => {
     );
   });
 
+  it('keeps the Room header outside the Android keyboard translation surface', () => {
+    const conversation = source.slice(
+      source.indexOf('<View style={styles.desktopConversationFrame}>'),
+    );
+    const header = conversation.indexOf('{/* Header. No surface of its own');
+    const keyboardSurface = conversation.indexOf('<KeyboardAvoidingView');
+
+    expect(header).toBeGreaterThanOrEqual(0);
+    expect(keyboardSurface).toBeGreaterThan(header);
+  });
+
   it('keeps the send arrow separated from the text field', () => {
     const sendButtonStyle = composerSource.slice(
       composerSource.indexOf('  sendButton: {'),

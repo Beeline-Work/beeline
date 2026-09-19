@@ -149,6 +149,26 @@ describe('using-beeline merge ownership', () => {
   });
 });
 
+describe('using-beeline human instruction ranking', () => {
+  // Soft prompt only: no hold ledger, no refusal check. Independent same-tier
+  // holds cannot collapse because this design adds no holder state; the agent
+  // reasons from the conversation.
+  it('ranks owner then workspace master/admin then member, and forbids field syntax in Room replies', () => {
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).toContain('## Conflicting human instructions');
+    expect(markdown).toMatch(/your own owner first/i);
+    expect(markdown).toMatch(/workspace'?s master and admins/i);
+    expect(markdown).toMatch(/then members/i);
+    expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
+    expect(markdown).toContain('Never tell a higher-tier human that a lower-tier hold binds them');
+    expect(markdown).toMatch(/name the person and their standing in ordinary words/i);
+    expect(markdown).toContain('workspaceRole=');
+    expect(markdown).toContain('agentOwner');
+    expect(markdown).toMatch(/Never write field names or field=value syntax/i);
+    expect(beelinePrimer()).not.toContain('## Conflicting human instructions');
+  });
+});
+
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
 

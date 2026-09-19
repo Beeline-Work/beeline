@@ -1,10 +1,10 @@
 import type { CornerListItem } from '@beeline/buzz-client';
 
 /**
- * Collapsed inspector list length. Five fills a side pane without burying
- * WORKFLOWS/MEMBERS, matches the reporter's starting number, and still leaves
- * one overflow row for the rest. A denser cap would hide live work that fits;
- * a larger one recreates the unbounded dump this list is meant to stop.
+ * Collapsed inspector list length. Five fills a side pane of live work,
+ * matches the reporter's starting number, and still leaves one overflow row
+ * for the rest. A denser cap would hide live work that fits; a larger one
+ * recreates the unbounded dump this list is meant to stop.
  * The Room header's corners screen (`RoomCornersList`) uses this same helper
  * so the cap, archived fallback, and see-more cannot drift.
  */

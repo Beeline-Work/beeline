@@ -217,7 +217,6 @@ function props(overrides: Record<string, unknown> = {}) {
     onOpenInMain: vi.fn(),
     onClose: vi.fn(),
     onNewCorner: vi.fn(),
-    onOpenRoster: vi.fn(),
     ...overrides,
   } as React.ComponentProps<typeof DesktopRoomInspector>;
 }
@@ -258,7 +257,7 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
-  it('renders the multi-corner overview with full objectives and one concluded row', () => {
+  it('renders the corner list with full objectives and one concluded row', () => {
     const tree = render();
     const copy = text(tree);
     expect(copy).toContain(
@@ -266,9 +265,13 @@ describe('DesktopRoomInspector work pane', () => {
     );
     expect(copy).toContain('review ›');
     expect(copy).toContain('archived · 1');
-    expect(copy).toContain('1 people · 1 agents');
     expect(copy).toContain('@codex');
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
+    expect(copy).not.toContain('MEMBERS');
+    expect(copy).not.toContain('WORKFLOWS');
+    expect(copy).not.toContain('Reviewer');
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-members' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-reviewer' })).toHaveLength(0);
     const objective = tree.root.findByProps({ testID: 'desktop-work-corner-objective-working' });
     expect(objective.props.numberOfLines).toBe(2);
     expect(objective.props.ellipsizeMode).toBe('tail');
@@ -367,7 +370,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(otherSeeds).toContain(agent.pubkey);
   });
 
-  it('shows only corner titles beneath the parent Room in the overview', () => {
+  it('shows only corner titles beneath the parent Room in the list', () => {
     const prefixedRoom = room();
     prefixedRoom.corners = [
       {
@@ -409,26 +412,17 @@ describe('DesktopRoomInspector work pane', () => {
     clearDesktopArtifactPane();
   });
 
-  it('renders dispatchable workflows and confirms the name and default branch before running', async () => {
-    phoneOperation
-      .mockResolvedValueOnce({
-        defaultBranch: 'main',
-        workflows: [
-          {
-            name: 'Release',
-            lastRunAt: Math.floor(Date.now() / 1000) - 300,
-            conclusion: 'success',
-          },
-          {
-            name: 'Nightly',
-            lastRunAt: Math.floor(Date.now() / 1000) - 3600,
-            conclusion: 'failure',
-          },
-        ],
-      })
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce({ defaultBranch: 'main', workflows: [] });
-    modalConfirm.mockResolvedValueOnce(true);
+  it('never renders members, workflows, or reviewer in the pane', async () => {
+    phoneOperation.mockResolvedValueOnce({
+      defaultBranch: 'main',
+      workflows: [
+        {
+          name: 'Release',
+          lastRunAt: Math.floor(Date.now() / 1000) - 300,
+          conclusion: 'success',
+        },
+      ],
+    });
     const repositoryRoom = {
       ...room(),
       repositoryResolution: 'repository',
@@ -439,24 +433,21 @@ describe('DesktopRoomInspector work pane', () => {
       tree = create(<DesktopRoomInspector {...props({ room: repositoryRoom })} />);
     });
 
-    expect(text(tree)).toContain('WORKFLOWS');
-    expect(text(tree)).toContain('Release');
-    expect(text(tree)).toContain('success');
-    expect(text(tree)).toContain('Run ›');
-    await act(async () => {
-      tree.root.findByProps({ testID: 'desktop-work-workflow-Release' }).props.onPress();
-    });
-    expect(modalConfirm).toHaveBeenCalledWith('Run Release?', 'Run Release on main?', {
-      cancelText: 'Cancel',
-      confirmText: 'Run',
-    });
-    expect(phoneOperation).toHaveBeenNthCalledWith(2, 'dispatchRoomWorkflow', {
-      roomId: 'room',
-      workflowName: 'Release',
-    });
+    const copy = text(tree);
+    expect(copy).toContain('CORNERS');
+    expect(copy).not.toContain('WORKFLOWS');
+    expect(copy).not.toContain('Release');
+    expect(copy).not.toContain('MEMBERS');
+    expect(copy).not.toContain('1 people · 1 agents');
+    expect(copy).not.toContain('Reviewer');
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-members' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-reviewer' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-reviewer-sheet' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(modalConfirm).not.toHaveBeenCalled();
   });
 
-  it('says plainly when a repository has no dispatchable workflows', async () => {
+  it('does not grow a workflows empty state in the pane when the repository has none', async () => {
     phoneOperation.mockResolvedValueOnce({ defaultBranch: 'main', workflows: [] });
     const repositoryRoom = {
       ...room(),
@@ -467,9 +458,10 @@ describe('DesktopRoomInspector work pane', () => {
     await act(async () => {
       tree = create(<DesktopRoomInspector {...props({ room: repositoryRoom })} />);
     });
-    expect(text(tree)).toContain('WORKFLOWS');
-    expect(text(tree)).toContain('No dispatchable workflows');
+    expect(text(tree)).not.toContain('WORKFLOWS');
+    expect(text(tree)).not.toContain('No dispatchable workflows');
     expect(text(tree)).not.toContain('Could not load workflows');
+    expect(phoneOperation).not.toHaveBeenCalled();
   });
 
   it.each(['member', 'owner', 'admin'] as const)(

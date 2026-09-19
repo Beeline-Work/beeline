@@ -95,6 +95,7 @@ import {
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
+  desktopWorkPaneHasLiveCorners,
   desktopWorkPaneMode,
   desktopWorkPaneWindowClass,
   initialDesktopWorkPaneState,
@@ -548,6 +549,7 @@ export default function BuzzChat() {
   const desktopWorkPaneRef = useRef(desktopWorkPane);
   const workPaneMode = desktopWorkPaneMode(desktopWorkPane);
   const observedCornerCardsRef = useRef<{ roomId: string; ids: Set<string> } | null>(null);
+  const [workPaneArrived, setWorkPaneArrived] = useState(false);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
   >(null);
@@ -709,6 +711,7 @@ export default function BuzzChat() {
       const transition = transitionDesktopWorkPane(desktopWorkPaneRef.current, event);
       desktopWorkPaneRef.current = transition.state;
       setDesktopWorkPane(transition.state);
+      if (desktopWorkPaneMode(transition.state) === 'present') setWorkPaneArrived(false);
       return transition;
     },
     [isDirectMessage],
@@ -731,12 +734,14 @@ export default function BuzzChat() {
   }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
 
   useEffect(() => {
-    if (!roomSurface || workPaneMode !== 'present') return;
+    if (!desktopExperience || !roomSurface || isDirectMessage) return;
     // The server-owned corner list is the lifecycle authority. Current corner
     // cards are daemon facts, so watching the retired `message.corner` shape
     // misses a real newly opened corner even though it is already paintable.
     // Live corners only: archived rows ride the same parent list so the
     // inspector can show them, but a finished corner is not newly opened work.
+    // A new corner never auto-opens the pane: the handle marks arrival, and
+    // an already-open corner list just grows.
     const ids = new Set(
       roomSurface.corners
         .filter((corner) => corner.state !== 'archived')
@@ -745,14 +750,14 @@ export default function BuzzChat() {
     const observed = observedCornerCardsRef.current;
     if (!observed || observed.roomId !== roomSurface.room.id) {
       observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
-      commitDesktopWorkPane({ type: 'open-overview' });
+      setWorkPaneArrived(false);
       return;
     }
     const opened = [...ids].find((cornerId) => !observed.ids.has(cornerId));
     observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
     if (!opened) return;
-    commitDesktopWorkPane({ type: 'open-corner', cornerId: opened });
-  }, [commitDesktopWorkPane, roomSurface, workPaneMode]);
+    if (workPaneMode !== 'present') setWorkPaneArrived(true);
+  }, [desktopExperience, isDirectMessage, roomSurface, workPaneMode]);
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
@@ -778,15 +783,21 @@ export default function BuzzChat() {
     };
   }, [desktopExperience, parentChannelId, roomClient]);
   const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
+  const hasLiveDesktopCorners = desktopWorkPaneHasLiveCorners(desktopWorkRoom?.corners);
   // A direct message renders no second pane at all (see the pane-event gate in
   // `commitDesktopWorkPane`): the transcript takes the space it occupied, and
   // neither the inspector nor its reopen handle ever mounts over a DM.
+  // Zero live corners: no handle (toggle is a no-op too). The pane still
+  // mounts when already present — an artifact tap can re-present it.
   const desktopWorkPaneMounted =
     desktopExperience && !isDirectMessage && workPaneMode === 'present'
       ? desktopWorkRoom
       : null;
   const desktopWorkHandleMounted =
-    desktopExperience && !isDirectMessage && workPaneMode === 'dismissed';
+    desktopExperience &&
+    !isDirectMessage &&
+    workPaneMode === 'dismissed' &&
+    hasLiveDesktopCorners;
   const channelKind: ChannelKind = roomSurface
     ? roomSurface.parent
       ? 'corner'
@@ -906,9 +917,10 @@ export default function BuzzChat() {
   const openDesktopCorner = useCallback(
     (roomId: string, cornerId: string) => {
       const transition = commitDesktopWorkPane({ type: 'open-corner', cornerId });
+      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
       if (transition.placement === 'main') router.push(cornerHref(cornerId, roomId));
     },
-    [commitDesktopWorkPane],
+    [commitDesktopWorkPane, workPaneWindowClass],
   );
   useEffect(() => {
     if (!desktopExperience) return;
@@ -3741,19 +3753,24 @@ export default function BuzzChat() {
 
   const openDesktopCornerInMain = useCallback(
     (cornerId: string) => {
-      const transition = commitDesktopWorkPane({ type: 'open-corner-in-main' });
-      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
+      commitDesktopWorkPane({ type: 'open-corner-in-main' });
       router.push(cornerHref(cornerId, desktopWorkRoomId));
     },
-    [commitDesktopWorkPane, desktopWorkRoomId, workPaneWindowClass],
+    [commitDesktopWorkPane, desktopWorkRoomId],
   );
 
   const toggleDesktopWorkPane = useCallback(() => {
+    if (
+      desktopWorkPaneRef.current.preference !== 'present' &&
+      !hasLiveDesktopCorners
+    ) {
+      return;
+    }
     const transition = commitDesktopWorkPane({ type: 'toggle' });
     void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
     if (transition.state.preference === 'dismissed')
       requestAnimationFrame(() => workPaneHandleRef.current?.focus());
-  }, [commitDesktopWorkPane, workPaneWindowClass]);
+  }, [commitDesktopWorkPane, hasLiveDesktopCorners, workPaneWindowClass]);
 
   useEffect(() => {
     if (!desktopExperience || typeof window === 'undefined') return;
@@ -5190,13 +5207,13 @@ export default function BuzzChat() {
             onOpenInMain={openDesktopCornerInMain}
             onClose={closeDesktopWorkPane}
             onNewCorner={focusComposer}
-            onOpenRoster={() => setRosterVisible(true)}
           />
         )}
         {desktopWorkHandleMounted && (
           <DesktopWorkPaneHandle
             ref={workPaneHandleRef}
             roomId={desktopWorkRoomId}
+            arrived={workPaneArrived}
             onOpen={openDesktopWorkOverview}
             onDropCorner={dropCornerInDesktopWorkPane}
           />

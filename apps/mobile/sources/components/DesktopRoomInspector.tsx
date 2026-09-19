@@ -2,7 +2,6 @@ import * as React from 'react';
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerListItem, RoomView } from '@beeline/buzz-client';
-import type { RoomWorkflowListResult, RoomWorkflowView } from '@beeline/api-contract/phone';
 import type { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   clampDesktopPaneWidth,
@@ -27,7 +26,6 @@ import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { Modal } from '@/modal';
 import {
   clearDesktopArtifactPane,
   currentDesktopArtifact,
@@ -44,11 +42,6 @@ import {
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
   ConversationComposer,
 } from '@/components/buzz/ConversationComposer';
-import {
-  HullActionSheetCancel,
-  HullActionSheetModal,
-  HullActionSheetRow,
-} from '@/components/buzz/HullActionSheet';
 import { LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
 import {
   DaemonFactCard,
@@ -65,7 +58,6 @@ type Props = {
   onOpenInMain(cornerId: string): void;
   onClose(): void;
   onNewCorner(): void;
-  onOpenRoster(): void;
   /** Scroll the cockpit transcript to this durable id and inscribe it. */
   focusMessageId?: string | null;
 };
@@ -116,22 +108,12 @@ export function DesktopRoomInspector({
   onOpenInMain,
   onClose,
   onNewCorner,
-  onOpenRoster,
   focusMessageId,
 }: Props) {
   const [detail, setDetail] = React.useState<RoomView | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
   const [cornersExpanded, setCornersExpanded] = React.useState(false);
-  const [reviewerOpen, setReviewerOpen] = React.useState(false);
-  const [reviewerAgentId, setReviewerAgentId] = React.useState(room.room.reviewerAgentId);
-  const [reviewerBusy, setReviewerBusy] = React.useState(false);
-  const [reviewerError, setReviewerError] = React.useState<string | null>(null);
-  const [workflowList, setWorkflowList] = React.useState<RoomWorkflowListResult | null>(null);
-  const [workflowLoading, setWorkflowLoading] = React.useState(false);
-  const [workflowError, setWorkflowError] = React.useState<string | null>(null);
-  const [workflowRunning, setWorkflowRunning] = React.useState<string | null>(null);
-  const workflowLoadGeneration = React.useRef(0);
   const dragStart = React.useRef(width);
   const [artifact, setArtifact] = React.useState<DesktopArtifactSelection | null>(currentDesktopArtifact());
   React.useEffect(
@@ -143,42 +125,7 @@ export function DesktopRoomInspector({
   React.useEffect(() => {
     setDetail(null);
     setCornersExpanded(false);
-    setReviewerAgentId(room.room.reviewerAgentId);
-  }, [room.room.id, room.room.reviewerAgentId]);
-  React.useEffect(() => {
-    setWorkflowList(null);
-    setWorkflowError(null);
-    setWorkflowRunning(null);
   }, [room.room.id]);
-
-  const canRunWorkflows =
-    room.viewer.identity.kind === 'human' &&
-    room.viewer.permissions.manage &&
-    room.repositoryResolution === 'repository';
-  const loadWorkflows = React.useCallback(async () => {
-    const generation = ++workflowLoadGeneration.current;
-    if (!canRunWorkflows) {
-      setWorkflowList(null);
-      setWorkflowError(null);
-      return;
-    }
-    setWorkflowLoading(true);
-    setWorkflowError(null);
-    try {
-      const result = await monolithPhoneOperation('listRoomWorkflows', { roomId: room.room.id });
-      if (generation === workflowLoadGeneration.current) setWorkflowList(result);
-    } catch (caught) {
-      if (generation === workflowLoadGeneration.current) {
-        setWorkflowError(`Could not load workflows: ${String(caught)}`);
-      }
-    } finally {
-      if (generation === workflowLoadGeneration.current) setWorkflowLoading(false);
-    }
-  }, [canRunWorkflows, room.room.id]);
-
-  React.useEffect(() => {
-    void loadWorkflows();
-  }, [loadWorkflows]);
 
   const refreshCorner = React.useCallback(async () => {
     if (client && selectedCornerId) setDetail(await client.room(selectedCornerId));
@@ -227,53 +174,6 @@ export function DesktopRoomInspector({
 
   const cornerList = inspectorCornerWindow(room.corners, cornersExpanded);
   const summary = room.corners.find((corner) => corner.corner.id === selectedCornerId);
-  const agents = room.members.filter((member) => member.identity.kind === 'agent');
-  const people = room.members.filter((member) => member.identity.kind === 'human');
-  const reviewer = agents.find(({ identity }) => identity.pubkey === reviewerAgentId)?.identity;
-
-  const changeReviewer = React.useCallback(
-    async (next: string | null) => {
-      setReviewerOpen(false);
-      if (!room.viewer.permissions.manage || (reviewerAgentId ?? null) === next) return;
-      setReviewerBusy(true);
-      setReviewerError(null);
-      try {
-        await monolithPhoneOperation('updateRoom', { roomId: room.room.id, reviewerAgentId: next });
-        setReviewerAgentId(next ?? undefined);
-      } catch (caught) {
-        setReviewerError(`Could not change Room reviewer: ${String(caught)}`);
-      } finally {
-        setReviewerBusy(false);
-      }
-    },
-    [reviewerAgentId, room.room.id, room.viewer.permissions.manage],
-  );
-
-  const runWorkflow = React.useCallback(
-    async (workflow: RoomWorkflowView) => {
-      if (!workflowList || workflowRunning) return;
-      const confirmed = await Modal.confirm(
-        `Run ${workflow.name}?`,
-        `Run ${workflow.name} on ${workflowList.defaultBranch}?`,
-        { cancelText: 'Cancel', confirmText: 'Run' },
-      );
-      if (!confirmed) return;
-      setWorkflowRunning(workflow.name);
-      setWorkflowError(null);
-      try {
-        await monolithPhoneOperation('dispatchRoomWorkflow', {
-          roomId: room.room.id,
-          workflowName: workflow.name,
-        });
-        await loadWorkflows();
-      } catch (caught) {
-        setWorkflowError(`Could not run ${workflow.name}: ${String(caught)}`);
-      } finally {
-        setWorkflowRunning(null);
-      }
-    },
-    [loadWorkflows, room.room.id, workflowList, workflowRunning],
-  );
 
   return (
     <View style={[styles.inspector, { width }]} testID="desktop-inspector">
@@ -299,7 +199,7 @@ export function DesktopRoomInspector({
         />
       ) : (
         <>
-          <View style={styles.header} testID="desktop-work-overview-header">
+          <View style={styles.header} testID="desktop-work-corners-header">
             <View style={styles.headerButton} />
             <View style={styles.headerCopy}>
               <Text numberOfLines={1} style={styles.headerTitle}>
@@ -330,111 +230,21 @@ export function DesktopRoomInspector({
               />
             )}
             ListFooterComponent={
-              <>
-                {cornerList.overflowLabel ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => setCornersExpanded(true)}
-                    style={styles.simpleRow}
-                    testID="desktop-work-corners-more"
-                  >
-                    <Text style={styles.simpleTitle}>{cornerList.overflowLabel}</Text>
-                    <Text style={styles.chevron}>›</Text>
-                  </Pressable>
-                ) : null}
-                {canRunWorkflows ? (
-                  <>
-                    <View style={styles.sectionGap} />
-                    <SectionHeader title="WORKFLOWS" />
-                    {workflowList?.workflows.map((workflow, index) => (
-                      <WorkflowRow
-                        key={`${workflow.name}-${index}`}
-                        workflow={workflow}
-                        busy={workflowRunning === workflow.name}
-                        disabled={Boolean(workflowRunning)}
-                        onPress={() => void runWorkflow(workflow)}
-                      />
-                    ))}
-                    {workflowLoading && !workflowList ? (
-                      <Text style={styles.empty}>Loading workflows…</Text>
-                    ) : null}
-                    {!workflowLoading && workflowList?.workflows.length === 0 ? (
-                      <Text style={styles.empty}>No dispatchable workflows</Text>
-                    ) : null}
-                    {workflowError ? <Text style={styles.error}>{workflowError}</Text> : null}
-                  </>
-                ) : null}
-                <View style={styles.sectionGap} />
-                <SectionHeader title="MEMBERS" />
+              cornerList.overflowLabel ? (
                 <Pressable
                   accessibilityRole="button"
-                  onPress={onOpenRoster}
-                  style={styles.memberRow}
-                  testID="desktop-work-members"
+                  onPress={() => setCornersExpanded(true)}
+                  style={styles.simpleRow}
+                  testID="desktop-work-corners-more"
                 >
-                  <View style={styles.faces}>
-                    {room.members.slice(0, 4).map(({ identity }) => (
-                      <IdentityMark
-                        key={identity.pubkey}
-                        kind={identity.kind === 'agent' ? 'agent' : 'human'}
-                        seed={identity.pubkey}
-                        avatarUrl={identity.avatar}
-                        face={identity.face}
-                        name={identity.name}
-                        size={22}
-                      />
-                    ))}
-                  </View>
-                  <Text style={styles.memberCount}>
-                    {people.length} people · {agents.length} agents
-                  </Text>
+                  <Text style={styles.simpleTitle}>{cornerList.overflowLabel}</Text>
                   <Text style={styles.chevron}>›</Text>
                 </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={!room.viewer.permissions.manage || reviewerBusy}
-                  onPress={() => setReviewerOpen(true)}
-                  style={styles.simpleRow}
-                  testID="desktop-work-reviewer"
-                >
-                  <Text style={styles.simpleTitle}>Reviewer</Text>
-                  <Text style={styles.simpleMeta}>
-                    {reviewer ? `@${reviewer.handle ?? reviewer.name}` : 'None'} ›
-                  </Text>
-                </Pressable>
-                {reviewerError ? <Text style={styles.error}>{reviewerError}</Text> : null}
-              </>
+              ) : null
             }
           />
         </>
       )}
-      <HullActionSheetModal
-        accessibilityLabel="Close reviewer picker"
-        onClose={() => setReviewerOpen(false)}
-        subtitle="This agent reviews every pull request opened from the Room."
-        testID="desktop-work-reviewer-sheet"
-        title={`Reviewer for #${room.room.name}`}
-        visible={reviewerOpen}
-      >
-        <HullActionSheetRow
-          disabled={reviewerBusy}
-          label="None"
-          onPress={() => void changeReviewer(null)}
-          selected={!reviewerAgentId}
-          testID="desktop-work-reviewer-none"
-        />
-        {agents.map(({ identity }) => (
-          <HullActionSheetRow
-            disabled={reviewerBusy}
-            key={identity.pubkey}
-            label={`@${identity.handle ?? identity.name}`}
-            onPress={() => void changeReviewer(identity.pubkey)}
-            selected={reviewerAgentId === identity.pubkey}
-            testID={`desktop-work-reviewer-agent-${identity.pubkey}`}
-          />
-        ))}
-        <HullActionSheetCancel onPress={() => setReviewerOpen(false)} />
-      </HullActionSheetModal>
     </View>
   );
 }
@@ -534,37 +344,6 @@ function CornerRow({
           {age(corner)}
         </Text>
       </View>
-    </Pressable>
-  );
-}
-
-function WorkflowRow({
-  workflow,
-  busy,
-  disabled,
-  onPress,
-}: {
-  workflow: RoomWorkflowView;
-  busy: boolean;
-  disabled: boolean;
-  onPress(): void;
-}) {
-  const run = workflow.lastRunAt
-    ? `${compactRelativeTime(workflow.lastRunAt, Date.now())} · ${workflow.conclusion ?? 'running'}`
-    : 'Never run';
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={styles.simpleRow}
-      testID={`desktop-work-workflow-${workflow.name}`}
-    >
-      <View style={styles.workflowCopy}>
-        <Text style={styles.simpleTitle}>{workflow.name}</Text>
-        <Text style={styles.simpleMeta}>{run}</Text>
-      </View>
-      <Text style={styles.sectionAction}>{busy ? 'Running…' : 'Run ›'}</Text>
     </Pressable>
   );
 }
@@ -975,7 +754,6 @@ const styles = StyleSheet.create((theme) => ({
   cornerStatusReview: { color: theme.buzz.ledgerQuiet },
   cornerStatusWaiting: { color: theme.buzz.accent },
   cornerStatusArchived: { color: theme.buzz.ledgerGhost },
-  sectionGap: { height: 22 },
   simpleRow: {
     minHeight: 44,
     flexDirection: 'row',
@@ -986,24 +764,11 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.divider,
   },
   simpleTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
-  simpleMeta: { ...theme.buzz.type.meta, color: theme.colors.textSecondary },
-  workflowCopy: { flex: 1, minWidth: 0, paddingVertical: 8, gap: 2 },
   chevron: {
     ...theme.buzz.type.bodyStrong,
     color: theme.colors.textSecondary,
     includeFontPadding: false,
   },
-  memberRow: {
-    minHeight: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    paddingHorizontal: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.divider,
-  },
-  faces: { flexDirection: 'row', gap: 3 },
-  memberCount: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
   cockpit: { flex: 1 },
   pinnedObjective: {
     ...theme.buzz.type.meta,

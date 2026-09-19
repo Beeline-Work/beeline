@@ -251,7 +251,7 @@ stamp (`Alden ✕ FAILED`, `◇ OPEN`) interrupts a live conversation with a dea
 record while duplicating the pinned line above the composer. So a Room has
 exactly **one** active-corner affordance, the pinned line, and exactly one place
 a finished corner is recorded, the Room's corners view (opened from the header
-`◇`, and also shown in the desktop inspector overview). The transcript keeps the
+`◇`, and also shown in the desktop work-pane corner list). The transcript keeps the
 conversation and nothing else.
 
 **A turn in progress and an open corner are two different facts, and they get
@@ -314,7 +314,7 @@ header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
 trailing slot carries the corner glyph `◇` beside overflow; it is a second door
 onto the Room's dedicated corners list (`corners/[roomId]`, windowed with the
-same cap and archived fallback as the desktop inspector overview), not a second
+same cap and archived fallback as the desktop work-pane corner list), not a second
 live-corner jump. The pinned line below the transcript remains the one
 active-corner affordance. The approval panel and
 diff review exist only in a Corner — that is a difference in content, not in

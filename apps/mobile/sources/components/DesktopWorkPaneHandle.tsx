@@ -1,16 +1,17 @@
 import * as React from 'react';
-import { Platform, Pressable, Text } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { readDesktopCornerDrag } from '@/buzz/desktop-work-pane';
 
 type Props = {
   roomId: string;
+  arrived?: boolean;
   onOpen(): void;
   onDropCorner(cornerId: string): void;
 };
 
 export const DesktopWorkPaneHandle = React.forwardRef<React.ElementRef<typeof Pressable>, Props>(
-  function DesktopWorkPaneHandle({ roomId, onOpen, onDropCorner }, ref) {
+  function DesktopWorkPaneHandle({ roomId, arrived = false, onOpen, onDropCorner }, ref) {
     const [dropActive, setDropActive] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
     const [hovered, setHovered] = React.useState(false);
@@ -39,7 +40,7 @@ export const DesktopWorkPaneHandle = React.forwardRef<React.ElementRef<typeof Pr
     const button = (
       <Pressable
         ref={ref}
-        accessibilityLabel="Open work pane"
+        accessibilityLabel={arrived ? 'Open work pane, new corner' : 'Open work pane'}
         accessibilityRole="button"
         focusable
         onBlur={() => setFocused(false)}
@@ -47,7 +48,11 @@ export const DesktopWorkPaneHandle = React.forwardRef<React.ElementRef<typeof Pr
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
         onPress={onOpen}
-        style={[styles.handle, highlighted && styles.handleActive, dropActive && styles.dropTarget]}
+        style={[
+          styles.handle,
+          (highlighted || arrived) && styles.handleActive,
+          dropActive && styles.dropTarget,
+        ]}
         testID="desktop-work-pane-handle"
       >
         {Platform.OS === 'web' && hovered && !dropActive ? (
@@ -57,8 +62,11 @@ export const DesktopWorkPaneHandle = React.forwardRef<React.ElementRef<typeof Pr
             style={styles.tooltip}
             testID="desktop-work-pane-tooltip"
           >
-            Open work pane
+            {arrived ? 'New corner' : 'Open work pane'}
           </Text>
+        ) : null}
+        {arrived && !dropActive ? (
+          <View style={styles.arrived} testID="desktop-work-pane-arrived" />
         ) : null}
         <Text style={[styles.glyph, dropActive && styles.dropCopy]}>
           {dropActive ? 'DROP TO OPEN IN WORK PANE' : '‹'}
@@ -91,6 +99,7 @@ export const DesktopWorkPaneHandle = React.forwardRef<React.ElementRef<typeof Pr
 
 const styles = StyleSheet.create((theme) => ({
   handle: {
+    position: 'relative',
     width: 14,
     height: 40,
     alignItems: 'center',
@@ -110,6 +119,14 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.buzz.accent,
     borderLeftColor: theme.buzz.accent,
     borderBottomColor: theme.buzz.accent,
+  },
+  arrived: {
+    position: 'absolute',
+    top: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.buzz.accent,
   },
   dropTarget: {
     width: 150,

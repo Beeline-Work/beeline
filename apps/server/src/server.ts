@@ -991,15 +991,33 @@ async function route(
         return;
       }
     }
-    // No bytea fallback: every file lives in `objects`. A tombstone is
-    // expired; anything else never existed for readers.
-    const expired = (
-      await options.database.query(`SELECT 1 FROM object_expirations WHERE id=$1`, [mediaId])
-    ).rows.length;
-    json(response, expired ? 410 : 404, {
-      error: expired ? 'media_expired' : 'media_not_found',
-      ...(expired ? { ttlHours: mediaTtlHours() } : {}),
+    // Existing person shares from the 24-hour TTL window still live in bytea
+    // `media`. New writes go to `objects`; this read stays until those rows expire.
+    const media = (
+      await options.database.query<{ bytes: Uint8Array; mime_type: string; name: string }>(
+        `SELECT bytes,mime_type,name FROM media WHERE id=$1`,
+        [mediaId],
+      )
+    ).rows[0];
+    if (!media) {
+      // Bytes past the media TTL are gone for good, and say so: a client that
+      // reads 410 renders "expired" instead of retrying a 404 forever.
+      const expired = (
+        await options.database.query(`SELECT 1 FROM media_expirations WHERE id=$1`, [mediaId])
+      ).rows.length;
+      json(response, expired ? 410 : 404, {
+        error: expired ? 'media_expired' : 'media_not_found',
+        ...(expired ? { ttlHours: mediaTtlHours() } : {}),
+      });
+      return;
+    }
+    response.writeHead(200, {
+      'content-type': media.mime_type,
+      'content-length': String(media.bytes.length),
+      'cache-control': 'public, max-age=31536000, immutable',
+      'content-disposition': `inline; filename="${media.name.replaceAll('"', '')}"`,
     });
+    response.end(Buffer.from(media.bytes));
     return;
   }
   if (url.pathname.startsWith('/v1/phone/') && !identityId) {

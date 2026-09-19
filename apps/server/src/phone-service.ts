@@ -5308,11 +5308,17 @@ export class PhoneService {
         [gone],
       );
 
-      // Object bytes are personal data: the rows go, and a tombstone keeps the
-      // readers' story the one media-ttl.ts already tells (expired, not lost).
+      // Object bytes and leftover bytea media are personal data: the rows go,
+      // and a tombstone keeps the readers' story the one media-ttl.ts already
+      // tells (expired, not lost).
       await database.query(
         `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id)
          INSERT INTO object_expirations(id) SELECT id FROM swept ON CONFLICT(id) DO NOTHING`,
+        [gone],
+      );
+      await database.query(
+        `WITH swept AS (DELETE FROM media WHERE owner_id=ANY($1) RETURNING id)
+         INSERT INTO media_expirations(id) SELECT id FROM swept ON CONFLICT(id) DO NOTHING`,
         [gone],
       );
 
@@ -6385,7 +6391,9 @@ export class PhoneService {
     if (!ids.size) return { expired: new Set(), artifacts: new Map() };
     const [expired, objectRows] = await Promise.all([
       this.database.query<{ id: string }>(
-        `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
+        `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])
+         UNION
+         SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
         [[...ids]],
       ),
       this.database.query<{

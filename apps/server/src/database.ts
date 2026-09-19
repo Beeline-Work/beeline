@@ -794,9 +794,35 @@ CREATE TABLE IF NOT EXISTS avatars (
   bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 131072)
 );
 
+CREATE TABLE IF NOT EXISTS media (
+  id uuid PRIMARY KEY,
+  owner_id text NOT NULL REFERENCES identities(id),
+  bytes bytea NOT NULL,
+  mime_type text NOT NULL,
+  name text NOT NULL,
+  sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (owner_id, sha256)
+);
+CREATE INDEX IF NOT EXISTS media_sha_idx ON media(sha256);
+CREATE INDEX IF NOT EXISTS media_created_idx ON media(created_at);
+
+-- Bytes expire (media-ttl.ts); the fact that they existed does not. One row per
+-- swept media id, so the media endpoint answers 410 Gone instead of 404 and the
+-- attachment projection can state expiry as a fact rather than infer it.
+CREATE TABLE IF NOT EXISTS media_expirations (
+  id uuid PRIMARY KEY,
+  expired_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS legacy_media_urls (
+  legacy_url text PRIMARY KEY,
+  media_id uuid NOT NULL REFERENCES media(id) ON DELETE CASCADE
+);
+
 -- Object-storage rows (object-storage.ts): person file shares and agent
--- artifacts. Bytes live in S3-compatible storage. The key is kind/owner/sha256;
--- owner+sha256 dedupes. The retired bytea media store is dropped below.
+-- artifacts write here. Bytes live in S3-compatible storage. Existing bytea
+-- media rows stay readable through the 24-hour TTL window.
 CREATE TABLE IF NOT EXISTS objects (
   id uuid PRIMARY KEY,
   owner_id text NOT NULL REFERENCES identities(id),
@@ -819,11 +845,6 @@ CREATE TABLE IF NOT EXISTS object_expirations (
   id uuid PRIMARY KEY,
   expired_at timestamptz NOT NULL DEFAULT now()
 );
-
--- The bytea media store is retired: person files share the objects/Tigris path.
-DROP TABLE IF EXISTS legacy_media_urls;
-DROP TABLE IF EXISTS media;
-DROP TABLE IF EXISTS media_expirations;
 
 CREATE TABLE IF NOT EXISTS github_installations (
   installation_id bigint PRIMARY KEY,

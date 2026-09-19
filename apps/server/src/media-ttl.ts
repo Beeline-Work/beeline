@@ -1,13 +1,14 @@
 /**
  * Attachment bytes are temporary; the record of the attachment is not.
  *
- * A file or image posted in a Room lives in `objects` (Tigris) for
+ * New person shares and agent artifacts live in `objects` (Tigris) for
  * `MEDIA_TTL_HOURS` (24 by default, overridden once through the
- * `MEDIA_TTL_HOURS` environment variable). The hourly sweep in `background.ts`
- * deletes the storage object and the row, and leaves an `object_expirations`
- * tombstone behind. Nothing else is touched: the message keeps its
- * `attachments` metadata, so a transcript still says a file was there, its
- * name, its type and its size.
+ * `MEDIA_TTL_HOURS` environment variable). Rows already in bytea `media` stay
+ * readable through that same window. The hourly sweep in `background.ts`
+ * deletes expired object bytes plus leftover `media` rows, and leaves the
+ * matching `object_expirations` / `media_expirations` tombstone. Nothing else
+ * is touched: the message keeps its `attachments` metadata, so a transcript
+ * still says a file was there, its name, its type and its size.
  *
  * The tombstone is what makes "expired" a fact rather than a guess. Without it
  * a missing row is indistinguishable from an id that never existed, and both

@@ -27,7 +27,15 @@ export type LiveWireTrace = {
 };
 
 type LiveWireEvent =
-  | { type: 'invalidate'; roomId: string; reason: string; trace?: LiveWireTrace }
+  | {
+      type: 'invalidate';
+      roomId: string;
+      reason: string;
+      messageId?: string;
+      agentId?: string;
+      requestId?: string;
+      trace?: LiveWireTrace;
+    }
   | { type: 'subscribed'; roomId: string }
   | { type: 'message-delta'; roomId: string; message: RoomViewMessage; trace?: LiveWireTrace }
   | { type: 'turn-delta'; roomId: string; turn: RoomViewAgentTurn; trace?: LiveWireTrace }

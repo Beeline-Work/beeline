@@ -1139,8 +1139,18 @@ async function route(
         : result && typeof (result as { roomId?: unknown }).roomId === 'string'
           ? (result as { roomId: string }).roomId
           : undefined;
-    if (invalidatedRoom)
-      options.live.publish({ type: 'invalidate', roomId: invalidatedRoom, reason: 'phone-write' });
+    if (invalidatedRoom) {
+      const messageId =
+        result && typeof (result as { messageId?: unknown }).messageId === 'string'
+          ? (result as { messageId: string }).messageId
+          : undefined;
+      options.live.publish({
+        type: 'invalidate',
+        roomId: invalidatedRoom,
+        reason: 'phone-write',
+        ...(messageId ? { messageId } : {}),
+      });
+    }
     if (result === undefined) {
       response.writeHead(204, { 'cache-control': 'private, no-store' });
       response.end();

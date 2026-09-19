@@ -27,6 +27,7 @@ import {
   dispatchRoomOpenTap,
   seedRoomOpenPixel,
 } from '@/buzz/room-open-prefetch';
+import { RoomOpenPixel } from './chat/_room-open-pixel';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
@@ -210,6 +211,7 @@ export default function BuzzChannels() {
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
+  const [openingSeed, setOpeningSeed] = useState<string | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
@@ -459,6 +461,7 @@ export default function BuzzChannels() {
 
   useFocusEffect(
     useCallback(() => {
+      setOpeningSeed(null);
       refreshNow();
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
@@ -509,6 +512,7 @@ export default function BuzzChannels() {
 
   const openRoom = useCallback(
     (roomId: string, newestLine?: string) => {
+      if (newestLine) setOpeningSeed(newestLine);
       dispatchRoomOpenTap(roomId, newestLine, {
         prefetch: prefetchRoom,
         navigate: (id) => {
@@ -771,6 +775,7 @@ export default function BuzzChannels() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <BuzzCommunityShell
       communities={communities}
       activeCommunityId={activeCommunityId}
@@ -1148,6 +1153,20 @@ export default function BuzzChannels() {
         />
       </View>
     </BuzzCommunityShell>
+    {openingSeed ? (
+      <View
+        pointerEvents="none"
+        testID="room-open-deck-overlay"
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 30 }}
+      >
+        <RoomOpenPixel
+          roomSurface={null}
+          seedText={openingSeed}
+          onFirstPaint={() => undefined}
+        />
+      </View>
+    ) : null}
+    </View>
   );
 }
 

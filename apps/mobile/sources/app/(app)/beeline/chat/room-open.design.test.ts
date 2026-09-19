@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = path.join(__dirname, '..');
 const chat = readFileSync(path.join(root, 'chat/[channelId].tsx'), 'utf8');
+const pixel = readFileSync(path.join(root, 'chat/_room-open-pixel.tsx'), 'utf8');
 const surface = readFileSync(path.join(root, 'chat/_chat-surface.tsx'), 'utf8');
 const layout = readFileSync(path.join(root, '../_layout.tsx'), 'utf8');
 const load = readFileSync(path.join(root, 'chat/_chat-surface-load.ts'), 'utf8');
@@ -41,14 +42,17 @@ describe('Room open-to-pixel occupancy', () => {
     expect(chat).not.toContain('from "./_chat-surface"');
     expect(channels).not.toContain('preloadChatSurface');
     expect(sidebar).not.toContain('preloadChatSurface');
-    expect(channels).toContain('dispatchRoomOpenTap');
+    expect(channels).toContain('RoomOpenPixel');
+    expect(channels).toContain('openingSeed');
+    expect(channels).toContain('room-open-deck-overlay');
     expect(sidebar).toContain('dispatchRoomOpenTap');
     expect(prefetch).toContain('dispatchRoomOpenTap');
     expect(prefetch).not.toContain('preloadChatSurface');
     expect(chat.indexOf("markRoomOpen('route-mount', decodedId)")).toBeLessThan(
       chat.lastIndexOf('attachChatSurfaceAfterPaint'),
     );
-    expect(chat.indexOf('pixel-ui-frame')).toBeLessThan(chat.lastIndexOf('attachChatSurfaceAfterPaint'));
+    expect(pixel.indexOf('pixel-ui-frame')).toBeGreaterThanOrEqual(0);
+    expect(chat.lastIndexOf('attachChatSurfaceAfterPaint')).toBeGreaterThan(0);
     const gate = chat.slice(
       chat.indexOf('export default function BuzzChat'),
       chat.indexOf('function RoomSessionHost'),
@@ -58,7 +62,7 @@ describe('Room open-to-pixel occupancy', () => {
   });
 
   it('keeps newest-row first paint aligned to header+composer and loads history only after a reader scroll', () => {
-    expect(chat).toContain('const headerReserve = insets.top + 60');
+    expect(pixel).toContain('const headerReserve = insets.top + 60');
     expect(surface).toContain('loadOlderTranscriptIfReaderAsked');
     expect(surface).toContain('if (!allowOlderHistoryRef.current) return');
     expect(surface).toContain('onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}');
@@ -66,9 +70,9 @@ describe('Room open-to-pixel occupancy', () => {
       'initialNumToRender={\n              desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined\n            }',
     );
     expect(surface).toContain('formatTerminalTurnOverlay');
-    expect(chat).toContain('roomOpenNewestTextMetrics()');
-    expect(chat).toContain('color: theme.buzz.textPrimary');
-    expect(chat).toContain('pixel-layout-newest');
+    expect(pixel).toContain('roomOpenNewestTextMetrics()');
+    expect(pixel).toContain('color: theme.buzz.textPrimary');
+    expect(pixel).toContain('pixel-layout-newest');
     expect(channels).toContain('beginRoomOpenPrefetch');
     expect(channels).toContain('seedRoomOpenPixel');
     expect(chat).toContain('roomOpenPixelSeed(decodedId)');
@@ -77,10 +81,10 @@ describe('Room open-to-pixel occupancy', () => {
   it('reserves the chrome composer stack without importing ConversationComposer', () => {
     expect(chat).not.toContain('ConversationComposer');
     expect(chat).not.toContain('COMPOSER_SINGLE_LINE_INPUT_HEIGHT');
-    expect(chat).toContain("from '@/buzz/room-open-geometry'");
-    expect(chat).toContain('room-open-pixel-composer-reserve');
-    expect(chat).toContain('ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT');
-    expect(chat).toContain('roomOpenComposerSafePadding(Platform.OS, insets.bottom)');
+    expect(pixel).toContain("from '@/buzz/room-open-geometry'");
+    expect(pixel).toContain('room-open-pixel-composer-reserve');
+    expect(pixel).toContain('ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT');
+    expect(pixel).toContain('roomOpenComposerSafePadding(Platform.OS, insets.bottom)');
   });
 
   it('keeps ROOM_OPEN console probes out of release product', () => {

@@ -67,6 +67,7 @@ describe('Room composer status layout', () => {
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     expect(inputBar.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);
     expect(inputBar.indexOf('hanging-turn-chrome')).toBeLessThan(inputBar.indexOf('<ConversationComposer'));
+    expect(source).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
   });
 
   it('keeps the send arrow separated from the text field', () => {

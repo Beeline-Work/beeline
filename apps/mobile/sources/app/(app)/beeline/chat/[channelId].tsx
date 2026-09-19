@@ -345,6 +345,10 @@ const CHANNEL_MENTION_OPTION: RoomMemberOption = {
 
 const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
+/** TurnProgressLine / TurnSettledLine: 26pt row + 4pt margin. Reserved on
+ *  the inverted list's visual tail so the hanging phone line does not cover
+ *  the last message. */
+const HANGING_TURN_CHROME_HEIGHT = 30;
 // How close to the visual bottom counts as "already reading the newest end"
 // for the layout-change tail snap (C97): offset 0 when native is inverted,
 // or content height minus viewport height on the ordinary desktop list.
@@ -4533,6 +4537,18 @@ export default function BuzzChat() {
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
+              // Inverted list: paddingTop is the visual tail, above the composer.
+              // Reserve the hanging turn line there so it cannot cover the last
+              // message. Skip when CornerLiveBar / offline already occupy that
+              // band — those stay in-flow, and a second inset would open a new
+              // gap. Do not grow the composer stack (that was the dead band).
+              !desktopTranscript &&
+                !isArchived &&
+                (composerAck || settledTurn) &&
+                !(cornerLiveBar && !isCorner) &&
+                !agentsOffline && {
+                  paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT,
+                },
             ]}
             maintainVisibleContentPosition={
               desktopTranscript

@@ -316,6 +316,10 @@ describe('the chat screen wires the scroll rule', () => {
   it('does not reserve the phone turn line in the composer footprint', () => {
     expect(chatSource).toContain('const composerFootprint = composerHeight + keyboardHeight;');
     expect(chatSource).toContain('styles.hangingTurnChrome');
+    expect(chatSource).toContain('HANGING_TURN_CHROME_HEIGHT');
+    expect(chatSource).toContain('paddingTop: 12 + HANGING_TURN_CHROME_HEIGHT');
+    expect(chatSource).toContain('!(cornerLiveBar && !isCorner)');
+    expect(chatSource).toContain('!agentsOffline');
   });
 
   /**

@@ -1,17 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { AcpClient, finalAgentMessageText } from './acp.js';
 import {
+  CURSOR_AGENT_APPROVE_MCPS_FLAG,
   CURSOR_AGENT_FORCE_FLAG,
   CURSOR_AGENT_TRUST_FLAG,
   CursorAcpServer,
   cursorAcpBridgeLaunch,
   cursorAgentArgv,
   describeCursorTurnFailure,
+  installCursorSessionMcp,
+  isolatedCursorHome,
+  isolatedHomeCursorMcpPath,
   translateCursorStreamEvent,
   type CursorAgentSpawn,
 } from './cursor-acp-bridge.js';
@@ -93,6 +97,7 @@ describe('cursor stream-json → ACP', () => {
       'stream-json',
       CURSOR_AGENT_TRUST_FLAG,
       CURSOR_AGENT_FORCE_FLAG,
+      CURSOR_AGENT_APPROVE_MCPS_FLAG,
       '--model',
       'composer-2.5',
       'hello from cursor',
@@ -233,6 +238,7 @@ process.stdout.write(JSON.stringify({ type: 'result', is_error: false, result: '
     expect(capturedArgv).toContain('composer-2.5');
     expect(capturedArgv).toContain(CURSOR_AGENT_TRUST_FLAG);
     expect(capturedArgv).toContain(CURSOR_AGENT_FORCE_FLAG);
+    expect(capturedArgv).toContain(CURSOR_AGENT_APPROVE_MCPS_FLAG);
   });
 
   it('fails a streamed error result with a named reason, not an empty end_turn', async () => {
@@ -353,5 +359,192 @@ setTimeout(() => {
     } finally {
       await client.stop();
     }
+  });
+});
+
+describe('cursor session MCP install', () => {
+  async function isolatedHomes(): Promise<{ home: string; cursorHome: string; env: NodeJS.ProcessEnv }> {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-cursor-mcp-'));
+    cleanup.push(root);
+    const home = resolve(root, 'user');
+    const cursorHome = resolve(root, 'cursor');
+    await mkdir(home, { recursive: true });
+    await mkdir(cursorHome, { recursive: true });
+    return { home, cursorHome, env: { HOME: home, CURSOR_HOME: cursorHome } };
+  }
+
+  const SERVER = {
+    name: 'beeline-agent',
+    command: '/usr/bin/beeline-readonly-mcp',
+    args: ['--stdio'],
+    env: [
+      { name: 'BEELINE_MCP_SURFACE', value: 'agent' },
+      { name: 'BEELINE_DAEMON_TOKEN', value: 'token-abc' },
+    ],
+  };
+
+  it('writes session servers only into the isolated cursor home, never the operator config', async () => {
+    const { cursorHome, env } = await isolatedHomes();
+    const operatorMcp = resolve(homedir(), '.cursor', 'mcp.json');
+    const before = await readFile(operatorMcp, 'utf8').catch(() => null);
+    const path = await installCursorSessionMcp({ env, servers: [SERVER] });
+    expect(path).toBe(resolve(cursorHome, 'mcp.json'));
+    expect(isolatedCursorHome(env)).toBe(cursorHome);
+    const written = JSON.parse(await readFile(path as string, 'utf8')) as {
+      mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+    };
+    expect(written.mcpServers['beeline-agent']).toEqual({
+      command: '/usr/bin/beeline-readonly-mcp',
+      args: ['--stdio'],
+      env: {
+        BEELINE_MCP_SURFACE: 'agent',
+        BEELINE_DAEMON_TOKEN: 'token-abc',
+      },
+    });
+    expect(isolatedHomeCursorMcpPath(env)).toBe(resolve(env.HOME as string, '.cursor', 'mcp.json'));
+    expect(JSON.parse(await readFile(isolatedHomeCursorMcpPath(env) as string, 'utf8'))).toEqual(written);
+    expect(await readFile(operatorMcp, 'utf8').catch(() => null)).toBe(before);
+    expect(isolatedCursorHome({ HOME: homedir(), CURSOR_HOME: resolve(homedir(), '.cursor') })).toBeUndefined();
+    expect(
+      await installCursorSessionMcp({
+        env: { HOME: homedir(), CURSOR_HOME: resolve(homedir(), '.cursor') },
+        servers: [SERVER],
+      }),
+    ).toBeUndefined();
+    expect(await installCursorSessionMcp({ env: { HOME: env.HOME }, servers: [SERVER] })).toBeUndefined();
+  });
+
+  it('session/new makes beeline-agent callable through the written mcp.json', async () => {
+    const { home, cursorHome, env } = await isolatedHomes();
+    const directory = await mkdtemp(resolve(tmpdir(), 'beeline-cursor-mcp-server-'));
+    cleanup.push(directory);
+    const logPath = resolve(directory, 'calls.jsonl');
+    const serverPath = resolve(directory, 'server.mjs');
+    await writeFile(
+      serverPath,
+      `import { createInterface } from 'node:readline';
+import { appendFileSync } from 'node:fs';
+const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize')
+    return send({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} } } });
+  if (request.method === 'tools/list')
+    return send({ jsonrpc: '2.0', id: request.id, result: { tools: [
+      { name: 'open_corner', description: 'Open a corner.', inputSchema: { type: 'object', properties: { name: { type: 'string' }, objective: { type: 'string' } } } },
+    ] } });
+  if (request.method === 'tools/call') {
+    appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ params: request.params, surface: process.env.BEELINE_MCP_SURFACE }) + '\\n');
+    return send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'opened corner proof-mcp' }] } });
+  }
+  send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'no' } });
+});
+`,
+      'utf8',
+    );
+    const agent = await fakeCursorAgent(`#!/usr/bin/env node
+const { spawn } = require('node:child_process');
+const { readFileSync } = require('node:fs');
+const { resolve } = require('node:path');
+(async () => {
+  const cursorHome = process.env.CURSOR_HOME;
+  const homeMcp = resolve(process.env.HOME, '.cursor', 'mcp.json');
+  const config = JSON.parse(readFileSync(resolve(cursorHome, 'mcp.json'), 'utf8'));
+  const homeConfig = JSON.parse(readFileSync(homeMcp, 'utf8'));
+  if (JSON.stringify(config) !== JSON.stringify(homeConfig)) {
+    throw new Error('isolated HOME mcp.json does not match CURSOR_HOME');
+  }
+  const server = config.mcpServers['beeline-agent'];
+  if (!server) throw new Error('beeline-agent missing from isolated mcp.json');
+  const child = spawn(server.command, server.args ?? [], {
+    env: { ...process.env, ...server.env },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  const pending = [];
+  const wait = (id) => new Promise((resolveWait) => {
+    const take = (chunk) => {
+      pending.push(chunk);
+      const lines = pending.join('').split(/\\r?\\n/);
+      pending.length = 0;
+      const rest = lines.pop();
+      if (rest) pending.push(rest);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const message = JSON.parse(line);
+        if (message.id === id) resolveWait(message);
+      }
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', take);
+  });
+  const send = (message) => child.stdin.write(JSON.stringify(message) + '\\n');
+  send({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'cursor-bridge-test', version: '1' } } });
+  await wait(0);
+  send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'open_corner', arguments: { name: 'Proof Mcp', objective: 'Prove the cursor bridge delivered beeline-agent' } } });
+  const result = await wait(1);
+  child.kill();
+  const text = result.result?.content?.[0]?.text ?? '';
+  process.stdout.write(JSON.stringify({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'result', is_error: false, result: text }) + '\\n');
+})().catch((error) => {
+  process.stderr.write(String(error) + '\\n');
+  process.exit(1);
+});
+`);
+    const writes: Array<Record<string, unknown>> = [];
+    const server = new CursorAcpServer({
+      spawnCursorAgent: spawnFake(agent),
+      enumerateModels: async () => ({ currentValue: 'auto', options: [{ id: 'auto' }] }),
+      env,
+      write: (message) => writes.push(message),
+    });
+    await server.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/new',
+      params: {
+        cwd: home,
+        mcpServers: [
+          {
+            name: 'beeline-agent',
+            command: process.execPath,
+            args: [serverPath],
+            env: [{ name: 'BEELINE_MCP_SURFACE', value: 'agent' }],
+          },
+        ],
+      },
+    });
+    const sessionId = (writes.find((message) => message.id === 2)?.result as { sessionId: string })
+      .sessionId;
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'session/prompt',
+      params: { sessionId, prompt: [{ type: 'text', text: 'open a corner' }] },
+    });
+    const prompt = writes.find((message) => message.id === 3);
+    expect(prompt?.error).toBeUndefined();
+    expect(prompt?.result).toEqual({ stopReason: 'end_turn' });
+    const update = writes.find((message) => message.method === 'session/update') as
+      | { params?: { update?: { content?: { text?: string } } } }
+      | undefined;
+    expect(update?.params?.update?.content?.text).toBe('opened corner proof-mcp');
+    expect(JSON.parse(await readFile(logPath, 'utf8'))).toEqual({
+      params: {
+        name: 'open_corner',
+        arguments: {
+          name: 'Proof Mcp',
+          objective: 'Prove the cursor bridge delivered beeline-agent',
+        },
+      },
+      surface: 'agent',
+    });
+    expect(JSON.parse(await readFile(resolve(cursorHome, 'mcp.json'), 'utf8')).mcpServers['beeline-agent'].command).toBe(
+      process.execPath,
+    );
   });
 });

@@ -51,9 +51,23 @@ import { writeIsolatedHarnessFile } from './agent-home.js';
  */
 export const PI_MCP_BRIDGE_FILENAME = 'beeline-mcp-bridge.js';
 
-/** True when `session/new`'s `mcpServers` actually reaches the model's tools. */
+function isPiAcpCommand(agentCommand: string | undefined): boolean {
+  return Boolean(agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand));
+}
+
+/**
+ * True when `session/new`'s `mcpServers` actually reaches the model's tools.
+ * Fail-closed: an unknown or retired harness must not claim delivery it does
+ * not perform. `cursor-agent-acp` is the unfinished stub; `cursor-acp-bridge`
+ * writes the servers into the isolated cursor home before spawning.
+ */
 export function harnessMountsSessionMcpServers(agentCommand: string | undefined): boolean {
-  return !(agentCommand && /(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(agentCommand));
+  if (!agentCommand) return false;
+  if (isPiAcpCommand(agentCommand)) return false;
+  if (/(^|[/\\])cursor-agent-acp(\.[a-z]+)?$/i.test(agentCommand)) return false;
+  return /(^|[/\\])(claude-(agent|code)-acp|codex-acp|grok|buzz-agent|cursor-acp-bridge)(\.[a-z]+)?$/i.test(
+    agentCommand,
+  );
 }
 
 /**
@@ -75,10 +89,10 @@ export function piMcpBridgeSource(servers: readonly McpServerWire[]): string {
 /**
  * Write the bridge into a pi session's isolated home, if this harness needs it.
  *
- * Returns the path written, or undefined when the harness mounts its own MCP
- * servers (every harness but pi) or the session has no isolated home to write
- * into. Never throws into a turn: a bridge that cannot be written leaves pi
- * exactly as it is today, and says so in the daemon log.
+ * Returns the path written, or undefined when this is not pi or the session
+ * has no isolated home to write into. Never throws into a turn: a bridge that
+ * cannot be written leaves pi exactly as it is today, and says so in the
+ * daemon log.
  */
 export async function installPiMcpBridge(input: {
   agentCommand?: string;
@@ -86,7 +100,7 @@ export async function installPiMcpBridge(input: {
   piHome?: string;
   servers: readonly McpServerWire[];
 }): Promise<string | undefined> {
-  if (harnessMountsSessionMcpServers(input.agentCommand)) return undefined;
+  if (!isPiAcpCommand(input.agentCommand)) return undefined;
   if (!input.piHome || !input.servers.length) return undefined;
   const directory = resolve(input.piHome, 'extensions');
   const path = resolve(directory, PI_MCP_BRIDGE_FILENAME);

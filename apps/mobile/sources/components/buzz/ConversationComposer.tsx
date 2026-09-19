@@ -127,6 +127,8 @@ export function ConversationComposer({
   const isListening = speech.state === 'listening';
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
   const hasSomethingToSend = canSend ?? Boolean(value.trim());
+  const hasLiveTranscript = Boolean(speech.partialText || value);
+  const listeningWillSend = Boolean(value.trim() || speech.partialText.trim());
   const sendDisabled = disabled || !hasSomethingToSend || isListening;
   // The trailing control is mic XOR send, in one slot: while dictation is live
   // the control stays the listening/stop control even as partial transcript
@@ -145,7 +147,9 @@ export function ConversationComposer({
       : speech.state === 'nothing-recognised'
         ? "didn't catch that \u00b7 tap mic to try again"
         : speech.state === 'listening'
-          ? 'listening \u00b7 tap mic to stop'
+          ? listeningWillSend
+            ? 'listening \u00b7 tap mic to send'
+            : 'listening \u00b7 tap mic to stop'
           : '';
   const statusIsError =
     speech.state === 'permission-denied' || speech.state === 'nothing-recognised';
@@ -259,7 +263,9 @@ export function ConversationComposer({
             onBlur={onBlur}
             onKeyPress={onKeyPress}
             onSelectionChange={onSelectionChange}
-            placeholder={isListening ? 'Listening' : 'Message'}
+            placeholder={
+              isListening ? (hasLiveTranscript ? '' : 'Listening') : 'Message'
+            }
             placeholderTextColor={theme.buzz.dim}
             multiline
             returnKeyType="default"
@@ -299,13 +305,21 @@ export function ConversationComposer({
           <TouchableOpacity
             accessibilityLabel={
               isListening
-                ? 'Stop listening'
+                ? listeningWillSend
+                  ? 'Stop listening and send'
+                  : 'Stop listening'
                 : speech.state === 'permission-denied'
                   ? 'Open microphone settings'
                   : 'Start speech input'
             }
             accessibilityRole="button"
-            accessibilityHint={isListening ? 'Stops dictation' : 'Dictates into the message field'}
+            accessibilityHint={
+              isListening
+                ? listeningWillSend
+                  ? 'Stops dictation and sends'
+                  : 'Stops dictation'
+                : 'Dictates into the message field'
+            }
             accessibilityState={{ selected: isListening }}
             accessibilityValue={
               isListening && speech.partialText
@@ -319,7 +333,9 @@ export function ConversationComposer({
                 return;
               }
               if (isListening) {
+                const shouldSend = listeningWillSend;
                 speech.stop();
+                if (shouldSend) onSend?.();
               } else {
                 speech.start();
               }

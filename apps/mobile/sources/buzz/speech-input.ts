@@ -281,11 +281,16 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     startAttemptRef.current += 1;
     clearSilenceTimer();
     listeningRef.current = false;
-    stopRequestedRef.current = true;
     restartCountRef.current = 0;
 
-    // Stopping is an explicit user action, not a failed capture. The silence
-    // timer remains the only path to the "didn't catch that" state.
+    // An explicit stop is the user saying they are done. Commit whatever we
+    // already have so the composer can send in the same press, then close the
+    // session so a late native result cannot refill the field after send.
+    // Stopping is not a failed capture — only the silence timer uses
+    // "didn't catch that". A late result after silence-stop still lands
+    // through the requested-stop window in `onEnd`.
+    finishStopWithCapture(pendingPartialRef.current);
+    stopRequestedRef.current = false;
     setState('idle');
 
     setPartialText('');
@@ -295,7 +300,7 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     } catch {
       /* ignore */
     }
-  }, [clearSilenceTimer]);
+  }, [clearSilenceTimer, finishStopWithCapture]);
 
   React.useEffect(() => {
     return () => {

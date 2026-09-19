@@ -62,6 +62,12 @@ vi.mock('@/components/buzz/WalletQr', async () => {
     WalletQr: (props: any) => ReactModule.createElement('WalletQr', props),
   };
 });
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 
 import WalletScreen from './wallet';
 import WalletSendScreen from './wallet-send';

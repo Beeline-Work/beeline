@@ -33,6 +33,7 @@ import {
   type DesktopArtifactSelection,
 } from '@/buzz/desktop-artifact-pane';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
@@ -612,9 +613,13 @@ function CornerCockpit({
         {objective}
       </Text>
       {loading || !detail ? (
-        <Text style={styles.empty}>
-          {loading ? 'Loading Corner…' : 'Corner details unavailable'}
-        </Text>
+        loading ? (
+          <View style={styles.loadingBlock} testID="desktop-corner-loader">
+            <SurfaceGlyphLoader />
+          </View>
+        ) : (
+          <Text style={styles.empty}>Corner details unavailable</Text>
+        )
       ) : (
         <FlatList
           ref={transcriptRef}
@@ -785,6 +790,7 @@ const styles = StyleSheet.create((theme) => ({
   focusedMessage: { backgroundColor: theme.buzz.bgHighlight },
   cockpitComposer: { paddingHorizontal: 16, paddingBottom: 12 },
   empty: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, padding: 16 },
+  loadingBlock: { alignItems: 'center', justifyContent: 'center', padding: 16 },
   error: {
     ...theme.buzz.type.meta,
     color: theme.buzz.danger,

@@ -59,6 +59,12 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => undefined),
 }));
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 
 import WorkbenchScreen from './workbench';
 import { setWorkbenchSource } from '@/buzz/workbench-source';

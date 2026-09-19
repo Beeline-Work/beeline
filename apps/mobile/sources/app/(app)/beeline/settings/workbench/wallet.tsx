@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
@@ -100,7 +101,7 @@ export default function WalletScreen() {
   if (wallet === null) {
     return (
       <View style={[styles.container, styles.centered]} testID="wallet-loading">
-        <Text style={styles.quietLine}>Loading wallet…</Text>
+        <SurfaceGlyphLoader testID="wallet-loader" />
       </View>
     );
   }
@@ -244,9 +245,9 @@ export default function WalletScreen() {
                 Activity is unavailable right now.
               </Text>
             ) : history === null ? (
-              <Text style={styles.quietLine} testID="wallet-activity-loading">
-                Loading activity…
-              </Text>
+              <View style={styles.activityLoading} testID="wallet-activity-loading">
+                <SurfaceGlyphLoader compact testID="wallet-activity-loader" />
+              </View>
             ) : history.length === 0 ? (
               <Text style={styles.quietLine} testID="wallet-activity-empty">
                 No transactions yet.
@@ -303,7 +304,8 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1 },
-    centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl },
+    centered: { alignItems: 'center', justifyContent: 'center', padding: hull.space.xl, gap: hull.space.md },
+    activityLoading: { alignItems: 'flex-start', paddingVertical: hull.space.sm },
     content: { flex: 1 },
     contentInner: { padding: hull.space.md, gap: hull.space.xs, paddingBottom: hull.space.xxl },
     addressBlock: {

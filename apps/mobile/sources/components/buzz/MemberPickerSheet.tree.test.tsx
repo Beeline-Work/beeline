@@ -167,6 +167,13 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
+vi.mock('./SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
+
 import { MemberPickerSheet, type MemberPickerCandidate } from './MemberPickerSheet';
 
 const ANA = 'a'.repeat(64);

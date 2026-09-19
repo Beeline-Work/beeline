@@ -6,7 +6,8 @@ import { Typography } from '@/constants/Typography';
 import { HullActionSheet } from './HullActionSheet';
 import { HullModal } from './HullDialog';
 import { IdentityMark } from './IdentityMark';
-import { BrassButton, PixelLoader } from './MonoHull';
+import { BrassButton } from './MonoHull';
+import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { RoomMemberPickerActions, type MemberPickerKind } from './RoomMemberPickerActions';
 
 export type MemberPickerCandidate = {
@@ -129,7 +130,7 @@ export function MemberPickerSheet({
         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {!agentConnectOnly && roomInScope && candidates === null && (
             <View style={styles.loading} testID="member-picker-loading">
-              <PixelLoader />
+              <SurfaceGlyphLoader testID="member-picker-glyph-loader" />
             </View>
           )}
           {!agentConnectOnly &&

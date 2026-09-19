@@ -169,6 +169,12 @@ vi.mock('@/components/buzz/MembersGlyph', () => ({
   MEMBERS_GLYPH_STROKE_WIDTH: 1.25,
   MembersGlyph: (props: any) => React.createElement('MembersGlyph', props),
 }));
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 
 import { SidebarView } from './SidebarView';
 

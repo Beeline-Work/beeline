@@ -14,7 +14,8 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -92,7 +93,7 @@ export default function BuzzCorners() {
   if (!surface && !error) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <PixelLoader />
+        <SurfaceGlyphLoader testID="changes-loader" />
         <Text style={styles.loading}>LOADING CHANGES</Text>
       </View>
     );

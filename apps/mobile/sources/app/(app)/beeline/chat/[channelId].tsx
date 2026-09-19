@@ -311,7 +311,8 @@ import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
-import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -4295,7 +4296,7 @@ export default function BuzzChat() {
     }
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <PixelLoader />
+        <SurfaceGlyphLoader testID="room-surface-loader" />
         <Text style={styles.loadingText}>
           LOADING {(isCorner ? CORNER_LABEL : ROOM_LABEL).toUpperCase()}
         </Text>

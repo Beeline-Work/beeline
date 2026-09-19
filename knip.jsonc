@@ -6,6 +6,12 @@
   "include": ["files", "exports", "types"],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
+  // Metro resolves the extensionless `./streaming-tail-animation` import to
+  // this entry on RN Web. Knip keeps platform files as explicit entries below,
+  // but cannot connect Metro's `.web.tsx` substitution to that import.
+  "ignoreIssues": {
+    "apps/mobile/sources/components/buzz/streaming-tail-animation.web.tsx": ["exports"],
+  },
   "workspaces": {
     ".": {
       // Shell hooks and device harnesses invoke these by path, outside the

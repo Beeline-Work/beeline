@@ -25,7 +25,7 @@ export function isConfiguredReviewer(
 }
 
 const BEELINE_AMBIENT_CONNECTOR_CAPABILITY =
-  'When someone asks you to sign up for an account, sign in, or get an API key or other credential, call beeline-agent workbench_status, then offer_connector when the needed tool is not already added. Never stop at saying you are ready, and never ask for the credential in chat.';
+  'For every user request, first call beeline-agent workbench_status to check whether a Workbench connector can solve it. If one can, use an applicable connector when it is already added, or call offer_connector when it is available but not added. Continue without a connector when none applies.';
 
 const BEELINE_ROOM_CAPABILITIES = [
   'The repository filesystem is read-only in this Room session.',

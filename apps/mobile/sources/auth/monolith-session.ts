@@ -45,6 +45,7 @@ export class GitHubAccountMismatchError extends Error {
 export class MonolithSession {
   private readonly identityListeners = new Set<() => void>();
   private access?: { token: string; expiresAt: number; identityId: string };
+  private refreshToken?: string;
   private refreshInFlight?: Promise<string>;
 
   constructor(
@@ -120,6 +121,7 @@ export class MonolithSession {
 
   async clear(): Promise<void> {
     this.access = undefined;
+    this.refreshToken = undefined;
     const storage = await this.secureStorage();
     await Promise.all([
       storage.deleteItemAsync(REFRESH_KEY),
@@ -182,7 +184,8 @@ export class MonolithSession {
   }
 
   private async performRefresh(): Promise<string> {
-    const refreshToken = await (await this.secureStorage()).getItemAsync(REFRESH_KEY);
+    const refreshToken =
+      this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
     if (!refreshToken) throw new MonolithSessionRequiredError();
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
       method: 'POST',
@@ -207,6 +210,7 @@ export class MonolithSession {
       storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),
       storage.setItemAsync(IDENTITY_KEY, tokens.identityId),
     ]);
+    this.refreshToken = tokens.refreshToken;
     this.access = {
       token: tokens.accessToken,
       expiresAt: tokens.accessExpiresAt,

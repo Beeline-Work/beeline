@@ -556,15 +556,28 @@ function publish(options) {
       .filter(Boolean),
   );
   const pins = readPinnedRuntimeVersion(process.cwd());
+  // A compatibility runtime can likewise reach its FIRST production update
+  // only because a store binary already shipped for it (that is the only way
+  // it enters COMPAT_RUNTIMES: the shipped-runtime coverage gate demands it).
+  // That binary's embedded update is its rollback anchor, and `rollback`
+  // already reaches it through update:roll-back-to-embedded per target.
+  // Refusing here would contradict the coverage gate, which is exactly how
+  // #1388's ios@24 entry left every OTA unpublishable.
+  const shippedBinaryKeys = new Set(SHIPPED_NATIVE_RUNTIMES.map(targetKey));
   const embeddedAnchorTargets = requiredRollbackTargets.filter(
     (target) =>
       !previousTargetKeys.has(targetKey(target)) &&
-      embeddedAnchorPlatforms.has(target.platform) &&
-      target.runtimeVersion === pins[target.platform],
+      ((embeddedAnchorPlatforms.has(target.platform) &&
+        target.runtimeVersion === pins[target.platform]) ||
+        shippedBinaryKeys.has(targetKey(target))),
   );
   for (const target of embeddedAnchorTargets)
     console.log(
-      `${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`,
+      `${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of ${
+        shippedBinaryKeys.has(targetKey(target)) && target.runtimeVersion !== pins[target.platform]
+          ? 'its already-shipped store binary'
+          : "this release's store binary"
+      }`,
     );
   const embeddedAnchorKeys = new Set(embeddedAnchorTargets.map(targetKey));
   const missingRollbackTargets = requiredRollbackTargets.filter(

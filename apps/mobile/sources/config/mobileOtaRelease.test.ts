@@ -654,7 +654,7 @@ printf '{"name":"production","id":"branch-id","currentPage":[{"group":"productio
     );
   });
 
-  it('refuses rollout candidates without readable installed-runtime rollback anchors', () => {
+  it('anchors a shipped compatibility runtime on its store binary and still refuses an unreadable production lookup', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-anchors-'));
     const fakeEas = join(directory, 'fake-eas.sh');
     writeFileSync(
@@ -674,24 +674,23 @@ esac
       ['publish', '--sha', '1234567890abcdef', '--ref', 'main', '--ledger', ledger],
       { EAS_CLI_PATH: fakeEas },
     );
-    expect(incomplete.status).toBe(1);
-    expect(incomplete.stderr).toContain(
-      'no rollback anchor for android@23, android@25, ios@23, ios@24, ios@26',
-    );
+    // Production carries only android@24, so every compatibility runtime has
+    // no earlier production update. Each of them is in SHIPPED_NATIVE_RUNTIMES
+    // (that is the only way into COMPAT_RUNTIMES), so its already-shipped store
+    // binary's embedded update is the rollback anchor and the guard passes;
+    // the publish then fails on the fake `eas update` (exit 9), proving it got
+    // past the anchor check rather than refusing there. Before this contract,
+    // #1388's ios@24 entry made every OTA unpublishable (release run
+    // 35391417318: "no rollback anchor for ios@24").
+    expect(incomplete.stderr).not.toContain('no rollback anchor');
+    expect(incomplete.stderr).toContain('EAS command failed (9');
+    for (const key of ['android@23', 'android@25', 'ios@23', 'ios@24', 'ios@26']) {
+      expect(incomplete.stdout).toContain(
+        `${key}: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary`,
+      );
+    }
+    expect(incomplete.stdout).not.toContain('ios@25: first production release');
     expect(existsSync(ledger)).toBe(false);
-
-    // A platform whose store binary shipped in this release may use that
-    // binary's embedded update as the anchor for its CURRENT pin only; ios@23
-    // and the android@23 compatibility runtime are not the
-    // current pin, so they still refuse.
-    const stillMissing = runRelease(
-      ['publish', '--sha', '1234567890abcdef', '--ref', 'main', '--ledger', ledger],
-      { EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: 'android,ios' },
-    );
-    expect(stillMissing.status).toBe(1);
-    expect(stillMissing.stderr).toContain(
-      'no rollback anchor for android@23, android@25, ios@23, ios@24, ios@26',
-    );
 
     writeFileSync(
       fakeEas,

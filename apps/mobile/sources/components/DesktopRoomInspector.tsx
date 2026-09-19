@@ -284,7 +284,7 @@ function CornerRow({
   const display = cornerDisplayState(corner);
   const title = displayGroupedCornerTitle(parentRoomName, corner.corner.name, corner.corner.id);
   const objective = inspectorCornerObjective(title, corner.corner.about);
-  const openedByViewer = corner.agent?.pubkey === viewerPubkey;
+  const initiatedByViewer = corner.initiator?.pubkey === viewerPubkey;
   return (
     <Pressable
       accessibilityRole="button"
@@ -313,7 +313,7 @@ function CornerRow({
         >
           {display.word}
         </Text>
-        {openedByViewer ? (
+        {initiatedByViewer ? (
           <Text style={styles.cornerMe} testID={`desktop-work-corner-me-${corner.corner.id}`}>
             ME
           </Text>

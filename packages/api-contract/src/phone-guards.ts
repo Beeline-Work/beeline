@@ -765,6 +765,8 @@ function corner(value: unknown): value is CornerListItem {
       item.reason === 'failed' ||
       item.reason === 'checks-failed' ||
       item.reason === 'question') &&
+    (item.initiator === undefined ||
+      (identity(item.initiator) && item.initiator.kind === 'human')) &&
     (item.agent === undefined || identity(item.agent)) &&
     (item.latestMessage === undefined || latest(item.latestMessage)),
   );

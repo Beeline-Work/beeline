@@ -271,6 +271,11 @@ interface MemberRow extends IdentityRow {
 interface CornerRow extends RoomRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
   objective: string | null;
+  initiator_id: string | null;
+  initiator_name: string | null;
+  initiator_handle: string | null;
+  initiator_avatar: string | null;
+  initiator_face: string | null;
   latest_id: string | null;
   latest_text: string | null;
   latest_created_at: Date | null;
@@ -1595,6 +1600,9 @@ export class PhoneService {
            ORDER BY m.created_at DESC,m.id DESC
          ), corner_rows AS (
            SELECT corner.*,fact.lifecycle,fact.objective,
+             initiator.id initiator_id,initiator.name initiator_name,
+             initiator.handle initiator_handle,initiator.avatar initiator_avatar,
+             initiator.face_id initiator_face,
              latest.id latest_id,latest.text latest_text,latest.created_at latest_created_at,
              latest.author_id latest_author_id,latest_identity.kind latest_author_kind,
              latest_identity.name latest_author_name,agent.identity_id agent_id,
@@ -1603,6 +1611,8 @@ export class PhoneService {
            FROM authorized_room room
            JOIN rooms corner ON corner.parent_id=room.id
            LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
+           LEFT JOIN identities initiator
+             ON initiator.id=fact.commissioned_by AND initiator.kind='human'
            LEFT JOIN LATERAL(
              SELECT * FROM messages WHERE room_id=corner.id
                AND presentation IN ('message','system')
@@ -1728,10 +1738,15 @@ export class PhoneService {
       await this.database.query<CornerRow>(
         `
       SELECT c.*,f.lifecycle,f.objective,lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
+        initiator.id initiator_id,initiator.name initiator_name,
+        initiator.handle initiator_handle,initiator.avatar initiator_avatar,
+        initiator.face_id initiator_face,
         li.kind latest_author_kind,li.name latest_author_name,agent.identity_id agent_id,
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
         turn.status latest_turn_status,turn.created_at latest_turn_created_at
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+      LEFT JOIN identities initiator
+        ON initiator.id=f.commissioned_by AND initiator.kind='human'
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
@@ -1778,6 +1793,20 @@ export class PhoneService {
           hasLiveWorkingTurn && corner.latest_turn_created_at
             ? unix(corner.latest_turn_created_at)
             : unix(corner.updated_at),
+        ...(corner.initiator_id && corner.initiator_name
+          ? {
+              initiator: {
+                pubkey: corner.initiator_id,
+                kind: 'human' as const,
+                name: corner.initiator_name,
+                ...(corner.initiator_handle ? { handle: corner.initiator_handle } : {}),
+                ...(corner.initiator_avatar
+                  ? { avatar: assetUrl(corner.initiator_avatar, this.publicOrigin) }
+                  : {}),
+                ...(corner.initiator_face ? { face: corner.initiator_face } : {}),
+              },
+            }
+          : {}),
         ...(corner.agent_id && corner.agent_name
           ? {
               agent: {

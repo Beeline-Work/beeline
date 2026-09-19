@@ -689,6 +689,8 @@ export type CornerListItem = {
    * latest child turn receipt rather than the corner metadata timestamp. */
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
+  /** Human whose request caused the agent to open this corner. */
+  readonly initiator?: RoomViewIdentity;
   readonly agent?: RoomViewIdentity;
   readonly latestMessage?: {
     readonly id: string;

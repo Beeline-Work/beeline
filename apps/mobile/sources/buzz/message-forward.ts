@@ -46,9 +46,17 @@ export async function forwardMessageToRoom(
 }
 
 /** One candidate row of the forward picker, named like the Room list names it. */
+export type ForwardTargetGroup = 'people' | 'agents' | 'rooms';
+
 export type ForwardTarget =
-  | { kind: 'room'; id: string; label: string }
-  | { kind: 'member'; id: string; label: string; memberId: string };
+  | { kind: 'room'; id: string; label: string; group: ForwardTargetGroup }
+  | {
+      kind: 'member';
+      id: string;
+      label: string;
+      memberId: string;
+      group: Exclude<ForwardTargetGroup, 'rooms'>;
+    };
 
 /** Resolve a member-backed destination only when the viewer selects it. */
 export async function resolveForwardTargetRoom(
@@ -84,7 +92,17 @@ export function forwardTargets(
     )
     .map((chat) => {
       const row = roomRowName(chat);
-      return { kind: 'room', id: chat.room.id, label: `${row.sigil}${row.name}` };
+      const group = chat.directMessage
+        ? chat.directMessage.peer.kind === 'agent'
+          ? 'agents'
+          : 'people'
+        : 'rooms';
+      return {
+        kind: 'room' as const,
+        id: chat.room.id,
+        label: `${row.sigil}${row.name}`,
+        group,
+      };
     });
   const memberTargets: ForwardTarget[] = [...workspace.members, ...workspace.agents]
     .filter(
@@ -97,6 +115,7 @@ export function forwardTargets(
       id: identity.pubkey,
       label: `@${previewHandle(identity)}`,
       memberId: identity.pubkey,
+      group: identity.kind === 'agent' ? ('agents' as const) : ('people' as const),
     }));
   return [...roomTargets, ...memberTargets];
 }

@@ -283,6 +283,7 @@ import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
+import { ForwardMessagePickerSheet } from '@/components/buzz/ForwardMessagePickerSheet';
 import { MessageReactionStrip } from '@/components/buzz/MessageReactionStrip';
 import {
   HULL_SHEET_INSET,
@@ -5304,50 +5305,19 @@ export default function BuzzChat() {
         />
       </HullActionSheetModal>
 
-      <HullActionSheetModal
-        accessibilityLabel="Close forward picker"
+      <ForwardMessagePickerSheet
+        busyRoomId={forwardBusyRoomId}
+        error={forwardError}
         onClose={() => {
           if (forwardBusyRoomId) return;
           setForwardTarget(null);
           setForwardRooms(null);
           setForwardError(null);
         }}
-        subtitle="Choose a Room or member in this Workspace"
-        testID="forward-room-picker"
-        title="Forward message"
+        onForward={(target) => void forwardToRoom(target)}
+        targets={forwardRooms}
         visible={Boolean(forwardTarget)}
-      >
-        <ScrollView style={styles.forwardRoomList}>
-          {forwardRooms === null ? (
-            <Text style={styles.forwardRoomStatus}>LOADING DESTINATIONS…</Text>
-          ) : forwardRooms.length ? (
-            forwardRooms.map((target) => (
-              <HullActionSheetRow
-                chevron="right"
-                disabled={Boolean(forwardBusyRoomId)}
-                key={`${target.kind}:${target.id}`}
-                label={target.label}
-                metadata={forwardBusyRoomId === target.id ? 'SENDING' : undefined}
-                onPress={() => void forwardToRoom(target)}
-                testID={`forward-${target.kind}-${target.id}`}
-              />
-            ))
-          ) : (
-            <Text style={styles.forwardRoomStatus}>
-              {forwardError ?? 'NO OTHER DESTINATIONS AVAILABLE'}
-            </Text>
-          )}
-        </ScrollView>
-        <HullActionSheetCancel
-          onPress={() => {
-            if (forwardBusyRoomId) return;
-            setForwardTarget(null);
-            setForwardRooms(null);
-            setForwardError(null);
-          }}
-          testID="forward-room-cancel"
-        />
-      </HullActionSheetModal>
+      />
 
       <RoomRosterSheet
         bottomInset={insets.bottom}
@@ -5648,13 +5618,6 @@ const styles = StyleSheet.create((theme) => {
     },
     desktopStatusFailed: {
       color: groknight.danger,
-    },
-    forwardRoomList: { maxHeight: 360 },
-    forwardRoomStatus: {
-      ...theme.buzz.type.sectionHead,
-      paddingHorizontal: 22,
-      paddingVertical: 18,
-      color: groknight.textMuted,
     },
     center: {
       alignItems: 'center',

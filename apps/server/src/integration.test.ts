@@ -100,7 +100,7 @@ describe('monolith integration', () => {
       WORKSPACE,
     ]);
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'master'),($1,NULL,$3,'member'),($1,$4,$2,'master'),($1,$4,$3,'member')`,
       [WORKSPACE, HUMAN, AGENT, ROOM],
     );
     auth = new TokenAuth(database, async (proof) => {
@@ -515,7 +515,7 @@ describe('monolith integration', () => {
         await operation('addWorkspaceMember', {
           workspaceId,
           memberId: aliceId,
-          role: 'owner',
+          role: 'master',
         })
       ).json(),
     ).toEqual({ joined: true });
@@ -525,7 +525,7 @@ describe('monolith integration', () => {
     expect(workspace.members).toContainEqual(
       expect.objectContaining({
         identity: expect.objectContaining({ pubkey: aliceId }),
-        role: 'owner',
+        role: 'master',
       }),
     );
 
@@ -641,7 +641,7 @@ describe('monolith integration', () => {
     ).toEqual([{ role: 'admin', removed: false }]);
   });
 
-  it('reserves workspace and Room management for workspace owners and admins', async () => {
+  it('reserves workspace and Room management for workspace masters and admins', async () => {
     const memberToken = await phoneToken('room-member');
     const memberId = createHash('sha256').update('github:room-member').digest('hex');
     const adminToken = await phoneToken('room-admin');
@@ -3645,6 +3645,14 @@ describe('monolith integration', () => {
     expect(await rosterSoulOf()).toBeDefined();
   });
 
+  it('hands the helper its connected owner identity so instruction ranking is not invented from chat', async () => {
+    expect(
+      await (
+        await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
+      ).json(),
+    ).toEqual(expect.objectContaining({ ownerIdentityId: HUMAN }));
+  });
+
   it('creates Rooms with or without an installed repository binding', async () => {
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type) VALUES(42,$1,'owner','User')`,
@@ -4677,7 +4685,7 @@ describe('monolith integration', () => {
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [lumen, HUMAN]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
+       ($1,NULL,$2,'master'),($1,NULL,$3,'member')`,
       [secondWorkspace, HUMAN, lumen],
     );
     await database.query(
@@ -4768,7 +4776,7 @@ describe('monolith integration', () => {
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [goosy, HUMAN]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'member'),($3,NULL,$4,'owner'),($3,NULL,$5,'member')`,
+       ($1,NULL,$2,'member'),($3,NULL,$4,'master'),($3,NULL,$5,'member')`,
       [WORKSPACE, goosy, secondWorkspace, HUMAN, AGENT],
     );
 
@@ -5759,7 +5767,7 @@ describe('monolith integration', () => {
     ).toEqual({ status: 'failed', old: true });
   });
 
-  it.each(['owner', 'admin'] as const)(
+  it.each(['master', 'admin'] as const)(
     'lets a current Room %s stop another requester’s turn',
     async (role) => {
       const requestId = 'e'.repeat(64);
@@ -5982,7 +5990,7 @@ describe('monolith integration', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+       VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
       [WORKSPACE, cornerId, HUMAN, AGENT],
     );
 

@@ -27,6 +27,7 @@ import {
   type RoomViewMessage,
   type WorkspaceListView,
   type WorkspaceView,
+  isMembershipRole,
 } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
 import { isConnectorOfferStatus } from './connector-offers.js';
@@ -358,7 +359,7 @@ function member(value: unknown): value is RoomViewMember {
   return Boolean(
     item &&
     identity(item.identity) &&
-    (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
+    isMembershipRole(item.role) &&
     (presence === undefined ||
       (presence &&
         (presence.status === 'online' || presence.status === 'offline') &&
@@ -639,7 +640,7 @@ function viewer(value: unknown): boolean {
         (readCursor.messageId === null || typeof readCursor.messageId === 'string') &&
         (readCursor.firstUnreadMessageId === null ||
           typeof readCursor.firstUnreadMessageId === 'string'))) &&
-    (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
+    isMembershipRole(item.role) &&
     permissions &&
     typeof permissions.send === 'boolean' &&
     typeof permissions.manage === 'boolean',
@@ -697,7 +698,7 @@ function workspace(value: unknown): value is ChatListWorkspace {
     typeof item.name === 'string' &&
     optionalString(item.avatar) &&
     (item.visibility === 'public' || item.visibility === 'invite-only') &&
-    (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
+    isMembershipRole(item.role) &&
     integer(item.updatedAt),
   );
 }

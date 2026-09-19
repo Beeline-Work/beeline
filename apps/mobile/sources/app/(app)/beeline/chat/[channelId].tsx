@@ -43,7 +43,6 @@ import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
-  type ChannelRole,
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
@@ -3089,7 +3088,7 @@ export default function BuzzChat() {
         !permission.repository ||
         permission.status !== 'pending' ||
         viewerIsAgent ||
-        (permission.purpose === 'squire-spending' && viewerChannelRole !== 'owner')
+        (permission.purpose === 'squire-spending' && viewerChannelRole !== 'master')
       )
         return;
       setPermissionActionId(permission.permissionId);

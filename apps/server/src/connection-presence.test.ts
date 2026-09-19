@@ -32,7 +32,7 @@ describe('delivery-driven presence', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$4,'member'),($1,$3,$4,'member'),($1,$2,$5,'owner')`,
+      VALUES($1,$2,$4,'member'),($1,$3,$4,'member'),($1,$2,$5,'master')`,
       [WORKSPACE, ROOM, OTHER, AGENT, HUMAN],
     );
     live = new LiveHub();

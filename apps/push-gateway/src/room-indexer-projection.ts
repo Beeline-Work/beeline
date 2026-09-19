@@ -213,7 +213,7 @@ export function workspaceItem(data: Json): ChatListWorkspace {
     ...(text(data.avatar) ? { avatar: text(data.avatar) } : {}),
     visibility:
       data.visibility === 'private' || data.visibility === 'invite-only' ? 'invite-only' : 'public',
-    role: data.role === 'owner' || data.role === 'admin' ? data.role : 'member',
+    role: data.role === 'master' || data.role === 'admin' ? data.role : 'member',
     updatedAt: integer(data.updatedAt),
   };
 }
@@ -720,12 +720,12 @@ export function viewer(room: Json, members: readonly RoomViewMember[]) {
   const member = members.find((candidate) => candidate.identity.pubkey === pubkey);
   return {
     identity: member?.identity ?? identity({ pubkey }),
-    role: (room.viewerRole === 'owner' || room.viewerRole === 'admin'
+    role: (room.viewerRole === 'master' || room.viewerRole === 'admin'
       ? room.viewerRole
-      : 'member') as 'owner' | 'admin' | 'member',
+      : 'member') as 'master' | 'admin' | 'member',
     permissions: {
       send: room.archived !== true,
-      manage: room.viewerRole === 'owner' || room.viewerRole === 'admin',
+      manage: room.viewerRole === 'master' || room.viewerRole === 'admin',
     },
   };
 }
@@ -760,7 +760,7 @@ export function repositoryResolutionFromRows(
   if (repository) return 'repository';
   // Keep an authorization failure separate from absence. This row is any
   // relay-indexed repository event, while `repository` above is limited to
-  // one whose author still projects as the Room owner/admin.
+  // one whose author still projects as the Room master/admin.
   return rowData(rows, 'repository-candidate') ? 'unverified' : 'none';
 }
 

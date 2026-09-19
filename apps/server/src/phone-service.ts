@@ -265,7 +265,7 @@ interface AgentTurnRow {
   requested_by: string | null;
 }
 interface MemberRow extends IdentityRow {
-  role: 'owner' | 'admin' | 'member';
+  role: 'master' | 'admin' | 'member';
   presence_body: { status: 'online' | 'offline'; observedAt: number } | null;
   presence_updated_at: Date | null;
 }
@@ -307,8 +307,8 @@ const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
 
 interface TopLevelRoomReadRow {
   room: RoomRow & {
-    viewer_role: 'owner' | 'admin' | 'member';
-    workspace_role: 'owner' | 'admin' | 'member';
+    viewer_role: 'master' | 'admin' | 'member';
+    workspace_role: 'master' | 'admin' | 'member';
     read_cursor: RoomView['viewer']['readCursor'] | null;
   };
   members: MemberRow[];
@@ -846,7 +846,7 @@ export class PhoneService {
       name: string;
       avatar: string | null;
       visibility: 'public' | 'invite-only';
-      role: 'owner' | 'admin' | 'member';
+      role: 'master' | 'admin' | 'member';
       updated_at: Date;
     }>(
       `SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at
@@ -896,7 +896,7 @@ export class PhoneService {
       visibility: 'public' | 'invite-only';
       created_at: Date;
       updated_at: Date;
-      role: 'owner' | 'admin' | 'member';
+      role: 'master' | 'admin' | 'member';
     }>(
       `SELECT w.*, m.role FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
        WHERE w.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
@@ -905,7 +905,7 @@ export class PhoneService {
     const row = workspace.rows[0];
     if (!row) return null;
     const managedRoomRows =
-      row.role === 'owner' || row.role === 'admin'
+      row.role === 'master' || row.role === 'admin'
         ? (
             await this.database.query<{
               id: string;
@@ -1008,7 +1008,7 @@ export class PhoneService {
       name: string;
       avatar: string | null;
       visibility: 'public' | 'invite-only';
-      role: 'owner' | 'admin' | 'member';
+      role: 'master' | 'admin' | 'member';
       updated_at: Date;
     }>(
       `SELECT w.id,w.name,w.avatar,w.visibility,w.updated_at,wm.role FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
@@ -1477,8 +1477,8 @@ export class PhoneService {
   ): Promise<CornerListView | null> {
     const parent = await this.database.query<
       RoomRow & {
-        viewer_role: 'owner' | 'admin' | 'member';
-        workspace_role: 'owner' | 'admin' | 'member';
+        viewer_role: 'master' | 'admin' | 'member';
+        workspace_role: 'master' | 'admin' | 'member';
       }
     >(
       `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
@@ -1517,8 +1517,8 @@ export class PhoneService {
     return (
       await this.database.query<
         RoomRow & {
-          viewer_role: 'owner' | 'admin' | 'member';
-          workspace_role: 'owner' | 'admin' | 'member';
+          viewer_role: 'master' | 'admin' | 'member';
+          workspace_role: 'master' | 'admin' | 'member';
           read_cursor: RoomView['viewer']['readCursor'] | null;
         }
       >(
@@ -1903,7 +1903,7 @@ export class PhoneService {
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
                 owner.name owner_name,owner.handle owner_handle,
                 a.owner_id=$3 can_change_yolo,
-                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
+                (a.owner_id=$3 OR viewer_membership.role IN ('master','admin')) can_manage_grants
          FROM agents a
          JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
            AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
@@ -3582,7 +3582,7 @@ export class PhoneService {
         )
       ).rows[0];
       if (!member) throw new Error('room access denied');
-      if (running.author_id !== viewerId && member.role !== 'owner' && member.role !== 'admin')
+      if (running.author_id !== viewerId && member.role !== 'master' && member.role !== 'admin')
         throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
       await database.query(
         `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 FOR UPDATE`,
@@ -3772,14 +3772,14 @@ export class PhoneService {
       if (!inserted.rowCount) {
         const owned = await db.query(
           `SELECT 1 FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
-           WHERE w.id=$1 AND m.identity_id=$2 AND m.role='owner' AND m.removed_at IS NULL`,
+           WHERE w.id=$1 AND m.identity_id=$2 AND m.role='master' AND m.removed_at IS NULL`,
           [id, viewerId],
         );
         if (!owned.rowCount) throw new Error('workspaceId is invalid');
         return;
       }
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'master')`,
         [id, viewerId],
       );
     });
@@ -3829,20 +3829,20 @@ export class PhoneService {
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const current = (
-        await database.query<{ role: 'owner' | 'admin' | 'member' }>(
+        await database.query<{ role: 'master' | 'admin' | 'member' }>(
           `SELECT role FROM memberships
            WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL FOR UPDATE`,
           [input.workspaceId, viewerId],
         )
       ).rows[0];
       if (!current) return;
-      if (current.role === 'owner') {
+      if (current.role === 'master') {
         const otherOwner = await database.query(
           `SELECT 1 FROM memberships
-           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id<>$2 AND role='owner' AND removed_at IS NULL`,
+           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id<>$2 AND role='master' AND removed_at IS NULL`,
           [input.workspaceId, viewerId],
         );
-        if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole owner');
+        if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole master');
       }
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
@@ -3892,7 +3892,7 @@ export class PhoneService {
         ])
       ).rows[0];
       if (!workspace) return; // idempotent: already deleted
-      await this.requireWorkspaceOwner(input.workspaceId, viewerId, database);
+      await this.requireWorkspaceMaster(input.workspaceId, viewerId, database);
       const members = await database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
         `SELECT m.identity_id,i.kind FROM memberships m JOIN identities i ON i.id=m.identity_id
          WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL`,
@@ -4071,7 +4071,7 @@ export class PhoneService {
     const leaver = await this.requireIdentity(viewerId);
     await this.database.transaction(async (database) => {
       const membership = (
-        await database.query<{ workspace_role: 'owner' | 'admin' | 'member' }>(
+        await database.query<{ workspace_role: 'master' | 'admin' | 'member' }>(
           `SELECT workspace_member.role workspace_role
            FROM memberships room_member
            JOIN memberships workspace_member
@@ -4085,7 +4085,7 @@ export class PhoneService {
         )
       ).rows[0];
       if (!membership) throw new Error('room membership required');
-      if (membership.workspace_role === 'owner' || membership.workspace_role === 'admin') {
+      if (membership.workspace_role === 'master' || membership.workspace_role === 'admin') {
         throw new Error('workspace managers cannot leave Rooms');
       }
       await database.query(
@@ -4191,7 +4191,7 @@ export class PhoneService {
       if (!targetIdentity) throw new Error('identity not found');
       const roles = await database.query<{
         identity_id: string;
-        role: 'owner' | 'admin' | 'member';
+        role: 'master' | 'admin' | 'member';
         removed_at: Date | null;
       }>(
         `SELECT identity_id,role,removed_at FROM memberships
@@ -4200,12 +4200,12 @@ export class PhoneService {
       );
       const actor = roles.rows.find((row) => row.identity_id === viewerId);
       const target = roles.rows.find((row) => row.identity_id === input.memberId);
-      if (!actor || actor.removed_at || (actor.role !== 'owner' && actor.role !== 'admin')) {
+      if (!actor || actor.removed_at || (actor.role !== 'master' && actor.role !== 'admin')) {
         throw new Error('workspace manager required');
       }
       if (
         actor.role === 'admin' &&
-        (input.role === 'owner' || target?.role === 'owner' || target?.role === 'admin')
+        (input.role === 'master' || target?.role === 'master' || target?.role === 'admin')
       ) {
         throw new Error('workspace manager cannot change a member with equal or greater authority');
       }
@@ -4301,7 +4301,7 @@ export class PhoneService {
       await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
       const roles = await database.query<{
         identity_id: string;
-        role: 'owner' | 'admin' | 'member';
+        role: 'master' | 'admin' | 'member';
       }>(
         `SELECT identity_id,role FROM memberships
          WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) AND removed_at IS NULL
@@ -4310,11 +4310,11 @@ export class PhoneService {
       );
       const actor = roles.rows.find((row) => row.identity_id === viewerId);
       const target = roles.rows.find((row) => row.identity_id === input.memberId);
-      if (!actor || (actor.role !== 'owner' && actor.role !== 'admin')) {
+      if (!actor || (actor.role !== 'master' && actor.role !== 'admin')) {
         throw new Error('workspace manager required');
       }
       if (!target) throw new Error('workspace membership required');
-      if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin')) {
+      if (target.role === 'master' || (actor.role === 'admin' && target.role === 'admin')) {
         throw new Error('workspace manager cannot remove a member with equal or greater authority');
       }
       await database.query(
@@ -4729,7 +4729,7 @@ export class PhoneService {
     if (!grant) throw new Error('grant not found');
     if (grant.owner_id !== viewerId) {
       const manager = await this.database.query(
-        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('master','admin') AND removed_at IS NULL`,
         [grant.workspace_id, viewerId],
       );
       if (!manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
@@ -4783,7 +4783,7 @@ export class PhoneService {
     if (offer.addressee_id !== viewerId) {
       const manager = await this.database.query(
         `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2
-           AND role IN ('owner','admin') AND removed_at IS NULL`,
+           AND role IN ('master','admin') AND removed_at IS NULL`,
         [offer.workspace_id, viewerId],
       );
       if (!manager.rowCount) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
@@ -5236,11 +5236,11 @@ export class PhoneService {
       await database.query(
         `WITH lone AS (
            SELECT m.workspace_id FROM memberships m
-           WHERE m.room_id IS NULL AND m.role='owner' AND m.removed_at IS NULL
+           WHERE m.room_id IS NULL AND m.role='master' AND m.removed_at IS NULL
              AND m.identity_id=ANY($1)
              AND NOT EXISTS (SELECT 1 FROM memberships o
                              WHERE o.workspace_id=m.workspace_id AND o.room_id IS NULL
-                               AND o.role='owner' AND o.removed_at IS NULL
+                               AND o.role='master' AND o.removed_at IS NULL
                                AND o.identity_id <> ALL($1))
          ), heir AS (
            SELECT DISTINCT ON (l.workspace_id) l.workspace_id,h.identity_id
@@ -5251,7 +5251,7 @@ export class PhoneService {
            JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
            ORDER BY l.workspace_id,h.role,h.joined_at,h.identity_id
          )
-         UPDATE memberships m SET role='owner' FROM heir
+         UPDATE memberships m SET role='master' FROM heir
          WHERE m.workspace_id=heir.workspace_id AND m.identity_id=heir.identity_id`,
         [gone],
       );
@@ -5259,9 +5259,9 @@ export class PhoneService {
         `WITH lone AS (
            SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
            WHERE m.room_id IS NOT NULL AND r.parent_id IS NULL AND r.archived_at IS NULL
-             AND m.role='owner' AND m.removed_at IS NULL AND m.identity_id=ANY($1)
+             AND m.role='master' AND m.removed_at IS NULL AND m.identity_id=ANY($1)
              AND NOT EXISTS (SELECT 1 FROM memberships o
-                             WHERE o.room_id=m.room_id AND o.role='owner'
+                             WHERE o.room_id=m.room_id AND o.role='master'
                                AND o.removed_at IS NULL AND o.identity_id <> ALL($1))
          ), heir AS (
            SELECT DISTINCT ON (l.room_id) l.room_id,h.identity_id
@@ -5271,7 +5271,7 @@ export class PhoneService {
            JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
            ORDER BY l.room_id,h.role,h.joined_at,h.identity_id
          )
-         UPDATE memberships m SET role='owner' FROM heir
+         UPDATE memberships m SET role='master' FROM heir
          WHERE m.room_id=heir.room_id AND m.identity_id=heir.identity_id`,
         [gone],
       );
@@ -5673,7 +5673,7 @@ export class PhoneService {
     if (!agent.viewer_role) throw new Error('workspace membership required');
     if (
       agent.owner_id !== viewerId &&
-      agent.viewer_role !== 'owner' &&
+      agent.viewer_role !== 'master' &&
       agent.viewer_role !== 'admin'
     )
       throw new Error('agent removal access denied');
@@ -6253,7 +6253,7 @@ export class PhoneService {
       `SELECT 1 FROM rooms room
        JOIN memberships membership ON membership.workspace_id=room.workspace_id
          AND membership.room_id IS NULL AND membership.identity_id=$2
-         AND membership.role IN ('owner','admin') AND membership.removed_at IS NULL
+         AND membership.role IN ('master','admin') AND membership.removed_at IS NULL
        WHERE room.id=$1`,
       [roomId, identityId],
     );
@@ -6264,7 +6264,7 @@ export class PhoneService {
       `SELECT 1 FROM rooms room
        JOIN memberships membership ON membership.workspace_id=room.workspace_id
          AND membership.room_id IS NULL AND membership.identity_id=$2
-         AND membership.role IN ('owner','admin') AND membership.removed_at IS NULL
+         AND membership.role IN ('master','admin') AND membership.removed_at IS NULL
        JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='human'
        WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL`,
       [roomId, identityId],
@@ -6311,23 +6311,23 @@ export class PhoneService {
     database = this.database,
   ) {
     const row = await database.query(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('master','admin') AND removed_at IS NULL`,
       [workspaceId, identityId],
     );
     if (!row.rowCount) throw new Error('workspace manager required');
   }
-  /** Owner-only: stricter than requireWorkspaceManager (owner|admin), for the
+  /** Master-only: stricter than requireWorkspaceManager (master|admin), for the
    *  one action an admin may never take — deleting the whole workspace. */
-  private async requireWorkspaceOwner(
+  private async requireWorkspaceMaster(
     workspaceId: string,
     identityId: string,
     database = this.database,
   ) {
     const row = await database.query(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role='owner' AND removed_at IS NULL`,
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role='master' AND removed_at IS NULL`,
       [workspaceId, identityId],
     );
-    if (!row.rowCount) throw new Error('workspace owner access denied');
+    if (!row.rowCount) throw new Error('workspace master access denied');
   }
   private async members(workspaceId: string, roomId: string | null): Promise<RoomViewMember[]> {
     const rows = await this.database.query<MemberRow>(
@@ -6696,11 +6696,11 @@ export const CONNECTOR_OFFER_AUTHORITY_MESSAGE =
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
 
 /**
- * A requester or current Room owner/admin may stop a turn.
+ * A requester or current Room master/admin may stop a turn.
  * Named here so `server.ts` answers 403 rather than a generic failure.
  */
 export const TURN_REQUESTER_AUTHORITY_MESSAGE =
-  'Only the requester, Room owner or admin can stop this turn';
+  'Only the requester, Room master or admin can stop this turn';
 
 /** The same owner-only axis, for who may address an agent. */
 export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;

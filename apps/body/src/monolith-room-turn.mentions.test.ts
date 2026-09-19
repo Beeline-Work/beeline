@@ -23,13 +23,25 @@ const OTHER_AGENT = '66'.repeat(32);
 /** The Room roster as the server answers it: display name AND canonical handle. */
 const ROSTER = (selfId: string) => ({
   members: [
-    { identityId: selfId, kind: 'agent' as const, name: 'Greeter', role: 'member' as const },
+    {
+      identityId: selfId,
+      kind: 'agent' as const,
+      name: 'Greeter',
+      role: 'member' as const,
+      soul: {
+        name: 'Bear',
+        instructions: 'Steady.',
+        avatarSeed: selfId,
+        authoredBy: CAPTAIN,
+        updatedAt: 1,
+      },
+    },
     {
       identityId: CAPTAIN,
       kind: 'human' as const,
       name: 'Captain',
       handle: 'lunchboxfortwo',
-      role: 'owner' as const,
+      role: 'master' as const,
     },
     {
       identityId: PEER,
@@ -121,7 +133,8 @@ describe('who an agent can tag, and how it is spelled', () => {
     let firstPostPending = true;
     const writes: unknown[] = [];
     const execute = vi.fn(async (name: string, input?: unknown) => {
-      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getAgentConfiguration')
+        return { commands: [], yoloMode: false, ownerIdentityId: CAPTAIN };
       if (name === 'getRoomRepositoryState') return { resolution: 'none' };
       if (name === 'getWorkspaceRoster') return ROSTER(agent.publicKey);
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
@@ -254,6 +267,10 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(prompts[0]).toContain('Room members, and the exact spelling that tags each one:');
     expect(prompts[0]).toContain('- @lunchboxfortwo — Captain (person)');
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
+    expect(prompts[0]).toContain('Your owner: @lunchboxfortwo');
+    expect(prompts[0]).toContain('A member cannot stop an action your owner ordered');
+    expect(prompts[0]).not.toContain('agentOwner');
+    expect(prompts[0]).not.toContain('workspaceRole');
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
   }, 20_000);

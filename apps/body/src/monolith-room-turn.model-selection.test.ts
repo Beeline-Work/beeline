@@ -69,7 +69,7 @@ async function activateWith(
       return {
         members: [
           { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
-          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'master' },
         ],
       };
     }
@@ -216,7 +216,7 @@ async function activateGrokLaunchArgv(): Promise<string[]> {
       return {
         members: [
           { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
-          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'master' },
         ],
       };
     }
@@ -364,7 +364,7 @@ async function activateAcrossSelectionChange(
       return {
         members: [
           { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
-          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'master' },
         ],
       };
     }

@@ -6,6 +6,7 @@ import {
   assertSchemaCurrent,
   backfillAgentHandles,
   backfillYoloModeDefault,
+  migrateMembershipRoleOwnerToMaster,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
   APP_POOL_WAIT_TIMEOUT_MS,
@@ -420,7 +421,7 @@ describe('the agent handle migration', () => {
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Tubing Crew')`, [workspace]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
+       ($1,NULL,$2,'master'),($1,NULL,$3,'member'),
        ($1,NULL,$4,'member'),($1,NULL,$5,'member')`,
       [workspace, human, goosy, lumen, secondLumen],
     );
@@ -491,7 +492,7 @@ describe('the inherited corner membership migration', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role,removed_at) VALUES
-       ($1,$2,$3,'owner',NULL),($1,$2,$4,'member',NULL),
+       ($1,$2,$3,'master',NULL),($1,$2,$4,'member',NULL),
        ($1,$2,$5,'member',NULL),($1,$6,$5,'member',now())`,
       [WORKSPACE, ROOM, OWNER, LATE_MEMBER, REMOVED_MEMBER, CORNER],
     );
@@ -517,7 +518,7 @@ describe('the inherited corner membership migration', () => {
       [CORNER],
     );
     expect(memberships.rows).toEqual([
-      { identity_id: OWNER, role: 'owner', removed_at: null, event_subscriptions: [] },
+      { identity_id: OWNER, role: 'master', removed_at: null, event_subscriptions: [] },
       {
         identity_id: LATE_MEMBER,
         role: 'member',
@@ -555,7 +556,7 @@ describe('the top-level shared Room role migration', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'owner'),($1,$5,$2,'owner')`,
+       ($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'master'),($1,$5,$2,'master')`,
       [workspace, member, room, corner, dm],
     );
 
@@ -569,9 +570,43 @@ describe('the top-level shared Room role migration', () => {
     expect(roles.rows).toEqual([
       { room_id: null, role: 'admin' },
       { room_id: room, role: 'admin' },
-      { room_id: corner, role: 'owner' },
-      { room_id: dm, role: 'owner' },
+      { room_id: corner, role: 'master' },
+      { room_id: dm, role: 'master' },
     ]);
+    database.close();
+  });
+});
+
+describe('the membership role owner→master migration', () => {
+  it('renames stored owner roles and refuses the old value afterwards', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    const workspace = '51111111-1111-4111-8111-111111111111';
+    const human = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Pat')`, [human]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [workspace]);
+    await database.query(`ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check`);
+    await database.query(
+      `ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK (role IN ('owner', 'admin', 'member'))`,
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`,
+      [workspace, human],
+    );
+
+    await expect(migrateMembershipRoleOwnerToMaster(database)).resolves.toBe(1);
+    expect(
+      (await database.query(`SELECT role FROM memberships WHERE identity_id=$1`, [human])).rows,
+    ).toEqual([{ role: 'master' }]);
+    await expect(migrateMembershipRoleOwnerToMaster(database)).resolves.toBe(0);
+    const other = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+    await expect(
+      database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [
+        workspace,
+        other,
+      ]),
+    ).rejects.toThrow();
     database.close();
   });
 });

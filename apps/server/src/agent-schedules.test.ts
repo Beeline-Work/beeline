@@ -34,8 +34,8 @@ async function fixture() {
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$6,'member'),
-      ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),($1,$5,$6,'member')`,
+      ($1,NULL,$2,'master'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$6,'member'),
+      ($1,$5,$2,'master'),($1,$5,$3,'member'),($1,$5,$4,'member'),($1,$5,$6,'member')`,
     [WORKSPACE, OWNER, MEMBER, AGENT, ROOM, OTHER_AGENT],
   );
   return database;

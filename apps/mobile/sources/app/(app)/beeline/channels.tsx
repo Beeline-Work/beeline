@@ -221,7 +221,7 @@ export default function BuzzChannels() {
     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
-    chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
+    chatList?.workspace.role === 'master' || chatList?.workspace.role === 'admin';
   const canLeaveRooms = chatList?.workspace.role === 'member';
   const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
 
@@ -308,7 +308,7 @@ export default function BuzzChannels() {
     const title = `${heading.sigil}${heading.name}`;
     Modal.alert(
       `Cannot leave ${title}`,
-      'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.',
+      'Workspace masters and admins cannot leave Rooms. Change your Workspace role first.',
     );
   }, []);
 

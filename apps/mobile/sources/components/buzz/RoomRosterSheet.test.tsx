@@ -326,7 +326,7 @@ describe('RoomRosterSheet', () => {
     const onRemove = vi.fn();
     const renderer = render(
       sheet({
-        memberByPubkey: new Map([[OX, { pubkey: OX, role: 'owner' }]]) as any,
+        memberByPubkey: new Map([[OX, { pubkey: OX, role: 'master' }]]) as any,
         onRemove,
       }),
     );

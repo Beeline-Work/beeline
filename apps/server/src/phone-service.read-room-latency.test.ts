@@ -86,7 +86,7 @@ describe('PhoneService.readRoom latency', () => {
     ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+       VALUES($1,NULL,$2,'master'),($1,$3,$2,'master')`,
       [WORKSPACE, VIEWER, ROOM],
     );
 
@@ -109,7 +109,7 @@ describe('PhoneService.readRoom latency', () => {
       );
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+         VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [WORKSPACE, corner, VIEWER, agent],
       );
     }

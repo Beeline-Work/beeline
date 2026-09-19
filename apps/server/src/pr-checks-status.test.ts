@@ -38,7 +38,7 @@ beforeEach(async () => {
   );
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [W]);
   await db.query(
-    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`,
+    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'master'),($1,$3,'member')`,
     [W, H, A],
   );
   await db.query(
@@ -69,7 +69,7 @@ beforeEach(async () => {
   for (const room of [R, C, AUTHOR]) {
     await db.query(
       `INSERT INTO memberships(room_id,identity_id,role,workspace_id)
-       VALUES($1,$2,'member',$4),($1,$3,'owner',$4)`,
+       VALUES($1,$2,'member',$4),($1,$3,'master',$4)`,
       [room, A, H, W],
     );
   }

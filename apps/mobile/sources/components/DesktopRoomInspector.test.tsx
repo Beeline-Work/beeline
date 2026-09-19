@@ -202,13 +202,13 @@ function room() {
       reviewerAgentId: agent.pubkey,
     },
     members: [
-      { identity: person, role: 'owner' },
+      { identity: person, role: 'master' },
       { identity: agent, role: 'member' },
     ],
     messages: [],
     latestAgentTurns: [],
     corners,
-    viewer: { identity: person, role: 'owner', permissions: { send: true, manage: true } },
+    viewer: { identity: person, role: 'master', permissions: { send: true, manage: true } },
     repositoryResolution: 'none',
     watchFilters: [],
   } as any;

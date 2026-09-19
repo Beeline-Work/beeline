@@ -47,6 +47,11 @@ import {
   type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
 import {
+  conversationHeldByHumanAuthority,
+  CORNER_HUMAN_HOLD_RULE,
+  workspaceRosterFromUnknown,
+} from './human-authority.js';
+import {
   AGENT_GRANT_KINDS,
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
@@ -1460,44 +1465,42 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
-  const [restore, conversation, roster, authority] = await Promise.all([
+  const [restore, conversation, roster, authority, configuration] = await Promise.all([
     daemonExecute('getCornerRestoreState', { cornerId }),
     // Newest page: a hold, an approval and a PR link are questions about where
-    // the corner stands NOW, and this scan is last-write-wins over the page.
+    // the corner stands NOW. Hold/resume ranking is server-derived identity,
+    // not last-human-wins over the page.
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
     daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
+    daemonExecute('getAgentConfiguration', { agentId, roomId: cornerId }),
   ]);
-  const humans = new Set(
-    Array.isArray(roster.members)
-      ? roster.members.flatMap((member) => {
-          if (!member || typeof member !== 'object' || Array.isArray(member)) return [];
-          const record = member as Record<string, unknown>;
-          return record.kind === 'human' && typeof record.identityId === 'string'
-            ? [record.identityId]
-            : [];
-        })
-      : [],
-  );
   const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
-  let held = false;
+  const ownerIdentityId =
+    configuration && typeof configuration === 'object' && !Array.isArray(configuration)
+      ? typeof (configuration as { ownerIdentityId?: unknown }).ownerIdentityId === 'string'
+        ? (configuration as { ownerIdentityId: string }).ownerIdentityId
+        : undefined
+      : undefined;
+  const items = Array.isArray(conversation.items) ? conversation.items : [];
+  const held = conversationHeldByHumanAuthority({
+    items,
+    roster: workspaceRosterFromUnknown(roster),
+    ownerIdentityId,
+    selfId: agentId,
+  });
   let pullRequest: unknown = args.pullRequest ?? lifecycle?.pr?.url;
   // An objective URL is a target hint only, never a check verdict.
   if (pullRequest === undefined && typeof restore.objective === 'string')
     pullRequest = restore.objective.match(
       /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/,
     )?.[0];
-  const items = Array.isArray(conversation.items) ? conversation.items : [];
   for (const item of items) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const message = item as Record<string, unknown>;
     const body = typeof message.body === 'string' ? message.body : '';
     const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
     if (url && args.pullRequest === undefined && !lifecycle?.pr?.url) pullRequest = url;
-    if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
-      if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
-      if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)) held = false;
-    }
   }
   const verdict =
     pullRequest !== undefined
@@ -1532,8 +1535,10 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'
       ? verdict.reviewerWake
       : undefined;
-  const mergeConditionsRule =
-    "Merge only when checks is passed, held is false, and approvalPending is false — then YOU merge it yourself with gh; the server never merges a corner's pull request and never sends a closing request of any kind, so waiting for one will wait forever. A local or gh checks result is not authorization on its own. approvalPending reflects only whether the reviewer's recorded PASS covers this exact head sha; it is not a hold on you merging once it is false. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
+  const mergeConditionsRule = [
+    "Merge only when checks is passed, held is false, and approvalPending is false — then YOU merge it yourself with gh; the server never merges a corner's pull request and never sends a closing request of any kind, so waiting for one will wait forever. A local or gh checks result is not authorization on its own. approvalPending reflects only whether the reviewer's recorded PASS covers this exact head sha; it is not a hold on you merging once it is false. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.",
+    CORNER_HUMAN_HOLD_RULE,
+  ].join(' ');
   return JSON.stringify({
     checks,
     reason,

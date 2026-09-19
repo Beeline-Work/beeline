@@ -9,22 +9,22 @@ import {
 } from './room-management';
 
 describe('Room management capabilities', () => {
-  it('exposes rename only to owners and admins', () => {
-    expect(canRenameRoom('owner')).toBe(true);
+  it('exposes rename only to masters and admins', () => {
+    expect(canRenameRoom('master')).toBe(true);
     expect(canRenameRoom('admin')).toBe(true);
     expect(canRenameRoom('member')).toBe(false);
     expect(canRenameRoom(null)).toBe(false);
   });
 
-  it('exposes repo set/change only to owners and admins', () => {
-    expect(canManageRoomRepository('owner')).toBe(true);
+  it('exposes repo set/change only to masters and admins', () => {
+    expect(canManageRoomRepository('master')).toBe(true);
     expect(canManageRoomRepository('admin')).toBe(true);
     expect(canManageRoomRepository('member')).toBe(false);
     expect(canManageRoomRepository(null)).toBe(false);
   });
 
-  it('shows delete only to owners and leave only to normal members', () => {
-    expect(roomLifecycleAction('owner')).toBe('delete');
+  it('shows delete only to masters and leave only to normal members', () => {
+    expect(roomLifecycleAction('master')).toBe('delete');
     expect(roomLifecycleAction('admin')).toBeNull();
     expect(roomLifecycleAction('member')).toBe('leave');
     expect(roomLifecycleAction(null)).toBeNull();
@@ -35,15 +35,15 @@ describe('Room management capabilities', () => {
     expect(canRemoveRoomParticipant(null, 'member', false)).toBe(false);
   });
 
-  it('keeps owner and peer-admin authority protected', () => {
-    expect(canRemoveRoomParticipant('admin', 'owner', false)).toBe(false);
+  it('keeps master and peer-admin authority protected', () => {
+    expect(canRemoveRoomParticipant('admin', 'master', false)).toBe(false);
     expect(canRemoveRoomParticipant('admin', 'admin', false)).toBe(false);
-    expect(canRemoveRoomParticipant('owner', 'admin', false)).toBe(true);
-    expect(canRemoveRoomParticipant('owner', 'member', true)).toBe(false);
+    expect(canRemoveRoomParticipant('master', 'admin', false)).toBe(true);
+    expect(canRemoveRoomParticipant('master', 'member', true)).toBe(false);
   });
 
   it('normalizes projection roles without granting unknown values authority', () => {
-    expect(normalizedRoomRole({ pubkey: 'a', role: 'owner' })).toBe('owner');
+    expect(normalizedRoomRole({ pubkey: 'a', role: 'master' })).toBe('master');
     expect(normalizedRoomRole({ pubkey: 'a', role: 'admin' })).toBe('admin');
     expect(normalizedRoomRole({ pubkey: 'a', role: 'unexpected' })).toBe('member');
     expect(normalizedRoomRole(undefined)).toBeNull();

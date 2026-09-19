@@ -56,7 +56,7 @@ export default function BuzzCommunityCreateOrJoin() {
     workspaceList?.workspaces.some(
       (workspace) =>
         workspace.id === activeCommunityId &&
-        (workspace.role === 'owner' || workspace.role === 'admin'),
+        (workspace.role === 'master' || workspace.role === 'admin'),
     ) ?? false;
 
   useEffect(() => {

@@ -62,7 +62,7 @@ describe('forward targets', () => {
   const workspace = {
     viewer: { identity: { pubkey: 'viewer', kind: 'human', name: 'Viewer' } },
     members: [
-      { identity: { pubkey: 'viewer', kind: 'human', name: 'Viewer' }, role: 'owner' },
+      { identity: { pubkey: 'viewer', kind: 'human', name: 'Viewer' }, role: 'master' },
       {
         identity: { pubkey: 'person-new', kind: 'human', name: 'New Person', handle: '@new' },
         role: 'member',

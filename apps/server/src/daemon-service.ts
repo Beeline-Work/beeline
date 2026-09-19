@@ -1089,7 +1089,7 @@ export class DaemonService {
       kind: 'human' | 'agent';
       name: string;
       handle: string | null;
-      role: 'owner' | 'admin' | 'member';
+      role: 'master' | 'admin' | 'member';
       owner_id: string | null;
       soul: {
         name?: string;
@@ -1334,7 +1334,7 @@ export class DaemonService {
     const row = (
       await this.database.query<{
         workspace_id: string;
-        role: 'owner' | 'admin' | 'member';
+        role: 'master' | 'admin' | 'member';
         kind: 'human' | 'agent';
         archived: boolean;
         access_policy: unknown;
@@ -1645,12 +1645,14 @@ export class DaemonService {
         commands: Array<{ name: string; description?: string }>;
         yolo_mode: boolean;
         reviewer_handle: string | null;
+        owner_id: string;
       }>(
         `SELECT a.soul,a.selected_model,a.selected_effort,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NOT NULL
                            AND reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
-                     THEN reviewer.handle END reviewer_handle
+                     THEN reviewer.handle END reviewer_handle,
+                a.owner_id
          FROM agents a
          LEFT JOIN rooms room ON room.id=$2
          LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
@@ -1669,6 +1671,7 @@ export class DaemonService {
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
       ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
+      ...(row?.owner_id ? { ownerIdentityId: row.owner_id } : {}),
     };
   }
   private async presence(input: Input<'getAgentPresence'>, agentId: string) {
@@ -3588,9 +3591,9 @@ export class DaemonService {
         [input.roomId, cornerId],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master')
          ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
-         DO UPDATE SET role='owner',removed_at=NULL`,
+         DO UPDATE SET role='master',removed_at=NULL`,
         [parent.workspace_id, cornerId, agentId],
       );
       await db.query(

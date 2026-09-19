@@ -1849,6 +1849,7 @@ describe('thin monolith corner turn', () => {
           commands: [],
           yoloMode: true,
           soul: { name: 'Terra', instructions: 'Steady, exact, and kind.' },
+          ownerIdentityId: 'captain',
         };
       }
       if (name === 'getWorkspaceRoster') {
@@ -1858,6 +1859,20 @@ describe('thin monolith corner turn', () => {
               identityId: runtime.agent.publicKey,
               kind: 'agent',
               name: 'Bee',
+              role: 'member',
+              soul: {
+                name: 'Terra',
+                instructions: 'Steady.',
+                avatarSeed: runtime.agent.publicKey,
+                authoredBy: 'captain',
+                updatedAt: 1,
+              },
+            },
+            {
+              identityId: 'captain',
+              kind: 'human',
+              name: 'Captain',
+              handle: 'lunchboxfortwo',
               role: 'member',
             },
             {
@@ -2010,6 +2025,8 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain('Corner objective:\nImplement the widget');
     expect(firstPrompt).toContain('Room members, and the exact spelling that tags each one:');
     expect(secondPrompt).toContain('Room members, and the exact spelling that tags each one:');
+    expect(firstPrompt).toContain('Your owner: @lunchboxfortwo');
+    expect(secondPrompt).toContain('Your owner: @lunchboxfortwo');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
     expect(secondPrompt).toContain('- @goosy-2 — Goosy (agent)');
     expect(sessionNew).toHaveBeenCalledWith(

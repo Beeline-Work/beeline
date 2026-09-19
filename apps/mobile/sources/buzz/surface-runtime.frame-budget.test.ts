@@ -90,7 +90,7 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
       members: [],
       viewer: {
         identity: { pubkey: 'b'.repeat(64), kind: 'human', name: 'Captain' },
-        role: 'owner',
+        role: 'master',
         permissions: { send: true, manage: true },
       },
       corners: [],

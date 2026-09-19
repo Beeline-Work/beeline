@@ -1,19 +1,19 @@
-import type { ChannelMember, ChannelRole, RoomView } from '@beeline/buzz-client';
+import type { MembershipRole, RoomView } from '@beeline/buzz-client';
 
 export type RoomLifecycleAction = 'delete' | 'leave' | null;
 
-export function normalizedRoomRole(member: ChannelMember | undefined): ChannelRole | null {
+export function normalizedRoomRole(member: { role?: string } | undefined): MembershipRole | null {
   if (!member) return null;
-  return member.role === 'owner' || member.role === 'admin' ? member.role : 'member';
+  return member.role === 'master' || member.role === 'admin' ? member.role : 'member';
 }
 
-export function roomLifecycleAction(role: ChannelRole | null): RoomLifecycleAction {
-  if (role === 'owner') return 'delete';
+export function roomLifecycleAction(role: MembershipRole | null): RoomLifecycleAction {
+  if (role === 'master') return 'delete';
   return role === 'member' ? 'leave' : null;
 }
 
-export function canRenameRoom(role: ChannelRole | null): boolean {
-  return role === 'owner' || role === 'admin';
+export function canRenameRoom(role: MembershipRole | null): boolean {
+  return role === 'master' || role === 'admin';
 }
 
 /**
@@ -21,8 +21,8 @@ export function canRenameRoom(role: ChannelRole | null): boolean {
  * (`packages/buzz-client/src/room-repository.ts`) — the write is rejected
  * either way, but the set/change UI must not even offer itself to a non-admin.
  */
-export function canManageRoomRepository(role: ChannelRole | null): boolean {
-  return role === 'owner' || role === 'admin';
+export function canManageRoomRepository(role: MembershipRole | null): boolean {
+  return role === 'master' || role === 'admin';
 }
 
 export type RoomRepositoryConfirmation = 'confirmed' | 'pending' | 'contradicted';
@@ -75,11 +75,11 @@ export async function confirmRoomRepositoryLink(
 }
 
 export function canRemoveRoomParticipant(
-  viewerRole: ChannelRole | null,
-  targetRole: ChannelRole | null,
+  viewerRole: MembershipRole | null,
+  targetRole: MembershipRole | null,
   isSelf: boolean,
 ): boolean {
-  if (isSelf || targetRole === 'owner') return false;
-  if (viewerRole === 'owner') return targetRole === 'admin' || targetRole === 'member';
+  if (isSelf || targetRole === 'master') return false;
+  if (viewerRole === 'master') return targetRole === 'admin' || targetRole === 'member';
   return viewerRole === 'admin' && targetRole === 'member';
 }

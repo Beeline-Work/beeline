@@ -70,6 +70,7 @@ import {
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
 import { roomMentionDirectory } from './monolith-room-turn.js';
+import { CORNER_HUMAN_HOLD_RULE, humanAuthorityContext } from './human-authority.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -439,6 +440,8 @@ export class MonolithCornerTurnLoop {
   private yoloMode = false;
   /** The live parent-Room reviewer baked into the current session. */
   private reviewerHandle?: string;
+  /** Server-derived pairing owner; compared with roster roles for instruction ranking. */
+  private ownerIdentityId?: string;
   /** The role-specific second-chance instruction for this session. */
   private cornerTurnEndNudge = CORNER_DELIVERY_NUDGE;
   /** Repository state already given a delivery reminder, until that state changes. */
@@ -593,6 +596,7 @@ export class MonolithCornerTurnLoop {
     });
     this.yoloMode = configuration.yoloMode;
     this.reviewerHandle = configuration.reviewerHandle;
+    this.ownerIdentityId = configuration.ownerIdentityId;
     const opener = this.options.openedBy
       ? roster.members.find((member) => member.identityId === this.options.openedBy)
       : undefined;
@@ -813,7 +817,7 @@ export class MonolithCornerTurnLoop {
                 : [
                     configuration.reviewerHandle
                       ? `Once the pull request exists, reply with its full URL and end the turn; do not tag the reviewer, check, or wait for CI.`
-                      : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Only a later explicit human resume clears a hold.',
+                      : `Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. ${CORNER_HUMAN_HOLD_RULE}`,
                     CORNER_AUTHOR_CONTRACT,
                     selfReviewerInstruction ??
                       cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
@@ -1005,6 +1009,7 @@ export class MonolithCornerTurnLoop {
                     'New in the corner since your last turn (the earlier transcript is already in this session):',
                   ),
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  humanAuthorityContext(roster, this.agent.publicKey, this.ownerIdentityId),
                   [
                     `Newest trigger:\n${trigger}`,
                     ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),

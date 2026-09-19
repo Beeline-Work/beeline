@@ -648,8 +648,8 @@ export class GitHubOperations {
       ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. approvalPending is false; merge once checks pass.`
       : configuredReviewerId
         ? reviewerWake.status === 'unreachable'
-          ? `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
-          : `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
+          ? `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room master/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
+          : `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room master/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
         : 'This Room has no configured reviewer, so no agent approval gates this pull request.';
     return {
       checks,
@@ -677,7 +677,7 @@ export class GitHubOperations {
            repository.repository_id,repository.installation_id,repository.full_name
          FROM rooms corner
          JOIN memberships manager ON manager.room_id=corner.id AND manager.identity_id=$2
-           AND manager.role IN ('owner','admin') AND manager.removed_at IS NULL
+           AND manager.role IN ('master','admin') AND manager.removed_at IS NULL
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
          JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
@@ -893,7 +893,7 @@ export class GitHubOperations {
          SELECT membership.identity_id FROM memberships membership
          JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
          WHERE membership.room_id=corner.id AND membership.removed_at IS NULL
-         ORDER BY (membership.role='owner') DESC,membership.joined_at LIMIT 1
+         ORDER BY (membership.role='master') DESC,membership.joined_at LIMIT 1
        )owner ON true
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND parent.github_events_enabled AND fact.feature_branch=$3

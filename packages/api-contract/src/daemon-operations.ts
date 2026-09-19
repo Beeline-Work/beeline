@@ -5,7 +5,7 @@ import type {
   AgentGrantStatus,
   CommandGrantScript,
 } from './agent-grants.js';
-import type { CornerLifecycleView } from './phone-types.js';
+import type { CornerLifecycleView, MembershipRole } from './phone-types.js';
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type {
@@ -290,7 +290,7 @@ export type WorkspaceRosterResult = {
     readonly kind: 'human' | 'agent';
     readonly name: string;
     readonly handle?: string;
-    readonly role: 'owner' | 'admin' | 'member';
+    readonly role: MembershipRole;
     readonly soul?: {
       readonly name: string;
       readonly instructions: string;
@@ -344,7 +344,7 @@ export type DaemonAttachment = {
 export type RoomConversationResult = RoomInboxResult;
 export type RoomAuthorityResult = {
   readonly workspaceId: string;
-  readonly role?: 'owner' | 'admin' | 'member';
+  readonly role?: MembershipRole;
   readonly member: boolean;
   readonly principalKind?: 'human' | 'agent';
   readonly archived: boolean;
@@ -425,6 +425,12 @@ export type AgentConfigurationResult = {
   readonly yoloMode: boolean;
   /** Live reviewer configured on a corner's parent Room; absent for self-review. */
   readonly reviewerHandle?: string;
+  /**
+   * The human who paired this agent (`agents.owner_id`). Absent only from a
+   * server older than this field; helpers then fall back to roster
+   * `soul.authoredBy`, which is the same column.
+   */
+  readonly ownerIdentityId?: string;
 };
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';

@@ -48,7 +48,7 @@ describe('default Workspace seed', () => {
       [CAPTAIN, CREW, LEAVER, AGENT],
     );
     await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'master')`,
       [DEFAULT_WORKSPACE_ID, CAPTAIN],
     );
     await seedDefaultWorkspace(db);
@@ -75,7 +75,7 @@ describe('default Workspace seed', () => {
       [WELCOME_ROOM_ID],
     );
     expect(members.rows).toEqual([
-      { identity_id: CAPTAIN, role: 'owner', removed: false },
+      { identity_id: CAPTAIN, role: 'master', removed: false },
       { identity_id: CREW, role: 'member', removed: false },
       { identity_id: LEAVER, role: 'member', removed: true },
       { identity_id: MISSING, role: 'member', removed: false },
@@ -86,7 +86,7 @@ describe('default Workspace seed', () => {
       [DEFAULT_WORKSPACE_ID],
     );
     expect(workspaceMembers.rows).toEqual([
-      { identity_id: CAPTAIN, role: 'owner' },
+      { identity_id: CAPTAIN, role: 'master' },
       { identity_id: CREW, role: 'member' },
       { identity_id: LEAVER, role: 'member' },
       { identity_id: AGENT, role: 'member' },
@@ -131,7 +131,7 @@ describe('default Workspace seed', () => {
       [HIDDEN],
     );
     await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'master')`,
       [DEFAULT_WORKSPACE_ID, CAPTAIN],
     );
     await seedDefaultWorkspace(db);

@@ -19,7 +19,7 @@ const room: RoomView = {
   repositoryResolution: 'none',
   viewer: {
     identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },
-    role: 'owner',
+    role: 'master',
     permissions: { send: true, manage: true },
   },
   watchFilters: [],

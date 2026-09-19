@@ -53,7 +53,7 @@ describe('PhoneService agent removal', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member'),($1,$5,$3,'member')`,
+       VALUES($1,NULL,$2,'master'),($1,NULL,$3,'member'),($1,$4,$2,'master'),($1,$4,$3,'member'),($1,$5,$3,'member')`,
       [WORKSPACE, OWNER, AGENT, ROOM, CORNER],
     );
     await database.query(

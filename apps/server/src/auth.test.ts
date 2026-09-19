@@ -114,7 +114,7 @@ describe('opaque token ceremony', () => {
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Tubing Crew')`, [tubingCrew]);
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner')`,
+       VALUES($1,NULL,$2,'master')`,
       [tubingCrew, captain],
     );
     const auth = new TokenAuth(db, async () => ({
@@ -142,7 +142,7 @@ describe('opaque token ceremony', () => {
       [captain],
     );
     expect(memberships.rows).toEqual([
-      { workspace_id: tubingCrew, identity_id: captain, role: 'owner' },
+      { workspace_id: tubingCrew, identity_id: captain, role: 'master' },
       {
         workspace_id: 'bee11e00-0000-4000-8000-000000000001',
         identity_id: captain,

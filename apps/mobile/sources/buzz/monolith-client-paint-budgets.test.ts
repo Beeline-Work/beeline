@@ -96,7 +96,7 @@ function deckView(): ChatListView {
       id: WORKSPACE,
       name: 'Paint Workspace',
       visibility: 'invite-only',
-      role: 'owner',
+      role: 'master',
       updatedAt: 1_700_000_000,
     },
     chats,
@@ -120,7 +120,7 @@ function transcriptView(): RoomView {
     members: [
       {
         identity: { pubkey: VIEWER, kind: 'human', name: 'Captain', handle: 'captain' },
-        role: 'owner',
+        role: 'master',
       },
     ],
     latestAgentTurns: [],
@@ -128,7 +128,7 @@ function transcriptView(): RoomView {
     repositoryResolution: 'none',
     viewer: {
       identity: { pubkey: VIEWER, kind: 'human', name: 'Captain', handle: 'captain' },
-      role: 'owner',
+      role: 'master',
       permissions: { send: true, manage: true },
     },
     watchFilters: [{ kinds: [9], '#h': [ROOM] }],

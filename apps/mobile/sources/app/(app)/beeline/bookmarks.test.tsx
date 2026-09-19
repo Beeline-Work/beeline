@@ -116,7 +116,7 @@ const parentRoom = {
       stateAt: 2,
     },
   ],
-  viewer: { identity: person, role: 'owner', permissions: { send: true, manage: true } },
+  viewer: { identity: person, role: 'master', permissions: { send: true, manage: true } },
   repositoryResolution: 'none',
   watchFilters: [],
 };

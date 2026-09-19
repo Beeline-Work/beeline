@@ -208,14 +208,14 @@ export class PushDeliveryLoop {
                 AND COALESCE(m.card->>'status','pending')='pending'
                 AND (
                   m.card->'requester'->>'pubkey'=m.push_identity_id
-                  OR m.push_role IN ('owner','admin')
+                  OR m.push_role IN ('master','admin')
                 )
               )
               -- A grant request names its owner in the card, not in its sentence.
               OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=m.push_identity_id)
               -- A connector offer names the person it is addressed to (R5).
               OR (m.card_type='connector-offer' AND m.card->'addressee'->>'pubkey'=m.push_identity_id)
-              OR (m.card_type='target-branch' AND m.push_role IN ('owner','admin'))
+              OR (m.card_type='target-branch' AND m.push_role IN ('master','admin'))
               OR (
                 m.card_type='choice'
                 AND COALESCE(m.card->>'status','open')='open'

@@ -19,7 +19,7 @@ import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
-import { isWorkspaceOwnerRole } from '@/buzz/workspace-role';
+import { isWorkspaceMasterRole } from '@/buzz/workspace-role';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import {
   HullActionSheetCancel,
@@ -92,7 +92,7 @@ export default function WorkspaceSettings() {
 
   const workspace = workspaceView?.workspace;
   const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
-  const isWorkspaceOwner = isWorkspaceOwnerRole(workspaceView?.viewer.role);
+  const isWorkspaceMaster = isWorkspaceMasterRole(workspaceView?.viewer.role);
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
     const joinedRooms = new Map(
@@ -366,7 +366,7 @@ export default function WorkspaceSettings() {
           <Text style={styles.deniedGlyph}>⌁</Text>
           <Text style={styles.deniedTitle}>Admin access required</Text>
           <Text style={styles.deniedBody}>
-            Only this {WORKSPACE_LABEL}&apos;s owners and admins can see or change its settings.
+            Only this {WORKSPACE_LABEL}&apos;s masters and admins can see or change its settings.
           </Text>
           {error && <Text style={styles.errorText}>{error}</Text>}
         </View>
@@ -524,7 +524,7 @@ export default function WorkspaceSettings() {
             })}
           </View>
 
-          {isWorkspaceOwner && (
+          {isWorkspaceMaster && (
             <View style={styles.section} testID="workspace-danger-zone">
               <Text style={styles.sectionLabel}>Danger zone</Text>
               <SettingsRow

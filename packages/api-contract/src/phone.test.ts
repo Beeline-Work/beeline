@@ -31,7 +31,7 @@ describe('phone contract', () => {
       latestAgentTurns: [],
       corners: [],
       repositoryResolution: 'none',
-      viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
+      viewer: { identity, role: 'master', permissions: { send: true, manage: true } },
       watchFilters: [],
     };
     expect(isRoomView(room)).toBe(true);
@@ -167,7 +167,7 @@ describe('phone contract', () => {
     };
     const base = {
       room: header,
-      viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
+      viewer: { identity, role: 'master', permissions: { send: true, manage: true } },
       watchFilters: [],
     };
     for (const state of ['working', 'waiting', 'review', 'archived'] as const) {

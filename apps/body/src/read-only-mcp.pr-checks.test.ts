@@ -37,7 +37,22 @@ beforeEach(() => {
         : name === 'getRoomConversation'
           ? { items }
           : name === 'getWorkspaceRoster'
-            ? { members: [{ kind: 'human', identityId: 'human' }] }
+            ? {
+                members: [
+                  {
+                    kind: 'agent',
+                    identityId: 'agent',
+                    role: 'member',
+                    soul: { authoredBy: 'owner' },
+                  },
+                  { kind: 'human', identityId: 'human', role: 'member' },
+                  { kind: 'human', identityId: 'owner', handle: 'captain', role: 'member' },
+                  { kind: 'human', identityId: 'admin', handle: 'ada', role: 'admin' },
+                  { kind: 'human', identityId: 'member-b', handle: 'sam', role: 'member' },
+                ],
+              }
+            : name === 'getAgentConfiguration'
+              ? { commands: [], yoloMode: false, ownerIdentityId: 'owner' }
             : name === 'getRoomAuthority'
               ? { archived: false }
               : name === 'getPrChecksStatus'
@@ -118,6 +133,48 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
       held: false,
       approvalPending: true,
     });
+  });
+  it('lets an agent-owner command override a member hold', async () => {
+    items = [
+      { authorId: 'human', body: 'hold' },
+      { authorId: 'owner', body: 'proceed' },
+    ];
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({ held: false });
+  });
+  it('lets a workspace admin command override a member hold', async () => {
+    items = [
+      { authorId: 'human', body: 'hold' },
+      { authorId: 'admin', body: 'go ahead' },
+    ];
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({ held: false });
+  });
+  it('keeps a member hold against another member command', async () => {
+    items = [
+      { authorId: 'human', body: 'hold' },
+      { authorId: 'member-b', body: 'proceed' },
+    ];
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({ held: true });
+  });
+  it('ignores a member hold after the agent owner already ordered the action', async () => {
+    items = [
+      { authorId: 'owner', body: 'merge now' },
+      { authorId: 'human', body: 'hold' },
+    ];
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({ held: false });
+  });
+  it('ignores a member resume of a higher-tier hold', async () => {
+    items = [
+      { authorId: 'owner', body: 'hold' },
+      { authorId: 'human', body: 'proceed' },
+    ];
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({ held: true });
+  });
+  it('names the ranked hold rule beside the merge-conditions rule', async () => {
+    const result = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(result.rule).toContain('A member cannot stop an action your owner ordered');
+    expect(result.rule).not.toContain('agentOwner');
+    expect(result.rule).not.toContain('workspaceRole');
+    expect(result.rule).toContain('Merge only when checks is passed');
   });
   it('passes through the named reviewer and folds the server rule into the merge-conditions rule', async () => {
     const result = JSON.parse(await prChecksStatus({ pullRequest: 614 }));

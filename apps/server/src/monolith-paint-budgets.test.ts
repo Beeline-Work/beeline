@@ -37,7 +37,7 @@ describe('monolith hot-path PhoneService read budgets (deck + transcript)', () =
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+         ($1,NULL,$2,'master'),($1,$3,$2,'master')`,
       [WORKSPACE, VIEWER, ROOM],
     );
     for (let i = 0; i < 40; i += 1) {

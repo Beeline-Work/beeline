@@ -96,7 +96,7 @@ export interface WritePermissionCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'master' | 'admin' | 'member' | null;
   actionId: string | null;
   targetBranch?: string;
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
@@ -123,7 +123,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
     !viewerIsAgent &&
     (viewerPubkey === permission.requesterPubkey ||
       viewerRole === 'admin' ||
-      viewerRole === 'owner');
+      viewerRole === 'master');
   const footerNote = pending
     ? !permission.repository
       ? 'missing target'
@@ -140,7 +140,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
           ? 'corner could not open'
           : 'request expired';
   const actions: TranscriptCardAction[] =
-    pending && canDecide && permission.repository && (!squireSpending || viewerRole === 'owner')
+    pending && canDecide && permission.repository && (!squireSpending || viewerRole === 'master')
       ? [
           {
             label: 'Deny',
@@ -197,7 +197,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
       }
       body={
         squireSpending
-          ? 'Trusty Squire stays in its vault-backed process. Only the Room owner can confirm this spending or checkout-capable action.'
+          ? 'Trusty Squire stays in its vault-backed process. Only the Room master can confirm this spending or checkout-capable action.'
           : permission.repository
             ? 'Opening a corner gives the agent a branch, not merge authority. A person still approves the merge.'
             : 'This write request is missing its repository target and cannot be allowed.'
@@ -222,7 +222,7 @@ export interface GrantRequestCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'master' | 'admin' | 'member' | null;
   /** The grant whose decision is in flight. */
   actionId: string | null;
   onDecision(grantId: string, decision: GrantDecision): void;
@@ -254,7 +254,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   const agentName = agent ? display.name : request.agent.name;
   const canDecide =
     !viewerIsAgent &&
-    (viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+    (viewerPubkey === request.owner.pubkey || viewerRole === 'admin' || viewerRole === 'master');
   const anyPending = request.grants.some((grant) => grant.status === 'pending');
   return (
     <View testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}>
@@ -342,7 +342,7 @@ export interface ConnectorOfferCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | null;
+  viewerRole: 'master' | 'admin' | 'member' | null;
   /** The offer whose acceptance is in flight. */
   actionId: string | null;
   onAccept(offerId: string): void;
@@ -378,7 +378,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   const pending = offer.status === 'pending';
   const canAccept =
     !viewerIsAgent &&
-    (viewerPubkey === offer.addressee.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+    (viewerPubkey === offer.addressee.pubkey || viewerRole === 'admin' || viewerRole === 'master');
   const busy = actionId === offer.offerId;
   const actions: TranscriptCardAction[] =
     pending && canAccept

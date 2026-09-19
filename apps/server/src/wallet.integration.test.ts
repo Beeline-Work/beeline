@@ -44,7 +44,7 @@ describe('wallet over the fake CDP seam', () => {
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
+       VALUES($1,NULL,$2,'master'),($1,NULL,$3,'member')`,
       [WORKSPACE, HUMAN, HELPER],
     );
     auth = new TokenAuth(database, async (proof) => {

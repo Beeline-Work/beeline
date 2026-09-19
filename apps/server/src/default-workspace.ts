@@ -17,7 +17,7 @@ import { joinWorkspaceMembersToPublicRoom } from './membership-join.js';
  * through `joinRooms`, which announces the Workspace arrival in each existing
  * person's read-only `@system` DM and — where an agent member of a projected
  * Room subscribed to `joined` — as that Room's subscribable join event.
- * Workspace owners/admins manage `#welcome` with the same role.
+ * Workspace masters/admins manage `#welcome` with the same role.
  */
 export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void> {
   await database.transaction(async (transaction) => {
@@ -29,7 +29,7 @@ export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void>
       `INSERT INTO rooms(id,workspace_id,created_by,name,about,visibility)
        SELECT $1,$2,
          (SELECT identity_id FROM memberships
-          WHERE workspace_id=$2 AND room_id IS NULL AND role='owner' AND removed_at IS NULL
+          WHERE workspace_id=$2 AND room_id IS NULL AND role='master' AND removed_at IS NULL
           ORDER BY joined_at,id LIMIT 1),
          $3,$4,'public'
        ON CONFLICT(id) DO NOTHING`,
@@ -37,12 +37,12 @@ export async function seedDefaultWorkspace(database: SqlDatabase): Promise<void>
     );
     await transaction.query(`UPDATE rooms SET visibility='public' WHERE id=$1`, [WELCOME_ROOM_ID]);
     await transaction.query(
-      `UPDATE rooms SET created_by=owner.identity_id
+      `UPDATE rooms SET created_by=master.identity_id
        FROM (
          SELECT identity_id FROM memberships
-         WHERE workspace_id=$2 AND room_id IS NULL AND role='owner' AND removed_at IS NULL
+         WHERE workspace_id=$2 AND room_id IS NULL AND role='master' AND removed_at IS NULL
          ORDER BY joined_at,id LIMIT 1
-       ) owner
+       ) master
        WHERE rooms.id=$1 AND rooms.created_by IS NULL`,
       [WELCOME_ROOM_ID, DEFAULT_WORKSPACE_ID],
     );

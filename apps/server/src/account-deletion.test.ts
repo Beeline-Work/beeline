@@ -66,8 +66,8 @@ describe('deleteAccount', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
-         ($1,$4,$2,'owner'),($1,$4,$3,'member'),($1,$4,$5,'member'),
+         ($1,NULL,$2,'master'),($1,NULL,$3,'member'),
+         ($1,$4,$2,'master'),($1,$4,$3,'member'),($1,$4,$5,'member'),
          ($1,$6,$2,'member'),($1,$6,$3,'member'),
          ($1,$7,$2,'member'),($1,$7,$5,'member')`,
       [WORKSPACE, OWNER, PARTNER, ROOM, AGENT, DM_HUMAN, DM_AGENT],
@@ -297,7 +297,7 @@ describe('deleteAccount', () => {
 
     // Sole surviving owner succession: the partner now owns the Workspace.
     await expectRowCount(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role='owner'`,
+      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role='master'`,
       [WORKSPACE, PARTNER],
       1,
     );

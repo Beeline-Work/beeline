@@ -56,7 +56,7 @@ export interface LegacyMembership {
   workspaceId: string;
   roomId?: string;
   identityId: string;
-  role: 'owner' | 'admin' | 'member';
+  role: 'master' | 'admin' | 'member';
   removed: boolean;
   generation?: number;
   identity?: Pick<LegacyIdentity, 'kind' | 'name' | 'handle' | 'avatar'>;
@@ -910,7 +910,7 @@ export async function readOldPostgresSnapshot(
     const memberRows = await database.query<{
       channel_id: string;
       identity_id: string;
-      role: 'owner' | 'admin' | 'member';
+      role: 'master' | 'admin' | 'member';
       removed: boolean;
       joined_at: Date;
       identity_name: string | null;

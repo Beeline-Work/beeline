@@ -302,7 +302,7 @@ export class RoomIndexer {
         ...(text(workspaceData.about) ? { about: text(workspaceData.about) } : {}),
         createdAt: integer(workspaceData.createdAt),
       },
-      ...(role === 'owner' || role === 'admin'
+      ...(role === 'master' || role === 'admin'
         ? {
             managerSettings: {
               visibility: item.visibility,
@@ -323,7 +323,7 @@ export class RoomIndexer {
       viewer: {
         identity: currentViewer?.identity ?? identity({ pubkey: viewerPubkey }),
         role,
-        permissions: { send: true, manage: role === 'owner' || role === 'admin' },
+        permissions: { send: true, manage: role === 'master' || role === 'admin' },
       },
       watchFilters: [
         { kinds: [...DURABLE_KINDS], '#h': [workspaceId] },
@@ -389,7 +389,7 @@ export class RoomIndexer {
           ...agentData,
           ...(soul?.avatar ? { avatar: soul.avatar } : {}),
         }),
-        role: agentData.role === 'owner' || agentData.role === 'admin' ? agentData.role : 'member',
+        role: agentData.role === 'master' || agentData.role === 'admin' ? agentData.role : 'member',
       },
       ...(rowData(rows, 'owner') ? { owner: identity(rowData(rows, 'owner')!) } : {}),
       ...(soul ? { soul } : {}),
@@ -620,12 +620,12 @@ export class RoomIndexer {
       corners,
       viewer: {
         identity: identity({ pubkey: roomData.viewerPubkey }),
-        role: (roomData.viewerRole === 'owner' || roomData.viewerRole === 'admin'
+        role: (roomData.viewerRole === 'master' || roomData.viewerRole === 'admin'
           ? roomData.viewerRole
-          : 'member') as 'owner' | 'admin' | 'member',
+          : 'member') as 'master' | 'admin' | 'member',
         permissions: {
           send: roomData.archived !== true,
-          manage: roomData.viewerRole === 'owner' || roomData.viewerRole === 'admin',
+          manage: roomData.viewerRole === 'master' || roomData.viewerRole === 'admin',
         },
       },
       watchFilters: [

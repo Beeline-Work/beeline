@@ -221,7 +221,7 @@ export type WorkspaceMemberDisplayItem = {
   avatarUrl?: string;
   /** The chosen face id; absent → derived from the pubkey. */
   face?: string;
-  role?: 'owner' | 'admin' | 'member';
+  role?: 'master' | 'admin' | 'member';
 };
 
 /** Presentation-only row. It is recomputed from server DTO partitions and is never persisted. */

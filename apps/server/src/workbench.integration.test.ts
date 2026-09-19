@@ -53,7 +53,7 @@ describe('workbench connectors', () => {
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$5,'member')`,
+       VALUES($1,NULL,$2,'master'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$5,'member')`,
       [
         WORKSPACE,
         HUMAN,

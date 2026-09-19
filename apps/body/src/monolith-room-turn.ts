@@ -58,6 +58,7 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE, SOUL_HOUSE_RULE } from './response-directives.js';
+import { humanAuthorityContext } from './human-authority.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
@@ -311,6 +312,8 @@ export class MonolithRoomTurnLoop {
   private pinnedProviderOverride?: string;
   private busy = false;
   private turnInstructionPrefix = '';
+  /** Server-derived pairing owner; compared with roster roles for instruction ranking. */
+  private ownerIdentityId?: string;
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
@@ -514,6 +517,7 @@ export class MonolithRoomTurnLoop {
       this.repositoryState(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
+    this.ownerIdentityId = configuration.ownerIdentityId;
     const fingerprint = sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
@@ -914,6 +918,7 @@ export class MonolithRoomTurnLoop {
                   ),
                   grantDecision ? resumePrompt(item) : '',
                   roomMentionDirectory(roster, this.agent.publicKey),
+                  humanAuthorityContext(roster, this.agent.publicKey, this.ownerIdentityId),
                   (corners.corners ?? []).some((corner) => !corner.archived)
                     ? `Current corners you belong to (use the exact cornerId with steer_corner):\n${JSON.stringify(
                         (corners.corners ?? []).filter((corner) => !corner.archived),

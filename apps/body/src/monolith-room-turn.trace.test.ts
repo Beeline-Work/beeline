@@ -95,7 +95,7 @@ async function runTurns(options: {
       return {
         members: [
           { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
-          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'master' },
         ],
       };
     }

@@ -70,8 +70,8 @@ describe('addressed-message routing and claim scaling', () => {
     ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
-       ($1,$4,$2,'owner'),($1,$4,$3,'member')`,
+       ($1,NULL,$2,'master'),($1,NULL,$3,'member'),
+       ($1,$4,$2,'master'),($1,$4,$3,'member')`,
       [WORKSPACE, HUMAN, TARGET, BASE_ROOM],
     );
     await database.query(`
@@ -151,7 +151,7 @@ describe('addressed-message routing and claim scaling', () => {
       ]);
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+         ($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [WORKSPACE, room, HUMAN, TARGET],
       );
     }

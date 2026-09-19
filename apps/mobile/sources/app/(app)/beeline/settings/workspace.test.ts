@@ -165,7 +165,7 @@ beforeEach(() => {
 });
 
 function workspaceView(
-  role: 'owner' | 'admin' | 'member' = 'owner',
+  role: 'master' | 'admin' | 'member' = 'master',
   avatar?: string,
   rooms?: Array<{
     id: string;
@@ -185,7 +185,7 @@ function workspaceView(
       createdAt: 1,
       updatedAt: 1,
     },
-    ...(role === 'owner' || role === 'admin'
+    ...(role === 'master' || role === 'admin'
       ? {
           managerSettings: {
             visibility: 'invite-only' as const,
@@ -237,7 +237,7 @@ function chatListView(chats: ReturnType<typeof room>[] = []) {
       id: 'workspace-1',
       name: 'Hull',
       visibility: 'invite-only',
-      role: 'owner',
+      role: 'master',
       updatedAt: 1,
     },
     chats,
@@ -266,7 +266,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findAllByProps({ testID: 'workspace-overview-settings' })).toHaveLength(0);
   });
 
-  it('loads every scoped settings section for a Workspace owner', async () => {
+  it('loads every scoped settings section for a Workspace master', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
@@ -280,7 +280,7 @@ describe('Workspace Settings authority', () => {
     const pictureUrl = 'https://example.test/media/canonical.png';
     avatarUpload.pickAndUploadAvatar.mockResolvedValue(pictureUrl);
     client.setCommunityAvatar.mockImplementation(async () => {
-      roomViews.workspace.mockResolvedValue(workspaceView('owner', pictureUrl));
+      roomViews.workspace.mockResolvedValue(workspaceView('master', pictureUrl));
     });
     const renderer = await render();
 
@@ -556,7 +556,7 @@ describe('Workspace Settings authority', () => {
     expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });
 
-  it('shows the delete row only to the Workspace owner', async () => {
+  it('shows the delete row only to the Workspace master', async () => {
     const ownerRenderer = await render();
     expect(ownerRenderer.root.findByProps({ testID: 'workspace-delete-row' })).toBeDefined();
 

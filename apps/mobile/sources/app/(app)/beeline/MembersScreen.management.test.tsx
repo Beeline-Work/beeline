@@ -250,11 +250,11 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-function member(pubkey: string, name: string, role: 'owner' | 'admin' | 'member') {
+function member(pubkey: string, name: string, role: 'master' | 'admin' | 'member') {
   return { identity: { pubkey, kind: 'human', name, handle: name.toLowerCase() }, role };
 }
 
-function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
+function baseWorkspace(viewerRole: 'master' | 'admin' = 'master') {
   return {
     workspace: {
       id: WORKSPACE,
@@ -266,7 +266,7 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
     },
     members: [
       member(VIEWER, 'Viewer', viewerRole),
-      member(OWNER, 'Captain', 'owner'),
+      member(OWNER, 'Captain', 'master'),
       member(MEMBER, 'Builder', 'member'),
     ],
     agents: [
@@ -459,7 +459,7 @@ describe('Members workspace management', () => {
     expect(selfRow.props.disabled).toBe(true);
     expect(selfRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
       '@viewer',
-      'owner',
+      'master',
     ]);
   });
 
@@ -507,12 +507,12 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: `member-${MEMBER}-identity` })).toHaveLength(0);
   });
 
-  it('offers an admin no removal of an owner or another admin', async () => {
+  it('offers an admin no removal of a master or another admin', async () => {
     state.workspace = {
       ...baseWorkspace('admin'),
       members: [
         member(VIEWER, 'Viewer', 'admin'),
-        member(OWNER, 'Captain', 'owner'),
+        member(OWNER, 'Captain', 'master'),
         member(MEMBER, 'Builder', 'admin'),
       ],
     };
@@ -525,7 +525,7 @@ describe('Members workspace management', () => {
     expect(client.removeMember).not.toHaveBeenCalled();
   });
 
-  it('lets an admin change a member role but exposes no editor for an owner', async () => {
+  it('lets an admin change a member role but exposes no editor for a master', async () => {
     state.workspace = baseWorkspace('admin');
     const renderer = await render();
 
@@ -533,7 +533,7 @@ describe('Members workspace management', () => {
       true,
     );
     await press(renderer, `member-${MEMBER}-identity`);
-    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-owner` }).props.disabled).toBe(
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-master` }).props.disabled).toBe(
       true,
     );
     await press(renderer, `member-${MEMBER}-admin`);
@@ -732,8 +732,8 @@ describe('Members workspace management', () => {
     ).not.toContain('›');
   });
 
-  it('keeps agent rows clickable with their chevron for admin and owner viewers', async () => {
-    for (const role of ['admin', 'owner'] as const) {
+  it('keeps agent rows clickable with their chevron for admin and master viewers', async () => {
+    for (const role of ['admin', 'master'] as const) {
       state.workspace = baseWorkspace(role);
       const renderer = await render();
       const row = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });

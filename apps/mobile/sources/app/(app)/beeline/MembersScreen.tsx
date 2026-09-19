@@ -48,7 +48,7 @@ async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
 }
 
-type WorkspaceRole = 'owner' | 'admin' | 'member';
+type WorkspaceRole = 'master' | 'admin' | 'member';
 type MembersAction =
   | 'invite-person'
   | 'pair-agent'
@@ -88,12 +88,12 @@ function canChangeRole(
   targetRole: WorkspaceRole,
 ): boolean {
   if (viewerPubkey === targetPubkey) return false;
-  if (viewerRole === 'owner') return true;
-  return viewerRole === 'admin' && targetRole !== 'owner';
+  if (viewerRole === 'master') return true;
+  return viewerRole === 'admin' && targetRole !== 'master';
 }
 
 function canAssignRole(viewerRole: WorkspaceRole, role: WorkspaceRole): boolean {
-  return viewerRole === 'owner' || (viewerRole === 'admin' && role !== 'owner');
+  return viewerRole === 'master' || (viewerRole === 'admin' && role !== 'master');
 }
 
 function ownerByline(
@@ -103,7 +103,7 @@ function ownerByline(
 }
 
 const ROLE_LABELS: Record<WorkspaceRole, string> = {
-  owner: 'Owner',
+  master: 'Master',
   admin: 'Admin',
   member: 'Member',
 };
@@ -843,7 +843,7 @@ export default function BuzzMembers() {
                           style={styles.rolePicker}
                           testID={`member-${member.identity.pubkey}-roles`}
                         >
-                          {(['member', 'admin', 'owner'] as const).map((role) => {
+                          {(['member', 'admin', 'master'] as const).map((role) => {
                             const allowed = canAssignRole(surface.viewer.role, role);
                             return (
                               <TouchableOpacity

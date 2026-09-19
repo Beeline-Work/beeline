@@ -38,8 +38,8 @@ async function fixture(): Promise<PgliteDatabase> {
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, AUTHOR]);
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member'),
-      ($1,$7,$3,'owner'),($1,$7,$6,'member')`,
+      ($1,$2,$3,'master'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member'),
+      ($1,$7,$3,'master'),($1,$7,$6,'member')`,
     [WORKSPACE, ROOM, AUTHOR, BEE, CARL, AGENT, CORNER],
   );
   return database;

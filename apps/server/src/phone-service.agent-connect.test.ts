@@ -37,7 +37,7 @@ describe('PhoneService agent connect pairing claim', () => {
     ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+       VALUES($1,NULL,$2,'master'),($1,$3,$2,'master')`,
       [WORKSPACE, OWNER, ROOM],
     );
     phone = new PhoneService(database, 'https://server.example');
@@ -224,7 +224,7 @@ describe('PhoneService agent connect pairing claim', () => {
     ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'member'),($3,NULL,$4,'owner')`,
+       ($1,NULL,$2,'member'),($3,NULL,$4,'master')`,
       [WORKSPACE, competingAgent, secondWorkspace, OWNER],
     );
     await database.query(
@@ -547,7 +547,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'MachineTest')`, [WORKSPACE]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner')`,
+       VALUES($1,NULL,$2,'master')`,
       [WORKSPACE, OWNER],
     );
     phone = new PhoneService(database, 'https://server.example');

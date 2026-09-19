@@ -47,7 +47,7 @@ export type TurnProgressInput = {
   activeTurnRequestedBy?: string;
   /** The identity reading this Room. */
   viewerPubkey?: string;
-  viewerRole?: 'owner' | 'admin' | 'member';
+  viewerRole?: 'master' | 'admin' | 'member';
 };
 
 /**
@@ -133,20 +133,20 @@ export type ComposerAckPresentation = {
   received?: boolean;
   /**
    * The coordinates a stop request names, present for the requester and
-   * current Room owners/admins. Other members see only the working line.
+   * current Room masters/admins. Other members see only the working line.
    */
   stop?: { agentPubkey: string; requestId: string };
 };
 
-/** The requester and current Room owners/admins may stop a running turn. */
+/** The requester and current Room masters/admins may stop a running turn. */
 export function viewerMayStopTurn(
   viewerPubkey: string | undefined,
   requestedBy: string | undefined,
-  viewerRole?: 'owner' | 'admin' | 'member',
+  viewerRole?: 'master' | 'admin' | 'member',
 ): boolean {
   return Boolean(
     viewerPubkey &&
-    (viewerRole === 'owner' ||
+    (viewerRole === 'master' ||
       viewerRole === 'admin' ||
       (requestedBy && viewerPubkey === requestedBy)),
   );

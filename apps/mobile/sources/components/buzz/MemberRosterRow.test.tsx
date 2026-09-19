@@ -56,7 +56,7 @@ describe('MemberRosterRow', () => {
     expect(
       renderer.root.findAllByType('Text' as any).map((node: any) => node.props.children),
     ).toEqual(['@builder', 'admin']);
-    expect(memberRosterSubtitle({ kind: 'human', role: 'owner' })).toBe('owner');
+    expect(memberRosterSubtitle({ kind: 'human', role: 'master' })).toBe('master');
   });
 
   it('formats an agent with model and owner under the single handle title', () => {

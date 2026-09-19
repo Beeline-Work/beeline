@@ -120,12 +120,12 @@ describe('Chat-list swipe-left actions', () => {
     expect(source).toContain('Could not leave ${ROOM_LABEL}:');
   });
 
-  it('gives Workspace owners and admins a truthful cannot-leave action', () => {
+  it('gives Workspace masters and admins a truthful cannot-leave action', () => {
     expect(source).toContain('!item.directMessage && canManageWorkspace');
     expect(source).toContain('testID={`room-leave-constraint-${item.room.id}`}');
     expect(source).toContain('`Cannot leave ${title}`');
     expect(source).toContain(
-      "'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.'",
+      "'Workspace masters and admins cannot leave Rooms. Change your Workspace role first.'",
     );
   });
 

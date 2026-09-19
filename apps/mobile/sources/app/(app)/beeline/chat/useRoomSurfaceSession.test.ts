@@ -222,7 +222,7 @@ function roomView(id: string, filters: RoomView['watchFilters'] = [{ '#h': [id] 
     latestAgentTurns: [],
     viewer: {
       identity: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
-      role: 'owner',
+      role: 'master',
       permissions: { send: true, manage: true },
     },
     repositoryResolution: { status: 'absent' },

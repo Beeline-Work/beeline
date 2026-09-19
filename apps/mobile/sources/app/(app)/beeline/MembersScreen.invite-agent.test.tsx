@@ -194,11 +194,11 @@ const workspace = {
     id: WORKSPACE,
     name: 'Builders',
     visibility: 'invite-only',
-    role: 'owner',
+    role: 'master',
     updatedAt: 1,
     createdAt: 1,
   },
-  members: [{ identity: { pubkey: VIEWER, kind: 'human', name: 'Viewer' }, role: 'owner' }],
+  members: [{ identity: { pubkey: VIEWER, kind: 'human', name: 'Viewer' }, role: 'master' }],
   agents: [
     {
       identity: { pubkey: AGENT, kind: 'agent', name: 'Clara' },
@@ -210,7 +210,7 @@ const workspace = {
   agentsTruncated: false,
   viewer: {
     identity: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
-    role: 'owner',
+    role: 'master',
     permissions: { send: true, manage: true },
   },
   watchFilters: [{ kinds: [30078], authors: [AGENT], '#t': ['agent-presence'] }],

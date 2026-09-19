@@ -448,7 +448,7 @@ CREATE TABLE IF NOT EXISTS memberships (
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  role text NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
+  role text NOT NULL CHECK (role IN ('master', 'admin', 'member')),
   generation bigint NOT NULL DEFAULT 1,
   identity_profile jsonb,
   invited_by text REFERENCES identities(id) ON DELETE SET NULL,
@@ -1214,6 +1214,7 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 export async function migrate(database: SqlDatabase): Promise<void> {
   await database.query(SCHEMA);
+  await migrateMembershipRoleOwnerToMaster(database);
   await database.query(AGENT_COMMAND_SCHEMA);
   await database.query(
     `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
@@ -1244,6 +1245,25 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   await backfillAgentHandles(database);
   await backfillYoloModeDefault(database);
   await backfillConnectorMachineId(database);
+}
+
+/**
+ * `memberships.role` used to store workspace/Room `owner`. That word is now
+ * reserved for the human who owns an agent; the top membership standing is
+ * `master`. Drop the old check, rename stored rows, install the live check.
+ */
+export async function migrateMembershipRoleOwnerToMaster(database: SqlDatabase): Promise<number> {
+  await database.query(`ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check`);
+  const result = await database.query(`UPDATE memberships SET role='master' WHERE role='owner'`);
+  await database.query(
+    `ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK (role IN ('master', 'admin', 'member'))`,
+  );
+  if (result.rowCount > 0) {
+    console.log(
+      `migrateMembershipRoleOwnerToMaster: renamed ${result.rowCount} membership role(s)`,
+    );
+  }
+  return result.rowCount;
 }
 
 /** Backfill machine_id on legacy workspace_connectors rows. */

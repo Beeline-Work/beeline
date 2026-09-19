@@ -109,9 +109,19 @@ export type RoomViewIdentity = {
   readonly face?: string;
 };
 
+/**
+ * Workspace and Room membership standing. `owner` is reserved for the human
+ * who owns a particular agent (`agents.owner_id` / `WorkspaceAgentView.owner`).
+ */
+export type MembershipRole = 'master' | 'admin' | 'member';
+
+export function isMembershipRole(value: unknown): value is MembershipRole {
+  return value === 'master' || value === 'admin' || value === 'member';
+}
+
 export type RoomViewMember = {
   readonly identity: RoomViewIdentity;
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: MembershipRole;
   readonly presence?: {
     readonly status: 'online' | 'offline';
     readonly observedAt: number;
@@ -390,7 +400,7 @@ export type RoomViewer = {
     readonly firstUnreadMessageId: string | null;
   };
   readonly identity: RoomViewIdentity;
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: MembershipRole;
   readonly permissions: {
     readonly send: boolean;
     readonly manage: boolean;
@@ -523,7 +533,7 @@ export type ChatListWorkspace = {
   readonly name: string;
   readonly avatar?: string;
   readonly visibility: 'public' | 'invite-only';
-  readonly role: 'owner' | 'admin' | 'member';
+  readonly role: MembershipRole;
   readonly updatedAt: number;
 };
 

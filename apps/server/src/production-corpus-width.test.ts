@@ -42,7 +42,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Width corpus')`, [WORKSPACE]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
+         ($1,NULL,$2,'master'),($1,NULL,$3,'member')`,
       [WORKSPACE, VIEWER, AGENT],
     );
     for (let i = 0; i < ROOM_COUNT; i += 1) {
@@ -54,7 +54,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
       );
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+         VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [WORKSPACE, roomId, VIEWER, AGENT],
       );
       await database.query(
@@ -72,7 +72,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
       );
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+         VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [WORKSPACE, cornerId, VIEWER, AGENT],
       );
       await database.query(

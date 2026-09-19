@@ -267,9 +267,9 @@ describe('RoomIndexer', () => {
     expect(view).toMatchObject({
       room: { id: ROOM, workspaceId: WORKSPACE, name: 'Fast Room' },
       repositoryResolution: 'repository',
-      viewer: { identity: { name: 'Ada' }, role: 'owner' },
+      viewer: { identity: { name: 'Ada' }, role: 'master' },
       members: [
-        { identity: { pubkey: VIEWER, kind: 'human', name: 'Ada' }, role: 'owner' },
+        { identity: { pubkey: VIEWER, kind: 'human', name: 'Ada' }, role: 'master' },
         {
           identity: { pubkey: AGENT, kind: 'agent', name: 'Milo' },
           role: 'member',
@@ -641,7 +641,7 @@ describe('RoomIndexer', () => {
 
     const view = await indexer.readRoom(ROOM, successor);
 
-    expect(view?.viewer).toMatchObject({ identity: { pubkey: successor }, role: 'owner' });
+    expect(view?.viewer).toMatchObject({ identity: { pubkey: successor }, role: 'master' });
     expect(view?.repository).toBeUndefined();
     expect(view?.repositoryResolution).toBe('unverified');
   });

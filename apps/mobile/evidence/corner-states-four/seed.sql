@@ -32,9 +32,9 @@ INSERT INTO rooms(id, workspace_id, parent_id, created_by, name, repository_reso
 INSERT INTO memberships(workspace_id, room_id, identity_id, role)
 SELECT '11111111-1111-4111-8111-111111111111', room_id, identity_id, role
 FROM (VALUES
-  (NULL::uuid, '913c42067daddb44ab84270088b65547077049070a3065c06bb6263c32e8aecb', 'owner'),
+  (NULL::uuid, '913c42067daddb44ab84270088b65547077049070a3065c06bb6263c32e8aecb', 'master'),
   (NULL::uuid, repeat('a', 64), 'member'),
-  ('22222222-2222-4222-8222-222222222222'::uuid, '913c42067daddb44ab84270088b65547077049070a3065c06bb6263c32e8aecb', 'owner'),
+  ('22222222-2222-4222-8222-222222222222'::uuid, '913c42067daddb44ab84270088b65547077049070a3065c06bb6263c32e8aecb', 'master'),
   ('22222222-2222-4222-8222-222222222222'::uuid, repeat('a', 64), 'member'),
   ('33333333-3333-4333-8333-333333333333'::uuid, '913c42067daddb44ab84270088b65547077049070a3065c06bb6263c32e8aecb', 'member'),
   ('33333333-3333-4333-8333-333333333333'::uuid, repeat('a', 64), 'member'),

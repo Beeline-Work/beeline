@@ -12,7 +12,7 @@ const route = vi.hoisted(() => ({
   pathname: '/beeline/channels',
 }));
 const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
-const workspaceRole = vi.hoisted(() => ({ current: 'owner' as 'owner' | 'admin' | 'member' }));
+const workspaceRole = vi.hoisted(() => ({ current: 'master' as 'master' | 'admin' | 'member' }));
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
     workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
@@ -215,7 +215,7 @@ describe('desktop Workspace navigation', () => {
     route.parent = undefined;
     route.pathname = '/beeline/channels';
     viewer.kind = 'human';
-    workspaceRole.current = 'owner';
+    workspaceRole.current = 'master';
     await act(async () => {
       tree = create(<SidebarView />);
     });

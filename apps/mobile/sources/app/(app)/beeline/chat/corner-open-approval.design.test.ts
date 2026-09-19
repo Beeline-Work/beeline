@@ -12,7 +12,7 @@ describe('corner-open approval card design contract', () => {
   it('offers the decision only to requester, admin, or owner', () => {
     expect(variants).toContain('viewerPubkey === permission.requesterPubkey');
     expect(variants).toContain("viewerRole === 'admin'");
-    expect(variants).toContain("viewerRole === 'owner'");
+    expect(variants).toContain("viewerRole === 'master'");
     expect(variants).toContain('corner-approval-audience-wait');
   });
 

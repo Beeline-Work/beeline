@@ -401,7 +401,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
       [WORKSPACE, ROOM, AUTHOR, agent],
     );
     try {

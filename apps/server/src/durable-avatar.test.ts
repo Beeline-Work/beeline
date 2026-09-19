@@ -73,7 +73,7 @@ describe('durable workspace avatars through the installed phone contract', () =>
     token = (await auth.exchangeGitHubOidc('owner')).accessToken;
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Avatar test')`, [WORKSPACE]);
     await database.query(
-      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`,
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'master')`,
       [WORKSPACE, OWNER],
     );
     objectStorage = new MemoryObjectStorage();

@@ -102,7 +102,7 @@ describe('background advisory-lock ownership', () => {
       ]);
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+         VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -204,7 +204,7 @@ describe('background advisory-lock ownership', () => {
       ]);
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+         VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -278,7 +278,7 @@ describe('background advisory-lock ownership', () => {
         workspace,
       ]);
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -326,7 +326,7 @@ describe('background advisory-lock ownership', () => {
         workspace,
       ]);
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -372,7 +372,7 @@ describe('background advisory-lock ownership', () => {
         workspace,
       ]);
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -421,7 +421,7 @@ describe('background advisory-lock ownership', () => {
         workspace,
       ]);
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -500,7 +500,7 @@ describe('background advisory-lock ownership', () => {
         workspace,
       ]);
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master'),($1,$2,$4,'member')`,
         [workspace, room, human, agent],
       );
       await db.query(
@@ -567,8 +567,8 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
-               ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
+         VALUES($1,$2,$3,'master'),($1,$2,$4,'member'),($1,$2,$5,'member'),
+               ($1,$6,$3,'master'),($1,$6,$5,'member')`,
         [workspace, room, human, otherHuman, agent, directRoom],
       );
       await db.query(
@@ -710,7 +710,7 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
+         ($1,$2,$3,'master'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
         [workspace, room, human, other, agent],
       );
       await db.query(
@@ -766,8 +766,8 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$4,'owner'),($1,$2,$5,'member'),
-         ($1,$3,$4,'owner'),($1,$3,$5,'member')`,
+         ($1,$2,$4,'master'),($1,$2,$5,'member'),
+         ($1,$3,$4,'master'),($1,$3,$5,'member')`,
         [workspace, room, corner, human, agent],
       );
       await db.query(
@@ -872,8 +872,8 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
-         ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
+         ($1,$2,$3,'master'),($1,$2,$4,'member'),($1,$2,$5,'member'),
+         ($1,$6,$3,'master'),($1,$6,$5,'member')`,
         [workspace, room, human, other, agent, directRoom],
       );
       await db.query(

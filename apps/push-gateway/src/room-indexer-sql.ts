@@ -541,7 +541,7 @@ WITH candidates AS (
     ORDER BY e.created_at ASC,e.id ASC LIMIT 1
   ) generation ON EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t
     WHERE t->>0='community' AND t->>1=a.id::text)
-  WHERE a.viewer_role IN ('owner','admin')
+  WHERE a.viewer_role IN ('master','admin')
     AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t WHERE t->>0='parent')
     AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t WHERE t->>0='t' AND t->>1='buzz-dm')
   -- $5 is 201: retain the pre-limit total while emitting the 200-Room
@@ -690,7 +690,7 @@ WITH workspace_candidates AS (
     AND e.kind = 30078 AND e.deleted_at IS NULL
   JOIN channel_members author ON author.community_id = e.community_id
     AND author.channel_id = a.id AND author.pubkey = e.pubkey
-    AND author.removed_at IS NULL AND author.role IN ('owner', 'admin')
+    AND author.removed_at IS NULL AND author.role IN ('master', 'admin')
   WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
     WHERE t->>0 = 't' AND t->>1 = 'buzz-room-repository')
   ORDER BY e.community_id, a.id, e.created_at DESC, e.id DESC
@@ -1698,7 +1698,7 @@ FROM authorized a JOIN LATERAL (
   SELECT e.content, e.created_at FROM events e
   JOIN channel_members author ON author.community_id = e.community_id
     AND author.channel_id = COALESCE(a.parent_id, a.id) AND author.pubkey = e.pubkey
-    AND author.removed_at IS NULL AND author.role IN ('owner', 'admin')
+    AND author.removed_at IS NULL AND author.role IN ('master', 'admin')
   WHERE e.community_id = a.community_id
     AND e.d_tag = 'buzz-room-repository:' || COALESCE(a.parent_id, a.id)::text
     AND e.kind = 30078

@@ -45,7 +45,7 @@ beforeAll(async () => {
   for (const who of [H, A, B])
     for (const room of [null, R, C])
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'master')`,
         [W, room, who],
       );
   for (const agent of [A, B])

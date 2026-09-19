@@ -85,7 +85,7 @@ const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
  * relative to the operator's real `$HOME`; `target` to the isolated dir.
  */
 const SHARED_CREDENTIALS: Array<{
-  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor';
+  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor' | 'user';
   source: string;
   target: string;
 }> = [

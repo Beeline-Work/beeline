@@ -11,7 +11,9 @@ import type { InitialLandingResult } from '@/navigation/initial-landing';
  *
  * The root layout owns the two delivery paths (the warm listener and the
  * cold-start replay) and hands both to this function. Everything a tap can
- * turn on lives here: the once-per-process guard, the default-action check,
+ * turn on lives here: the once-per-process guard, the durable leftover-id skip
+ * (Expo Android synthesizes a DEFAULT response from `google.message_id` extras
+ * on Activity onCreate, including a launcher reopen), the default-action check,
  * the wait for the app root's landing decision (see
  * `navigation/initial-landing.ts` — a push routed before that decision lands
  * is overwritten by it), the suppression of a landing replace still pending
@@ -25,6 +27,20 @@ export type TappedNotificationResponse = {
 
 export type NotificationEntryPath = 'cold' | 'background' | 'foreground';
 
+export type ConsumedNotificationResponseStore = {
+  has(id: string): Promise<boolean>;
+  add(id: string): Promise<void>;
+};
+
+export type NotificationResponseIdStorage = {
+  getItem(key: string): Promise<string | null>;
+  setItem(key: string, value: string): Promise<void>;
+};
+
+export const CONSUMED_NOTIFICATION_RESPONSE_IDS_KEY =
+  '@beeline/push/consumed-notification-response-ids';
+const MAX_CONSUMED_NOTIFICATION_RESPONSE_IDS = 32;
+
 export type NotificationResponseEntries = {
   addResponseListener: (listener: (response: TappedNotificationResponse) => void) => {
     remove(): void;
@@ -32,20 +48,89 @@ export type NotificationResponseEntries = {
   getLastResponse: () => Promise<TappedNotificationResponse | null>;
   getAppState: () => string;
   route: (response: TappedNotificationResponse, entry: NotificationEntryPath) => Promise<unknown>;
-  log?: (message: string, error: unknown) => void;
+  /** Durably remembered response ids; a leftover cold replay of one already routed is not a tap. */
+  consumedResponses?: ConsumedNotificationResponseStore;
+  log?: (message: string, error?: unknown) => void;
 };
+
+function parseConsumedResponseIds(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function readIdentifier(response: TappedNotificationResponse): string | undefined {
+  const identifier = response.notification?.request?.identifier;
+  return typeof identifier === 'string' && identifier ? identifier : undefined;
+}
+
+/** Persist routed Expo response ids so a later process cannot replay the same leftover extras. */
+export function createConsumedNotificationResponseStore(
+  storage: NotificationResponseIdStorage,
+): ConsumedNotificationResponseStore {
+  let loaded: string[] | undefined;
+  const load = async (): Promise<string[]> => {
+    loaded ??= parseConsumedResponseIds(
+      await storage.getItem(CONSUMED_NOTIFICATION_RESPONSE_IDS_KEY),
+    );
+    return loaded;
+  };
+  return {
+    async has(id: string): Promise<boolean> {
+      return (await load()).includes(id);
+    },
+    async add(id: string): Promise<void> {
+      const ids = await load();
+      if (ids.includes(id)) return;
+      ids.push(id);
+      if (ids.length > MAX_CONSUMED_NOTIFICATION_RESPONSE_IDS) {
+        ids.splice(0, ids.length - MAX_CONSUMED_NOTIFICATION_RESPONSE_IDS);
+      }
+      loaded = ids;
+      await storage.setItem(CONSUMED_NOTIFICATION_RESPONSE_IDS_KEY, JSON.stringify(ids));
+    },
+  };
+}
+
+async function dispatchNotificationResponse(
+  entries: NotificationResponseEntries,
+  response: TappedNotificationResponse,
+  entry: NotificationEntryPath,
+  active: () => boolean,
+): Promise<void> {
+  const id = readIdentifier(response);
+  if (id && entries.consumedResponses && (await entries.consumedResponses.has(id))) {
+    entries.log?.(`[PUSH ROUTING] Skipping leftover ${entry} notification response: ${id}`);
+    return;
+  }
+  if (!active()) return;
+  await entries.route(response, entry);
+}
 
 /** Wire every Expo response entry path to the same payload resolver. */
 export function startNotificationResponseEntries(entries: NotificationResponseEntries): () => void {
   let active = true;
+  const stillActive = () => active;
   const subscription = entries.addResponseListener((response) => {
     const entry = entries.getAppState() === 'active' ? 'foreground' : 'background';
-    void entries.route(response, entry);
+    void dispatchNotificationResponse(entries, response, entry, stillActive).catch((error) =>
+      entries.log?.('Failed to route notification response:', error),
+    );
   });
   void entries
     .getLastResponse()
     .then((response) => {
-      if (active && response) return entries.route(response, 'cold');
+      if (!active) return;
+      if (!response) {
+        entries.log?.('[PUSH ROUTING] cold getLastResponse is null');
+        return;
+      }
+      return dispatchNotificationResponse(entries, response, 'cold', stillActive);
     })
     .catch((error) => entries.log?.('Failed to read last notification response:', error));
   return () => {
@@ -67,6 +152,8 @@ export type NotificationResponseRouting = {
   /** Clears the retained native "last response" once it has been routed. */
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
+  /** Same durable ids the entry adapter consults; a leftover replay is not a new tap. */
+  consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
 };
 
@@ -77,11 +164,6 @@ function stringifyNotificationPayload(value: unknown): string {
   } catch (error) {
     return `[unserializable notification payload: ${error instanceof Error ? error.message : 'Unknown error'}]`;
   }
-}
-
-function readIdentifier(response: TappedNotificationResponse): string | undefined {
-  const identifier = response.notification?.request?.identifier;
-  return typeof identifier === 'string' && identifier ? identifier : undefined;
 }
 
 /**
@@ -107,6 +189,15 @@ export async function routeBuzzNotificationResponse(
       return null;
     }
     routing.handled.add(responseId);
+    if (routing.consumedResponses && (await routing.consumedResponses.has(responseId))) {
+      log(`[PUSH ROUTING] Skipping leftover notification response: ${responseId}`);
+      try {
+        await routing.clearLastResponse();
+      } catch (error) {
+        log(`Failed to clear last notification response: ${String(error)}`);
+      }
+      return null;
+    }
   }
 
   try {
@@ -139,6 +230,7 @@ export async function routeBuzzNotificationResponse(
       routing.suppressPendingInitialLanding();
       const resolvedTarget = await routing.resolveTarget(buzzTarget);
       navigateToBuzzTargetFromNotification(routing.router, resolvedTarget, responseId!);
+      if (responseId) await routing.consumedResponses?.add(responseId);
       log(
         `[PUSH ROUTING] Navigating to Beeline ${resolvedTarget.target}: ${resolvedTarget.channelId ?? resolvedTarget.workspaceId}`,
       );

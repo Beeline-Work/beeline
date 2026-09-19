@@ -46,18 +46,47 @@ describe('phone cold launch after the deck replace', () => {
   });
 
   it('does not route a leftover last notification when this launch had no tap', async () => {
+    const leftover = {
+      actionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
+      notification: {
+        request: {
+          identifier: 'leftover-msg',
+          content: {
+            data: {
+              type: 'mention',
+              channelId: BEELINE_ROOM_ID,
+              roomId: BEELINE_ROOM_ID,
+            },
+          },
+        },
+      },
+    };
+    const consumed = {
+      ids: new Set(['leftover-msg']),
+      has: async (id: string) => consumed.ids.has(id),
+      add: async (id: string) => {
+        consumed.ids.add(id);
+      },
+    };
     const route = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
     startNotificationResponseEntries({
       addResponseListener: () => ({ remove() {} }),
-      getLastResponse: async () => null,
+      getLastResponse: async () => leftover,
       getAppState: () => 'active',
+      consumedResponses: consumed,
       route,
+      log,
     });
-    await Promise.resolve();
+    await vi.waitFor(() =>
+      expect(log.mock.calls.some((call) => String(call[0]).includes('Skipping leftover'))).toBe(
+        true,
+      ),
+    );
     expect(route).not.toHaveBeenCalled();
 
     const navigate = vi.fn();
-    await routeBuzzNotificationResponse(null, {
+    await routeBuzzNotificationResponse(leftover, {
       router: { navigate },
       handled: new Set(),
       defaultActionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
@@ -65,6 +94,7 @@ describe('phone cold launch after the deck replace', () => {
       suppressPendingInitialLanding: () => undefined,
       clearLastResponse: async () => undefined,
       resolveTarget: async (target) => target,
+      consumedResponses: consumed,
       log: () => {},
     });
     expect(navigate).not.toHaveBeenCalled();

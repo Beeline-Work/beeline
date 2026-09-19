@@ -26,6 +26,10 @@ export type TurnSilenceOutcome = {
 
 const NO_RESTART: TurnSilenceOutcome = { kind: 'hiccup', hiccupRestart: false, attempt: 0 };
 
+export function turnSilenceLockKey(roomId: string, requestId: string, agentId: string): string {
+  return `silence:${roomId}:${requestId}:${agentId}`;
+}
+
 export async function noteFirstSilence(
   database: SqlDatabase,
   live: LiveHub,
@@ -54,26 +58,47 @@ export async function noteFirstSilence(
   ).rows[0];
   if (!trigger) return NO_RESTART;
 
+  return database.transaction((db) => inscribeSilence(db, live, input, trigger.agent_name));
+}
+
+async function inscribeSilence(
+  database: SqlDatabase,
+  live: LiveHub,
+  input: {
+    readonly roomId: string;
+    readonly requestId: string;
+    readonly agentId: string;
+    readonly reason?: string | null;
+    readonly reasonKind?: string;
+    readonly liveRestart?: boolean;
+    readonly helperAlreadyRestarted?: boolean;
+  },
+  agentName: string,
+): Promise<TurnSilenceOutcome> {
+  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+    turnSilenceLockKey(input.roomId, input.requestId, input.agentId),
+  ]);
+
   const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX);
   const classified = classifyTurnSilence(reason || undefined, input.reasonKind);
   const command = (
     await database.query<{ id: string; state: string; hiccup_attempts: number }>(
       `SELECT id,state,hiccup_attempts FROM agent_commands
        WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')
-       ORDER BY created_at DESC,id DESC LIMIT 1`,
+       ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
       [input.roomId, input.agentId, input.requestId],
     )
   ).rows[0];
-  const attempt =
-    !command || command.state === 'pending' || command.state === 'cancelled'
-      ? (command?.hiccup_attempts ?? 0)
-      : command.hiccup_attempts + 1;
-  const restart = shouldRestartHiccup(classified.kind, attempt);
-  const phrase = phraseTurnSilence(trigger.agent_name, classified, {
+  const canIncrement = Boolean(
+    command && command.state !== 'pending' && command.state !== 'cancelled',
+  );
+  const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
+  const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt));
+  const phrase = phraseTurnSilence(agentName, classified, {
     givingUp: classified.kind === 'hiccup' && attempt >= 3,
   });
   const systemPhrase: SystemPhrase = {
-    subject: { kind: 'agent', id: input.agentId, name: trigger.agent_name },
+    subject: { kind: 'agent', id: input.agentId, name: agentName },
     verb: phrase.verb,
     consequence: phrase.consequence,
   };
@@ -88,7 +113,12 @@ export async function noteFirstSilence(
     `INSERT INTO agent_turns(room_id,request_id,agent_id,status,failure_reason)
      VALUES($1,$2,$3,'failed',$4)
      ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-       status='failed',failure_reason=EXCLUDED.failure_reason,created_at=now()
+       status='failed',
+       failure_reason=CASE
+         WHEN agent_turns.status='working' THEN EXCLUDED.failure_reason
+         ELSE agent_turns.failure_reason
+       END,
+       created_at=now()
      WHERE agent_turns.status IN ('working','failed')`,
     [input.roomId, input.requestId, input.agentId, reason || classified.fault || null],
   );
@@ -102,8 +132,10 @@ export async function noteFirstSilence(
       [input.roomId, input.requestId, input.agentId],
     )
   ).rows[0];
-  if (recent) await restateSystemLine(database, recent.id, systemPhrase, card);
-  else {
+  const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= 3;
+  if (recent) {
+    if (restart || givingUp) await restateSystemLine(database, recent.id, systemPhrase, card);
+  } else {
     await systemLine(database, {
       roomId: input.roomId,
       ...systemPhrase,
@@ -113,9 +145,18 @@ export async function noteFirstSilence(
     });
   }
 
-  if (restart && command && command.state !== 'pending' && command.state !== 'cancelled') {
-    await reopenCommand(database, live, input.roomId, input.agentId, command.id, attempt);
-    if (input.liveRestart && !input.helperAlreadyRestarted) {
+  let hiccupRestart = false;
+  if (restart && command) {
+    const reopened = await reopenCommand(
+      database,
+      live,
+      input.roomId,
+      input.agentId,
+      command.id,
+      attempt,
+    );
+    hiccupRestart = reopened;
+    if (reopened && input.liveRestart && !input.helperAlreadyRestarted) {
       live.publish({
         type: 'invalidate',
         roomId: input.roomId,
@@ -128,7 +169,14 @@ export async function noteFirstSilence(
   } else if (classified.kind === 'offline' && command?.state === 'claimed') {
     // The helper never posted a turn. Leave the original request eligible for
     // `beeline start` instead of completing it the way a spent hiccup is.
-    await reopenCommand(database, live, input.roomId, input.agentId, command.id, command.hiccup_attempts);
+    await reopenCommand(
+      database,
+      live,
+      input.roomId,
+      input.agentId,
+      command.id,
+      command.hiccup_attempts,
+    );
   } else if (
     classified.kind === 'hiccup' &&
     !restart &&
@@ -142,7 +190,7 @@ export async function noteFirstSilence(
     );
   }
 
-  return { kind: classified.kind, hiccupRestart: restart, attempt };
+  return { kind: classified.kind, hiccupRestart, attempt };
 }
 
 async function reopenCommand(
@@ -152,14 +200,15 @@ async function reopenCommand(
   agentId: string,
   commandId: string,
   hiccupAttempts: number,
-): Promise<void> {
-  await database.query(
+): Promise<boolean> {
+  const updated = await database.query(
     `UPDATE agent_commands SET
        state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
        completed_at=NULL,hiccup_attempts=$2
      WHERE id=$1 AND state IN ('claimed','complete')`,
     [commandId, hiccupAttempts],
   );
+  if (!updated.rowCount) return false;
   live.publish({
     type: 'invalidate',
     roomId,
@@ -167,4 +216,5 @@ async function reopenCommand(
     targetAgentId: agentId,
     agentId,
   });
+  return true;
 }

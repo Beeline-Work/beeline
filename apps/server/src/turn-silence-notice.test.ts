@@ -6,6 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import type { CommittedTurnLiveRow } from './live.js';
+import { noteFirstSilence } from './turn-silence-notice.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -34,11 +35,10 @@ async function fixture() {
 }
 
 async function ask(database: PgliteDatabase, requestId: string, generation = 'g1') {
-  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`, [
-    requestId,
-    ROOM,
-    HUMAN,
-  ]);
+  await database.query(
+    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`,
+    [requestId, ROOM, HUMAN],
+  );
   const command = await createAgentCommand(database, {
     roomId: ROOM,
     agentId: AGENT,
@@ -267,11 +267,10 @@ describe('90-second first silence from presence', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const requestId = 'e'.repeat(64);
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
-    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`, [
-      requestId,
-      ROOM,
-      HUMAN,
-    ]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`,
+      [requestId, ROOM, HUMAN],
+    );
     const command = await createAgentCommand(database, {
       roomId: ROOM,
       agentId: AGENT,
@@ -335,5 +334,124 @@ describe('90-second first silence from presence', () => {
       generation_id: null,
     });
     expect(restarts).toEqual([1]);
+  });
+
+  it('inscribes every Room that still has an unanswered delivery when presence demotes once', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const SECOND_ROOM = '33333333-3333-4333-8333-333333333333';
+    const firstRequest = 'a'.repeat(64);
+    const secondRequest = 'b'.repeat(64);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Second')`, [
+      SECOND_ROOM,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, SECOND_ROOM, HUMAN, AGENT],
+    );
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy Hello'),($4,$5,$3,'@candy Hello')`,
+      [firstRequest, ROOM, HUMAN, secondRequest, SECOND_ROOM],
+    );
+    await presence.observe();
+    await vi.advanceTimersByTimeAsync(100);
+    const rooms = (
+      await database.query<{ room_id: string }>(
+        `SELECT room_id FROM messages WHERE card_type='turn-failed' ORDER BY room_id`,
+      )
+    ).rows.map((row) => row.room_id);
+    expect(rooms).toEqual([ROOM, SECOND_ROOM].sort());
+    const presenceStatus = (
+      await database.query<{ status: string }>(
+        `SELECT body->>'status' status FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
+        [AGENT],
+      )
+    ).rows.map((row) => row.status);
+    expect(presenceStatus).toEqual(['offline']);
+  });
+});
+
+describe('silence detector ownership', () => {
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = await fixture();
+  });
+  afterEach(async () => {
+    await database.close();
+  });
+
+  it('accepts the startup-failure receipt before a corner loop can claim its command', async () => {
+    const requestId = '9'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`,
+      [requestId, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: requestId,
+      reason: 'human_tag',
+    });
+    const result = await new DaemonService(database, new LiveHub()).execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        requestId,
+        status: 'failed',
+        reason: 'corner parent Room repository state is not verified yet',
+        reasonKind: 'workspace-failure',
+      },
+      AGENT,
+    );
+    expect(result.hiccupRestart).toBeUndefined();
+    expect(await failureLine(database, requestId)).toMatchObject({
+      silence: 'workspace-failure',
+      state: 'failed',
+    });
+    expect(await commandState(database, command!.id)).toEqual({
+      state: 'complete',
+      hiccup_attempts: 0,
+      generation_id: null,
+    });
+  });
+
+  it('coalesces concurrent silence detectors into one restart', async () => {
+    const requestId = 'f'.repeat(64);
+    const command = await ask(database, requestId);
+    const live = new LiveHub();
+    const liveRestarts: number[] = [];
+    live.subscribeAll((event) => {
+      if (event.type === 'invalidate' && event.reason === 'hiccup-restart') {
+        liveRestarts.push(event.hiccupAttempt ?? 0);
+      }
+    });
+    const outcomes = await Promise.all([
+      noteFirstSilence(database, live, {
+        roomId: ROOM,
+        requestId,
+        agentId: AGENT,
+        reason: 'the turn stalled',
+        reasonKind: 'hiccup',
+        liveRestart: false,
+      }),
+      noteFirstSilence(database, live, {
+        roomId: ROOM,
+        requestId,
+        agentId: AGENT,
+        reason: 'the turn stalled',
+        reasonKind: 'hiccup',
+        liveRestart: true,
+      }),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.hiccupRestart)).toHaveLength(1);
+    expect(outcomes.some((outcome) => outcome.hiccupRestart && outcome.attempt === 1)).toBe(true);
+    expect(await commandState(database, command.id)).toEqual({
+      state: 'pending',
+      hiccup_attempts: 1,
+      generation_id: null,
+    });
+    expect(liveRestarts.length).toBeLessThanOrEqual(1);
   });
 });

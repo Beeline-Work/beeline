@@ -300,15 +300,28 @@ export class ConnectionPresence {
     );
     if (changed.rowCount) {
       await broadcastAgentPresence(this.database, this.live, delivery.agent_id);
-      await noteFirstSilence(this.database, this.live, {
-        roomId: delivery.room_id,
-        requestId: delivery.message_id,
-        agentId: delivery.agent_id,
-        reason: "her helper isn't running",
-        reasonKind: 'offline',
-        liveRestart: true,
-      }).catch(this.report);
     }
+    // Presence is one canonical row; the unanswered-delivery fact is per request
+    // and per Room. Losing the demotion race must not skip the Room line.
+    const unanswered = await this.database.query(
+      `SELECT 1 FROM memberships member
+       WHERE member.identity_id=$1 AND member.room_id=$2 AND member.removed_at IS NULL
+         AND NOT EXISTS(
+           SELECT 1 FROM agent_turns turn
+           WHERE turn.agent_id=$1 AND turn.room_id=$2
+             AND (turn.request_id=$3 OR turn.created_at>=$4::timestamptz)
+         )`,
+      [delivery.agent_id, delivery.room_id, delivery.message_id, delivery.created_at],
+    );
+    if (!unanswered.rowCount) return;
+    await noteFirstSilence(this.database, this.live, {
+      roomId: delivery.room_id,
+      requestId: delivery.message_id,
+      agentId: delivery.agent_id,
+      reason: "her helper isn't running",
+      reasonKind: 'offline',
+      liveRestart: true,
+    }).catch(this.report);
   }
 
   private turnTimerKey(roomId: string, requestId: string, agentId: string): string {

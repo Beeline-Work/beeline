@@ -392,6 +392,50 @@ export async function authorizeCommandOutput(
   return row;
 }
 
+/**
+ * A failed receipt is bound to the command that asked, including a pending
+ * corner-start command that never got a generation. Claimed output still
+ * requires the stored generation; omitting it is how startup reports fail
+ * without fabricating one.
+ */
+export async function authorizeFailedTurnOutput(
+  db: SqlDatabase,
+  roomId: string,
+  agentId: string,
+  requestId: unknown,
+  generation: unknown,
+): Promise<CommandRow> {
+  if (typeof generation === 'string' && generation) {
+    return authorizeCommandOutput(db, roomId, agentId, requestId, generation);
+  }
+  const row =
+    typeof requestId === 'string'
+      ? (
+          await db.query<CommandRow & { turn_cancelled: boolean }>(
+            `SELECT command.*,
+               EXISTS(SELECT 1 FROM agent_turns turn
+                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
+             FROM agent_commands command
+             WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+               AND command.action IN ('input','resume') AND command.state='pending'
+             ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command`,
+            [roomId, agentId, requestId],
+          )
+        ).rows[0]
+      : undefined;
+  if (!row) {
+    console.error('command output rejected', {
+      agent: agentId,
+      room: roomId,
+      generation: typeof generation === 'string' ? generation : undefined,
+    });
+    throw new Error('command output authority rejected');
+  }
+  if (row.turn_cancelled) throw new Error('command turn cancelled');
+  return row;
+}
+
 export async function readAgentCommands(
   db: SqlDatabase,
   roomId: string,

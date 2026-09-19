@@ -143,7 +143,10 @@ export function classifyTurnSilence(
     /repository not found/i.test(text) ||
     /could not resolve host/i.test(text) ||
     /failed to start corner/i.test(text) ||
-    /unable to access/i.test(text)
+    /unable to access/i.test(text) ||
+    /repository state is not verified/i.test(text) ||
+    /incomplete repository binding/i.test(text) ||
+    /no authoritative objective fact/i.test(text)
   ) {
     return { kind: 'workspace-failure', repo: repoFromReason(text) };
   }

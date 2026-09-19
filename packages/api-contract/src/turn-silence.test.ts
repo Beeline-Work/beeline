@@ -12,18 +12,22 @@ describe('turn silence classification', () => {
   it('maps the four hiccup causes onto one restart class', () => {
     expect(classifyTurnSilence(undefined).kind).toBe('hiccup');
     expect(classifyTurnSilence('the turn stalled').kind).toBe('hiccup');
-    expect(classifyTurnSilence('the model ended its turn with no text (stop reason end_turn)').kind).toBe(
-      'hiccup',
-    );
+    expect(
+      classifyTurnSilence('the model ended its turn with no text (stop reason end_turn)').kind,
+    ).toBe('hiccup');
     expect(classifyTurnSilence('ACP agent exited (code 1)').kind).toBe('hiccup');
     expect(classifyTurnSilence('provider error 429 concurrency_limit').kind).toBe('hiccup');
   });
 
   it('does not treat standing conditions as hiccups', () => {
-    expect(classifyTurnSilence('model selection unavailable', 'model-selection-unavailable')).toEqual({
+    expect(
+      classifyTurnSilence('model selection unavailable', 'model-selection-unavailable'),
+    ).toEqual({
       kind: 'wrong-model',
     });
-    expect(classifyTurnSilence("she's set to a model that isn't available").kind).toBe('wrong-model');
+    expect(classifyTurnSilence("she's set to a model that isn't available").kind).toBe(
+      'wrong-model',
+    );
     expect(
       classifyTurnSilence(
         "You've hit your usage limit. Upgrade to Pro for more usage, or try again at Sep 19th, 2026 4:09 AM.",
@@ -35,11 +39,22 @@ describe('turn silence classification', () => {
     expect(classifyTurnSilence('provider error 402: This request requires more credits').kind).toBe(
       'allowance-spent',
     );
-    expect(classifyTurnSilence('ACP error -32000: Authentication required').kind).toBe('not-signed-in');
+    expect(classifyTurnSilence('ACP error -32000: Authentication required').kind).toBe(
+      'not-signed-in',
+    );
     expect(classifyTurnSilence('fatal: repository not found github.com/acme/widgets.git')).toEqual({
       kind: 'workspace-failure',
       repo: 'acme/widgets',
     });
+    expect(
+      classifyTurnSilence('corner parent Room repository state is not verified yet').kind,
+    ).toBe('workspace-failure');
+    expect(
+      classifyTurnSilence('corner parent Room has an incomplete repository binding').kind,
+    ).toBe('workspace-failure');
+    expect(classifyTurnSilence('corner has no authoritative objective fact').kind).toBe(
+      'workspace-failure',
+    );
     expect(classifyTurnSilence('server command protocol 1 is required; refusing intake').kind).toBe(
       'helper-out-of-date',
     );
@@ -93,8 +108,11 @@ describe('turn silence phrasing', () => {
 
   it('says so once when hiccup retries are exhausted', () => {
     expect(
-      phraseTurnSilence('Candy', { kind: 'hiccup', fault: 'ACP agent exited (code 1)' }, { givingUp: true })
-        .consequence,
+      phraseTurnSilence(
+        'Candy',
+        { kind: 'hiccup', fault: 'ACP agent exited (code 1)' },
+        { givingUp: true },
+      ).consequence,
     ).toBe('ACP agent exited (code 1). Stopped restarting after three tries.');
   });
 });

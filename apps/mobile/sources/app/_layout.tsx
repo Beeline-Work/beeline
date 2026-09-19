@@ -29,6 +29,7 @@ import { useLocalSetting } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
 import {
+  createConsumedNotificationResponseStore,
   routeBuzzNotificationResponse,
   startNotificationResponseEntries,
   type TappedNotificationResponse,
@@ -63,6 +64,8 @@ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { BootPaint } from '@/components/buzz/BootPaint';
+
+const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
 // Foreground banner policy: suppress banners while the app is active, and
 // always for the Room the person currently has open. Background display and
@@ -337,6 +340,8 @@ export default function RootLayout() {
         suppressPendingInitialLanding: suppressInitialLandingNavigation,
         clearLastResponse: Notifications.clearLastNotificationResponseAsync,
         resolveTarget: resolveBuzzNotificationDestination,
+        consumedResponses: consumedNotificationResponses,
+        log: (message) => console.warn(message),
       });
     },
     [router],
@@ -351,8 +356,10 @@ export default function RootLayout() {
       addResponseListener: Notifications.addNotificationResponseReceivedListener,
       getLastResponse: Notifications.getLastNotificationResponseAsync,
       getAppState: () => AppState.currentState,
+      consumedResponses: consumedNotificationResponses,
       route: (response) => handleNotificationResponse(response),
-      log: (message, error) => console.log(message, error),
+      log: (message, error) =>
+        error == null ? console.warn(message) : console.warn(message, error),
     });
   }, [handleNotificationResponse, initialized]);
 

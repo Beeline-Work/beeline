@@ -594,7 +594,7 @@ describe('phone committed-row live delivery', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('bounds a stalled lookup while preserving burst delivery order', async () => {
+  it('keeps later committed deltas direct when an earlier lookup stalls', async () => {
     const read = vi.fn(
       async (_roomId: string, _viewerId: string, target: { messageId: string }) => {
         if (target.messageId === 'message-1') return new Promise<never>(() => undefined);
@@ -612,7 +612,7 @@ describe('phone committed-row live delivery', () => {
       },
     );
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const received = nextSocketMessages(socket, 3);
+    const received = nextSocketMessages(socket, 2);
     const startedAt = Date.now();
 
     for (const messageId of ['message-1', 'message-2', 'message-3']) {
@@ -620,23 +620,45 @@ describe('phone committed-row live delivery', () => {
     }
 
     const messages = await received;
-    expect(Date.now() - startedAt).toBeLessThan(800);
+    expect(Date.now() - startedAt).toBeLessThan(150);
     expect(
       messages.map((message) =>
         message.type === 'message-delta'
           ? (message.message as { id: string }).id
           : message.messageId,
       ),
-    ).toEqual(['message-1', 'message-2', 'message-3']);
-    expect(messages[0]).toMatchObject({
-      type: 'invalidate',
-      reason: 'delta-fallback:postgres:messages',
-    });
-    expect(messages.slice(1).map((message) => message.type)).toEqual([
-      'message-delta',
-      'message-delta',
-    ]);
+    ).toEqual(['message-2', 'message-3']);
+    expect(messages.map((message) => message.type)).toEqual(['message-delta', 'message-delta']);
     expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not downgrade a slow committed row to the refetch scheduler', async () => {
+    const delta = {
+      type: 'message-delta' as const,
+      roomId: 'room-live',
+      message: {
+        id: 'message-slow',
+        text: 'slow but direct',
+        createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
+        presentation: 'message' as const,
+      },
+    };
+    const read = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      return delta;
+    });
+    const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
+    const received = nextSocketMessage(socket, 'message-delta');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:messages',
+      messageId: 'message-slow',
+    });
+
+    await expect(received).resolves.toEqual(delta);
   });
 
   it('diagnoses the same-process committed-row delivery boundary', async () => {

@@ -50,7 +50,7 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toMatch(/<IdentityMark\s*\n\s*kind="workspace"/);
   });
 
-  it('puts membership in the corner action sheet only; the Room sheet carries the header door', () => {
+  it('keeps membership out of the header and on both overflow sheets', () => {
     // Owner trim (2026-08-23): "3 participants · IN THIS ROOM" became
     // "3 members" (singular "1 member") on every surface.
     expect(chatSource).not.toContain('IN THIS ROOM  ›');
@@ -61,12 +61,13 @@ describe('Chat header — one language for Room and Corner', () => {
     );
     expect(directMessageMeta, 'missing Direct Message metadata').toBeTruthy();
     expect(directMessageMeta![0]).not.toContain('formatRoomParticipantTotal');
-    // The Room sheet's Members row is retired (R4); only the corner sheet keeps one.
-    expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(1);
-    expect(chatSource.match(/label="Members"/g)).toHaveLength(1);
+    // Room overflow and corner overflow each carry one Members row. The
+    // header diamond opens corners, not the roster (#1432 masking).
+    expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(2);
+    expect(chatSource.match(/label="Members"/g)).toHaveLength(2);
     expect(
       chatSource.match(/formatRoomParticipantTotal\(roomParticipantTotal\)/g).length,
-    ).toBeGreaterThanOrEqual(1);
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('keeps the repository subtitle in the shared meta token', () => {

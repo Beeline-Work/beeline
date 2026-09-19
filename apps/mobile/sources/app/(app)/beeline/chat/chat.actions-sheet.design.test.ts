@@ -22,6 +22,7 @@ const cornerSheet = sheet('testID="corner-actions-sheet"', 'corner actions sheet
 const messageSheet = sheet('testID="message-actions-sheet"', 'message actions sheet');
 
 const ROOM_ROWS = [
+  'room-participant-roster-trigger',
   'rename-room-action',
   'room-github-events-toggle',
   'room-schedules-action',
@@ -69,15 +70,27 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
-  it('keeps the membership roster row on the corner actions sheet and out of the Room sheet', () => {
-    const members = row(cornerSheet, 'room-participant-roster-trigger');
-    expect(members).toContain('label="Members"');
-    expect(members).toContain('leading={<MembersGlyph testID="room-participant-roster-glyph" />}');
-    expect(members).toContain('metadata=');
-    expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
-    expect(members).toContain('setRosterVisible(true)');
-    expect(roomSheet, 'the Room sheet has its own header door; a Members row here is retired')
-      .not.toContain('room-participant-roster-trigger');
+  it('puts the membership roster row on both overflow sheets, gated the same way', () => {
+    // Trigger: open a Room, tap overflow.
+    // Masking: #1432 retired this Room-sheet row for a header diamond that
+    // opens corners; #1436 then removed MEMBERS from the desktop work pane.
+    // Symptom: overflow showed Rename / Repo / Scheduled work / Delete, and
+    // no path reached the roster to add or remove members.
+    for (const source of [roomSheet, cornerSheet]) {
+      const members = row(source, 'room-participant-roster-trigger');
+      expect(members).toContain('label="Members"');
+      expect(members).toContain('leading={<MembersGlyph testID="room-participant-roster-glyph" />}');
+      expect(members).toContain('metadata=');
+      expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+      expect(members).toContain('disabled={!memberManagement.canOpenRoster}');
+      expect(members).toContain('setRosterVisible(true)');
+    }
+    expect(row(roomSheet, 'room-participant-roster-trigger')).toContain(
+      'setRoomActionsVisible(false)',
+    );
+    expect(row(cornerSheet, 'room-participant-roster-trigger')).toContain(
+      'setCornerActionsVisible(false)',
+    );
     for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
     expect(cornerSheet).toContain('testID="close-corner-action"');
   });
@@ -95,8 +108,11 @@ describe('Room and corner actions sheets', () => {
     expect(notifications).toContain('toggle={{');
     expect(notifications).toContain('value: roomRepository.githubEventsEnabled !== false');
     expect(notifications).not.toContain('chevron');
-    // A row that leaves for a screen gets the chevron alone.
+    // A row that leaves for a screen gets the chevron; Members also carries
+    // the live count in metadata.
     expect(row(roomSheet, 'room-schedules-action')).toContain('chevron="right"');
+    expect(row(roomSheet, 'room-participant-roster-trigger')).toContain('chevron="right"');
+    expect(row(roomSheet, 'room-participant-roster-trigger')).toContain('metadata=');
     // Plain actions carry nothing at all — no pencil, no square.
     for (const testID of ['delete-room-action', 'leave-room-action']) {
       const plain = row(roomSheet, testID);
@@ -117,6 +133,7 @@ describe('Room and corner actions sheets', () => {
     expect(chat).toContain('label="Repo notifications"');
     expect(chat).toContain('label="Scheduled work"');
     expect(chat).toContain('label="Rename"');
+    expect(chat).toContain('label="Members"');
     expect(chat).toContain('<RoomReviewerActions');
     // The old titles crammed the value and the verb into the label, and the
     // notifications row even lost the space before its separator.
@@ -156,6 +173,7 @@ describe('Room and corner actions sheets', () => {
   });
 
   it('leaves every action wired to exactly what it called before', () => {
+    expect(row(roomSheet, 'room-participant-roster-trigger')).toContain('setRosterVisible(true)');
     expect(row(roomSheet, 'rename-room-action')).toContain('setRenameEditing(true)');
     expect(row(roomSheet, 'room-github-events-toggle')).toContain(
       'onPress={() => void handleToggleGitHubEvents()}',

@@ -4433,11 +4433,11 @@ export default function BuzzChat() {
               ) : null}
             </View>
             {/* Membership still consumes no header width: the Members row lives
-              in the overflow sheet (corner) or the inspector (desktop Room).
-              The trailing slot carries the corner glyph `◇` in brass beside
-              overflow — a second door onto the Room's dedicated corners list,
-              not a second live-corner jump. The pinned line below the
-              transcript stays the one active-corner affordance. */}
+              in the Room and corner overflow sheets. The desktop work pane
+              does not carry it. The trailing slot is the corner glyph `◇` in
+              brass beside overflow — a door onto the Room's corners list, not
+              members. The pinned line below the transcript stays the one
+              active-corner affordance. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
@@ -5375,6 +5375,21 @@ export default function BuzzChat() {
         title={displayRoomName}
         visible={roomActionsVisible}
       >
+        <HullActionSheetRow
+          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+          chevron="right"
+          disabled={!memberManagement.canOpenRoster}
+          label="Members"
+          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
+          metadata={
+            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+          }
+          onPress={() => {
+            setRoomActionsVisible(false);
+            setRosterVisible(true);
+          }}
+          testID="room-participant-roster-trigger"
+        />
         {canManageWorkspace &&
           (renameEditing ? (
             <View style={styles.roomRenameEditor} testID="rename-room-editor">

@@ -86,11 +86,30 @@ describe('distillTurnFailureReason', () => {
         ),
       ).kind,
     ).toBe('allowance-spent');
-    expect(distillTurnFailureReason(new Error('ACP error -32000: Authentication required')).kind).toBe(
-      'not-signed-in',
-    );
-    expect(distillTurnFailureReason(new Error('fatal: repository not found github.com/acme/widgets.git')).kind).toBe(
-      'workspace-failure',
-    );
+    expect(
+      distillTurnFailureReason(new Error('ACP error -32000: Authentication required')).kind,
+    ).toBe('not-signed-in');
+    expect(
+      distillTurnFailureReason(new Error('fatal: repository not found github.com/acme/widgets.git'))
+        .kind,
+    ).toBe('workspace-failure');
+    expect(
+      distillTurnFailureReason(new Error('corner parent Room repository state is not verified yet'))
+        .kind,
+    ).toBe('workspace-failure');
+    expect(
+      distillTurnFailureReason(new Error('corner parent Room has an incomplete repository binding'))
+        .kind,
+    ).toBe('workspace-failure');
+    expect(
+      distillTurnFailureReason(new Error('corner has no authoritative objective fact')).kind,
+    ).toBe('workspace-failure');
+    expect(
+      distillTurnFailureReason(
+        new Error(
+          'Command failed: git clone https://github.example/acme/widgets.git\nfatal: unable to access repository',
+        ),
+      ).kind,
+    ).toBe('workspace-failure');
   });
 });

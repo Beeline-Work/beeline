@@ -39,8 +39,7 @@ export type TurnReceiptReasonKind = (typeof TURN_RECEIPT_REASON_KINDS)[number];
 
 export function isTurnReceiptReasonKind(value: unknown): value is TurnReceiptReasonKind {
   return (
-    typeof value === 'string' &&
-    (TURN_RECEIPT_REASON_KINDS as readonly string[]).includes(value)
+    typeof value === 'string' && (TURN_RECEIPT_REASON_KINDS as readonly string[]).includes(value)
   );
 }
 
@@ -143,7 +142,11 @@ export function classifyTurnSilence(
     /repository not found/i.test(text) ||
     /could not resolve host/i.test(text) ||
     /failed to start corner/i.test(text) ||
-    /unable to access/i.test(text)
+    /unable to access/i.test(text) ||
+    /\bgit clone\b/i.test(text) ||
+    /repository state is not verified/i.test(text) ||
+    /incomplete repository binding/i.test(text) ||
+    /no authoritative objective fact/i.test(text)
   ) {
     return { kind: 'workspace-failure', repo: repoFromReason(text) };
   }
@@ -162,6 +165,27 @@ function repoFromReason(text: string): string {
 
 export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number): boolean {
   return kind === 'hiccup' && nextAttempt > 0 && nextAttempt < HICCUP_ATTEMPT_LIMIT;
+}
+
+/** Corner-start configuration that cannot recover without a human/config change. */
+export function isStandingWorkspaceConfigurationFault(text: string): boolean {
+  return (
+    /repository state is not verified/i.test(text) ||
+    /incomplete repository binding/i.test(text) ||
+    /no authoritative objective fact/i.test(text)
+  );
+}
+
+/**
+ * A generation-less failed receipt is bound to a still-pending command. Standing
+ * conditions complete it; a transient clone/checkout/network (or hiccup that
+ * cannot restart because nothing was claimed) leaves it pending so the next
+ * startCorner can answer the original request without a helper-process restart.
+ */
+export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason = ''): boolean {
+  if (kind === 'hiccup' || kind === 'offline') return false;
+  if (kind === 'workspace-failure') return isStandingWorkspaceConfigurationFault(reason);
+  return true;
 }
 
 export function hiccupBackoffMs(attempt: number): number {
@@ -184,7 +208,7 @@ function capLine(name: string, verb: string, consequence: string): TurnSilencePh
 export function phraseTurnSilence(
   name: string,
   classified: ClassifiedTurnSilence,
-  options: { readonly givingUp?: boolean } = {},
+  options: { readonly givingUp?: boolean; readonly restarting?: boolean } = {},
 ): TurnSilencePhrase {
   const agent = name.trim() || 'The agent';
   switch (classified.kind) {
@@ -232,8 +256,10 @@ export function phraseTurnSilence(
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();
       const remedy = options.givingUp
         ? 'Stopped restarting after three tries.'
-        : 'Restarting her and resending your message.';
-      return capLine(agent, 'could not answer', `${fault}. ${remedy}`);
+        : options.restarting === false
+          ? undefined
+          : 'Restarting her and resending your message.';
+      return capLine(agent, 'could not answer', remedy ? `${fault}. ${remedy}` : `${fault}.`);
     }
   }
 }

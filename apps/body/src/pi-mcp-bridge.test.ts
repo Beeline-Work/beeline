@@ -26,13 +26,18 @@ async function home(): Promise<string> {
 }
 
 describe('pi MCP bridge', () => {
-  it('names pi as the one harness that drops session/new mcpServers', () => {
+  it('claims session MCP only for harnesses that actually deliver it', () => {
     expect(harnessMountsSessionMcpServers('/usr/bin/pi-acp')).toBe(false);
     expect(harnessMountsSessionMcpServers('pi-acp')).toBe(false);
+    expect(harnessMountsSessionMcpServers('cursor-agent-acp')).toBe(false);
+    expect(harnessMountsSessionMcpServers('/usr/bin/cursor-agent-acp')).toBe(false);
+    expect(harnessMountsSessionMcpServers('cursor-acp-bridge')).toBe(true);
+    expect(harnessMountsSessionMcpServers('/usr/bin/cursor-acp-bridge')).toBe(true);
     expect(harnessMountsSessionMcpServers('claude-agent-acp')).toBe(true);
     expect(harnessMountsSessionMcpServers('codex-acp')).toBe(true);
     expect(harnessMountsSessionMcpServers('grok')).toBe(true);
-    expect(harnessMountsSessionMcpServers(undefined)).toBe(true);
+    expect(harnessMountsSessionMcpServers('some-unknown-acp')).toBe(false);
+    expect(harnessMountsSessionMcpServers(undefined)).toBe(false);
   });
 
   it('carries the session’s exact server command, args and environment', () => {
@@ -64,6 +69,12 @@ describe('pi MCP bridge', () => {
     const piHome = await home();
     expect(
       await installPiMcpBridge({ agentCommand: 'claude-agent-acp', piHome, servers: [SERVER] }),
+    ).toBeUndefined();
+    expect(
+      await installPiMcpBridge({ agentCommand: 'cursor-acp-bridge', piHome, servers: [SERVER] }),
+    ).toBeUndefined();
+    expect(
+      await installPiMcpBridge({ agentCommand: 'cursor-agent-acp', piHome, servers: [SERVER] }),
     ).toBeUndefined();
     expect(
       await installPiMcpBridge({ agentCommand: '/usr/bin/pi-acp', servers: [SERVER] }),

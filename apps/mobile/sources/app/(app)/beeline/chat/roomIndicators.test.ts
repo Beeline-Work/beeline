@@ -153,7 +153,9 @@ describe('the corner line and the turn indicator are independent', () => {
     // other, both, or neither.
     expect(chatSource).toContain('{!isCorner && !isArchived && cornerLiveBar && (');
     expect(chatSource).toContain('desktopExperience ? (');
-    expect(chatSource).toMatch(/\{!isArchived && composerAck && \(\s*<TurnProgressLine/);
+    expect(chatSource).toMatch(
+      /\{!isArchived && composerAck && \(\s*<View style=\{styles\.hangingTurnChrome\}/,
+    );
     expect(chatSource).toContain('<TurnProgressLine');
     expect(chatSource).toContain('label={composerAck.label}');
   });

@@ -49,12 +49,24 @@ describe('Room composer status layout', () => {
     expect(inputStyle).toContain('maxHeight: COMPOSER_MAX_INPUT_HEIGHT');
   });
 
-  it('keeps turn progress inside the growing composer stack, above the field', () => {
+  it('keeps turn progress inside the composer stack, above the field', () => {
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
     const composer = inputBar.indexOf('<ConversationComposer');
     expect(progress).toBeGreaterThanOrEqual(0);
     expect(composer).toBeGreaterThan(progress);
+  });
+
+  it('hangs the phone turn line over the transcript so it does not open a composer gap', () => {
+    const hanging = source.slice(
+      source.indexOf('hangingTurnChrome: {'),
+      source.indexOf('agentOfflineHint: {'),
+    );
+    expect(hanging).toContain("position: 'absolute'");
+    expect(hanging).toContain("bottom: '100%'");
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
+    expect(inputBar.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);
+    expect(inputBar.indexOf('hanging-turn-chrome')).toBeLessThan(inputBar.indexOf('<ConversationComposer'));
   });
 
   it('keeps the send arrow separated from the text field', () => {

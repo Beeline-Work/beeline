@@ -2344,10 +2344,10 @@ export default function BuzzChat() {
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
-  // keyboard, the server's later claim mounts TurnProgressLine, and a corner
-  // lease mounts CornerLiveBar. Native layout can update the pinned ref before
-  // an effect runs, preserving the old offset as an empty gap. Capture the
-  // verdict in render, including the two independently mounted status lines.
+  // keyboard, and a corner lease mounts CornerLiveBar. The phone turn line
+  // hangs over the tail instead of growing this footprint. Native layout can
+  // update the pinned ref before an effect runs, preserving the old offset as
+  // an empty gap. Capture the verdict in render.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -5027,9 +5027,11 @@ export default function BuzzChat() {
                   </TouchableOpacity>
                 </View>
               )}
-              {/* Keep this in the composer stack, directly above the field. A
-                growing multiline field then takes room from the transcript,
-                never from the only live progress signal. */}
+              {/* Phone turn chrome hangs over the transcript tail instead of
+                growing the composer stack. Emulator measurement: last-message
+                → composer grew by the thinking-line height itself (30pt), not
+                a double-counted footprint or an extra follow offset. Hanging
+                keeps that idle gap; desktop keeps the reserved slot. */}
               {desktopExperience ? (
                 <View
                   style={styles.desktopStatusSlot}
@@ -5067,19 +5069,23 @@ export default function BuzzChat() {
               ) : (
                 <>
                   {!isArchived && composerAck && (
-                    <TurnProgressLine
-                      label={composerAck.label}
-                      startedAt={composerAck.startedAt}
-                      received={composerAck.received}
-                      stopping={stoppingThisTurn}
-                      onStop={
-                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                      }
-                      testID="turn-progress-line"
-                    />
+                    <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
+                      <TurnProgressLine
+                        label={composerAck.label}
+                        startedAt={composerAck.startedAt}
+                        received={composerAck.received}
+                        stopping={stoppingThisTurn}
+                        onStop={
+                          composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                        }
+                        testID="turn-progress-line"
+                      />
+                    </View>
                   )}
                   {!isArchived && !composerAck && settledTurn && (
-                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                    <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
+                      <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                    </View>
                   )}
                 </>
               )}
@@ -6006,10 +6012,18 @@ const styles = StyleSheet.create((theme) => {
       flexGrow: 1,
     },
     inputBar: {
+      position: 'relative',
       paddingHorizontal: 16,
       paddingTop: 8,
       borderTopWidth: 1,
       borderTopColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    hangingTurnChrome: {
+      position: 'absolute',
+      right: 0,
+      bottom: '100%',
+      left: 0,
       backgroundColor: groknight.bgTerminal,
     },
     agentOfflineHint: {

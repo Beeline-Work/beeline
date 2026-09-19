@@ -9,11 +9,13 @@ const layout = readFileSync(path.join(root, '../_layout.tsx'), 'utf8');
 const load = readFileSync(path.join(root, 'chat/_chat-surface-load.ts'), 'utf8');
 const session = readFileSync(path.join(root, 'chat/useRoomSurfaceSession.ts'), 'utf8');
 const channels = readFileSync(path.join(root, 'channels.tsx'), 'utf8');
+const sidebar = readFileSync(path.join(root, '../../../components/SidebarView.tsx'), 'utf8');
 const trace = readFileSync(path.join(root, '../../../buzz/room-open-trace.ts'), 'utf8');
+const prefetch = readFileSync(path.join(root, '../../../buzz/room-open-prefetch.ts'), 'utf8');
 
 describe('Room open-to-pixel occupancy', () => {
   it('marks navigation dispatch, route mount, and cache-read separately from auth', () => {
-    expect(channels).toContain("markRoomOpen('nav-dispatch', roomId)");
+    expect(prefetch).toContain("markRoomOpen('nav-dispatch', roomId)");
     expect(chat).toContain("markRoomOpen('route-mount', decodedId)");
     expect(session).toContain("markRoomOpen('session-effect', channelId)");
     expect(session).toContain("markRoomOpen('cache-read-start')");
@@ -28,16 +30,25 @@ describe('Room open-to-pixel occupancy', () => {
     expect(chatScreen).toContain("animation: 'none'");
   });
 
-  it('starts the 6k chrome chunk from the deck so first Room import is not behind the newest-row paint', () => {
+  it('starts the 6k chrome chunk after the newest-row pixel, never on the deck tap', () => {
     expect(load).toContain("import('./_chat-surface')");
     expect(load).toContain('surface-preload-start');
-    expect(chat).toContain('preloadChatSurface()');
+    expect(load).toContain('surface-preload-error');
+    expect(load).toContain('pending = null');
+    expect(chat).toContain('attachChatSurfaceAfterPaint');
+    expect(chat).toContain('afterInteractions');
     expect(chat).not.toContain("from './_chat-surface'");
     expect(chat).not.toContain('from "./_chat-surface"');
-    expect(channels).toContain('preloadChatSurface()');
+    expect(channels).not.toContain('preloadChatSurface');
+    expect(sidebar).not.toContain('preloadChatSurface');
+    expect(channels).toContain('dispatchRoomOpenTap');
+    expect(sidebar).toContain('dispatchRoomOpenTap');
+    expect(prefetch).toContain('dispatchRoomOpenTap');
+    expect(prefetch).not.toContain('preloadChatSurface');
     expect(chat.indexOf("markRoomOpen('route-mount', decodedId)")).toBeLessThan(
-      chat.indexOf('preloadChatSurface()'),
+      chat.lastIndexOf('attachChatSurfaceAfterPaint'),
     );
+    expect(chat.indexOf('pixel-ui-frame')).toBeLessThan(chat.lastIndexOf('attachChatSurfaceAfterPaint'));
   });
 
   it('keeps newest-row first paint aligned to header+composer and loads history only after a reader scroll', () => {

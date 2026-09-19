@@ -1,4 +1,5 @@
 import type { RoomView } from '@beeline/buzz-client';
+import { markRoomOpen } from '@/buzz/room-open-trace';
 
 type Inflight = {
   roomId: string;
@@ -17,6 +18,22 @@ export function seedRoomOpenPixel(roomId: string, text: string): void {
 
 export function roomOpenPixelSeed(roomId: string): string | null {
   return pixelSeed?.roomId === roomId ? pixelSeed.text : null;
+}
+
+/** Deck tap: seed + navigate. Never start chrome `import()` here — a pending
+ *  evaluation occupies the JS thread and steals the tap-to-pixel budget. */
+export function dispatchRoomOpenTap(
+  roomId: string,
+  newestLine: string | undefined,
+  next: {
+    prefetch?: (roomId: string) => void;
+    navigate: (roomId: string) => void;
+  },
+): void {
+  markRoomOpen('nav-dispatch', roomId);
+  if (newestLine) seedRoomOpenPixel(roomId, newestLine);
+  next.prefetch?.(roomId);
+  next.navigate(roomId);
 }
 
 /** Start the Room GET at deck press so navigation and fetch overlap. */

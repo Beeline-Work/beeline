@@ -3,6 +3,7 @@ import type { RoomView } from '@beeline/buzz-client';
 
 import {
   beginRoomOpenPrefetch,
+  dispatchRoomOpenTap,
   roomOpenPixelSeed,
   seedRoomOpenPixel,
   takeRoomOpenPrefetch,
@@ -27,5 +28,14 @@ describe('room-open prefetch', () => {
     seedRoomOpenPixel('room-a', 'PIXEL-450 NEWEST ROW');
     expect(roomOpenPixelSeed('room-a')).toBe('PIXEL-450 NEWEST ROW');
     expect(roomOpenPixelSeed('room-b')).toBeNull();
+  });
+
+  it('dispatches navigation without evaluating the chrome module', () => {
+    const prefetch = vi.fn();
+    const navigate = vi.fn();
+    dispatchRoomOpenTap('room-b', 'newest line', { prefetch, navigate });
+    expect(roomOpenPixelSeed('room-b')).toBe('newest line');
+    expect(prefetch).toHaveBeenCalledWith('room-b');
+    expect(navigate).toHaveBeenCalledWith('room-b');
   });
 });

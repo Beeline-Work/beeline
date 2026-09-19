@@ -24,8 +24,9 @@ import {
   roomOpenMessagePadding,
   roomOpenNewestTextMetrics,
 } from '@/buzz/room-open-geometry';
+import { afterInteractions } from '@/buzz/defer-interaction';
 import { roomOpenPixelSeed } from '@/buzz/room-open-prefetch';
-import { preloadChatSurface } from './_chat-surface-load';
+import { attachChatSurfaceAfterPaint } from './_chat-surface-load';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -41,9 +42,11 @@ type ChatSurfaceProps = {
 function RoomOpenPixel({
   roomSurface,
   seedText,
+  onFirstPaint,
 }: {
   roomSurface: RoomView | null;
   seedText: string | null;
+  onFirstPaint: () => void;
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -52,11 +55,22 @@ function RoomOpenPixel({
   // Match the chat header's minHeight (insets.top + 60) so chrome mount does
   // not jump the newest row when the header appears.
   const headerReserve = insets.top + 60;
+  const painted = useRef(false);
   const markLayout = (phase: 'pixel-layout-loader' | 'pixel-layout-newest') => {
     markRoomOpen(phase, newest?.id ?? (newestText ? 'seed' : undefined));
+    const notify = () => {
+      if (painted.current) return;
+      painted.current = true;
+      onFirstPaint();
+    };
     const raf = globalThis.requestAnimationFrame;
     if (typeof raf === 'function') {
-      raf(() => markRoomOpen(phase === 'pixel-layout-newest' ? 'pixel-ui-frame' : 'pixel-ui-loader'));
+      raf(() => {
+        markRoomOpen(phase === 'pixel-layout-newest' ? 'pixel-ui-frame' : 'pixel-ui-loader');
+        notify();
+      });
+    } else {
+      notify();
     }
   };
   if (!newestText) {
@@ -127,8 +141,8 @@ function RoomOpenPixel({
 }
 
 /** First paint is only the newest cached/fetched row. The 6k-line chrome
- *  module is imported after that commit so its occupancy cannot steal the
- *  open-to-pixel budget. */
+ *  module is imported after that pixel and after the current interaction so
+ *  a pending evaluation cannot steal the tap-to-pixel budget. */
 export default function BuzzChat() {
   const { channelId, notificationResponseId } = useLocalSearchParams<{
     channelId: string;
@@ -150,27 +164,21 @@ export default function BuzzChat() {
   });
   const [Chrome, setChrome] = useState<ComponentType<ChatSurfaceProps> | null>(null);
   const [surfaceReady, setSurfaceReady] = useState(false);
+  const [pixelPainted, setPixelPainted] = useState(false);
 
   useLayoutEffect(() => {
     markRoomOpen('route-mount', decodedId);
-  }, [decodedId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    markRoomOpen('surface-import-start');
-    void preloadChatSurface().then((mod) => {
-      if (cancelled) return;
-      markRoomOpen('surface-import-end');
-      setChrome(() => mod.BuzzChatSurface);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
+    setPixelPainted(false);
     setSurfaceReady(false);
   }, [decodedId]);
+
+  useEffect(() => {
+    if (!pixelPainted || Chrome) return;
+    return attachChatSurfaceAfterPaint(
+      (mod) => setChrome(() => mod.BuzzChatSurface),
+      afterInteractions,
+    );
+  }, [pixelPainted, isFocused, Chrome]);
 
   useLayoutEffect(() => {
     if (!session.roomSurface) return;
@@ -200,8 +208,10 @@ export default function BuzzChat() {
   if (!surfaceReady || !Chrome) {
     return (
       <RoomOpenPixel
+        key={decodedId}
         roomSurface={session.roomSurface}
         seedText={roomOpenPixelSeed(decodedId)}
+        onFirstPaint={() => setPixelPainted(true)}
       />
     );
   }

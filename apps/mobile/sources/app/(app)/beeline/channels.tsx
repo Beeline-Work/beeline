@@ -22,9 +22,11 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { markRoomOpen } from '@/buzz/room-open-trace';
-import { beginRoomOpenPrefetch, seedRoomOpenPixel } from '@/buzz/room-open-prefetch';
-import { preloadChatSurface } from './chat/_chat-surface-load';
+import {
+  beginRoomOpenPrefetch,
+  dispatchRoomOpenTap,
+  seedRoomOpenPixel,
+} from '@/buzz/room-open-prefetch';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
@@ -226,14 +228,6 @@ export default function BuzzChannels() {
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
   const canLeaveRooms = chatList?.workspace.role === 'member';
   const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
-
-  useEffect(() => {
-    if (!chatList) return;
-    const frame = globalThis.requestAnimationFrame(() => {
-      void preloadChatSurface();
-    });
-    return () => globalThis.cancelAnimationFrame(frame);
-  }, [chatList]);
 
   useEffect(() => {
     if (
@@ -515,12 +509,13 @@ export default function BuzzChannels() {
 
   const openRoom = useCallback(
     (roomId: string, newestLine?: string) => {
-      void preloadChatSurface();
-      markRoomOpen('nav-dispatch', roomId);
-      if (newestLine) seedRoomOpenPixel(roomId, newestLine);
-      if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, roomId);
-      prefetchRoom(roomId);
-      router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href);
+      dispatchRoomOpenTap(roomId, newestLine, {
+        prefetch: prefetchRoom,
+        navigate: (id) => {
+          if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
+          router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+        },
+      });
     },
     [activeCommunityId, identity, prefetchRoom],
   );

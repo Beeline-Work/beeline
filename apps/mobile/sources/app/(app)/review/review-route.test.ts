@@ -36,8 +36,13 @@ vi.mock('expo-linking', () => ({ useURL: () => null }));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return {
-    PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props),
     MonoButton: (props: any) => ReactModule.createElement('MonoButton', props),
+  };
+});
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
   };
 });
 vi.mock('@/auth/review-sign-in', () => ({ signInWithReviewSecret: signIn }));

@@ -55,7 +55,12 @@ vi.mock('./MonoHull', async () => {
   return {
     BrassButton: host('BrassButton'),
     HullSurface: host('HullSurface'),
-    PixelLoader: host('PixelLoader'),
+  };
+});
+vi.mock('./SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
   };
 });
 vi.mock('./IdentityMark', async () => {

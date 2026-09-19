@@ -1,5 +1,5 @@
 {
-  "app/(app)/beeline/channels.tsx": 8,
+  "app/(app)/beeline/channels.tsx": 7,
   "app/(app)/beeline/chat/RoomMessageVariants.tsx": 17,
   "app/(app)/beeline/chat/[channelId].tsx": 49,
   "app/(app)/beeline/community.tsx": 9,

@@ -13,6 +13,7 @@ vi.mock('react-native', async () => {
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
     TextInput: host('TextInput'),
+    View: host('View'),
   };
 });
 
@@ -28,6 +29,12 @@ vi.mock('@/constants/Typography', () => ({
   },
 }));
 
+vi.mock('./SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 vi.mock('./HullActionSheet', () => ({
   HULL_SHEET_INSET: 22,
   HullActionSheetCancel: (props: any) =>

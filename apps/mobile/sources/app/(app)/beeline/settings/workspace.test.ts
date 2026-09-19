@@ -97,6 +97,12 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     PixelLoader: host('PixelLoader'),
   };
 });
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
+  const ReactModule = await import('react');
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
+});
 vi.mock('@/components/buzz/HullActionSheet', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>

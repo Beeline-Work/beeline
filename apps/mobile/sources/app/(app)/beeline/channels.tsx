@@ -53,7 +53,10 @@ import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import { CornerWorkingPulse } from '@/components/buzz/CornerLiveBar';
-import { MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton } from '@/components/buzz/MonoHull';
+import { consumeFirstRoomDeckAfterBoot } from '@/buzz/boot-paint-handoff';
+import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
   RoomDeckComposeMenu,
   type RoomDeckComposeAction,
@@ -164,6 +167,7 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
 
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
+  const suppressFirstDeckPaint = useRef(consumeFirstRoomDeckAfterBoot()).current;
   const isDesktop = useIsDesktop();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
@@ -717,10 +721,10 @@ export default function BuzzChannels() {
   }
   if (!chatList && !error) {
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <PixelLoader />
-        <Text style={styles.loading}>LOADING ROOMS</Text>
-      </View>
+      <RoomDeckLoadingView
+        style={{ paddingTop: insets.top }}
+        suppressPaint={suppressFirstDeckPaint}
+      />
     );
   }
   if (!chatList) {
@@ -1005,7 +1009,7 @@ export default function BuzzChannels() {
                   <View style={styles.cornerDropdown} testID={`room-corners-${item.room.id}`}>
                     {cornerLoadingRoomId === item.room.id && !corners ? (
                       <View style={styles.cornerLoading}>
-                        <PixelLoader compact />
+                        <SurfaceGlyphLoader compact testID="corners-loader" />
                         <Text style={styles.cornerLoadingText}>LOADING CORNERS</Text>
                       </View>
                     ) : cornerLoadErrors[item.room.id] ? (
@@ -1120,12 +1124,6 @@ const styles = StyleSheet.create((theme) => {
       gap: 14,
       backgroundColor: hull.bgTerminal,
       paddingHorizontal: 28,
-    },
-    loading: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 10,
-      letterSpacing: 1.2,
     },
     header: {
       minHeight: 62,

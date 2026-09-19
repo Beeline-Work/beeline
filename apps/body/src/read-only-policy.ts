@@ -265,6 +265,7 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'pr_checks_status',
   'post_artifact',
   'write_scratch_file',
+  'fetch_image',
 ] as const;
 
 const SQUIRE_TITLE_PREFIXES = [

@@ -1,0 +1,40 @@
+
+ RUN  v3.2.7 /home/lunchbox/.treehouse/buzzy-e37bbb/18/buzzy/apps/mobile
+
+ ✓ sources/config/nativeSplashHandoff.test.ts (1 test) 3ms
+ ✓ sources/app/(app)/beeline/channels.bootstrap.test.ts (11 tests) 5ms
+ ✓ sources/components/buzz/SurfaceGlyphLoader.test.ts (6 tests) 56ms
+ ✓ sources/config/logoAssets.test.ts (8 tests) 799ms
+   ✓ Beeline continuous-line logo assets > ships full-size marks on unmasked rasters and preserves adaptive bounds  668ms
+ ✓ sources/config/mobileOtaRelease.test.ts (78 tests) 23540ms
+   ✓ mobile OTA release governor > publishes the committed compatibility runtime targets alongside the store pins  539ms
+   ✓ mobile OTA release governor > fails publish planning before any EAS call when the plan strands a shipped runtime  551ms
+   ✓ mobile OTA release governor > dry-runs beta publish and exact-group production operations with pinned EAS CLI  2116ms
+   ✓ mobile OTA release governor > prints EAS JSON failure details captured on stdout  537ms
+   ✓ mobile OTA release governor > publishes and promotes every committed platform-runtime rollout target  1176ms
+   ✓ mobile OTA release governor > carries duplicate-platform runtime groups through publish, promotion, and delivery  1527ms
+   ✓ mobile OTA release governor > anchors a shipped compatibility runtime on its store binary and still refuses an unreadable production lookup  1214ms
+   ✓ mobile OTA release governor > refuses a publish that silently covers only one of the built platforms  611ms
+   ✓ mobile OTA release governor > refuses a publish whose updates belong to no update group  530ms
+   ✓ mobile OTA release governor > reads a publish payload that names each group around its updates  686ms
+   ✓ mobile OTA release governor > rolls production back to one known-good group per platform  589ms
+   ✓ mobile OTA release governor > rolls back every target when the previous runtime shared one group  532ms
+   ✓ mobile OTA release governor > rolls a first production release back to the embedded update with no predecessor group  554ms
+   ✓ mobile OTA release governor > prints the embedded rollback plan on a dry run without touching EAS  533ms
+   ✓ mobile OTA release governor > refuses a rollback that leaves a platform on the failed production group  524ms
+   ✓ mobile OTA release governor > promotes and rolls back a ledger whose single group covered both platforms  1089ms
+   ✓ mobile OTA release governor > never lets a stale failed canary roll back a newer production group  581ms
+   ✓ mobile OTA release governor > records an automatic rollback only when the failed group is still production  525ms
+   ✓ mobile OTA release governor > fails closed before republishing when the guarded current-group query is unavailable  549ms
+   ✓ mobile OTA release governor > tracks every merge through pending, built, published, and physical-device confirmation  1247ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks with the existing not-ready message class when an offline emulator outlives the readiness window  1034ms
+   ✓ mobile OTA release governor > canary runner environment classification > refuses a custom MAESTRO_FLOW when the device reports a stale update  2030ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks before product smoke when the expected OTA update never becomes active  2131ms
+ ✓ sources/config/nativeFingerprint.test.ts (12 tests) 100984ms
+   ✓ native fingerprint gate > pins the runtime version by hand, because a computed stamp orphans installed binaries  537ms
+   ✓ native fingerprint gate > accepts this tree and rejects a real native edit, end to end  100439ms
+
+ Test Files  6 passed (6)
+      Tests  116 passed (116)
+   Start at  14:37:43
+   Duration  101.64s (transform 487ms, setup 423ms, collect 1.19s, tests 125.39s, environment 1ms, prepare 825ms)

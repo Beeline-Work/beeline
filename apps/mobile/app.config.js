@@ -67,12 +67,11 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "25",
-            icon: {
-                light: "./sources/assets/images/icon-light.png",
-                dark: "./sources/assets/images/icon-ios.png",
-                tinted: "./sources/assets/images/icon-ios-tinted.png",
-            },
+            runtimeVersion: runtimeVersionOverride || "27",
+            // Keep the launcher identity stable across system appearance modes.
+            // iOS masks this full-size source; only Android adaptive layers need
+            // the separately inset safe-zone treatment.
+            icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
@@ -102,7 +101,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "24",
+            runtimeVersion: runtimeVersionOverride || "26",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -202,7 +201,7 @@ export default {
                 {
                     ios: {
                         image: "./sources/assets/images/splash-android-light.png",
-                        imageWidth: 150,
+                        imageWidth: 125,
                         resizeMode: "contain",
                         backgroundColor: "#F3EEE4",
                         dark: {
@@ -212,7 +211,7 @@ export default {
                     },
                     android: {
                         image: "./sources/assets/images/splash-android-light.png",
-                        imageWidth: 150,
+                        imageWidth: 125,
                         resizeMode: "contain",
                         backgroundColor: "#F3EEE4",
                         dark: {

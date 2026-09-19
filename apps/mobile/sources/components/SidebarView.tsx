@@ -39,6 +39,7 @@ import {
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
@@ -529,11 +530,10 @@ export const SidebarView = React.memo(function SidebarView() {
                   ]}
                   testID="desktop-members"
                 >
-                  <Ionicons
-                    name="people-outline"
-                    size={16}
+                  <MembersGlyph
                     color={styles.headerGlyphColor.color}
-                    {...(Platform.OS === 'web' ? { 'aria-hidden': true } : {})}
+                    size={16}
+                    testID="desktop-members-glyph"
                   />
                 </Pressable>
               ) : null}

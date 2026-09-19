@@ -14,11 +14,11 @@ export const CHANGES_LABEL = `${CORNER_LABEL}s`;
  * and Workspace settings. Three surfaces previously reached the same screen
  * under three different words ("PEOPLE", "Members", "MEMBERS").
  *
- * Chrome next to bookmarks uses an outline people glyph from the same Ionicons
- * family; the word remains the accessible name and the in-list entries' title.
- * The angular hexagon `⌬` (captain report C73) stays retired: it never belonged
- * to the creature motif, and a Speakeasy animal would collide with identity
- * marks. `members-glyph.test.ts` holds that rule.
+ * Chrome next to bookmarks uses `MembersGlyph`; the word remains the accessible
+ * name and the in-list entries' title. The angular hexagon `⌬` (captain report
+ * C73) and the Ionicons `people-outline` stand-in stay retired: they never
+ * belonged to the creature motif, and a Speakeasy animal would collide with
+ * identity marks. `members-glyph.test.ts` holds that rule.
  */
 export const MEMBERS_LABEL = 'Members';
 

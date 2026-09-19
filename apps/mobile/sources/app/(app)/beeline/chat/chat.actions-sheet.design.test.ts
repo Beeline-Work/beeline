@@ -72,6 +72,7 @@ describe('Room and corner actions sheets', () => {
   it('keeps the membership roster row on the corner actions sheet and out of the Room sheet', () => {
     const members = row(cornerSheet, 'room-participant-roster-trigger');
     expect(members).toContain('label="Members"');
+    expect(members).toContain('leading={<MembersGlyph testID="room-participant-roster-glyph" />}');
     expect(members).toContain('metadata=');
     expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
     expect(members).toContain('setRosterVisible(true)');

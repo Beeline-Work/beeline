@@ -1,89 +1,153 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useSyncExternalStore } from 'react';
 import { type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import {
-  advanceStream,
-  mixHex,
-  openStream,
-  pendingTailLength,
-  type StreamState,
-} from '@/buzz/streaming-prose';
+  liveDraftStore,
+  type LiveDraftSnapshot,
+  type LiveDraftStore,
+} from '@/buzz/live-draft-store';
+import { pendingTailLength, type StreamState } from '@/buzz/streaming-prose';
 import { MonoMarkdown } from './MonoMarkdown';
+import { STREAMING_TAIL_FADE_MS, useStreamingTailAnimation } from './streaming-tail-animation';
 
-/** One arrival window. Characters that land inside it fade up together. */
-const TAIL_FADE_MS = 160;
-const TAIL_FADE_STEPS = 4;
+type Presentation = StreamState & {
+  revision: number;
+  windowKey: number;
+  windowEndsAt: number;
+};
+
+const now = () => globalThis.performance?.now?.() ?? Date.now();
+
+function presentSnapshot(
+  current: Presentation,
+  snapshot: LiveDraftSnapshot,
+  animate: boolean,
+): Presentation {
+  if (snapshot.revision === current.revision) {
+    if (!animate && current.settled < current.text.length) {
+      return {
+        ...current,
+        settled: current.text.length,
+        progress: 1,
+        windowKey: current.windowKey + 1,
+        windowEndsAt: 0,
+      };
+    }
+    return current;
+  }
+
+  const at = now();
+  const append = snapshot.text.startsWith(current.text);
+  const windowRunning = current.windowEndsAt > at && current.settled < current.text.length;
+  if (!animate || !snapshot.reveal || !append) {
+    return {
+      text: snapshot.text,
+      settled: snapshot.text.length,
+      progress: 1,
+      revision: snapshot.revision,
+      windowKey: current.windowKey + 1,
+      windowEndsAt: 0,
+    };
+  }
+
+  if (windowRunning) {
+    return {
+      ...current,
+      text: snapshot.text,
+      revision: snapshot.revision,
+    };
+  }
+
+  return {
+    text: snapshot.text,
+    settled: current.text.length,
+    progress: 0,
+    revision: snapshot.revision,
+    windowKey: current.windowKey + 1,
+    windowEndsAt: at + STREAMING_TAIL_FADE_MS,
+  };
+}
 
 /**
- * A turn as it is being written (C98).
+ * The only subscriber to one cumulative draft lane.
  *
- * The caller supplies the provisional tone; this component adds the one thing
- * a static render cannot say — that the words are still arriving. The tail
- * that landed since the last window walks its colour up from the transcript
- * ground to the body tone, so new text materialises where it was written and
- * everything already read holds perfectly still.
- *
- * Honest by construction. Nothing is revealed on a timer: the text rendered is
- * exactly the text the producer has sent, and a window opens only because
- * characters actually arrived. A harness that rewrites what it wrote settles
- * whole rather than pretending the replacement is new (`buzz/streaming-prose.ts`).
- *
- * Cheap by construction. A delta inside a running window changes only the tail
- * length; the block tree is rebuilt but the parse is memoised on the text, and
- * the fade costs four renders per window however fast the harness streams.
+ * React runs once per text commit from the 33/50 store. The 160ms tail reveal
+ * is a Reanimated shared value on native and a Web Animation on desktop; this
+ * component has no per-frame state, interval, or list-data update.
  */
 export function StreamingProse({
-  markdown,
+  streamKey,
+  store = liveDraftStore,
   textStyle,
   testID,
 }: {
-  markdown: string;
+  streamKey: string;
+  store?: LiveDraftStore;
   textStyle: TextStyle;
   testID?: string;
 }) {
   const reducedMotion = useReducedMotion();
   const animate = !reducedMotion;
-  const [stream, setStream] = useState<StreamState>(() => openStream(markdown, animate));
-  // Derived from props during render, the sanctioned way: a delta must not
-  // wait a frame to be shown, and the tail must never flash at full tone
-  // before its window opens.
-  if (stream.text !== markdown) setStream(advanceStream(stream, markdown, animate));
+  const snapshot = useSyncExternalStore(
+    (listener) => store.subscribe(streamKey, listener),
+    () => store.getSnapshot(streamKey),
+    () => store.getSnapshot(streamKey),
+  );
+  const presentationRef = useRef<Presentation>({
+    text: '',
+    settled: 0,
+    progress: 1,
+    revision: 0,
+    windowKey: 0,
+    windowEndsAt: 0,
+  });
+  presentationRef.current = presentSnapshot(presentationRef.current, snapshot, animate);
+  const presentation = presentationRef.current;
+  const tailLength = pendingTailLength(presentation);
 
-  const pending = pendingTailLength(stream) > 0;
+  // Logical settlement needs no paint: the native/web animation already ends
+  // at the exact provisional tone. This ref update only makes the NEXT text
+  // commit open a fresh suffix window instead of extending an expired one.
   useEffect(() => {
-    if (!pending || !animate) return;
-    let step = 0;
-    const timer = setInterval(() => {
-      step += 1;
-      const done = step >= TAIL_FADE_STEPS;
-      if (done) clearInterval(timer);
-      setStream((current) =>
-        done
-          ? { ...current, settled: current.text.length, progress: 1 }
-          : { ...current, progress: step / TAIL_FADE_STEPS },
-      );
-    }, TAIL_FADE_MS / TAIL_FADE_STEPS);
-    return () => clearInterval(timer);
-  }, [animate, pending]);
+    if (!animate || tailLength <= 0 || presentation.windowEndsAt <= 0) return;
+    const delay = Math.max(0, presentation.windowEndsAt - now());
+    const timer = setTimeout(() => {
+      const current = presentationRef.current;
+      if (current.windowKey !== presentation.windowKey) return;
+      presentationRef.current = {
+        ...current,
+        settled: current.text.length,
+        progress: 1,
+        windowEndsAt: 0,
+      };
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [animate, presentation.windowEndsAt, presentation.windowKey, tailLength]);
 
-  const tailLength = pendingTailLength(stream);
   const ground = String(styles.ground.color);
   const tone = String(textStyle.color ?? ground);
-  const tail = useMemo(
-    () =>
-      tailLength > 0
-        ? { length: tailLength, style: { color: mixHex(ground, tone, stream.progress) } }
-        : undefined,
-    [ground, stream.progress, tailLength, tone],
-  );
+  const tailAnimation = useStreamingTailAnimation({
+    active: animate && tailLength > 0,
+    ground,
+    tone,
+    windowKey: presentation.windowKey,
+  });
+  const tail =
+    tailLength > 0
+      ? {
+          length: tailLength,
+          style: tailAnimation.style,
+          component: tailAnimation.component,
+          windowKey: presentation.windowKey,
+        }
+      : undefined;
 
   return (
-    <MonoMarkdown markdown={stream.text} tail={tail} testID={testID} textStyle={textStyle} />
+    <MonoMarkdown markdown={presentation.text} tail={tail} testID={testID} textStyle={textStyle} />
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  /** The transcript ground the arriving characters rise out of. */
   ground: { color: theme.buzz.bgBase },
 }));

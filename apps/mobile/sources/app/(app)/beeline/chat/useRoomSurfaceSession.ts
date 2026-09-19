@@ -6,7 +6,6 @@ import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
   SurfaceRefreshScheduler,
-  applyLiveOverlay,
   isRoomView,
   type LiveOverlay,
   type RoomView,
@@ -27,6 +26,13 @@ import {
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { liveDraftRowId } from '@/buzz/draft-settle';
+import { rememberProvisionalDraft } from '@/buzz/draft-settle';
+import {
+  applyLiveOverlayStructure,
+  liveDraftStore,
+  liveDraftStoreKey,
+  type LiveDraftStore,
+} from '@/buzz/live-draft-store';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -145,6 +151,8 @@ export interface UseRoomSurfaceSessionResult {
   roomClient: RoomViewClient | null;
   roomSurface: RoomView | null;
   liveOverlays: readonly LiveOverlay[];
+  /** Row-local cumulative draft text; Room state holds lane structure only. */
+  liveDraftStore: LiveDraftStore;
   userPubkey: string;
   heartbeatPresences: Record<string, RoomAgentPresence>;
   presenceResolved: boolean;
@@ -180,6 +188,7 @@ export function useRoomSurfaceSession({
   const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
 
   const outboxRef = useRef<RoomOutbox | null>(null);
+  const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
   const agentPresencesRef = useRef(heartbeatPresences);
@@ -188,6 +197,7 @@ export function useRoomSurfaceSession({
   const deltaReconcilePendingRef = useRef(false);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
+  liveOverlaysRef.current = liveOverlays;
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
@@ -301,6 +311,7 @@ export function useRoomSurfaceSession({
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
+    liveOverlaysRef.current = [];
     setLiveOverlays([]);
     reconciledViewRef.current = null;
     setFailedIds(new Set());
@@ -324,7 +335,21 @@ export function useRoomSurfaceSession({
         });
         return;
       }
-      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
+      // Thought text is private and has no transcript row. Keeping it in Room
+      // state bought only a full-screen render for every cumulative snapshot.
+      if (overlay.kind === 'thought') return;
+
+      const storeKey = liveDraftStoreKey(overlay.agentPubkey, overlay.requestId);
+      if (overlay.text !== undefined) {
+        // Settlement can arrive in the same JS turn as the last draft. Record
+        // the newest client-held value before React reconciles the durable row.
+        rememberProvisionalDraft(storeKey, overlay.text);
+      }
+      const current = liveOverlaysRef.current;
+      const next = applyLiveOverlayStructure(current, overlay, liveDraftStore);
+      if (next === current) return;
+      liveOverlaysRef.current = next;
+      setLiveOverlays(next);
     };
 
     const applyView = (
@@ -335,6 +360,14 @@ export function useRoomSurfaceSession({
     ) => {
       if (cancelled) return;
       const stableView = reconcileRoomView(reconciledViewRef.current, view);
+      for (const message of stableView.messages) {
+        if (message.requestId)
+          liveDraftStore.drain(liveDraftStoreKey(message.author.pubkey, message.requestId));
+      }
+      for (const turn of stableView.latestAgentTurns) {
+        if (turn.status === 'complete')
+          liveDraftStore.drain(liveDraftStoreKey(turn.agentPubkey, turn.requestId));
+      }
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
@@ -456,6 +489,13 @@ export function useRoomSurfaceSession({
                 return;
               }
               reconciledViewRef.current = next;
+              if (live.type === 'message-delta' && live.message.requestId) {
+                liveDraftStore.drain(
+                  liveDraftStoreKey(live.message.author.pubkey, live.message.requestId),
+                );
+              } else if (live.type === 'turn-delta' && live.turn.status === 'complete') {
+                liveDraftStore.drain(liveDraftStoreKey(live.turn.agentPubkey, live.turn.requestId));
+              }
               hasPainted = true;
               bindingsRef.current.observeRoomSurface();
               if (received)
@@ -723,6 +763,7 @@ export function useRoomSurfaceSession({
                 error.status === 502);
             if (terminal) {
               setRoomSurface(null);
+              liveOverlaysRef.current = [];
               setLiveOverlays([]);
               unsubscribe?.();
               unsubscribe = undefined;
@@ -795,6 +836,7 @@ export function useRoomSurfaceSession({
     roomClient,
     roomSurface,
     liveOverlays,
+    liveDraftStore,
     userPubkey,
     heartbeatPresences,
     presenceResolved,

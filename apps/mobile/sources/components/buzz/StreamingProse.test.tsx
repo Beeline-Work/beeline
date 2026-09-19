@@ -2,30 +2,84 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LiveDraftClock } from '@/buzz/live-draft-store';
+
+const probes = vi.hoisted(() => ({
+  markdownRenders: 0,
+  reducedMotion: false,
+  withTiming: vi.fn((value: number) => value),
+  cancelAnimation: vi.fn(),
+}));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
-    Linking: { openURL: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles },
     Text: host('Text'),
-    View: host('View'),
-    ScrollView: host('ScrollView'),
   };
 });
 
-let reducedMotion = false;
-vi.mock('react-native-reanimated', () => ({ useReducedMotion: () => reducedMotion }));
+vi.mock('react-native-reanimated', async () => {
+  const ReactModule = await import('react');
+  const AnimatedText = (props: any) =>
+    ReactModule.createElement('AnimatedText', props, props.children);
+  return {
+    default: { Text: AnimatedText },
+    cancelAnimation: probes.cancelAnimation,
+    interpolateColor: (value: number, _input: number[], output: string[]) =>
+      value <= 0 ? output[0] : output[1],
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    useReducedMotion: () => probes.reducedMotion,
+    useSharedValue: (value: number) => ReactModule.useRef({ value }).current,
+    withTiming: probes.withTiming,
+  };
+});
 
+vi.mock('./MonoMarkdown', async () => {
+  const ReactModule = await import('react');
+  return {
+    MonoMarkdown: (props: any) => {
+      probes.markdownRenders += 1;
+      return ReactModule.createElement('MonoMarkdown', props, props.markdown);
+    },
+  };
+});
+
+import { createLiveDraftStore } from '@/buzz/live-draft-store';
 import { groknight } from '@/buzz/groknight';
 import { StreamingProse } from './StreamingProse';
 
-const PROVISIONAL = { color: groknight.ledgerQuiet, fontSize: groknight.proseSize };
+class FrameClock implements LiveDraftClock {
+  at = 0;
+  nextId = 1;
+  frames = new Map<number, (at: number) => void>();
+  timers = new Map<number, { at: number; callback: () => void }>();
+  now = () => this.at;
+  requestFrame = (callback: (at: number) => void) => {
+    const id = this.nextId++;
+    this.frames.set(id, callback);
+    return id;
+  };
+  cancelFrame = (id: number) => void this.frames.delete(id);
+  setTimer = (callback: () => void, delay: number) => {
+    const id = this.nextId++;
+    this.timers.set(id, { at: this.at + delay, callback });
+    return id;
+  };
+  clearTimer = (id: number) => void this.timers.delete(id);
+  frame(at: number) {
+    this.at = at;
+    const callbacks = [...this.frames.values()];
+    this.frames.clear();
+    callbacks.forEach((callback) => callback(at));
+  }
+}
 
+const PROVISIONAL = { color: groknight.ledgerQuiet, fontSize: groknight.proseSize };
 const originalConsoleError = console.error;
+
 beforeAll(() => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -38,112 +92,109 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
-  reducedMotion = false;
+  probes.markdownRenders = 0;
+  probes.reducedMotion = false;
+  probes.withTiming.mockClear();
+  probes.cancelAnimation.mockClear();
   vi.useFakeTimers();
 });
 afterEach(() => vi.useRealTimers());
 
-function render(element: React.ReactElement): ReactTestRenderer {
+function mount(store: ReturnType<typeof createLiveDraftStore>): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(element);
+    renderer = create(
+      <StreamingProse
+        store={store}
+        streamKey="agent-a:turn-a"
+        textStyle={PROVISIONAL}
+        testID="draft"
+      />,
+    );
   });
   return renderer;
 }
 
-/** Every rendered string, in order — what the reader can actually see. */
-function collectText(node: unknown): string {
-  if (node === null || node === undefined || typeof node === 'boolean') return '';
-  if (typeof node === 'string') return node;
-  if (Array.isArray(node)) return node.map(collectText).join('');
-  if (typeof node === 'object' && 'children' in (node as any))
-    return collectText((node as any).children);
-  return '';
+function markdown(renderer: ReactTestRenderer) {
+  return renderer.root.findByType('MonoMarkdown').props as {
+    markdown: string;
+    tail?: { length: number; windowKey: number };
+  };
 }
 
-/** The spans carrying the arriving-tail tone, and the colour they carry. */
-function tailSpans(renderer: ReactTestRenderer): { text: string; color: string }[] {
-  return renderer.root
-    .findAll(
-      (node: { type: unknown; props: { style?: unknown } }) =>
-        node.type === 'Text' &&
-        Array.isArray(node.props.style) &&
-        node.props.style.some(
-          (entry: unknown) =>
-            Boolean(entry) &&
-            typeof entry === 'object' &&
-            'color' in (entry as Record<string, unknown>) &&
-            Object.keys(entry as Record<string, unknown>).length === 1,
-        ),
-    )
-    .map((node: any) => ({
-      text: collectText(node.props.children),
-      color: node.props.style.find(
-        (entry: unknown) =>
-          Boolean(entry) &&
-          typeof entry === 'object' &&
-          Object.keys(entry as Record<string, unknown>).length === 1 &&
-          'color' in (entry as Record<string, unknown>),
-      ).color as string,
-    }));
-}
+describe('StreamingProse row-local reveal', () => {
+  it('renders only on text commits while Reanimated owns every reveal frame', () => {
+    const clock = new FrameClock();
+    const store = createLiveDraftStore({ clock });
+    const renderer = mount(store);
+    expect(markdown(renderer).markdown).toBe('');
 
-describe('StreamingProse', () => {
-  it('shows exactly the text produced, with only the new characters arriving', () => {
-    const renderer = render(<StreamingProse markdown="The answer" textStyle={PROVISIONAL} />);
-    // The opening chunk has just arrived, so all of it is the tail.
-    expect(collectText(renderer.toJSON())).toBe('The answer');
-    expect(tailSpans(renderer).map((span) => span.text).join('')).toBe('The answer');
-
-    // Let it settle, then stream a delta.
-    act(() => vi.advanceTimersByTime(200));
-    expect(tailSpans(renderer)).toEqual([]);
-    act(() => renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />));
-
-    expect(collectText(renderer.toJSON())).toBe('The answer is 42');
-    // Only the delta animates; the words already read hold still.
-    expect(tailSpans(renderer).map((span) => span.text).join('')).toBe(' is 42');
-  });
-
-  it('walks the arriving tail up from the ground to the body tone, once', () => {
-    const renderer = render(<StreamingProse markdown="Arriving" textStyle={PROVISIONAL} />);
-    expect(tailSpans(renderer)[0]?.color).toBe(groknight.bgBase.toLowerCase());
-
-    act(() => vi.advanceTimersByTime(40));
-    const midway = tailSpans(renderer)[0]?.color;
-    expect(midway).not.toBe(groknight.bgBase.toLowerCase());
-    expect(midway).not.toBe(groknight.ledgerQuiet);
+    store.publish('agent-a:turn-a', 'The answer');
+    expect(markdown(renderer).markdown).toBe('');
+    act(() => clock.frame(16));
+    expect(markdown(renderer)).toMatchObject({
+      markdown: 'The answer',
+      tail: { length: 'The answer'.length },
+    });
+    expect(probes.withTiming).toHaveBeenCalledTimes(1);
+    const rendersAfterCommit = probes.markdownRenders;
 
     act(() => vi.advanceTimersByTime(160));
-    // Settled: the tail is gone and the text simply carries the body tone.
-    expect(tailSpans(renderer)).toEqual([]);
-    expect(collectText(renderer.toJSON())).toBe('Arriving');
-    // And no timer is left running to move it again.
-    expect(vi.getTimerCount()).toBe(0);
+    expect(probes.markdownRenders).toBe(rendersAfterCommit);
+    expect(markdown(renderer).markdown).toBe('The answer');
   });
 
-  it('never re-animates text the harness rewrote rather than appended', () => {
-    const renderer = render(<StreamingProse markdown="The answer is 41" textStyle={PROVISIONAL} />);
+  it('extends one running tail without restarting it, then opens a later window', () => {
+    const clock = new FrameClock();
+    const store = createLiveDraftStore({ clock });
+    const renderer = mount(store);
+    store.publish('agent-a:turn-a', 'One');
+    act(() => clock.frame(16));
+    const firstWindow = markdown(renderer).tail!.windowKey;
+
+    clock.at = 20;
+    store.publish('agent-a:turn-a', 'One two');
+    act(() => clock.frame(50));
+    expect(markdown(renderer).tail).toMatchObject({ length: 7, windowKey: firstWindow });
+    expect(probes.withTiming).toHaveBeenCalledTimes(1);
+
     act(() => vi.advanceTimersByTime(200));
-    act(() =>
-      renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />),
-    );
-    expect(collectText(renderer.toJSON())).toBe('The answer is 42');
-    expect(tailSpans(renderer)).toEqual([]);
+    clock.at = 90;
+    store.publish('agent-a:turn-a', 'One two three');
+    act(() => clock.frame(100));
+    expect(markdown(renderer).tail!.windowKey).toBeGreaterThan(firstWindow);
+    expect(probes.withTiming).toHaveBeenCalledTimes(2);
   });
 
-  it('skips the typewriter entirely under reduced motion', () => {
-    reducedMotion = true;
-    const renderer = render(<StreamingProse markdown="The answer" textStyle={PROVISIONAL} />);
-    expect(collectText(renderer.toJSON())).toBe('The answer');
-    expect(tailSpans(renderer)).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
+  it('shows rewrites and catch-up drains fully, cancelling the reveal', () => {
+    const clock = new FrameClock();
+    const store = createLiveDraftStore({ clock });
+    const renderer = mount(store);
+    store.publish('agent-a:turn-a', 'The answer is 41');
+    act(() => clock.frame(16));
 
-    act(() =>
-      renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />),
-    );
-    expect(collectText(renderer.toJSON())).toBe('The answer is 42');
-    expect(tailSpans(renderer)).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
+    act(() => store.publish('agent-a:turn-a', 'The answer is 42'));
+    expect(markdown(renderer)).toMatchObject({ markdown: 'The answer is 42', tail: undefined });
+    expect(probes.cancelAnimation).toHaveBeenCalled();
+
+    clock.at = 17;
+    store.publish('agent-a:turn-a', 'The answer is 42. Done.');
+    act(() => store.drain('agent-a:turn-a'));
+    expect(markdown(renderer)).toMatchObject({
+      markdown: 'The answer is 42. Done.',
+      tail: undefined,
+    });
+  });
+
+  it('keeps the same frame-aligned schedule under reduced motion and reveals no tail', () => {
+    probes.reducedMotion = true;
+    const clock = new FrameClock();
+    const store = createLiveDraftStore({ clock });
+    const renderer = mount(store);
+    store.publish('agent-a:turn-a', 'Reduced motion');
+    expect(markdown(renderer).markdown).toBe('');
+    act(() => clock.frame(16));
+    expect(markdown(renderer)).toMatchObject({ markdown: 'Reduced motion', tail: undefined });
+    expect(probes.withTiming).not.toHaveBeenCalled();
   });
 });

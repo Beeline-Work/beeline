@@ -897,8 +897,11 @@ describe('useRoomSurfaceSession', () => {
       agentPubkey: 'agent-a',
       requestId: 'turn-c',
       closed: false,
-      text: "I'll trace the producer, then make the smallest correction",
     });
+    expect(current.liveOverlays[0]).not.toHaveProperty('text');
+    expect(current.liveDraftStore.getReceived('agent-a:turn-c')).toBe(
+      "I'll trace the producer, then make the smallest correction",
+    );
 
     // Exactly as a Room settles: the durable reply carries the turn's request
     // id, and the provisional row stops being visible the moment it lands.
@@ -965,18 +968,59 @@ describe('useRoomSurfaceSession', () => {
       emit({ type: 'draft', agentId: 'goosy', turnId: 'turn-x', text: 'goosy so far, and more' });
     });
 
-    // Two rows still, in the same order, each carrying its own newer text:
-    // neither agent took the other's row and neither stamp moved.
-    expect(
-      current.liveOverlays.map((overlay) => [
-        overlay.agentPubkey,
-        overlay.kind === 'draft' ? overlay.text : '',
-        overlay.createdAt,
-      ]),
-    ).toEqual([
-      ['goosy', 'goosy so far, and more', anchors[0]],
-      ['terra', 'terra so far, and more', anchors[1]],
-    ]);
+    // Two structural rows still, in the same order. Their changing text is in
+    // independent keyed stores, so neither Room state nor FlatList data moves.
+    expect(current.liveOverlays.map((overlay) => [overlay.agentPubkey, overlay.createdAt])).toEqual(
+      [
+        ['goosy', anchors[0]],
+        ['terra', anchors[1]],
+      ],
+    );
+    expect(current.liveDraftStore.getReceived('goosy:turn-x')).toBe('goosy so far, and more');
+    expect(current.liveDraftStore.getReceived('terra:turn-x')).toBe('terra so far, and more');
+    await act(async () => renderer.unmount());
+  });
+
+  it('does not render its Room owner or replace its structural overlay array for draft text', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renders = 0;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => {
+            renders += 1;
+            current = result;
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emit = (text: string) =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'draft',
+          roomId: 'room-a',
+          agentId: 'agent-a',
+          turnId: 'turn-local',
+          text,
+        },
+      });
+    await act(async () => emit('one'));
+    const structuralOverlays = current.liveOverlays;
+    const rendersAfterOpen = renders;
+
+    await act(async () => {
+      emit('one two');
+      emit('one two three');
+    });
+
+    expect(current.liveOverlays).toBe(structuralOverlays);
+    expect(renders).toBe(rendersAfterOpen);
+    expect(current.liveDraftStore.getReceived('agent-a:turn-local')).toBe('one two three');
     await act(async () => renderer.unmount());
   });
 
@@ -1016,7 +1060,12 @@ describe('useRoomSurfaceSession', () => {
       kind: 'draft',
       requestId: 'turn-1',
       closed: true,
+    });
+    expect(current.liveOverlays[0]).not.toHaveProperty('text');
+    expect(current.liveDraftStore.getSnapshot('agent-a:turn-1')).toMatchObject({
       text: 'I will update only X, then commit.',
+      reveal: false,
+      reason: 'drain',
     });
 
     // The durable final lands with the same request id and takes over the

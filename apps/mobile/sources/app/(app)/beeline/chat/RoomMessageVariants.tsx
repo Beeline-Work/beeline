@@ -474,9 +474,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
   const open = card.status === 'open';
   const viewerVote = card.responses.find((response) => response.identityId === viewerPubkey);
   const canAct =
-    open &&
-    !viewerIsAgent &&
-    (card.mode === 'question' || card.electorate.includes(viewerPubkey));
+    open && !viewerIsAgent && (card.mode === 'question' || card.electorate.includes(viewerPubkey));
   const busy = actionId === card.choiceId;
   const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
   const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
@@ -1861,6 +1859,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             }
             items={activity}
             messageDraft={message.agentMessageDraft}
+            messageDraftKey={message.agentMessageDraftKey}
             stamp={ledgerStamp(message.timestamp)}
             testID="corner-activity-timeline"
           />

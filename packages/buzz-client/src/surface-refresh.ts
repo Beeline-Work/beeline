@@ -36,9 +36,11 @@ export class SurfaceRefreshScheduler<T> {
   private expectations: SurfaceExpectation<T>[] = [];
 
   constructor(private readonly options: SurfaceRefreshOptions<T>) {
-    // 150 ms matches the product interaction target; forced refreshes still
-    // bypass this floor so same-process committed deltas stay immediate.
-    this.minimumIntervalMs = options.minimumIntervalMs ?? 150;
+    // 50 ms pairs with the server's LIVE_DELTA_DEADLINE_MS (50) so the two
+    // coalesce stages sum to 100 ms under the 150 ms interaction target,
+    // leaving 50 ms for GET/paint on a cross-process miss. Forced refreshes
+    // still bypass this floor so same-process committed deltas stay immediate.
+    this.minimumIntervalMs = options.minimumIntervalMs ?? 50;
     this.maximumWaitMs = options.maximumWaitMs ?? 1_000;
     this.now = options.now ?? Date.now;
     this.setTimer = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay));

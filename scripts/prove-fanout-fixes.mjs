@@ -60,9 +60,11 @@ check(
 );
 
 check(
-  'F150.scheduler-and-deadline',
-  refresh.includes('minimumIntervalMs ?? 150') && server.includes('LIVE_DELTA_DEADLINE_MS = 150'),
-  'surface refresh floor and live-delta deadline are 150 ms',
+  'F150.composed-coalesce-floors',
+  refresh.includes('minimumIntervalMs ?? 50') &&
+    server.includes('LIVE_INTERACTION_TARGET_MS = 150') &&
+    server.includes('LIVE_DELTA_DEADLINE_MS = Math.floor(LIVE_INTERACTION_TARGET_MS / 3)'),
+  'deadline 50 ms + scheduler 50 ms compose under the 150 ms interaction target',
 );
 
 check(

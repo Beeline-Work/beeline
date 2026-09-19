@@ -6,7 +6,7 @@ Scope: server live fanout, Room/deck hot reads, push delivery, client paint evid
 
 ## Status
 
-Implementation landed on this branch for the reconciled priority list (subscription batching, 150 ms floors, presence fanout, width coverage, push concurrency, monolith paint proof). The original finding write-up below is retained as the audit record.
+Implementation landed on this branch for the reconciled priority list (subscription batching, composed 50+50 ms coalesce floors under the 150 ms interaction target, presence fanout, width coverage with explainHotRead, push concurrency). Hot-path PhoneService read timings are measured separately from client paint (F5 remains open for real navigation/paint evidence).
 
 ## Targets (source of truth for this audit)
 
@@ -16,8 +16,9 @@ Implementation landed on this branch for the reconciled priority list (subscript
 | Route p95 | 500 ms |
 | Route p99 | 1,000 ms |
 | Route maximum | 2,000 ms |
-| Live-delta fallback deadline | 150 ms (`LIVE_DELTA_DEADLINE_MS` in `apps/server/src/server.ts`; was 400) |
-| Surface refresh floor | 150 ms (`SurfaceRefreshScheduler` default `minimumIntervalMs`; was 500) |
+| Live interaction target (miss path) | 150 ms end-to-end (deadline + scheduler + GET/paint) |
+| Live-delta fallback deadline | 50 ms (`LIVE_DELTA_DEADLINE_MS` = target/3 in `apps/server/src/server.ts`; was 400, then briefly 150 alone) |
+| Surface refresh floor | 50 ms (`SurfaceRefreshScheduler` default `minimumIntervalMs`; was 500, then briefly 150 alone) |
 
 ## Ranking (Nerd)
 
@@ -72,7 +73,7 @@ Evidence:
 - `production-corpus-hot-reads.test.ts` seeds one Room + one corner for 35,100 messages.
 - Room-list budget (100 ms) is exercised with that single-Room workspace despite a 200-Room API cap.
 
-Add width-shaped replay cases before choosing query rewrites.
+Follow-up on this branch: `production-corpus-width.test.ts` now seeds 50 Rooms (shallow) and one Room with 40 corners, invokes `explainHotRead` + `assertHotRead`, and asserts warm `readChats` / `readRoom` under the real `HOT_READ_BUDGETS_MS` (no 5× slack).
 
 ### F4 — Push delivery serializes under the sole background leader (P2)
 
@@ -91,8 +92,9 @@ Evidence:
 
 - `apps/mobile/evidence/navigation-performance-api36.md` reports 306 / 430 / 486 ms paints against the public relay reader (2026-08-12).
 - Current monolith client coverage includes structural `FRAME-BUDGET` tests (`surface-runtime.frame-budget.test.ts`), not monolith cold/warm Room-deck or transcript paint benchmarks.
+- `monolith-paint-budgets.test.ts` measures in-process `PhoneService.readChats` / `readRoom` only — useful as a server hot-path floor, not as client cold/warm paint proof.
 
-Need a monolith cold/warm Room-deck and transcript benchmark before claiming those targets still hold.
+Need a monolith cold/warm Room-deck and transcript **client** paint benchmark before claiming those targets still hold.
 
 ## Challenges / nuances (Nerd)
 

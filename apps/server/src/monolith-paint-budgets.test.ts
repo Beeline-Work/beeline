@@ -8,15 +8,16 @@ const WORKSPACE = '10000000-0000-4000-8000-000000000201';
 const ROOM = '20000000-0000-4000-8000-000000000201';
 const VIEWER = 'd'.repeat(64);
 
-/** Product page-load target used by the fanout audit (not a named in-tree constant). */
-const PAGE_LOAD_TARGET_MS = 450;
+/** Hot-path PhoneService read target (server authority the phone paints from).
+ * This is not a client navigation/paint proof — see audit F5. */
+const HOT_PATH_READ_TARGET_MS = 450;
 
 /**
- * Monolith cold/warm Room-deck and transcript paint path proof.
- * Exercises PhoneService.readChats / readRoom — the same authority the phone
- * paints — and prints observable timings against the 450 ms page target.
+ * Monolith hot-path deck and transcript PhoneService read budgets.
+ * Measures the server projection the phone paints — not mobile navigation,
+ * transport, cache hydration, rendering, or cold/warm client paint.
  */
-describe('monolith paint budgets (deck + transcript)', () => {
+describe('monolith hot-path PhoneService read budgets (deck + transcript)', () => {
   let database: PgliteDatabase;
   let phone: PhoneService;
 
@@ -48,7 +49,7 @@ describe('monolith paint budgets (deck + transcript)', () => {
     }
   }, 60_000);
 
-  it('cold and warm deck/transcript reads stay under the 450 ms page target', async () => {
+  it('cold and warm deck/transcript PhoneService reads stay under the hot-path target', async () => {
     const measure = async (label: string, work: () => Promise<unknown>) => {
       const started = performance.now();
       await work();
@@ -68,8 +69,8 @@ describe('monolith paint budgets (deck + transcript)', () => {
       ['cold transcript', coldRoom],
       ['warm transcript', warmRoom],
     ] as const) {
-      expect(elapsedMs, `${label} exceeded ${PAGE_LOAD_TARGET_MS} ms`).toBeLessThanOrEqual(
-        PAGE_LOAD_TARGET_MS,
+      expect(elapsedMs, `${label} exceeded ${HOT_PATH_READ_TARGET_MS} ms`).toBeLessThanOrEqual(
+        HOT_PATH_READ_TARGET_MS,
       );
     }
   });

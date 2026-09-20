@@ -53,7 +53,7 @@ export function CodeHighlighter({ code, language, style }: CodeHighlighterProps)
       {lines.map((line, li) => (
         <Text key={li} style={styles.line}>
           {line.length === 0 ? (
-            <Text>{' '}</Text>
+            <Text> </Text>
           ) : (
             line.map((span, si) => (
               <Text key={si} style={tokenStyle(span.token)}>

@@ -198,9 +198,9 @@ blank-line-delimited block — a dump is usually written directly under the
 sentence introducing it, and a block rule would either swallow that sentence or
 miss the dump. The summary truncates; the disclosure copy beside it never does,
 because the affordance is the reason the line exists. A fenced code block marks
-itself with a 2px left rule in Two Inks structure (`#6c6c76` Obsidian /
-`#8B7F6E` Bone, ≥3:1) — the same vocabulary tool readouts use — never a panel.
-Short fences stay inline with no chrome. A long fence is one inscribed line
+itself with a 2px left rule in Two Inks structure (see Color exceptions) —
+the same vocabulary tool readouts use — never a panel.
+Short fences stay inline with a Copy control and no inscription. A long fence is one inscribed line
 (`json · 13 lines · 277 B`) plus a four-line peek labelled with what it hides,
 and opens full-width in `ToolOutputSheet` (`CodeBlock.tsx`) where long lines
 wrap. Colour inside the fence is Three-role Two Inks (`groknight.syntax*`).

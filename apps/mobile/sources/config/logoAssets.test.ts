@@ -212,6 +212,81 @@ describe('Beeline continuous-line logo assets', () => {
     expect(faviconHeight).toBeGreaterThanOrEqual(900);
     expect(faviconHeight).toBeLessThan(950);
 
+    // Status-bar small icon: 24×24 dp asset, 22×22 dp optical square. The
+    // loop is taller than wide, so height fills that square and width stays
+    // inside it. The 24 px mdpi raster must still read and must not clip.
+    const notificationSource = readFileSync(new URL('icon-notification.png', images));
+    const notificationMeta = await sharp(notificationSource).metadata();
+    expect(notificationMeta.width).toBe(512);
+    expect(notificationMeta.height).toBe(512);
+    const opticalPx = Math.round((22 / 24) * 512);
+    const { data: notificationPixels, info: notificationInfo } = await sharp(notificationSource)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let minX = notificationInfo.width;
+    let minY = notificationInfo.height;
+    let maxX = -1;
+    let maxY = -1;
+    let edgeHits = 0;
+    let tintedHits = 0;
+    for (let y = 0; y < notificationInfo.height; y += 1) {
+      for (let x = 0; x < notificationInfo.width; x += 1) {
+        const at = (y * notificationInfo.width + x) * notificationInfo.channels;
+        const [r, g, b, a] = [
+          notificationPixels[at]!,
+          notificationPixels[at + 1]!,
+          notificationPixels[at + 2]!,
+          notificationPixels[at + 3]!,
+        ];
+        if (a <= 8) continue;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+        if (r <= 240 || g <= 240 || b <= 240) tintedHits += 1;
+        if (x === 0 || y === 0 || x === notificationInfo.width - 1 || y === notificationInfo.height - 1) {
+          edgeHits += 1;
+        }
+      }
+    }
+    const notificationWidth = maxX - minX + 1;
+    const notificationHeight = maxY - minY + 1;
+    expect(notificationHeight, 'notification height').toBeGreaterThanOrEqual(opticalPx - 8);
+    expect(notificationHeight, 'notification height').toBeLessThanOrEqual(opticalPx + 4);
+    expect(notificationWidth, 'notification width').toBeGreaterThan(300);
+    expect(notificationWidth, 'notification width').toBeLessThan(opticalPx);
+    expect(tintedHits).toBe(0);
+    expect(edgeHits).toBe(0);
+
+    const { data: mdpiPixels, info: mdpiInfo } = await sharp(notificationSource)
+      .resize(24, 24)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let mdpiMinX = mdpiInfo.width;
+    let mdpiMinY = mdpiInfo.height;
+    let mdpiMaxX = -1;
+    let mdpiMaxY = -1;
+    let mdpiEdgeHits = 0;
+    for (let y = 0; y < mdpiInfo.height; y += 1) {
+      for (let x = 0; x < mdpiInfo.width; x += 1) {
+        const at = (y * mdpiInfo.width + x) * mdpiInfo.channels;
+        if (mdpiPixels[at + 3]! <= 8) continue;
+        mdpiMinX = Math.min(mdpiMinX, x);
+        mdpiMinY = Math.min(mdpiMinY, y);
+        mdpiMaxX = Math.max(mdpiMaxX, x);
+        mdpiMaxY = Math.max(mdpiMaxY, y);
+        if (x === 0 || y === 0 || x === mdpiInfo.width - 1 || y === mdpiInfo.height - 1) {
+          mdpiEdgeHits += 1;
+        }
+      }
+    }
+    expect(mdpiMaxY - mdpiMinY + 1).toBeGreaterThanOrEqual(20);
+    expect(mdpiMaxY - mdpiMinY + 1).toBeLessThanOrEqual(23);
+    expect(mdpiMaxX - mdpiMinX + 1).toBeGreaterThanOrEqual(14);
+    expect(mdpiEdgeHits).toBe(0);
+
     for (const name of ['icon-adaptive.png', 'icon-adaptive-monochrome.png']) {
       const [width, height] = await bounds(name, null);
       expect(width, `${name} width`).toBeGreaterThanOrEqual(400);

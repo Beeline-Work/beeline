@@ -1089,8 +1089,23 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   onOpenUrl,
 }: GitHubEventCardProps) {
   const event = message.githubEvent!;
-  const subject = event.type === 'pull-request' ? 'PR' : 'Issue';
+  const subject =
+    event.type === 'pull-request'
+      ? 'PR'
+      : event.type === 'issue'
+        ? 'Issue'
+        : event.type === 'push'
+          ? 'Push'
+          : event.type === 'ci'
+            ? 'CI'
+            : 'Review';
   const state = event.action === 'merged' ? 'merged' : event.action;
+  const tone: 'waiting' | 'settled' | 'failed' =
+    state === 'opened' || state === 'pushed'
+      ? 'waiting'
+      : state === 'failed' || state === 'changes_requested'
+        ? 'failed'
+        : 'settled';
   return (
     <RepositoryFactCard
       title={`${subject} 1 ${state}`}
@@ -1102,7 +1117,7 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
           state,
           title: event.title,
           kindLine: subject,
-          tone: state === 'opened' ? 'waiting' : 'settled',
+          tone,
           onPress: () => onOpenUrl(event.url),
         },
       ]}

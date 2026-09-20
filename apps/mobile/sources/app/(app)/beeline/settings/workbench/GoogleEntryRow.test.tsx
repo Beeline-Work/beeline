@@ -101,9 +101,22 @@ describe('GoogleEntryRow', () => {
     });
     const details = renderer.root.findByProps({ testID: 'google-entry-details' });
     expect(details).toBeDefined();
-    expect(details.findByType('Text' as any).props.children).toBe(
+    const texts = details.findAllByType('Text' as any);
+    expect(texts[0]!.props.children).toBe(
       'Covers Gmail, Google Calendar, YouTube, and other Google services.',
     );
+    // Every folded tool is legible behind the disclosure, each with its own status.
+    const toolStatuses = ['gmail', 'calendar', 'drive', 'youtube'].map((name) =>
+      renderer.root.findByProps({ testID: `google-tool-google-${name}` }),
+    );
+    expect(
+      toolStatuses.map((node) => node.props.children.map((c: any) => c.props.children)),
+    ).toEqual([
+      ['gmail', 'not connected'],
+      ['calendar', 'not connected'],
+      ['drive', 'not connected'],
+      ['youtube', 'not connected'],
+    ]);
   });
 
   it('shows a partially connected set as repair: side Connect tops up, pane counts what is live', async () => {
@@ -124,11 +137,14 @@ describe('GoogleEntryRow', () => {
     await act(async () => {
       row.props.onPress();
     });
+    for (const name of ['gmail', 'calendar', 'drive', 'youtube']) {
+      expect(renderer.root.findAll((node: any) => node.props?.testID === `google-tool-google-${name}` && node.type === 'View')).toHaveLength(1);
+    }
     expect(
-      renderer.root.findAll((node: any) =>
-        String(node.props?.testID ?? '').startsWith('google-entry-tool-'),
-      ),
-    ).toHaveLength(0);
+      renderer.root
+        .findByProps({ testID: 'google-tool-google-youtube' })
+        .props.children.map((c: any) => c.props.children),
+    ).toEqual(['youtube', 'not connected']);
   });
 
   it('shows a fully connected set as connected with its sign-in identity and no connect button', async () => {

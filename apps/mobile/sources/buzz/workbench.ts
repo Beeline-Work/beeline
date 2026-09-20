@@ -241,6 +241,20 @@ export function googleEntryDescription(
   return entry ? connectorDescription(entry) : '';
 }
 
+/** Per-tool rows for the Google entry's expanded disclosure: one line per
+ *  folded tool (Gmail / Calendar / Drive / YouTube) with its own status word,
+ *  so a single tool like YouTube is visible and legible behind the fold.
+ *  Tools the catalog does not list are omitted. */
+export function googleToolRows(
+  connectors: readonly WorkbenchConnector[],
+): readonly { id: GoogleToolId; name: string; status: WorkbenchConnectorStatus }[] {
+  return GOOGLE_CONNECTOR_ORDER.flatMap((id) => {
+    const tool = connectors.find((connector) => connector.id === id);
+    if (!tool) return [];
+    return [{ id, name: tool.name, status: tool.status ?? 'disconnected' }];
+  });
+}
+
 /** The concrete Google tool type the single entry pairs first: the first
  * not-yet-connected tool in canonical order. When every tool is already
  * connected it re-arms the first — the server re-arms only the requested

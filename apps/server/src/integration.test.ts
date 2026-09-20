@@ -5002,6 +5002,85 @@ describe('monolith integration', () => {
         targetBranch: 'main',
       }),
     ]);
+    // Room-level mainline activity: pushes and CI are gated to the default
+    // branch and reviews ride open PRs; corner branches never reach the Room.
+    await webhook('push', 'room-push-main', {
+      ...base,
+      ref: 'refs/heads/main',
+      after: '3'.repeat(40),
+      compare: 'https://github.com/owner/widgets/compare/2...3',
+      size: 2,
+      commits: [{ id: 'a' }, { id: 'b' }],
+      sender: { login: 'octocat' },
+    });
+    await webhook('push', 'room-push-feature-branch', {
+      ...base,
+      ref: 'refs/heads/docs/readme',
+      after: '4'.repeat(40),
+      compare: 'https://github.com/owner/widgets/compare/3...4',
+      size: 1,
+      commits: [{ id: 'c' }],
+      sender: { login: 'octocat' },
+    });
+    await webhook('check_suite', 'room-checks-main', {
+      ...base,
+      action: 'completed',
+      check_suite: {
+        id: 9,
+        status: 'completed',
+        conclusion: 'success',
+        head_branch: 'main',
+        head_sha: '3'.repeat(40),
+        app: { name: 'Beeline CI' },
+        url: 'https://github.com/owner/widgets/actions/runs/9',
+      },
+      sender: { login: 'octocat' },
+    });
+    await webhook('pull_request_review', 'room-review-approved', {
+      ...base,
+      action: 'submitted',
+      review: {
+        state: 'approved',
+        user: { login: 'reviewer' },
+        html_url: 'https://github.com/owner/widgets/pull/18#pullrequestreview-1',
+      },
+      pull_request: {
+        number: 18,
+        title: 'Improve documentation',
+        html_url: 'https://github.com/owner/widgets/pull/18',
+        head: { ref: 'docs/readme', sha: '2'.repeat(40) },
+        base: { ref: 'main' },
+      },
+      sender: { login: 'reviewer' },
+    });
+    const mainlineCards = await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='github-event'
+       ORDER BY created_at`,
+      [ROOM],
+    );
+    expect(mainlineCards.rows.map((row) => row.card)).toEqual([
+      expect.objectContaining({ type: 'issue', action: 'opened' }),
+      expect.objectContaining({ type: 'pull-request', action: 'opened' }),
+      expect.objectContaining({
+        type: 'push',
+        action: 'pushed',
+        actor: 'octocat',
+        title: '2 commits to main',
+        branch: 'main',
+      }),
+      expect.objectContaining({
+        type: 'ci',
+        action: 'passed',
+        title: 'Beeline CI check suite',
+        branch: 'main',
+      }),
+      expect.objectContaining({
+        type: 'review',
+        action: 'approved',
+        actor: 'reviewer',
+        title: 'Improve documentation',
+      }),
+    ]);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',

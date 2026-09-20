@@ -18,6 +18,7 @@ const controls = vi.hoisted(() => ({
     expectations: Array<(view: RoomView) => boolean>;
     forceCalls: number;
     signalCalls: number;
+    started: boolean;
   }>,
   subscriptions: [] as Array<{
     filters: unknown;
@@ -174,11 +175,13 @@ vi.mock('@beeline/buzz-client', async () => {
           expectations: [],
           forceCalls: 0,
           signalCalls: 0,
+          started: false,
         };
         controls.schedulers.push(this.control);
       }
       async startAfter(watch: Promise<void>) {
         await watch;
+        this.control.started = true;
       }
       signal() {
         this.control.signalCalls += 1;
@@ -762,7 +765,31 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('does not reread on the opening subscribe handshake, then forces after a live resubscribe', async () => {
+  it('holds the opening Room read until the watch answers the subscribe', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.schedulers[0]!.started).toBe(false);
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    await flushEffects();
+    expect(controls.schedulers[0]!.started).toBe(true);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('rereads when the watch resubscribes, never on its opening handshake', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -785,41 +812,6 @@ describe('useRoomSurfaceSession', () => {
       });
     });
     expect(controls.schedulers[0]!.forceCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('treats a replacement watch handshake as the opening subscribe, not a reconnect', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      });
-    });
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-
-    await act(async () => {
-      controls.schedulers[0]!.apply(
-        roomView('room-a', [{ '#h': ['room-a'] }, { '#d': ['agent-presence:room-a'] }]),
-      );
-    });
-    await flushEffects();
-
-    const replacement = controls.subscriptions.at(-1);
-    expect(replacement).toBeDefined();
-    await act(async () => {
-      replacement!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      });
-    });
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
     await act(async () => renderer.unmount());
   });
 

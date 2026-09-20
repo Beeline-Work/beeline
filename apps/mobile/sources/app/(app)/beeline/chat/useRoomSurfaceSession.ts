@@ -22,7 +22,6 @@ import {
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
-import { takeRoomOpenPrefetch } from '@/buzz/room-open-prefetch';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -50,6 +49,8 @@ import {
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+/** A socket that never answers must not hold the open's one Room read. */
+const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 
 type ReceivedLiveTrace = LiveWireTrace & {
   reason: string;
@@ -334,7 +335,6 @@ export function useRoomSurfaceSession({
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
     let hasPainted = false;
-    let subscribeHandshakeDone = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
 
@@ -487,6 +487,11 @@ export function useRoomSurfaceSession({
 
     const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
+      let handshakeSeen = false;
+      let listenReady: (() => void) | undefined;
+      const handshake = new Promise<void>((resolve) => {
+        listenReady = resolve;
+      });
       const currentTransport = transportForEffect;
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
@@ -508,11 +513,16 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
-              // Opening handshake is not a resubscribe. startAfter already
-              // issues the one Room GET after listen is ready. A later
-              // subscribed on this same watch is a reconnect and must reread.
-              if (hasPainted && subscribeHandshakeDone) scheduler?.force();
-              subscribeHandshakeDone = true;
+              // This watch's first frame is listen-ready, and the read
+              // startAfter then issues is the one covering read of the open.
+              // A later frame on this same watch is a reconnect and must
+              // reread.
+              if (handshakeSeen) {
+                if (hasPainted) scheduler?.force();
+                return;
+              }
+              handshakeSeen = true;
+              listenReady?.();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -718,6 +728,14 @@ export function useRoomSurfaceSession({
       }
       unsubscribe?.();
       unsubscribe = stop;
+      let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        handshake,
+        new Promise<void>((resolve) => {
+          handshakeTimer = setTimeout(resolve, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
+        }),
+      ]);
+      if (handshakeTimer) clearTimeout(handshakeTimer);
     };
 
     let transportForEffect: BuzzRigTransport | undefined;
@@ -812,11 +830,7 @@ export function useRoomSurfaceSession({
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
             try {
-              const prefetched = takeRoomOpenPrefetch(channelId);
-              if (prefetched) markRoomOpen('prefetch-await');
-              const view = prefetched
-                ? ((await prefetched) ?? (await nextRoomClient.room(channelId)))
-                : await nextRoomClient.room(channelId);
+              const view = await nextRoomClient.room(channelId);
               logLiveTrace('room-read-end', traces);
               markRoomOpen('room-read-end', view.messages.at(-1)?.id);
               markRoomOpenWeight(view);

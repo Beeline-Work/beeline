@@ -15,10 +15,20 @@ vi.mock('react-native', async () => {
     View: host('View'),
     ScrollView: host('ScrollView'),
     Pressable: host('Pressable'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+vi.mock('./HullActionSheet', () => {
+  const ReactModule = require('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
+  };
+});
 
 import { tokenizeCode, flattenTokens, type HighlightToken } from '@/buzz/syntax-highlight';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
@@ -43,11 +53,15 @@ afterAll(() => vi.restoreAllMocks());
 // ---------------------------------------------------------------------------
 
 function tokensOf(input: string, lang: string | null = 'typescript'): HighlightToken[] {
-  return tokenizeCode(input, lang).flat().map((s) => s.token);
+  return tokenizeCode(input, lang)
+    .flat()
+    .map((s) => s.token);
 }
 
 function tokenStrings(input: string, lang: string | null = 'typescript'): string[] {
-  return tokenizeCode(input, lang).flat().map((s) => s.text);
+  return tokenizeCode(input, lang)
+    .flat()
+    .map((s) => s.text);
 }
 
 describe('tokenizeCode', () => {
@@ -69,74 +83,100 @@ describe('tokenizeCode', () => {
     expect(flattenTokens(tokenizeCode(code, 'typescript'))).toBe(code);
   });
 
-  it('classifies keywords', () => {
+  it('classifies keywords as names', () => {
     const tokens = tokensOf('const x = async () => {};');
-    expect(tokens.filter((t) => t === 'keyword').length).toBeGreaterThanOrEqual(2);
-    expect(tokens).toContain('keyword');
+    expect(tokens.filter((t) => t === 'name').length).toBeGreaterThanOrEqual(2);
+    expect(tokens).toContain('name');
   });
 
-  it('classifies string literals', () => {
-    const tokens = tokensOf('const x = "hello world";');
-    // "hello world" should be classified as a string
+  it('classifies string literals as values', () => {
     const strings = tokensOf('"hello"', null);
-    expect(strings).toContain('string');
+    expect(strings).toContain('value');
   });
 
-  it('classifies single-quoted strings', () => {
+  it('classifies single-quoted strings as values', () => {
     const tokens = tokenizeCode(`const s = 'hello';`, 'typescript').flat();
-    const strTokens = tokens.filter((t) => t.token === 'string');
-    expect(strTokens.length).toBeGreaterThanOrEqual(1);
+    const strTokens = tokens.filter((t) => t.token === 'value');
+    expect(strTokens.some((t) => t.text.includes('hello'))).toBe(true);
   });
 
-  it('classifies template literals', () => {
+  it('classifies template literals as values', () => {
     const tokens = tokenizeCode('const s = `hello ${name}`;', 'typescript').flat();
-    const strTokens = tokens.filter((t) => t.token === 'string');
+    const strTokens = tokens.filter((t) => t.token === 'value');
     expect(strTokens.length).toBeGreaterThanOrEqual(1);
     expect(strTokens.some((t) => t.text.includes('hello'))).toBe(true);
   });
 
-  it('classifies numbers', () => {
+  it('classifies numbers as values', () => {
     const tokens = tokenizeCode('const n = 42;', 'typescript').flat();
-    const numTokens = tokens.filter((t) => t.token === 'number');
-    expect(numTokens.some((t) => t.text === '42')).toBe(true);
+    expect(tokens.some((t) => t.token === 'value' && t.text === '42')).toBe(true);
   });
 
-  it('classifies hex numbers', () => {
+  it('classifies hex numbers as values', () => {
     const tokens = tokenizeCode('const n = 0xff;', 'typescript').flat();
-    const numTokens = tokens.filter((t) => t.token === 'number');
-    expect(numTokens.some((t) => t.text === '0xff')).toBe(true);
+    expect(tokens.some((t) => t.token === 'value' && t.text === '0xff')).toBe(true);
   });
 
-  it('classifies line comments', () => {
+  it('classifies line comments as structure', () => {
     const tokens = tokenizeCode('// this is a comment\nconst x = 1;', 'typescript').flat();
-    const commentTokens = tokens.filter((t) => t.token === 'comment');
-    expect(commentTokens.length).toBeGreaterThanOrEqual(1);
+    const commentTokens = tokens.filter((t) => t.token === 'structure');
     expect(commentTokens.some((t) => t.text.includes('comment'))).toBe(true);
   });
 
-  it('classifies block comments', () => {
+  it('classifies block comments as structure', () => {
     const tokens = tokenizeCode('/* block */ const x = 1;', 'typescript').flat();
-    const commentTokens = tokens.filter((t) => t.token === 'comment');
-    expect(commentTokens.length).toBeGreaterThanOrEqual(1);
-    expect(commentTokens.some((t) => t.text.includes('block'))).toBe(true);
+    expect(tokens.some((t) => t.token === 'structure' && t.text.includes('block'))).toBe(true);
   });
 
-  it('classifies python-style # comments', () => {
+  it('classifies python-style # comments as structure', () => {
     const tokens = tokenizeCode('# a comment\nx = 1', 'python').flat();
-    const commentTokens = tokens.filter((t) => t.token === 'comment');
-    expect(commentTokens.length).toBeGreaterThanOrEqual(1);
+    expect(tokens.some((t) => t.token === 'structure' && t.text.includes('comment'))).toBe(true);
   });
 
-  it('classifies built-in names', () => {
+  it('classifies built-in names as names', () => {
     const tokens = tokenizeCode('console.log("hello");', 'typescript').flat();
-    expect(tokens.some((t) => t.token === 'builtin' && t.text === 'console')).toBe(true);
+    expect(tokens.some((t) => t.token === 'name' && t.text === 'console')).toBe(true);
   });
 
-  it('classifies function calls', () => {
+  it('classifies function calls as names', () => {
     const tokens = tokenizeCode('foo();', 'typescript').flat();
-    // The function name before '(' should be classified; paren is punctuation
-    expect(tokens.some((t) => t.token === 'function' && t.text === 'foo')).toBe(true);
+    expect(tokens.some((t) => t.token === 'name' && t.text === 'foo')).toBe(true);
   });
+
+  it('paints a JSON key and its value as different roles', () => {
+    const tokens = tokenizeCode('{ "apiKey": "sk-or-..." }', 'json').flat();
+    expect(flattenTokens(tokenizeCode('{ "apiKey": "sk-or-..." }', 'json'))).toBe(
+      '{ "apiKey": "sk-or-..." }',
+    );
+    expect(tokens.some((t) => t.token === 'name' && t.text === '"apiKey"')).toBe(true);
+    expect(tokens.some((t) => t.token === 'value' && t.text === '"sk-or-..."')).toBe(true);
+    expect(tokens.some((t) => t.token === 'value' && t.text === '"apiKey"')).toBe(false);
+  });
+
+  it('honours JSON so true is a value, not a type name', () => {
+    const tokens = tokenizeCode('{ "reasoning": true }', 'json').flat();
+    expect(tokens.some((t) => t.token === 'value' && t.text === 'true')).toBe(true);
+    expect(tokens.some((t) => t.token === 'name' && t.text === '"reasoning"')).toBe(true);
+  });
+
+  it('does not paint a URL as a comment in shell', () => {
+    const code = 'curl https://usebeeline.app/dl/x.json';
+    expect(flattenTokens(tokenizeCode(code, 'bash'))).toBe(code);
+    const tokens = tokenizeCode(code, 'bash').flat();
+    expect(tokens.some((t) => t.token === 'structure' && t.text.includes('usebeeline'))).toBe(
+      false,
+    );
+  });
+
+  it.each(['jsonc', 'json5', 'yaml', 'yml', 'css', 'html', 'python', 'bash', 'sql'])(
+    'uses the generic scanner for %s',
+    (language) => {
+      const code = '{ "name": "Milo", "reasoning": true }\nconst x = 42; # note';
+      expect(tokenizeCode(code, language)).toEqual(tokenizeCode(code, null));
+      expect(flattenTokens(tokenizeCode(code, language))).toBe(code);
+      expect(tokenizeCode(code, language)[0]).not.toEqual(tokenizeCode(code, 'json')[0]);
+    },
+  );
 
   it('handles empty string', () => {
     expect(flattenTokens(tokenizeCode('', 'typescript'))).toBe('');
@@ -155,7 +195,7 @@ describe('tokenizeCode', () => {
     expect(flattenTokens(tokenizeCode(code, 'rust'))).toBe(code);
     // Should still classify strings and numbers
     const tokens = tokenizeCode(code, 'rust').flat();
-    expect(tokens.some((t) => t.token === 'string')).toBe(true);
+    expect(tokens.some((t) => t.token === 'value' && t.text.includes('hi'))).toBe(true);
   });
 
   it('handles code with no language hint', () => {
@@ -193,9 +233,7 @@ describe('CodeHighlighter', () => {
     ).join('\n');
     let renderer!: ReactTestRenderer;
     act(() => {
-      renderer = create(
-        React.createElement(CodeHighlighter, { code, language: 'typescript' }),
-      );
+      renderer = create(React.createElement(CodeHighlighter, { code, language: 'typescript' }));
     });
 
     expect(renderedText(renderer)).toBe(code);
@@ -244,6 +282,21 @@ describe('CodeHighlighter', () => {
     const text = renderedText(renderer);
     expect(text).toBe('hello world');
   });
+
+  it.each(['  ', '\t'])('preserves selectable JSON with %j indentation', (indent) => {
+    const code = JSON.stringify({ providers: { milo: { name: 'Milo' } } }, null, indent)
+      .replace('\n', '\n\n')
+      .concat('\n');
+    expect(flattenTokens(tokenizeCode(code, 'json'))).toBe(code);
+
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(CodeHighlighter, { code, language: 'json' }));
+    });
+    const text = renderedText(renderer);
+    expect(text).toBe(code);
+    expect(JSON.parse(text)).toEqual(JSON.parse(code));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -253,14 +306,13 @@ describe('CodeHighlighter', () => {
 import { MonoMarkdown } from './MonoMarkdown';
 
 describe('MonoMarkdown code blocks (via CodeHighlighter)', () => {
-  it('renders a fenced code block with language label', () => {
+  it('renders a short fenced block without an inscription', () => {
     const md = '```typescript\nconst x: number = 42;\n```';
     let renderer!: ReactTestRenderer;
     act(() => {
       renderer = create(React.createElement(MonoMarkdown, { markdown: md }));
     });
     const text = renderedText(renderer);
-    expect(text).toContain('typescript');
     expect(text).toContain('const x');
     expect(text).toContain('number');
     expect(text).toContain('42');

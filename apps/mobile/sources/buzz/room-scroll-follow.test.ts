@@ -346,9 +346,10 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('const composerFootprint = composerHeight + keyboardHeight;');
     expect(chatSource).toContain('styles.hangingTurnChrome');
     expect(chatSource).toContain('paddingTop: phoneTranscriptTailPadding({');
-    expect(chatSource).toContain(
-      'pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline)',
-    );
+    // The pinned corner line is retired, so the offline hint is the only
+    // chrome left that pushes the tail above the composer. The zero gap that
+    // leaves is measured in `room-bottom-chrome.test.tsx`.
+    expect(chatSource).toContain('pushedChromeVisible: agentsOffline');
     expect(chatSource).toContain('styles.bottomChromeStack');
   });
 

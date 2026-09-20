@@ -14,12 +14,12 @@ const STOP_HIT_SLOP = 9;
  * and has not answered yet. One transient line pinned above the composer,
  * gone the moment the reply lands.
  *
- * It is deliberately NOT `CornerLiveBar`, and the difference is the whole
- * point. A turn is a thing the reader is *waiting* for, so this names nobody's
- * corner, carries no `view →`, and cannot be pressed — there is nowhere to go.
- * A corner is a thing that *exists*, so the corner line names it and opens it.
- * Conflating them is what once lit the gold corner line — pointed at a corner
- * that had long since been archived — for a plain "who is Alan?" question.
+ * It is the ONLY line here, and it reports a turn and nothing else. A turn is
+ * a thing the reader is *waiting* for, so this names nobody's corner, carries
+ * no `view →`, and cannot be pressed — there is nowhere to go. The retired
+ * pinned corner line used to sit beneath it; conflating the two is what once
+ * lit that gold line — pointed at a corner long since archived — for a plain
+ * "who is Alan?" question. Corner state is read in the corners list now.
  *
  * Gold and the shared live breath are still correct here: `DESIGN.md` assigns
  * that pair to exactly one meaning, an agent is alive and working, which is
@@ -151,9 +151,10 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    // Same geometry as the pinned corner line, so the two never jump the
-    // composer around when one replaces the other. No border, no fill: a status
-    // light in a fixed place needs no frame to be found.
+    // This box is what the transcript reserves at its tail
+    // (`phoneTranscriptTailPadding`), so the line lands flush on the composer
+    // with no dead band. No border, no fill: a status light in a fixed place
+    // needs no frame to be found.
     bar: {
       width: '100%',
       minWidth: 0,

@@ -37,6 +37,7 @@ RestartSec=5s
 RestartSteps=5
 RestartMaxDelaySec=60s
 RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXIT_STATUS} ${UNKNOWN_AGENT_EXIT_STATUS}
+SuccessExitStatus=${UNKNOWN_AGENT_EXIT_STATUS}
 WatchdogSec=180s
 TimeoutStartSec=90s
 TimeoutStopSec=10min
@@ -197,7 +198,7 @@ export async function enabledAgentServices(
   for (const line of result.stdout.split('\n')) {
     const [unit, state] = line.trim().split(/\s+/, 3);
     const match = unit ? AGENT_SERVICE.exec(unit) : null;
-    if (!match || !/^enabled(?:-runtime)?$/.test(state ?? '')) continue;
+    if (!match || state !== 'enabled') continue;
     enabled.set(match[1]!.toLowerCase(), unit!);
   }
   return enabled;
@@ -248,18 +249,28 @@ export async function reconcileAgentServices(
     env?: NodeJS.ProcessEnv;
     run?: SystemdRunner;
     hasRuntime?: (configPath: string) => Promise<boolean>;
+    reportFailure?: (unit: string, error: unknown) => void;
   } = {},
 ): Promise<string[]> {
   const env = options.env ?? process.env;
   const run = options.run ?? runSystemctl;
   const enabled = await enabledAgentServices({ run });
   const hasRuntime = options.hasRuntime ?? runtimeExists;
+  const reportFailure =
+    options.reportFailure ??
+    ((unit: string, error: unknown) => {
+      console.error(`[beeline] failed to reconcile orphan unit ${unit}:`, error);
+    });
   const reconciled: string[] = [];
-  for (const publicKey of enabled.keys()) {
-    const configPath = runtimeConfigPath(defaultSupervisorRoot(env), publicKey);
-    if (await hasRuntime(configPath)) continue;
-    await disableAgentService(publicKey, { run, stop: false });
-    reconciled.push(publicKey);
+  for (const [publicKey, unit] of enabled) {
+    try {
+      const configPath = runtimeConfigPath(defaultSupervisorRoot(env), publicKey);
+      if (await hasRuntime(configPath)) continue;
+      await disableAgentService(publicKey, { run, stop: false });
+      reconciled.push(publicKey);
+    } catch (error) {
+      reportFailure(unit, error);
+    }
   }
   return reconciled;
 }

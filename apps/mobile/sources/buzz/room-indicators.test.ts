@@ -1,120 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomViewAgentTurn } from '@beeline/buzz-client';
-import type { CornerState, CornerStateReason } from '@beeline/api-contract/phone';
-import type { CornerSummary } from './corners';
 import {
   COMPOSER_ACK_BOUND_MS,
   hasComposerAckReceipt,
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
   humanBranchName,
-  pinnedCornerVerb,
   selectComposerAckState,
   selectComposerAckPresentation,
   viewerMayStopTurn,
-  selectPinnedCorner,
   selectTurnProgressAgentPubkey,
   selectWorkingAgents,
 } from './room-indicators';
 
-const NOW = 1_700_000_000_000;
-const corner = (
-  id: string,
-  state: CornerState,
-  reason?: CornerStateReason,
-  at = NOW / 1_000,
-): CornerSummary => ({
-  id,
-  name: id,
-  openerPubkey: 'agent',
-  state,
-  ...(reason ? { reason } : {}),
-  stateAt: at,
-  createdAt: at,
-  lastActivityAt: at,
-});
-
-describe('selectPinnedCorner', () => {
-  it('pins canonical open as waiting before work starts', () => {
-    expect(selectPinnedCorner({ lifecycle: [corner('opening', 'waiting')], now: NOW })).toEqual({
-      cornerId: 'opening',
-      status: 'waiting',
-    });
-  });
-
-  it('does not pin a parent body-control corner-open message without a server corner', () => {
-    const parentRoomHistory = [
-      {
-        kind: 9,
-        tags: [
-          ['t', 'body-control'],
-          ['subchannel', 'corner-06ac8027'],
-          ['status', 'starting'],
-        ],
-      },
-    ];
-    expect(parentRoomHistory).toHaveLength(1); // the ghost-producing history is present
-    expect(selectPinnedCorner({ lifecycle: [], now: NOW })).toBeNull();
-  });
-
-  it('renders the server working state without a client freshness rewrite', () => {
-    expect(selectPinnedCorner({ lifecycle: [corner('fresh', 'working')], now: NOW })).toEqual({
-      cornerId: 'fresh',
-      status: 'working',
-    });
-    expect(
-      selectPinnedCorner({
-        lifecycle: [corner('expired-receipt', 'working', undefined, 1)],
-        now: NOW,
-      }),
-    ).toEqual({ cornerId: 'expired-receipt', status: 'working' });
-  });
-
-  it('never pins an archived record', () => {
-    expect(selectPinnedCorner({ lifecycle: [corner('done', 'archived')], now: NOW })).toBeNull();
-  });
-
-  it('keeps canonical review/question waits actionable without calling them live', () => {
-    expect(
-      selectPinnedCorner({
-        lifecycle: [
-          corner('question', 'waiting', 'question', NOW / 1_000 + 1),
-          corner('review', 'review', undefined, NOW / 1_000),
-        ],
-        now: NOW,
-      }),
-    ).toEqual({ cornerId: 'review', status: 'review' });
-  });
-
-  it('keeps a quiet unfinished corner pinned while no turn is running', () => {
-    expect(selectPinnedCorner({ lifecycle: [corner('idle-corner', 'waiting')], now: NOW })).toEqual(
-      { cornerId: 'idle-corner', status: 'waiting' },
-    );
-  });
-
-  it('prefers review-ready over working, then recency within a tier', () => {
-    expect(
-      selectPinnedCorner({
-        lifecycle: [
-          corner('working', 'working', undefined, NOW / 1_000),
-          corner('review', 'review', undefined, 1),
-        ],
-        now: NOW,
-      }),
-    ).toEqual({ cornerId: 'review', status: 'review' });
-    expect(
-      selectPinnedCorner({
-        lifecycle: [
-          corner('older', 'working', undefined, NOW / 1_000 - 2),
-          corner('newer', 'working', undefined, NOW / 1_000 - 1),
-        ],
-        now: NOW,
-      }),
-    ).toEqual({ cornerId: 'newer', status: 'working' });
-  });
-});
-
-describe('pinned-corner presentation', () => {
+describe('corner-state presentation', () => {
   it('spends gold only on canonical working', () => {
     expect(isPinnedCornerLive('working')).toBe(true);
     expect(isPinnedCornerLive('waiting')).toBe(false);
@@ -126,15 +25,6 @@ describe('pinned-corner presentation', () => {
     expect(isPinnedCornerReadyForReview('review')).toBe(true);
     expect(isPinnedCornerReadyForReview('working')).toBe(false);
     expect(isPinnedCornerReadyForReview('waiting')).toBe(false);
-  });
-
-  it('uses only the four lowercase labels', () => {
-    expect(['working', 'waiting', 'review', 'archived'].map(pinnedCornerVerb)).toEqual([
-      'working',
-      'waiting',
-      'review',
-      'archived',
-    ]);
   });
 
   it('shows a human branch name instead of a raw Git ref', () => {

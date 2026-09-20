@@ -14,6 +14,7 @@ vi.mock('react-native', async () => {
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 

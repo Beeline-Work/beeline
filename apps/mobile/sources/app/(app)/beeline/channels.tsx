@@ -60,7 +60,7 @@ import { BookmarksGlyph } from '@/components/buzz/BookmarksGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
-import { CornerWorkingPulse } from '@/components/buzz/CornerLiveBar';
+import { CornerWorkingPulse } from '@/components/buzz/CornerWorkingPulse';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';

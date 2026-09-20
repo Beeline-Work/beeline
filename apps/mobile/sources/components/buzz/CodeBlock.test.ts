@@ -17,10 +17,24 @@ vi.mock('react-native', async () => {
     View: host('View'),
     ScrollView: host('ScrollView'),
     Pressable: host('Pressable'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
+vi.mock('./HullActionSheet', () => ({
+  HULL_SHEET_INSET: 22,
+  HullActionSheetModal: (props: any) =>
+    React.createElement('HullActionSheetModal', props, props.children),
+  HullActionSheetRow: (props: any) => React.createElement('HullActionSheetRow', props),
+}));
 
-import { CodeBlock } from './CodeBlock';
+import {
+  CodeBlock,
+  fenceByteLength,
+  fenceInscription,
+  hiddenLineLabel,
+  isLongFence,
+  PEEK_LINE_COUNT,
+} from './CodeBlock';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -35,6 +49,19 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
+function collectHostText(node: { props?: { children?: unknown } }): string {
+  const walk = (value: unknown): string => {
+    if (value === null || value === undefined || typeof value === 'boolean') return '';
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (Array.isArray(value)) return value.map(walk).join('');
+    if (typeof value === 'object' && value && 'props' in value) {
+      return walk((value as { props: { children?: unknown } }).props.children);
+    }
+    return '';
+  };
+  return walk(node.props?.children);
+}
+
 function render(code: string, language: string | null = 'typescript'): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
@@ -42,6 +69,20 @@ function render(code: string, language: string | null = 'typescript'): ReactTest
   });
   return renderer;
 }
+
+const FRAME_JSON = `{
+  "providers": {
+    "milo": {
+      "name": "Milo",
+      "baseUrl": "https://milo-gateway.fly.dev/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-or-...",
+      "models": [
+        { "id": "milo/auto", "reasoning": true, "context": 200000 }
+      ]
+    }
+  }
+}`;
 
 describe('CodeBlock', () => {
   it('renders an unlabeled fence as wrapped, monochrome prose', () => {
@@ -54,7 +95,7 @@ describe('CodeBlock', () => {
       false,
     );
     expect(renderer.root.findAllByType('Text').some((node) => node.props.children === 'TEXT')).toBe(
-      true,
+      false,
     );
     expect(renderer.root.findByProps({ accessibilityLabel: 'Copy all text' })).toBeDefined();
   });
@@ -70,40 +111,79 @@ describe('CodeBlock', () => {
     },
   );
 
-  it('keeps short highlighted code selectable in a horizontal scroller', () => {
+  it('keeps a short highlighted fence selectable and wrapping, with no chrome', () => {
     const renderer = render('const answer = 42;');
     const codeText = renderer.root.findAllByType('Text').find((node) => node.props.selectable);
     expect(codeText?.props.selectable).toBe(true);
     expect(renderer.root.findAllByType('ScrollView').some((node) => node.props.horizontal)).toBe(
-      true,
+      false,
     );
+    expect(renderer.root.findAllByProps({ testID: 'code-inscription' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Copy all code' })).toBeDefined();
   });
 
-  it('copies the complete block even while its preview is bounded', async () => {
+  it('copies the complete block even while its peek is bounded', async () => {
     copy.mockClear();
-    const code = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n');
-    const renderer = render(code);
+    const renderer = render(FRAME_JSON, 'json');
     const copyButton = renderer.root.findByProps({ accessibilityLabel: 'Copy all code' });
     await act(async () => {
       await copyButton.props.onPress();
     });
-    expect(copy).toHaveBeenCalledWith(code);
+    expect(copy).toHaveBeenCalledWith(FRAME_JSON);
     expect(renderer.root.findByProps({ accessibilityLiveRegion: 'polite' }).props.children).toBe(
       'Copied',
     );
   });
 
-  it('announces and exposes bounded expansion state', () => {
-    const code = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n');
-    const renderer = render(code);
-    const expand = renderer.root.findByProps({ accessibilityLabel: 'Expand code block, 30 lines' });
-    expect(expand.props.accessibilityState).toEqual({ expanded: false });
-    act(() => expand.props.onPress());
-    const collapse = renderer.root.findByProps({ accessibilityLabel: 'Collapse code block' });
-    expect(collapse.props.accessibilityState).toEqual({ expanded: true });
-    const vertical = renderer.root
-      .findAllByType('ScrollView')
-      .find((node) => !node.props.horizontal);
-    expect(vertical?.props.scrollEnabled).toBe(true);
+  it('inscribes a long fence and labels what the peek hides', () => {
+    const renderer = render(FRAME_JSON, 'json');
+    expect(renderer.root.findByProps({ testID: 'code-inscription' }).props.children).toBe(
+      fenceInscription('json', FRAME_JSON),
+    );
+    expect(renderer.root.findByProps({ testID: 'code-inscription' }).props.children).toContain(
+      'json · 13 lines ·',
+    );
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .some((node) => node.props.children === hiddenLineLabel(13)),
+    ).toBe(true);
+    const highlighters = renderer.root.findAllByProps({ testID: 'code-highlighter' });
+    const peekText = collectHostText(highlighters[0]!);
+    expect(peekText).toContain('providers');
+    expect(peekText).not.toContain('apiKey');
+    expect(peekText).toBe(FRAME_JSON.split('\n').slice(0, PEEK_LINE_COUNT).join('\n'));
+  });
+
+  it('opens the existing output sheet full-width with wrapping', () => {
+    const renderer = render(FRAME_JSON, 'json');
+    const open = renderer.root.findByProps({
+      accessibilityLabel: `Open json, ${hiddenLineLabel(13)}`,
+    });
+    expect(open.props.accessibilityState).toEqual({ expanded: false });
+    expect(renderer.root.findByType('HullActionSheetModal' as any).props.visible).toBe(false);
+    act(() => open.props.onPress());
+    const sheet = renderer.root.findByType('HullActionSheetModal' as any);
+    expect(sheet.props.visible).toBe(true);
+    expect(sheet.props.title).toBe('json');
+    expect(sheet.props.subtitle).toBe(fenceInscription('json', FRAME_JSON));
+    expect(open.props.accessibilityState).toEqual({ expanded: true });
+    expect(renderer.root.findAllByType('ScrollView').some((node) => node.props.horizontal)).toBe(
+      false,
+    );
+    const highlighters = renderer.root.findAllByProps({ testID: 'code-highlighter' });
+    const texts = highlighters.map((node) => collectHostText(node));
+    expect(texts.some((text) => text.includes('apiKey') && text.includes('200000'))).toBe(true);
+    expect(texts).toContain(FRAME_JSON);
+    expect(JSON.parse(texts.find((text) => text === FRAME_JSON)!)).toEqual(JSON.parse(FRAME_JSON));
+  });
+
+  it('pins the length rule: more than a peek is long', () => {
+    expect(PEEK_LINE_COUNT).toBe(4);
+    expect(isLongFence('a\nb\nc\nd')).toBe(false);
+    expect(isLongFence('a\nb\nc\nd\ne')).toBe(true);
+    expect(hiddenLineLabel(13)).toBe('9 more lines');
+    expect(hiddenLineLabel(5)).toBe('1 more line');
+    expect(fenceByteLength(FRAME_JSON)).toBe(new TextEncoder().encode(FRAME_JSON).length);
   });
 });

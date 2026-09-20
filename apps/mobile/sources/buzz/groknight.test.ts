@@ -117,6 +117,26 @@ describe('The quiet tier holds a WCAG-AA floor', () => {
     }
   });
 
+  it('lifts Two Inks roles above a 3:1 floor on the canvas in both themes', () => {
+    expect(beelineThemes.obsidian.syntaxStructure).toBe('#6c6c76');
+    expect(beelineThemes.obsidian.syntaxName).toBe('#a58ec6');
+    expect(beelineThemes.obsidian.syntaxValue).toBe('#a8cde8');
+    expect(beelineThemes.bone.syntaxStructure).toBe('#8B7F6E');
+    expect(beelineThemes.bone.syntaxName).toBe('#6b5a83');
+    expect(beelineThemes.bone.syntaxValue).toBe('#1e4460');
+    for (const set of Object.values(beelineThemes)) {
+      expect(contrast(set.syntaxStructure, set.bgBase)).toBeGreaterThanOrEqual(3);
+      expect(contrast(set.syntaxName, set.bgBase)).toBeGreaterThanOrEqual(3);
+      expect(contrast(set.syntaxValue, set.bgBase)).toBeGreaterThanOrEqual(3);
+      expect(contrast(set.syntaxName, set.bgBase)).toBeGreaterThan(
+        contrast(set.syntaxStructure, set.bgBase),
+      );
+      expect(contrast(set.syntaxValue, set.bgBase)).toBeGreaterThan(
+        contrast(set.syntaxName, set.bgBase),
+      );
+    }
+  });
+
   it('keeps the lifted quiet tier a step below body and above ghost', () => {
     for (const set of Object.values(beelineThemes)) {
       const onCanvas = (ink: string) => contrast(ink, set.bgBase);
@@ -127,7 +147,12 @@ describe('The quiet tier holds a WCAG-AA floor', () => {
 });
 
 describe('Borrowing Calm type roles and spacing', () => {
-  const role = (fontFamily: string, fontSize: number, lineHeight: number, letterSpacing: number) => ({
+  const role = (
+    fontFamily: string,
+    fontSize: number,
+    lineHeight: number,
+    letterSpacing: number,
+  ) => ({
     fontFamily,
     fontSize,
     lineHeight,

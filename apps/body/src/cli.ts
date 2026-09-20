@@ -569,7 +569,9 @@ async function main(): Promise<void> {
     let configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
     const agentPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
     if (agentPubkey && process.platform === 'linux') {
-      await reconcileAgentServices({ env: process.env });
+      await reconcileAgentServices({ env: process.env }).catch((error) => {
+        console.error('[beeline] failed to enumerate orphan agent units:', error);
+      });
     }
     if (!configPath && agentPubkey) {
       const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());

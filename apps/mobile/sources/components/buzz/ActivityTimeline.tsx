@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
@@ -11,8 +11,8 @@ import {
   type ToolLedgerLine,
   type ToolLedgerRun,
 } from '@/buzz/tool-ledger';
-import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
+import { ToolOutputSheet } from './ToolOutputSheet';
 import {
   LedgerBylineView,
   provisionalProseStyle,
@@ -185,54 +185,6 @@ function ToolRunGroupRow({
 }
 
 /**
- * The one output surface: the tapped call's label as the title, its distilled
- * failure reason as the subtitle, and the full raw output in a scrollable,
- * selectable, copyable mono body. Inline expansion in the transcript is gone.
- */
-function ToolOutputSheet({ line, onClose }: { line: ToolLedgerLine | null; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(
-    () => () => {
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-    },
-    [],
-  );
-  const copy = React.useCallback(async () => {
-    if (!line?.detail) return;
-    try {
-      await (await import('expo-clipboard')).setStringAsync(line.detail);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopied(false), 2000);
-  }, [line?.detail]);
-  return (
-    <HullActionSheetModal
-      onClose={onClose}
-      subtitle={line?.outcome === 'failure' ? line?.reason : undefined}
-      testID="tool-output-sheet"
-      title={line?.label ?? 'Output'}
-      visible={Boolean(line?.detail)}
-    >
-      <ScrollView contentContainerStyle={styles.sheetContent} style={styles.sheetScroll}>
-        <Text selectable style={styles.sheetOutput} testID="tool-output-text">
-          {line?.detail}
-        </Text>
-      </ScrollView>
-      <HullActionSheetRow
-        label="Copy output"
-        metadata={copied ? 'Copied' : undefined}
-        onPress={copy}
-        testID="tool-output-copy"
-      />
-    </HullActionSheetModal>
-  );
-}
-
-/**
  * The live conversational turn: agent prose, and beneath it the one-line tool
  * ledger — one collapsed disclosure per agent turn, expanding to a line per
  * tool call, with every line that carries output opening the output sheet.
@@ -290,7 +242,13 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           testID="activity-message-draft"
         />
       ) : null}
-      <ToolOutputSheet line={sheetLine} onClose={() => setSheetLine(null)} />
+      <ToolOutputSheet
+        detail={sheetLine?.detail}
+        onClose={() => setSheetLine(null)}
+        subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
+        title={sheetLine?.label ?? 'Output'}
+        visible={Boolean(sheetLine?.detail)}
+      />
     </View>
   );
 });
@@ -379,11 +337,5 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerQuiet,
     },
     groupFailed: { color: groknight.accent },
-    sheetScroll: { maxHeight: '45%' },
-    sheetContent: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: groknight.space.sm },
-    sheetOutput: {
-      ...groknight.type.machine,
-      color: groknight.ledgerBody,
-    },
   };
 });

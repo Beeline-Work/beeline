@@ -61,6 +61,8 @@ describe('turn silence classification', () => {
     expect(classifyTurnSilence('corner has no authoritative objective fact').kind).toBe(
       'workspace-failure',
     );
+    expect(classifyTurnSilence('profile_busy: chrome in use').kind).toBe('workspace-failure');
+    expect(classifyTurnSilence('broker unavailable').kind).toBe('workspace-failure');
     expect(classifyTurnSilence('server command protocol 1 is required; refusing intake').kind).toBe(
       'helper-out-of-date',
     );

@@ -399,25 +399,11 @@ describe('Room message variant components', () => {
         url: 'https://github.test/issue',
       },
       {
-        type: 'push' as const,
-        action: 'pushed' as const,
-        actor: 'Ada',
-        title: '2 commits to main',
-        url: 'https://github.test/compare',
-      },
-      {
         type: 'ci' as const,
         action: 'failed' as const,
         actor: 'octocat',
         title: 'Beeline CI check suite',
         url: 'https://github.test/runs/9',
-      },
-      {
-        type: 'review' as const,
-        action: 'approved' as const,
-        actor: 'reviewer',
-        title: 'Improve documentation',
-        url: 'https://github.test/pr#review',
       },
     ]) {
       const renderer = render(
@@ -432,6 +418,24 @@ describe('Room message variant components', () => {
       );
       expect(onOpenUrl).toHaveBeenLastCalledWith(githubEvent.url);
     }
+  });
+
+  it('renders nothing for a repository card kind this build does not know', () => {
+    const renderer = render(
+      <GitHubEventCard
+        message={message({
+          githubEvent: {
+            type: 'deployment',
+            action: 'succeeded',
+            actor: 'octocat',
+            title: 'Deployed to production',
+            url: 'https://github.test/deployments/1',
+          },
+        })}
+        onOpenUrl={vi.fn()}
+      />,
+    );
+    expect(renderer.toJSON()).toBeNull();
   });
 
   it('renders one cell per PR with header summary, accordion, and per-cell navigation', () => {

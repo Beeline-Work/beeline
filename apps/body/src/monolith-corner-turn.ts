@@ -14,10 +14,13 @@ import {
   type ToolCallEntry,
 } from './acp.js';
 import {
+  expectedMountedImportedMcpServerNames,
+  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
+import { grantedHostRoutesFromList } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -561,12 +564,13 @@ export class MonolithCornerTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster] = await Promise.all([
+    const [configuration, roster, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
+      this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     return sessionConfigFingerprint({
@@ -575,9 +579,25 @@ export class MonolithCornerTurnLoop {
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
-      mcpServers: this.mountedMcpServers(),
+      mcpServers: expectedMountedImportedMcpServerNames({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+        grantedHostRoutes,
+      }),
       reviewerHandle: configuration.reviewerHandle,
     });
+  }
+
+  private async grantedHostRoutes(): Promise<string[]> {
+    try {
+      return grantedHostRoutesFromList(
+        await this.options.api.execute('listAgentGrants', {
+          agentId: this.agent.publicKey,
+        }),
+      );
+    } catch {
+      return [];
+    }
   }
 
   private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
@@ -591,12 +611,13 @@ export class MonolithCornerTurnLoop {
   private async activate(trace?: TurnTrace): Promise<string> {
     if (this.client?.isAlive && this.sessionId) return this.sessionId;
     trace?.noteActivation('cold');
-    const [configuration, roster] = await Promise.all([
+    const [configuration, roster, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
+      this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     this.yoloMode = configuration.yoloMode;
@@ -636,6 +657,7 @@ export class MonolithCornerTurnLoop {
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
+          grantedHostRoutes,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -738,6 +760,11 @@ export class MonolithCornerTurnLoop {
           // and this one is deliberately outside the per-corner home so the
           // download is paid once per host rather than once per corner.
           npmCacheDir,
+          ...grantedSquireHostBindPaths({
+            operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes,
+          }),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },

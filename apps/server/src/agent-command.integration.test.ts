@@ -518,6 +518,58 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(await commands(B, C)).toHaveLength(1);
   expect((await commands(B, C))[0]?.reason).toBe('corner_check');
 });
+it('holds the green review wake while the corner worker still holds a live turn', async () => {
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+  // B is the corner's worker and is mid-turn: it claimed a command and its
+  // lease is live.
+  const worker = await send('Do the work', C);
+  await db.transaction((tx) =>
+    routeSystemCommand(tx, {
+      roomId: C,
+      sourceMessageId: worker.messageId,
+      targets: [B],
+      kind: 'joined',
+    }),
+  );
+  const [workerCommand] = await commands(B, C);
+  expect(workerCommand).toBeDefined();
+  await claim(workerCommand!, 'gw');
+
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    [C],
+  );
+  await systemLine(db, {
+    roomId: C,
+    subject: { kind: 'person', id: H, name: 'Human' },
+    verb: 'passed a check',
+    kind: 'check-passed',
+  });
+
+  // The reviewer's command exists and is durable, but is not delivered while
+  // the worker's lease is live: two agents must not stream into one corner.
+  await expect(
+    db
+      .query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, A])
+      .then((r) => r.rowCount),
+  ).resolves.toBe(1);
+  expect(await commands(A, C)).toHaveLength(0);
+
+  // The worker's lease lapses; the same durable row is now deliverable.
+  await db.query(
+    `UPDATE agent_commands SET lease_expires_at=now()-interval '1 minute' WHERE room_id=$1 AND agent_id=$2`,
+    [C, B],
+  );
+  expect(await commands(A, C)).toHaveLength(1);
+
+  // This suite shares one store, so leave none of the above behind.
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    [C],
+  );
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
+});
 it('does not wake the author or consume a green transition when the configured reviewer is not a parent member', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [

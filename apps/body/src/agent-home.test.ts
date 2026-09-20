@@ -15,6 +15,7 @@ import {
   hasLocalTrustySquireState,
   harnessStateDirsFromEnv,
   hostImportedMcpServerNames,
+  expectedMountedImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
@@ -1101,6 +1102,41 @@ describe('mounted imported MCP server names', () => {
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
     await prepareRoomAgentHome({ root: agentHomeRoot, ...input });
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual([]);
+  });
+
+  it('rewrites a granted host route into the isolated home and drops it when revoked', async () => {
+    const operatorHome = await scratch('beeline-granted-host-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-granted-host-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      [
+        '[mcp_servers.files]',
+        'command = "files-mcp"',
+        '[mcp_servers.squire]',
+        'command = "npx"',
+        'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
+      ].join('\n'),
+    );
+    const input = { operatorHome, agentKind: 'codex' as const };
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      ...input,
+      grantedHostRoutes: ['squire'],
+    });
+    const isolated = readFileSync(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), 'utf8');
+    expect(isolated).toContain('files-mcp');
+    expect(isolated).toContain('TRUSTY_SQUIRE_BROKER_SOCKET');
+    expect(isolated).toContain('squire-facade');
+    expect(isolated).not.toContain('@trusty-squire/mcp@latest');
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
+    expect(
+      expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['squire'] }),
+    ).toEqual(['files', 'squire']);
+
+    await prepareRoomAgentHome({ root: agentHomeRoot, ...input });
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
+    expect(expectedMountedImportedMcpServerNames(input)).toEqual(['files']);
   });
 
   it('does not treat a stale copied local server as still mounted after the operator removes it', async () => {

@@ -272,6 +272,10 @@ export function ConversationComposer({
             }
             placeholderTextColor={theme.buzz.dim}
             multiline
+            // Android keyboards otherwise take the whole screen in landscape and
+            // type into the OS extract editor instead of this composer. The prop
+            // sets IME_FLAG_NO_FULLSCREEN; it is a no-op on the other platforms.
+            disableFullscreenUI
             returnKeyType="default"
             scrollEnabled={height >= maxHeight}
             submitBehavior="newline"

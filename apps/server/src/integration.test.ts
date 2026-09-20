@@ -32,6 +32,7 @@ import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
+import { MCP_GRANT_CREATOR_ONLY_MESSAGE } from '@beeline/api-contract/agent-grants';
 import { closeExpiredChoices } from './room-choice.js';
 
 /** Who a message tags, read the way every surface reads it: from its own text. */
@@ -5050,8 +5051,8 @@ describe('monolith integration', () => {
         targetBranch: 'main',
       }),
     ]);
-    // Room-level mainline activity: pushes and CI are gated to the default
-    // branch; corner branches never reach the Room.
+    // Room-level mainline activity: CI is gated to the default branch and a
+    // raw push never becomes a Room card at all.
     await webhook('push', 'room-push-main', {
       ...base,
       ref: 'refs/heads/main',
@@ -5059,15 +5060,6 @@ describe('monolith integration', () => {
       compare: 'https://github.com/owner/widgets/compare/2...3',
       size: 2,
       commits: [{ id: 'a' }, { id: 'b' }],
-      sender: { login: 'octocat' },
-    });
-    await webhook('push', 'room-push-feature-branch', {
-      ...base,
-      ref: 'refs/heads/docs/readme',
-      after: '4'.repeat(40),
-      compare: 'https://github.com/owner/widgets/compare/3...4',
-      size: 1,
-      commits: [{ id: 'c' }],
       sender: { login: 'octocat' },
     });
     await webhook('check_suite', 'room-checks-main', {
@@ -5093,19 +5085,14 @@ describe('monolith integration', () => {
       expect.objectContaining({ type: 'issue', action: 'opened' }),
       expect.objectContaining({ type: 'pull-request', action: 'opened' }),
       expect.objectContaining({
-        type: 'push',
-        action: 'pushed',
-        actor: 'octocat',
-        title: '2 commits to main',
-        branch: 'main',
-      }),
-      expect.objectContaining({
         type: 'ci',
         action: 'passed',
         title: 'Beeline CI check suite',
         branch: 'main',
       }),
     ]);
+    // A push to the default branch posted no card of its own.
+    expect(mainlineCards.rows.some((row) => row.card.type === 'push')).toBe(false);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',
@@ -8057,7 +8044,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('approves grants on the spot under yolo with auto=true and no card, except budget which always asks', async () => {
+  it('approves grants on the spot under yolo with auto=true and no card, except budget and mcp which always ask', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
       await daemonOperation('requestAgentGrant', {
@@ -8115,6 +8102,164 @@ describe('monolith integration', () => {
     expect(budget).toEqual(
       expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
     );
+    const mcp = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'route Trusty Squire into this agent home',
+      })
+    ).json()) as Record<string, unknown>;
+    expect(mcp).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
+    );
+  });
+
+  it('answers an mcp route card owner-only, re-scoping an everyone agent to its creator', async () => {
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    const adminToken = await phoneToken('mcp-grant-admin');
+    const adminId = createHash('sha256').update('github:mcp-grant-admin').digest('hex');
+    await operation('addWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: adminId,
+      role: 'admin',
+    });
+    expect(
+      (
+        await operation('updateAgentAccessPolicy', {
+          workspaceId: WORKSPACE,
+          agentId: AGENT,
+          policy: 'everyone',
+        })
+      ).status,
+    ).toBe(204);
+    const accessLines = async () =>
+      (
+        await database.query<{ room_id: string; text: string }>(
+          `SELECT room_id,text FROM messages
+           WHERE presentation='system' AND text LIKE '%changed who may address%'
+           ORDER BY created_at,room_id`,
+        )
+      ).rows;
+    const before = await accessLines();
+    const policy = async () =>
+      (
+        await database.query<{ access_policy: { type: string } }>(
+          `SELECT access_policy FROM agents WHERE agent_id=$1`,
+          [AGENT],
+        )
+      ).rows[0]!.access_policy.type;
+
+    const route = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'route Trusty Squire into this agent home',
+      })
+    ).json()) as { grantId: string };
+
+    // A Workspace admin is authority enough for every other kind, and not for
+    // this one: a host route is the owner's own machine.
+    const byAdmin = await operation(
+      'decideAgentGrant',
+      { grantId: route.grantId, decision: 'always' },
+      adminToken,
+    );
+    expect(byAdmin.status).toBe(403);
+    expect(await byAdmin.json()).toEqual({ error: "Only the agent's owner can change this" });
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM agent_grants WHERE id::text=$1`,
+          [route.grantId],
+        )
+      ).rows,
+    ).toEqual([{ status: 'pending' }]);
+    expect(await policy()).toBe('everyone');
+
+    // The owner accepts, and acceptance re-scopes the agent: one line per Room
+    // the agent is still in, naming the owner as the only one who may ask.
+    const accepted = await operation('decideAgentGrant', {
+      grantId: route.grantId,
+      decision: 'always',
+    });
+    expect(accepted.status).toBe(200);
+    expect(await policy()).toBe('creator');
+    const rescoped = (await accessLines()).slice(before.length);
+    const agentRooms = (
+      await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
+           AND r.workspace_id=$2 AND r.archived_at IS NULL ORDER BY m.room_id`,
+        [AGENT, WORKSPACE],
+      )
+    ).rows.map((row) => row.room_id);
+    expect(agentRooms.length).toBeGreaterThan(0);
+    expect(rescoped.map((row) => row.room_id).sort()).toEqual([...agentRooms].sort());
+    expect(new Set(rescoped.map((row) => row.text))).toEqual(
+      new Set(['@owner changed who may address @bee · only @owner may ask now']),
+    );
+
+    // Already creator-scoped: a second route is accepted with no policy write
+    // and no second line.
+    const second = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'mcp',
+        target: 'files-mcp',
+        reason: 'route the operator file server in',
+      })
+    ).json()) as { grantId: string };
+    expect(
+      (await operation('decideAgentGrant', { grantId: second.grantId, decision: 'always' })).status,
+    ).toBe(200);
+    expect(await policy()).toBe('creator');
+    expect(await accessLines()).toHaveLength(before.length + rescoped.length);
+
+    // Revoking is owner-only too.
+    const revokeByAdmin = await operation(
+      'revokeAgentGrant',
+      { grantId: second.grantId },
+      adminToken,
+    );
+    expect(revokeByAdmin.status).toBe(403);
+    expect((await operation('revokeAgentGrant', { grantId: second.grantId })).status).toBe(200);
+
+    // An allowlist agent is refused with the reason, and the card stays pending.
+    await operation('updateAgentAccessPolicy', {
+      workspaceId: WORKSPACE,
+      agentId: AGENT,
+      policy: 'allowlist',
+      allow: [HUMAN],
+    });
+    const third = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'route Trusty Squire into this agent home',
+      })
+    ).json()) as { grantId: string };
+    const refused = await operation('decideAgentGrant', {
+      grantId: third.grantId,
+      decision: 'always',
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: MCP_GRANT_CREATOR_ONLY_MESSAGE });
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM agent_grants WHERE id::text=$1`,
+          [third.grantId],
+        )
+      ).rows,
+    ).toEqual([{ status: 'pending' }]);
+    expect(await policy()).toBe('allowlist');
+    // NO is always the owner's to give, whatever the policy.
+    expect(
+      (await operation('decideAgentGrant', { grantId: third.grantId, decision: 'deny' })).status,
+    ).toBe(200);
   });
 
   /**

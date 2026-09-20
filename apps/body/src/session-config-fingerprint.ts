@@ -23,6 +23,8 @@
  * Route grant/revoke provisioning is outside this fingerprint's responsibility.
  * Only names enter the fingerprint, not server settings or credential state;
  * changing settings under an unchanged name does not invalidate the session.
+ * Grant and revoke change the prepared name set, so the next activation
+ * compares a different fingerprint and starts a fresh session.
  */
 export interface SessionConfigInput {
   /** The model this activation would select, after the Room's own override. */

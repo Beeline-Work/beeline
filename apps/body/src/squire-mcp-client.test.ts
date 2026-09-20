@@ -143,6 +143,8 @@ describe('StdioSquireMcpClient', () => {
     await client.call('ping');
     expect(spawned[0]).toEqual(['npx', '-y', '@trusty-squire/mcp@latest', 'server']);
     expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toMatch(/chrome-profile$/);
+    expect(spawnedEnv?.XDG_CONFIG_HOME).toMatch(/\.config$/);
+    expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);
     client.close();
   });
 });

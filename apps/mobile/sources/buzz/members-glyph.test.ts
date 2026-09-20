@@ -54,12 +54,11 @@ describe('the members word', () => {
     expect(desktop).toContain('testID="desktop-members"');
   });
 
-  it('puts the same mark on both overflow roster rows and leaves the work pane alone', () => {
+  it('keeps MembersGlyph off the overflow roster rows and the work pane', () => {
     const chat = readFileSync(new URL(ROOM_ENTRY_POINTS[0], import.meta.url), 'utf8');
     expect(chat.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(2);
-    expect(chat.match(/leading=\{<MembersGlyph testID="room-participant-roster-glyph" \/>\}/g)).toHaveLength(
-      2,
-    );
+    expect(chat).not.toContain('MembersGlyph');
+    expect(chat).not.toContain('room-participant-roster-glyph');
     const inspector = readFileSync(
       new URL('../components/DesktopRoomInspector.tsx', import.meta.url),
       'utf8',

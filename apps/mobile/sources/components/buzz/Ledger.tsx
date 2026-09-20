@@ -28,8 +28,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * message in a human run: the speaker's
  * 26px face tile, then the name in the identity's own hue at body size, the
  * quiet mono model metadata (`claude-opus-4-1`, or the `AGENT` fallback), and
- * the mono stamp pinned right (clock, or `17 SEP 16:58` on a past day's
- * first byline). A human message is plain body text — regular weight, primary tone,
+ *         the mono stamp pinned right (clock, or `17 SEP 16:58` on a past-day
+ * byline). A human message is plain body text — regular weight, primary tone,
  * same size as everything — so nothing but the brass byline name marks it as
  * the viewer's own.
  *

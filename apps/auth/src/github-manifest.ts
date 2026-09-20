@@ -41,7 +41,6 @@ export const REQUIRED_GITHUB_APP_EVENTS = [
   'check_run',
   'check_suite',
   'status',
-  'pull_request_review',
 ] as const;
 
 export const REQUIRED_GITHUB_APP_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({

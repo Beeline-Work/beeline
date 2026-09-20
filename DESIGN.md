@@ -414,10 +414,10 @@ accent is never the only thing carrying the fact.
 the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
 the slab its only affordance — opening the compose sheet. The header carries
 no plus: it is the Workspace name and nothing louder, with `MembersGlyph` —
-an open head circle on a wide body triangle, stroke only — as the Members
-door. The word remains the accessible name. The retired hexagon `⌬` never
-returns; a Speakeasy animal is an identity face, not a chrome mark for the
-roster.
+an open head circle on a right-isosceles body triangle (equal legs, 90°
+apex), stroke only — as the Members door. The word remains the accessible
+name. The retired hexagon `⌬` never returns; a Speakeasy animal is an
+identity face, not a chrome mark for the roster.
 
 The Workspace rail is the same slab with one hairline edge. Selection reads
 three redundant ways and none of them is a box or a fill: an edge bar (never a
@@ -536,8 +536,8 @@ or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
 One concept gets one glyph, product-wide. Members chrome on the Room-list
 header, the desktop workspace heading, and the corner roster row is
 `MembersGlyph` (`components/buzz/MembersGlyph.tsx`), a peer of `RoomGlyph`:
-stroke-only circle over triangle, no fill, no second person. The desktop
-work pane no longer offers members. `Members` is the accessible name (`MEMBERS_LABEL`,
+stroke-only circle over a right-isosceles triangle, no fill, no second
+person. The desktop work pane no longer offers members. `Members` is the accessible name (`MEMBERS_LABEL`,
 `buzz/vocabulary.ts`). In-list titles (the Members page, Workspace settings, the
 roster sheet) keep the word. The retired hexagon `⌬` and the Ionicons
 `people-outline` stand-in stay gone. That mark stays visually distinct from the

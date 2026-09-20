@@ -153,16 +153,20 @@ describe('beeline-triage request skill', () => {
     );
     expect(markdown).toContain('## Bugfix execution');
     expect(markdown).toContain('They are instruction, not a server gate');
+    expect(markdown).toContain('They do not condition the fix on reproduction');
     expect(markdown).toContain('Reproduction <id>: <user path> → <observable wrong result>');
-    expect(markdown).toContain('### 1. Reproduce first');
-    expect(markdown).toContain('Before any change, reproduce the bug as triage isolated it');
-    expect(markdown).toContain('Do not fix a bug you have not seen');
+    expect(markdown).toContain('### 1. Attempt to reproduce');
+    expect(markdown).toContain('emulator, Playwright, browser, test runner');
+    expect(markdown).toContain('If reproduction fails, warn and continue exactly as triage already does');
+    expect(markdown).toContain('Never stop');
+    expect(markdown).toContain('Never condition the fix on reproduction');
+    expect(markdown).not.toContain('Do not fix a bug you have not seen');
     expect(markdown).toContain('### 2. Narrow fix');
-    expect(markdown).toContain('Change only what removes that recorded reproduction');
+    expect(markdown).toContain('Narrow the fix to the reported behavior');
     expect(markdown).toContain('### 3. Proof matching triage');
-    expect(markdown).toContain('Cite the same identifier');
+    expect(markdown).toContain('When none was obtained, state that plainly and show the regression instead');
     expect(markdown).toContain(
-      'the reviewer can check this proof, not merely that some test exists',
+      'the reviewer can check that proof, not merely that some test exists',
     );
   });
 });
@@ -228,13 +232,16 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('desirability evidence:');
   });
 
-  it('fails a bug proof that does not name the recorded reproduction', () => {
-    expect(markdown).toContain('quote the recorded `Reproduction <id>`');
+  it('fails a bug proof that skips a recorded reproduction identifier', () => {
+    expect(markdown).toContain('if a `Reproduction <id>` was recorded, quote it');
     expect(markdown).toContain(
-      'FAIL if the proof does not name that identifier, even when other tests pass',
+      'FAIL if that proof does not name the identifier, even when other tests pass',
     );
-    expect(markdown).toContain('reproduction id:');
-    expect(markdown).toContain('proof of that reproduction (or FAIL):');
+    expect(markdown).toContain(
+      'If none was obtained, require the proof to say so plainly and show the regression instead',
+    );
+    expect(markdown).toContain('reproduction id (or none obtained):');
+    expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
   });
 });
 

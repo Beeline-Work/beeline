@@ -149,11 +149,10 @@ describe('corner merge instructions', () => {
 
   it('binds the corner author to the triage reproduction identifier', () => {
     expect(CORNER_AUTHOR_CONTRACT).toContain("beeline-triage skill's bugfix execution contract");
-    expect(CORNER_AUTHOR_CONTRACT).toContain('Record that under Reproduction <id>');
-    expect(CORNER_AUTHOR_CONTRACT).toContain(
-      'do not write a fix for a bug you have not seen',
-    );
-    expect(CORNER_AUTHOR_CONTRACT).toContain('cite the same identifier');
+    expect(CORNER_AUTHOR_CONTRACT).toContain('record it under Reproduction <id>');
+    expect(CORNER_AUTHOR_CONTRACT).toContain('never stop and never condition the fix on reproduction');
+    expect(CORNER_AUTHOR_CONTRACT).toContain('when none was obtained, state that plainly');
+    expect(CORNER_AUTHOR_CONTRACT).not.toContain('do not write a fix for a bug you have not seen');
   });
 
   it('boots a non-opener reviewer with the review instruction and repository gh surface', async () => {

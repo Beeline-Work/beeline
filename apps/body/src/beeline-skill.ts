@@ -193,7 +193,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 - Record the command and the observed Y.
 - A unit test of an inner function, a log line, \`the code looks right\`, or any other proxy does not count.
 - If the user-visible Y cannot be produced, FAIL now. Nothing below can rescue the review.
-- For a bug, quote the recorded \`Reproduction <id>\`. Re-run that exact user path on the PR head and record that the wrong result is gone. FAIL if the proof does not name that identifier, even when other tests pass.
+- For a bug, if a \`Reproduction <id>\` was recorded, quote it, re-run that exact user path on the PR head, and record that the wrong result is gone. FAIL if that proof does not name the identifier, even when other tests pass. If none was obtained, require the proof to say so plainly and show the regression instead; do not fail the review for a missing identifier.
 - State whether the diff fulfills that objective and only that objective.
 
 ## 3. Empirical pass second
@@ -232,8 +232,8 @@ Before judging the implementation, independently repeat the two judgment legs fr
 \`user story:\`
 \`work warranted evidence:\`
 \`desirability evidence:\`
-\`reproduction id:\`
-\`proof of that reproduction (or FAIL):\`
+\`reproduction id (or none obtained):\`
+\`proof of that reproduction (or none obtained + regression):\`
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
 \`critical findings (block):\`
@@ -297,25 +297,25 @@ Do not emit a warning merely because evidence is incomplete when the repository 
 
 ## Bugfix execution
 
-Once a corner is open for a reported bug, follow these steps in order. They are instruction, not a server gate. Warranted-work and desirability warnings still do not block.
+Once a corner is open for a reported bug, follow these steps in order. They are instruction, not a server gate. They do not condition the fix on reproduction. Warranted-work and desirability warnings still do not block.
 
-### 1. Reproduce first
+### 1. Attempt to reproduce
 
-- Before any change, reproduce the bug as triage isolated it.
-- Record the exact user path and the observable wrong result under an identifier: \`Reproduction <id>\`.
-- Reuse the identifier triage emitted when it recorded one.
-- If you cannot reproduce it, stop and report what you tried. Do not fix a bug you have not seen.
+- Attempt to reproduce the bug as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner.
+- Record what was tried and what was observed.
+- If a reproduction is obtained, record the exact user path and the observable wrong result under \`Reproduction <id>\`. Reuse the identifier triage emitted when it recorded one.
+- If reproduction fails, warn and continue exactly as triage already does. Never stop. Never condition the fix on reproduction.
 
 ### 2. Narrow fix
 
-- Change only what removes that recorded reproduction.
-- Scope is bounded by the reproduction, not by nearby improvements.
+- Narrow the fix to the reported behavior.
+- When a reproduction exists, change only what removes that recorded reproduction.
+- Nearby improvements stay out of scope.
 
 ### 3. Proof matching triage
 
-- Re-run the same reproduction. It must now pass.
-- Cite the same identifier.
-- Add the regression that would fail if the bug returned.
-- Name that identifier in the pull request so the reviewer can check this proof, not merely that some test exists.
+- When a reproduction exists, re-run it, cite the same identifier, and show it now passing, plus the regression that would fail if the bug returned.
+- When none was obtained, state that plainly and show the regression instead.
+- Name the identifier in the pull request when one exists so the reviewer can check that proof, not merely that some test exists.
 `;
 }

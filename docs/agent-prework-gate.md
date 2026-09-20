@@ -16,11 +16,13 @@ warnings but do not block the implementer. The configured reviewer independently
 warranted-work and desirability checks against the completed change, verifies that the diff matches
 the clarified request, and checks tests and regression exposure before approving the exact head.
 
-Once a corner is open for a bug, the same skill's execution contract binds the implementer to that
-isolated ask: reproduce it first under an identifier, change only what removes that reproduction,
-and prove the same identifier now passes. The reviewer checks that named proof, not merely that
-some test exists. Failed triage reproduction remains a warning; failed implementer reproduction
-stops the fix.
+Once a corner is open for a bug, the same skill's execution contract asks the implementer to
+attempt reproduction with every host tool, record what was tried, and continue if it fails —
+exactly as triage already warns without blocking. A obtained reproduction is recorded under an
+identifier; the fix is narrowed to the reported behavior; proof re-runs that identifier when one
+exists, or states plainly that none was obtained and shows the regression. The reviewer checks the
+named reproduction when one exists, not merely that some test exists. Never stop. Never condition
+the fix on reproduction.
 
 This split keeps pre-work useful without creating a new approval queue. Triage improves the request
 and exposes concerns while the reviewer remains the hard quality gate.
@@ -89,14 +91,16 @@ the implementer can cite it.
 The same `beeline-triage` skill carries the implementer contract. No new server gate, receipt, or
 tooling. Once the corner is open for a reported bug:
 
-1. **Reproduce first.** Before any change, reproduce the bug as triage isolated it. Record the
-   exact user path and the observable wrong result under `Reproduction <id>`, reusing triage's
-   identifier when it recorded one. If reproduction fails, stop and report what was tried; do not
-   fix a bug the agent has not seen.
-2. **Narrow fix.** Change only what removes that recorded reproduction. Nearby improvements are out
-   of scope.
-3. **Proof matching triage.** Re-run the same reproduction and show it now passing, cited by the
-   same identifier, plus the regression that would fail if the bug returned.
+1. **Attempt to reproduce.** Use every tool the host offers — emulator, Playwright, browser, test
+   runner. Record what was tried and what was observed. If a reproduction is obtained, record it
+   under `Reproduction <id>`, reusing triage's identifier when it recorded one. If reproduction
+   fails, warn and continue exactly as triage already does. Never stop. Never condition the fix on
+   reproduction.
+2. **Narrow fix.** Narrow the change to the reported behavior. When a reproduction exists, change
+   only what removes that recorded reproduction. Nearby improvements are out of scope.
+3. **Proof matching triage.** Re-run the same reproduction where one exists, cited by the same
+   identifier, plus the regression that would fail if the bug returned. Where none was obtained,
+   state that plainly and show the regression instead.
 
 ## Desirability rubric
 
@@ -122,11 +126,12 @@ Before judging implementation details, the reviewer must independently establish
 - the change has concrete user benefit and fits repository direction;
 - the diff implements the clarified request and no unapproved additions;
 - tests exercise the user outcome and credible regression paths;
-- for a bug, the proof names the recorded `Reproduction <id>`, re-runs that path, and shows the
-  wrong result is gone — some other test existing is not that proof.
+- for a bug, when a `Reproduction <id>` exists, the proof names it, re-runs that path, and shows
+  the wrong result is gone — some other test existing is not that proof. When none was obtained,
+  the proof says so and shows the regression.
 
 Confirmed duplicate or obsolete work, a confirmed product conflict, unapproved scope, missing
-demonstration, a proof that does not name the triage reproduction, or insufficient regression
+demonstration, a proof that skips a recorded reproduction identifier, or insufficient regression
 proof fails review. The author still owns merging after approval; the reviewer never merges.
 
 ## Placement
@@ -148,10 +153,11 @@ enforced through the existing reviewer approval gate after implementation.
 - Ambiguity that can alter the outcome asks a question instead of silently choosing scope.
 - Failed reproduction, plausible duplicate work, or desirability conflict warns without blocking.
 - A successful triage reproduction emits `Reproduction <id>` for the implementer to reuse.
-- The implementer reproduces before any change, stops if they cannot, and bounds the diff to that
-  reproduction.
-- The proof re-runs the same identifier and names it; the reviewer fails a proof that only shows
-  some other test.
+- The implementer attempts reproduction with every host tool, records the attempt, and continues
+  with a warning if it fails; the fix is never conditioned on reproduction.
+- The proof re-runs a recorded identifier when one exists, or states none was obtained and shows
+  the regression; the reviewer fails a proof that skips a recorded identifier or only shows some
+  other test.
 - The reviewer independently records warranted-work and desirability evidence.
 - The reviewer still demonstrates the user outcome, runs affected tests, checks regressions, and
   binds approval to the exact head.
@@ -163,5 +169,4 @@ enforced through the existing reviewer approval gate after implementation.
 - Claiming that green CI alone proves an absence of regressions.
 - Adding a server receipt, mobile approval queue, or separate pre-work reviewer.
 - Allowing triage warnings to approve or reject work.
-- Blocking the implementer on a failed triage reproduction; only the implementer's own unseen
-  reproduction stops the fix.
+- Blocking the implementer on a failed reproduction, or conditioning the fix on obtaining one.

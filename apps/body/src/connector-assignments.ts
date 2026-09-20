@@ -35,9 +35,11 @@ import {
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   installSquire,
+  isProcessAlive,
   isSquireBrowserSessionFailure,
   readVault,
   revokeGrants,
+  squireConnectSession,
   type InstallSquireOptions,
   type InstallSquireResult,
   type SquireMcpClient,
@@ -287,6 +289,19 @@ export class ConnectorAssignmentLoop {
 
   /** Install Trusty Squire, reporting every step as it settles. */
   private async runInstall(connectorId: string): Promise<void> {
+    // The row stays `installing` for the whole time the human is signing in,
+    // and the server re-issues this assignment on EVERY poll until it leaves
+    // that state. A connect this helper spawned and still owns IS that
+    // ceremony: starting another one releases the claim, which SIGTERMs the
+    // process group and takes the noVNC tunnel the phone is displaying down
+    // with it. The surface already posted stays live and stays on the row.
+    const claim = squireConnectSession();
+    if (claim && isProcessAlive(claim.pid)) {
+      this.log(
+        `trusty-squire connect still waiting for sign-in (pid ${String(claim.pid)}); leaving it alone`,
+      );
+      return;
+    }
     const report = async (steps: readonly ConnectorStep[]) => {
       try {
         await this.api.execute('postConnectorStatus', { agentId: this.agentId, connectorId, steps });

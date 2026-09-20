@@ -6,19 +6,19 @@
  * (`connector-squire.ts`) so the assignment loop stays Squire-shaped and
  * tests keep driving a mock.
  *
- * The server is spawned on demand through `squireVaultLaunch`: the
- * non-electing host façade while a broker holds the socket, otherwise Squire's
- * own server on the same host paths — the credential plane must not depend on
- * a broker unit the daemon never installs. It is initialized once and left
- * running for the helper's lifetime; a failed call or a dead child tears the
- * session down so the next call starts a fresh one. Tests may inject a
- * command; omitting `server` on a raw npx spawn runs Squire's connect CLI
- * instead of the vault MCP.
+ * The server is spawned on demand as `npx -y @trusty-squire/mcp@latest server`
+ * under `squireConnectProcessEnv()`, which already points it at the host
+ * broker socket, profile and config — this client runs OUTSIDE every sandbox,
+ * so the non-electing façade (which a sandboxed agent gets through its Squire
+ * route grant) would only add a process and a refusal when no broker is up.
+ * It is initialized once and left running for the helper's lifetime; a failed
+ * call or a dead child tears the session down so the next call starts a fresh
+ * one. Tests may inject a command; omitting `server` on a raw npx spawn runs
+ * Squire's connect CLI instead of the vault MCP.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
-import { squireVaultLaunch } from './squire-host.js';
+import { SQUIRE_SERVER_ARGS } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
@@ -96,11 +96,10 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
-    const launch = squireVaultLaunch(homedir());
     const child = (this.options.spawn ?? spawn)(
-      this.options.command ?? launch.command,
-      [...(this.options.args ?? launch.args)],
-      { env: this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env } },
+      this.options.command ?? 'npx',
+      [...(this.options.args ?? SQUIRE_SERVER_ARGS)],
+      { env: this.options.env ?? squireConnectProcessEnv() },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

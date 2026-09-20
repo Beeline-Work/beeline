@@ -77,7 +77,7 @@ async function until(predicate: () => boolean): Promise<void> {
 function fakeStreamRunner(result: {
   stdout?: string;
   stderr?: string;
-  signIn?: { method: 'streamed-page' | 'oauth'; url: string };
+  signIn?: { method: 'streamed-page'; url: string };
 }): StreamedShellRunner {
   return async () => ({
     stdout: result.stdout ?? '',
@@ -96,13 +96,6 @@ describe('parseConnectOutput', () => {
       method: 'streamed-page',
       url: 'https://tunnel.example/vnc.html#p=hunter2',
     });
-  });
-
-  it('reports an OAuth URL when Squire prints one', () => {
-    const signIn = parseConnectOutput(
-      'Sign in: https://squire.example/oauth/authorize?state=abc (oauth)',
-    );
-    expect(signIn).toEqual({ method: 'oauth', url: 'https://squire.example/oauth/authorize?state=abc' });
   });
 
   it('is undefined when connect printed no URL', () => {
@@ -134,11 +127,39 @@ describe('parseConnectOutput', () => {
     expect(parseConnectOutput('Visit https://trustysquire.ai/ for help\n')).toBeUndefined();
   });
 
-  it('keeps any other printed URL, path alone and all', () => {
+  it('takes the bare install confirm page', () => {
     expect(parseConnectOutput('Open https://trustysquire.ai/install\n')).toEqual({
       method: 'streamed-page',
       url: 'https://trustysquire.ai/install',
     });
+  });
+
+  it('never publishes a URL that belongs to somebody other than Squire', () => {
+    // npm's update notifier writes this to the connect child's stderr, and a
+    // failed tunnel rig puts Cloudflare's docs link in the stderr tail Squire
+    // quotes back. Neither is a page the phone may be sent to.
+    expect(
+      parseConnectOutput(
+        'npm notice Changelog: https://github.com/npm/cli/releases/tag/v10.9.2\n',
+      ),
+    ).toBeUndefined();
+    expect(
+      parseConnectOutput(
+        'cloudflared: see https://developers.cloudflare.com/cloudflare-one/connections/connect-apps for details\n',
+      ),
+    ).toBeUndefined();
+    expect(
+      parseConnectOutput('Sign in: https://squire.example/oauth/authorize?state=abc\n'),
+    ).toBeUndefined();
+  });
+
+  it('takes the real ceremony out of a stream that carries foreign URLs first', () => {
+    expect(
+      parseConnectOutput(
+        'npm notice Changelog: https://github.com/npm/cli/releases/tag/v10.9.2\n' +
+          'Open this on any device: https://tunnel.test/#p=hunter22\n',
+      ),
+    ).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' });
   });
 
   it('does not read the install-page banner as a sign-in surface', () => {
@@ -259,9 +280,9 @@ describe('installSquire', () => {
       streamRun: async (_cmd, args) => {
         streamInvocations.push(['npx', ...args]);
         return {
-          stdout: 'https://squire.example/oauth/authorize?x=1',
+          stdout: 'https://tunnel.test/#p=hunter22',
           stderr: '',
-          signIn: { method: 'oauth', url: 'https://squire.example/oauth/authorize?x=1' },
+          signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
           abort: () => {},
         };
       },

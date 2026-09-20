@@ -452,15 +452,19 @@ const step = (label: string, status: ConnectorStep['status'], reason?: string): 
   ...(reason ? { reason } : {}),
 });
 
-/** A bare origin is the marketing page, not a ceremony: loading it in the
- *  in-app webview is the black `not_found` page. Everything with a path,
- *  query or fragment is Squire's own sign-in surface. */
+/**
+ * Squire prints exactly two sign-in surfaces: the headless noVNC tunnel
+ * (`https://<host>/#p=<password>`) and the hosted install confirm page
+ * (`https://<host>/install…`). Everything else on connect's streams belongs
+ * to somebody else — npm's update notifier writes its changelog link to
+ * stderr, and a failed tunnel rig carries Cloudflare's docs link in the
+ * stderr tail Squire quotes back. Neither is a page the phone may open.
+ */
 function isConnectCeremonyUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return (
-      parsed.pathname.replace(/\/+$/, '') !== '' || parsed.search !== '' || parsed.hash !== ''
-    );
+    if (parsed.protocol !== 'https:') return false;
+    return parsed.hash.startsWith('#p=') || /(^|\/)install(\/|$)/.test(parsed.pathname);
   } catch {
     return false;
   }
@@ -499,23 +503,16 @@ export function unframeBoxedOutput(output: string): string {
 }
 
 /**
- * Read the sign-in surface out of Squire's own connect output. Squire may
- * print its bare marketing origin before the real ceremony URL; that origin
- * is not a sign-in page. A URL is taken only once a terminator proves it is
- * whole — the streamed runner reads partial chunks, and half a tunnel host
- * parses as a perfectly valid URL.
+ * Read the sign-in surface out of Squire's own connect output. Both surfaces
+ * it prints are pages the in-app webview shows, so the method is the same for
+ * either. A URL is taken only once a terminator proves it is whole — the
+ * streamed runner reads partial chunks, and half a tunnel host parses as a
+ * perfectly valid URL.
  */
 export function parseConnectOutput(output: string): ConnectorSignIn | undefined {
   const urls = unframeBoxedOutput(output).match(/https:\/\/[^\s"'<>]+(?=[\s"'<>])/g) ?? [];
   const url = urls.find(isConnectCeremonyUrl);
-  if (!url) return undefined;
-  if (/oauth|authorize/i.test(url) || /oauth/i.test(output)) {
-    return { method: 'oauth', url };
-  }
-  if (/novnc|vnc\.html|remote|stream/i.test(url) || /novnc|remote login|vnc/i.test(output)) {
-    return { method: 'streamed-page', url };
-  }
-  return { method: 'streamed-page', url };
+  return url ? { method: 'streamed-page', url } : undefined;
 }
 
 /**

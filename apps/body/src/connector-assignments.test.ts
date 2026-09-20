@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
-import type {
-  InstallSquireOptions,
-  InstallSquireResult,
-  SquireMcpClient,
-  VaultConnectionMeta,
+import {
+  defaultStreamedRunner,
+  releaseSquireConnectSession,
+  type InstallSquireOptions,
+  type InstallSquireResult,
+  type SquireMcpClient,
+  type VaultConnectionMeta,
 } from './connector-squire.js';
 
 type ExecuteCall = { op: string; input: Record<string, unknown> };
@@ -45,7 +47,7 @@ const connectedInstall =
       steps,
       squireVersion: '1.4.2',
       signedInAs: 'dana@example.test',
-      signIn: { method: 'oauth', url: 'https://squire.example/oauth' },
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
     };
   };
 
@@ -163,6 +165,43 @@ describe('ConnectorAssignmentLoop', () => {
     await loop.runOnce();
     await settle();
     expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments']);
+  });
+
+  it('leaves a live connect alone instead of restarting the ceremony under the human', async () => {
+    // The server re-issues `install` on every poll for as long as the row is
+    // `installing`, which is the whole sign-in. Starting a second connect
+    // releases this helper's claim, and that SIGTERMs the process group the
+    // noVNC tunnel on the phone is running in.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    expect(connect.signIn?.url).toBe('https://tunnel.test/#p=hunter22');
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    await loop.runOnce();
+    await settle();
+    expect(started).toBe(0);
+    expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments']);
+
+    // The human finished (or closed the page) and connect exited: the next
+    // assignment is an ordinary fresh install again.
+    connect.abort();
+    releaseSquireConnectSession();
+    await loop.runOnce();
+    await settle();
+    expect(started).toBe(1);
+    loop.stop();
   });
 
   it('never starts the same connector twice while an install is in flight', async () => {

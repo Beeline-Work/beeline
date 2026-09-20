@@ -134,11 +134,13 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
-  it('spawns Squire on the host paths when no broker holds the socket', async () => {
+  it('spawns the vault server itself, on the host broker paths', async () => {
     const home = mkdtempSync(join(tmpdir(), 'beeline-squire-client-'));
     homes.push(home);
     const previousHome = process.env.HOME;
+    const previousProfile = process.env.TRUSTY_SQUIRE_PROFILE_DIR;
     process.env.HOME = home;
+    delete process.env.TRUSTY_SQUIRE_PROFILE_DIR;
     const spawned: string[][] = [];
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
     const { child } = fakeChild({
@@ -157,9 +159,12 @@ describe('StdioSquireMcpClient', () => {
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousProfile === undefined) delete process.env.TRUSTY_SQUIRE_PROFILE_DIR;
+      else process.env.TRUSTY_SQUIRE_PROFILE_DIR = previousProfile;
     }
-    // No broker unit on this host: the credential plane still spawns the vault
-    // server itself rather than refusing with `broker unavailable`.
+    // This client runs outside every sandbox, so it starts the vault server
+    // directly rather than through the façade, which would only add a process
+    // and refuse with `broker unavailable` on a host with no broker unit.
     expect(spawned[0]).toEqual(['npx', '-y', '@trusty-squire/mcp@latest', 'server']);
     expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(
       join(home, '.trusty-squire', 'chrome-profile'),

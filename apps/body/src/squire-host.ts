@@ -104,22 +104,6 @@ export function squireFacadeLaunch(home: string): {
 }
 
 /**
- * The helper's OWN vault MCP launch (it runs outside every sandbox, so it is
- * free to elect). While a host broker holds the socket it goes through the
- * non-electing façade and shares that one Chrome; with no broker listening it
- * spawns Squire's server directly on the same host paths, so the credential
- * plane keeps working on a machine whose broker unit was never installed.
- */
-export function squireVaultLaunch(home: string): {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-} {
-  if (squireBrokerSocketReady(squireHostPaths(home).brokerSocket)) return squireFacadeLaunch(home);
-  return { command: 'npx', args: [...SQUIRE_SERVER_ARGS], env: squireHostRewriteEnv(home) };
-}
-
-/**
  * Locate npx next to the running node so a systemd user unit does not depend
  * on a shell PATH. fnm/nvm/volta put `npx` beside `process.execPath`.
  */

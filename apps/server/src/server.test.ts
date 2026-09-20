@@ -131,6 +131,35 @@ describe('server readiness', () => {
     });
   });
 
+  it('publishes no Room invalidation for a chat-list dismissal write', async () => {
+    const publish = vi.fn();
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: { execute } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: { publish } as unknown as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    for (const name of ['reopenChat', 'closeChat']) {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/${name}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId: 'room-open' }),
+      });
+
+      expect(response.status).toBe(204);
+    }
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it('serves daemon release readiness without a phone bearer', async () => {
     const releaseReadiness = vi.fn().mockResolvedValue({
       daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready' }],

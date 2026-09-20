@@ -334,6 +334,8 @@ export function useRoomSurfaceSession({
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
+    /** Ends the watch's handshake wait when the reader leaves before it. */
+    let abandonHandshakeWait: (() => void) | undefined;
     let hasPainted = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
@@ -526,7 +528,7 @@ export function useRoomSurfaceSession({
               }
               handshakeSeen = true;
               listenReady?.();
-              if (readRacedAhead && hasPainted) scheduler?.force();
+              if (readRacedAhead) scheduler?.force();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -734,6 +736,9 @@ export function useRoomSurfaceSession({
       await Promise.race([
         handshake,
         new Promise<void>((resolve) => {
+          abandonHandshakeWait = resolve;
+        }),
+        new Promise<void>((resolve) => {
           handshakeTimer = setTimeout(() => {
             readRacedAhead = true;
             resolve();
@@ -741,6 +746,7 @@ export function useRoomSurfaceSession({
         }),
       ]);
       if (handshakeTimer) clearTimeout(handshakeTimer);
+      abandonHandshakeWait = undefined;
       if (cancelled || generation !== watchGeneration) {
         stop();
         return;
@@ -924,6 +930,7 @@ export function useRoomSurfaceSession({
     return () => {
       cancelled = true;
       watchGeneration += 1;
+      abandonHandshakeWait?.();
       scheduler?.dispose();
       appStateSubscription?.remove();
       unsubscribe?.();

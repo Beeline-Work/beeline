@@ -817,7 +817,9 @@ describe('useRoomSurfaceSession', () => {
 
   it('covers a read that gave up waiting once the subscribe finally lands', async () => {
     vi.useFakeTimers();
-    controls.cached = roomView('room-a');
+    // A Room never opened on this device has nothing to paint while its one
+    // read is still in flight, and that read is exactly what needs covering.
+    controls.cached = null;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
@@ -841,6 +843,26 @@ describe('useRoomSurfaceSession', () => {
     });
     expect(controls.schedulers[0]!.forceCalls).toBe(1);
     await act(async () => renderer.unmount());
+    vi.useRealTimers();
+  });
+
+  it('closes a watch still waiting on its subscribe when the reader leaves', async () => {
+    vi.useFakeTimers();
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.subscriptions[0]!.stop).not.toHaveBeenCalled();
+
+    await act(async () => renderer.unmount());
+    await flushEffects();
+    expect(controls.subscriptions[0]!.stop).toHaveBeenCalled();
     vi.useRealTimers();
   });
 

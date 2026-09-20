@@ -292,7 +292,7 @@ describe('DaemonApiClient', () => {
     vi.useRealTimers();
   });
 
-  it('delivers scoped membership and connector wakes without a catalog', async () => {
+  it('delivers scoped membership, corner-complete and connector wakes without a catalog', async () => {
     FakeWebSocket.instances.length = 0;
     const client = new DaemonApiClient(
       'http://127.0.0.1:43123',
@@ -304,22 +304,28 @@ describe('DaemonApiClient', () => {
     const memberships: unknown[] = [];
     const connectors: unknown[] = [];
     const completes: string[] = [];
+    const inbox: string[] = [];
     client.setRoomsChangedListener((event) => memberships.push(event));
     client.setConnectorAssignmentListener(() => connectors.push(true));
     client.setCornerCompleteListener((roomId) => completes.push(roomId));
-    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const release = client.liveSubscribe(
+      'room-1',
+      undefined,
+      (items) => inbox.push(...items.map((item) => item.id)),
+      () => undefined,
+    );
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
     socket.message({ type: 'subscribed', roomId: 'room-1' });
 
     socket.message({
       type: 'rooms-changed',
-      roomId: 'room-2',
+      roomId: 'corner-1',
       parentRoomId: 'room-1',
       operation: 'INSERT',
     });
-    socket.message({ type: 'member-left', roomId: 'room-2', removed: true });
-    socket.message({ type: 'corner-open', cornerId: 'corner-1', parentRoomId: 'room-1' });
+    socket.message({ type: 'rooms-changed', roomId: 'corner-1', removed: true });
+    socket.message({ type: 'rooms-changed' });
     socket.message({ type: 'corner-complete', roomId: 'corner-1' });
     socket.message({ type: 'connector-assignment' });
     socket.message({
@@ -343,12 +349,17 @@ describe('DaemonApiClient', () => {
       ],
     });
 
-    expect(memberships.filter(Boolean)).toEqual([
-      { roomId: 'room-2', parentRoomId: 'room-1', operation: 'INSERT' },
-      { roomId: 'room-2', removed: true },
-      { roomId: 'corner-1', cornerId: 'corner-1', parentRoomId: 'room-1' },
-      { roomId: 'corner-2', parentRoomId: 'room-1' },
+    // A corner-opened card is a message, not a membership fact: the scoped
+    // `rooms-changed` built from the membership row is the one corner-open
+    // authority, so the card must not synthesize a second one.
+    expect(memberships).toEqual([
+      // Socket open: the unscoped wake that still arms the recovery reconcile.
+      undefined,
+      { roomId: 'corner-1', parentRoomId: 'room-1', operation: 'INSERT' },
+      { roomId: 'corner-1', removed: true },
+      {},
     ]);
+    expect(inbox).toEqual(['open']);
     expect(completes).toEqual(['corner-1']);
     expect(connectors).toEqual([true]);
     release();

@@ -20,7 +20,6 @@ export type InboxItem = Output<'getRoomInbox'>['items'][number];
 /** Membership / corner set change pushed on the daemon live socket. */
 export type RoomMembershipChange = {
   readonly roomId?: string;
-  readonly cornerId?: string;
   readonly parentRoomId?: string;
   readonly operation?: string;
   readonly removed?: boolean;
@@ -93,7 +92,6 @@ export function isAgentRemovedError(error: unknown): boolean {
 function membershipChange(event: Record<string, unknown>): RoomMembershipChange {
   return {
     ...(typeof event.roomId === 'string' && event.roomId ? { roomId: event.roomId } : {}),
-    ...(typeof event.cornerId === 'string' ? { cornerId: event.cornerId } : {}),
     ...(typeof event.parentRoomId === 'string' ? { parentRoomId: event.parentRoomId } : {}),
     ...(typeof event.operation === 'string' ? { operation: event.operation } : {}),
     ...(event.removed === true ? { removed: true } : {}),
@@ -300,24 +298,6 @@ export class DaemonApiClient {
         this.roomsChangedListener?.(membershipChange(event));
         return;
       }
-      if (event.type === 'member-joined' || event.type === 'member-left') {
-        this.roomsChangedListener?.(
-          membershipChange({
-            ...event,
-            removed: event.type === 'member-left' || event.removed === true,
-          }),
-        );
-        return;
-      }
-      if (event.type === 'corner-open') {
-        this.roomsChangedListener?.(
-          membershipChange({
-            ...event,
-            roomId: typeof event.cornerId === 'string' ? event.cornerId : event.roomId,
-          }),
-        );
-        return;
-      }
       if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
         this.cornerCompleteListener?.(event.roomId);
         return;
@@ -381,16 +361,8 @@ export class DaemonApiClient {
       }
       while (room.pushedIds.size > 10_000)
         room.pushedIds.delete(room.pushedIds.values().next().value!);
-      if (items.length) {
+      if (items.length)
         room.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
-        for (const item of items) {
-          const kind = item.systemEvent?.kind;
-          const cornerId = item.systemEvent?.object?.id;
-          if (kind === 'corner-opened' && cornerId) {
-            this.roomsChangedListener?.({ roomId: cornerId, parentRoomId: event.roomId });
-          }
-        }
-      }
     };
     const reconnect = () => {
       if (this.liveSocket !== socket) return;

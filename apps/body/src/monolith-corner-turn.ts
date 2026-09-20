@@ -393,6 +393,8 @@ export interface MonolithCornerTurnOptions {
   scheduler: SessionScheduler;
   signal?: AbortSignal;
   pollMs?: number;
+  /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
+  closePollMs?: number;
   onPoll(): void;
   onFailure(retryInMs: number): void;
   onCloseRequested(): Promise<void>;
@@ -426,10 +428,15 @@ export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
 
-  /** Called by the daemon's one slow workspace reconciliation sweep. */
+  /**
+   * Called by the daemon's one slow workspace reconciliation sweep. The wake
+   * is the intake loop's own stable notify and is handed back exactly once, so
+   * it is kept: clearing it here left `requestClose` waking nothing after the
+   * first sweep, and a pushed `corner-complete` then waited out the idle timer.
+   * Intake clears it itself when it exits.
+   */
   requestReconciliation(): void {
     this.wakeIntake?.();
-    this.wakeIntake = undefined;
   }
   private client?: AcpClient;
   private sessionId?: string;
@@ -481,11 +488,14 @@ export class MonolithCornerTurnLoop {
   private closePushed = false;
   /** Last durable close read; 0 means the first check still runs. */
   private lastCloseCheck = 0;
+  /** This corner's own jittered recovery interval, drawn once. */
+  private readonly closePollMs: number;
 
   /** In-flight warm-store harvest, awaited at shutdown and never by a turn. */
   private harvest: Promise<void> | undefined;
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
+    this.closePollMs = options.closePollMs ?? cornerClosePollMs();
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.options = { ...options, api: this.commandContext.bind(options.api) };
@@ -1512,7 +1522,7 @@ export class MonolithCornerTurnLoop {
             return true;
           }
           const now = Date.now();
-          if (this.lastCloseCheck !== 0 && now - this.lastCloseCheck < cornerClosePollMs())
+          if (this.lastCloseCheck !== 0 && now - this.lastCloseCheck < this.closePollMs)
             return false;
           this.lastCloseCheck = now;
           const state = await api.execute('getCornerRestoreState', { cornerId });

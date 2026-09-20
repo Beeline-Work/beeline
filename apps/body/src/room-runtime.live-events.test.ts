@@ -34,7 +34,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     expect(DEFAULT_RECONCILE_HEARTBEAT_MS).toBe(10 * 60_000);
   });
 
-  it('starts a Room from member-joined without listing corners', async () => {
+  it('starts a Room from a membership push without listing corners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-room-'));
     roots.push(root);
     const execute = vi.fn(async (name: string) => {
@@ -74,7 +74,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
-  it('starts a corner from corner-open and closes it on corner-complete', async () => {
+  it('starts a corner from its membership push and closes it on corner-complete', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-corner-'));
     roots.push(root);
     const execute = vi.fn(async (name: string) => {
@@ -115,6 +115,47 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       expect(execute).not.toHaveBeenCalledWith('listRoomCorners', expect.anything());
       await coordinator.applyCornerComplete('corner-1');
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).not.toContain('corner-1'));
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('does not start an archived corner a membership push inherited', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-archived-'));
+    roots.push(root);
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-old',
+          objective: 'Landed already',
+          closeRequested: true,
+          lane: 'code',
+        };
+      if (name === 'getRoomRepositoryState')
+        return { resolution: 'repository', remote: 'https://github.example/x.git', key: 'x' };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: vi.fn(),
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    try {
+      await coordinator.applyMembershipEvent({
+        roomId: 'corner-old',
+        parentRoomId: 'room-1',
+        operation: 'INSERT',
+      });
+      expect(coordinator.activeRoomIds()).not.toContain('corner-old');
+      expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     } finally {
       await coordinator.shutdown();
     }

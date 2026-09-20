@@ -882,6 +882,7 @@ describe('corner close-request polling cadence', () => {
     execute: ReturnType<typeof vi.fn>,
     pollMs: number,
     liveSubscribe?: DaemonApiClient['liveSubscribe'],
+    closePollMs?: number,
   ) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
     roots.push(root);
@@ -957,6 +958,7 @@ describe('corner close-request polling cadence', () => {
         scheduler,
         signal: abort.signal,
         pollMs,
+        ...(closePollMs !== undefined ? { closePollMs } : {}),
         onPoll,
         onFailure: vi.fn(),
         onCloseRequested: async () => undefined,
@@ -1688,15 +1690,46 @@ describe('corner close-request polling cadence', () => {
       }
       return { id: 'write-id', createdAt: 1 };
     });
-    // A short poll interval stands in for the wake's failure: the loop still
-    // reaches the second intake through the ordinary timed wait.
-    const { loop, scheduler } = await cornerHarness(execute, 20);
+    // A dropped `corner-complete` costs latency, never correctness: with no
+    // push at all the corner is still reaped by the durable close read, here
+    // on a short stand-in for the 10-minute recovery interval.
+    const { loop, scheduler } = await cornerHarness(execute, 20, undefined, 20);
+    await loop.run();
+    await scheduler.dispose();
+    expect(closeReads).toBe(2);
+  });
+
+  it('still closes on a pushed corner-complete after a reconciliation sweep', async () => {
+    let closeReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation')
+        return { items: [{ type: 'message', authorId: '11'.repeat(32), requestId: 'r1' }] };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        return { items: [], cursor: 'latest' };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const liveSubscribe = vi.fn((_roomId, _cursor, _onItems, onState) => {
+      onState?.(true, { pushIntake: true, connectionPresence: true });
+      return () => undefined;
+    }) as unknown as DaemonApiClient['liveSubscribe'];
+    const { loop, scheduler, onPoll } = await cornerHarness(execute, 60_000, liveSubscribe);
+    const started = Date.now();
     const running = loop.run();
-    await vi.waitFor(() => expect(closeReads).toBe(1));
+    await vi.waitFor(() => expect(onPoll).toHaveBeenCalledTimes(1));
+    // The sweep's wake must not consume the intake wake: the close below is
+    // the only thing that can end this loop inside the test's deadline.
+    loop.requestReconciliation();
+    await new Promise((resolve) => setTimeout(resolve, 50));
     loop.requestClose();
     await running;
     await scheduler.dispose();
     expect(closeReads).toBe(1);
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it('does not use the configured fast recovery cadence after push acknowledgement', async () => {

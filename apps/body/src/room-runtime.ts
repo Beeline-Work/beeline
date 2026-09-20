@@ -381,6 +381,9 @@ export class RoomRuntimeCoordinator {
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
   private readonly startingCorners = new Set<string>();
+  /** Pushed membership changes awaiting a bounded apply, latest per Room. */
+  private readonly pendingMembershipEvents = new Map<string, RoomMembershipChange>();
+  private membershipDrain: Promise<void> | undefined;
   /** Corners whose start failure has already been said out loud, once each. */
   private readonly reportedCornerStartFailures = new Set<string>();
   /** Standing workspace-configuration faults, keyed by the config that failed. */
@@ -437,10 +440,8 @@ export class RoomRuntimeCoordinator {
     // a daemon whose transport cannot deliver it still reconciles on the
     // heartbeat as before.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
-      if (event && (event.roomId || event.cornerId)) {
-        void this.applyMembershipEvent(event).catch((error) =>
-          console.error('[thin-core] live membership apply failed', error),
-        );
+      if (event?.roomId) {
+        this.queueMembershipEvent(event);
         return;
       }
       this.discoveryWakes.wake();
@@ -632,19 +633,46 @@ export class RoomRuntimeCoordinator {
   }
 
   /**
-   * Incremental apply of a membership / corner-open / member-left push.
+   * Pushed membership changes are applied at the same bound the reconcile pass
+   * uses. One `rooms-changed` per row means a single human action (adding an
+   * agent to a Room inherits a membership per corner under it) arrives as a
+   * burst; unbounded, that burst is exactly the concurrent restore reads and
+   * worktree checkouts this change exists to stop.
+   */
+  private queueMembershipEvent(event: RoomMembershipChange): void {
+    if (!event.roomId) {
+      this.discoveryWakes.wake();
+      return;
+    }
+    this.pendingMembershipEvents.set(event.roomId, event);
+    this.membershipDrain ??= this.drainMembershipEvents().finally(() => {
+      this.membershipDrain = undefined;
+    });
+  }
+
+  private async drainMembershipEvents(): Promise<void> {
+    while (this.pendingMembershipEvents.size) {
+      const batch = [...this.pendingMembershipEvents.values()];
+      this.pendingMembershipEvents.clear();
+      await mapWithConcurrency(batch, ROOM_JOIN_CONCURRENCY, (event) =>
+        this.applyMembershipEvent(event).catch((error) =>
+          console.error('[thin-core] live membership apply failed', error),
+        ),
+      );
+    }
+  }
+
+  /**
+   * Incremental apply of one scoped membership push.
    * An unscoped wake still uses the slow reconcile as recovery.
    */
   async applyMembershipEvent(event: RoomMembershipChange): Promise<void> {
-    const roomId = event.cornerId ?? event.roomId;
+    const roomId = event.roomId;
     if (!roomId) {
       this.discoveryWakes.wake();
       return;
     }
-    const left =
-      event.removed === true ||
-      event.operation === 'DELETE' ||
-      event.operation === 'delete';
+    const left = event.removed === true || event.operation?.toUpperCase() === 'DELETE';
     if (left) {
       const running = this.running.get(roomId);
       if (running) await this.stopRunning(roomId, running);
@@ -850,6 +878,11 @@ export class RoomRuntimeCoordinator {
           roomId: corner.parentRoomId,
         }),
       ]);
+      // An archived corner is already closed. Reconcile filters those out of
+      // its own list; a pushed membership row carries no archive state, and
+      // inheriting a Room membership writes one row per corner under it,
+      // including the archived ones.
+      if (restore.closeRequested) return;
       configKey = cornerStartConfigKey(repository, restore.objective ?? '');
       const previousStanding = this.standingCornerStartFaults.get(corner.cornerId);
       if (previousStanding === configKey) return;
@@ -891,7 +924,7 @@ export class RoomRuntimeCoordinator {
         : undefined;
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
-      const isOpener = !corner.openedBy || corner.openedBy === this.agent.publicKey;
+      const isOpener = corner.openedBy === this.agent.publicKey;
       if (worktree && shouldPostInitialCornerWorkingState(restore, isOpener)) {
         await this.options.daemonApi.execute('postCornerRemoteState', {
           cornerId: corner.cornerId,

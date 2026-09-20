@@ -255,6 +255,9 @@ export type ChatDisplayMessage = {
   relayId?: string;
   activity?: AgentActivityItem[];
   agentThought?: string;
+  /** Stable key for the queued native live-text lane. Text never enters list data. */
+  agentMessageDraftKey?: string;
+  /** Static/test seam. Transport drafts use `agentMessageDraftKey`. */
   agentMessageDraft?: string;
   durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];

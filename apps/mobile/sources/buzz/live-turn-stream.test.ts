@@ -5,6 +5,7 @@ import type { ChatDisplayMessage } from './room-view-presentation';
 import { mergeDisplayPages } from './room-view-presentation';
 import { liveDraftMessages, projectActiveTurnStream } from './live-turn-stream';
 import { joinedTurnRowId, liveDraftRowId } from './draft-settle';
+import { liveDraftDrainKey } from './live-draft-drain';
 
 const AGENT = 'a'.repeat(64);
 const OTHER_AGENT = 'b'.repeat(64);
@@ -55,7 +56,7 @@ describe('active turn stream projection', () => {
         isAgentActivity: true,
         isAgentLiveTurn: true,
         isAgentDraft: true,
-        agentMessageDraft: 'The answer is streaming.',
+        agentMessageDraftKey: liveDraftDrainKey(AGENT, 'request-1'),
       }),
     ];
 
@@ -69,7 +70,7 @@ describe('active turn stream projection', () => {
       pubkey: AGENT,
       isAgentActivity: true,
       isAgentLiveTurn: true,
-      agentMessageDraft: 'The answer is streaming.',
+      agentMessageDraftKey: liveDraftDrainKey(AGENT, 'request-1'),
       activity: [{ title: 'edited Ledger.tsx' }, { title: 'read receipts' }],
     });
     expect(projected[1]).not.toHaveProperty('agentThought');
@@ -186,9 +187,9 @@ describe('two agents streaming at once', () => {
 
     const rows = mergeDisplayPages([], liveDraftMessages(overlays, []));
 
-    expect(rows.map((row) => [row.id, row.pubkey, row.agentMessageDraft])).toEqual([
-      [liveDraftRowId(AGENT, REQUEST), AGENT, 'goosy one two three'],
-      [liveDraftRowId(OTHER_AGENT, REQUEST), OTHER_AGENT, 'other one two'],
+    expect(rows.map((row) => [row.id, row.pubkey, row.agentMessageDraftKey])).toEqual([
+      [liveDraftRowId(AGENT, REQUEST), AGENT, liveDraftDrainKey(AGENT, REQUEST)],
+      [liveDraftRowId(OTHER_AGENT, REQUEST), OTHER_AGENT, liveDraftDrainKey(OTHER_AGENT, REQUEST)],
     ]);
     expect(rows.map((row) => row.timestamp)).toEqual([100, 101]);
   });
@@ -211,9 +212,9 @@ describe('two agents streaming at once', () => {
       false,
     );
 
-    expect(projected.map((row) => [row.id, row.agentMessageDraft])).toEqual([
-      [joinedTurnRowId(AGENT, REQUEST), 'goosy is still writing'],
-      [joinedTurnRowId(OTHER_AGENT, REQUEST), 'the other is writing'],
+    expect(projected.map((row) => [row.id, row.agentMessageDraftKey])).toEqual([
+      [joinedTurnRowId(AGENT, REQUEST), liveDraftDrainKey(AGENT, REQUEST)],
+      [joinedTurnRowId(OTHER_AGENT, REQUEST), liveDraftDrainKey(OTHER_AGENT, REQUEST)],
     ]);
     expect(projected.map((row) => row.timestamp)).toEqual([100, 101]);
   });
@@ -257,8 +258,8 @@ describe('two agents streaming at once', () => {
       const settled = retracted();
       // Before the receipt lands the streamed text stays put: a draft must
       // never blink out between the retract and its turn's ending.
-      expect(liveDraftMessages(settled, []).map((row) => row.agentMessageDraft)).toEqual([
-        'Opening a corner for that.',
+      expect(liveDraftMessages(settled, []).map((row) => row.agentMessageDraftKey)).toEqual([
+        liveDraftDrainKey(AGENT, REQUEST),
       ]);
       const complete: RoomViewAgentTurn = {
         requestId: REQUEST,
@@ -282,9 +283,10 @@ describe('two agents streaming at once', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
         text: '',
-        agentMessageDraft: 'Codex gets the review',
+        agentMessageDraftKey: liveDraftDrainKey(AGENT, REQUEST),
         isAgentDraft: true,
       });
+      expect(rows[0]).not.toHaveProperty('agentMessageDraft');
       expect(rows[0]?.activity).toBeUndefined();
     });
 
@@ -295,7 +297,9 @@ describe('two agents streaming at once', () => {
           [],
           [{ requestId: REQUEST, agentPubkey: AGENT, status, createdAt: 130 }],
         );
-        expect(rows.map((row) => row.agentMessageDraft)).toEqual(['Opening a corner for that.']);
+        expect(rows.map((row) => row.agentMessageDraftKey)).toEqual([
+          liveDraftDrainKey(AGENT, REQUEST),
+        ]);
       }
     });
 

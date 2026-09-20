@@ -48,8 +48,6 @@ function generate(version) {
       '// because both render hosts take the renderer as a string: the app document',
       '// on web and the WebView document on Android.',
       '',
-      `export const PDFJS_VERSION = ${JSON.stringify(version)};`,
-      '',
       '/** `pdf.min.mjs` — the API half, imported as an ES module from a blob URL. */',
       `export const PDFJS_MAIN_SOURCE = ${JSON.stringify(main)};`,
       '',

@@ -19,6 +19,15 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+vi.mock('./HullActionSheet', () => {
+  const ReactModule = require('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
+  };
+});
 
 const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
 vi.mock('@/utils/open-external-url', () => openExternal);
@@ -539,9 +548,7 @@ describe('MonoMarkdown opens URL links through the shared external URL boundary'
         React.createElement(MonoMarkdown, { markdown: '[docs](https://docs.example.com/guide)' }),
       );
     });
-    const link = renderer.root
-      .findAllByType('Text')
-      .find((node) => node.props.children === 'docs');
+    const link = renderer.root.findAllByType('Text').find((node) => node.props.children === 'docs');
     expect(link?.props.onPress).toBeDefined();
     act(() => link?.props.onPress());
     expect(openExternal.openExternalUrl).toHaveBeenCalledWith('https://docs.example.com/guide');
@@ -572,7 +579,12 @@ import {
 
 describe('tableColumnWeights — one clamped flex weight per column', () => {
   it('weights each column by its longest cell', () => {
-    expect(tableColumnWeights([['a', 'bbbbb'], ['ccc', 'b']])).toEqual([3, 5]);
+    expect(
+      tableColumnWeights([
+        ['a', 'bbbbb'],
+        ['ccc', 'b'],
+      ]),
+    ).toEqual([3, 5]);
   });
 
   it('clamps a huge column so it cannot squeeze the rest into slivers', () => {
@@ -583,10 +595,12 @@ describe('tableColumnWeights — one clamped flex weight per column', () => {
   });
 
   it('lifts every column to the minimum weight', () => {
-    expect(tableColumnWeights([['', ''], ['', '']])).toEqual([
-      TABLE_MIN_COLUMN_WEIGHT,
-      TABLE_MIN_COLUMN_WEIGHT,
-    ]);
+    expect(
+      tableColumnWeights([
+        ['', ''],
+        ['', ''],
+      ]),
+    ).toEqual([TABLE_MIN_COLUMN_WEIGHT, TABLE_MIN_COLUMN_WEIGHT]);
   });
 
   it('reads a ragged row as trailing empty cells', () => {
@@ -627,7 +641,11 @@ describe('MonoMarkdown renders a pipe table as an aligned wrapping grid', () => 
   function flexOf(node: JsonNode): number | undefined {
     const styles = Array.isArray(node.props?.style) ? node.props!.style : [node.props?.style];
     for (const style of styles) {
-      if (style && typeof style === 'object' && typeof (style as { flex?: unknown }).flex === 'number') {
+      if (
+        style &&
+        typeof style === 'object' &&
+        typeof (style as { flex?: unknown }).flex === 'number'
+      ) {
         return (style as { flex: number }).flex;
       }
     }

@@ -1,10 +1,7 @@
 import React, { useMemo } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Text, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { TextStyle } from 'react-native';
-import { syntaxColors, type SyntaxToken } from '@/buzz/syntax-colors';
-import { tokenizeCode, type TokenizedLine, type HighlightToken } from '@/buzz/syntax-highlight';
-import { Typography } from '@/constants/Typography';
+import { tokenizeCode, type HighlightToken } from '@/buzz/syntax-highlight';
 
 type CodeHighlighterProps = {
   code: string;
@@ -17,32 +14,23 @@ type CodeHighlighterProps = {
 // selectable, full-fidelity text node instead of building thousands of spans.
 const MAX_HIGHLIGHTED_CODE_CHARS = 20_000;
 
-/**
- * Map a highlight-token type to a syntax-palette colour.
- */
-function tokenColor(token: HighlightToken): string | undefined {
+function tokenStyle(token: HighlightToken) {
   switch (token) {
-    case 'keyword': return syntaxColors.keyword;
-    case 'string':
-    case 'attrValue': return syntaxColors.string;
-    case 'number': return syntaxColors.number;
-    case 'comment': return syntaxColors.comment;
-    case 'type': return syntaxColors.type;
-    case 'builtin': return syntaxColors.builtin;
-    case 'punctuation': return syntaxColors.punctuation;
-    case 'function': return syntaxColors.function;
-    case 'tag': return syntaxColors.tag;
-    case 'attrName': return syntaxColors.attrName;
-    default: return undefined;
+    case 'structure':
+      return styles.structure;
+    case 'name':
+      return styles.name;
+    case 'value':
+      return styles.value;
+    default:
+      return undefined;
   }
 }
 
 /**
- * Renders a code block with syntax-highlighted spans.
- *
- * A `null` language fence still colours strings, numbers, and comments while
- * omitting language-specific classification. Very large blocks fall back to
- * one full-fidelity monochrome Text node so native layout stays bounded.
+ * Renders a code block with Two Inks spans. Long lines wrap: the parent must
+ * bound width (no horizontal ScrollView). Very large blocks fall back to one
+ * full-fidelity Text node so native layout stays bounded.
  */
 export function CodeHighlighter({ code, language, style }: CodeHighlighterProps) {
   const lines = useMemo(
@@ -50,47 +38,41 @@ export function CodeHighlighter({ code, language, style }: CodeHighlighterProps)
     [code, language],
   );
 
-  // If the code is empty, render nothing meaningful.
   if (!code) return null;
 
   if (!lines) {
     return (
-      <Text selectable style={[styles.codeText, style]}>
+      <Text selectable style={[styles.codeText, style]} testID="code-highlighter">
         {code}
       </Text>
     );
   }
 
   return (
-    <Text selectable style={[styles.codeText, style]}>
+    <Text selectable style={[styles.codeText, style]} testID="code-highlighter">
       {lines.map((line, li) => (
-        <Text key={li} style={styles.line}>
-          {line.length === 0 ? (
-            // Preserve blank lines with a space character so the Text height doesn't collapse.
-            <Text>{' '}</Text>
-          ) : (
-            line.map((span, si) => (
-              <Text key={si} style={tokenColor(span.token) ? { color: tokenColor(span.token) } : undefined}>
-                {span.text}
-              </Text>
-            ))
-          )}
-          {li < lines.length - 1 ? <Text>{'\n'}</Text> : null}
-        </Text>
+        <React.Fragment key={li}>
+          {li > 0 ? '\n' : null}
+          {line.map((span, si) => (
+            <Text key={si} style={tokenStyle(span.token)}>
+              {span.text}
+            </Text>
+          ))}
+        </React.Fragment>
       ))}
     </Text>
   );
 }
 
-const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
-  return ({
+const styles = StyleSheet.create((theme) => ({
   codeText: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
+    ...theme.buzz.type.machine,
+    width: '100%',
+    minWidth: 0,
+    flexShrink: 1,
+    color: theme.buzz.syntaxStructure,
   },
-  line: {},
-  });
-});
+  structure: { color: theme.buzz.syntaxStructure },
+  name: { color: theme.buzz.syntaxName },
+  value: { color: theme.buzz.syntaxValue },
+}));

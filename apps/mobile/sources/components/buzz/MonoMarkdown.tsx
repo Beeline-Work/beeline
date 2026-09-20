@@ -536,10 +536,8 @@ const styles = StyleSheet.create((theme) => ({
   listItem: { width: '100%' },
   listGlyph: { color: theme.buzz.ledgerQuiet },
   /**
-   * A fenced block is code, not a card. The Editorial direction marks it with
-   * a 2px left rule in the theme's peak steel — the same vocabulary tool
-   * readouts use — so code and machine output read as one family, clearly not
-   * conversation.
+   * Tables share the 2px left-rule vocabulary. Fenced code owns its own frame
+   * in CodeBlock.tsx (Two Inks structure, inscribed-and-opened).
    */
   codeFrame: {
     maxWidth: '100%',

@@ -200,10 +200,16 @@ miss the dump. The summary truncates; the disclosure copy beside it never does,
 because the affordance is the reason the line exists. A fenced code block marks
 itself with a 2px left rule in Two Inks structure (see Color exceptions) —
 the same vocabulary tool readouts use — never a panel.
-Short fences stay inline with a Copy control and no inscription. A long fence is one inscribed line
-(`json · 13 lines · 277 B`) plus a four-line peek labelled with what it hides,
+Fences of up to four source lines stay inline with a Copy control and no inscription.
+A longer fence is one inscribed line (language, line count, and byte size)
+plus a four-line peek labelled with what it hides,
 and opens full-width in `ToolOutputSheet` (`CodeBlock.tsx`) where long lines
-wrap. Colour inside the fence is Three-role Two Inks (`groknight.syntax*`).
+wrap. Copy copies the complete block, including lines hidden by the peek;
+selectable text preserves source spaces and tabs. Unlabelled fences and the
+`text`, `txt`, `plaintext`, `markdown`, and `md` labels stay monochrome.
+Other labelled fences use Two Inks: `json` distinguishes keys from values;
+all other labels use the generic scanner (see `syntax-highlight.ts`). Very
+large bodies use the full-fidelity monochrome fallback in `CodeHighlighter.tsx`.
 
 **Text still being written says so, and settles by dissolving.** A streaming
 turn is not a finished message, and reading like one is a lie the reader pays
@@ -709,8 +715,9 @@ check), never as a page or Room/Corner load gate.
 4. **Two Inks** (captain 2026-09-19, C composed with B) is the fenced-block
    palette: three roles — structure, name, value — in two theme-tuned hues
    drawn from the canvas family (aubergine lifted, and its cool complement),
-   laddered by luminance so the block still parses in greyscale. Obsidian
-   `syntaxStructure` `#6c6c76` / `syntaxName` `#a58ec6` / `syntaxValue`
-   `#a8cde8`; Bone `#8B7F6E` / `#6b5a83` / `#1e4460`. Hue is the redundant
+   laddered by luminance so the block still parses in greyscale. The theme's
+   `syntaxStructure`, `syntaxName`, and `syntaxValue` in
+   `apps/mobile/sources/buzz/groknight.ts` own the palette values for each canvas;
+   `groknight.test.ts` pins their contrast and luminance order. Hue is the redundant
    channel. It lives only inside a fenced block and the sheet that opens one;
    it does not authorize a fifth exception.

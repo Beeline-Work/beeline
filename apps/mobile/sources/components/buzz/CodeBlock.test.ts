@@ -174,9 +174,7 @@ describe('CodeBlock', () => {
     const texts = highlighters.map((node) => collectHostText(node));
     expect(texts.some((text) => text.includes('apiKey') && text.includes('200000'))).toBe(true);
     expect(texts).toContain(FRAME_JSON);
-    expect(JSON.parse(texts.find((text) => text === FRAME_JSON)!)).toEqual(
-      JSON.parse(FRAME_JSON),
-    );
+    expect(JSON.parse(texts.find((text) => text === FRAME_JSON)!)).toEqual(JSON.parse(FRAME_JSON));
   });
 
   it('pins the length rule: more than a peek is long', () => {

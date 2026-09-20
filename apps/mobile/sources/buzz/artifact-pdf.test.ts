@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -105,7 +108,6 @@ describe('the vendored renderer is loaded only when a PDF is on screen', () => {
     vi.doMock('@/vendor/pdfjs/pdfjs.gen', () => ({
       PDFJS_MAIN_SOURCE: 'var vendoredMain;',
       PDFJS_WORKER_SOURCE: 'var vendoredWorker;',
-      PDFJS_VERSION: '0.0.0-test',
     }));
     const { loadPdfViewerDocument } = await import('./artifact-pdf');
     const html = await loadPdfViewerDocument({ pdfBase64: 'JVBERi0xLjQK', mode: 'preview' });
@@ -113,5 +115,37 @@ describe('the vendored renderer is loaded only when a PDF is on screen', () => {
     expect(html).toContain('var vendoredWorker;');
     vi.doUnmock('@/vendor/pdfjs/pdfjs.gen');
     vi.resetModules();
+  });
+});
+
+/**
+ * The Android floor. pdf.js' default build assumes a browser as new as its own
+ * release: it calls `Promise.withResolvers` while loading the very first
+ * document, and that is Chrome 119. An Android System WebView updates through
+ * the Play Store independently of the OS, so a device can sit well behind the
+ * app — on one of those the default build throws before a page is ever drawn,
+ * and the reader gets the failure line instead of their PDF. `legacy/build` is
+ * the same pdf.js with its core-js polyfills folded in.
+ *
+ * The marker below is core-js' installer for that primitive. It appears in
+ * `legacy/build` and not in `build`, so regenerating from the wrong directory
+ * fails here rather than on a reader's phone.
+ */
+const CORE_JS_WITH_RESOLVERS = 'withResolvers:function withResolvers(';
+
+describe('the vendored renderer runs on the Android WebViews the app still meets', () => {
+  const vendored = readFileSync(
+    fileURLToPath(new URL('../vendor/pdfjs/pdfjs.gen.ts', import.meta.url)),
+    'utf8',
+  );
+
+  it('supplies Promise.withResolvers itself rather than assuming the runtime has it', () => {
+    expect(vendored).toContain(CORE_JS_WITH_RESOLVERS);
+  });
+
+  it('supplies it to both halves that load in the WebView, the API and the worker', () => {
+    // One installer in `pdf.min.mjs`, one in `pdf.worker.min.mjs`: the fake
+    // worker runs the worker build on the main thread and needs it too.
+    expect(vendored.split(CORE_JS_WITH_RESOLVERS)).toHaveLength(3);
   });
 });

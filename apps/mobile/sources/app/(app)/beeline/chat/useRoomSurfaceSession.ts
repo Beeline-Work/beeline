@@ -488,6 +488,7 @@ export function useRoomSurfaceSession({
     const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
       let handshakeSeen = false;
+      let readRacedAhead = false;
       let listenReady: (() => void) | undefined;
       const handshake = new Promise<void>((resolve) => {
         listenReady = resolve;
@@ -516,13 +517,16 @@ export function useRoomSurfaceSession({
               // This watch's first frame is listen-ready, and the read
               // startAfter then issues is the one covering read of the open.
               // A later frame on this same watch is a reconnect and must
-              // reread.
+              // reread. When the read gave up waiting and ran first, its
+              // snapshot predates this lane, so the frame that finally
+              // arrives is the only thing that can cover it.
               if (handshakeSeen) {
                 if (hasPainted) scheduler?.force();
                 return;
               }
               handshakeSeen = true;
               listenReady?.();
+              if (readRacedAhead && hasPainted) scheduler?.force();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -726,16 +730,23 @@ export function useRoomSurfaceSession({
         stop();
         return;
       }
-      unsubscribe?.();
-      unsubscribe = stop;
       let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         handshake,
         new Promise<void>((resolve) => {
-          handshakeTimer = setTimeout(resolve, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
+          handshakeTimer = setTimeout(() => {
+            readRacedAhead = true;
+            resolve();
+          }, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
         }),
       ]);
       if (handshakeTimer) clearTimeout(handshakeTimer);
+      if (cancelled || generation !== watchGeneration) {
+        stop();
+        return;
+      }
+      unsubscribe?.();
+      unsubscribe = stop;
     };
 
     let transportForEffect: BuzzRigTransport | undefined;

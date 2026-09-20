@@ -815,6 +815,35 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('covers a read that gave up waiting once the subscribe finally lands', async () => {
+    vi.useFakeTimers();
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+    expect(controls.schedulers[0]!.started).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    await flushEffects();
+    expect(controls.schedulers[0]!.started).toBe(true);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    await act(async () => renderer.unmount());
+    vi.useRealTimers();
+  });
+
   it('records a bounded correlation trace when the phone socket receives an invalidation', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     controls.cached = roomView('room-a');

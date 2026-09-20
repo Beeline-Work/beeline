@@ -63,8 +63,9 @@ vi.mock('react-native-reanimated', async () => {
 
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { beelineThemes } from './groknight';
+import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
-import { roomBottomChromeStyles } from './room-bottom-chrome';
+import { roomBottomChromeStyles, turnLineOverlayCoverPx } from './room-bottom-chrome';
 
 /**
  * The Room's bottom edge, measured rather than read.
@@ -72,12 +73,8 @@ import { roomBottomChromeStyles } from './room-bottom-chrome';
  * Every number here comes from the style objects the app itself mounts — the
  * screen assigns `bottomChrome.stack` / `.hangingTurnChrome` / `.composerRow`
  * straight into its StyleSheet, and the turn line's own box is read off a
- * rendered `TurnProgressLine`. So this fails on a stray margin the way the
- * reader's eye would, not on a renamed symbol.
- *
- * The rule: with the pinned corner line gone there is nothing left between
- * the hanging turn line and the composer, so their edges meet at one y and
- * the transcript reserves the line's height and not a pixel more.
+ * rendered `TurnProgressLine`. So this fails on a stray overlay the way the
+ * reader's last message would, not on a renamed symbol.
  */
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -86,30 +83,9 @@ import { roomBottomChromeStyles } from './room-bottom-chrome';
 const layout = roomBottomChromeStyles(beelineThemes.obsidian);
 
 const px = (value: unknown): number => Number(value ?? 0);
-/** Read a style's box-model fields by name: a regression ADDS one of these. */
-const box = (style: unknown): Record<string, unknown> => (style ?? {}) as Record<string, unknown>;
-
-/**
- * Distance in px between the bottom edge of the absolutely-placed turn line
- * and the top edge of the stack's first in-flow row. `bottom: '100%'` puts
- * the child's bottom edge exactly on the parent's top edge; a bottom margin
- * on the line, top padding on the stack, or a top margin on the row each open
- * a band of dead slab between them.
- */
-function turnLineToRowGap(row: ViewStyle): number {
-  const hanging = layout.hangingTurnChrome;
-  expect(hanging.position, 'the turn line must hang, not sit in flow').toBe('absolute');
-  expect(hanging.bottom, "the turn line's bottom edge is the stack's top edge").toBe('100%');
-  return (
-    px(box(hanging).marginBottom) +
-    px(box(layout.stack).paddingTop) +
-    px(box(layout.stack).rowGap ?? box(layout.stack).gap) +
-    px(box(row).marginTop)
-  );
-}
 
 /** The turn line's own layout box, measured off a rendered line. */
-function measureTurnLine(): { height: number; bottomMargin: number } {
+function measureTurnLine(): { height: number; bottomMargin: number; box: number } {
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
@@ -123,43 +99,43 @@ function measureTurnLine(): { height: number; bottomMargin: number } {
       node.type === 'View' && node.props.testID === 'turn-line',
   )[0];
   expect(bar, 'the turn line must render its own outer box').toBeTruthy();
-  // The line's single row owns its height; the outer bar owns the margin that
-  // parts it from the composer below.
   const row = bar
     .findAll(() => true)
     .flatMap((node: { props: { style?: unknown } }) => flatten(node.props.style))
     .find((style: ViewStyle) => style.flexDirection === 'row' && style.minHeight != null);
   expect(row, "the turn line's row must declare its own height").toBeTruthy();
-  const measured = {
-    height: px(row!.minHeight),
-    bottomMargin: flatten(bar.props.style).reduce(
-      (total: number, style: ViewStyle) => total + px(style.marginBottom),
-      0,
-    ),
-  };
+  const height = px(row!.minHeight);
+  const bottomMargin = flatten(bar.props.style).reduce(
+    (total: number, style: ViewStyle) => total + px(style.marginBottom),
+    0,
+  );
   act(() => renderer.unmount());
-  return measured;
+  return { height, bottomMargin, box: height + bottomMargin };
 }
 
-describe('the Room turn line sits on the composer', () => {
-  it('leaves no gap between the hanging turn line and the composer', () => {
-    expect(turnLineToRowGap(layout.composerRow)).toBe(0);
+describe('the Room turn line is a band above the composer', () => {
+  it('sits in flow with a hairline, flush on the composer, not over the transcript', () => {
+    const hanging = layout.hangingTurnChrome;
+    // Overlay used position/bottom to paint over the list. The in-flow band
+    // is only a hairline fill — no overlay fields, no extra air that would
+    // shove the composer row.
+    expect(Object.keys(hanging).sort()).toEqual([
+      'backgroundColor',
+      'borderTopColor',
+      'borderTopWidth',
+    ]);
+    expect(hanging.borderTopWidth).toBe(1);
+    expect(hanging.borderTopColor).toBe(beelineThemes.obsidian.border);
+    expect(hanging.backgroundColor).toBe(beelineThemes.obsidian.bgTerminal);
+    expect(Object.keys(layout.stack)).toEqual(['position']);
+    expect(Object.keys(layout.stack)).not.toContain('gap');
+    expect(Object.keys(layout.stack)).not.toContain('paddingTop');
+    expect(Object.keys(hanging)).not.toContain('marginBottom');
+    expect(Object.keys(layout.composerRow)).not.toContain('marginTop');
+    expect(layout.composerRow.paddingTop).toBe(8);
   });
 
-  it('adds no in-flow height of its own, so the stack starts at the composer', () => {
-    // An absolute line cannot push the composer down; the transcript reserves
-    // its height instead. A line that went in flow would move the field under
-    // the reader's thumb every time an agent started answering.
-    expect(layout.hangingTurnChrome.left).toBe(0);
-    expect(layout.hangingTurnChrome.right).toBe(0);
-    expect(px(box(layout.stack).paddingBottom)).toBe(0);
-    expect(px(box(layout.stack).gap)).toBe(0);
-  });
-
-  it('reserves exactly the rendered line at the transcript tail, and nothing more', () => {
-    // The reserve keeps the hanging line off the newest row. It is spent on
-    // the line alone, so no dead band survives where the pinned corner line
-    // used to absorb it.
+  it('would cover the last row if it overlaid the ordinary tail, so it must not overlay', () => {
     const line = measureTurnLine();
     const idle = phoneTranscriptTailPadding({
       turnChromeVisible: false,
@@ -171,6 +147,18 @@ describe('the Room turn line sits on the composer', () => {
     });
 
     expect(line.height).toBeGreaterThan(0);
-    expect(thinking - idle).toBe(line.height + line.bottomMargin);
+    expect(thinking).toBe(idle);
+    expect(thinking).toBe(ROOM_OPEN_LIST_TAIL_PADDING);
+    expect(line.box).toBeGreaterThan(thinking);
+
+    const overlayCover = turnLineOverlayCoverPx(line.box, thinking);
+    expect(overlayCover).toBe(line.box - thinking);
+    expect(overlayCover).toBeGreaterThan(0);
+
+    // In-flow band: no overlay fields, so none of the 30px line box is taken
+    // from the 12px tail. The last row keeps the ordinary margin.
+    expect(Object.keys(layout.hangingTurnChrome)).not.toContain('position');
+    expect(Object.keys(layout.hangingTurnChrome)).not.toContain('bottom');
+    expect(turnLineOverlayCoverPx(0, thinking)).toBe(0);
   });
 });

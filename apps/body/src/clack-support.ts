@@ -36,7 +36,7 @@ export function clackPromptOutput(output: NodeJS.WriteStream = stdout): NodeJS.W
  * `never`, so callers get `value` narrowed to `T` after this returns.
  */
 export function unwrapPrompt<T>(
-  value: T | typeof clack.CANCEL_SYMBOL,
+  value: T | Extract<Awaited<ReturnType<typeof clack.text>>, symbol>,
   cancelMessage = 'Cancelled.',
 ): T {
   if (clack.isCancel(value)) {

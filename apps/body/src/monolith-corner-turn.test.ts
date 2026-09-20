@@ -432,7 +432,7 @@ describe('corner close-request polling cadence', () => {
       cwd: workspace,
       mode: 'edit',
       mcpServers: [expect.objectContaining({ name: 'beeline-agent' })],
-      systemPrompt: expect.stringContaining('chat-only corner with no repository'),
+      systemPrompt: expect.stringContaining('no-code corner with no repository checkout'),
     });
     expect(sessionInput?.systemPrompt).not.toContain(CORNER_AUTHOR_CONTRACT);
     expect(sessionInput?.mcpServers.some((server) => server.name === 'buzz-dev-mcp')).toBe(false);

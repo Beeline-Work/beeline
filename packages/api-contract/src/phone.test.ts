@@ -32,7 +32,6 @@ describe('phone contract', () => {
       messages: [],
       members: [],
       latestAgentTurns: [],
-      corners: [],
       repositoryResolution: 'none',
       viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
       watchFilters: [],

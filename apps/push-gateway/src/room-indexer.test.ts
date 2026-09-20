@@ -285,7 +285,6 @@ describe('RoomIndexer', () => {
           generationId: 'generation-1',
         },
       ],
-      corners: [{ corner: { id: CORNER, updatedAt: 5 } }],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
       ['Hello', 'Ada'],
@@ -577,7 +576,7 @@ describe('RoomIndexer', () => {
     const room = await indexer.readRoom(ROOM, VIEWER);
     expect(room?.latestAgentTurns).toEqual([]);
     expect(room?.members.some((member) => member.identity.pubkey === AGENT)).toBe(false);
-    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, state: 'waiting' }]);
+    expect(room && 'corners' in room).toBe(false);
 
     const chats = await indexer.readChats(WORKSPACE, VIEWER);
     expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
@@ -1960,14 +1959,6 @@ describe('RoomIndexer', () => {
           }),
         }),
       ]),
-      corners: [
-        expect.objectContaining({
-          agent: expect.objectContaining({
-            pubkey: AGENT,
-            name: 'Milo',
-          }),
-        }),
-      ],
     });
     expect(history?.messages).toEqual(
       expect.arrayContaining([
@@ -2084,14 +2075,11 @@ describe('RoomIndexer', () => {
       state: 'working',
       stateAt: 49,
     });
-    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]).toMatchObject({
-      state: 'working',
-      stateAt: 49,
-    });
+    const parentRoom = await indexer.readRoom(ROOM, VIEWER);
+    expect(parentRoom && 'corners' in parentRoom).toBe(false);
 
     await publishAgentTurn('5', 52, 'complete');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
-    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
 
     await publishAgentTurn('6', 53, 'failed');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');

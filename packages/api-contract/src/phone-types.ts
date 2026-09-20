@@ -464,7 +464,6 @@ export type RoomView = {
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */
   readonly cornerLifecycle?: CornerLifecycleView;
-  readonly corners: readonly CornerListItem[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

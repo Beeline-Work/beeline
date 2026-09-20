@@ -452,7 +452,6 @@ export function useRoomSurfaceSession({
         new Set([
           channelId,
           ...(stableView.parent ? [stableView.parent.id] : []),
-          ...stableView.corners.map((corner) => corner.corner.id),
         ]),
       );
       const replayedOverlays = pendingOverlayEvents;
@@ -601,8 +600,8 @@ export function useRoomSurfaceSession({
                 scheduler?.signal();
               }
             } else if (live.roomId !== channelId) {
-              // Parent Room watches include corners for lifecycle invalidation,
-              // but an ephemeral lane belongs exclusively to its emitting Room.
+              // A Room watch no longer includes child corners. An ephemeral
+              // lane still belongs exclusively to its emitting Room.
               return;
             } else if (live.type === 'presence') {
               applyDecodedOverlay({

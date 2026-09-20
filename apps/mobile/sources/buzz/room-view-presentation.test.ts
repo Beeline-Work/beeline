@@ -36,7 +36,6 @@ describe('Room view presentation', () => {
       permissions: { send: true, manage: true },
     },
     repositoryResolution: { status: 'absent' },
-    corners: [],
     watchFilters: [{ '#h': ['room'] }],
   });
 
@@ -117,8 +116,7 @@ describe('Room view presentation', () => {
 
   it('uses the child turn receipt time for a working corner instead of stale metadata', () => {
     const receiptAt = Math.floor(Date.now() / 1_000);
-    const [corner] = cornerSummaries({
-      corners: [
+    const [corner] = cornerSummaries([
         {
           corner: {
             id: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
@@ -133,8 +131,7 @@ describe('Room view presentation', () => {
           state: 'working',
           stateAt: receiptAt,
         },
-      ],
-    });
+    ]);
 
     expect(corner).toMatchObject({
       state: 'working',
@@ -144,8 +141,7 @@ describe('Room view presentation', () => {
 
   it('presents a review corner as live while a fresh steering turn is working', () => {
     const receiptAt = Math.floor(Date.now() / 1_000);
-    const [corner] = cornerSummaries({
-      corners: [
+    const [corner] = cornerSummaries([
         {
           corner: {
             id: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
@@ -160,8 +156,7 @@ describe('Room view presentation', () => {
           state: 'working',
           stateAt: receiptAt,
         },
-      ],
-    });
+    ]);
 
     expect(corner).toMatchObject({
       state: 'working',

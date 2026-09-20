@@ -42,7 +42,6 @@ function roomView(pubkey: string): RoomView {
     viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
     briefing: [],
     review: { status: 'none', files: [], approvedBy: [] },
-    corners: [],
     watchFilters: [{ kinds: [9], '#h': [ROOM] }],
   };
 }

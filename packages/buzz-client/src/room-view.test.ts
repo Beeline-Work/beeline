@@ -15,7 +15,6 @@ const room: RoomView = {
   messages: [],
   members: [],
   latestAgentTurns: [],
-  corners: [],
   repositoryResolution: 'none',
   viewer: {
     identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },

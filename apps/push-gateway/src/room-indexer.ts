@@ -149,9 +149,6 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     ) === roomId
       ? { participants: directMessageParticipants as [string, string] }
       : undefined;
-  const corners = rows
-    .filter((row) => row.section === 'sibling')
-    .map((row) => cornerItem(json(row.data)));
   const latestAgentTurns = rows
     .filter((row) => row.section === 'agent-turn')
     .flatMap((row): RoomViewAgentTurn[] => {
@@ -205,14 +202,10 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     ...(repository ? { repository } : {}),
     repositoryResolution,
     ...(parentData ? { cornerLifecycle: cornerLifecycle(roomData) } : {}),
-    corners,
     watchFilters: roomFilters(
       roomId,
       String(roomData.workspaceId ?? ''),
-      [
-        ...(parentData ? [String(parentData.id ?? '')] : []),
-        ...corners.map((item) => item.corner.id),
-      ],
+      parentData ? [String(parentData.id ?? '')] : [],
       members,
     ),
   };

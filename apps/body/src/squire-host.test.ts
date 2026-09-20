@@ -17,12 +17,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 import {
   ensureSquireHostDir,
+  SQUIRE_BROKER_FLAG,
   SQUIRE_BROKER_UNAVAILABLE,
+  SQUIRE_SERVER_ARGS,
   squireBrokerSocketReady,
   squireFacadeLaunch,
   squireHostBindPaths,
   squireHostPaths,
   squireHostRewriteEnv,
+  squireServerCommand,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
 } from './squire-host.js';
@@ -223,7 +226,8 @@ describe('host broker unit', () => {
   }
 
   it('elects outside every sandbox, on the same paths a façade is handed', () => {
-    const { keys, environment } = unitSettings(trustySquireBrokerUnit());
+    const unit = trustySquireBrokerUnit();
+    const { keys, environment } = unitSettings(unit);
     expect(TRUSTY_SQUIRE_BROKER_UNIT_NAME).toBe('trusty-squire-broker.service');
     expect(keys).not.toContain('PrivateTmp');
     // `%h` is systemd's own host-home specifier: the unit's socket, profile
@@ -239,6 +243,29 @@ describe('host broker unit', () => {
       squireHostPaths('/host-home').brokerSocket.replace('/host-home', '%h'),
     );
     expect(keys).toContain('ExecStart');
+    const execStart = unit
+      .split('\n')
+      .find((line) => line.startsWith('ExecStart='))
+      ?.slice('ExecStart='.length);
+    expect(execStart).toBe(`%h/.local/bin/beeline ${SQUIRE_BROKER_FLAG}`);
+    expect(execStart).not.toMatch(/\bnpx\b/);
+  });
+
+  it('elects npx from beside the running node, not from a shell PATH', async () => {
+    const dir = await scratch('beeline-squire-npx-');
+    const npx = join(dir, 'npx');
+    writeFileSync(npx, '#!/bin/sh\n');
+    chmodSync(npx, 0o755);
+    expect(squireServerCommand(join(dir, 'node'))).toEqual({
+      command: npx,
+      args: [...SQUIRE_SERVER_ARGS],
+      pathPrefix: dir,
+    });
+    expect(squireServerCommand(join(dir, 'missing', 'node'))).toEqual({
+      command: 'npx',
+      args: [...SQUIRE_SERVER_ARGS],
+      pathPrefix: join(dir, 'missing'),
+    });
   });
 });
 

@@ -12,13 +12,16 @@ import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const SQUIRE_BROKER_UNAVAILABLE = 'broker unavailable';
 export const TRUSTY_SQUIRE_BROKER_UNIT_NAME = 'trusty-squire-broker.service';
 /** Hidden CLI flag so a bundled `beeline` process can be the façade child. */
 export const SQUIRE_FACADE_FLAG = '--squire-facade';
+/** Hidden CLI flag so the host user unit can elect through the installed launcher. */
+export const SQUIRE_BROKER_FLAG = '--squire-broker';
+export const SQUIRE_SERVER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'server'] as const;
 
 export type SquireHostPaths = {
   readonly dir: string;
@@ -100,6 +103,22 @@ export function squireFacadeLaunch(home: string): {
   throw new Error('Squire façade entry not found next to the Beeline helper');
 }
 
+/**
+ * Locate npx next to the running node so a systemd user unit does not depend
+ * on a shell PATH. fnm/nvm/volta put `npx` beside `process.execPath`.
+ */
+export function squireServerCommand(nodeExecPath = process.execPath): {
+  command: string;
+  args: string[];
+  pathPrefix: string;
+} {
+  const binDir = dirname(nodeExecPath);
+  const sibling = join(binDir, 'npx');
+  const args = [...SQUIRE_SERVER_ARGS];
+  if (existsSync(sibling)) return { command: sibling, args, pathPrefix: binDir };
+  return { command: 'npx', args, pathPrefix: binDir };
+}
+
 /** The host elector: one user unit, no PrivateTmp, same socket every façade sees. */
 export function trustySquireBrokerUnit(): string {
   return `[Unit]
@@ -114,7 +133,7 @@ Environment=TRUSTY_SQUIRE_PROFILE_DIR=%h/.trusty-squire/chrome-profile
 Environment=XDG_CONFIG_HOME=%h/.config
 Environment=TRUSTY_SQUIRE_BROKER_SOCKET=%h/.trusty-squire/broker.sock
 ExecStartPre=/bin/mkdir -p %h/.trusty-squire
-ExecStart=/usr/bin/env npx -y @trusty-squire/mcp@latest server
+ExecStart=%h/.local/bin/beeline ${SQUIRE_BROKER_FLAG}
 Restart=on-failure
 RestartSec=5s
 UMask=0077
@@ -125,6 +144,31 @@ WantedBy=default.target
 `;
 }
 
+function spawnSquireServer(env: NodeJS.ProcessEnv, locateNpx: boolean): void {
+  const launch = locateNpx
+    ? squireServerCommand()
+    : { command: 'npx', args: [...SQUIRE_SERVER_ARGS], pathPrefix: '' };
+  const path = [launch.pathPrefix, env.PATH || '/usr/bin:/bin'].filter(Boolean).join(':');
+  const child = spawn(launch.command, launch.args, {
+    env: { ...env, PATH: path },
+    stdio: 'inherit',
+  });
+  child.on('exit', (code, signal) => {
+    if (signal) process.exit(1);
+    process.exit(code ?? 1);
+  });
+}
+
+/** Host elector: spawn Squire's server even when no socket exists yet. */
+export function runSquireBroker(env: NodeJS.ProcessEnv = process.env): void {
+  const home = env.HOME?.trim() || homedir();
+  const paths = ensureSquireHostDir(home);
+  spawnSquireServer(
+    { ...env, ...squireHostRewriteEnv(home), TRUSTY_SQUIRE_BROKER_SOCKET: paths.brokerSocket },
+    true,
+  );
+}
+
 export function runSquireFacade(env: NodeJS.ProcessEnv = process.env): void {
   const socket =
     env.TRUSTY_SQUIRE_BROKER_SOCKET ?? squireHostPaths(env.HOME?.trim() || homedir()).brokerSocket;
@@ -133,12 +177,5 @@ export function runSquireFacade(env: NodeJS.ProcessEnv = process.env): void {
     process.exitCode = 1;
     return;
   }
-  const child = spawn('npx', ['-y', '@trusty-squire/mcp@latest', 'server'], {
-    env: { ...env, TRUSTY_SQUIRE_BROKER_SOCKET: socket },
-    stdio: 'inherit',
-  });
-  child.on('exit', (code, signal) => {
-    if (signal) process.exit(1);
-    process.exit(code ?? 1);
-  });
+  spawnSquireServer({ ...env, TRUSTY_SQUIRE_BROKER_SOCKET: socket }, false);
 }

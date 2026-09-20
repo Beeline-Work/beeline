@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const chat = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const chat = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const screen = readFileSync(new URL('../settings/schedules.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../../_layout.tsx', import.meta.url), 'utf8');
 

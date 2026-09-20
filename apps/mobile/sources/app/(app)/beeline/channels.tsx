@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   SurfaceRefreshScheduler,
   isChatListView,
+  isRoomView,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -21,6 +22,12 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import {
+  beginRoomOpenPrefetch,
+  dispatchRoomOpenTap,
+  seedRoomOpenPixel,
+} from '@/buzz/room-open-prefetch';
+import { RoomOpenPixel } from './chat/_room-open-pixel';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
@@ -204,6 +211,10 @@ export default function BuzzChannels() {
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
+  const [openingSeed, setOpeningSeed] = useState<{
+    text: string;
+    agentsOffline: boolean;
+  } | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
@@ -453,6 +464,7 @@ export default function BuzzChannels() {
 
   useFocusEffect(
     useCallback(() => {
+      setOpeningSeed(null);
       refreshNow();
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
@@ -486,12 +498,41 @@ export default function BuzzChannels() {
     };
   }, [activeCommunityId, identity, memberPickerVisible, relayUrl]);
 
-  const openRoom = useCallback(
+  const prefetchRoom = useCallback(
     (roomId: string) => {
-      if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, roomId);
-      router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href);
+      if (!identity || !relayUrl) return;
+      const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${roomId}`);
+      void mobileSurfaceCache.read(address, isRoomView);
+      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
+      beginRoomOpenPrefetch(
+        roomId,
+        () => http.room(roomId),
+        (view) => mobileSurfaceCache.write(address, view, isRoomView),
+      );
     },
-    [activeCommunityId, identity],
+    [identity, relayUrl],
+  );
+
+  const openRoom = useCallback(
+    (roomId: string, newestLine?: string, agentsOffline = false) => {
+      if (newestLine) setOpeningSeed({ text: newestLine, agentsOffline });
+      const go = () => {
+        dispatchRoomOpenTap(roomId, newestLine, {
+          agentsOffline,
+          prefetch: prefetchRoom,
+          navigate: (id) => {
+            if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
+            router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+          },
+        });
+      };
+      if (newestLine && typeof globalThis.requestAnimationFrame === 'function') {
+        globalThis.requestAnimationFrame(() => go());
+        return;
+      }
+      go();
+    },
+    [activeCommunityId, identity, prefetchRoom],
   );
 
   const loadRoomCorners = useCallback(
@@ -745,6 +786,7 @@ export default function BuzzChannels() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <BuzzCommunityShell
       communities={communities}
       activeCommunityId={activeCommunityId}
@@ -901,9 +943,23 @@ export default function BuzzChannels() {
                 <TouchableOpacity
                   accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
                   testID={`room-${item.room.id}`}
+                  onPressIn={() => {
+                    prefetchRoom(item.room.id);
+                    if (hasPreview) {
+                      setOpeningSeed({
+                        text: preview.text,
+                        agentsOffline: Boolean(item.agentsOffline),
+                      });
+                      seedRoomOpenPixel(item.room.id, preview.text, item.agentsOffline);
+                    }
+                  }}
                   onPress={() => {
                     swipeableRefs.current.get(item.room.id)?.close();
-                    openRoom(item.room.id);
+                    openRoom(
+                      item.room.id,
+                      hasPreview ? preview.text : undefined,
+                      item.agentsOffline,
+                    );
                   }}
                   style={styles.rowMain}
                 >
@@ -960,6 +1016,7 @@ export default function BuzzChannels() {
                       else swipeableRefs.current.delete(item.room.id);
                     }}
                     friction={1}
+                    onSwipeableWillOpen={() => setOpeningSeed(null)}
                     overshootRight={false}
                     rightThreshold={ROW_HEIGHT}
                     renderRightActions={() => (
@@ -1118,6 +1175,21 @@ export default function BuzzChannels() {
         />
       </View>
     </BuzzCommunityShell>
+    {openingSeed ? (
+      <View
+        pointerEvents="none"
+        testID="room-open-deck-overlay"
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 30, elevation: 30 }}
+      >
+        <RoomOpenPixel
+          roomSurface={null}
+          seedText={openingSeed.text}
+          agentsOffline={openingSeed.agentsOffline}
+          onFirstPaint={() => undefined}
+        />
+      </View>
+    ) : null}
+    </View>
   );
 }
 

@@ -11,6 +11,7 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import {
   loadActiveCommunityId,
   loadLastViewedChannel,
@@ -425,7 +426,13 @@ export const SidebarView = React.memo(function SidebarView() {
     pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
-    (roomId: string) => router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href),
+    (roomId: string, newestLine?: string) => {
+      dispatchRoomOpenTap(roomId, newestLine, {
+        navigate: (id) => {
+          router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+        },
+      });
+    },
     [router],
   );
 
@@ -715,7 +722,9 @@ export const SidebarView = React.memo(function SidebarView() {
                         accessibilityLabel={`Open ${item.directMessage ? 'direct message' : ROOM_LABEL} ${rowName.sigil}${rowName.name}`}
                         accessibilityRole="button"
                         accessibilityState={{ selected: activeRoomId === item.room.id }}
-                        onPress={() => openRoom(item.room.id)}
+                        onPress={() =>
+                          openRoom(item.room.id, hasPreview ? preview.text : undefined)
+                        }
                         style={({ pressed }) => [
                           styles.roomRow,
                           !isDesktop && styles.roomRowCompact,

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { desktopTailLanding, tailFollowStalled } from './room-scroll-follow';
 
 const chatSource = readFileSync(
-  new URL('../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
+  new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
   'utf8',
 );
 

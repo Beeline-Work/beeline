@@ -12,7 +12,7 @@ import {
   selectRuntimeConfigPaths,
 } from './runtime.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { installAgentService } from './systemd.js';
+import { installAgentService, installTrustySquireBrokerService } from './systemd.js';
 
 export type AgentStartStatus = 'started' | 'already-running' | 'failed';
 
@@ -91,6 +91,15 @@ async function startRuntime(
   const selectedAgent = runtimeAgentCommand(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
   if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
+    try {
+      await installTrustySquireBrokerService();
+    } catch (error) {
+      report(
+        `[beeline] trusty-squire host broker not installed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     const existingPid = await runtimeDaemonPid(configPath);
     if (existingPid) {
       report(`[beeline] agent already running (pid ${existingPid})`);

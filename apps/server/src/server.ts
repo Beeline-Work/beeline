@@ -13,6 +13,7 @@ import {
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
+import { MCP_GRANT_CREATOR_ONLY_MESSAGE } from '@beeline/api-contract/agent-grants';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
@@ -193,7 +194,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                 message.includes(TURN_REQUESTER_AUTHORITY_MESSAGE) ||
                 message.includes('yolo cannot be enabled in a public workspace') ||
                 message.includes(YOLO_AUTHORITY_MESSAGE) ||
-                message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE)
+                message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
+                message.includes(MCP_GRANT_CREATOR_ONLY_MESSAGE)
               ? 403
               : message.includes('not found')
                 ? 404

@@ -3089,7 +3089,7 @@ export class DaemonService {
         }
       : owner;
     const grantId = randomUUID();
-    const auto = context.yolo_mode && kind !== 'budget' && escalations.length === 0;
+    const auto = context.yolo_mode && kind !== 'budget' && kind !== 'mcp' && escalations.length === 0;
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(

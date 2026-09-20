@@ -5,6 +5,11 @@ import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { defaultSupervisorRoot, runtimeConfigPath } from './runtime.js';
+import {
+  ensureSquireHostDir,
+  TRUSTY_SQUIRE_BROKER_UNIT_NAME,
+  trustySquireBrokerUnit,
+} from './squire-host.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -80,6 +85,36 @@ function assertCanonicalInstalledLauncher(env: NodeJS.ProcessEnv, invocationPath
 export function systemdUserUnitPath(env: NodeJS.ProcessEnv = process.env): string {
   const configRoot = env.XDG_CONFIG_HOME?.trim() || resolve(homedir(), '.config');
   return resolve(configRoot, 'systemd', 'user', SYSTEMD_UNIT_NAME);
+}
+
+export function systemdBrokerUnitPath(env: NodeJS.ProcessEnv = process.env): string {
+  const configRoot = env.XDG_CONFIG_HOME?.trim() || resolve(homedir(), '.config');
+  return resolve(configRoot, 'systemd', 'user', TRUSTY_SQUIRE_BROKER_UNIT_NAME);
+}
+
+/**
+ * One host elector outside every agent sandbox: no PrivateTmp, shared socket.
+ * Idempotent; enable --now keeps the daemon up for every façade.
+ */
+export async function installTrustySquireBrokerService(options: {
+  env?: NodeJS.ProcessEnv;
+  run?: SystemdRunner;
+  invocationPath?: string;
+} = {}): Promise<void> {
+  const env = options.env ?? process.env;
+  assertCanonicalInstalledLauncher(env, options.invocationPath);
+  const home = env.HOME?.trim() || homedir();
+  ensureSquireHostDir(home);
+  const path = systemdBrokerUnitPath(env);
+  const content = trustySquireBrokerUnit();
+  const existing = await readFile(path, 'utf8').catch(() => '');
+  if (existing !== content) {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(path, content, { mode: 0o600 });
+  }
+  const run = options.run ?? runSystemctl;
+  await run(['daemon-reload']);
+  await run(['enable', '--now', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
 }
 
 export interface SystemdRunner {

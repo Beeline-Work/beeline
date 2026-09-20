@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
@@ -30,6 +30,8 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { trustySquireStorePath } from './trusty-squire-storage.js';
+import { grantedSquireHostBindPaths } from './agent-home.js';
+import { ensureSquireHostDir, squireFacadeLaunch } from './squire-host.js';
 
 const ROOM_BASE = [
   '--unshare-pid',
@@ -84,6 +86,19 @@ describe('sandbox mount plan', () => {
     expect(plan.writable).not.toContain('/srv/beeline/repositories/abc');
     // Nothing here lives under /tmp, so nothing needs restoring through it.
     expect(plan.readOnly).toEqual([]);
+  });
+
+  it('binds the host Trusty Squire directory read-write when a host route is granted', () => {
+    const plan = sandboxMountPlan({
+      mode: 'readonly',
+      cwd: '/srv/beeline/repositories/abc',
+      harnessStateDirs: ['/srv/beeline/rooms/r1/agent-home/claude'],
+      additionalWritablePaths: [
+        '/srv/beeline/agents/pk/rooms/r1/agent-home',
+        '/home/op/.trusty-squire',
+      ],
+    });
+    expect(plan.writable).toContain('/home/op/.trusty-squire');
   });
 
   it('gives a Room its attach-scratch root a writable bind too, not just harness state', () => {
@@ -365,7 +380,7 @@ describe('credential masks — readable is usable, so known stores are absent', 
   });
 
   it('creates private mountpoints for required paths absent on the host', () => {
-    const store = '/home/op/.config/trusty-squire';
+    const store = '/home/op/.gnupg';
     const bus = '/run/user/1000/bus';
     const masks = credentialMaskPaths([store, bus], '/home/op', () => undefined, [store, bus]);
     const { args } = buildBwrapArgv({
@@ -459,6 +474,24 @@ describe('credential masks — readable is usable, so known stores are absent', 
       { path: '/home/op/.config/gh', kind: 'dir' },
       { path: '/home/op/.secrets.env', kind: 'file' },
     ]);
+  });
+
+  it('leaves MCP session directories off the known mask so they stay reachable', () => {
+    const session = '/home/op/.config/trusty-squire';
+    const masks = credentialMaskPaths(
+      undefined,
+      '/home/op',
+      (path) => {
+        if (path === '/home/op/.netrc' || path === '/home/op/.git-credentials' || path === '/home/op/.secrets.env') {
+          return { isDirectory: false };
+        }
+        return { isDirectory: true };
+      },
+    );
+    expect(masks.map((mask) => mask.path)).not.toContain(session);
+    expect(masks.map((mask) => mask.path)).toEqual(
+      expect.arrayContaining(['/home/op/.config/gh', '/home/op/.ssh']),
+    );
   });
 });
 
@@ -674,7 +707,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   it('keeps stores and session sockets created after activation outside the namespace', async () => {
     const hostConfig = resolve(root, 'late-config');
     const runtimeDir = resolve(root, 'late-run');
-    const store = resolve(hostConfig, 'trusty-squire');
+    const store = resolve(hostConfig, 'late-store');
     const bus = resolve(runtimeDir, 'bus');
     mkdirSync(hostConfig, { recursive: true });
     mkdirSync(runtimeDir, { recursive: true });
@@ -760,5 +793,103 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     );
     expect(escapeSibling.status).not.toBe(0);
     expect(existsSync(resolve(siblingCorner, 'evil.txt'))).toBe(false);
+  });
+
+  it('a granted Squire façade reaches the one host broker; an ungranted grant reaches nothing', async () => {
+    const operatorHome = resolve(checkout, 'squire-operator');
+    const sessionDir = resolve(operatorHome, '.config/trusty-squire');
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(resolve(sessionDir, 'session.json'), '{"paired":true}\n');
+    const paths = ensureSquireHostDir(operatorHome);
+    const ledger = resolve(paths.dir, 'brokers.jsonl');
+    // Squire's own server, as far as electing goes: it binds the socket it was
+    // handed and says whether it became the daemon or found one already there.
+    const shimDir = resolve(checkout, 'squire-bin');
+    mkdirSync(shimDir, { recursive: true });
+    const shim = resolve(shimDir, 'npx');
+    writeFileSync(
+      shim,
+      `#!${process.execPath}
+'use strict';
+const fs = require('fs');
+const net = require('net');
+const socket = process.env.TRUSTY_SQUIRE_BROKER_SOCKET;
+const record = (outcome) =>
+  fs.appendFileSync(${JSON.stringify(ledger)}, JSON.stringify({ outcome, socket }) + '\\n');
+const server = net.createServer();
+server.once('error', () => {
+  record('connected');
+  process.exit(0);
+});
+server.listen(socket, () => {
+  record('elected');
+  server.close(() => process.exit(0));
+});
+`,
+      { mode: 0o755 },
+    );
+    const server = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once('error', rejectListen);
+      server.listen(paths.brokerSocket, resolveListen);
+    });
+    const runFacade = (granted: readonly string[]) => {
+      const launch = squireFacadeLaunch(operatorHome);
+      const wrapped = wrapAgentCommand({
+        bwrapPath: bwrap.path!,
+        spec: {
+          mode: 'readonly' as const,
+          cwd: checkout,
+          additionalWritablePaths: grantedSquireHostBindPaths({
+            operatorHome,
+            grantedHostRoutes: granted,
+          }),
+          maskPaths: credentialMaskPaths(undefined, operatorHome),
+        },
+        command: launch.command,
+        args: launch.args,
+      });
+      return spawnSync(wrapped.command, wrapped.args, {
+        encoding: 'utf8',
+        env: {
+          ...launch.env,
+          PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+          HOME: operatorHome,
+        },
+      });
+    };
+    const records = () =>
+      readFileSync(ledger, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { outcome: string; socket: string });
+    try {
+      const reachable = runWrapped(
+        {
+          mode: 'readonly' as const,
+          cwd: checkout,
+          maskPaths: credentialMaskPaths(undefined, operatorHome),
+        },
+        `cat ${JSON.stringify(resolve(sessionDir, 'session.json'))}`,
+      );
+      expect(reachable.stdout.trim()).toBe('{"paired":true}');
+
+      writeFileSync(ledger, '');
+      expect(runFacade(['squire']).status).toBe(0);
+      expect(runFacade(['squire']).status).toBe(0);
+      expect(records().map((entry) => entry.outcome)).toEqual(['connected', 'connected']);
+      expect(new Set(records().map((entry) => entry.socket))).toEqual(
+        new Set([paths.brokerSocket]),
+      );
+      expect(lstatSync(paths.brokerSocket).isSocket()).toBe(true);
+
+      // A grant on some other host server binds nothing here: the broker
+      // directory stays read-only, so the same façade cannot touch it.
+      writeFileSync(ledger, '');
+      expect(runFacade(['browser']).status).not.toBe(0);
+      expect(records()).toEqual([]);
+    } finally {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
   });
 });

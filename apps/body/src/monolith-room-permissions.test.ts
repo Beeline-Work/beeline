@@ -1,14 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AcpClient, type AcpPermissionRequest } from './acp.js';
+import { commandFixtureApi } from './command-fixture.test-support.js';
+import type { BodyConfig } from './config.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   GROK_NATIVE_SEARCH_TOOL_PERMISSION,
   GROK_USE_TOOL_OPEN_CORNER_PERMISSION,
   GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL_UPDATE,
 } from './fixtures/grok-use-tool-permissions.js';
-import { roomMcpPermissionDecision } from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, roomMcpPermissionDecision } from './monolith-room-turn.js';
 import {
   isMountedMcpToolPermissionRequest,
   resolveMountedMcpToolCall,
 } from './read-only-policy.js';
+import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { SessionScheduler } from './session-scheduler.js';
 
 describe('top-level Room MCP permission policy', () => {
   it('allows every mounted MCP tool call, host or operator', () => {
@@ -249,6 +258,19 @@ describe('top-level Room MCP permission policy', () => {
           ['browser'],
         ),
       ).toBe('reject');
+      expect(
+        roomMcpPermissionDecision(
+          {
+            toolCall: {
+              kind: 'execute',
+              title: 'mcp.squire.use_credential',
+              rawInput: { server: 'squire', tool: 'use_credential', arguments: {} },
+            },
+          },
+          undefined,
+          [],
+        ),
+      ).toBe('allow');
     });
 
     it("refuses grok's own native tools, captured from the same turn", () => {
@@ -270,5 +292,176 @@ describe('top-level Room MCP permission policy', () => {
       expect(roomMcpPermissionDecision({ toolCall: { title: 'use_tool' } })).toBe('reject');
       expect(roomMcpPermissionDecision({})).toBe('reject');
     });
+  });
+});
+
+/**
+ * The wiring, not the predicate: a granted host route only becomes callable if
+ * the turn loop hands the matcher the names this session actually mounted.
+ * grok is the harness that proves it — it routes every MCP call through its
+ * own `use_tool` dispatcher, so the qualified name resolves against the
+ * mounted list alone (C90). A unit case over `roomMcpPermissionDecision` with
+ * the name supplied by hand passes whether or not the loop supplies it.
+ */
+describe('a granted host route reaches the permission matcher', () => {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  const AGENT_HEX = '11'.repeat(32);
+  const HUMAN = '22'.repeat(32);
+
+  async function capturedAllowlist(
+    grants: Array<{ kind: string; target: string }>,
+  ): Promise<(request: AcpPermissionRequest) => boolean> {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-granted-route-'));
+    roots.push(root);
+    const operatorHome = join(root, 'operator-home');
+    await mkdir(join(operatorHome, '.grok'), { recursive: true });
+    await writeFile(
+      join(operatorHome, '.grok/config.toml'),
+      [
+        '[mcp_servers.squire]',
+        'command = "npx"',
+        'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const identity = identityFromKey(AGENT_HEX, 'Bee');
+    const agent = {
+      name: 'Bee',
+      publicKey: identity.publicKey,
+      secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+    };
+    const runtime = {
+      agent,
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'grok',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config = {
+      agentBinary: '/fake-agent',
+      agentKind: 'grok',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: join(root, 'room'),
+      autoApprovePermissions: true,
+      accessPolicy: 'everyone',
+      agentHomeRoot: join(root, 'agent-home'),
+      operatorHome,
+    } as BodyConfig;
+
+    let inboxReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+      if (name === 'listAgentGrants') return { grants };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [
+            { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+            { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          ],
+        };
+      }
+      if (name === 'getRoomInbox') {
+        inboxReads += 1;
+        if (inboxReads === 2) {
+          return {
+            items: [
+              {
+                id: 'ask-1',
+                authorId: HUMAN,
+                createdAt: 1,
+                type: 'message',
+                body: 'use the vault',
+                attachments: [],
+              },
+            ],
+            cursor: 'ask-1',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
+    vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'done',
+      toolCalls: [],
+    });
+
+    let allowlist: ((request: AcpPermissionRequest) => boolean) | undefined;
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const abort = new AbortController();
+    const loop = new MonolithRoomTurnLoop({
+      roomId: 'room-id',
+      workspaceId: 'workspace',
+      cwd: config.workspaceRoot,
+      runtime,
+      config,
+      api: commandFixtureApi(api, 'room-id', agent.publicKey),
+      scheduler,
+      health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+      signal: abort.signal,
+      pollMs: 10,
+      createAcpClient: (options: ConstructorParameters<typeof AcpClient>[0]) => {
+        allowlist = options.permissionAllowlist;
+        return acp;
+      },
+    }).run();
+    await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
+    abort.abort();
+    await loop;
+    await scheduler.dispose();
+    expect(allowlist).toBeDefined();
+    return allowlist!;
+  }
+
+  const grokUseTool: AcpPermissionRequest = {
+    toolCall: {
+      title: 'use_tool',
+      rawInput: {
+        tool_name: 'squire__use_credential',
+        tool_input: { service: 'openai' },
+      },
+    },
+  };
+
+  it("approves grok's use_tool spelling of a route the owner granted", async () => {
+    const allowlist = await capturedAllowlist([{ kind: 'mcp', target: 'squire' }]);
+    expect(allowlist(grokUseTool)).toBe(true);
+  });
+
+  it('keeps refusing the same call with no grant', async () => {
+    const allowlist = await capturedAllowlist([]);
+    expect(allowlist(grokUseTool)).toBe(false);
   });
 });

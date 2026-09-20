@@ -72,7 +72,7 @@ import {
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
-import { classifyImportedMcpServer } from './mcp-route-class.js';
+import { classifyImportedMcpServer, isCodeOwnedHostMcpName } from './mcp-route-class.js';
 import {
   grantedSquireHostRoute,
   mergeGooseHostRoutes,
@@ -877,6 +877,13 @@ export function expectedMountedImportedMcpServerNames(input: {
     operatorHome: input.operatorHome,
     agentKind: input.agentKind,
   }).filter((name) => allowed.has(name));
+  // A code-owned host name is a standing route even when this harness has
+  // no operator declaration to rewrite. pi is that case: Candy's approved
+  // squire grant never entered the mount set, so every restart looked
+  // ungranted and she asked again.
+  for (const name of allowed) {
+    if (isCodeOwnedHostMcpName(name)) grantedHost.push(name);
+  }
   return [...new Set([...local, ...grantedHost])].sort((left, right) => left.localeCompare(right));
 }
 

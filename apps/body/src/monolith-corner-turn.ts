@@ -17,10 +17,11 @@ import {
   expectedMountedImportedMcpServerNames,
   grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
+  hostImportedMcpDeclarations,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { grantedHostRoutesFromList } from './host-mcp-route.js';
+import { grantedHostRoutesFromList, grantedHostRouteWires } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -713,13 +714,18 @@ export class MonolithCornerTurnLoop {
       ...githubEnv,
       npm_config_cache: npmCacheDir,
     };
+    const operatorHome = this.options.config.operatorHome ?? homedir();
     const fingerprint = sessionConfigFingerprint({
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
-      mcpServers: this.mountedMcpServers(agentEnv),
+      mcpServers: expectedMountedImportedMcpServerNames({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+        grantedHostRoutes,
+      }),
       reviewerHandle: configuration.reviewerHandle,
     });
     this.agentEnv = agentEnv;
@@ -731,7 +737,6 @@ export class MonolithCornerTurnLoop {
       },
       selection,
     );
-    const operatorHome = this.options.config.operatorHome ?? homedir();
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
     this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
     this.sessionScratchDir = tmpDir;
@@ -823,12 +828,22 @@ export class MonolithCornerTurnLoop {
     ];
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
+    const grantedRouteServers = grantedHostRouteWires(
+      grantedHostRoutes,
+      operatorHome,
+      hostImportedMcpDeclarations({
+        operatorHome,
+        agentKind: this.options.config.agentKind,
+      }),
+    );
     // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
     // on pi would have no `pr_checks_status` and no `post_artifact` either.
+    // Granted host routes ride the same bridge: pi has no harness MCP config
+    // for applyGrantedHostRoutes to rewrite.
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
-      servers,
+      servers: [...servers, ...grantedRouteServers],
     });
     const persona = configuration.soul ?? self?.soul;
     const identityInstructions = `Your Beeline identity is ${self?.name ?? this.agent.name}.`;

@@ -3,6 +3,7 @@ import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
 import {
   grantedMcpServerNames,
   grantedHostRoutesFromList,
+  grantedHostRouteWires,
   grantedSquireHostRoute,
   hostRouteEnv,
   mergeJsonHostRoutes,
@@ -74,6 +75,45 @@ describe('granted MCP host routes', () => {
     expect(grantedSquireHostRoute(['vault'], declarations)).toBe(true);
     expect(grantedSquireHostRoute(['squire'], {})).toBe(true);
     expect(grantedSquireHostRoute([], declarations)).toBe(false);
+  });
+
+  it('rewrites a code-owned Squire grant with no operator declaration', () => {
+    // Candy is pi: that harness has no operator MCP config, so the grant
+    // cannot wait on a copied declaration. The name itself is the route.
+    const rewritten = rewriteGrantedHostRoutes({}, ['squire'], '/home/op');
+    expect(Object.keys(rewritten)).toEqual(['squire']);
+    expect(rewritten.squire?.env).toEqual(squireHostRewriteEnv('/home/op'));
+    expect(rewritten.squire).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
+  });
+
+  it('turns a standing always mcp grant into session wires that survive a restart read', () => {
+    // Candy's live shape: two unexpired status=approved mcp/squire rows.
+    // listAgentGrants returns both; the next session and the session after a
+    // daemon restart must produce the same façade wire without another card.
+    const standing = {
+      grants: [
+        { kind: 'mcp', target: 'squire', status: 'approved' },
+        { kind: 'mcp', target: 'squire', status: 'approved' },
+      ],
+    };
+    const names = grantedHostRoutesFromList(standing);
+    expect(names).toEqual(['squire']);
+    const first = grantedHostRouteWires(names, '/home/op');
+    const afterRestart = grantedHostRouteWires(grantedHostRoutesFromList(standing), '/home/op');
+    expect(first).toEqual(afterRestart);
+    expect(first).toEqual([
+      expect.objectContaining({
+        name: 'squire',
+        command: process.execPath,
+        args: expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
+        env: expect.arrayContaining(
+          Object.entries(squireHostRewriteEnv('/home/op')).map(([name, value]) => ({
+            name,
+            value,
+          })),
+        ),
+      }),
+    ]);
   });
 
   it('writes only granted host routes', () => {

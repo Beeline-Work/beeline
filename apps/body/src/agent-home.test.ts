@@ -1139,6 +1139,26 @@ describe('mounted imported MCP server names', () => {
     expect(expectedMountedImportedMcpServerNames(input)).toEqual(['files']);
   });
 
+  it('keeps a standing mcp grant on a pi home after a restart', () => {
+    // Candy's shape: kind=mcp target=squire status=approved, expires_at null.
+    // pi has no operator MCP config file, so applyGrantedHostRoutes writes
+    // nothing the harness will read. The standing grant must still enter the
+    // expected mount set so the next session — and every session after a
+    // daemon restart — mounts Squire without another card.
+    expect(
+      expectedMountedImportedMcpServerNames({
+        agentKind: 'pi',
+        grantedHostRoutes: ['squire'],
+      }),
+    ).toEqual(['squire']);
+    expect(
+      expectedMountedImportedMcpServerNames({
+        agentKind: 'pi',
+        grantedHostRoutes: ['squire'],
+      }),
+    ).toEqual(['squire']);
+  });
+
   it('does not treat a stale copied local server as still mounted after the operator removes it', async () => {
     const operatorHome = await scratch('beeline-mounted-mcp-stale-op-');
     const agentHomeRoot = resolve(await scratch('beeline-mounted-mcp-stale-home-'), 'agent-home');

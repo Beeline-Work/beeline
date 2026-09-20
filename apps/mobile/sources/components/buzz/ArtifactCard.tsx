@@ -5,6 +5,7 @@ import type { AttachmentReference } from '@beeline/buzz-client';
 
 import {
   ARTIFACT_MAX_PREVIEW_HEIGHT,
+  artifactCapabilities,
   artifactFormat,
   createInitialLoadGuard,
   mediaIdFromUrl,
@@ -52,6 +53,10 @@ export const ArtifactCard = React.memo(function ArtifactCard({
   isDesktop?: boolean;
 }) {
   const format = artifactFormat(attachment.mimeType);
+  const capabilities = artifactCapabilities(
+    attachment.mimeType,
+    isDesktop ? 'desktop' : Platform.OS === 'ios' ? 'ios' : 'android',
+  );
   const title = attachment.title ?? attachment.name;
   const kindWord = format === 'document' ? attachment.mimeType.toLowerCase() : format;
   const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${kindWord} · ${formatAttachmentSize(attachment.size)}`;
@@ -77,9 +82,9 @@ export const ArtifactCard = React.memo(function ArtifactCard({
   // Android hands the whole PDF to the system viewer (phase one); desktop
   // previews and opens through the browser. iOS renders the first page here.
   // Raster images keep the file-style card but open in the native phone viewer.
-  if (format === 'document' || format === 'image' || (format === 'pdf' && Platform.OS !== 'ios')) {
+  if (capabilities.preview === 'external') {
     const actions =
-      format === 'document' || (format === 'image' && isDesktop)
+      capabilities.viewer === 'external' && (format !== 'pdf' || isDesktop)
         ? (['browser'] as const)
         : (['browser', 'open'] as const);
     return (
@@ -121,7 +126,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
         ) : (
           <ArtifactSandboxPreview
             attachment={attachment}
-            format={format === 'pdf' ? 'pdf' : format}
+            format={format === 'pdf' ? 'pdf' : format === 'svg' ? 'svg' : 'html'}
           />
         )}
       </Pressable>

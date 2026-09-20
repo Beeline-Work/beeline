@@ -1,10 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
+import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
 import { validateArtifact } from './artifact-validation.js';
 
 const mb = (n: number) => Buffer.alloc(n);
 
 describe('post_artifact validation matrix', () => {
+  it.each([
+    ['text/html', '<p>html</p>'],
+    ['image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"/>'],
+    ['application/pdf', '%PDF-1.7 minimal'],
+    ['text/markdown', '# Markdown'],
+    ['image/png', 'png'],
+    ['image/jpeg', 'jpeg'],
+    ['image/gif', 'gif'],
+    ['image/webp', 'webp'],
+    ['text/plain', 'plain'],
+    ['application/json', '{}'],
+    ['text/csv', 'a,b'],
+    ['application/zip', 'zip'],
+    ['application/octet-stream', 'bytes'],
+  ])('accepts the inventoried %s lane', (mime, content) => {
+    expect(() => validateArtifact(mime, Buffer.from(content), 'Artifact')).not.toThrow();
+  });
+
+  it('keeps the validation inventory exhaustive with the shared contract', () => {
+    const tested = [
+      'text/html',
+      'image/svg+xml',
+      'application/pdf',
+      'text/markdown',
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'text/plain',
+      'application/json',
+      'text/csv',
+      'application/zip',
+      'application/octet-stream',
+    ];
+    expect(tested).toEqual([...ARTIFACT_MIME_TYPES]);
+  });
+
   it('accepts a self-contained HTML page', () => {
     const html = Buffer.from(
       '<!doctype html><html><head><style>body{color:#111}</style></head>' +
@@ -55,9 +92,9 @@ describe('post_artifact validation matrix', () => {
   });
 
   it('rejects script-scheme URLs', () => {
-    expect(() => validateArtifact('text/html', Buffer.from('<a href="javascript:alert(1)">x</a>'), 't')).toThrow(
-      /self-contained/,
-    );
+    expect(() =>
+      validateArtifact('text/html', Buffer.from('<a href="javascript:alert(1)">x</a>'), 't'),
+    ).toThrow(/self-contained/);
   });
 
   it('accepts an inline-styled SVG with data: images', () => {
@@ -69,29 +106,44 @@ describe('post_artifact validation matrix', () => {
   });
 
   it('requires a PDF to carry the %PDF- signature', () => {
-    expect(() => validateArtifact('application/pdf', Buffer.from('%PDF-1.7 fake'), 'Spec')).not.toThrow();
+    expect(() =>
+      validateArtifact('application/pdf', Buffer.from('%PDF-1.7 fake'), 'Spec'),
+    ).not.toThrow();
     expect(() => validateArtifact('application/pdf', Buffer.from('not a pdf'), 'Spec')).toThrow(
       /%PDF-/,
     );
   });
 
   it('checks size only for Markdown', () => {
-    expect(() => validateArtifact('text/markdown', Buffer.from('# Notes\n\n- one'), 'Notes')).not.toThrow();
-    expect(() => validateArtifact('text/markdown', Buffer.from('<script>x</script>'), 'Notes')).not.toThrow();
+    expect(() =>
+      validateArtifact('text/markdown', Buffer.from('# Notes\n\n- one'), 'Notes'),
+    ).not.toThrow();
+    expect(() =>
+      validateArtifact('text/markdown', Buffer.from('<script>x</script>'), 'Notes'),
+    ).not.toThrow();
   });
 
   it('caps every format at the artifact ceiling', () => {
     for (const mime of ['text/html', 'image/svg+xml', 'application/pdf', 'text/markdown']) {
-      const bytes = mime === 'application/pdf' ? Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES)]) : mb(ARTIFACT_MAXIMUM_BYTES + 1);
+      const bytes =
+        mime === 'application/pdf'
+          ? Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES)])
+          : mb(ARTIFACT_MAXIMUM_BYTES + 1);
       expect(() => validateArtifact(mime, bytes, 't')).toThrow(/-byte limit/);
     }
     expect(() =>
-      validateArtifact('application/pdf', Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES - 5)]), 'Spec'),
+      validateArtifact(
+        'application/pdf',
+        Buffer.concat([Buffer.from('%PDF-'), mb(ARTIFACT_MAXIMUM_BYTES - 5)]),
+        'Spec',
+      ),
     ).not.toThrow();
   });
 
   it('refuses unknown mimes, empty artifacts, and empty titles', () => {
-    expect(() => validateArtifact('audio/mpeg', Buffer.from('x'), 't')).toThrow(/mime must be one of/);
+    expect(() => validateArtifact('audio/mpeg', Buffer.from('x'), 't')).toThrow(
+      /mime must be one of/,
+    );
     expect(() => validateArtifact('text/html', Buffer.alloc(0), 't')).toThrow(/empty/);
     expect(() => validateArtifact('text/html', Buffer.from('<p>hi</p>'), '  ')).toThrow(/title/);
   });

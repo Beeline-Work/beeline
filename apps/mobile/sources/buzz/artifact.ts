@@ -5,6 +5,14 @@
  * branches are testable without a renderer.
  */
 export type ArtifactFormat = 'html' | 'svg' | 'image' | 'pdf' | 'markdown' | 'document';
+export type ArtifactSurface = 'ios' | 'android' | 'desktop';
+export type ArtifactTreatment = 'inline' | 'external';
+
+export interface ArtifactCapabilities {
+  format: ArtifactFormat;
+  preview: ArtifactTreatment;
+  viewer: ArtifactTreatment;
+}
 
 export function artifactFormat(mimeType: string): ArtifactFormat {
   const mime = mimeType.split(';')[0]!.trim().toLowerCase();
@@ -14,6 +22,37 @@ export function artifactFormat(mimeType: string): ArtifactFormat {
   if (mime === 'application/pdf') return 'pdf';
   if (mime === 'text/markdown' || mime === 'text/x-markdown') return 'markdown';
   return 'document';
+}
+
+/**
+ * The complete preview/viewer support table. A file can always be opened via
+ * its signed browser link; `external` means there is no renderer on that
+ * surface and the app deliberately hands it off.
+ */
+export function artifactCapabilities(
+  mimeType: string,
+  surface: ArtifactSurface,
+): ArtifactCapabilities {
+  const format = artifactFormat(mimeType);
+  if (format === 'html' || format === 'svg' || format === 'markdown') {
+    return { format, preview: 'inline', viewer: 'inline' };
+  }
+  if (format === 'pdf') {
+    const inline = surface === 'ios';
+    return {
+      format,
+      preview: inline ? 'inline' : 'external',
+      viewer: inline ? 'inline' : 'external',
+    };
+  }
+  if (format === 'image') {
+    return {
+      format,
+      preview: 'external',
+      viewer: surface === 'desktop' ? 'external' : 'inline',
+    };
+  }
+  return { format, preview: 'external', viewer: 'external' };
 }
 
 /** Extract the server media id from the canonical stored URL `/v1/media/<id>`. */

@@ -281,6 +281,27 @@ describe('CodeHighlighter', () => {
     const text = renderedText(renderer);
     expect(text).toBe('hello world');
   });
+
+  it('keeps indented JSON leading spaces after tokenize and render', () => {
+    const code = `{
+  "providers": {
+    "milo": {
+      "name": "Milo"
+    }
+  }
+}`;
+    expect(flattenTokens(tokenizeCode(code, 'json'))).toBe(code);
+
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(CodeHighlighter, { code, language: 'json' }));
+    });
+    const text = renderedText(renderer);
+    expect(text.replaceAll('\u00a0', ' ')).toBe(code);
+    expect(text).toContain(`\u00a0\u00a0"providers"`);
+    expect(text).toContain(`\u00a0\u00a0\u00a0\u00a0"milo"`);
+    expect(text).toContain(`\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"name"`);
+  });
 });
 
 // ---------------------------------------------------------------------------

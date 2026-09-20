@@ -27,4 +27,21 @@ describe('JSON token roles', () => {
       expect(flattenTokens(lines)).toBe(code);
     },
   );
+
+  it('keeps leading indentation on each JSON line', () => {
+    const code = `{
+  "providers": {
+    "milo": {
+      "name": "Milo"
+    }
+  }
+}`;
+    const lines = tokenizeCode(code, 'json');
+
+    expect(flattenTokens(lines)).toBe(code);
+    expect(lines.map((line) => line.map((span) => span.text).join(''))).toEqual(code.split('\n'));
+    expect(lines[1]?.[0]).toEqual({ token: 'plain', text: '  ' });
+    expect(lines[2]?.[0]).toEqual({ token: 'plain', text: '    ' });
+    expect(lines[3]?.[0]).toEqual({ token: 'plain', text: '      ' });
+  });
 });

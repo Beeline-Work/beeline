@@ -151,6 +151,8 @@ describe('CodeBlock', () => {
     const peekText = collectHostText(highlighters[0]!);
     expect(peekText).toContain('providers');
     expect(peekText).not.toContain('apiKey');
+    expect(peekText.replaceAll('\u00a0', ' ')).toContain('  "providers": {');
+    expect(peekText.replaceAll('\u00a0', ' ')).toContain('    "milo": {');
   });
 
   it('opens the existing output sheet full-width with wrapping', () => {
@@ -172,6 +174,9 @@ describe('CodeBlock', () => {
     const highlighters = renderer.root.findAllByProps({ testID: 'code-highlighter' });
     const texts = highlighters.map((node) => collectHostText(node));
     expect(texts.some((text) => text.includes('apiKey') && text.includes('200000'))).toBe(true);
+    expect(
+      texts.some((text) => text.replaceAll('\u00a0', ' ').includes('        { "id": "milo/auto"')),
+    ).toBe(true);
   });
 
   it('pins the length rule: more than a peek is long', () => {

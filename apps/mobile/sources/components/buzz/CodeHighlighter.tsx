@@ -14,6 +14,14 @@ type CodeHighlighterProps = {
 // selectable, full-fidelity text node instead of building thousands of spans.
 const MAX_HIGHLIGHTED_CODE_CHARS = 20_000;
 
+// Nested Text on Android/iOS collapses leading ASCII spaces. Keep each source
+// line's indent visible; wrapped continuations may hang.
+function preserveLineIndent(text: string): string {
+  return text.replace(/^[ \t]+/, (indent) =>
+    indent.replaceAll(/ |\t/g, (ch) => (ch === '\t' ? '\u00a0\u00a0' : '\u00a0')),
+  );
+}
+
 function tokenStyle(token: HighlightToken) {
   switch (token) {
     case 'structure':
@@ -57,7 +65,7 @@ export function CodeHighlighter({ code, language, style }: CodeHighlighterProps)
           ) : (
             line.map((span, si) => (
               <Text key={si} style={tokenStyle(span.token)}>
-                {span.text}
+                {si === 0 ? preserveLineIndent(span.text) : span.text}
               </Text>
             ))
           )}

@@ -29,6 +29,22 @@ describe('the one sandbox prop table', () => {
     expect(props({ html: '<p>x</p>' }, true).scrollEnabled).toBe(true);
   });
 
+  it('turns script on only when asked, and keeps the rest of the table either way', () => {
+    // The one caller that asks is the generated PDF document, which IS the
+    // renderer; artifact markup never gets it.
+    const table = artifactWebViewProps({ source: { html: '<p>x</p>' }, guard, javaScript: true });
+    expect(table.javaScriptEnabled).toBe(true);
+    expect(table.originWhitelist).toEqual([]);
+    expect(table.setSupportMultipleWindows).toBe(false);
+    expect(table.allowFileAccess).toBe(false);
+    expect(Object.hasOwn(table, 'onMessage')).toBe(false);
+  });
+
+  it('carries the base URL that gives the PDF document a real origin', () => {
+    const source = { html: '<p>x</p>', baseUrl: 'https://artifact.usebeeline.app/' };
+    expect(artifactWebViewProps({ source, guard }).source).toEqual(source);
+  });
+
   it('routes every navigation request through the one-shot guard', () => {
     const table = props({ html: '<p>x</p>' });
     const request = { url: 'about:blank' };

@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -25,15 +27,36 @@ export function artifactMediaUrl(attachment: AttachmentReference): string {
   return `${getBuzzRuntimeConfig().monolithUrl}/v1/media/${objectId}`;
 }
 
-/** Native images load the authenticated artifact route without leaving the app. */
+/**
+ * Images load without leaving the app. Native carries the session bearer on
+ * the request itself; on web an `<img>` cannot carry a header, so the bytes
+ * come through the authenticated session and are handed to the DOM as an
+ * object URL — which the caller revokes with `releaseArtifactImageSource`.
+ */
 export async function artifactImageSource(attachment: AttachmentReference): Promise<{
   uri: string;
-  headers: { authorization: string };
+  headers?: { authorization: string };
 }> {
+  if (Platform.OS === 'web') {
+    const bytes = await fetchArtifactBytes(attachment);
+    return {
+      uri: URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: attachment.mimeType })),
+    };
+  }
   return {
     uri: artifactMediaUrl(attachment),
     headers: { authorization: `Bearer ${await monolithSession.authorization()}` },
   };
+}
+
+/** Frees an object URL minted above; a native uri is left alone. */
+export function releaseArtifactImageSource(source: { uri: string } | null | undefined): void {
+  if (source?.uri.startsWith('blob:')) URL.revokeObjectURL(source.uri);
+}
+
+/** The file's bytes as base64, for the hosts that take a PDF as a string. */
+export async function artifactBase64(attachment: AttachmentReference): Promise<string> {
+  return toBase64(await fetchArtifactBytes(attachment));
 }
 
 export async function fetchArtifactBytes(attachment: AttachmentReference): Promise<Uint8Array> {

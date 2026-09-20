@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
  * - the resolver stays pure (no React Native), so it remains unit-testable
  *   without renderer mocks.
  */
-const chatSource = readFileSync(path.join(__dirname, 'chat', '[channelId].tsx'), 'utf8');
+const chatSource = readFileSync(path.join(__dirname, 'chat', '_chat-surface.tsx'), 'utf8');
 const markdownSource = readFileSync(
   path.join(__dirname, '..', '..', '..', 'components', 'buzz', 'MonoMarkdown.tsx'),
   'utf8',

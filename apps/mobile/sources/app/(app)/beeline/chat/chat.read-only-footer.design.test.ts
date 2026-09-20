@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 
 describe('Chat read-only footer', () => {
   it('sits above Android system navigation', () => {

@@ -2216,6 +2216,33 @@ describe('monolith integration', () => {
     expect((await readChats()).unread).toBe(false);
   });
 
+  it('carries the resolved all-offline Room footer state on the deck item', async () => {
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence',$3::jsonb)`,
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({ status: 'offline', observedAt: Math.floor(Date.now() / 1_000) }),
+      ],
+    );
+
+    const readRoomItem = async () =>
+      (await phone.readChats(WORKSPACE, HUMAN))?.chats.find((chat) => chat.room.id === ROOM);
+    expect(await readRoomItem()).toMatchObject({ agentsOffline: true });
+
+    await database.query(
+      `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
+       WHERE room_id=$1 AND agent_id=$2 AND kind='presence'`,
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({ status: 'online', observedAt: Math.floor(Date.now() / 1_000) }),
+      ],
+    );
+    expect((await readRoomItem())?.agentsOffline).toBeUndefined();
+  });
+
   it('repairs millisecond-truncated read marks and treats their marked message as read', async () => {
     const messageId = 'e'.repeat(64);
     await database.query(

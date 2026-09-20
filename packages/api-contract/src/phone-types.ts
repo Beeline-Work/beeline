@@ -480,6 +480,9 @@ export type AgentHistoryEntry = {
 
 export type ChatListItem = {
   readonly room: RoomViewHeader;
+  /** Every current Room agent has a resolved presence fact and none is online.
+   *  Carried by the deck so first-paint footer geometry matches the Room GET. */
+  readonly agentsOffline?: boolean;
   /** Hidden from the deck for this viewer until explicit reopen or newer incoming activity. */
   readonly closed?: boolean;
   readonly latestMessage?: {

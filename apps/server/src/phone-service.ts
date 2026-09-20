@@ -1043,6 +1043,7 @@ export class PhoneService {
         working: boolean;
         needs_you: boolean;
         closed: boolean;
+        agents_offline: boolean;
       }
     >(
       `
@@ -1054,6 +1055,7 @@ export class PhoneService {
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
         NULL::timestamptz peer_activity_at,false unread,
+        false agents_offline,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
         (r.direct_participants IS NOT NULL AND EXISTS(
@@ -1097,6 +1099,7 @@ export class PhoneService {
           peer_presence_body: Record<string, unknown> | null;
           peer_presence_updated_at: Date | null;
           peer_activity_at: Date | null;
+          agents_offline: boolean;
         }>(
           `SELECT room.id room_id,presence.body peer_presence_body,
              presence.updated_at peer_presence_updated_at,
@@ -1105,9 +1108,12 @@ export class PhoneService {
                 WHERE message.room_id=room.id AND message.author_id=peer.id),
                (SELECT max(mark.updated_at) FROM room_read_marks mark
                 WHERE mark.room_id=room.id AND mark.identity_id=peer.id)
-             ) peer_activity_at
+             ) peer_activity_at,
+             agent_presence.agent_count > 0
+               AND agent_presence.known_presence_count = agent_presence.agent_count
+               AND agent_presence.online_agent_count = 0 agents_offline
            FROM rooms room
-           JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
+           LEFT JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
              CASE WHEN jsonb_typeof(room.direct_participants)='array'
                THEN room.direct_participants ELSE '[]'::jsonb END
            ) participant WHERE participant<>$2 LIMIT 1)
@@ -1115,8 +1121,25 @@ export class PhoneService {
              SELECT body,updated_at FROM live_outputs
              WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
            ) presence ON peer.kind='agent'
+           LEFT JOIN LATERAL(
+             SELECT count(*)::int agent_count,
+               count(agent_status.body)::int known_presence_count,
+               count(*) FILTER(
+                 WHERE agent_status.body->>'status'='online'
+                   AND agent_status.updated_at>$3
+               )::int online_agent_count
+             FROM memberships member
+             JOIN identities agent ON agent.id=member.identity_id
+               AND agent.kind='agent' AND agent.hidden_from_roster=false
+             LEFT JOIN LATERAL(
+               SELECT body,updated_at FROM live_outputs
+               WHERE agent_id=member.identity_id AND kind='presence'
+               ORDER BY updated_at DESC LIMIT 1
+             ) agent_status ON true
+             WHERE member.room_id=room.id AND member.removed_at IS NULL
+           ) agent_presence ON true
            WHERE room.id=ANY($1::uuid[])`,
-          [roomIds, viewerId],
+          [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)],
         ),
       ),
       this.optionalEnrichment(
@@ -1147,6 +1170,7 @@ export class PhoneService {
       room.peer_presence_body = item?.peer_presence_body ?? null;
       room.peer_presence_updated_at = item?.peer_presence_updated_at ?? null;
       room.peer_activity_at = item?.peer_activity_at ?? null;
+      room.agents_offline = item?.agents_offline ?? false;
       room.unread = cursorByRoom.get(room.id) ?? false;
     }
     return {
@@ -1160,6 +1184,7 @@ export class PhoneService {
       },
       chats: rooms.rows.slice(0, 200).map((row) => ({
         room: roomHeader(row, this.publicOrigin),
+        ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
         cornerCount: Number(row.corner_count),

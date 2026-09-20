@@ -639,6 +639,7 @@ export function BuzzChatSurface({
   const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
+  const [roomRepoListLoading, setRoomRepoListLoading] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
   const [roomRepoNotice, setRoomRepoNotice] = useState<string | null>(null);
   // Typed "the App does not cover this repository yet" state: rendered as a
@@ -3394,6 +3395,7 @@ export function BuzzChatSurface({
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
       if (!transport || !activeCommunityId) return;
+      setRoomRepoListLoading(true);
       try {
         const access = await transport.workspaceGitHubAccess({ refresh });
         setRoomRepoCandidates(access.candidates);
@@ -3407,6 +3409,8 @@ export function BuzzChatSurface({
         if (refresh) throw error;
         setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates());
         setGitHubInstallations([]);
+      } finally {
+        setRoomRepoListLoading(false);
       }
     },
     [activeCommunityId, transport],
@@ -5356,11 +5360,96 @@ export function BuzzChatSurface({
       <HullActionSheetModal
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
         dismissOnBackdrop={!renameBusy}
+        footer={<HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />}
         onClose={closeRoomActions}
+        sticky={
+          <RoomRepositoryActions
+            busy={roomRepoBusy}
+            canManage={canManageWorkspace}
+            loading={roomRepoListLoading}
+            onToggle={() => void handleToggleRoomRepoPicker()}
+            picker={null}
+            pickerVisible={showRoomRepoPicker}
+            repositoryName={roomRepository?.binding.name ?? null}
+            slot="row"
+          />
+        }
         testID="room-actions-sheet"
         title={displayRoomName}
         visible={roomActionsVisible}
       >
+        <RoomRepositoryActions
+          busy={roomRepoBusy}
+          canManage={canManageWorkspace}
+          loading={roomRepoListLoading}
+          notifications={
+            roomRepository ? (
+              <HullActionSheetRow
+                accessibilityLabel={
+                  roomRepository.githubEventsEnabled === false
+                    ? 'Turn repository notifications on'
+                    : 'Turn repository notifications off'
+                }
+                description="Pushes, pull requests, issues, CI, and reviews posted here."
+                disabled={roomRepoBusy}
+                label="Repo notifications"
+                onPress={() => void handleToggleGitHubEvents()}
+                testID="room-github-events-toggle"
+                toggle={{
+                  disabled: roomRepoBusy,
+                  onValueChange: () => void handleToggleGitHubEvents(),
+                  value: roomRepository.githubEventsEnabled !== false,
+                }}
+              />
+            ) : null
+          }
+          onToggle={() => void handleToggleRoomRepoPicker()}
+          picker={
+            <View style={styles.roomSheetInset}>
+              <RepoPicker
+                busy={roomRepoBusy || roomRepoListLoading}
+                candidates={roomRepoCandidates}
+                installations={githubInstallations}
+                currentKey={roomRepository?.binding.key ?? null}
+                error={roomRepoError}
+                notice={roomRepoNotice}
+                ownerGrant={ownerGrant}
+                uncoveredOwners={uncoveredOwnersRef.current}
+                onAddAccount={() => void handleAddGitHubAccount()}
+                onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                onCreateRepository={handleCreateGitHubRepository}
+                onManageInstallation={(installation) =>
+                  void handleManageGitHubInstallation(installation)
+                }
+                onSelect={handleSelectRoomRepoCandidate}
+                onUnlink={
+                  canManageWorkspace && roomRepository
+                    ? () => void handleUnlinkRoomRepository()
+                    : undefined
+                }
+                testIDPrefix="room-repo-picker"
+                unlinkRepositoryName={roomRepository?.binding.name}
+              />
+            </View>
+          }
+          pickerVisible={showRoomRepoPicker}
+          reviewer={
+            <RoomReviewerActions
+              agents={(roomSurface?.members ?? [])
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity)}
+              canManage={canManageWorkspace}
+              hasRepository={roomRepository !== null}
+              onSaved={() => refreshSignal.force()}
+              reviewerAgentId={roomSurface?.room.reviewerAgentId}
+              roomId={decodedId}
+              roomName={displayRoomName}
+              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            />
+          }
+          repositoryName={roomRepository?.binding.name ?? null}
+          slot="body"
+        />
         <HullActionSheetRow
           accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
           chevron="right"
@@ -5431,76 +5520,6 @@ export function BuzzChatSurface({
               testID="rename-room-action"
             />
           ))}
-        <RoomRepositoryActions
-          busy={roomRepoBusy}
-          canManage={canManageWorkspace}
-          notifications={
-            roomRepository ? (
-              <HullActionSheetRow
-                accessibilityLabel={
-                  roomRepository.githubEventsEnabled === false
-                    ? 'Turn repository notifications on'
-                    : 'Turn repository notifications off'
-                }
-                description="Pushes, pull requests, issues, CI, and reviews posted here."
-                disabled={roomRepoBusy}
-                label="Repo notifications"
-                onPress={() => void handleToggleGitHubEvents()}
-                testID="room-github-events-toggle"
-                toggle={{
-                  disabled: roomRepoBusy,
-                  onValueChange: () => void handleToggleGitHubEvents(),
-                  value: roomRepository.githubEventsEnabled !== false,
-                }}
-              />
-            ) : null
-          }
-          onToggle={() => void handleToggleRoomRepoPicker()}
-          picker={
-            <View style={styles.roomSheetInset}>
-              <RepoPicker
-                busy={roomRepoBusy}
-                candidates={roomRepoCandidates}
-                installations={githubInstallations}
-                currentKey={roomRepository?.binding.key ?? null}
-                error={roomRepoError}
-                notice={roomRepoNotice}
-                ownerGrant={ownerGrant}
-                uncoveredOwners={uncoveredOwnersRef.current}
-                onAddAccount={() => void handleAddGitHubAccount()}
-                onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                onCreateRepository={handleCreateGitHubRepository}
-                onManageInstallation={(installation) =>
-                  void handleManageGitHubInstallation(installation)
-                }
-                onSelect={handleSelectRoomRepoCandidate}
-                onUnlink={
-                  canManageWorkspace && roomRepository
-                    ? () => void handleUnlinkRoomRepository()
-                    : undefined
-                }
-                testIDPrefix="room-repo-picker"
-                unlinkRepositoryName={roomRepository?.binding.name}
-              />
-            </View>
-          }
-          pickerVisible={showRoomRepoPicker}
-          reviewer={
-            <RoomReviewerActions
-              agents={(roomSurface?.members ?? [])
-                .filter((member) => member.identity.kind === 'agent')
-                .map((member) => member.identity)}
-              canManage={canManageWorkspace}
-              hasRepository={roomRepository !== null}
-              onSaved={() => refreshSignal.force()}
-              reviewerAgentId={roomSurface?.room.reviewerAgentId}
-              roomId={decodedId}
-              roomName={displayRoomName}
-              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
-            />
-          }
-          repositoryName={roomRepository?.binding.name ?? null}
-        />
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
@@ -5543,7 +5562,6 @@ export function BuzzChatSurface({
             <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
           </View>
         )}
-        <HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />
       </HullActionSheetModal>
 
       <HullActionSheetModal

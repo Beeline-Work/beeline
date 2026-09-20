@@ -1,12 +1,5 @@
 import React, { memo, useMemo, useState } from 'react';
-import {
-  SectionList,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { SectionList, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { GitHubRepositoryLinkagePlan, RepoCandidate } from '@/buzz/room-repo-picker';
@@ -55,11 +48,13 @@ export type RepoPickerProps = {
 /**
  * The candidate list is height-bounded and internally scrollable so an
  * account with 100+ repositories never renders past the fold: every host
- * (room-create panel, corner-open banner, Room-actions sheet) constrains it.
+ * (room-create panel, corner-open banner, Room-actions sheet) constrains it
+ * to about six 42px rows.
  */
-const MAX_LIST_HEIGHT_FRACTION = 0.45;
-const MIN_LIST_HEIGHT = 180;
-const MAX_LIST_HEIGHT_CAP = 420;
+export const REPO_CANDIDATE_ROW_MIN_HEIGHT = 42;
+export const REPO_CANDIDATE_VISIBLE_ROWS = 6;
+export const REPO_CANDIDATE_LIST_MAX_HEIGHT =
+  REPO_CANDIDATE_ROW_MIN_HEIGHT * REPO_CANDIDATE_VISIBLE_ROWS;
 
 export const RepoPicker = memo(function RepoPicker({
   candidates,
@@ -82,7 +77,6 @@ export const RepoPicker = memo(function RepoPicker({
 }: RepoPickerProps) {
   const { theme } = useUnistyles();
   const groknight = theme.buzz;
-  const { height: windowHeight } = useWindowDimensions();
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -119,13 +113,8 @@ export const RepoPicker = memo(function RepoPicker({
   );
   // An empty search keeps showing every account header (including 0-repo or
   // suspended installations); a non-empty query drops groups with no hits.
-  const windowListMaxHeight = Math.round(
-    Math.min(
-      Math.max(windowHeight * MAX_LIST_HEIGHT_FRACTION, MIN_LIST_HEIGHT),
-      MAX_LIST_HEIGHT_CAP,
-    ),
-  );
   const pastedFullName = githubFullNameFromInput(query);
+  const showLoadingPlaceholders = busy && visible.length === 0 && !error && !pastedFullName;
   const exactCandidate = pastedFullName
     ? candidates.find((candidate) => candidate.name.toLowerCase() === pastedFullName.toLowerCase())
     : undefined;
@@ -153,7 +142,7 @@ export const RepoPicker = memo(function RepoPicker({
       disabled={busy}
       key={candidate.key}
       onPress={() => onSelect(candidate)}
-      style={styles.candidateRow}
+      style={[styles.candidateRow, { minHeight: REPO_CANDIDATE_ROW_MIN_HEIGHT }]}
       testID={`${testIDPrefix}-candidate-${candidate.key}`}
     >
       <Text numberOfLines={1} style={styles.candidateName}>
@@ -185,6 +174,23 @@ export const RepoPicker = memo(function RepoPicker({
       {ownerGrant && <OwnerGrantNeededCard {...ownerGrant} />}
       <SectionList
         keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={
+          showLoadingPlaceholders ? (
+            <View accessibilityLabel="Loading repositories" testID={`${testIDPrefix}-loading`}>
+              {Array.from({ length: REPO_CANDIDATE_VISIBLE_ROWS }, (_, index) => (
+                <View
+                  key={index}
+                  style={styles.placeholderRow}
+                  testID={`${testIDPrefix}-placeholder-${index}`}
+                >
+                  <View style={styles.placeholderBar} />
+                </View>
+              ))}
+            </View>
+          ) : !error && !pastedFullName ? (
+            <Text style={styles.empty}>No repositories match.</Text>
+          ) : null
+        }
         nestedScrollEnabled
         renderItem={({ item }) => candidateRow(item)}
         renderSectionHeader={({ section }) =>
@@ -203,7 +209,7 @@ export const RepoPicker = memo(function RepoPicker({
         style={[
           styles.candidateScroll,
           fillAvailableHeight && styles.candidateScrollFill,
-          { maxHeight: windowListMaxHeight },
+          { maxHeight: REPO_CANDIDATE_LIST_MAX_HEIGHT },
         ]}
         testID={`${testIDPrefix}-list`}
       />
@@ -265,9 +271,6 @@ export const RepoPicker = memo(function RepoPicker({
             </TouchableOpacity>
           </View>
         </View>
-      )}
-      {!visible.length && !error && !pastedFullName && (
-        <Text style={styles.empty}>No repositories match.</Text>
       )}
       {onCreateRepository && activeInstallations.length > 0 && (
         <View>
@@ -387,9 +390,19 @@ const styles = StyleSheet.create((theme) => {
     containerFill: { flex: 1 },
     candidateScroll: {
       // Height-bounded so a 100+ repo account scrolls instead of rendering past
-      // the fold; the bound scales with the window and is clamped (see the
-      // MAX_LIST_HEIGHT_* constants above).
+      // the fold; six 42px rows, see REPO_CANDIDATE_LIST_MAX_HEIGHT.
       flexGrow: 0,
+    },
+    placeholderRow: {
+      minHeight: REPO_CANDIDATE_ROW_MIN_HEIGHT,
+      justifyContent: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.border,
+    },
+    placeholderBar: {
+      height: StyleSheet.hairlineWidth,
+      width: '42%',
+      backgroundColor: groknight.border,
     },
     candidateScrollFill: { flex: 1, flexShrink: 1, minHeight: 0 },
     groupHeader: {
@@ -402,7 +415,6 @@ const styles = StyleSheet.create((theme) => {
     groupName: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13 },
     groupMeta: { ...Typography.mono(), color: groknight.textMuted, fontSize: 9 },
     candidateRow: {
-      minHeight: 42,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',

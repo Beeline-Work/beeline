@@ -22,7 +22,7 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isCornerStatusRestatement } from './reply-sanitizer.js';
+import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
@@ -81,10 +81,10 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (reviewerHandle)
-    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then merge with gh pr merge --squash --match-head-commit <sha>.`;
+    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only if the complete gate passes.`;
   return yoloMode
     ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
-    : 'Yolo is off: never merge; wait for explicit human approval in the app.';
+    : 'Yolo is off: never merge; wait for a human owner to turn yolo on or merge the pull request themselves.';
 }
 
 export function cornerReviewerInstruction(input: {
@@ -947,6 +947,7 @@ export class MonolithCornerTurnLoop {
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
+    let deliberateNoReply = false;
     try {
       await withTurnReceiptHeartbeat(
         api,
@@ -1296,6 +1297,7 @@ export class MonolithCornerTurnLoop {
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
+              deliberateNoReply = isDeliberateCornerNoReply(reply, restates);
               await trace.measure('publish', () =>
                 stream.settle(
                   durableReply,
@@ -1317,6 +1319,7 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: 'complete',
+        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
       });
       // After the receipt: an operator artifact never delays the answer, and

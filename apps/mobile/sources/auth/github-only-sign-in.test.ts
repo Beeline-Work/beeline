@@ -26,6 +26,7 @@ describe('GitHub-only mobile sign-in surface', () => {
       source('app/(app)/beeline/onboarding.tsx'),
       source('app/(app)/beeline/channels.tsx'),
       source('app/(app)/beeline/chat/[channelId].tsx'),
+      source('app/(app)/beeline/chat/_chat-surface.tsx'),
       source('app/(app)/beeline/settings/identity.tsx'),
       source('app/(app)/_layout.tsx'),
       source('auth/github-auth-session.ts'),

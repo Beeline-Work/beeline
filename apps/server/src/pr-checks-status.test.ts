@@ -17,6 +17,7 @@ const C = '4c21aefc-a9e9-457b-918e-b26306253ac8';
 const AUTHOR = '33333333-3333-4333-8333-333333333333';
 const H = 'a'.repeat(64);
 const A = 'b'.repeat(64);
+const REVIEWER = 'c'.repeat(64);
 const URL = 'https://github.com/owner/widgets/pull/614';
 const SHA = 'bcaa310a' + '1'.repeat(32);
 
@@ -33,13 +34,19 @@ beforeEach(async () => {
   db = new PgliteDatabase();
   await migrate(db);
   await db.query(
-    `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Reviewer')`,
-    [H, A],
+    `INSERT INTO identities(id,kind,name,handle)
+     VALUES($1,'human','Owner','owner'),($2,'agent','Author','author'),($3,'agent','Reviewer','reviewer')`,
+    [H, A, REVIEWER],
+  );
+  await db.query(
+    `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$3,false),($2,$3,false)`,
+    [A, REVIEWER, H],
   );
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [W]);
   await db.query(
-    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`,
-    [W, H, A],
+    `INSERT INTO memberships(workspace_id,identity_id,role)
+     VALUES($1,$2,'owner'),($1,$3,'member'),($1,$4,'member')`,
+    [W, H, A, REVIEWER],
   );
   await db.query(
     `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type,status)
@@ -61,16 +68,16 @@ beforeEach(async () => {
       [corner, W, R, H],
     );
     await db.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Review PR 614',$2,'{"checks":"unknown","lifecycle":"working"}')`,
-      [corner, `corner/${corner}`],
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
+       VALUES($1,$3,'Review PR 614',$2,'{"checks":"unknown","lifecycle":"working"}')`,
+      [corner, `corner/${corner}`, A],
     );
   }
   for (const room of [R, C, AUTHOR]) {
     await db.query(
       `INSERT INTO memberships(room_id,identity_id,role,workspace_id)
-       VALUES($1,$2,'member',$4),($1,$3,'owner',$4)`,
-      [room, A, H, W],
+       VALUES($1,$2,'member',$5),($1,$3,'member',$5),($1,$4,'owner',$5)`,
+      [room, A, REVIEWER, H, W],
     );
   }
   head = SHA;
@@ -170,18 +177,13 @@ async function ownPr() {
 
 describe('PR-scoped check gate', () => {
   it('uses GitHub statusCheckRollup as the verdict', async () => {
-    await expect(gate()).resolves.toEqual({
+    await expect(gate()).resolves.toMatchObject({
       checks: 'passed',
       pullRequest: URL,
       headSha: SHA,
       approvalPending: false,
       reviewer: null,
-      reviewerIsAuthor: false,
-      reviewerWake: {
-        status: 'unconfigured',
-        detail: 'This Room has no configured reviewer, so no agent is woken for review.',
-      },
-      rule: 'This Room has no configured reviewer, so no agent approval gates this pull request.',
+      reviewerExists: false,
     });
     expect(graphqlRequests()).toHaveLength(1);
     expect(
@@ -232,35 +234,39 @@ describe('PR-scoped check gate', () => {
       checks: 'passed',
       approvalPending: false,
       reviewer: '@reviewer',
+      reviewerExists: true,
       reviewerIsAuthor: true,
     });
   });
 
-  it('keeps reviewer approval bound to the requested PR and exact head', async () => {
+  it('keeps configured reviewer approval bound to the requested PR and exact head', async () => {
     await ownPr();
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
-    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
-    expect(await gate()).toMatchObject({ approvalPending: true, reviewer: '@reviewer' });
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    expect(await gate(AUTHOR)).toMatchObject({
+      approvalPending: true,
+      reviewer: '@reviewer',
+      reviewerExists: true,
+    });
     await expect(
-      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
+      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, REVIEWER),
     ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
-    expect(await gate()).toMatchObject({ approvalPending: false });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
     head = '9'.repeat(40);
-    expect(await gate()).toMatchObject({ approvalPending: true, headSha: head });
+    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true, headSha: head });
   });
 
   it('names a configured reviewer who is not a parent member and does not drop the gate', async () => {
     await ownPr();
-    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
       R,
-      A,
+      REVIEWER,
     ]);
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
       approvalPending: true,
       reviewer: '@reviewer',
+      reviewerExists: true,
       reviewerIsAuthor: false,
       reviewerWake: {
         status: 'unreachable',
@@ -317,12 +323,12 @@ describe('PR-scoped check gate', () => {
       'Room repository',
     );
     await expect(
-      daemon.execute('getPrChecksStatus', { cornerId: C, pullRequest: 614 }, 'c'.repeat(64)),
+      daemon.execute('getPrChecksStatus', { cornerId: C, pullRequest: 614 }, 'e'.repeat(64)),
     ).rejects.toThrow('access denied');
     expect(requests).toHaveLength(0);
   });
 
-  it('returns the authoritative verdict through the real helper over local HTTP', async () => {
+  it('composes yolo, reviewer outcome, reviewer existence, and human hold through the real helper', async () => {
     server = createServer(async (request, response) => {
       try {
         const chunks: Buffer[] = [];
@@ -367,13 +373,58 @@ describe('PR-scoped check gate', () => {
     const lines = createInterface({ input: child.stdout });
     const replies: string[] = [];
     lines.on('line', (line) => replies.push(line));
-    child.stdin.write(
-      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pr_checks_status', arguments: { pullRequest: 614 } } })}\n`,
-    );
-    await vi.waitFor(() => expect(replies).toHaveLength(1));
-    child.kill();
-    expect(JSON.parse(replies[0]!)).toMatchObject({
-      result: { content: [{ type: 'text', text: expect.stringContaining('"checks":"passed"') }] },
+    const callGate = async (id: number) => {
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'pr_checks_status', arguments: { pullRequest: 614 } } })}\n`,
+      );
+      await vi.waitFor(() => expect(replies).toHaveLength(id));
+      const response = JSON.parse(replies[id - 1]!) as {
+        result: { content: Array<{ text: string }> };
+      };
+      return JSON.parse(response.result.content[0]!.text) as Record<string, unknown>;
+    };
+
+    await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
+    await expect(callGate(1)).resolves.toMatchObject({
+      checks: 'passed',
+      approvalPending: true,
+      reviewerExists: false,
+      reviewFailed: false,
+      isWorkerYolo: true,
+      didHumanSayDontMerge: false,
     });
+
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force,pull_request_number,head_sha)
+       VALUES($1,$2,false,614,$3)`,
+      [C, REVIEWER, SHA],
+    );
+    await expect(callGate(2)).resolves.toMatchObject({
+      approvalPending: false,
+      reviewerExists: true,
+      reviewFailed: false,
+      isWorkerYolo: true,
+    });
+
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
+    await expect(callGate(3)).resolves.toMatchObject({
+      approvalPending: true,
+      reviewerExists: true,
+      reviewFailed: false,
+      isWorkerYolo: false,
+      didHumanSayDontMerge: false,
+    });
+
+    await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'do not merge')`,
+      ['d'.repeat(64), C, H],
+    );
+    await expect(callGate(4)).resolves.toMatchObject({
+      approvalPending: true,
+      didHumanSayDontMerge: true,
+    });
+    child.kill();
   });
 });

@@ -47,11 +47,12 @@ describe('corner merge instructions', () => {
   it('selects the no-reviewer and reviewer matrix', () => {
     expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
     expect(cornerMergeInstruction(false)).toContain('never merge');
-    expect(cornerMergeInstruction(false)).toContain('explicit human approval');
+    expect(cornerMergeInstruction(false)).toContain('human owner to turn yolo on');
     for (const yolo of [false, true]) {
       const instruction = cornerMergeInstruction(yolo, 'echo');
       expect(instruction).not.toContain('please review');
       expect(instruction).toContain('do not merge until @echo tags you with approval');
+      expect(instruction).toContain('only if the complete gate passes');
       expect(instruction).toContain('gh pr merge --squash --match-head-commit <sha>');
     }
   });

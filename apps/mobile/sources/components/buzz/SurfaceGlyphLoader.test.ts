@@ -24,7 +24,7 @@ type LoadingSurface = {
 const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'thinking', file: 'components/buzz/TurnProgressLine.tsx', treatment: 'glyph' },
   { id: 'activity-working', file: 'components/buzz/ActivityTimeline.tsx', treatment: 'glyph' },
-  { id: 'room-corner-entry', file: 'app/(app)/beeline/chat/[channelId].tsx', treatment: 'glyph' },
+  { id: 'room-corner-entry', file: 'app/(app)/beeline/chat/_chat-surface.tsx', treatment: 'glyph' },
   { id: 'room-deck', file: 'components/buzz/RoomDeckLoadingView.tsx', treatment: 'glyph' },
   { id: 'room-deck-corners', file: 'app/(app)/beeline/channels.tsx', treatment: 'glyph' },
   { id: 'changes-list', file: 'app/(app)/beeline/corners/[roomId].tsx', treatment: 'glyph' },
@@ -58,7 +58,7 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   },
   {
     id: 'history-line',
-    file: 'app/(app)/beeline/chat/[channelId].tsx',
+    file: 'app/(app)/beeline/chat/_chat-surface.tsx',
     treatment: 'exception',
     reason:
       '"Loading earlier messages…" is an inscribed transcript history row, not a load gate. A painting glyph would interrupt the ledger.',

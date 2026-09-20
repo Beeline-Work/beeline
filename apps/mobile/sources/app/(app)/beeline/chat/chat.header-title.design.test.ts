@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  * header title face, size or mono style of its own again, and every subtitle
  * under it reads through the `meta` role.
  */
-const chatSource = readFileSync(path.join(__dirname, '[channelId].tsx'), 'utf8');
+const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
 const componentsDir = path.join(__dirname, '..', '..', '..', '..', 'components', 'buzz');
 const titleSource = readFileSync(path.join(componentsDir, 'ChannelHeaderTitle.tsx'), 'utf8');
 const ladderSource = readFileSync(path.join(componentsDir, 'HeaderLadder.tsx'), 'utf8');

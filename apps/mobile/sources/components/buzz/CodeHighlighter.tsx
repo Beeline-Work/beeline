@@ -14,14 +14,6 @@ type CodeHighlighterProps = {
 // selectable, full-fidelity text node instead of building thousands of spans.
 const MAX_HIGHLIGHTED_CODE_CHARS = 20_000;
 
-// Nested Text on Android/iOS collapses leading ASCII spaces. Keep each source
-// line's indent visible; wrapped continuations may hang.
-function preserveLineIndent(text: string): string {
-  return text.replace(/^[ \t]+/, (indent) =>
-    indent.replaceAll(/ |\t/g, (ch) => (ch === '\t' ? '\u00a0\u00a0' : '\u00a0')),
-  );
-}
-
 function tokenStyle(token: HighlightToken) {
   switch (token) {
     case 'structure':
@@ -59,18 +51,14 @@ export function CodeHighlighter({ code, language, style }: CodeHighlighterProps)
   return (
     <Text selectable style={[styles.codeText, style]} testID="code-highlighter">
       {lines.map((line, li) => (
-        <Text key={li} style={styles.line}>
-          {line.length === 0 ? (
-            <Text> </Text>
-          ) : (
-            line.map((span, si) => (
-              <Text key={si} style={tokenStyle(span.token)}>
-                {si === 0 ? preserveLineIndent(span.text) : span.text}
-              </Text>
-            ))
-          )}
-          {li < lines.length - 1 ? <Text>{'\n'}</Text> : null}
-        </Text>
+        <React.Fragment key={li}>
+          {li > 0 ? '\n' : null}
+          {line.map((span, si) => (
+            <Text key={si} style={tokenStyle(span.token)}>
+              {span.text}
+            </Text>
+          ))}
+        </React.Fragment>
       ))}
     </Text>
   );
@@ -84,7 +72,6 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     color: theme.buzz.syntaxStructure,
   },
-  line: {},
   structure: { color: theme.buzz.syntaxStructure },
   name: { color: theme.buzz.syntaxName },
   value: { color: theme.buzz.syntaxValue },

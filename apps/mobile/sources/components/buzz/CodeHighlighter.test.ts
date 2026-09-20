@@ -282,14 +282,10 @@ describe('CodeHighlighter', () => {
     expect(text).toBe('hello world');
   });
 
-  it('keeps indented JSON leading spaces after tokenize and render', () => {
-    const code = `{
-  "providers": {
-    "milo": {
-      "name": "Milo"
-    }
-  }
-}`;
+  it.each(['  ', '\t'])('preserves selectable JSON with %j indentation', (indent) => {
+    const code = JSON.stringify({ providers: { milo: { name: 'Milo' } } }, null, indent)
+      .replace('\n', '\n\n')
+      .concat('\n');
     expect(flattenTokens(tokenizeCode(code, 'json'))).toBe(code);
 
     let renderer!: ReactTestRenderer;
@@ -297,10 +293,8 @@ describe('CodeHighlighter', () => {
       renderer = create(React.createElement(CodeHighlighter, { code, language: 'json' }));
     });
     const text = renderedText(renderer);
-    expect(text.replaceAll('\u00a0', ' ')).toBe(code);
-    expect(text).toContain(`\u00a0\u00a0"providers"`);
-    expect(text).toContain(`\u00a0\u00a0\u00a0\u00a0"milo"`);
-    expect(text).toContain(`\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"name"`);
+    expect(text).toBe(code);
+    expect(JSON.parse(text)).toEqual(JSON.parse(code));
   });
 });
 

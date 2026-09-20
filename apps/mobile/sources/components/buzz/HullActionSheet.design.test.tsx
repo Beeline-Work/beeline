@@ -44,10 +44,12 @@ vi.mock('react-native', async () => {
     Modal: host('Modal'),
     Platform: { OS: 'ios' },
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
     TextInput: host('TextInput'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 

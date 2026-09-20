@@ -5,10 +5,13 @@ import { chmod, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises
 import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { migrate } from '../../server/src/database.js';
-import { PgliteDatabase } from '../../server/src/test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from '../../server/src/test-support.js';
+import { ObjectService } from '../../server/src/object-service.js';
+import { ARTIFACT_MAXIMUM_BYTES } from '../../../packages/api-contract/src/artifacts.js';
 import { TokenAuth } from '../../server/src/auth.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
@@ -49,19 +52,106 @@ afterEach(async () =>
  * agent opening a no-code corner, and the corner's own agent delivering. It
  * records every system prompt it is handed so the test can read what the
  * corner was actually told.
+ *
+ * The delivering turn does NOT narrate an artifact. It spawns the real
+ * `beeline-agent` MCP server off the `session/new` wire — the same command,
+ * args and env a live ACP agent is handed — and calls `post_artifact` over
+ * stdio. Otherwise this test would pass on a lane that had lost the ability
+ * to deliver anything at all, which is the one thing the lane exists to do.
  */
-async function writeFakeHarness(directory: string, promptLog: string): Promise<string> {
+async function writeFakeHarness(
+  directory: string,
+  promptLog: string,
+  artifactLog: string,
+): Promise<string> {
   const binary = resolve(directory, 'fake-acp-agent.mjs');
   await writeFile(
     binary,
     `#!/usr/bin/env node
 import { createInterface } from 'node:readline';
 import { appendFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 
 const lines = createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
 const PROMPT_LOG = ${JSON.stringify(promptLog)};
+const ARTIFACT_LOG = ${JSON.stringify(artifactLog)};
+const WRITE_UP = [
+  '# Five nearest competitors',
+  '',
+  '| product | wedge |',
+  '| --- | --- |',
+  '| Acme | price |',
+  '| Widgetry | distribution |',
+].join('\\n');
 let systemPrompt = '';
+let mcpServers = [];
+
+/** One stdio MCP session against a server off the session/new wire. */
+async function callMcpTools(server, calls) {
+  const env = { ...process.env };
+  for (const entry of server.env ?? []) env[entry.name] = entry.value;
+  const child = spawn(server.command, server.args ?? [], {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // Kept so a server that dies on startup reports why, instead of surfacing
+  // as an unexplained initialize timeout.
+  let stderr = '';
+  child.stderr.on('data', (piece) => { stderr += String(piece); });
+  const pending = new Map();
+  createInterface({ input: child.stdout }).on('line', (line) => {
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    const settle = pending.get(message.id);
+    if (settle) { pending.delete(message.id); settle(message); }
+  });
+  let nextId = 1;
+  const rpc = (method, params) =>
+    new Promise((resolve, reject) => {
+      const id = nextId++;
+      const timer = setTimeout(
+        () => reject(new Error(method + ' timed out; server stderr: ' + (stderr.trim() || '(silent)'))),
+        30000,
+      );
+      pending.set(id, (message) => { clearTimeout(timer); resolve(message); });
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\\n');
+    });
+  try {
+    await rpc('initialize', {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      clientInfo: { name: 'fake-acp-agent', version: '1.0.0' },
+    });
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\\n');
+    const results = [];
+    for (const call of calls) {
+      results.push(await rpc('tools/call', { name: call.name, arguments: call.arguments }));
+    }
+    return results;
+  } finally {
+    child.kill();
+  }
+}
+
+/** Write the report, then post it. Exactly the two steps the prompt names. */
+async function deliverArtifact() {
+  const server = (mcpServers ?? []).find((entry) => entry.name === 'beeline-agent');
+  if (!server) return { ok: false, detail: 'no beeline-agent MCP server on the session wire' };
+  const [written, posted] = await callMcpTools(server, [
+    { name: 'write_scratch_file', arguments: { path: 'competitors.md', content: WRITE_UP } },
+    { name: 'post_artifact', arguments: { path: 'competitors.md', title: 'Competitor scan', mime: 'text/markdown' } },
+  ]);
+  const textOf = (answer) =>
+    (answer?.result?.content ?? []).map((part) => part?.text ?? '').join(' ') ||
+    JSON.stringify(answer?.error ?? answer?.result ?? null);
+  const failed = written?.result?.isError || posted?.result?.isError || posted?.error || written?.error;
+  return {
+    ok: !failed,
+    wrote: textOf(written),
+    posted: textOf(posted),
+  };
+}
 
 const chunk = (text) =>
   send({
@@ -82,6 +172,7 @@ lines.on('line', async (line) => {
   }
   if (message.method === 'session/new') {
     systemPrompt = String(message.params?.systemPrompt ?? '');
+    mcpServers = message.params?.mcpServers ?? [];
     await appendFile(PROMPT_LOG, JSON.stringify({ systemPrompt }) + '\\n');
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
     return;
@@ -91,6 +182,16 @@ lines.on('line', async (line) => {
     // so the harness answers the way that prompt tells it to.
     if (systemPrompt.includes('no-code corner with no repository checkout')) {
       const handle = (systemPrompt.match(/replying with @([a-z0-9-]+)/i) ?? [])[1] ?? 'nobody';
+      let delivery;
+      try {
+        delivery = await deliverArtifact();
+      } catch (error) {
+        delivery = { ok: false, detail: String(error) };
+      }
+      await appendFile(ARTIFACT_LOG, JSON.stringify(delivery) + '\\n');
+      // The reply is plain prose, as a real one would be. The artifact rides
+      // it because post_artifact queued it onto this turn, not because the
+      // text says so.
       chunk('Posted the competitor write-up. @' + handle + ' it is in this corner.');
       send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
       return;
@@ -177,6 +278,7 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
 }
 
 let database: PgliteDatabase;
+let objectStorage: MemoryObjectStorage;
 let origin: string;
 let server: ReturnType<typeof createBeelineServer>;
 let accessToken: string;
@@ -184,6 +286,7 @@ let core: ThinDaemonCore;
 let abort: AbortController;
 let listener: PostgresLiveListener;
 let promptLog: string;
+let artifactLog: string;
 
 /** A real bare repository to stand in for the Room's GitHub remote. */
 async function createBareRemote(directory: string): Promise<string> {
@@ -240,24 +343,49 @@ beforeEach(async () => {
     login: proof === 'proof' ? 'owner' : proof,
     name: 'Owner',
   }));
-  const phone = new PhoneService(database, 'http://placeholder');
   const live = new LiveHub();
+  // Real object storage: post_artifact streams the bytes through the server,
+  // so without it the delivery this test exists to prove cannot happen.
+  objectStorage = new MemoryObjectStorage();
+  await objectStorage.listen();
+  const objectService = new ObjectService(
+    database,
+    objectStorage.asStorage(),
+    'http://placeholder',
+    ARTIFACT_MAXIMUM_BYTES,
+  );
+  const phone = new PhoneService(
+    database,
+    'http://placeholder',
+    undefined,
+    undefined,
+    live,
+    false,
+    database,
+    objectService,
+  );
   const daemon = new DaemonService(database, live, async () => ({
     token: 'test-room-token',
     expiresAt: Date.now() + 60_000,
   }));
-  server = createBeelineServer({ database, auth, phone, daemon, live });
+  server = createBeelineServer({ database, auth, phone, daemon, live, objectService });
   listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 50);
   void listener.run();
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  // The attachment url the corner's reply carries has to be one the requester
+  // can actually fetch, so both services must name this server.
+  (phone as unknown as { publicOrigin: string }).publicOrigin = origin;
+  (objectService as unknown as { publicOrigin: string }).publicOrigin = origin;
   accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
 
   const harnessHome = join(supervisorRoot, 'harness-home');
   await mkdir(harnessHome, { recursive: true });
   promptLog = join(supervisorRoot, 'prompts.jsonl');
+  artifactLog = join(supervisorRoot, 'artifacts.jsonl');
   await writeFile(promptLog, '');
-  const agentCommand = await writeFakeHarness(supervisorRoot, promptLog);
+  await writeFile(artifactLog, '');
+  const agentCommand = await writeFakeHarness(supervisorRoot, promptLog, artifactLog);
   const exchange = await auth.createDaemonExchange(AGENT);
   const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
   const runtime: AgentRuntimeRecord = {
@@ -288,8 +416,19 @@ beforeEach(async () => {
     agentArgs: [],
     agentBinary: agentCommand,
     mcpBinary: process.execPath,
+    // The real agent-surface MCP server, so post_artifact is the production
+    // code path and not a stub the test wrote to agree with itself.
     readonlyMcpCommand: process.execPath,
-    readonlyMcpArgs: [],
+    // Absolute loader path: the MCP server is spawned with the corner's
+    // scratch directory as its cwd, where a bare `tsx` specifier cannot
+    // resolve.
+    readonlyMcpArgs: [
+      '--import',
+      fileURLToPath(new URL('../../../node_modules/tsx/dist/loader.mjs', import.meta.url)),
+      fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url)),
+    ],
+    // post_artifact's second legal root, and where write_scratch_file writes.
+    agentHomeRoot: join(supervisorRoot, 'agent-home-overlay'),
     agentEnv: {
       PATH: process.env.PATH ?? '',
       HOME: harnessHome,
@@ -320,6 +459,7 @@ afterEach(async () => {
   await listener?.stop();
   await new Promise((r) => setTimeout(r, 150));
   if (server) await new Promise<void>((done) => server.close(() => done()));
+  if (objectStorage) await objectStorage.close();
   if (database) await database.close();
 });
 
@@ -368,6 +508,7 @@ it(
             text?: string;
             author?: { pubkey?: string };
             mentionPubkeys?: string[];
+            attachments?: Array<{ url: string; name: string; mimeType: string; size: number }>;
           }>;
         };
         const found = room.messages.find(
@@ -379,6 +520,26 @@ it(
       },
       { timeout: 60_000 },
     );
+
+    // What post_artifact actually reported, checked BEFORE the attachment: a
+    // tool refusal should fail as itself, not as a mystery empty array.
+    const delivery = (await readFile(artifactLog, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { ok: boolean; wrote?: string; posted?: string; detail?: string });
+    expect(delivery[0]?.ok, `post_artifact failed: ${JSON.stringify(delivery[0])}`).toBe(true);
+
+    // The tag and the artifact have to arrive on the SAME message: that one
+    // message is the whole delivery on this lane.
+    expect(reply.attachments ?? []).toHaveLength(1);
+
+    // The requester can open it, and the bytes are the write-up.
+    const attachment = reply.attachments![0]!;
+    const downloaded = await fetch(attachment.url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(downloaded.status).toBe(200);
+    const contents = Buffer.from(await downloaded.arrayBuffer()).toString('utf8');
 
     const prompts = (await readFile(promptLog, 'utf8'))
       .split('\n')
@@ -395,6 +556,8 @@ it(
         `corner lane recorded:   ${corner.lane}`,
         `corner reply in Room:   ${reply.text}`,
         `tag routed to:          ${reply.mentionPubkeys?.includes(HUMAN) ? 'the requester (Owner)' : 'nobody'}`,
+        `artifact on that reply: ${attachment.name} (${attachment.mimeType}, ${attachment.size} bytes)`,
+        `artifact opens as:      ${JSON.stringify(contents.split('\n')[0])} ...`,
         `feature branch cut:     ${
           (await database.query(`SELECT feature_branch FROM corner_facts WHERE feature_branch IS NOT NULL`))
             .rows.length
@@ -411,6 +574,12 @@ it(
         '',
       ].join('\n'),
     );
+
+    // The delivery itself: a real artifact, posted through the real tool.
+    expect(attachment).toMatchObject({ name: 'Competitor scan', mimeType: 'text/markdown' });
+    expect(contents).toContain('# Five nearest competitors');
+    expect(contents).toContain('| Widgetry | distribution |');
+    expect(attachment.size).toBe(Buffer.byteLength(contents, 'utf8'));
 
     // No branch was cut and no merge was ever on the table.
     expect(

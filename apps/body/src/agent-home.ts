@@ -41,6 +41,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
+import { parse as parseToml } from 'smol-toml';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
@@ -688,10 +689,17 @@ function addTomlMcpNames(
 ): void {
   const source = readExistingText(path);
   if (source === undefined) return;
-  for (const name of tomlChildTableNames(source, ['mcp_servers'])) {
-    const section = extractTomlSections(source, ['mcp_servers', name]);
-    const hostRoute = name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
-    if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(name);
+  const mountedSource = mode === 'imported' ? filteredHarnessMcpToml(source) : source;
+  if (!mountedSource) return;
+  let servers: unknown;
+  try {
+    servers = parseToml(mountedSource).mcp_servers;
+  } catch {
+    return;
+  }
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
+  for (const [name, value] of Object.entries(servers)) {
+    if (mode !== 'host-route' || isHostRouteMcpServer(name, value)) names.add(name);
   }
 }
 
@@ -704,12 +712,12 @@ function addClaudeMcpNames(
   const servers = parsed?.mcpServers;
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
   for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
-    const hostRoute = isClaudeHostRoute(name, value);
+    const hostRoute = isHostRouteMcpServer(name, value);
     if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(name);
   }
 }
 
-function isClaudeHostRoute(name: string, value: unknown): boolean {
+function isHostRouteMcpServer(name: string, value: unknown): boolean {
   if (name === 'squire') return true;
   const server = value as Record<string, unknown> | null;
   if (!server || typeof server.command !== 'string') return false;

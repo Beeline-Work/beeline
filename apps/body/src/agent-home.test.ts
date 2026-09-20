@@ -855,6 +855,36 @@ describe('mounted imported MCP server names', () => {
     ]);
   });
 
+  it.each(['codex', 'grok'] as const)(
+    'tracks every preserved TOML server declaration for %s',
+    async (agentKind) => {
+      const operatorHome = await scratch('beeline-toml-inventory-op-');
+      const agentHomeRoot = resolve(await scratch('beeline-toml-inventory-home-'), 'agent-home');
+      await mkdir(resolve(operatorHome, `.${agentKind}`), { recursive: true });
+      const sourcePath = resolve(operatorHome, `.${agentKind}/config.toml`);
+      const input = { operatorHome, agentHomeRoot, agentKind };
+      for (const source of [
+        '[mcp_servers]\nfiles = { command = "files-mcp", args = ["--stdio"] }\n',
+        '[mcp_servers]\n"files".command = "files-mcp"\n',
+        "[mcp_servers.'files']\ncommand = 'files-mcp'\n",
+        '[mcp_servers.files.env]\nMODE = "read"\n[mcp_servers.files]\ncommand = "files-mcp"\n',
+      ]) {
+        await writeFile(sourcePath, source);
+        const preparedEnv = await prepareRoomAgentHome({
+          root: agentHomeRoot,
+          operatorHome,
+          agentKind,
+        });
+        expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
+        expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
+        await writeFile(sourcePath, '');
+        expect(mountedImportedMcpServerNames(input)).toEqual([]);
+        await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind });
+        expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual([]);
+      }
+    },
+  );
+
   it.each([
     'extensions:\n    files:\n        cmd: files-mcp\n    squire:\n        cmd: squire-mcp\n',
     'extensions:\n  "files": {cmd: files-mcp}\n  \'squire\': {cmd: squire-mcp}\n',

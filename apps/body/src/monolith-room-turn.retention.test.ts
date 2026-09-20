@@ -10,7 +10,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
-import { tomlChildTableNames } from './toml-section.js';
+import { parse as parseToml } from 'smol-toml';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
 const roots: string[] = [];
@@ -162,10 +162,17 @@ async function twoTurns(
             parseYaml(await readFile(join(paths.agentHomeRoot, 'goose/config/config.yaml'), 'utf8'))
               .extensions ?? {},
           ).sort()
-        : tomlChildTableNames(
-            await readFile(join(paths.agentHomeRoot, 'codex/config.toml'), 'utf8'),
-            ['mcp_servers'],
-          ),
+        : Object.keys(
+            parseToml(
+              await readFile(
+                join(paths.agentHomeRoot, `${config.agentKind}/config.toml`),
+                'utf8',
+              ).catch((error: NodeJS.ErrnoException) => {
+                if (error.code === 'ENOENT') return '';
+                throw error;
+              }),
+            ).mcp_servers ?? {},
+          ).sort(),
     );
     systemPrompts.push(input.systemPrompt ?? '');
     return { sessionId: `room-session-${activations}`, raw: {} };
@@ -253,6 +260,37 @@ describe('retained Room session', () => {
     expect(activations).toBe(2);
     expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
   });
+
+  it.each(['codex', 'grok'] as const)(
+    'restarts %s when an inline TOML server is removed',
+    async (agentKind) => {
+      const { activations, traces, mountedInventories } = await twoTurns(
+        [unchanged, unchanged],
+        [],
+        {
+          agentKind,
+          thirdTurn: true,
+          beforeTurns: async ({ operatorHome }) => {
+            await mkdir(join(operatorHome, `.${agentKind}`), { recursive: true });
+            await writeFile(
+              join(operatorHome, `.${agentKind}/config.toml`),
+              '[mcp_servers]\nfiles = { command = "files-mcp" }\n',
+            );
+          },
+          betweenTurns: async ({ operatorHome }) => {
+            await writeFile(join(operatorHome, `.${agentKind}/config.toml`), '');
+          },
+        },
+      );
+      expect(mountedInventories).toEqual([['files'], []]);
+      expect(activations).toBe(2);
+      expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual([
+        'cold',
+        'cold',
+        'warm',
+      ]);
+    },
+  );
 
   it.each([
     ['extensions: {}\n', 'extensions:\n    "files": {cmd: files-mcp}\n', [], ['files']],

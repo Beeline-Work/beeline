@@ -151,15 +151,18 @@ describe('Chat header — one language for Room and Corner', () => {
     const diamond = chatSource.match(/roomCornersGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
     expect(diamond![0]).toContain('color: groknight.accent');
-    expect(diamond![0]).toContain('...groknight.type.hero');
+    expect(diamond![0]).toContain('...groknight.type.body');
     expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
-    // Captain 2026-09-20: the sigil must not read as a speck beside the menu.
-    // Its type box is measured against the overflow dots' own, not eyeballed.
+    // Captain 2026-09-20: optically the SAME mark-size as the overflow dots —
+    // neither a speck nor a tower. `◇` draws about 0.6em, so the role that
+    // matches the dots by eye sits just above their own size, and well below
+    // the hero role that made it tower.
     const dotsSize = Number(
       chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?fontSize:\s*(\d+)/)![1],
     );
-    expect(typeRoles.hero.fontSize).toBeGreaterThan(dotsSize);
-    expect(typeRoles.hero.lineHeight).toBeGreaterThanOrEqual(dotsSize);
+    expect(typeRoles.body.fontSize).toBeGreaterThan(dotsSize);
+    expect(typeRoles.body.fontSize).toBeLessThan(typeRoles.hero.fontSize);
+    expect(typeRoles.body.fontSize - dotsSize).toBeLessThanOrEqual(6);
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(dots![0]).toContain('color: groknight.steel');
     expect(dots![0]).toContain('fontSize: 12');
@@ -171,6 +174,13 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(doorButton![0]).toContain('marginLeft: 12');
     // No word rides along any more.
     expect(chatSource).not.toContain('roomCornersLabel');
+    // Siblings: the door and the overflow carry the SAME box, so neither
+    // reads as chrome hanging off the other.
+    const overflowBox = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
+    for (const metric of ['minWidth: 44', 'minHeight: 44']) {
+      expect(doorButton![0], metric).toContain(metric);
+      expect(overflowBox![0], metric).toContain(metric);
+    }
     // Bare slab between the named door and the dots, on top of the door's own
     // padding: two controls a thumb must hit separately cannot share an edge.
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);

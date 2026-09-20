@@ -5723,21 +5723,22 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // A full space step of bare slab parts the named door from the dots, on
-    // top of the door's own padding. Two controls a thumb must hit separately
-    // cannot share an edge.
+    // Siblings, not a cluster: the same 44pt box as the corners door, parted
+    // from it by bare slab so neither reads as chrome hanging off the other.
     roomClusteredActionsButton: {
+      minWidth: 44,
       minHeight: 44,
       marginLeft: groknight.space.lg,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // The sigil leads the door and must not read as a speck beside the menu:
-    // it takes the hero role, so its box is larger than the overflow dots'
-    // own bounding box rather than a third of it.
+    // Optically the SAME mark-size as the overflow dots, not larger and not a
+    // speck (captain, 2026-09-20). `◇` draws ~0.6em, `•••` draws a wide short
+    // row, so matching the two by eye means the body role against the dots'
+    // 12: meta (13) left the diamond visibly smaller, hero (22) made it tower.
     roomCornersGlyph: {
       ...Typography.default('semiBold'),
-      ...groknight.type.hero,
+      ...groknight.type.body,
       color: groknight.accent,
     },
     roomActionsGlyph: {

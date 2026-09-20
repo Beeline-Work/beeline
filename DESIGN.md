@@ -321,14 +321,13 @@ machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
 trailing slot carries the **corners door**: the brass corner sigil `◇` ALONE,
-at the hero role, in its own 44pt box, with `space.lg` of bare slab before the
-overflow dots. No word rides beside it. What was wrong with the mark that came
-before was never that it lacked a label — it was set at the metadata size, so
-it read as a speck, and it sat close enough to the dots to look like part of
-them (captain, 2026-09-20). So the sigil is now the largest glyph in the
-trailing slot, its type box deliberately bigger than the overflow dots' own,
-and the gap is what makes it a second control rather than a second mark on the
-first. The accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
+in its own 44pt box, with `space.lg` of bare slab before the overflow dots'
+identical 44pt box. No word rides beside it. The two are **siblings** — same
+box, same baseline, parted by slab — and the sigil is sized to read at
+optically the SAME mark-size as the dots: `◇` draws about 0.6em against a wide
+short row of bullets, so the body role matches them by eye where the metadata
+role left a speck and the hero role made it tower (captain, 2026-09-20). The
+accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
 (`corners/[roomId]`, windowed with the same cap and archived fallback as the
 desktop work-pane corner list) and is the Room's one active-corner affordance.
 The approval panel and diff review exist only in a Corner — that is a

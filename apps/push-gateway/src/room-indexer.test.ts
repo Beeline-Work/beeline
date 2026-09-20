@@ -1612,6 +1612,7 @@ describe('RoomIndexer', () => {
     );
     const cardId = 'f'.repeat(64);
     const legacyId = 'e'.repeat(64);
+    const ciId = '9'.repeat(64);
     const insertGitHubEvent = async (
       id: string,
       createdAt: number,
@@ -1646,6 +1647,17 @@ describe('RoomIndexer', () => {
       ],
       'lena pushed 0 commits to acme/widget:main',
     );
+    await insertGitHubEvent(ciId, 15, [
+      ['h', ROOM],
+      ['t', 'github-event'],
+      ['service', 'beeline-events'],
+      ['github-event-type', 'ci'],
+      ['github-event-action', 'passed'],
+      ['github-event-actor', 'octocat'],
+      ['github-event-title', 'Beeline CI check suite'],
+      ['github-event-url', 'https://github.com/acme/widget/actions/runs/9'],
+      ['github-event-id', '9'],
+    ]);
 
     const view = await indexer.readRoom(ROOM, VIEWER);
     const history = await indexer.readHistory(ROOM, VIEWER);
@@ -1665,7 +1677,9 @@ describe('RoomIndexer', () => {
       }),
     );
     expect(view?.messages.map((message) => message.id)).not.toContain(legacyId);
+    expect(view?.messages.map((message) => message.id)).not.toContain(ciId);
     expect(history?.messages.map((message) => message.id)).not.toContain(legacyId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(ciId);
   });
 
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {

@@ -890,6 +890,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   // Header: kind + per-state summary over UNIQUE PRs, each state counted once.
   const headline = useMemo(() => {
     const isCheck = items[0]?.kind === 'check';
+    const isIssue = !isCheck && items.every((item) => item.kind === 'issue');
     const stateCounts = new Map<string, number>();
     for (const item of items) {
       const word = headerSummaryState(item.state, isCheck);
@@ -898,7 +899,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
     const parts = Array.from(stateCounts.entries())
       .sort()
       .map(([state, count]) => `${count} ${state}`);
-    const kind = isCheck ? 'Check' : 'PR';
+    const kind = isCheck ? 'Check' : isIssue ? 'Issue' : 'PR';
     return `${kind} · ${parts.join(', ')}`;
   }, [items]);
 
@@ -1092,7 +1093,7 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   const event = message.githubEvent!;
   // Only the kinds this build knows how to draw. A card from a newer server
   // renders nothing rather than taking the Room down with it.
-  const SUBJECTS: Record<string, string> = { 'pull-request': 'PR', issue: 'Issue', ci: 'CI' };
+  const SUBJECTS: Record<string, string> = { 'pull-request': 'PR', issue: 'Issue' };
   const subject = SUBJECTS[event.type];
   const state = event.action === 'merged' ? 'merged' : event.action;
   const tone: 'waiting' | 'settled' | 'failed' =

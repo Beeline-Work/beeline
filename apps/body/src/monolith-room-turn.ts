@@ -21,11 +21,16 @@ import {
   expectedMountedImportedMcpServerNames,
   grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
+  hostImportedMcpDeclarations,
   hostImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { grantedHostRoutesFromList, ungatedHostServers } from './host-mcp-route.js';
+import {
+  grantedHostRoutesFromList,
+  grantedHostRouteWires,
+  ungatedHostServers,
+} from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -607,7 +612,11 @@ export class MonolithRoomTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
-      mcpServers: this.mountedMcpServers(agentEnv),
+      mcpServers: expectedMountedImportedMcpServerNames({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+        grantedHostRoutes,
+      }),
     });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
@@ -673,13 +682,24 @@ export class MonolithRoomTurnLoop {
     ];
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
-    // pi never mounts what `session/new` hands it, so its whole daemon tool
-    // panel is written into its own extensions directory instead
-    // (`pi-mcp-bridge.ts`). Every other harness ignores this.
+    const grantedRouteServers = grantedHostRouteWires(
+      grantedHostRoutes,
+      operatorHome,
+      hostImportedMcpDeclarations({
+        operatorHome,
+        agentKind: this.options.config.agentKind,
+      }),
+    );
+    // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
+    // daemon tool panel is written into its own extensions directory instead
+    // (`pi-mcp-bridge.ts`). Granted host routes also ride that bridge:
+    // isolated homes write them into `mcp.json` like the other harnesses,
+    // but pi 0.85.1 itself does not read that file and isolated homes
+    // exclude the settings.json that would load optional pi-mcp-adapter.
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
-      servers,
+      servers: [...servers, ...grantedRouteServers],
     });
     // What this session actually mounted, not only the Beeline-owned servers:
     // the isolated home also holds every copied local import and every granted
@@ -688,6 +708,7 @@ export class MonolithRoomTurnLoop {
     // missing here is a mounted server the agent could never call.
     const mountedServers = [
       ...servers.map((server) => server.name),
+      ...grantedRouteServers.map((server) => server.name),
       ...this.mountedMcpServers(agentEnv),
     ];
     const hostServers = ungatedHostServers(

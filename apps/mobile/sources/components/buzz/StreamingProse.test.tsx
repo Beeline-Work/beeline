@@ -17,6 +17,17 @@ vi.mock('react-native', async () => {
   };
 });
 
+// Code fences share the native output sheet; keep its platform shell out of Node.
+vi.mock('./HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
+  };
+});
+
 let reducedMotion = false;
 vi.mock('react-native-reanimated', () => ({ useReducedMotion: () => reducedMotion }));
 

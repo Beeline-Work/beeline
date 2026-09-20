@@ -324,6 +324,7 @@ export function useRoomSurfaceSession({
   useEffect(() => {
     if (!channelId) return;
     if (!isFocused) return;
+    liveDraftDrainStore.setActive(true);
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;

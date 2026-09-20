@@ -6,6 +6,7 @@ const root = path.join(__dirname, '..');
 const chat = readFileSync(path.join(root, 'chat/[channelId].tsx'), 'utf8');
 const surface = readFileSync(path.join(root, 'chat/_chat-surface.tsx'), 'utf8');
 const channels = readFileSync(path.join(root, 'channels.tsx'), 'utf8');
+const sidebar = readFileSync(path.join(root, '../../../components/SidebarView.tsx'), 'utf8');
 const composer = readFileSync(
   path.join(root, '../../../components/buzz/ConversationComposer.tsx'),
   'utf8',
@@ -58,6 +59,13 @@ describe('Room open paints a Room, not the last message', () => {
     expect(pressIn).not.toContain('seedRoomOpenPixel');
     expect(pressIn).not.toContain('setOpeningSeed');
     expect(pressIn).toContain('prefetchRoom');
+  });
+
+  it('opens a Room without stacking a second copy of the same channel', () => {
+    expect(channels).toContain('navigateToRoom');
+    expect(channels).not.toContain('router.push(`/beeline/chat/${encodeURIComponent(id)}`');
+    expect(sidebar).toContain('navigateToRoom');
+    expect(sidebar).not.toContain('router.push(`/beeline/chat/${encodeURIComponent(id)}`');
   });
 
   it('opens the Room with header, transcript, and composer instead of a last-message pixel', () => {

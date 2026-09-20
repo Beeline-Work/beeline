@@ -411,6 +411,13 @@ const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
  * the stacked 12+44 boxes that used to float the diamond away.
  */
 const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
+/**
+ * `◇` is missing from Space Grotesk, so the mark paints from a fallback face
+ * inside the body line box; a rotated square also reads high against the
+ * overflow bullets, whose ink sits ~1px below their line-box centre. 2px down
+ * is the optical correction — size, weight and the character stay put.
+ */
+const CORNER_DIAMOND_OPTICAL_Y = 2;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -5793,6 +5800,8 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.body,
       color: groknight.accent,
+      includeFontPadding: false,
+      transform: [{ translateY: CORNER_DIAMOND_OPTICAL_Y }],
     },
     roomActionsGlyph: {
       ...Typography.default('semiBold'),
@@ -5800,6 +5809,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
       lineHeight: 16,
       letterSpacing: 1.2,
+      includeFontPadding: false,
     },
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,

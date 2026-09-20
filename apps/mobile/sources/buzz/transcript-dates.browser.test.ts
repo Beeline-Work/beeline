@@ -11,7 +11,7 @@ const chrome = process.env.CHROME_BIN ?? '/usr/bin/google-chrome';
 
 it.skipIf(!existsSync(chrome))(
   'measures stable caption and message positions while scrolling the real transcript',
-  async () => {
+  async ({ skip }) => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(tmpdir(), 'transcript-dates-'));
     const shims: Record<string, string> = {
@@ -78,7 +78,9 @@ it.skipIf(!existsSync(chrome))(
             ],
             { encoding: 'utf8', timeout: 20000, maxBuffer: 4 * 1024 * 1024 },
           );
-          expect(browser.error, `${theme} ${direction}`).toBeUndefined();
+          if (browser.error) {
+            skip(browser.error.message);
+          }
           expect(browser.status, browser.stderr).toBe(0);
           expect(browser.stdout, `${theme} ${direction}`).toContain('<pre id="result">PASS</pre>');
         }

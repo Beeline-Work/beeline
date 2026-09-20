@@ -152,7 +152,10 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
     expect(diamond![0]).toContain('color: groknight.accent');
     expect(diamond![0]).toContain('...groknight.type.body');
+    expect(diamond![0]).toContain('includeFontPadding: false');
+    expect(diamond![0]).toContain('transform: [{ translateY: CORNER_DIAMOND_OPTICAL_Y }]');
     expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    expect(chatSource).toContain('const CORNER_DIAMOND_OPTICAL_Y = 2');
     // Captain 2026-09-20: optically the SAME mark-size as the overflow dots —
     // neither a speck nor a tower. `◇` draws about 0.6em, so the role that
     // matches the dots by eye sits just above their own size, and well below
@@ -166,6 +169,7 @@ describe('Chat header — one language for Room and Corner', () => {
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(dots![0]).toContain('color: groknight.steel');
     expect(dots![0]).toContain('fontSize: 12');
+    expect(dots![0]).toContain('includeFontPadding: false');
     // Its own 44pt-tall target, so it is a destination rather than chrome
     // hanging off the menu.
     const doorButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);

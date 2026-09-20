@@ -30,7 +30,6 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { trustySquireStorePath } from './trusty-squire-storage.js';
-import { squireSessionUnmaskPaths } from './host-mcp-route.js';
 import {
   ensureSquireHostDir,
   squireFacadeLaunch,
@@ -385,7 +384,7 @@ describe('credential masks — readable is usable, so known stores are absent', 
   });
 
   it('creates private mountpoints for required paths absent on the host', () => {
-    const store = '/home/op/.config/trusty-squire';
+    const store = '/home/op/.gnupg';
     const bus = '/run/user/1000/bus';
     const masks = credentialMaskPaths([store, bus], '/home/op', () => undefined, [store, bus]);
     const { args } = buildBwrapArgv({
@@ -481,7 +480,7 @@ describe('credential masks — readable is usable, so known stores are absent', 
     ]);
   });
 
-  it('a granted Squire route unmasks only .config/trusty-squire, never ssh or gh', () => {
+  it('leaves MCP session directories off the known mask so they stay reachable', () => {
     const session = '/home/op/.config/trusty-squire';
     const masks = credentialMaskPaths(
       undefined,
@@ -492,8 +491,6 @@ describe('credential masks — readable is usable, so known stores are absent', 
         }
         return { isDirectory: true };
       },
-      [],
-      [session],
     );
     expect(masks.map((mask) => mask.path)).not.toContain(session);
     expect(masks.map((mask) => mask.path)).toEqual(
@@ -714,7 +711,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   it('keeps stores and session sockets created after activation outside the namespace', async () => {
     const hostConfig = resolve(root, 'late-config');
     const runtimeDir = resolve(root, 'late-run');
-    const store = resolve(hostConfig, 'trusty-squire');
+    const store = resolve(hostConfig, 'late-store');
     const bus = resolve(runtimeDir, 'bus');
     mkdirSync(hostConfig, { recursive: true });
     mkdirSync(runtimeDir, { recursive: true });
@@ -840,15 +837,7 @@ try {
           mode: 'readonly' as const,
           cwd: checkout,
           additionalWritablePaths: squireHostBindPaths(operatorHome, granted),
-          maskPaths: credentialMaskPaths(
-            undefined,
-            operatorHome,
-            undefined,
-            [],
-            squireSessionUnmaskPaths(operatorHome, granted, {
-              squire: { command: 'squire-mcp' },
-            }),
-          ),
+          maskPaths: credentialMaskPaths(undefined, operatorHome),
         },
         command: process.execPath,
         args: [probe],
@@ -859,9 +848,15 @@ try {
       });
     };
     try {
-      const ungranted = runFacade([]);
-      expect(ungranted.stdout.trim()).toBe('unpaired');
-      expect(ungranted.status).not.toBe(0);
+      const reachable = runWrapped(
+        {
+          mode: 'readonly' as const,
+          cwd: checkout,
+          maskPaths: credentialMaskPaths(undefined, operatorHome),
+        },
+        `cat ${JSON.stringify(resolve(sessionDir, 'session.json'))}`,
+      );
+      expect(reachable.stdout.trim()).toBe('{"paired":true}');
 
       const grantedA = runFacade(['squire']);
       const grantedB = runFacade(['squire']);

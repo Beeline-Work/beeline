@@ -116,9 +116,9 @@
  * the known credential homes ({@link KNOWN_CREDENTIAL_MASK_PATHS}); an owner
  * whose machine keeps secrets elsewhere extends it via the runtime record's
  * `sandboxMaskPaths` or the `BUZZY_BODY_SANDBOX_MASK` environment variable
- * (comma-separated absolute paths). An owner-only `mcp` grant may unmask
- * exactly `.config/trusty-squire` so a rewritten façade can read
- * `session.json` — never a blanket drop of the known list.
+ * (comma-separated absolute paths). MCP server configuration and session
+ * directories are not on that list — a sandboxed agent can read the host
+ * Trusty Squire session.
  *
  * **Residual, stated honestly**: no mask list can enumerate every secret on a
  * shared operator machine — env files, dotfiles, and tool state live
@@ -232,10 +232,6 @@ export function harnessHomeStateDirs(
  */
 export const KNOWN_CREDENTIAL_MASK_PATHS = [
   '.config/gh',
-  // Stays masked for every ungranted session. A granted Squire route unmasks
-  // this one path via {@link credentialMaskPaths} `unmaskPaths` so the façade
-  // can read `session.json`. Do not remove the entry.
-  '.config/trusty-squire',
   '.ssh',
   '.netrc',
   '.git-credentials',
@@ -255,9 +251,7 @@ export interface MaskedPath {
  * do not exist are skipped. Required absent entries get namespace-only
  * directory mountpoints so later-created host paths remain hidden. Existing
  * entry kinds come from a real stat so the argv builder can pick tmpfs vs
- * `/dev/null` without touching the filesystem itself. `unmaskPaths` is the
- * grant-scoped exemption: those resolved paths are omitted from the mask so
- * a rewritten Squire façade can read the host session, and nothing else.
+ * `/dev/null` without touching the filesystem itself.
  */
 export function credentialMaskPaths(
   extraPaths: string[] | undefined,
@@ -271,10 +265,8 @@ export function credentialMaskPaths(
     }
   },
   requiredPaths: string[] = [],
-  unmaskPaths: readonly string[] = [],
 ): MaskedPath[] {
   const required = new Set(requiredPaths.map((path) => resolve(path)));
-  const unmasked = new Set(unmaskPaths.map((path) => resolve(path)));
   const candidates = [
     ...KNOWN_CREDENTIAL_MASK_PATHS.map((entry) => resolve(home, entry)),
     ...(extraPaths ?? []).map((entry) => resolve(entry)),
@@ -282,7 +274,7 @@ export function credentialMaskPaths(
   const seen = new Set<string>();
   const masks: MaskedPath[] = [];
   for (const path of candidates) {
-    if (seen.has(path) || unmasked.has(path)) continue;
+    if (seen.has(path)) continue;
     seen.add(path);
     const info = stat(path);
     if (!info) {
@@ -623,6 +615,6 @@ export function detectBwrapSandbox(
   }
   return {
     path: bwrapPath,
-    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp and PID namespace, writable only in its own harness state; ambient credential stores (~/.config/gh, ~/.config/trusty-squire, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a repository corner adds its worktree and git dir, then receives its linked repository's GitHub App credential. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
+    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp and PID namespace, writable only in its own harness state; ambient credential stores (~/.config/gh, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a repository corner adds its worktree and git dir, then receives its linked repository's GitHub App credential. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
   };
 }

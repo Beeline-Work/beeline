@@ -2302,10 +2302,11 @@ export function BuzzChatSurface({
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
-  // keyboard, and an offline helper mounts its hint. The phone turn line
-  // hangs above the whole bottom stack instead of growing this footprint.
-  // Native layout can update the pinned ref before an effect runs, preserving
-  // the old offset as an empty gap. Capture the verdict in render.
+  // keyboard, an offline helper mounts its hint, and the phone turn line is
+  // an in-flow band above the composer (`bottomChromeLayoutKey` includes
+  // turn/no-turn). Native layout can update the pinned ref before an effect
+  // runs, preserving the old offset as an empty gap. Capture the verdict in
+  // render.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -4519,15 +4520,13 @@ export function BuzzChatSurface({
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail. The offline
-              // hint already pushes that tail above the composer; reserve
-              // the hanging line only when it is absent. This keeps the
-              // offline + thinking gap identical to the Room's idle gap.
+              // Inverted list: paddingTop is the visual tail. Always the
+              // ordinary 12px — the thinking line is an in-flow band above
+              // the composer, not a padding reserve and not an overlay.
               !desktopTranscript &&
-                !isArchived &&
-                (composerAck || settledTurn) && {
+                !isArchived && {
                   paddingTop: phoneTranscriptTailPadding({
-                    turnChromeVisible: true,
+                    turnChromeVisible: Boolean(composerAck || settledTurn),
                     pushedChromeVisible: agentsOffline,
                   }),
                 },
@@ -4840,10 +4839,10 @@ export function BuzzChatSurface({
             </View>
           ) : (
             <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-              {/* Phone turn chrome hangs above the whole bottom stack
-                (corner, offline, composer) so it cannot cover any of them.
-                The inverted list reserves this height; the line fills it.
-                Desktop keeps the reserved slot inside inputBar. */}
+              {/* Phone turn chrome is an in-flow band above the composer —
+                hairline, then the line, then the composer's hairline — so it
+                cannot paint over the last message. The transcript tail stays
+                the ordinary 12px. Desktop keeps the slot inside inputBar. */}
               {!desktopExperience && composerAck && (
                 <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
                   <TurnProgressLine
@@ -6026,10 +6025,8 @@ const styles = StyleSheet.create((theme) => {
     emptyState: {
       flexGrow: 1,
     },
-    // The stack, the line hanging off its top edge, and the composer row are
-    // one measured column — `buzz/room-bottom-chrome.ts` owns all three so the
-    // zero gap between the turn line and the composer is a number a test can
-    // read rather than a shape three separate rules happen to agree on.
+    // The stack, the in-flow turn band, and the composer row are one measured
+    // column — `buzz/room-bottom-chrome.ts` owns all three.
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
     hangingTurnChrome: bottomChrome.hangingTurnChrome,

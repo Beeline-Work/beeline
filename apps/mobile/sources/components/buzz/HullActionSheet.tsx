@@ -44,12 +44,11 @@ const SHEET_BODY_MIN_HEIGHT = 140;
 function useVisualKeyboardHeight(): number {
   const [height, setHeight] = React.useState(0);
   React.useEffect(() => {
-    const addListener = Keyboard?.addListener;
-    if (typeof addListener !== 'function') return undefined;
-    const shown = addListener('keyboardDidShow', (event) => {
+    if (typeof Keyboard?.addListener !== 'function') return undefined;
+    const shown = Keyboard.addListener('keyboardDidShow', (event) => {
       setHeight(event.endCoordinates?.height ?? 0);
     });
-    const hidden = addListener('keyboardDidHide', () => setHeight(0));
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setHeight(0));
     return () => {
       shown.remove();
       hidden.remove();

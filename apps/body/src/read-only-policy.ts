@@ -1,4 +1,5 @@
 import type { AcpPermissionRequest } from './acp.js';
+import { CODE_OWNED_HOST_MCP_NAMES, isHostMcpIdentity } from './mcp-route-class.js';
 
 export const READ_ONLY_MCP_SERVER_NAME = 'beeline-readonly-mcp';
 export const BEELINE_AGENT_MCP_SERVER_NAME = 'beeline-agent';
@@ -268,29 +269,25 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'fetch_image',
 ] as const;
 
-const SQUIRE_TITLE_PREFIXES = [
-  'mcp__squire__',
-  'mcp.squire.',
-  'squire.',
-  'squire/',
-  // grok's qualified `<server>__<tool>` spelling, inside `use_tool` or as the
-  // relabelled title.
-  'squire__',
-] as const;
-
 /**
- * Trusty Squire stays host-broker-gated even where other MCP calls are
- * approved: it is never session-mounted in a thin Room. This wins before any
- * allow rule, and reads the dispatcher envelope as well as the title so a
- * wrapper cannot carry it past the gate.
+ * Host-classified MCP stays host-gated even where other MCP calls are
+ * approved. This wins before any allow rule, and reads the dispatcher
+ * envelope as well as the title so a wrapper cannot carry it past the gate.
+ * Classification is the same host/local verdict the import step uses;
+ * Squire is code-owned as host, and an operator-marked host server is
+ * refused the same way.
  */
-export function isSquireMcpPermissionRequest(request: AcpPermissionRequest): boolean {
+export function isHostMcpPermissionRequest(
+  request: AcpPermissionRequest,
+  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
+): boolean {
   const rawInput = request.toolCall?.rawInput;
   if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
-    if ((rawInput as Record<string, unknown>).server === 'squire') return true;
+    const server = (rawInput as Record<string, unknown>).server;
+    if (typeof server === 'string' && isHostMcpIdentity(server, hostServers)) return true;
   }
   return toolIdentityCandidates(request.toolCall).some((candidate) =>
-    SQUIRE_TITLE_PREFIXES.some((prefix) => candidate.toLowerCase().startsWith(prefix)),
+    isHostMcpIdentity(candidate, hostServers),
   );
 }
 

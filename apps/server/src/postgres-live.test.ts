@@ -232,7 +232,7 @@ describe('Postgres live fanout', () => {
     );
   });
 
-  it('names the parent Room on a corner membership invalidate', async () => {
+  it('names the parent Room and the corner opener on a corner membership invalidate', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, live, () => client, 1);
@@ -261,9 +261,61 @@ describe('Postgres live fanout', () => {
           event.targetAgentId === AUTHOR &&
           event.roomId === corner &&
           event.parentRoomId === ROOM &&
+          event.openedBy === AUTHOR &&
           event.removed !== true,
       ),
     );
+
+    // `openCorner` writes the corner's memberships before `corner_facts`, so
+    // the opener is read the way the corner list reads it: the recorded owner
+    // once it exists, and the room's creator until then.
+    const opener = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane) VALUES($1,$2,'fix it','code')`,
+      [corner, opener],
+    );
+    received.length = 0;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+      [WORKSPACE, corner, opener],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === opener &&
+          event.openedBy === opener,
+      ),
+    );
+  });
+
+  it('leaves a top-level Room membership without a corner opener', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, AUTHOR],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) => event.type === 'invalidate' && event.reason === 'postgres:memberships',
+      ),
+    );
+    expect(
+      received.filter((event) => event.type === 'invalidate' && event.openedBy !== undefined),
+    ).toEqual([]);
   });
 
   it('delivers a connector-assignment wake without a catalog', async () => {

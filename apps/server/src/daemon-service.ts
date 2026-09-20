@@ -3777,13 +3777,7 @@ export class DaemonService {
     const parentId = await this.database.transaction(async (database) => {
       return (await closeCornerState(database, cornerId)).parentId;
     });
-    this.live.publish({
-      type: 'invalidate',
-      roomId: cornerId,
-      reason: 'corner',
-      closeRequested: true,
-      agentId,
-    });
+    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
     this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return this.writeResult();
   }

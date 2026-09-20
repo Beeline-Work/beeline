@@ -530,12 +530,14 @@ describe('daemon live command push', () => {
       targetAgentId: agentId,
       operation: 'INSERT',
       parentRoomId: roomId,
+      openedBy: 'opener-agent',
     });
     await expect(roomsChanged).resolves.toEqual({
       type: 'rooms-changed',
       roomId: 'corner-1',
       operation: 'INSERT',
       parentRoomId: roomId,
+      openedBy: 'opener-agent',
     });
 
     const connector = nextSocketMessage(socket, 'connector-assignment');

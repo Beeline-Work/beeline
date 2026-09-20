@@ -77,6 +77,14 @@ BEGIN
         'parentRoomId', (
           SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)
         ),
+        'openedBy', (
+          SELECT COALESCE(
+            (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+            room.created_by
+          )
+          FROM rooms room
+          WHERE room.id = COALESCE(NEW.room_id, OLD.room_id) AND room.parent_id IS NOT NULL
+        ),
         'removed', CASE
           WHEN TG_OP = 'DELETE' THEN true
           ELSE COALESCE(NEW.removed_at IS NOT NULL, false)
@@ -179,6 +187,7 @@ interface LiveNotificationPayload {
   traceId?: string;
   databaseAt?: number;
   parentRoomId?: string;
+  openedBy?: string;
   removed?: boolean;
   closeRequested?: boolean;
 }
@@ -209,6 +218,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.traceId === 'string' ? { traceId: parsed.traceId } : {}),
       ...(typeof parsed.databaseAt === 'number' ? { databaseAt: parsed.databaseAt } : {}),
       ...(typeof parsed.parentRoomId === 'string' ? { parentRoomId: parsed.parentRoomId } : {}),
+      ...(typeof parsed.openedBy === 'string' ? { openedBy: parsed.openedBy } : {}),
       ...(typeof parsed.removed === 'boolean' ? { removed: parsed.removed } : {}),
       ...(typeof parsed.closeRequested === 'boolean'
         ? { closeRequested: parsed.closeRequested }
@@ -396,6 +406,7 @@ export class PostgresLiveListener {
         ? { targetAgentId: payload.identityId }
         : {}),
       ...(payload.parentRoomId ? { parentRoomId: payload.parentRoomId } : {}),
+      ...(payload.openedBy ? { openedBy: payload.openedBy } : {}),
       ...(payload.removed ? { removed: true } : {}),
       ...(payload.closeRequested ? { closeRequested: true } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),

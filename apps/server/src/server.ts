@@ -283,6 +283,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   ...(event.roomId ? { roomId: event.roomId } : {}),
                   ...(event.operation ? { operation: event.operation } : {}),
                   ...(event.parentRoomId ? { parentRoomId: event.parentRoomId } : {}),
+                  ...(event.openedBy ? { openedBy: event.openedBy } : {}),
                   ...(event.removed ? { removed: true } : {}),
                 }),
               );
@@ -500,10 +501,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
                     return;
                   }
-                  if (
-                    event.closeRequested &&
-                    (event.reason === 'postgres:corner_facts' || event.reason === 'corner')
-                  ) {
+                  if (event.closeRequested && event.reason === 'postgres:corner_facts') {
                     if (client.readyState === client.OPEN)
                       client.send(JSON.stringify({ type: 'corner-complete', roomId }));
                     return;

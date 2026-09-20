@@ -322,6 +322,7 @@ describe('DaemonApiClient', () => {
       type: 'rooms-changed',
       roomId: 'corner-1',
       parentRoomId: 'room-1',
+      openedBy: 'opener-agent',
       operation: 'INSERT',
     });
     socket.message({ type: 'rooms-changed', roomId: 'corner-1', removed: true });
@@ -355,7 +356,7 @@ describe('DaemonApiClient', () => {
     expect(memberships).toEqual([
       // Socket open: the unscoped wake that still arms the recovery reconcile.
       undefined,
-      { roomId: 'corner-1', parentRoomId: 'room-1', operation: 'INSERT' },
+      { roomId: 'corner-1', parentRoomId: 'room-1', openedBy: 'opener-agent', operation: 'INSERT' },
       { roomId: 'corner-1', removed: true },
       {},
     ]);

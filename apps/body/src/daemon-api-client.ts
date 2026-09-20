@@ -21,6 +21,8 @@ export type InboxItem = Output<'getRoomInbox'>['items'][number];
 export type RoomMembershipChange = {
   readonly roomId?: string;
   readonly parentRoomId?: string;
+  /** The corner's opener, carried by the same row that announces the corner. */
+  readonly openedBy?: string;
   readonly operation?: string;
   readonly removed?: boolean;
 };
@@ -93,6 +95,7 @@ function membershipChange(event: Record<string, unknown>): RoomMembershipChange 
   return {
     ...(typeof event.roomId === 'string' && event.roomId ? { roomId: event.roomId } : {}),
     ...(typeof event.parentRoomId === 'string' ? { parentRoomId: event.parentRoomId } : {}),
+    ...(typeof event.openedBy === 'string' ? { openedBy: event.openedBy } : {}),
     ...(typeof event.operation === 'string' ? { operation: event.operation } : {}),
     ...(event.removed === true ? { removed: true } : {}),
   };

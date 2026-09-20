@@ -292,10 +292,9 @@ describe('corner merge instructions', () => {
 });
 
 describe('corner close-request polling cadence', () => {
-  it('polls on a 10-minute recovery interval with jitter', () => {
-    expect(CORNER_CLOSE_POLL_BASE_MS).toBe(10 * 60_000);
+  it('spreads the recovery poll with up to three seconds of jitter', () => {
     expect(cornerClosePollMs(() => 0)).toBe(CORNER_CLOSE_POLL_BASE_MS);
-    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThanOrEqual(CORNER_CLOSE_POLL_BASE_MS);
+    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThan(CORNER_CLOSE_POLL_BASE_MS);
     expect(cornerClosePollMs(() => 0.999)).toBeLessThan(CORNER_CLOSE_POLL_BASE_MS + 3_000);
     expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
   });

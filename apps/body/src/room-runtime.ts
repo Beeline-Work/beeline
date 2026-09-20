@@ -683,9 +683,19 @@ export class RoomRuntimeCoordinator {
     if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
     if (event.parentRoomId) {
       this.monolithCornerParents.set(roomId, event.parentRoomId);
+      // The opener rides the same row that announces the corner. Without it
+      // nobody is the opener, so the initial `working` state — the only write
+      // of `corner_facts.feature_branch`, which every corner GitHub webhook is
+      // resolved by — would never happen. Fall back to the reconcile read that
+      // carries the corner's recorded opener rather than starting it blind.
+      if (!event.openedBy) {
+        this.discoveryWakes.wake();
+        return;
+      }
       await this.startCorner({
         cornerId: roomId,
         parentRoomId: event.parentRoomId,
+        openedBy: event.openedBy,
       });
       return;
     }

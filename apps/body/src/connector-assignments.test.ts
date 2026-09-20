@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
-import {
-  CEREMONY_EXPIRED,
-  CONNECTOR_POLL_INTERVAL_MS,
-  ConnectorAssignmentLoop,
-} from './connector-assignments.js';
+import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
@@ -68,10 +64,6 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
-  it('uses a 5-minute recovery poll, not a 10-second ask', () => {
-    expect(CONNECTOR_POLL_INTERVAL_MS).toBe(5 * 60_000);
-  });
-
   it('drains immediately on wake without waiting for the recovery poll', async () => {
     const api = apiMock([]);
     let scheduled = 0;

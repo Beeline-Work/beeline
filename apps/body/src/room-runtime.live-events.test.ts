@@ -4,10 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonApiClient, RoomMembershipChange } from './daemon-api-client.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import {
-  DEFAULT_RECONCILE_HEARTBEAT_MS,
-  RoomRuntimeCoordinator,
-} from './room-runtime.js';
+import { RoomRuntimeCoordinator } from './room-runtime.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -30,10 +27,6 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('RoomRuntimeCoordinator live membership apply', () => {
-  it('uses a 10-minute recovery heartbeat', () => {
-    expect(DEFAULT_RECONCILE_HEARTBEAT_MS).toBe(10 * 60_000);
-  });
-
   it('starts a Room from a membership push without listing corners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-room-'));
     roots.push(root);
@@ -109,6 +102,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       await coordinator.applyMembershipEvent({
         roomId: 'corner-1',
         parentRoomId: 'room-1',
+        openedBy: identityFromKey('11'.repeat(32), 'Bee').publicKey,
         operation: 'INSERT',
       });
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('corner-1'));
@@ -152,10 +146,42 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       await coordinator.applyMembershipEvent({
         roomId: 'corner-old',
         parentRoomId: 'room-1',
+        openedBy: identityFromKey('11'.repeat(32), 'Bee').publicKey,
         operation: 'INSERT',
       });
       expect(coordinator.activeRoomIds()).not.toContain('corner-old');
       expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('arms the recovery reconcile instead of starting a corner with no opener', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-opener-'));
+    roots.push(root);
+    const execute = vi.fn(async () => ({}));
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: vi.fn(),
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    try {
+      await coordinator.applyMembershipEvent({
+        roomId: 'corner-1',
+        parentRoomId: 'room-1',
+        operation: 'INSERT',
+      });
+      expect(coordinator.activeRoomIds()).not.toContain('corner-1');
+      expect(execute).not.toHaveBeenCalled();
+      expect(coordinator.needsFastReconcile()).toBe(true);
     } finally {
       await coordinator.shutdown();
     }

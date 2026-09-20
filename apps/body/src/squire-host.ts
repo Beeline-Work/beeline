@@ -9,14 +9,16 @@
  * user unit with no PrivateTmp. A sandboxed façade never elects.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const SQUIRE_BROKER_UNAVAILABLE = 'broker unavailable';
-export const SQUIRE_PROFILE_BUSY = 'profile_busy';
 export const TRUSTY_SQUIRE_BROKER_UNIT_NAME = 'trusty-squire-broker.service';
+/** Hidden CLI flag so a bundled `beeline` process can be the façade child. */
+export const SQUIRE_FACADE_FLAG = '--squire-facade';
 
 export type SquireHostPaths = {
   readonly dir: string;
@@ -45,56 +47,6 @@ export function squireHostRewriteEnv(home: string): Record<string, string> {
   };
 }
 
-export function squireSessionFile(configHome: string): string {
-  return join(resolve(configHome), 'trusty-squire', 'session.json');
-}
-
-/** The façade pairs when it can read a non-empty host session.json. */
-export function squireFacadeIsPaired(env: NodeJS.ProcessEnv = process.env): boolean {
-  const configHome =
-    env.XDG_CONFIG_HOME?.trim() || join(env.HOME?.trim() || homedir(), '.config');
-  try {
-    return readFileSync(squireSessionFile(configHome), 'utf8').trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-export function squireFacadeProbe(env: NodeJS.ProcessEnv = process.env): {
-  paired: boolean;
-  socketReady: boolean;
-} {
-  const paths = squireHostPaths(env.HOME?.trim() || homedir());
-  const socket = env.TRUSTY_SQUIRE_BROKER_SOCKET ?? paths.brokerSocket;
-  return {
-    paired: squireFacadeIsPaired(env),
-    socketReady: squireFacadeMaySpawn(socket),
-  };
-}
-
-/**
- * Unfixed PrivateTmp layout: each agent elects its own broker socket and
- * Chrome profile. Two agents → two inodes and two Chromes.
- */
-export function squirePrivateTmpTopology(agentHomes: readonly string[]): {
-  sockets: string[];
-  chromeProfiles: string[];
-} {
-  return {
-    sockets: agentHomes.map((home) => join(home, 'tmp', 'trusty-squire.sock')),
-    chromeProfiles: agentHomes.map((home) => join(home, '.trusty-squire', 'chrome-profile')),
-  };
-}
-
-export function squireUnfixedProcessPlan(agentCount: number): {
-  daemons: number;
-  chromes: number;
-  facades: number;
-  refusals: number;
-} {
-  return { daemons: agentCount, chromes: agentCount, facades: 0, refusals: 0 };
-}
-
 export function ensureSquireHostDir(home: string): SquireHostPaths {
   const paths = squireHostPaths(home);
   mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
@@ -102,12 +54,17 @@ export function ensureSquireHostDir(home: string): SquireHostPaths {
   return paths;
 }
 
-/** Bind-mount the host broker directory read-write when a host route is granted. */
-export function squireHostBindPaths(home: string, granted: readonly string[]): string[] {
-  if (granted.length === 0) return [];
+/**
+ * Bind-mount the host broker directory read-write, and only for an agent whose
+ * grant actually rewrites a Squire route: the broker socket and the logged-in
+ * Chrome profile live there, so an unrelated `mcp` grant must not reach them.
+ */
+export function squireHostBindPaths(home: string, squireRouteGranted: boolean): string[] {
+  if (!squireRouteGranted) return [];
   return [ensureSquireHostDir(home).dir];
 }
 
+/** A façade may spawn only when the host daemon already holds the socket. */
 export function squireBrokerSocketReady(socketPath: string): boolean {
   try {
     return lstatSync(socketPath).isSocket();
@@ -116,80 +73,31 @@ export function squireBrokerSocketReady(socketPath: string): boolean {
   }
 }
 
-/** A façade may spawn only when the host daemon already holds the socket. */
-export function squireFacadeMaySpawn(socketPath: string): boolean {
-  return squireBrokerSocketReady(socketPath);
-}
-
-export function squireTurnFailure(text: string | undefined | null): typeof SQUIRE_PROFILE_BUSY | typeof SQUIRE_BROKER_UNAVAILABLE | undefined {
-  if (typeof text !== 'string' || text.length === 0) return undefined;
-  if (new RegExp(SQUIRE_BROKER_UNAVAILABLE, 'i').test(text)) return SQUIRE_BROKER_UNAVAILABLE;
-  if (
-    /profile_busy/i.test(text) ||
-    /Trusty Squire[\s\S]{0,80}browser/i.test(text) ||
-    /browser[\s\S]{0,80}Trusty Squire/i.test(text)
-  ) {
-    return SQUIRE_PROFILE_BUSY;
-  }
-  return undefined;
-}
-
-export function squireFacadeScriptPath(): string {
-  return fileURLToPath(new URL('./squire-facade.js', import.meta.url));
-}
-
 /**
- * The per-client façade launch written into an isolated harness home. The
- * wrapper refuses to start when the host socket is missing, so a sandbox
- * never elects.
+ * The per-client façade entry: the compiled module beside this one, its source
+ * through tsx in a source checkout, or the bundled CLI plus its hidden flag —
+ * the single-file release bundle has no sibling module to spawn.
  */
 export function squireFacadeLaunch(home: string): {
   command: string;
   args: string[];
   env: Record<string, string>;
 } {
-  const compiled = squireFacadeScriptPath();
-  const script = existsSync(compiled) ? compiled : compiled.replace(/\.js$/, '.ts');
-  return {
-    command: process.execPath,
-    args: [script],
-    env: squireHostRewriteEnv(home),
-  };
-}
-
-/**
- * Observable topology for the RED/GREEN broker-count proof: two agents on
- * one host share one daemon socket and one Chrome profile.
- */
-export function squireHostTopology(
-  home: string,
-  agentIds: readonly string[],
-): {
-  daemonSocket: string;
-  chromeProfile: string;
-  facades: Array<{ agentId: string; brokerSocket: string; profileDir: string }>;
-} {
-  const paths = squireHostPaths(home);
-  return {
-    daemonSocket: paths.brokerSocket,
-    chromeProfile: paths.profileDir,
-    facades: agentIds.map((agentId) => ({
-      agentId,
-      brokerSocket: paths.brokerSocket,
-      profileDir: paths.profileDir,
-    })),
-  };
-}
-
-export function squireProcessPlan(input: {
-  hostHome: string;
-  agentCount: number;
-  brokerReady: boolean;
-}): { daemons: number; chromes: number; facades: number; refusals: number } {
-  if (!input.brokerReady) {
-    return { daemons: 0, chromes: 0, facades: 0, refusals: input.agentCount };
+  const env = squireHostRewriteEnv(home);
+  const meta = import.meta.url;
+  if (meta.startsWith('beeline:')) {
+    const entry = process.argv[1];
+    if (!entry) throw new Error('Squire façade cannot resolve the Beeline CLI entry');
+    return { command: process.execPath, args: [entry, SQUIRE_FACADE_FLAG], env };
   }
-  return { daemons: 1, chromes: 1, facades: input.agentCount, refusals: 0 };
+  const js = fileURLToPath(new URL('./squire-facade.js', meta));
+  if (existsSync(js)) return { command: process.execPath, args: [js], env };
+  const ts = fileURLToPath(new URL('./squire-facade.ts', meta));
+  if (existsSync(ts)) {
+    const tsx = createRequire(meta).resolve('tsx');
+    return { command: process.execPath, args: ['--import', tsx, ts], env };
+  }
+  throw new Error('Squire façade entry not found next to the Beeline helper');
 }
 
 /** The host elector: one user unit, no PrivateTmp, same socket every façade sees. */
@@ -217,19 +125,10 @@ WantedBy=default.target
 `;
 }
 
-export function runSquireFacade(
-  env: NodeJS.ProcessEnv = process.env,
-  argv: readonly string[] = process.argv,
-): void {
-  if (argv.includes('--probe')) {
-    const probe = squireFacadeProbe(env);
-    const ok = probe.paired && probe.socketReady;
-    process.stdout.write(ok ? 'paired\n' : 'unpaired\n');
-    process.exitCode = ok ? 0 : 1;
-    return;
-  }
-  const socket = env.TRUSTY_SQUIRE_BROKER_SOCKET ?? squireHostPaths(env.HOME?.trim() || homedir()).brokerSocket;
-  if (!squireFacadeMaySpawn(socket)) {
+export function runSquireFacade(env: NodeJS.ProcessEnv = process.env): void {
+  const socket =
+    env.TRUSTY_SQUIRE_BROKER_SOCKET ?? squireHostPaths(env.HOME?.trim() || homedir()).brokerSocket;
+  if (!squireBrokerSocketReady(socket)) {
     process.stderr.write(`${SQUIRE_BROKER_UNAVAILABLE}\n`);
     process.exitCode = 1;
     return;

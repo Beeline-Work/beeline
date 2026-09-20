@@ -30,12 +30,8 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { trustySquireStorePath } from './trusty-squire-storage.js';
-import {
-  ensureSquireHostDir,
-  squireFacadeLaunch,
-  squireHostBindPaths,
-  squireProcessPlan,
-} from './squire-host.js';
+import { grantedSquireHostBindPaths } from './agent-home.js';
+import { ensureSquireHostDir, squireFacadeLaunch } from './squire-host.js';
 
 const ROOM_BASE = [
   '--unshare-pid',
@@ -799,30 +795,38 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     expect(existsSync(resolve(siblingCorner, 'evil.txt'))).toBe(false);
   });
 
-  it('a granted Squire façade pairs through a masked sandbox; two façades share one broker', async () => {
+  it('a granted Squire façade reaches the one host broker; an ungranted grant reaches nothing', async () => {
     const operatorHome = resolve(checkout, 'squire-operator');
     const sessionDir = resolve(operatorHome, '.config/trusty-squire');
     mkdirSync(sessionDir, { recursive: true });
     writeFileSync(resolve(sessionDir, 'session.json'), '{"paired":true}\n');
     const paths = ensureSquireHostDir(operatorHome);
-    const probe = resolve(checkout, 'squire-facade-probe.cjs');
+    const ledger = resolve(paths.dir, 'brokers.jsonl');
+    // Squire's own server, as far as electing goes: it binds the socket it was
+    // handed and says whether it became the daemon or found one already there.
+    const shimDir = resolve(checkout, 'squire-bin');
+    mkdirSync(shimDir, { recursive: true });
+    const shim = resolve(shimDir, 'npx');
     writeFileSync(
-      probe,
-      `'use strict';
+      shim,
+      `#!${process.execPath}
+'use strict';
 const fs = require('fs');
-const path = require('path');
-const session = path.join(process.env.XDG_CONFIG_HOME, 'trusty-squire', 'session.json');
+const net = require('net');
 const socket = process.env.TRUSTY_SQUIRE_BROKER_SOCKET;
-try {
-  const paired =
-    fs.readFileSync(session, 'utf8').trim().length > 0 && fs.lstatSync(socket).isSocket();
-  process.stdout.write(paired ? 'paired\\n' : 'unpaired\\n');
-  process.exit(paired ? 0 : 1);
-} catch {
-  process.stdout.write('unpaired\\n');
-  process.exit(1);
-}
+const record = (outcome) =>
+  fs.appendFileSync(${JSON.stringify(ledger)}, JSON.stringify({ outcome, socket }) + '\\n');
+const server = net.createServer();
+server.once('error', () => {
+  record('connected');
+  process.exit(0);
+});
+server.listen(socket, () => {
+  record('elected');
+  server.close(() => process.exit(0));
+});
 `,
+      { mode: 0o755 },
     );
     const server = createServer();
     await new Promise<void>((resolveListen, rejectListen) => {
@@ -836,17 +840,29 @@ try {
         spec: {
           mode: 'readonly' as const,
           cwd: checkout,
-          additionalWritablePaths: squireHostBindPaths(operatorHome, granted),
+          additionalWritablePaths: grantedSquireHostBindPaths({
+            operatorHome,
+            grantedHostRoutes: granted,
+          }),
           maskPaths: credentialMaskPaths(undefined, operatorHome),
         },
-        command: process.execPath,
-        args: [probe],
+        command: launch.command,
+        args: launch.args,
       });
       return spawnSync(wrapped.command, wrapped.args, {
         encoding: 'utf8',
-        env: { ...process.env, ...launch.env, HOME: operatorHome },
+        env: {
+          ...launch.env,
+          PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+          HOME: operatorHome,
+        },
       });
     };
+    const records = () =>
+      readFileSync(ledger, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { outcome: string; socket: string });
     try {
       const reachable = runWrapped(
         {
@@ -858,16 +874,20 @@ try {
       );
       expect(reachable.stdout.trim()).toBe('{"paired":true}');
 
-      const grantedA = runFacade(['squire']);
-      const grantedB = runFacade(['squire']);
-      expect(grantedA.stdout.trim()).toBe('paired');
-      expect(grantedB.stdout.trim()).toBe('paired');
-      expect(grantedA.status).toBe(0);
-      expect(grantedB.status).toBe(0);
+      writeFileSync(ledger, '');
+      expect(runFacade(['squire']).status).toBe(0);
+      expect(runFacade(['squire']).status).toBe(0);
+      expect(records().map((entry) => entry.outcome)).toEqual(['connected', 'connected']);
+      expect(new Set(records().map((entry) => entry.socket))).toEqual(
+        new Set([paths.brokerSocket]),
+      );
       expect(lstatSync(paths.brokerSocket).isSocket()).toBe(true);
-      expect(
-        squireProcessPlan({ hostHome: operatorHome, agentCount: 2, brokerReady: true }),
-      ).toEqual({ daemons: 1, chromes: 1, facades: 2, refusals: 0 });
+
+      // A grant on some other host server binds nothing here: the broker
+      // directory stays read-only, so the same façade cannot touch it.
+      writeFileSync(ledger, '');
+      expect(runFacade(['browser']).status).not.toBe(0);
+      expect(records()).toEqual([]);
     } finally {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }

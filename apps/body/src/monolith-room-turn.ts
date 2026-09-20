@@ -19,13 +19,13 @@ import {
 } from './acp.js';
 import {
   expectedMountedImportedMcpServerNames,
+  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
 import { grantedHostRoutesFromList, ungatedHostServers } from './host-mcp-route.js';
-import { squireHostBindPaths } from './squire-host.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -639,7 +639,11 @@ export class MonolithRoomTurnLoop {
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
-          ...squireHostBindPaths(operatorHome, grantedHostRoutes),
+          ...grantedSquireHostBindPaths({
+            operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes,
+          }),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },

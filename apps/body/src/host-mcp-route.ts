@@ -1,9 +1,13 @@
 /**
  * Host MCP routes: Beeline copies the route to a server into an agent's
- * isolated home, never the server. A granted host declaration is rewritten
- * (Squire gets the host rewrite env and the façade wrapper) and merged after
- * local servers are copied. Ungranted host servers stay out.
+ * isolated home, never the server. EVERY granted host declaration is
+ * rewritten onto host state ({@link hostRouteEnv}) rather than copied
+ * verbatim, so the isolated home reaches the operator's one instance instead
+ * of standing up a private replica; Squire, the one server with a broker,
+ * additionally gets the non-electing façade wrapper. Routes are merged after
+ * local servers are copied, and ungranted host servers stay out.
  */
+import { join, resolve } from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
@@ -12,7 +16,7 @@ import {
   isCodeOwnedHostMcpName,
   MCP_ROUTE_CLASS_KEY,
 } from './mcp-route-class.js';
-import { squireFacadeLaunch, squireHostRewriteEnv } from './squire-host.js';
+import { squireFacadeLaunch } from './squire-host.js';
 
 export function grantedMcpServerNames(
   grants: readonly { kind: string; target: string }[] | undefined,
@@ -70,9 +74,31 @@ function isSquireDeclaration(name: string, declaration: Record<string, unknown>)
   return Boolean(command) && isTrustySquireMcpLaunch(command, stringArray(declaration.args));
 }
 
+/** True when a granted name resolves to a Squire host route. */
+export function grantedSquireHostRoute(
+  granted: readonly string[],
+  declarations: Record<string, Record<string, unknown>> = {},
+): boolean {
+  return granted.some((name) => {
+    if (isCodeOwnedHostMcpName(name)) return true;
+    const declaration = declarations[name];
+    return Boolean(declaration && isSquireDeclaration(name, declaration));
+  });
+}
+
 /**
- * Rewrite a host declaration into a route: keep a cheap stdio command, point a
- * singleton (Squire) at the host broker/profile, never copy the server itself.
+ * What makes a copied declaration a ROUTE rather than a replica: the server
+ * reads the operator's own configuration on the host instead of the empty
+ * isolated one it would otherwise find under the sandbox `$HOME`.
+ */
+export function hostRouteEnv(hostHome: string): Record<string, string> {
+  return { XDG_CONFIG_HOME: join(resolve(hostHome), '.config') };
+}
+
+/**
+ * Rewrite a host declaration into a route: point it at host state, and swap a
+ * singleton (Squire) onto the host broker/profile through the façade that
+ * never elects. The server itself is never copied.
  */
 export function rewriteHostMcpDeclaration(
   name: string,
@@ -81,18 +107,16 @@ export function rewriteHostMcpDeclaration(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...declaration };
   delete next[MCP_ROUTE_CLASS_KEY];
-  if (!isSquireDeclaration(name, declaration)) return next;
-  const launch = squireFacadeLaunch(hostHome);
+  const launch = isSquireDeclaration(name, declaration) ? squireFacadeLaunch(hostHome) : undefined;
+  const routeEnv = launch?.env ?? hostRouteEnv(hostHome);
   const gooseShape = 'cmd' in declaration && !('command' in declaration);
-  if (gooseShape) {
-    next.cmd = launch.command;
+  if (launch) {
+    if (gooseShape) next.cmd = launch.command;
+    else next.command = launch.command;
     next.args = launch.args;
-    next.envs = { ...recordValue(declaration.envs), ...launch.env };
-  } else {
-    next.command = launch.command;
-    next.args = launch.args;
-    next.env = { ...recordValue(declaration.env), ...launch.env };
   }
+  if (gooseShape) next.envs = { ...recordValue(declaration.envs), ...routeEnv };
+  else next.env = { ...recordValue(declaration.env), ...routeEnv };
   return next;
 }
 
@@ -144,8 +168,4 @@ export function mergeGooseHostRoutes(existing: string | undefined, routes: Recor
   const document = recordValue(parsed) ?? {};
   const extensions = { ...recordValue(document.extensions), ...routes };
   return stringifyYaml({ ...document, extensions });
-}
-
-export function squireRouteEnv(hostHome: string): Record<string, string> {
-  return squireHostRewriteEnv(hostHome);
 }

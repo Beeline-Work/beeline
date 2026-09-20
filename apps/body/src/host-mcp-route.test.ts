@@ -3,6 +3,8 @@ import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
 import {
   grantedMcpServerNames,
   grantedHostRoutesFromList,
+  grantedSquireHostRoute,
+  hostRouteEnv,
   mergeJsonHostRoutes,
   mergeTomlHostRoutes,
   rewriteGrantedHostRoutes,
@@ -47,13 +49,29 @@ describe('granted MCP host routes', () => {
     expect(rewritten).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
   });
 
-  it('keeps a non-Squire host server command and does not copy a Chrome profile', () => {
+  it('routes a non-Squire host server at host state instead of copying the launch line', () => {
     const rewritten = rewriteHostMcpDeclaration(
       'browser',
       { command: 'browser-mcp', [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST },
       '/home/op',
     );
-    expect(rewritten).toEqual({ command: 'browser-mcp' });
+    expect(rewritten).toEqual({
+      command: 'browser-mcp',
+      env: { XDG_CONFIG_HOME: '/home/op/.config' },
+    });
+    expect(rewritten.env).toEqual(hostRouteEnv('/home/op'));
+    expect(rewritten.env).not.toHaveProperty('TRUSTY_SQUIRE_PROFILE_DIR');
+  });
+
+  it('answers whether a grant reaches Squire, not merely some host server', () => {
+    const declarations = {
+      browser: { command: 'browser-mcp' },
+      vault: { command: 'npx', args: ['-y', '@trusty-squire/mcp@latest', 'server'] },
+    };
+    expect(grantedSquireHostRoute(['browser'], declarations)).toBe(false);
+    expect(grantedSquireHostRoute(['vault'], declarations)).toBe(true);
+    expect(grantedSquireHostRoute(['squire'], {})).toBe(true);
+    expect(grantedSquireHostRoute([], declarations)).toBe(false);
   });
 
   it('writes only granted host routes', () => {

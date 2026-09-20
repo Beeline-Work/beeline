@@ -15,12 +15,12 @@ import {
 } from './acp.js';
 import {
   expectedMountedImportedMcpServerNames,
+  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
 import { grantedHostRoutesFromList } from './host-mcp-route.js';
-import { squireHostBindPaths } from './squire-host.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -758,7 +758,11 @@ export class MonolithCornerTurnLoop {
           // and this one is deliberately outside the per-corner home so the
           // download is paid once per host rather than once per corner.
           npmCacheDir,
-          ...squireHostBindPaths(operatorHome, grantedHostRoutes),
+          ...grantedSquireHostBindPaths({
+            operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes,
+          }),
         ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },

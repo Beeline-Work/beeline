@@ -74,12 +74,13 @@ import {
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import { classifyImportedMcpServer } from './mcp-route-class.js';
 import {
+  grantedSquireHostRoute,
   mergeGooseHostRoutes,
   mergeJsonHostRoutes,
   mergeTomlHostRoutes,
   rewriteGrantedHostRoutes,
 } from './host-mcp-route.js';
-import { ensureSquireHostDir } from './squire-host.js';
+import { ensureSquireHostDir, squireHostBindPaths } from './squire-host.js';
 import {
   resolveOpenRouterRouting,
   withOpenRouterModelRouting,
@@ -508,7 +509,8 @@ async function applyGrantedHostRoutes(
 ): Promise<void> {
   if (granted.length === 0) return;
   try {
-    ensureSquireHostDir(operatorHome);
+    if (grantedSquireHostRoute(granted, hostImportedMcpDeclarations({ operatorHome, agentKind })))
+      ensureSquireHostDir(operatorHome);
     const routesFor = (kind: AgentKind) =>
       rewriteGrantedHostRoutes(
         hostImportedMcpDeclarations({ operatorHome, agentKind: kind }),
@@ -834,6 +836,28 @@ export function hostImportedMcpServerNames(
 ): string[] {
   return Object.keys(hostImportedMcpDeclarations(input)).sort((left, right) =>
     left.localeCompare(right),
+  );
+}
+
+/**
+ * The host paths a session must have bound read-write: only the Squire broker
+ * directory, and only for an agent whose grant actually rewrites a Squire
+ * route. Any other `mcp` grant reaches none of it.
+ */
+export function grantedSquireHostBindPaths(input: {
+  operatorHome?: string;
+  agentKind?: AgentKind;
+  grantedHostRoutes?: readonly string[];
+}): string[] {
+  const operatorHome = input.operatorHome ?? homedir();
+  const granted = input.grantedHostRoutes ?? [];
+  if (granted.length === 0) return [];
+  return squireHostBindPaths(
+    operatorHome,
+    grantedSquireHostRoute(
+      granted,
+      hostImportedMcpDeclarations({ operatorHome, agentKind: input.agentKind }),
+    ),
   );
 }
 

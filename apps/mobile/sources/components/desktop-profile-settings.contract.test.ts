@@ -12,10 +12,12 @@ describe('desktop profile settings path', () => {
   it('routes the persistent PC navigation to the unified Identity settings surface', () => {
     expect(sidebar).toContain('testID="profile-settings-navigation"');
     expect(sidebar).toContain("router.push('/beeline/settings' as Href)");
-    // The desktop foot is the viewer's own face (R4), labelled "Settings" for
-    // assistive technology; the 'PROFILE & SETTINGS' text row is retired.
-    expect(sidebar).toContain('accessibilityLabel="Settings"');
-    expect(sidebar).toContain('<IdentityMark seed={identityPubkey} kind="human"');
+    // The desktop foot is the viewer's own face AND username (R4, captain's
+    // amendment); the 'PROFILE & SETTINGS' text row is retired.
+    expect(sidebar).toContain('accessibilityLabel={');
+    expect(sidebar).toContain("`${viewerIdentity.name} — Settings`");
+    expect(sidebar).toContain('testID="profile-settings-name"');
+    expect(sidebar).toContain('<IdentityMark\n                  seed={identityPubkey}');
     expect(sidebar).not.toContain('PROFILE & SETTINGS');
     // The duplicated /settings redirect door is gone; the identity screen IS
     // the settings surface.

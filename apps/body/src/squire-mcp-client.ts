@@ -6,13 +6,17 @@
  * (`connector-squire.ts`) so the assignment loop stays Squire-shaped and
  * tests keep driving a mock.
  *
- * The server is spawned on demand (`npx -y @trusty-squire/mcp@latest server`),
- * initialized once, and left running for the helper's lifetime; a failed call
- * or a dead child tears the session down so the next call starts a fresh one.
- * Omitting `server` runs Squire's connect CLI instead of the vault MCP.
+ * The server is spawned on demand through the non-electing host façade
+ * (`squireFacadeLaunch`), initialized once, and left running for the helper's
+ * lifetime; a failed call or a dead child tears the session down so the next
+ * call starts a fresh one. The façade refuses when no host broker holds the
+ * socket. Tests may inject a command; omitting `server` on a raw npx spawn
+ * runs Squire's connect CLI instead of the vault MCP.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
+import { squireFacadeLaunch } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
@@ -98,10 +102,11 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
+    const launch = this.options.command ? undefined : squireFacadeLaunch(homedir());
     const child = (this.options.spawn ?? spawn)(
-      this.options.command ?? 'npx',
-      [...(this.options.args ?? [...SQUIRE_MCP_SERVER_ARGS])],
-      { env: this.options.env ?? squireConnectProcessEnv() },
+      this.options.command ?? launch!.command,
+      [...(this.options.args ?? launch!.args)],
+      { env: this.options.env ?? { ...squireConnectProcessEnv(), ...launch?.env } },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

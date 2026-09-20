@@ -10,6 +10,7 @@ import {
   installSquire,
   isProcessAlive,
   isSquireBrowserSessionFailure,
+  parseConnectHelperChrome,
   parseConnectOutput,
   readConnectionDetail,
   readConnectionLedger,
@@ -108,7 +109,7 @@ describe('parseConnectOutput', () => {
     expect(parseConnectOutput('nothing useful here')).toBeUndefined();
   });
 
-  it('reports the hosted --skip-browser install page as a streamed page', () => {
+  it('reports the hosted install page as a streamed page', () => {
     const signIn = parseConnectOutput(
       'Open this in your browser to finish: https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqmXeQUojqvHNwnpta3vv5p\n',
     );
@@ -116,6 +117,30 @@ describe('parseConnectOutput', () => {
       method: 'streamed-page',
       url: 'https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqmXeQUojqvHNwnpta3vv5p',
     });
+  });
+
+  it('ignores a marketing trustysquire.ai origin printed before the ceremony URL', () => {
+    const signIn = parseConnectOutput(
+      'Docs: https://trustysquire.ai\nOpen this: https://trustysquire.ai/install?token=secret\n',
+    );
+    expect(signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install?token=secret',
+    });
+  });
+
+  it('does not treat a bare trustysquire.ai page as the ceremony', () => {
+    expect(parseConnectOutput('Visit https://trustysquire.ai for help\n')).toBeUndefined();
+    expect(parseConnectOutput('Open https://trustysquire.ai/install\n')).toBeUndefined();
+  });
+
+  it('recognizes connect opening the shared host Chrome without a URL', () => {
+    expect(
+      parseConnectHelperChrome(
+        'Opening the Trusty Squire install page in a browser. The page walks you through signing in with Google.\n',
+      ),
+    ).toBe(true);
+    expect(parseConnectHelperChrome('still waiting\n')).toBe(false);
   });
 });
 
@@ -174,7 +199,7 @@ describe('installSquire', () => {
       ['npx', '-y', '@trusty-squire/mcp@latest', '--version'],
     ]);
     expect(streamInvocations).toEqual([
-      ['npx', '-y', '@trusty-squire/mcp@latest', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
+      ['npx', '-y', '@trusty-squire/mcp@latest', 'connect', '--target=codex'],
     ]);
   });
 
@@ -203,6 +228,23 @@ describe('installSquire', () => {
     expect(
       result.steps.find((step) => step.label === 'trusty-squire installed')?.reason,
     ).toContain('no sign-in URL');
+  });
+
+  it('continues the ceremony when connect opened the shared host Chrome', async () => {
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: async () => ({
+        stdout: 'Opening the Trusty Squire install page in a browser.\n',
+        stderr: '',
+        helperChrome: true,
+        abort: () => {},
+      }),
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(result.status).toBe('connected');
+    expect(result.signIn).toBeUndefined();
+    expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
   });
 
   it('surfaces the signIn URL on the installing result before the pairing probe', async () => {
@@ -352,9 +394,7 @@ describe('version resolution', () => {
       '-y',
       '@trusty-squire/mcp@1.1.14',
       'connect',
-      '--force-relogin=google',
       '--target=codex',
-      '--skip-browser',
     ]);
     expect(result.steps.find((s) => s.label.startsWith('trusty-squire'))?.status).toBe('done');
     expect(logs.join('\n')).toContain('stale copy');

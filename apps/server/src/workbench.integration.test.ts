@@ -186,6 +186,60 @@ describe('workbench connectors', () => {
     expect(otherView.connections).toEqual([]);
   });
 
+  it('lists keys in vault created-at order, not by service', async () => {
+    const connectorId = await pairOwnerConnector();
+    await applyVaultList(database, { id: connectorId, owner_identity_id: HUMAN }, [
+      {
+        reference: 'alpha',
+        service: 'alpha',
+        label: 'default',
+        fieldNames: ['token'],
+        allowedHosts: [],
+        createdAt: 10,
+        stale: false,
+        state: 'active',
+      },
+      {
+        reference: 'zeta',
+        service: 'zeta',
+        label: 'default',
+        fieldNames: ['token'],
+        allowedHosts: [],
+        createdAt: 40,
+        stale: false,
+        state: 'active',
+      },
+      {
+        reference: 'mu',
+        service: 'mu',
+        label: 'default',
+        fieldNames: ['token'],
+        allowedHosts: [],
+        createdAt: 20,
+        stale: false,
+        state: 'active',
+      },
+      {
+        reference: 'beta',
+        service: 'beta',
+        label: 'default',
+        fieldNames: ['token'],
+        allowedHosts: [],
+        createdAt: 30,
+        stale: false,
+        state: 'active',
+      },
+    ]);
+    const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connections: { reference: string; service: string; label: string }[];
+    };
+    const ours = view.connections.filter((row) =>
+      ['alpha', 'zeta', 'mu', 'beta'].includes(row.reference),
+    );
+    expect(ours.map((row) => row.reference)).toEqual(['zeta', 'beta', 'mu', 'alpha']);
+    expect(ours.every((row) => row.label === 'default')).toBe(true);
+  });
+
   it('reads the workbench when the client sends no workspace id (the settings screen path)', async () => {
     // The Workbench screen navigates with NO route params, so the client sends
     // workspaceId:''. It must NOT be cast to a uuid — the helpers query used to

@@ -1,16 +1,18 @@
 /**
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
- * One helper carries ONE Squire account (captain decision 2026-09-14). The
- * install runs Squire's own `connect --skip-browser` command through a
- * STREAMING runner that captures the hosted sign-in URL from live stdout as
- * soon as it appears (the machine token and sign-in surface print before
- * connect blocks waiting for the human). `--skip-browser` means connect never
- * launches its own Chrome — it prints a hosted sign-in page for the human's
- * own browser, so the install works on a headless helper with no local
- * display or tunnel binaries. The URL is surfaced as a `streamed-page` signIn
- * immediately; the connect process stays alive in the background while the
- * human completes sign-in on that page.
+ * One helper shares the host Squire broker and its one Chrome. The install
+ * runs Squire's own `connect` through a STREAMING runner that captures the
+ * sign-in URL from live stdout as soon as it appears (a noVNC URL on a
+ * headless helper, or the bot Chrome opening on a machine with a display).
+ * Connect is not given `--skip-browser` or `--force-relogin`: skip-browser
+ * signs the human in outside the bot profile so the shared Chrome never
+ * gains the session, and force-relogin clears provider cookies and asserts
+ * a single-session precondition the broker does not have. The URL is
+ * surfaced as a `streamed-page` signIn when Squire prints one; a local
+ * Chrome opening without a URL still starts the ceremony on the helper.
+ * The connect process stays alive in the background while the human
+ * completes sign-in.
  *
  * The old exit-only `ShellRunner` (defaultShellRunner) remains for the
  * version probe and other quick commands. A new `StreamedShellRunner`
@@ -324,6 +326,8 @@ export type StreamedCommandResult = {
   /** The sign-in surface, captured from live output. Undefined when the process
    * exited or errored before printing a URL. */
   readonly signIn?: ConnectorSignIn;
+  /** Connect opened the shared host Chrome and printed no ceremony URL. */
+  readonly helperChrome?: boolean;
   /** Kill the background process and clean up. Safe to call even if the
    * process has already exited. */
   readonly abort: () => void;
@@ -418,6 +422,10 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
       const signIn = parseConnectOutput(combined);
       if (signIn) {
         finish({ stdout, stderr, signIn, abort });
+        return;
+      }
+      if (parseConnectHelperChrome(combined)) {
+        finish({ stdout, stderr, helperChrome: true, abort });
       }
     };
 
@@ -446,13 +454,31 @@ const step = (label: string, status: ConnectorStep['status'], reason?: string): 
   ...(reason ? { reason } : {}),
 });
 
+/** Marketing/registry origins that are not a sign-in surface. Loading one
+ *  in the in-app webview is the black `not_found` page. */
+function isConnectCeremonyUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/i.test(parsed.protocol)) return false;
+    if (/oauth|authorize/i.test(url)) return true;
+    if (/novnc|vnc\.html|\/vnc\b|#p=/i.test(url)) return true;
+    return (
+      /\/install\b/i.test(parsed.pathname) &&
+      (parsed.searchParams.has('token') || parsed.hash.length > 1)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Read the sign-in surface out of Squire's own connect output. Squire prints
- * a banner carrying the URL and names the surface; the method follows the
- * words it prints, never our guess.
+ * Read the sign-in surface out of Squire's own connect output. Squire may
+ * print a marketing or registry URL before the real ceremony URL; the first
+ * https origin is not a sign-in page.
  */
 export function parseConnectOutput(output: string): ConnectorSignIn | undefined {
-  const url = output.match(/https:\/\/[^\s"'<>]+/)?.[0];
+  const urls = output.match(/https:\/\/[^\s"'<>]+/g) ?? [];
+  const url = urls.find(isConnectCeremonyUrl);
   if (!url) return undefined;
   if (/oauth|authorize/i.test(url) || /oauth/i.test(output)) {
     return { method: 'oauth', url };
@@ -460,9 +486,12 @@ export function parseConnectOutput(output: string): ConnectorSignIn | undefined 
   if (/novnc|vnc\.html|remote|stream/i.test(url) || /novnc|remote login|vnc/i.test(output)) {
     return { method: 'streamed-page', url };
   }
-  // Squire's connect only prints one sign-in URL; a URL with no recognisable
-  // surface words is the streamed page (the default install surface).
   return { method: 'streamed-page', url };
+}
+
+/** True when connect opened the shared host Chrome and printed no URL. */
+export function parseConnectHelperChrome(output: string): boolean {
+  return /Opening the Trusty Squire install page/i.test(output);
 }
 
 export type InstallSquireOptions = {
@@ -595,9 +624,10 @@ export function parseSignedInAs(output: string): string | undefined {
  *
  * Order: helper reached → trusty-squire installed → waiting for sign-in →
  * paired to the workspace. The connect command runs through a STREAMING
- * runner that captures the hosted sign-in URL from live stdout as soon as it
- * is printed (before the process exits). The connect process stays alive in
- * the background for the human to complete sign-in. The post-install
+ * runner that captures the ceremony URL from live stdout as soon as it is
+ * printed (before the process exits), or continues when connect opened the
+ * shared host Chrome without printing one. The connect process stays alive
+ * in the background for the human to complete sign-in. The post-install
  * `pairSquire` probe confirms the account is live.
  *
  * A failed step ends the report with a clear reason and everything after it
@@ -648,23 +678,15 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     );
   }
 
-  // Squire's `connect --skip-browser` prints a hosted sign-in URL for the
-  // human's own browser and then blocks waiting for sign-in. It never launches
-  // its own Chrome, so no local display or tunnel binaries are needed on a
-  // headless helper. The streaming runner captures the URL from live stdout
-  // and resolves immediately — keeping the process alive.
+  // Connect uses the shared host Chrome (or its headless noVNC URL). Do not
+  // pass --skip-browser or --force-relogin: those sign the human in outside
+  // the bot profile and clear cookies the broker can already share.
   const install = await streamRun(
     'npx',
-    [
-      ...resolution.npxArgs,
-      'connect',
-      '--force-relogin=google',
-      '--target=codex',
-      '--skip-browser',
-    ],
+    [...resolution.npxArgs, 'connect', '--target=codex'],
     squireConnectProcessEnv(profileDir),
   );
-  if (!install.signIn) {
+  if (!install.signIn && !install.helperChrome) {
     const stderr = install.stderr.trim();
     let stepReason = stderr || 'connect printed no sign-in URL';
     let failReason = stderr || 'the trusty-squire connect command printed no sign-in surface';

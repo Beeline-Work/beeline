@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
@@ -30,6 +30,13 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { trustySquireStorePath } from './trusty-squire-storage.js';
+import { squireSessionUnmaskPaths } from './host-mcp-route.js';
+import {
+  ensureSquireHostDir,
+  squireFacadeLaunch,
+  squireHostBindPaths,
+  squireProcessPlan,
+} from './squire-host.js';
 
 const ROOM_BASE = [
   '--unshare-pid',
@@ -473,6 +480,26 @@ describe('credential masks — readable is usable, so known stores are absent', 
       { path: '/home/op/.secrets.env', kind: 'file' },
     ]);
   });
+
+  it('a granted Squire route unmasks only .config/trusty-squire, never ssh or gh', () => {
+    const session = '/home/op/.config/trusty-squire';
+    const masks = credentialMaskPaths(
+      undefined,
+      '/home/op',
+      (path) => {
+        if (path === '/home/op/.netrc' || path === '/home/op/.git-credentials' || path === '/home/op/.secrets.env') {
+          return { isDirectory: false };
+        }
+        return { isDirectory: true };
+      },
+      [],
+      [session],
+    );
+    expect(masks.map((mask) => mask.path)).not.toContain(session);
+    expect(masks.map((mask) => mask.path)).toEqual(
+      expect.arrayContaining(['/home/op/.config/gh', '/home/op/.ssh']),
+    );
+  });
 });
 
 describe('feature detection falls back rather than failing the daemon', () => {
@@ -773,5 +800,81 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     );
     expect(escapeSibling.status).not.toBe(0);
     expect(existsSync(resolve(siblingCorner, 'evil.txt'))).toBe(false);
+  });
+
+  it('a granted Squire façade pairs through a masked sandbox; two façades share one broker', async () => {
+    const operatorHome = resolve(checkout, 'squire-operator');
+    const sessionDir = resolve(operatorHome, '.config/trusty-squire');
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(resolve(sessionDir, 'session.json'), '{"paired":true}\n');
+    const paths = ensureSquireHostDir(operatorHome);
+    const probe = resolve(checkout, 'squire-facade-probe.cjs');
+    writeFileSync(
+      probe,
+      `'use strict';
+const fs = require('fs');
+const path = require('path');
+const session = path.join(process.env.XDG_CONFIG_HOME, 'trusty-squire', 'session.json');
+const socket = process.env.TRUSTY_SQUIRE_BROKER_SOCKET;
+try {
+  const paired =
+    fs.readFileSync(session, 'utf8').trim().length > 0 && fs.lstatSync(socket).isSocket();
+  process.stdout.write(paired ? 'paired\\n' : 'unpaired\\n');
+  process.exit(paired ? 0 : 1);
+} catch {
+  process.stdout.write('unpaired\\n');
+  process.exit(1);
+}
+`,
+    );
+    const server = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once('error', rejectListen);
+      server.listen(paths.brokerSocket, resolveListen);
+    });
+    const runFacade = (granted: readonly string[]) => {
+      const launch = squireFacadeLaunch(operatorHome);
+      const wrapped = wrapAgentCommand({
+        bwrapPath: bwrap.path!,
+        spec: {
+          mode: 'readonly' as const,
+          cwd: checkout,
+          additionalWritablePaths: squireHostBindPaths(operatorHome, granted),
+          maskPaths: credentialMaskPaths(
+            undefined,
+            operatorHome,
+            undefined,
+            [],
+            squireSessionUnmaskPaths(operatorHome, granted, {
+              squire: { command: 'squire-mcp' },
+            }),
+          ),
+        },
+        command: process.execPath,
+        args: [probe],
+      });
+      return spawnSync(wrapped.command, wrapped.args, {
+        encoding: 'utf8',
+        env: { ...process.env, ...launch.env, HOME: operatorHome },
+      });
+    };
+    try {
+      const ungranted = runFacade([]);
+      expect(ungranted.stdout.trim()).toBe('unpaired');
+      expect(ungranted.status).not.toBe(0);
+
+      const grantedA = runFacade(['squire']);
+      const grantedB = runFacade(['squire']);
+      expect(grantedA.stdout.trim()).toBe('paired');
+      expect(grantedB.stdout.trim()).toBe('paired');
+      expect(grantedA.status).toBe(0);
+      expect(grantedB.status).toBe(0);
+      expect(lstatSync(paths.brokerSocket).isSocket()).toBe(true);
+      expect(
+        squireProcessPlan({ hostHome: operatorHome, agentCount: 2, brokerReady: true }),
+      ).toEqual({ daemons: 1, chromes: 1, facades: 2, refusals: 0 });
+    } finally {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
   });
 });

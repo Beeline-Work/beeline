@@ -6,5 +6,5 @@ import { runSquireFacade } from './squire-host.js';
 
 const entry = process.argv[1]?.replace(/\\/g, '/');
 if (entry && /squire-facade\.(c?js|ts)$/.test(entry)) {
-  runSquireFacade();
+  runSquireFacade(process.env, process.argv);
 }

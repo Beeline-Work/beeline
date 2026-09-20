@@ -16,10 +16,11 @@ import {
 import {
   expectedMountedImportedMcpServerNames,
   harnessStateDirsFromEnv,
+  hostImportedMcpDeclarations,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
-import { grantedHostRoutesFromList } from './host-mcp-route.js';
+import { grantedHostRoutesFromList, squireSessionUnmaskPaths } from './host-mcp-route.js';
 import { squireHostBindPaths } from './squire-host.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
@@ -760,7 +761,20 @@ export class MonolithCornerTurnLoop {
           npmCacheDir,
           ...squireHostBindPaths(operatorHome, grantedHostRoutes),
         ],
-        maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
+        maskPaths: credentialMaskPaths(
+          this.options.config.sandboxMaskPaths,
+          operatorHome,
+          undefined,
+          [],
+          squireSessionUnmaskPaths(
+            operatorHome,
+            grantedHostRoutes,
+            hostImportedMcpDeclarations({
+              operatorHome,
+              agentKind: this.options.config.agentKind,
+            }),
+          ),
+        ),
       },
       command,
       args: agentArgs,

@@ -1,4 +1,6 @@
 import { createServer } from 'node:net';
+import { spawnSync } from 'node:child_process';
+import { lstatSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,14 +10,18 @@ import {
   SQUIRE_BROKER_UNAVAILABLE,
   SQUIRE_PROFILE_BUSY,
   squireBrokerSocketReady,
+  squireFacadeIsPaired,
   squireFacadeLaunch,
   squireFacadeMaySpawn,
+  squireFacadeProbe,
   squireHostBindPaths,
-  squireHostPaths,
   squireHostRewriteEnv,
   squireHostTopology,
+  squirePrivateTmpTopology,
   squireProcessPlan,
+  squireSessionFile,
   squireTurnFailure,
+  squireUnfixedProcessPlan,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
 } from './squire-host.js';
@@ -38,27 +44,81 @@ describe('squire host rewrite env', () => {
 });
 
 describe('RED/GREEN broker topology', () => {
-  it('two agents with private /tmp sockets are two brokers and two Chromes', () => {
-    const agentATmp = '/tmp-agent-a';
-    const agentBTmp = '/tmp-agent-b';
-    const defaultSocket = (tmp: string) => join(tmp, 'trusty-squire.sock');
-    expect(defaultSocket(agentATmp)).not.toBe(defaultSocket(agentBTmp));
-    expect(defaultSocket(agentATmp)).not.toBe(squireHostPaths('/home/op').brokerSocket);
+  async function listenUnix(socket: string) {
+    const server = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once('error', rejectListen);
+      server.listen(socket, () => resolveListen());
+    });
+    return server;
+  }
+
+  it('RED: two PrivateTmp agents elect two broker sockets and two Chromes', async () => {
+    const agentA = await mkdtemp(join(tmpdir(), 'beeline-squire-red-a-'));
+    const agentB = await mkdtemp(join(tmpdir(), 'beeline-squire-red-b-'));
+    roots.push(agentA, agentB);
+    const topology = squirePrivateTmpTopology([agentA, agentB]);
+    for (const home of [agentA, agentB]) {
+      mkdirSync(join(home, 'tmp'), { recursive: true });
+      mkdirSync(join(home, '.trusty-squire', 'chrome-profile'), { recursive: true });
+    }
+    const servers = await Promise.all(topology.sockets.map((socket) => listenUnix(socket)));
+    try {
+      expect(lstatSync(topology.sockets[0]!).ino).not.toBe(lstatSync(topology.sockets[1]!).ino);
+      expect(new Set(topology.chromeProfiles).size).toBe(2);
+      expect(squireUnfixedProcessPlan(2)).toEqual({
+        daemons: 2,
+        chromes: 2,
+        facades: 0,
+        refusals: 0,
+      });
+    } finally {
+      await Promise.all(
+        servers.map((server) => new Promise<void>((resolveClose) => server.close(() => resolveClose()))),
+      );
+    }
   });
 
-  it('GREEN: two façades on one host share one daemon socket and one Chrome', () => {
-    const topology = squireHostTopology('/home/op', ['agent-a', 'agent-b']);
-    expect(topology.daemonSocket).toBe('/home/op/.trusty-squire/broker.sock');
-    expect(topology.chromeProfile).toBe('/home/op/.trusty-squire/chrome-profile');
-    expect(topology.facades).toHaveLength(2);
-    expect(new Set(topology.facades.map((facade) => facade.brokerSocket)).size).toBe(1);
-    expect(new Set(topology.facades.map((facade) => facade.profileDir)).size).toBe(1);
-    expect(squireProcessPlan({ hostHome: '/home/op', agentCount: 2, brokerReady: true })).toEqual({
-      daemons: 1,
-      chromes: 1,
-      facades: 2,
-      refusals: 0,
-    });
+  it('GREEN: two façade processes share one host socket inode and one Chrome', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'beeline-squire-green-'));
+    roots.push(home);
+    const paths = ensureSquireHostDir(home);
+    mkdirSync(join(paths.configHome, 'trusty-squire'), { recursive: true });
+    writeFileSync(squireSessionFile(paths.configHome), '{"paired":true}\n');
+    const server = await listenUnix(paths.brokerSocket);
+    try {
+      const topology = squireHostTopology(home, ['agent-a', 'agent-b']);
+      expect(lstatSync(topology.facades[0]!.brokerSocket).ino).toBe(
+        lstatSync(topology.facades[1]!.brokerSocket).ino,
+      );
+      expect(new Set(topology.facades.map((facade) => facade.profileDir)).size).toBe(1);
+      const env = { ...process.env, ...squireHostRewriteEnv(home), HOME: home };
+      const probe = [
+        "const fs=require('fs');",
+        "const path=require('path');",
+        "const session=path.join(process.env.XDG_CONFIG_HOME,'trusty-squire','session.json');",
+        'const socket=process.env.TRUSTY_SQUIRE_BROKER_SOCKET;',
+        'try {',
+        "  const paired=fs.readFileSync(session,'utf8').trim().length>0 && fs.lstatSync(socket).isSocket();",
+        "  process.stdout.write(paired?'paired\\n':'unpaired\\n');",
+        '  process.exit(paired?0:1);',
+        "} catch { process.stdout.write('unpaired\\n'); process.exit(1); }",
+      ].join('');
+      const facadeA = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env });
+      const facadeB = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env });
+      expect(facadeA.stdout.trim()).toBe('paired');
+      expect(facadeB.stdout.trim()).toBe('paired');
+      expect(squireFacadeProbe(env)).toEqual({ paired: true, socketReady: true });
+      expect(squireFacadeIsPaired(env)).toBe(true);
+      expect(squireProcessPlan({ hostHome: home, agentCount: 2, brokerReady: true })).toEqual({
+        daemons: 1,
+        chromes: 1,
+        facades: 2,
+        refusals: 0,
+      });
+    } finally {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
   });
 
   it('a sandboxed façade does not elect when the host socket is missing', () => {
@@ -73,15 +133,11 @@ describe('RED/GREEN broker topology', () => {
     const dir = await mkdtemp(join(tmpdir(), 'beeline-squire-sock-'));
     roots.push(dir);
     const socket = join(dir, 'broker.sock');
-    const server = createServer();
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(socket, () => resolve());
-    });
+    const server = await listenUnix(socket);
     try {
       expect(squireFacadeMaySpawn(socket)).toBe(true);
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
   });
 });

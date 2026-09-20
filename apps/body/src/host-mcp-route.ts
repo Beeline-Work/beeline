@@ -6,6 +6,7 @@
  */
 import { stringify as stringifyToml } from 'smol-toml';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { resolve } from 'node:path';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import {
   classifyImportedMcpServer,
@@ -13,6 +14,8 @@ import {
   MCP_ROUTE_CLASS_KEY,
 } from './mcp-route-class.js';
 import { squireFacadeLaunch, squireHostRewriteEnv } from './squire-host.js';
+
+export const TRUSTY_SQUIRE_SESSION_DIR = '.config/trusty-squire';
 
 export function grantedMcpServerNames(
   grants: readonly { kind: string; target: string }[] | undefined,
@@ -68,6 +71,32 @@ function isSquireDeclaration(name: string, declaration: Record<string, unknown>)
     (typeof declaration.cmd === 'string' && declaration.cmd) ||
     '';
   return Boolean(command) && isTrustySquireMcpLaunch(command, stringArray(declaration.args));
+}
+
+/** True when a live mcp grant rewrites a Squire host route (needs the host session). */
+export function grantedNeedsSquireSession(
+  granted: readonly string[],
+  declarations: Record<string, Record<string, unknown>> = {},
+): boolean {
+  for (const name of granted) {
+    if (isCodeOwnedHostMcpName(name)) return true;
+    const declaration = declarations[name];
+    if (declaration && isSquireDeclaration(name, declaration)) return true;
+  }
+  return false;
+}
+
+/**
+ * Grant-scoped mask exemption: only `.config/trusty-squire`, and only when the
+ * agent holds a Squire host route. Ungranted sessions keep the empty tmpfs.
+ */
+export function squireSessionUnmaskPaths(
+  home: string,
+  granted: readonly string[],
+  declarations: Record<string, Record<string, unknown>> = {},
+): string[] {
+  if (!grantedNeedsSquireSession(granted, declarations)) return [];
+  return [resolve(home, TRUSTY_SQUIRE_SESSION_DIR)];
 }
 
 /**

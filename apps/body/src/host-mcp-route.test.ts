@@ -7,6 +7,7 @@ import {
   mergeTomlHostRoutes,
   rewriteGrantedHostRoutes,
   rewriteHostMcpDeclaration,
+  squireSessionUnmaskPaths,
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { squireHostRewriteEnv } from './squire-host.js';
@@ -80,6 +81,23 @@ describe('granted MCP host routes', () => {
     expect(merged).toContain('files-mcp');
     expect(merged).toContain('TRUSTY_SQUIRE_BROKER_SOCKET');
     expect(merged).not.toContain('squire-mcp');
+  });
+
+  it('unmasks only the Squire session dir when that host route is granted', () => {
+    expect(squireSessionUnmaskPaths('/home/op', [], { squire: { command: 'squire-mcp' } })).toEqual(
+      [],
+    );
+    expect(
+      squireSessionUnmaskPaths('/home/op', ['browser'], {
+        browser: { command: 'browser-mcp' },
+      }),
+    ).toEqual([]);
+    expect(squireSessionUnmaskPaths('/home/op', ['squire'])).toEqual(['/home/op/.config/trusty-squire']);
+    expect(
+      squireSessionUnmaskPaths('/home/op', ['vault'], {
+        vault: { command: 'npx', args: ['-y', '@trusty-squire/mcp@latest', 'server'] },
+      }),
+    ).toEqual(['/home/op/.config/trusty-squire']);
   });
 
   it('merges rewritten routes into Claude JSON', () => {

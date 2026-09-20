@@ -19,7 +19,7 @@
  * supplied by mountedImportedMcpServerNames in agent-home.ts. Retention derives
  * the next inventory using the same preparation rules, never treating stale
  * isolated copies as independent grant authority. This applies to every
- * imported server, including TypeScript, rather than special-casing Squire.
+ * imported server, including Trusty Squire, rather than special-casing Squire.
  * Route grant/revoke provisioning is outside this fingerprint's responsibility.
  * Only names enter the fingerprint, not server settings or credential state;
  * changing settings under an unchanged name does not invalidate the session.

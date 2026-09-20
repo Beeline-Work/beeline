@@ -18,7 +18,6 @@ import {
   grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
-  mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
 import { grantedHostRoutesFromList, grantedHostRouteWires } from './host-mcp-route.js';
@@ -599,14 +598,6 @@ export class MonolithCornerTurnLoop {
     } catch {
       return [];
     }
-  }
-
-  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
-    return mountedImportedMcpServerNames({
-      operatorHome: this.options.config.operatorHome,
-      agentKind: this.options.config.agentKind,
-      preparedEnv,
-    });
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {

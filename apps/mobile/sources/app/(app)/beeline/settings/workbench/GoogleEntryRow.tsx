@@ -7,6 +7,7 @@ import {
   googleEntryDescription,
   googleEntryState,
   googleBlockedOnSquireBrowser,
+  googleToolRows,
   connectorInstrument,
   type WorkbenchConnector,
 } from '@/buzz/workbench';
@@ -65,6 +66,29 @@ export function GoogleEntryRow({
       {expanded ? (
         <View style={styles.details} testID="google-entry-details">
           <Text style={styles.tool}>{entry.description}</Text>
+          {googleToolRows(connectors).map((tool) => (
+            <View key={tool.id} style={styles.toolRow} testID={`google-tool-${tool.id}`}>
+              <Text style={styles.tool}>{tool.name}</Text>
+              <Text
+                style={[
+                  styles.tool,
+                  tool.status === 'connected'
+                    ? styles.toolConnected
+                    : tool.status === 'error'
+                      ? styles.toolError
+                      : undefined,
+                ]}
+              >
+                {tool.status === 'connected'
+                  ? 'connected'
+                  : tool.status === 'installing'
+                    ? 'installing'
+                    : tool.status === 'error'
+                      ? 'error'
+                      : 'not connected'}
+              </Text>
+            </View>
+          ))}
         </View>
       ) : null}
     </View>
@@ -80,5 +104,13 @@ const styles = StyleSheet.create((theme) => {
       paddingRight: hull.space.sm,
     },
     tool: { ...hull.type.meta, color: hull.textSecondary },
+    toolRow: {
+      flexDirection: 'row' as const,
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+      gap: hull.space.sm,
+    },
+    toolConnected: { color: hull.textPrimary },
+    toolError: { color: hull.danger },
   };
 });

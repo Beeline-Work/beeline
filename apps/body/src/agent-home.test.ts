@@ -466,6 +466,8 @@ describe('operator skills + MCP passthrough', () => {
     expect(triageSkill).toContain(
       'Warnings inform the user and implementer; they do not block work.',
     );
+    expect(triageSkill).toContain('## Bugfix execution');
+    expect(triageSkill).toContain('Do not fix a bug you have not seen');
     for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'claude')) {
       expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
     }

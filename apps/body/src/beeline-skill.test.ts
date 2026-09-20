@@ -146,6 +146,25 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('Triage warning — desirable:');
     expect(markdown).toContain('Do not emit a warning merely because evidence is incomplete');
   });
+
+  it('binds the implementer to a recorded reproduction without blocking triage', () => {
+    expect(markdown).toContain(
+      'If the need cannot be established, reproduction fails, or other work may obviate it, warn; do not block.',
+    );
+    expect(markdown).toContain('## Bugfix execution');
+    expect(markdown).toContain('They are instruction, not a server gate');
+    expect(markdown).toContain('Reproduction <id>: <user path> → <observable wrong result>');
+    expect(markdown).toContain('### 1. Reproduce first');
+    expect(markdown).toContain('Before any change, reproduce the bug as triage isolated it');
+    expect(markdown).toContain('Do not fix a bug you have not seen');
+    expect(markdown).toContain('### 2. Narrow fix');
+    expect(markdown).toContain('Change only what removes that recorded reproduction');
+    expect(markdown).toContain('### 3. Proof matching triage');
+    expect(markdown).toContain('Cite the same identifier');
+    expect(markdown).toContain(
+      'the reviewer can check this proof, not merely that some test exists',
+    );
+  });
 });
 
 describe('using-beeline merge ownership', () => {
@@ -207,6 +226,15 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('Require a concrete user benefit, the smallest coherent solution');
     expect(markdown).toContain('work warranted evidence:');
     expect(markdown).toContain('desirability evidence:');
+  });
+
+  it('fails a bug proof that does not name the recorded reproduction', () => {
+    expect(markdown).toContain('quote the recorded `Reproduction <id>`');
+    expect(markdown).toContain(
+      'FAIL if the proof does not name that identifier, even when other tests pass',
+    );
+    expect(markdown).toContain('reproduction id:');
+    expect(markdown).toContain('proof of that reproduction (or FAIL):');
   });
 });
 

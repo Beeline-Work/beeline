@@ -131,14 +131,15 @@ export function cornerSelfReviewerInstruction(input: {
 
 export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
-If the objective reports a defect, reproduce it first at the layer where it lives: the command, request, or tap sequence, and what was observed.
-Do not write a fix before you have seen the defect. Turn the reproduction into the regression test.
+Follow the beeline-triage skill's bugfix execution contract when the objective reports a defect.
+If the objective reports a defect, reproduce it first as triage isolated it, before any change: the command, request, or tap sequence, and the observable wrong result. Record that under Reproduction <id>, reusing triage's identifier when it recorded one.
+If you cannot reproduce it, stop and report what you tried; do not write a fix for a bug you have not seen. Turn that recorded reproduction into the regression test. Change only what removes it.
 Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
 If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
 A unit test of an inner function, a log line, or reading the code is not a demonstration.
 The pull request body MUST contain two sections with exactly these headings: ## Reproduced and ## Demonstrated.
-Under ## Reproduced, give the steps or command and what was observed; write "not a defect report" for feature work.
-Under ## Demonstrated, give the command or steps that produced Y and what was observed.
+Under ## Reproduced, name Reproduction <id> and give the steps or command and what was observed; write "not a defect report" for feature work.
+Under ## Demonstrated, cite the same identifier, show that reproduction now passing, and name the regression that would fail if the bug returned.
 A pull request without both sections is not deliverable and the Room's reviewer will fail it.
 Change only what the objective asks. No unrequested features, flags, compatibility shims, or refactors.`;
 

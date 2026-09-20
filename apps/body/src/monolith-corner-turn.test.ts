@@ -147,6 +147,15 @@ describe('corner merge instructions', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
   });
 
+  it('binds the corner author to the triage reproduction identifier', () => {
+    expect(CORNER_AUTHOR_CONTRACT).toContain("beeline-triage skill's bugfix execution contract");
+    expect(CORNER_AUTHOR_CONTRACT).toContain('Record that under Reproduction <id>');
+    expect(CORNER_AUTHOR_CONTRACT).toContain(
+      'do not write a fix for a bug you have not seen',
+    );
+    expect(CORNER_AUTHOR_CONTRACT).toContain('cite the same identifier');
+  });
+
   it('boots a non-opener reviewer with the review instruction and repository gh surface', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
     roots.push(root);

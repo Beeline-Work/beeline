@@ -4,11 +4,10 @@ import { isLedgerDayOpener, transcriptStamp } from './message-dates';
 
 export function useTranscriptStamp(
   timestamp: number | undefined,
-  firstBylineOfDay: boolean,
+  firstBylineOfDay = true,
 ): string {
   const [now, setNow] = useState(() => new Date().setHours(0, 0, 0, 0));
   useEffect(() => {
-    if (!firstBylineOfDay) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => {
       clearTimeout(timer);

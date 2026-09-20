@@ -28,8 +28,12 @@ function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
 }
 
+function sourceTitle(bookmark: MessageBookmarkView): string {
+  return bookmark.roomName.replace(/^#/, '');
+}
+
 function sourceLabel(bookmark: MessageBookmarkView): string {
-  return `${bookmark.roomKind === 'corner' ? '◇ ' : '#'}${bookmark.roomName.replace(/^#/, '')}`;
+  return `${bookmark.roomKind === 'corner' ? '◇ ' : '#'}${sourceTitle(bookmark)}`;
 }
 
 export default function BookmarksScreen() {
@@ -246,9 +250,14 @@ export default function BookmarksScreen() {
           testID={`bookmark-${bookmark.messageId}`}
         >
           <View style={styles.originLine}>
-            <Text numberOfLines={1} style={styles.origin}>
-              {sourceLabel(bookmark)}
-            </Text>
+            <View style={styles.originSource}>
+              <Text style={bookmark.roomKind === 'corner' ? styles.originDiamond : styles.originSigil}>
+                {bookmark.roomKind === 'corner' ? '◇' : '#'}
+              </Text>
+              <Text numberOfLines={1} style={styles.origin}>
+                {sourceTitle(bookmark)}
+              </Text>
+            </View>
             <Text style={styles.time}>
               {compactRelativeTime(bookmark.messageCreatedAt, Date.now())}
             </Text>
@@ -345,7 +354,7 @@ export default function BookmarksScreen() {
     <View style={[styles.screen, { paddingTop: desktop ? 0 : insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Rooms"
-        meta={`PRIVATE · ${bookmarks.length} SAVED`}
+        meta={`${bookmarks.length} SAVED`}
         onBack={desktop ? undefined : () => router.back()}
         testID="bookmarks-header"
         title="Bookmarks"
@@ -396,6 +405,15 @@ const styles = StyleSheet.create((theme) => ({
   rowSelected: { backgroundColor: theme.buzz.bgHighlight },
   rowUnavailable: { opacity: 0.68 },
   originLine: { flexDirection: 'row', alignItems: 'baseline', gap: 12 },
+  originSource: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  },
+  originDiamond: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
+  originSigil: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
   origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
   time: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   author: {

@@ -29,10 +29,10 @@ describe('A+B message dates', () => {
     expect(transcriptStamp(THU_1658, true, SAT_NOW_MS)).toBe('17 SEP 16:58');
   });
 
-  it('keeps later same-day bylines on the clock', () => {
+  it('dates every byline of a past day so the tail still carries the date', () => {
     expect(isLedgerDayOpener(THU_1702, THU_1658)).toBe(false);
     expect(ledgerDayCaption(THU_1702, THU_1658)).toBeNull();
-    expect(transcriptStamp(THU_1702, false, SAT_NOW_MS)).toBe('17:02');
+    expect(transcriptStamp(THU_1702, false, SAT_NOW_MS)).toBe('17 SEP 17:02');
   });
 
   it('opens today with a caption and a clock-only stamp', () => {

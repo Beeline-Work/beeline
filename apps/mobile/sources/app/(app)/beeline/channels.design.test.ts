@@ -93,7 +93,8 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'emptyList')).toContain('paddingTop: hull.space.xxl');
     expect(styleBlock(source, 'empty')).toContain("alignItems: 'flex-start'");
     expect(styleBlock(source, 'empty')).toContain('paddingHorizontal: hull.space.lg');
-    expect(styleBlock(source, 'header')).toContain('paddingHorizontal: hull.space.lg');
+    expect(styleBlock(source, 'header')).toContain('paddingLeft: hull.space.lg');
+    expect(styleBlock(source, 'header')).toContain('paddingRight: 16');
     expect(styleBlock(source, 'empty')).not.toMatch(/\bpadding: \d/);
     expect(styleBlock(source, 'emptyTitle')).toContain('...hull.type.body,');
     expect(styleBlock(source, 'emptyTitle')).toContain('color: hull.textPrimary');
@@ -364,7 +365,10 @@ describe('Room list layout contract', () => {
     );
     expect(phoneRow).not.toContain('cornerEndcap');
     expect(phoneRow.match(/<Text\b/g)).toHaveLength(3);
+    expect(phoneRow).toContain('styles.cornerTrail');
     expect(styleBlock(source, 'cornerRow')).toContain("alignItems: 'center'");
+    expect(styleBlock(source, 'cornerTrail')).toContain("alignItems: 'center'");
+    expect(styleBlock(source, 'cornerChevron')).toContain('...theme.buzz.type.sectionHead');
 
     const desktopHeadlineStart = desktopInspectorSource.indexOf(
       '<View style={styles.cornerHeadline}>',

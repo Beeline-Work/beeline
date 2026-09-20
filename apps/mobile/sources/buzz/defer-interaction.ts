@@ -23,18 +23,3 @@ export function whenInteractionsComplete(): Promise<void> {
     InteractionManager.runAfterInteractions(() => resolve());
   });
 }
-
-/** After the current interaction, wait one more vsync-sized beat so a just-
- *  committed pixel can present before a heavy `import()` occupies the JS thread. */
-export const PIXEL_IDLE_MS = 50;
-
-export function afterPixelIdle(run: () => void): () => void {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const cancelIM = afterInteractions(() => {
-    timeout = setTimeout(run, PIXEL_IDLE_MS);
-  });
-  return () => {
-    cancelIM();
-    if (timeout !== undefined) clearTimeout(timeout);
-  };
-}

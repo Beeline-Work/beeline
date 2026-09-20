@@ -59,6 +59,18 @@ describe('private bookmark surfaces', () => {
     expect(inspector).toContain('desktop-work-focused-message');
   });
 
+  it('names the header count without a PRIVATE label', () => {
+    expect(bookmarks).toContain('meta={`${bookmarks.length} SAVED`}');
+    expect(bookmarks).not.toContain('PRIVATE');
+  });
+
+  it('parts the corner diamond from the title with a spacing step', () => {
+    expect(bookmarks).toContain('styles.originDiamond');
+    expect(bookmarks).toContain('gap: 8');
+    expect(bookmarks).toContain("styles.originDiamond : styles.originSigil");
+    expect(bookmarks).toContain("{bookmark.roomKind === 'corner' ? '◇' : '#'}");
+  });
+
   it('does not expose cached content for unavailable sources', () => {
     expect(bookmarks).toContain('Deleted or no longer accessible');
     expect(bookmarks).toContain('This bookmark no longer exposes message content.');

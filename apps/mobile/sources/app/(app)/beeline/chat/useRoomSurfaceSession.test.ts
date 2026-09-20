@@ -985,8 +985,10 @@ describe('useRoomSurfaceSession', () => {
       agentPubkey: 'agent-a',
       requestId: 'turn-c',
       closed: false,
-      text: "I'll trace the producer, then make the smallest correction",
     });
+    expect(current.liveDraftStore.getReceived('agent-a:turn-c')).toBe(
+      "I'll trace the producer, then make the smallest correction",
+    );
 
     // Exactly as a Room settles: the durable reply carries the turn's request
     // id, and the provisional row stops being visible the moment it lands.
@@ -1007,6 +1009,50 @@ describe('useRoomSurfaceSession', () => {
       });
     });
     expect(visibleLiveOverlays(current.liveOverlays, [reply])).toEqual([]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps cumulative draft arrivals out of Room React state after opening the live row', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let roomRenders = 0;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => {
+            current = result;
+            roomRenders += 1;
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emitDraft = (text: string) =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'draft',
+          roomId: 'room-a',
+          agentId: 'agent-a',
+          turnId: 'turn-a',
+          text,
+        },
+      });
+
+    await act(async () => emitDraft('0'));
+    const structuralRows = current.liveOverlays;
+    const rendersAfterOpeningRow = roomRenders;
+
+    // Separate React turns are intentional. Batching a burst would hide the
+    // one Room render currently paid for by every network arrival.
+    for (let chunk = 1; chunk < 40; chunk += 1) {
+      await act(async () => emitDraft(String(chunk).padStart(chunk + 1, 'x')));
+    }
+
+    expect(current.liveOverlays).toBe(structuralRows);
+    expect(roomRenders).toBe(rendersAfterOpeningRow);
     await act(async () => renderer.unmount());
   });
 
@@ -1058,7 +1104,9 @@ describe('useRoomSurfaceSession', () => {
     expect(
       current.liveOverlays.map((overlay) => [
         overlay.agentPubkey,
-        overlay.kind === 'draft' ? overlay.text : '',
+        overlay.kind === 'draft'
+          ? current.liveDraftStore.getReceived(`${overlay.agentPubkey}:${overlay.requestId}`)
+          : '',
         overlay.createdAt,
       ]),
     ).toEqual([
@@ -1104,8 +1152,10 @@ describe('useRoomSurfaceSession', () => {
       kind: 'draft',
       requestId: 'turn-1',
       closed: true,
-      text: 'I will update only X, then commit.',
     });
+    expect(current.liveDraftStore.getReceived('agent-a:turn-1')).toBe(
+      'I will update only X, then commit.',
+    );
 
     // The durable final lands with the same request id and takes over the
     // row's slot: no gap, no duplicate bubble.

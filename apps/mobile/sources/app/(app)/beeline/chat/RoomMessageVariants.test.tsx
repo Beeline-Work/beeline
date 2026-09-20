@@ -2,7 +2,7 @@ import * as React from 'react';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   conversationIdentityByPubkey,
   type ChatDisplayMessage,
@@ -13,6 +13,7 @@ import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
+const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
 const conversationSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const composerSource = readFileSync(
   new URL('../../../../components/buzz/ConversationComposer.tsx', import.meta.url),
@@ -55,6 +56,13 @@ vi.mock('react-native', async () => {
   };
   return {
     Animated,
+    AppState: {
+      currentState: 'active',
+      addEventListener: (_event: string, listener: (state: string) => void) => {
+        appStateListeners.add(listener);
+        return { remove: () => appStateListeners.delete(listener) };
+      },
+    },
     Image: host('Image'),
     Linking: { openURL: vi.fn(async () => undefined) },
     Platform: { OS: 'web', select: (choices: Record<string, unknown>) => choices.default },
@@ -174,10 +182,17 @@ beforeEach(() => {
   resetProvisionalDrafts();
 });
 
+const mountedRenderers: ReactTestRenderer[] = [];
+afterEach(() => {
+  act(() => mountedRenderers.splice(0).forEach((renderer) => renderer.unmount()));
+  vi.useRealTimers();
+});
+
 function render(element: React.ReactElement): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(element);
+    mountedRenderers.push(renderer);
   });
   return renderer;
 }
@@ -1483,7 +1498,12 @@ describe('Room message variant components', () => {
   it('keeps a human continuation compact', () => {
     render(
       <OrdinaryLedgerMessage
-        message={message({ id: 'ada-second-message', pubkey: 'ada' })}
+        message={message({ id: 'ada-second-message', pubkey: 'ada', timestamp: 2 })}
+        immediatelyPrecedingMessage={message({
+          id: 'ada-first-message',
+          pubkey: 'ada',
+          timestamp: 1,
+        })}
         continued
         participantsHydrated
         viewerPubkey="viewer"
@@ -1500,6 +1520,144 @@ describe('Room message variant components', () => {
     );
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
+  });
+
+  it.each([false, true])('dates the first byline with preceding notice: %s', (afterNotice) => {
+    const thu1658 = Math.floor(new Date(2026, 8, 17, 16, 58).getTime() / 1000);
+    const thu1702 = Math.floor(new Date(2026, 8, 17, 17, 2).getTime() / 1000);
+    const first = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'thu-first', isUser: true, timestamp: thu1658 })}
+        firstBylineOfDay
+        immediatelyPrecedingMessage={
+          afterNotice
+            ? message({ id: 'notice', timestamp: thu1658 - 60, isSystemNotice: true })
+            : undefined
+        }
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={true}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(first.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17 SEP 16:58');
+    expect(first.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(
+      !afterNotice,
+    );
+
+    const later = render(
+      <OrdinaryLedgerMessage
+        firstBylineOfDay={false}
+        message={message({ id: 'thu-later', isUser: true, timestamp: thu1702 })}
+        immediatelyPrecedingMessage={message({
+          id: 'intervening-notice',
+          isSystemNotice: true,
+          isUser: true,
+          timestamp: thu1658,
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(later.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17:02');
+    expect(later.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(false);
+  });
+
+  it.each([
+    ['midnight', false],
+    ['midnight', true],
+    ['resume', false],
+    ['resume', true],
+  ] as const)('refreshes the first byline on %s (desktop: %s)', (trigger, desktopLayout) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 19, 23, 59, 59));
+    const timestamp = new Date(2026, 8, 19, 20, 46).getTime() / 1000;
+    const row = (id: string, firstBylineOfDay: boolean) =>
+      render(
+        <OrdinaryLedgerMessage
+          message={message({ id, isUser: true, timestamp })}
+          firstBylineOfDay={firstBylineOfDay}
+          desktopLayout={desktopLayout}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onCopy={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+    const first = row('first', true);
+    const later = row('later', false);
+    const stamp = (tree: ReactTestRenderer) =>
+      tree.root.findByType('LedgerSteer' as never).props.byline.stamp;
+    expect(stamp(first)).toBe('20:46');
+    expect(stamp(later)).toBe('20:46');
+    expect(vi.getTimerCount()).toBe(1);
+    if (trigger === 'midnight') {
+      act(() => vi.advanceTimersByTime(1000));
+    } else {
+      act(() => appStateListeners.forEach((listener) => listener('background')));
+      expect(vi.getTimerCount()).toBe(0);
+      vi.setSystemTime(new Date(2026, 8, 20, 8));
+      act(() => appStateListeners.forEach((listener) => listener('active')));
+    }
+    expect(stamp(first)).toBe('19 SEP 20:46');
+    expect(stamp(later)).toBe('20:46');
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => {
+      first.unmount();
+      later.unmount();
+    });
+    expect(appStateListeners.size).toBe(0);
+  });
+
+  it('keeps today’s first byline on the clock', () => {
+    const now = Date.now();
+    const today = Math.floor(now / 1000) - 120;
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'today-first', isUser: true, timestamp: today })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const stamp = renderer.root.findByType('LedgerSteer' as never).props.byline.stamp as string;
+    expect(stamp).toMatch(/^[0-2]\d:[0-5]\d$/);
+    expect(stamp).not.toMatch(/SEP|JAN|TODAY|YESTERDAY/i);
   });
 
   it('renders a complete agent JSON object as a fenced JSON block', () => {

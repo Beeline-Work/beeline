@@ -19,7 +19,7 @@
  * because it genuinely is not on the stack.
  */
 
-import type { Href } from 'expo-router';
+import type { Href, Router } from 'expo-router';
 
 export type ChatStackRoute = {
   name?: string;
@@ -58,6 +58,18 @@ export function cornerOpenAction(
 /** Open a top-level Room transcript. */
 export function roomHref(channelId: string): Href {
   return { pathname: '/beeline/chat/[channelId]', params: { channelId } } as unknown as Href;
+}
+
+/**
+ * Open a Room without stacking a second copy of the same channel.
+ *
+ * `router.push` always appends, so a second tap — or a tap that lands while
+ * the previous Room is still the top route — leaves `channels → room → room`.
+ * The first back then pops onto the same Room. Navigate with a channel-id
+ * identity reuses that screen; a different channel (or a corner) still stacks.
+ */
+export function navigateToRoom(router: Pick<Router, 'navigate'>, channelId: string): void {
+  router.navigate(roomHref(channelId), { dangerouslySingular: true });
 }
 
 /** Open the Room's dedicated corners list — the one place archived work is recorded. */
@@ -143,8 +155,10 @@ export type ChatBackAction =
  *
  * A corner with an explicit opening surface returns there. Otherwise it
  * resolves to its parent Room — popped to if already on the stack, opened in
- * place if not. A Room falls back to plain stack behaviour, except when it is
- * the only route, where `router.back()` is a no-op and the Room list is the
+ * place if not. A Room falls back to plain stack behaviour, except when
+ * consecutive copies of the same Room sit on top — the first back must pop
+ * all of them, not land in the Room the reader just left — or when it is the
+ * only route, where `router.back()` is a no-op and the Room list is the
  * honest destination.
  */
 export function chatBackAction(
@@ -168,5 +182,23 @@ export function chatBackAction(
       ? { type: 'open-room', channelId: parentChannelId }
       : { type: 'pop', count };
   }
+  const duplicateCount = consecutiveTopChannelCount(routes);
+  if (duplicateCount > 1) {
+    return routes.length === duplicateCount
+      ? { type: 'room-list' }
+      : { type: 'pop', count: duplicateCount };
+  }
   return routes.length > 1 ? { type: 'back' } : { type: 'room-list' };
+}
+
+/** How many copies of the top channel sit on top of each other. */
+export function consecutiveTopChannelCount(routes: readonly ChatStackRoute[]): number {
+  const topId = routeChannelId(routes[routes.length - 1]);
+  if (!topId) return 0;
+  let count = 0;
+  for (let index = routes.length - 1; index >= 0; index -= 1) {
+    if (routeChannelId(routes[index]) !== topId) break;
+    count += 1;
+  }
+  return count;
 }

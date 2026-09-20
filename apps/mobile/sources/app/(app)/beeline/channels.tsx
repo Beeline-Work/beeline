@@ -33,7 +33,7 @@ import {
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { cornerHref } from '@/buzz/corner-navigation';
+import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
 import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';
 import {
   displayGroupedCornerTitle,
@@ -510,7 +510,7 @@ export default function BuzzChannels() {
         prefetch: prefetchRoom,
         navigate: (id) => {
           if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
-          router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+          navigateToRoom(router, id);
         },
       });
     },

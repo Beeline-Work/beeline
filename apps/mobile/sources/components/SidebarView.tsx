@@ -13,6 +13,7 @@ import {
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
+import { navigateToRoom } from '@/buzz/corner-navigation';
 import {
   loadActiveCommunityId,
   loadLastViewedChannel,
@@ -437,7 +438,7 @@ export const SidebarView = React.memo(function SidebarView() {
     (roomId: string) => {
       dispatchRoomOpenTap(roomId, {
         navigate: (id) => {
-          router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+          navigateToRoom(router, id);
         },
       });
     },

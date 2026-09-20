@@ -153,6 +153,12 @@ export interface LiveDraftDrainStore {
   remove(key: string): void;
   attach(key: string, sink: LiveDraftSink): () => void;
   setInstant(key: string, instant: boolean): void;
+  /**
+   * Pause the scheduler without flushing. A focused Room is active; leave and
+   * unmount must flip this off synchronously so a mid-turn drain cannot occupy
+   * the JS thread until the message is ready to paint.
+   */
+  setActive(active: boolean): void;
   subscribePromotion(listener: (key: string) => void): () => void;
   getPresentation(key: string): LiveDraftPresentation;
   getReceived(key: string): string;
@@ -175,6 +181,7 @@ export function createLiveDraftDrainStore({
   const completedMetrics = new Map<string, LiveDraftMetrics>();
   const promotionListeners = new Set<(key: string) => void>();
   let timerId: number | undefined;
+  let active = true;
 
   const laneFor = (key: string): Lane => {
     const current = lanes.get(key);
@@ -200,8 +207,29 @@ export function createLiveDraftDrainStore({
     [...lanes.values()].some((lane) => lane.queued.length > 0 && lane.sink);
 
   const schedule = () => {
-    if (timerId !== undefined || !hasPaintableWork()) return;
+    if (!active || timerId !== undefined || !hasPaintableWork()) return;
     timerId = clock.setTimer(tick, LIVE_DRAFT_TICK_MS);
+  };
+
+  const stopTimer = () => {
+    if (timerId === undefined) return;
+    clock.clearTimer(timerId);
+    timerId = undefined;
+  };
+
+  const catchUpQueued = () => {
+    for (const [key, lane] of lanes) {
+      if (!lane.sink || !lane.queued) continue;
+      const flushed = lane.queued.length;
+      lane.liveText += lane.queued;
+      lane.queued = '';
+      lane.characterBudget = 0;
+      const promoted = promoteLive(lane);
+      lane.metrics.promotions += promoted.length;
+      lane.metrics.paintedCharacters += flushed;
+      lane.sink.replace({ blocks: lane.blocks, liveText: lane.liveText });
+      if (promoted.length) notifyPromotion(key);
+    }
   };
 
   const notifyPromotion = (key: string) => {
@@ -241,6 +269,7 @@ export function createLiveDraftDrainStore({
 
   function tick() {
     timerId = undefined;
+    if (!active) return;
     const at = clock.now();
     for (const [key, lane] of lanes) paintLane(key, lane, at);
     schedule();
@@ -268,8 +297,7 @@ export function createLiveDraftDrainStore({
 
   const cancelIdleTimer = () => {
     if (timerId === undefined || hasPaintableWork()) return;
-    clock.clearTimer(timerId);
-    timerId = undefined;
+    stopTimer();
   };
 
   return {
@@ -351,6 +379,16 @@ export function createLiveDraftDrainStore({
       lane.instant = instant;
       if (instant) schedule();
     },
+    setActive(next) {
+      if (active === next) return;
+      active = next;
+      if (!active) {
+        stopTimer();
+        return;
+      }
+      catchUpQueued();
+      cancelIdleTimer();
+    },
     subscribePromotion(listener) {
       promotionListeners.add(listener);
       return () => promotionListeners.delete(listener);
@@ -367,8 +405,8 @@ export function createLiveDraftDrainStore({
       return lane ? snapshotMetrics(lane.metrics) : (completedMetrics.get(key) ?? EMPTY_METRICS);
     },
     reset() {
-      if (timerId !== undefined) clock.clearTimer(timerId);
-      timerId = undefined;
+      stopTimer();
+      active = true;
       lanes.clear();
       completedMetrics.clear();
       promotionListeners.clear();

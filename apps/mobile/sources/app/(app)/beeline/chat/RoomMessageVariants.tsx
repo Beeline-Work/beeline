@@ -35,7 +35,8 @@ import {
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
-import { isLedgerDayOpener, transcriptStamp } from '@/buzz/message-dates';
+import { isLedgerDayOpener } from '@/buzz/message-dates';
+import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
 import {
   type NotificationLifecycleRun,
   type NotificationLifecycleState,
@@ -1738,6 +1739,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const isSelfSteer = isOwn && !isAgent;
   const dayOpener = isLedgerDayOpener(message.timestamp, immediatelyPrecedingMessage?.timestamp);
   const bylineOpener = firstBylineOfDay ?? dayOpener;
+  const stamp = useTranscriptStamp(message.timestamp, bylineOpener && !message.isAgentActivity);
   const continuedRun = continued && !bylineOpener;
   const voiceName = isAgent
     ? (indexedAuthor?.name ??
@@ -1754,7 +1756,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       : {
           name: isSelfSteer ? 'You' : voiceName,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
-          stamp: transcriptStamp(message.timestamp, bylineOpener),
+          stamp,
           isViewer: isSelfSteer,
           bookmarked: message.bookmarked,
           ...(announcementFeed

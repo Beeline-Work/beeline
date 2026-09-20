@@ -25,17 +25,16 @@ export type ScrollFollowDecision = 'scroll' | 'hold';
 
 /**
  * Ordinary inverted-list tail (`messageListContent.paddingVertical`). The
- * hanging thinking line overlays this padding instead of growing it: a reserve
- * that appears only when the line paints is a step (the last message jumps)
- * and the 12+30 result exceeds this ordinary margin.
+ * thinking line is an in-flow band above the composer, so this value stays
+ * 12px whether the line is visible or not. Growing it only while thinking is
+ * a step; overlaying a ~30px opaque line on 12px of tail covers the last row.
  */
 const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 12;
 
-/** The inverted phone transcript's visual-tail padding. The hanging turn line
- * is out of the tail (absolute on the chrome stack), so this value is the
- * ordinary 12px whether that line is visible or not — including when offline
- * chrome already pushes the list. Callers still pass the chrome flags so a
- * regression that keys padding on them fails the no-step tests. */
+/** The inverted phone transcript's visual-tail padding. Always the ordinary
+ * 12px — the thinking line lives in the chrome stack, not in this padding.
+ * Callers still pass the chrome flags so a regression that keys padding on
+ * them fails the no-step tests. */
 export function phoneTranscriptTailPadding(_chrome: {
   turnChromeVisible: boolean;
   pushedChromeVisible: boolean;

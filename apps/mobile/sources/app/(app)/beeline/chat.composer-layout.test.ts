@@ -57,7 +57,7 @@ describe('Room composer status layout', () => {
     expect(composer).toBeGreaterThan(progress);
   });
 
-  it('hangs the phone turn line over the transcript so it does not open a composer gap', () => {
+  it('places the phone turn line in the chrome stack above the composer', () => {
     // The geometry itself is measured in `buzz/room-bottom-chrome.test.tsx`;
     // what this file holds is that the screen mounts that shared column
     // rather than a second hand-rolled copy of it.
@@ -72,9 +72,6 @@ describe('Room composer status layout', () => {
     expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
     expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
     expect(source).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
-    // The pinned corner line is gone, so the offline hint is the only chrome
-    // left that pushes the tail. The turn line lands directly on the
-    // composer — measured in `buzz/room-bottom-chrome.test.tsx`.
     expect(source).toContain('pushedChromeVisible: agentsOffline');
     expect(source).not.toContain('CornerLiveBar');
   });

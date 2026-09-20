@@ -1,18 +1,23 @@
 /**
  * Lightweight, zero-dependency syntax tokenizer for React Native.
  *
- * Produces an array of `{token, text}` pairs that a renderer can map
- * to styled `<Text>` spans.  Designed for code blocks in chat bubbles,
- * not for IDE-grade accuracy — covers the common cases and degrades
- * gracefully to plain text for anything it doesn't recognise.
+ * Three roles — structure, name, value — for Two Inks. Honours the fence
+ * language: JSON/YAML distinguish keys from values; comment rules follow the
+ * language so `https://` and CSS hex values are not painted as comments.
  *
  * DESIGN: keyword/type/builtin words are matched as literal word-boundary
  * patterns so they never get merged into a plain-text run.  The function-call
  * pattern (ident followed by `(`) is checked AFTER those, so `async ()`
- * emits `keyword async` + `punctuation (` not `function async` + `(`.
+ * emits `name async` + `structure (` not a call named `async`.
  */
 
-export type HighlightToken =
+import type { SyntaxRole } from '@/buzz/syntax-colors';
+
+export type HighlightToken = SyntaxRole | 'plain';
+
+type TokenSpan = { token: HighlightToken; text: string };
+
+type ScanToken =
   | 'keyword'
   | 'string'
   | 'number'
@@ -24,14 +29,21 @@ export type HighlightToken =
   | 'tag'
   | 'attrName'
   | 'attrValue'
-  /** The token type when nothing matched — stays on the base colour. */
   | 'plain';
 
-type TokenSpan = { token: HighlightToken; text: string };
+type ScanSpan = { token: ScanToken; text: string };
 
-// ---------------------------------------------------------------------------
-// Language keyword sets
-// ---------------------------------------------------------------------------
+type LanguageKind =
+  | 'json'
+  | 'jsonc'
+  | 'yaml'
+  | 'js'
+  | 'css'
+  | 'html'
+  | 'python'
+  | 'shell'
+  | 'sql'
+  | 'other';
 
 const JS_KEYWORDS = new Set([
   'abstract', 'arguments', 'as', 'assert', 'async', 'await', 'break', 'case',
@@ -56,6 +68,8 @@ const TYPES = new Set([
   'PromiseLike', 'Iterable', 'Iterator', 'Maybe', 'Either',
 ]);
 
+const VALUE_LITERALS = new Set(['true', 'false', 'null', 'undefined']);
+
 const BUILTINS = new Set([
   'console', 'Math', 'JSON', 'Object', 'Array', 'Map', 'Set',
   'Promise', 'RegExp', 'Date', 'Error', 'window', 'global',
@@ -65,12 +79,7 @@ const BUILTINS = new Set([
   'Symbol', 'BigInt', 'Number', 'Boolean', 'String',
 ]);
 
-// ---------------------------------------------------------------------------
-// Build word-boundary patterns for keyword/type/builtin sets
-// ---------------------------------------------------------------------------
-
 function buildWordPattern(words: Set<string>): RegExp {
-  // Sort by length descending so longer words match before shorter substrings.
   const sorted = [...words].sort((a, b) => b.length - a.length || a.localeCompare(b));
   const escaped = sorted.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp('\\b(?:' + escaped.join('|') + ')\\b', 'g');
@@ -80,54 +89,170 @@ const KEYWORD_PATTERN = buildWordPattern(JS_KEYWORDS);
 const TYPE_PATTERN = buildWordPattern(TYPES);
 const BUILTIN_PATTERN = buildWordPattern(BUILTINS);
 
-// ---------------------------------------------------------------------------
-// Regex-based tokenizer
-// ---------------------------------------------------------------------------
+type ScanPattern = {
+  pattern: RegExp;
+  token: ScanToken;
+  allowAt?: (line: string, pos: number) => boolean;
+};
 
-const TOKEN_PATTERNS: { pattern: RegExp; token: HighlightToken }[] = [
-  // Comments must come first so they don't get consumed by keyword/string patterns.
-  { pattern: /\/\/.*/g, token: 'comment' },
-  { pattern: /\/\*[\s\S]*?\*\//g, token: 'comment' },
-  { pattern: /#.*/g, token: 'comment' },
-  { pattern: /<!--[\s\S]*?-->/g, token: 'comment' },
-
-  // Strings (single, double, backtick, heredoc-like)
+const STRING_PATTERNS: ScanPattern[] = [
   { pattern: /'(?:[^'\\]|\\.)*'/g, token: 'string' },
   { pattern: /"(?:[^"\\]|\\.)*"/g, token: 'string' },
   { pattern: /`(?:[^`\\]|\\.)*`/g, token: 'string' },
+];
 
-  // Markup tags and attributes (HTML, JSX, TSX)
+const SLASH_LINE_COMMENT: ScanPattern = {
+  pattern: /\/\/.*/g,
+  token: 'comment',
+  allowAt: (line, pos) => pos === 0 || line[pos - 1] !== ':',
+};
+const BLOCK_COMMENT: ScanPattern = { pattern: /\/\*[\s\S]*?\*\//g, token: 'comment' };
+const HASH_COMMENT: ScanPattern = {
+  pattern: /#.*/g,
+  token: 'comment',
+  allowAt: (line, pos) => pos === 0 || /\s/.test(line[pos - 1] ?? ''),
+};
+const HTML_COMMENT: ScanPattern = { pattern: /<!--[\s\S]*?-->/g, token: 'comment' };
+const SQL_LINE_COMMENT: ScanPattern = { pattern: /--.*/g, token: 'comment' };
+
+const MARKUP_PATTERNS: ScanPattern[] = [
   { pattern: /<\/?[a-zA-Z][\w-]*>/g, token: 'tag' },
   { pattern: /<\/?[a-zA-Z][\w-]*/g, token: 'tag' },
   { pattern: /\/?>/g, token: 'tag' },
   { pattern: /[a-zA-Z][\w-]*=(?=["'`{])/g, token: 'attrName' },
+];
 
-  // Numbers (integers, floats, hex, binary)
-  { pattern: /\b(?:0[xX][\da-fA-F]+|0[bB][01]+|0[oO][0-7]+|\d*\.\d+|\d+\.\d*|\d+)\b(?!=\w*\()/g, token: 'number' },
+const NUMBER_PATTERN: ScanPattern = {
+  pattern: /\b(?:0[xX][\da-fA-F]+|0[bB][01]+|0[oO][0-7]+|\d*\.\d+|\d+\.\d*|\d+)\b(?!=\w*\()/g,
+  token: 'number',
+};
 
-  // Keywords, types, and built-ins — matched as standalone word-boundary
-  // patterns so they never merge into a plain-text run.
-  { pattern: KEYWORD_PATTERN, token: 'keyword' },
-  { pattern: TYPE_PATTERN, token: 'type' },
-  { pattern: BUILTIN_PATTERN, token: 'builtin' },
+const FUNCTION_PATTERN: ScanPattern = {
+  pattern: /\b([a-zA-Z_$][\w$]*)\s*\(/g,
+  token: 'function',
+};
 
-  // Function calls: identifier followed by ( — matches the name part only.
-  // Must come AFTER keyword/type/builtin so `async (` is caught as keyword + punctuation.
-  { pattern: /\b([a-zA-Z_$][\w$]*)\s*\(/g, token: 'function' },
-
-  // Punctuation and operators
+const PUNCTUATION_PATTERNS: ScanPattern[] = [
   { pattern: /[{}()\[\];,.:!?=<>+\-*/%&|^~]=?|=>|\|\||&&|\+\+|--|\.\.\./g, token: 'punctuation' },
   { pattern: /[{}()\[\];,.:!]/g, token: 'punctuation' },
 ];
 
-/**
- * Tokenize a single line of source code.
- */
-function tokenizeLine(line: string, _language: string | null): TokenSpan[] {
-  const spans: TokenSpan[] = [];
-  let pos = 0;
+function languageKind(language: string | null): LanguageKind {
+  const normalized = language?.trim().toLowerCase() ?? '';
+  if (normalized === 'json') return 'json';
+  if (normalized === 'jsonc' || normalized === 'json5') return 'jsonc';
+  if (normalized === 'yaml' || normalized === 'yml') return 'yaml';
+  if (
+    normalized === 'js' ||
+    normalized === 'javascript' ||
+    normalized === 'ts' ||
+    normalized === 'typescript' ||
+    normalized === 'jsx' ||
+    normalized === 'tsx' ||
+    normalized === 'mjs' ||
+    normalized === 'cjs'
+  ) {
+    return 'js';
+  }
+  if (normalized === 'css' || normalized === 'scss' || normalized === 'less') return 'css';
+  if (normalized === 'html' || normalized === 'xml' || normalized === 'svg') return 'html';
+  if (normalized === 'python' || normalized === 'py') return 'python';
+  if (
+    normalized === 'sh' ||
+    normalized === 'bash' ||
+    normalized === 'zsh' ||
+    normalized === 'shell' ||
+    normalized === 'zshrc'
+  ) {
+    return 'shell';
+  }
+  if (normalized === 'sql') return 'sql';
+  return 'other';
+}
 
-  const append = (token: HighlightToken, text: string) => {
+function commentPatterns(kind: LanguageKind): ScanPattern[] {
+  switch (kind) {
+    case 'json':
+      return [];
+    case 'jsonc':
+    case 'js':
+    case 'other':
+      return [SLASH_LINE_COMMENT, BLOCK_COMMENT];
+    case 'css':
+      return [BLOCK_COMMENT];
+    case 'html':
+      return [HTML_COMMENT];
+    case 'python':
+    case 'yaml':
+    case 'shell':
+      return [HASH_COMMENT];
+    case 'sql':
+      return [SQL_LINE_COMMENT, BLOCK_COMMENT];
+  }
+}
+
+function scanPatterns(kind: LanguageKind): ScanPattern[] {
+  const comments = commentPatterns(kind);
+  if (kind === 'json' || kind === 'jsonc') {
+    return [
+      ...STRING_PATTERNS,
+      ...comments,
+      NUMBER_PATTERN,
+      { pattern: /\b(?:true|false|null)\b/g, token: 'number' },
+      ...PUNCTUATION_PATTERNS,
+    ];
+  }
+  if (kind === 'yaml') {
+    return [
+      ...STRING_PATTERNS,
+      ...comments,
+      NUMBER_PATTERN,
+      { pattern: /\b(?:true|false|null|yes|no|on|off)\b/gi, token: 'number' },
+      ...PUNCTUATION_PATTERNS,
+    ];
+  }
+  if (kind === 'css') {
+    return [
+      ...STRING_PATTERNS,
+      ...comments,
+      { pattern: /#[0-9a-fA-F]{3,8}\b/g, token: 'number' },
+      NUMBER_PATTERN,
+      { pattern: /\b[a-zA-Z_][\w-]*(?=\s*:)/g, token: 'attrName' },
+      ...PUNCTUATION_PATTERNS,
+    ];
+  }
+  if (kind === 'html') {
+    return [...comments, ...STRING_PATTERNS, ...MARKUP_PATTERNS, NUMBER_PATTERN, ...PUNCTUATION_PATTERNS];
+  }
+  if (kind === 'shell' || kind === 'python') {
+    return [...STRING_PATTERNS, ...comments, NUMBER_PATTERN, ...PUNCTUATION_PATTERNS];
+  }
+  return [
+    ...STRING_PATTERNS,
+    ...comments,
+    ...MARKUP_PATTERNS,
+    NUMBER_PATTERN,
+    { pattern: KEYWORD_PATTERN, token: 'keyword' },
+    { pattern: TYPE_PATTERN, token: 'type' },
+    { pattern: BUILTIN_PATTERN, token: 'builtin' },
+    FUNCTION_PATTERN,
+    ...PUNCTUATION_PATTERNS,
+  ];
+}
+
+function classifyReserved(word: string): ScanToken | null {
+  if (JS_KEYWORDS.has(word)) return 'keyword';
+  if (TYPES.has(word)) return 'type';
+  if (BUILTINS.has(word)) return 'builtin';
+  return null;
+}
+
+function scanLine(line: string, kind: LanguageKind): ScanSpan[] {
+  const spans: ScanSpan[] = [];
+  let pos = 0;
+  const patterns = scanPatterns(kind);
+
+  const append = (token: ScanToken, text: string) => {
     if (!text) return;
     const previous = spans.at(-1);
     if (previous?.token === token) {
@@ -139,31 +264,19 @@ function tokenizeLine(line: string, _language: string | null): TokenSpan[] {
 
   while (pos < line.length) {
     let matched = false;
-    for (const { pattern, token } of TOKEN_PATTERNS) {
+    for (const { pattern, token, allowAt } of patterns) {
+      if (allowAt && !allowAt(line, pos)) continue;
       pattern.lastIndex = 0;
       const remaining = line.slice(pos);
       const m = pattern.exec(remaining);
       if (m && m.index === 0) {
         const text = m[0];
         if (token === 'function' && m[1]) {
-          // The capture group is the identifier; the rest (`(`, maybe with
-          // whitespace captured by \s*) is punctuation.  If the identifier
-          // happens to be a keyword/type/builtin (e.g. `async (`) we keep
-          // the better classification instead of calling it a function.
           const idToken = classifyReserved(m[1]);
           append(idToken ?? 'function', m[1]);
           const rest = text.slice(m[1].length);
-          if (rest) {
-            append('punctuation', rest);
-          }
-        } else if (token === 'tag' && text.startsWith('</')) {
-          // Closing tag — whole token is a tag
-          append('tag', text);
-        } else if (token === 'tag' && text.length > 1 && text.endsWith('>')) {
-          // Self-closing or opening tag — whole token is a tag
-          append('tag', text);
-        } else if (token === 'attrName') {
-          // The match is `name=`; split the value assignment punctuation
+          if (rest) append('punctuation', rest);
+        } else if (token === 'attrName' && text.includes('=')) {
           const eqIdx = text.indexOf('=');
           append('attrName', text.slice(0, eqIdx));
           append('punctuation', '=');
@@ -176,29 +289,80 @@ function tokenizeLine(line: string, _language: string | null): TokenSpan[] {
       }
     }
     if (matched) continue;
-
-    // Not matched by any pattern — add this character to the current plain run.
-    append('plain', line[pos]);
+    append('plain', line[pos]!);
     pos += 1;
   }
 
   return spans;
 }
 
-/**
- * Check if a word is a reserved identifier (keyword, type, builtin).
- * Returns the token type or null if it's just a plain identifier.
- */
-function classifyReserved(word: string): HighlightToken | null {
-  if (JS_KEYWORDS.has(word)) return 'keyword';
-  if (TYPES.has(word)) return 'type';
-  if (BUILTINS.has(word)) return 'builtin';
-  return null;
+function nextSignificant(spans: ScanSpan[], from: number): ScanSpan | undefined {
+  for (let i = from + 1; i < spans.length; i++) {
+    if (spans[i]!.token === 'plain' && /^\s*$/.test(spans[i]!.text)) continue;
+    return spans[i];
+  }
+  return undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+function scanToRole(token: ScanToken): HighlightToken {
+  switch (token) {
+    case 'comment':
+    case 'punctuation':
+      return 'structure';
+    case 'string':
+    case 'attrValue':
+    case 'number':
+      return 'value';
+    case 'keyword':
+    case 'function':
+    case 'tag':
+    case 'attrName':
+    case 'builtin':
+      return 'name';
+    case 'type':
+      return 'name';
+    default:
+      return 'plain';
+  }
+}
+
+function promoteKeyedStrings(spans: ScanSpan[], kind: LanguageKind): TokenSpan[] {
+  const keyed = kind === 'json' || kind === 'jsonc' || kind === 'yaml';
+  return spans.map((span, index) => {
+    if (keyed && span.token === 'string') {
+      const next = nextSignificant(spans, index);
+      return { token: next?.text.startsWith(':') ? 'name' : 'value', text: span.text };
+    }
+    if (keyed && span.token === 'plain' && /^\s*[A-Za-z_][\w-]*\s*$/.test(span.text)) {
+      const next = nextSignificant(spans, index);
+      if (next?.text.startsWith(':')) return { token: 'name', text: span.text };
+      if (kind === 'yaml') return { token: 'value', text: span.text };
+    }
+    if (span.token === 'type' && VALUE_LITERALS.has(span.text)) {
+      return { token: 'value', text: span.text };
+    }
+    return { token: scanToRole(span.token), text: span.text };
+  });
+}
+
+function mergeRoles(spans: TokenSpan[]): TokenSpan[] {
+  const out: TokenSpan[] = [];
+  for (const span of spans) {
+    if (!span.text) continue;
+    const previous = out.at(-1);
+    if (previous?.token === span.token) {
+      previous.text += span.text;
+      continue;
+    }
+    out.push({ ...span });
+  }
+  return out;
+}
+
+function tokenizeLine(line: string, language: string | null): TokenSpan[] {
+  const kind = languageKind(language);
+  return mergeRoles(promoteKeyedStrings(scanLine(line, kind), kind));
+}
 
 export type TokenizedLine = TokenSpan[];
 
@@ -207,7 +371,7 @@ export type TokenizedLine = TokenSpan[];
  *
  * @param code  The full code block text.
  * @param language  Language hint from the markdown fence (e.g. `typescript`,
- *                  `python`).  `null` for unfenced blocks.
+ *                  `json`).  `null` for unfenced blocks.
  */
 export function tokenizeCode(code: string, language: string | null): TokenizedLine[] {
   const lines = code.split('\n');

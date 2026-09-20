@@ -19,6 +19,15 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+vi.mock('./HullActionSheet', () => {
+  const ReactModule = require('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
+  };
+});
 
 const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
 vi.mock('@/utils/open-external-url', () => openExternal);

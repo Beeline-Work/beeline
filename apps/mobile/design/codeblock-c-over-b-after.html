@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code block — C over B after</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --sans:'Space Grotesk',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --r:3px;
+}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;padding:0}
+body{background:#14091A;color:#c9c9d1;font-family:var(--sans);font-size:16px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding:40px 24px 80px}
+h1{margin:0;font-weight:500;color:#f0f0f3;font-size:22px}
+.eyebrow{font-size:10px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:#83838d;margin:0 0 10px}
+.lede{margin:12px 0 28px;max-width:70ch}
+.mocks{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.mockcol{display:flex;flex-direction:column;gap:9px}
+.mocklabel{font-family:var(--mono);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:#83838d}
+.phone{width:393px;max-width:100%;border:1px solid #291e33;border-radius:14px;overflow:hidden}
+.phone--ob{background:#14091A}
+.phone--bn{background:#F3EEE4;border-color:#DED2BC}
+.pbody{padding:14px 16px 18px}
+.prose{font-size:15px;line-height:1.55;margin:0 0 12px}
+.phone--ob .prose{color:#c9c9d1}
+.phone--bn .prose{color:#4A4038}
+.phone--ob .prose code{font-family:var(--mono);font-size:13px;color:#f0f0f3}
+.phone--bn .prose code{font-family:var(--mono);font-size:13px;color:#171310}
+.cb{border-left:2px solid #6c6c76;padding:4px 8px}
+.phone--bn .cb{border-left-color:#8B7F6E}
+.cl{font-family:var(--mono);font-size:13px;line-height:19px}
+.cl code{font:inherit;white-space:pre-wrap;display:block;word-break:break-word}
+.cl i{font-style:normal}
+.phone--ob .t-s{color:#6c6c76}.phone--ob .t-k{color:#a58ec6}.phone--ob .t-v{color:#a8cde8}
+.phone--bn .t-s{color:#8B7F6E}.phone--bn .t-k{color:#6b5a83}.phone--bn .t-v{color:#1e4460}
+.inscr{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-family:var(--mono);font-size:13px;line-height:19px}
+.phone--ob .inscr .kind{color:#c9c9d1}.phone--bn .inscr .kind{color:#4A4038}
+.inscr .v{font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+.phone--ob .inscr .v{color:#b08a4a}.phone--bn .inscr .v{color:#8a6323}
+.morerow{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;height:24px;display:flex;align-items:center;gap:10px;margin-top:4px}
+.phone--ob .morerow{color:#b08a4a}.phone--bn .morerow{color:#8a6323}
+.morerow .cnt{letter-spacing:0;font-size:11px;text-transform:none}
+.phone--ob .morerow .cnt{color:#6c6c76}.phone--bn .morerow .cnt{color:#A79C89}
+.sheet{width:393px;max-width:100%;border:1px solid #291e33;border-radius:14px;overflow:hidden}
+.sheet--ob{background:#14091A}.sheet--bn{background:#F3EEE4;border-color:#DED2BC}
+.sheetgrab{height:22px;display:flex;align-items:center;justify-content:center}
+.sheetgrab i{display:block;width:34px;height:3px;border-radius:2px;background:#3b3048}
+.sheet--bn .sheetgrab i{background:#C9BBA0}
+.sheethead{padding:4px 16px 12px;border-bottom:1px solid #291e33}
+.sheet--bn .sheethead{border-bottom-color:#DED2BC}
+.sheethead .t{font-family:var(--sans);font-size:16px;font-weight:500}
+.sheet--ob .sheethead .t{color:#f0f0f3}.sheet--bn .sheethead .t{color:#171310}
+.sheethead .s{font-family:var(--mono);font-size:11px;margin-top:2px}
+.sheet--ob .sheethead .s{color:#90909B}.sheet--bn .sheethead .s{color:#6F6455}
+.sheetbody{padding:12px 16px 4px}
+.sheetbody .cl code{white-space:pre-wrap;word-break:break-word}
+.sheetfoot{border-top:1px solid #291e33;padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;font-family:var(--sans);font-size:15px}
+.sheet--bn .sheetfoot{border-top-color:#DED2BC}
+.sheet--ob .sheetfoot{color:#f0f0f3}.sheet--bn .sheetfoot{color:#171310}
+.sheetfoot .meta{font-family:var(--mono);font-size:11px}
+.sheet--ob .sheetfoot .meta{color:#6c6c76}.sheet--bn .sheetfoot .meta{color:#A79C89}
+.cbtop{display:flex;justify-content:flex-end;height:0;position:relative}
+.copychip{position:absolute;top:0;right:0;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;padding:2px 0 2px 10px}
+.phone--ob .copychip{color:#b08a4a}.phone--bn .copychip{color:#8a6323}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p class="eyebrow">Beeline · after · C over B</p>
+<h1>Inscribed and opened, in Two Inks</h1>
+<p class="lede">Same JSON from the redesign board. Short fences stay chrome-less. A long fence is one inscribed line plus a four-line peek labelled with what it hides, and opens wrapping in the existing output sheet.</p>
+<div class="mocks">
+  <div class="mockcol" id="ob-inline"><div class="mocklabel">Obsidian · in the transcript</div><div class="phone phone--ob"><div class="pbody"><p class="prose">1. Put Milo in <code>~/.pi/agent/models.json</code> (mode <code>0600</code>). Use your OpenRouter key, not anyone else’s:</p>
+<div class="cb">
+  <div class="inscr"><span class="kind">json · 13 lines · 276 B</span><span class="v">copy</span></div>
+  <div class="cl"><code><i class="t-s">{</i></code></div>
+  <div class="cl"><code>  <i class="t-k">"providers"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+  <div class="cl"><code>    <i class="t-k">"milo"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+  <div class="cl"><code>      <i class="t-k">"name"</i><i class="t-s">:</i> <i class="t-v">"Milo"</i><i class="t-s">,</i></code></div>
+  <div class="morerow"><span>⌄ open</span><span class="cnt">9 more lines</span></div>
+</div></div></div></div>
+  <div class="mockcol" id="ob-open"><div class="mocklabel">Obsidian · opened, wrapping</div><div class="sheet sheet--ob">
+    <div class="sheetgrab"><i></i></div>
+    <div class="sheethead"><div class="t">json</div><div class="s">json · 13 lines · 276 B</div></div>
+    <div class="sheetbody">
+      <div class="cl"><code><i class="t-s">{</i></code></div>
+      <div class="cl"><code>  <i class="t-k">"providers"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+      <div class="cl"><code>    <i class="t-k">"milo"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"name"</i><i class="t-s">:</i> <i class="t-v">"Milo"</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"baseUrl"</i><i class="t-s">:</i> <i class="t-v">"https://milo-gateway.fly.dev/v1"</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"api"</i><i class="t-s">:</i> <i class="t-v">"openai-completions"</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"apiKey"</i><i class="t-s">:</i> <i class="t-v">"sk-or-..."</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"models"</i><i class="t-s">:</i> <i class="t-s">[</i></code></div>
+      <div class="cl"><code>        <i class="t-s">{</i> <i class="t-k">"id"</i><i class="t-s">:</i> <i class="t-v">"milo/auto"</i><i class="t-s">,</i> <i class="t-k">"reasoning"</i><i class="t-s">:</i> <i class="t-v">true</i><i class="t-s">,</i> <i class="t-k">"context"</i><i class="t-s">:</i> <i class="t-v">200000</i> <i class="t-s">}</i></code></div>
+      <div class="cl"><code>      <i class="t-s">]</i></code></div>
+      <div class="cl"><code>    <i class="t-s">}</i></code></div>
+      <div class="cl"><code>  <i class="t-s">}</i></code></div>
+      <div class="cl"><code><i class="t-s">}</i></code></div>
+    </div>
+    <div class="sheetfoot"><span>Copy output</span><span class="meta">276 B</span></div>
+  </div></div>
+  <div class="mockcol" id="bn-inline"><div class="mocklabel">Bone · in the transcript</div><div class="phone phone--bn"><div class="pbody"><p class="prose">1. Put Milo in <code>~/.pi/agent/models.json</code> (mode <code>0600</code>). Use your OpenRouter key, not anyone else’s:</p>
+<div class="cb">
+  <div class="inscr"><span class="kind">json · 13 lines · 276 B</span><span class="v">copy</span></div>
+  <div class="cl"><code><i class="t-s">{</i></code></div>
+  <div class="cl"><code>  <i class="t-k">"providers"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+  <div class="cl"><code>    <i class="t-k">"milo"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+  <div class="cl"><code>      <i class="t-k">"name"</i><i class="t-s">:</i> <i class="t-v">"Milo"</i><i class="t-s">,</i></code></div>
+  <div class="morerow"><span>⌄ open</span><span class="cnt">9 more lines</span></div>
+</div></div></div></div>
+  <div class="mockcol" id="bn-open"><div class="mocklabel">Bone · opened, wrapping</div><div class="sheet sheet--bn">
+    <div class="sheetgrab"><i></i></div>
+    <div class="sheethead"><div class="t">json</div><div class="s">json · 13 lines · 276 B</div></div>
+    <div class="sheetbody">
+      <div class="cl"><code><i class="t-s">{</i></code></div>
+      <div class="cl"><code>  <i class="t-k">"providers"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+      <div class="cl"><code>    <i class="t-k">"milo"</i><i class="t-s">:</i> <i class="t-s">{</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"name"</i><i class="t-s">:</i> <i class="t-v">"Milo"</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"baseUrl"</i><i class="t-s">:</i> <i class="t-v">"https://milo-gateway.fly.dev/v1"</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"api"</i><i class="t-s">:</i> <i class="t-v">"openai-completions"</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"apiKey"</i><i class="t-s">:</i> <i class="t-v">"sk-or-..."</i><i class="t-s">,</i></code></div>
+      <div class="cl"><code>      <i class="t-k">"models"</i><i class="t-s">:</i> <i class="t-s">[</i></code></div>
+      <div class="cl"><code>        <i class="t-s">{</i> <i class="t-k">"id"</i><i class="t-s">:</i> <i class="t-v">"milo/auto"</i><i class="t-s">,</i> <i class="t-k">"reasoning"</i><i class="t-s">:</i> <i class="t-v">true</i><i class="t-s">,</i> <i class="t-k">"context"</i><i class="t-s">:</i> <i class="t-v">200000</i> <i class="t-s">}</i></code></div>
+      <div class="cl"><code>      <i class="t-s">]</i></code></div>
+      <div class="cl"><code>    <i class="t-s">}</i></code></div>
+      <div class="cl"><code>  <i class="t-s">}</i></code></div>
+      <div class="cl"><code><i class="t-s">}</i></code></div>
+    </div>
+    <div class="sheetfoot"><span>Copy output</span><span class="meta">276 B</span></div>
+  </div></div>
+</div>
+</div>
+</body>
+</html>

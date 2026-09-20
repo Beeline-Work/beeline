@@ -40,8 +40,8 @@ ground: `#90909B` in Obsidian, `#6F6455` in Bone (pinned in
 `groknight.test.ts`; never re-dim it). `#83838d` and `#6c6c76` remain
 reserved for chrome, muted labels, and the gutter's ghost tier. Brass is
 `#b08a4a` in Obsidian (the Editorial direction's single accent; the older
-gold `#c9a24b` is retired); diff green/red remains the one domain-color
-exception.
+gold `#c9a24b` is retired); diff green/red remains a domain-color
+exception, and Two Inks is the fenced-block exception (see Color exceptions).
 
 Bone is Obsidian's construction rules run in reverse: a warm bone canvas
 (`#F3EEE4`) instead of the warm-dark aubergine, "content near-black, chrome
@@ -51,9 +51,10 @@ near-black and reads too light against bone. Every elevation, border, and
 divider step keeps Obsidian's relative position on the ladder, re-based on
 the bone canvas. Diff green/red ships as text color, not a swatch, so it is
 tuned per canvas the same way brass is: Obsidian keeps `#3FB950`/`#F85149`,
-Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — the domain
-color is still the one exception (never a third hue), it is just no longer
-one literal hex shared by every canvas. The ledger's quiet ink is tuned per
+Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — that domain
+color stays the diff exception (never a third hue on the slab), it is just no
+longer one literal hex shared by every canvas. Two Inks lives only inside a
+fenced block. The ledger's quiet ink is tuned per
 canvas the same way: the gray bone shares with chrome (`#8B7F6E`) falls to
 3.4:1 on the bone canvas, so Bone darkens `ledgerQuiet` to `#6F6455` (5.0:1)
 while Obsidian lifts its own to `#90909B` (6.1:1). Both hold the AA floor
@@ -197,8 +198,12 @@ blank-line-delimited block — a dump is usually written directly under the
 sentence introducing it, and a block rule would either swallow that sentence or
 miss the dump. The summary truncates; the disclosure copy beside it never does,
 because the affordance is the reason the line exists. A fenced code block marks
-itself with a 2px left rule in the theme's peak steel — the same vocabulary tool
-readouts use — never a panel.
+itself with a 2px left rule in Two Inks structure (`#6c6c76` Obsidian /
+`#8B7F6E` Bone, ≥3:1) — the same vocabulary tool readouts use — never a panel.
+Short fences stay inline with no chrome. A long fence is one inscribed line
+(`json · 13 lines · 277 B`) plus a four-line peek labelled with what it hides,
+and opens full-width in `ToolOutputSheet` (`CodeBlock.tsx`) where long lines
+wrap. Colour inside the fence is Three-role Two Inks (`groknight.syntax*`).
 
 **Text still being written says so, and settles by dissolving.** A streaming
 turn is not a finished message, and reading like one is a lie the reader pays
@@ -701,3 +706,11 @@ check), never as a page or Room/Corner load gate.
 3. **Ledger speaker rails** use human blue and agent green only in the dense
    Ledger theme. They are redundant with speaker position/identity and do not
    authorize colored prose, chrome, or status decoration.
+4. **Two Inks** (captain 2026-09-19, C composed with B) is the fenced-block
+   palette: three roles — structure, name, value — in two theme-tuned hues
+   drawn from the canvas family (aubergine lifted, and its cool complement),
+   laddered by luminance so the block still parses in greyscale. Obsidian
+   `syntaxStructure` `#6c6c76` / `syntaxName` `#a58ec6` / `syntaxValue`
+   `#a8cde8`; Bone `#8B7F6E` / `#6b5a83` / `#1e4460`. Hue is the redundant
+   channel. It lives only inside a fenced block and the sheet that opens one;
+   it does not authorize a fifth exception.

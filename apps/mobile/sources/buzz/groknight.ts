@@ -172,11 +172,17 @@ export const beelineThemes = {
     accent: '#b08a4a',
     humanRail: '#b08a4a',
     agentRail: '#3b3048',
-    // Diff green/red is the one domain-color exception (DESIGN.md), tuned
+    // Diff green/red is one domain-color exception (DESIGN.md), tuned
     // per canvas like brass is: legible text against near-black here, and
     // against Bone's near-white canvas in that theme's own values below.
     diffAdded: '#3FB950',
     diffRemoved: '#F85149',
+    // Two Inks: the fourth DESIGN.md colour exception (captain 2026-09-19).
+    // Three roles, two hues from the canvas family, luminance-laddered so a
+    // block still parses in greyscale. Structure is the 2px rule too.
+    syntaxStructure: '#6c6c76',
+    syntaxName: '#a58ec6',
+    syntaxValue: '#a8cde8',
     ledgerBright: '#f0f0f3',
     ledgerBody: '#c9c9d1',
     // The quiet tier carries the ledger's own reading matter — previews,
@@ -278,6 +284,11 @@ export const beelineThemes = {
     // TranscriptCard/ActivityTimeline/RoomMessageVariants, not swatches.
     diffAdded: '#1a7f37',
     diffRemoved: '#cf222e',
+    // Two Inks on Bone: the aubergine and its cool complement, darkened the
+    // same way brass and diff text are. Structure is Bone chrome (`#8B7F6E`).
+    syntaxStructure: '#8B7F6E',
+    syntaxName: '#6b5a83',
+    syntaxValue: '#1e4460',
     ledgerBright: '#171310',
     ledgerBody: '#4A4038',
     // Darkened from #8B7F6E the way brass and diff text are: the gray shared

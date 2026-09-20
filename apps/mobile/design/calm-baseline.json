@@ -19,7 +19,6 @@
   "components/RoundButton.tsx": 2,
   "components/ShortcutHints.tsx": 2,
   "components/UpdateReadyPrompt.tsx": 1,
-  "components/buzz/CodeHighlighter.tsx": 1,
   "components/buzz/CommunityRail.tsx": 5,
   "components/buzz/CornerLiveBar.tsx": 3,
   "components/buzz/CornerStatusLine.tsx": 3,

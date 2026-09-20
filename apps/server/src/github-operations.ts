@@ -752,8 +752,7 @@ export class GitHubOperations {
       event === 'pull_request' ||
       event === 'check_run' ||
       event === 'check_suite' ||
-      event === 'status' ||
-      event === 'pull_request_review'
+      event === 'status'
     ) {
       await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
@@ -819,14 +818,12 @@ export class GitHubOperations {
 
   /**
    * Room-level repository activity. Issues and pull requests post on
-   * opened/closed; pushes, check runs/suites/commit statuses (CI) and pull
-   * request reviews post too — the Room toggle promises all of them. Corner
-   * branches stay corner-owned (the corner exclusion below), and pushes and
-   * CI are gated to the repository's DEFAULT branch: a Room reads the
-   * repository's mainline activity, while feature-branch churn belongs to
-   * corners and pull-request heads. `pull_request_review` requires the App
-   * to subscribe to it (`REQUIRED_GITHUB_APP_EVENTS` in apps/auth, drift
-   * detection names the missing subscription on the live App).
+   * opened/closed; pushes and check runs/suites/commit statuses (CI) post
+   * too — the Room toggle promises those. Corner branches stay corner-owned
+   * (the corner exclusion below), and pushes and CI are gated to the
+   * repository's DEFAULT branch: a Room reads the repository's mainline
+   * activity, while feature-branch churn belongs to corners and
+   * pull-request heads.
    */
   private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
     if (
@@ -835,8 +832,7 @@ export class GitHubOperations {
       event !== 'push' &&
       event !== 'check_run' &&
       event !== 'check_suite' &&
-      event !== 'status' &&
-      event !== 'pull_request_review'
+      event !== 'status'
     )
       return;
     const repository = repositoryName(body);
@@ -844,7 +840,7 @@ export class GitHubOperations {
 
     let card:
       | {
-          type: 'issue' | 'pull-request' | 'push' | 'ci' | 'review';
+          type: 'issue' | 'pull-request' | 'push' | 'ci';
           action: string;
           actor: string;
           title: string;
@@ -914,33 +910,11 @@ export class GitHubOperations {
         ...(branch ? { branch } : {}),
       };
       dedupeKey = `${sha ?? ''}:${fact.name}`;
-    } else {
-      const action = text(body.action);
-      if (action !== 'submitted') return;
-      const review = record(body.review);
-      const pullRequest = record(body.pull_request);
-      const state = text(review?.state);
-      if (state !== 'approved' && state !== 'changes_requested' && state !== 'commented') return;
-      const title = text(pullRequest?.title)?.trim();
-      const url =
-        githubUrl(text(review?.html_url)) ?? githubUrl(text(pullRequest?.html_url));
-      if (!title || !url) return;
-      branch = text(record(pullRequest?.head)?.ref);
-      targetBranch = text(record(pullRequest?.base)?.ref);
-      card = {
-        type: 'review',
-        action: state,
-        actor: text(record(review?.user)?.login) || actor,
-        title,
-        url,
-        ...(branch ? { branch } : {}),
-        ...(targetBranch ? { targetBranch } : {}),
-      };
-      dedupeKey = url;
     }
+    if (!card || !dedupeKey) return;
 
     // Pushes and CI are mainline events: gate them to the repository's
-    // default branch. Reviews ride the pull request's head branch exclusion.
+    // default branch. Pull-request cards still exclude a matching corner branch.
     const defaultBranchGate =
       event === 'push' || event === 'check_run' || event === 'check_suite' || event === 'status';
     const rooms = await this.database.query<{ room_id: string; author_id: string }>(

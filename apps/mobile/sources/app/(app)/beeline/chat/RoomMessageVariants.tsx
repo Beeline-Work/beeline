@@ -32,6 +32,7 @@ import {
   rememberProvisionalDraft,
   takeProvisionalDraft,
 } from '@/buzz/draft-settle';
+import { liveDraftDrainStore } from '@/buzz/live-draft-drain';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
@@ -1783,14 +1784,19 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   // turn's own request id. The durable reply below collects it and fades out
   // of it; nothing about the draft itself changes (C98).
   const draftKey =
-    message.pubkey && message.agentMessageDraft ? draftRequestId(message.id) : undefined;
+    message.pubkey && (message.agentMessageDraft || message.agentMessageDraftKey)
+      ? draftRequestId(message.id)
+      : undefined;
   useEffect(() => {
-    if (!draftKey || !message.pubkey || !message.agentMessageDraft) return;
-    rememberProvisionalDraft(
-      provisionalDraftKey(message.pubkey, draftKey),
-      message.agentMessageDraft,
-    );
-  }, [draftKey, message.agentMessageDraft, message.pubkey]);
+    if (!draftKey || !message.pubkey) return;
+    const text =
+      message.agentMessageDraft ??
+      (message.agentMessageDraftKey
+        ? liveDraftDrainStore.getReceived(message.agentMessageDraftKey)
+        : '');
+    if (!text) return;
+    rememberProvisionalDraft(provisionalDraftKey(message.pubkey, draftKey), text);
+  }, [draftKey, message.agentMessageDraft, message.agentMessageDraftKey, message.pubkey]);
   // Spent once per settled reply, and decided once per mounted row: a
   // re-render mid-transition must not restart or cancel the dissolve.
   const settleRef = useRef<string | undefined>(undefined);
@@ -1861,6 +1867,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             }
             items={activity}
             messageDraft={message.agentMessageDraft}
+            messageDraftKey={message.agentMessageDraftKey}
             stamp={ledgerStamp(message.timestamp)}
             testID="corner-activity-timeline"
           />

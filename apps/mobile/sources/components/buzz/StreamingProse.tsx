@@ -1,89 +1,151 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { type TextStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Text, TextInput, View, type TextStyle } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
+import { StyleSheet } from 'react-native-unistyles';
 import {
-  advanceStream,
-  mixHex,
-  openStream,
-  pendingTailLength,
-  type StreamState,
-} from '@/buzz/streaming-prose';
+  liveDraftDrainStore,
+  type LiveDraftDrainStore,
+} from '@/buzz/live-draft-drain';
 import { MonoMarkdown } from './MonoMarkdown';
 
-/** One arrival window. Characters that land inside it fade up together. */
-const TAIL_FADE_MS = 160;
-const TAIL_FADE_STEPS = 4;
+type NativeTextTarget = {
+  setNativeProps?: (props: { text?: string }) => void;
+  textContent?: string | null;
+  value?: string;
+};
+
+type StreamingProseProps = {
+  textStyle: TextStyle;
+  testID?: string;
+  /** Production lane. Its cumulative text lives only in the drain store. */
+  streamKey?: string;
+  store?: LiveDraftDrainStore;
+  /** Static compatibility seam for stories and component tests. */
+  markdown?: string;
+};
 
 /**
- * A turn as it is being written (C98).
+ * The narrow live-text surface for one draft.
  *
- * The caller supplies the provisional tone; this component adds the one thing
- * a static render cannot say — that the words are still arriving. The tail
- * that landed since the last window walks its colour up from the transcript
- * ground to the body tone, so new text materialises where it was written and
- * everything already read holds perfectly still.
- *
- * Honest by construction. Nothing is revealed on a timer: the text rendered is
- * exactly the text the producer has sent, and a window opens only because
- * characters actually arrived. A harness that rewrites what it wrote settles
- * whole rather than pretending the replacement is new (`buzz/streaming-prose.ts`).
- *
- * Cheap by construction. A delta inside a running window changes only the tail
- * length; the block tree is rebuilt but the parse is memoised on the text, and
- * the fade costs four renders per window however fast the harness streams.
+ * Arrivals do not enter this component. The store's one fixed scheduler calls
+ * `setNativeProps({ text })` on the live TextInput as it drains queued
+ * characters. React runs only when complete leading lines become a new
+ * immutable plain-text block. The durable row later replaces this component
+ * and invokes MonoMarkdown once for the finished message.
  */
 export function StreamingProse({
   markdown,
+  streamKey,
+  store = liveDraftDrainStore,
   textStyle,
   testID,
-}: {
-  markdown: string;
-  textStyle: TextStyle;
-  testID?: string;
-}) {
-  const reducedMotion = useReducedMotion();
-  const animate = !reducedMotion;
-  const [stream, setStream] = useState<StreamState>(() => openStream(markdown, animate));
-  // Derived from props during render, the sanctioned way: a delta must not
-  // wait a frame to be shown, and the tail must never flash at full tone
-  // before its window opens.
-  if (stream.text !== markdown) setStream(advanceStream(stream, markdown, animate));
-
-  const pending = pendingTailLength(stream) > 0;
-  useEffect(() => {
-    if (!pending || !animate) return;
-    let step = 0;
-    const timer = setInterval(() => {
-      step += 1;
-      const done = step >= TAIL_FADE_STEPS;
-      if (done) clearInterval(timer);
-      setStream((current) =>
-        done
-          ? { ...current, settled: current.text.length, progress: 1 }
-          : { ...current, progress: step / TAIL_FADE_STEPS },
-      );
-    }, TAIL_FADE_MS / TAIL_FADE_STEPS);
-    return () => clearInterval(timer);
-  }, [animate, pending]);
-
-  const tailLength = pendingTailLength(stream);
-  const ground = String(styles.ground.color);
-  const tone = String(textStyle.color ?? ground);
-  const tail = useMemo(
-    () =>
-      tailLength > 0
-        ? { length: tailLength, style: { color: mixHex(ground, tone, stream.progress) } }
-        : undefined,
-    [ground, stream.progress, tailLength, tone],
-  );
-
+}: StreamingProseProps) {
+  if (!streamKey) {
+    return <MonoMarkdown markdown={markdown ?? ''} testID={testID} textStyle={textStyle} />;
+  }
   return (
-    <MonoMarkdown markdown={stream.text} tail={tail} testID={testID} textStyle={textStyle} />
+    <NativeStreamingProse
+      store={store}
+      streamKey={streamKey}
+      testID={testID}
+      textStyle={textStyle}
+    />
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  /** The transcript ground the arriving characters rise out of. */
-  ground: { color: theme.buzz.bgBase },
-}));
+const LiveNativeText = React.forwardRef<
+  NativeTextTarget,
+  { textStyle: TextStyle; testID?: string }
+>(function LiveNativeText({ textStyle, testID }, ref) {
+  return (
+    <TextInput
+      ref={ref as React.Ref<TextInput>}
+      caretHidden
+      defaultValue=""
+      editable={false}
+      multiline
+      pointerEvents="none"
+      scrollEnabled={false}
+      showSoftInputOnFocus={false}
+      style={[textStyle, styles.nativeText]}
+      testID={testID}
+      underlineColorAndroid="transparent"
+    />
+  );
+});
+
+function NativeStreamingProse({
+  store,
+  streamKey,
+  textStyle,
+  testID,
+}: Required<Pick<StreamingProseProps, 'store' | 'streamKey' | 'textStyle'>> & {
+  testID?: string;
+}) {
+  const nativeTextRef = useRef<NativeTextTarget | null>(null);
+  const liveTextRef = useRef('');
+  const [blocks, setBlocks] = useState<readonly string[]>(
+    () => store.getPresentation(streamKey).blocks,
+  );
+  const reducedMotion = useReducedMotion();
+
+  const setNativeText = useCallback((text: string) => {
+    liveTextRef.current = text;
+    const target = nativeTextRef.current;
+    if (!target) return;
+    target.setNativeProps?.({ text });
+    if ('value' in target) target.value = text;
+    else if ('textContent' in target) target.textContent = text;
+  }, []);
+
+  useEffect(() => {
+    store.setInstant(streamKey, reducedMotion);
+  }, [reducedMotion, store, streamKey]);
+
+  useEffect(() => {
+    const initial = store.getPresentation(streamKey);
+    liveTextRef.current = initial.liveText;
+    setBlocks(initial.blocks);
+    setNativeText(initial.liveText);
+    return store.attach(streamKey, {
+      paint(update) {
+        setNativeText(update.liveText);
+        if (update.promoted.length > 0) setBlocks(update.blocks);
+      },
+      replace(next) {
+        setNativeText(next.liveText);
+        setBlocks(next.blocks);
+      },
+    });
+  }, [setNativeText, store, streamKey]);
+
+  useLayoutEffect(() => {
+    setNativeText(liveTextRef.current);
+  }, [blocks, setNativeText]);
+
+  return (
+    <View style={styles.stack} testID={testID}>
+      {blocks.map((block, index) => (
+        <Text key={index} style={textStyle}>
+          {block}
+        </Text>
+      ))}
+      <LiveNativeText
+        ref={nativeTextRef}
+        testID={testID ? `${testID}-live` : undefined}
+        textStyle={textStyle}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  stack: { width: '100%', minWidth: 0 },
+  nativeText: {
+    width: '100%',
+    minWidth: 0,
+    padding: 0,
+    margin: 0,
+    textAlignVertical: 'top',
+  },
+});

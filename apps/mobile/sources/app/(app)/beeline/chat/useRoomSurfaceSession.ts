@@ -6,7 +6,6 @@ import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
   SurfaceRefreshScheduler,
-  applyLiveOverlay,
   isRoomView,
   type LiveOverlay,
   type RoomView,
@@ -33,6 +32,12 @@ import {
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { liveDraftRowId } from '@/buzz/draft-settle';
+import {
+  applyLiveOverlayStructure,
+  liveDraftDrainKey,
+  liveDraftDrainStore,
+  type LiveDraftDrainStore,
+} from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -178,6 +183,7 @@ export interface UseRoomSurfaceSessionResult {
   roomClient: RoomViewClient | null;
   roomSurface: RoomView | null;
   liveOverlays: readonly LiveOverlay[];
+  liveDraftStore: LiveDraftDrainStore;
   userPubkey: string;
   heartbeatPresences: Record<string, RoomAgentPresence>;
   presenceResolved: boolean;
@@ -213,6 +219,7 @@ export function useRoomSurfaceSession({
   const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
 
   const outboxRef = useRef<RoomOutbox | null>(null);
+  const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
   const agentPresencesRef = useRef(heartbeatPresences);
@@ -221,6 +228,7 @@ export function useRoomSurfaceSession({
   const deltaReconcilePendingRef = useRef(false);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
+  liveOverlaysRef.current = liveOverlays;
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
@@ -334,6 +342,7 @@ export function useRoomSurfaceSession({
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
+    liveOverlaysRef.current = [];
     setLiveOverlays([]);
     reconciledViewRef.current = null;
     setFailedIds(new Set());
@@ -357,12 +366,30 @@ export function useRoomSurfaceSession({
         });
         return;
       }
-      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
+      // A cumulative draft arrival mutates only the keyed drain queue; React
+      // state changes once to open/close a lane, never for text.
+      const current = liveOverlaysRef.current;
+      const next = applyLiveOverlayStructure(current, overlay, liveDraftDrainStore);
+      if (next === current) return;
+      liveOverlaysRef.current = next;
+      setLiveOverlays(next);
     };
 
     const paintView = (view: RoomView, fresh: boolean): RoomView | null => {
       if (cancelled) return null;
       const stableView = reconcileRoomView(reconciledViewRef.current, view);
+      for (const message of stableView.messages) {
+        if (message.requestId) {
+          liveDraftDrainStore.finalize(
+            liveDraftDrainKey(message.author.pubkey, message.requestId),
+          );
+        }
+      }
+      for (const turn of stableView.latestAgentTurns) {
+        if (turn.status === 'complete') {
+          liveDraftDrainStore.finalize(liveDraftDrainKey(turn.agentPubkey, turn.requestId));
+        }
+      }
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
@@ -485,6 +512,15 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
               if (live.roomId !== channelId) return;
+              if (live.type === 'message-delta' && live.message.requestId) {
+                liveDraftDrainStore.finalize(
+                  liveDraftDrainKey(live.message.author.pubkey, live.message.requestId),
+                );
+              } else if (live.type === 'turn-delta' && live.turn.status === 'complete') {
+                liveDraftDrainStore.finalize(
+                  liveDraftDrainKey(live.turn.agentPubkey, live.turn.requestId),
+                );
+              }
               const received = live.trace
                 ? {
                     ...live.trace,
@@ -812,6 +848,14 @@ export function useRoomSurfaceSession({
                 error.status === 502);
             if (terminal) {
               setRoomSurface(null);
+              for (const overlay of liveOverlaysRef.current) {
+                if (overlay.kind === 'draft') {
+                  liveDraftDrainStore.remove(
+                    liveDraftDrainKey(overlay.agentPubkey, overlay.requestId),
+                  );
+                }
+              }
+              liveOverlaysRef.current = [];
               setLiveOverlays([]);
               unsubscribe?.();
               unsubscribe = undefined;
@@ -856,6 +900,12 @@ export function useRoomSurfaceSession({
       outboxRef.current = null;
       schedulerRef.current = null;
       reconciledViewRef.current = null;
+      for (const overlay of liveOverlaysRef.current) {
+        if (overlay.kind === 'draft') {
+          liveDraftDrainStore.remove(liveDraftDrainKey(overlay.agentPubkey, overlay.requestId));
+        }
+      }
+      liveOverlaysRef.current = [];
     };
   }, [
     applyAgentPresence,
@@ -886,6 +936,7 @@ export function useRoomSurfaceSession({
     roomClient,
     roomSurface,
     liveOverlays,
+    liveDraftStore: liveDraftDrainStore,
     userPubkey,
     heartbeatPresences,
     presenceResolved,

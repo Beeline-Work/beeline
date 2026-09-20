@@ -546,6 +546,7 @@ export function BuzzChatSurface({
     roomClient,
     roomSurface,
     liveOverlays,
+    liveDraftStore,
     userPubkey,
     heartbeatPresences,
     presenceResolved,
@@ -2040,6 +2041,14 @@ export function BuzzChatSurface({
       flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     });
   }, [desktopTranscript]);
+  useEffect(
+    () =>
+      liveDraftStore.subscribePromotion(() => {
+        if (!isPinnedToTailRef.current || userDraggingRef.current) return;
+        scrollToNewestMessage();
+      }),
+    [liveDraftStore, scrollToNewestMessage],
+  );
   const newestMessage = foldedMessages.at(-1);
   const newestMessageId = newestMessage
     ? [

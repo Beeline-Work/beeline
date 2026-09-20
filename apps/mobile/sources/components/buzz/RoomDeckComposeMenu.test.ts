@@ -10,6 +10,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Dimensions: { get: () => ({ width: 390, height: 844 }) },
+    Keyboard: { addListener: () => ({ remove: () => undefined }) },
     KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Modal: host('Modal'),
     Platform: {
@@ -17,6 +18,7 @@ vi.mock('react-native', async () => {
       select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
     },
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
     Text: host('Text'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),

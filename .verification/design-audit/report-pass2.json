@@ -1,0 +1,44 @@
+[
+  {
+    "name": "bookmarks",
+    "path": "/beeline/bookmarks",
+    "file": ".verification/design-audit/shots/w2-bookmarks.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n33M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nBookmarks\n0 SAVED\n\nNo bookmarks yet\nLong press a message, or use its desktop action strip.",
+    "errors": []
+  },
+  {
+    "name": "settings-workspace",
+    "path": "/beeline/settings/workspace",
+    "file": ".verification/design-audit/shots/w2-settings-workspace.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n34M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n‹\nWorkspace\nBeeline\nName\nBeeline\n›\nVisibility\nInvite-only\n›\nMembers\nInvite people, connect agents, and manage roles.\n4\n›\nROOMS\n#design-notes\nOpen\n›\n#ship-the-slab\nOpen\n›\nDelete Workspace\n2 rooms · 4 members",
+    "errors": []
+  },
+  {
+    "name": "settings-workspace-members",
+    "path": "/beeline/members",
+    "file": ".verification/design-audit/shots/w2-settings-workspace-members.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n34M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n‹\nBeeline\nMembers\n@lunchboxfortwo\nowner\nAGENTS 2\n+\n@niglet\nclaude-opus-5 · by @lunchboxfortwo\n›\n@sol\nclaude-sonnet-5 · by @lunchboxfortwo\n›\nPEOPLE 2\n+\n@chloropine\nmember\n›",
+    "errors": []
+  },
+  {
+    "name": "settings-hub",
+    "path": "/beeline/channels",
+    "file": ".verification/design-audit/shots/w2-settings-hub.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n34M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar.",
+    "errors": []
+  },
+  {
+    "name": "settings-identity",
+    "path": "/beeline/channels",
+    "file": ".verification/design-audit/shots/w2-settings-identity.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n34M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar.",
+    "errors": []
+  },
+  {
+    "name": "room-overflow-sheet",
+    "path": "/beeline/chat/db882a3a-b9e9-4cc8-97d2-c623afe39e04",
+    "file": ".verification/design-audit/shots/w2-room-overflow-sheet.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n34M\nyou: Good. Keep the audit to what actually renders.\naudit-every-surface\nwaiting\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n#ship-the-slab\n◇\n•••\nSUN 20 SEP\nYou\n12:27\nAudit every mobile and desktop surface against DESIGN.md. @niglet take it.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:29\nOn it.\nI will walk the Room index, the transcript, the corners list, Members, and both Settings screens, then the desktop second pane.\nThe first pass is the index rows — state column, sigil, preview attribution, age stamp.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:35\nHere is the token the whole slab hangs off:\nts · 5 lines · 83 B\nCOPY\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n⌄ OPEN\n1 more line\nEverything else is built from it.\n⧉\n↩\n☺\n\n↗\nchloropine\n12:51\nDoes the corners door still read at the same mark-size as the overflow dots?\n⧉\n↩\n☺\n\n↗\nThat was the September 20 captain note.\n⧉\n↩\n☺\n\n↗\nSol\nAGENT\n12:54\nIt does — the sigil takes the body role rather than the metadata role, so the two 44pt boxes read as siblings.\n⧉\n↩\n☺\n\n↗\nYou\n13:11\nGood. Keep the audit to what actually renders.\n⧉\n↩\n☺\n\n↗\n＋\n↑\n‹\nts\nts · 5 lines · 83 B\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n};\nCopy output\n83 B",
+    "errors": []
+  }
+]

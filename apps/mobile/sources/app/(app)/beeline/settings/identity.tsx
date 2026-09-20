@@ -59,6 +59,7 @@ import { saveStoredPushLevel } from '@/push/push-level-storage';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import {
   createManualUpdateState,
   isManualUpdateBusy,
@@ -387,7 +388,11 @@ export default function BuzzIdentitySettings() {
           onPress={() => router.back()}
           style={styles.backButton}
         >
-          <Text style={styles.backButtonText}>‹</Text>
+          <ChevronGlyph
+            color={styles.backButtonText.color}
+            direction="left"
+            size={CHEVRON_BACK_SIZE}
+          />
         </TouchableOpacity>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Settings</Text>
@@ -592,7 +597,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     backButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    backButtonText: { color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: {

@@ -47,7 +47,11 @@ describe('Members page layout contract', () => {
   it('expands agent settings under the tapped row and rotates that row’s chevron', () => {
     const agentsStart = source.indexOf('testID="members-agents-section"');
     const agents = source.slice(agentsStart, source.indexOf('</KeyboardAwareScrollView>', agentsStart));
-    expect(agents).toContain('{open ? \'⌄\' : \'›\'}');
+    // The disclosure mark is the shared drawn chevron at the one row size,
+    // turned down when the row is open — not `⌄`/`›` set in the hero role.
+    expect(agents).toContain('<ChevronGlyph');
+    expect(agents).toContain("direction={open ? 'down' : 'right'}");
+    expect(agents).toContain('size={CHEVRON_ROW_SIZE}');
     expect(agents).toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
     expect(agents).toContain('open &&');
     expect(source.indexOf('testID="members-agents-section"')).toBeLessThan(

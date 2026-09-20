@@ -20,6 +20,26 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
+// Glyph primitives (chevrons, the corner sigil, the members mark) are drawn
+// shapes now, so any component tree can contain one. Node tests never load
+// react-native-svg's native entrypoint; render its elements as plain hosts.
+vi.mock('react-native-svg', () => {
+  const host = (name: string) => (props: Record<string, unknown>) =>
+    React.createElement(name, props, props.children as React.ReactNode);
+  return {
+    default: host('Svg'),
+    Svg: host('Svg'),
+    Circle: host('Circle'),
+    Ellipse: host('Ellipse'),
+    G: host('G'),
+    Line: host('Line'),
+    Path: host('Path'),
+    Polygon: host('Polygon'),
+    Polyline: host('Polyline'),
+    Rect: host('Rect'),
+  };
+});
+
 const animationBuilder = {
   duration: () => animationBuilder,
   easing: () => animationBuilder,

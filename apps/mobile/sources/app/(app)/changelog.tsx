@@ -9,6 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/layout';
 import { t } from '@/text';
 import { useLayoutClass } from '@/utils/responsive';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export default function ChangelogScreen() {
     const insets = useSafeAreaInsets();
@@ -81,7 +82,7 @@ function ChangelogHeader() {
                 onPress={() => router.back()}
                 style={styles.back}
             >
-                <Text style={styles.backText}>‹</Text>
+        <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
             </TouchableOpacity>
             <View style={styles.headerCopy}>
                 <Text style={styles.headerTitle}>{t('navigation.whatsNew')}</Text>
@@ -111,13 +112,7 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    backText: {
-        ...Typography.default(),
-        fontFamily: theme.buzz.proseRegular,
-        color: theme.buzz.chrome,
-        fontSize: 28,
-        lineHeight: 32,
-    },
+  backText: { color: theme.buzz.chrome },
     headerCopy: { flex: 1, minWidth: 0 },
     headerTitle: {
         ...Typography.default('semiBold'),

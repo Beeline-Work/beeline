@@ -1,0 +1,158 @@
+[
+  {
+    "name": "channels",
+    "route": "/beeline/channels",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-channels.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n24M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "room",
+    "route": "/beeline/chat/e7621e08-89d9-43ed-8911-d02bc1992a7d",
+    "landed": "/",
+    "crashed": true,
+    "file": ".verification/design-audit/shots/desktop-room.png",
+    "errors": [
+      "%o\n\n%s\n\n%s\n TypeError: Illegal invocation\n    at BuzzChat(./(app)/beeline/chat/[channelId].tsx) (<anonymous>) The above error occurred in the <BuzzChat(./(app)/beeline/chat/[channelId].tsx)> component. React will try to recreate this component tree from scratch using the error boundary you provided, Try."
+    ],
+    "text": "Something went wrong\nError: Illegal invocation\nSitemap\nRetry"
+  },
+  {
+    "name": "room-empty",
+    "route": "/beeline/chat/9aa0c2fb-b38d-4a36-b0bb-269578f3c027",
+    "landed": "/",
+    "crashed": true,
+    "file": ".verification/design-audit/shots/desktop-room-empty.png",
+    "errors": [
+      "%o\n\n%s\n\n%s\n TypeError: Illegal invocation\n    at BuzzChat(./(app)/beeline/chat/[channelId].tsx) (<anonymous>) The above error occurred in the <BuzzChat(./(app)/beeline/chat/[channelId].tsx)> component. React will try to recreate this component tree from scratch using the error boundary you provided, Try."
+    ],
+    "text": "Something went wrong\nError: Illegal invocation\nSitemap\nRetry"
+  },
+  {
+    "name": "corner",
+    "route": "/beeline/chat/ef722ea9-1b54-42f2-9897-ca03f5b026cd",
+    "landed": "/",
+    "crashed": true,
+    "file": ".verification/design-audit/shots/desktop-corner.png",
+    "errors": [
+      "%o\n\n%s\n\n%s\n TypeError: Illegal invocation\n    at BuzzChat(./(app)/beeline/chat/[channelId].tsx) (<anonymous>) The above error occurred in the <BuzzChat(./(app)/beeline/chat/[channelId].tsx)> component. React will try to recreate this component tree from scratch using the error boundary you provided, Try."
+    ],
+    "text": "Something went wrong\nError: Illegal invocation\nSitemap\nRetry"
+  },
+  {
+    "name": "dm",
+    "route": "/beeline/chat/aa9b7dde-9ab1-4809-8b75-6e3e7c070da5",
+    "landed": "/",
+    "crashed": true,
+    "file": ".verification/design-audit/shots/desktop-dm.png",
+    "errors": [
+      "%o\n\n%s\n\n%s\n TypeError: Illegal invocation\n    at BuzzChat(./(app)/beeline/chat/[channelId].tsx) (<anonymous>) The above error occurred in the <BuzzChat(./(app)/beeline/chat/[channelId].tsx)> component. React will try to recreate this component tree from scratch using the error boundary you provided, Try."
+    ],
+    "text": "Something went wrong\nError: Illegal invocation\nSitemap\nRetry"
+  },
+  {
+    "name": "corners-list",
+    "route": "/beeline/corners/e7621e08-89d9-43ed-8911-d02bc1992a7d",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-corners-list.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n25M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "members",
+    "route": "/beeline/members",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-members.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n25M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "settings",
+    "route": "/beeline/settings",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-settings.png",
+    "errors": [
+      "Received `%s` for a non-boolean attribute `%s`.\n\nIf you want to write it to the DOM, pass a string instead: %s=\"%s\" or %s={value.toString()}. true accessible accessible true accessible",
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n25M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "settings-identity",
+    "route": "/beeline/settings/identity",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-settings-identity.png",
+    "errors": [
+      "Received `%s` for a non-boolean attribute `%s`.\n\nIf you want to write it to the DOM, pass a string instead: %s=\"%s\" or %s={value.toString()}. true accessible accessible true accessible",
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n25M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "settings-workspace",
+    "route": "/beeline/settings/workspace",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-settings-workspace.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n26M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "settings-workbench",
+    "route": "/beeline/settings/workbench",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-settings-workbench.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n26M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "agents",
+    "route": "/beeline/agents",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-agents.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n26M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "bookmarks",
+    "route": "/beeline/bookmarks",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-bookmarks.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n26M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  },
+  {
+    "name": "community",
+    "route": "/beeline/community",
+    "landed": "/beeline/channels",
+    "crashed": false,
+    "file": ".verification/design-audit/shots/desktop-community.png",
+    "errors": [
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ],
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n26M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar."
+  }
+]

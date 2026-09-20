@@ -39,6 +39,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
+import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
@@ -938,7 +939,13 @@ export default function BuzzMembers() {
           role={member.role}
           testID={`member-${member.identity.pubkey}-identity`}
           trailing={
-            hasDetail ? <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text> : undefined
+            hasDetail ? (
+              <ChevronGlyph
+                color={styles.chevron.color}
+                direction={open ? 'down' : 'right'}
+                size={CHEVRON_ROW_SIZE}
+              />
+            ) : undefined
           }
         />
         {open && (
@@ -1009,7 +1016,7 @@ export default function BuzzMembers() {
       >
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.back}>
-            <Text style={styles.backText}>‹</Text>
+            <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
           </TouchableOpacity>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>{surface.workspace.name}</Text>
@@ -1079,7 +1086,11 @@ export default function BuzzMembers() {
                   testID={`agent-${member.identity.pubkey}-identity`}
                   trailing={
                     agentDetail ? (
-                      <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>
+                        <ChevronGlyph
+                          color={styles.chevron.color}
+                          direction={open ? 'down' : 'right'}
+                          size={CHEVRON_ROW_SIZE}
+                        />
                     ) : undefined
                   }
                 />
@@ -1216,7 +1227,11 @@ export default function BuzzMembers() {
                               !
                             </Text>
                           )}
-                          <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>
+                                  <ChevronGlyph
+                                    color={styles.chevron.color}
+                                    direction={open ? 'down' : 'right'}
+                                    size={CHEVRON_ROW_SIZE}
+                                  />
                         </TouchableOpacity>
                         {open && kind === 'model' && axis && (
                           <TextInput
@@ -1438,7 +1453,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    backText: { color: hull.textPrimary },
     headerCopy: { flex: 1 },
     eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
@@ -1483,7 +1498,7 @@ const styles = StyleSheet.create((theme) => {
     rowCopy: { flex: 1, minWidth: 0 },
     name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    chevron: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
+    chevron: { color: hull.textMuted },
     personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },
     rolePicker: { flexDirection: 'row', gap: hull.space.sm },
     removeControl: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },

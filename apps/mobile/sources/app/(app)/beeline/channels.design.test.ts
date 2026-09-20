@@ -94,19 +94,15 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'empty')).toContain("alignItems: 'flex-start'");
     expect(styleBlock(source, 'empty')).toContain('paddingHorizontal: hull.space.lg');
     expect(styleBlock(source, 'header')).toContain('paddingLeft: hull.space.lg');
-    expect(styleBlock(source, 'header')).toContain('paddingRight: 16');
+    expect(styleBlock(source, 'header')).toContain(
+      'paddingRight: HEADER_EDGE_INSET - HEADER_TARGET_AIR',
+    );
     expect(styleBlock(source, 'headerActions')).toContain('gap: hull.space.sm');
-    expect(styleBlock(source, 'headerAction')).toContain('minWidth: 16');
+    expect(styleBlock(source, 'headerAction')).toContain('minWidth: HEADER_TARGET_SIZE');
     expect(styleBlock(source, 'headerAction')).not.toContain('paddingHorizontal: 8');
-    expect(styleBlock(source, 'headerMembersAction')).toContain('minWidth: 16');
-    expect(styleBlock(source, 'headerMembersAction')).not.toContain("alignItems: 'flex-end'");
-    expect(styleBlock(source, 'headerBookmarksGlyph')).toContain(
-      'transform: [{ translateY: BOOKMARKS_GLYPH_OPTICAL_Y }]',
-    );
-    expect(source).toContain('const BOOKMARKS_GLYPH_OPTICAL_Y = 1');
-    expect(source).toContain(
-      'const HEADER_GLYPH_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',
-    );
+    expect(styleBlock(source, 'headerAction')).not.toContain("alignItems: 'flex-end'");
+    // One box style for both header marks, so the siblings cannot drift.
+    expect(source).not.toContain('headerMembersAction');
     expect(styleBlock(source, 'empty')).not.toMatch(/\bpadding: \d/);
     expect(styleBlock(source, 'emptyTitle')).toContain('...hull.type.body,');
     expect(styleBlock(source, 'emptyTitle')).toContain('color: hull.textPrimary');
@@ -155,6 +151,26 @@ describe('Room list layout contract', () => {
     expect(emptyDeck.match(/styles\.emptyButtonPressed/g)).toHaveLength(2);
     expect(emptyDeck).not.toContain('<MonoButton');
     expect(emptyDeck).not.toMatch(/[A-Z]{2,} [A-Z]{2,}/);
+  });
+
+  it('spaces the header targets, not their ink, and draws every mark as a shape', () => {
+    // A 44pt target measured edge to edge, one spacing step from its
+    // neighbour's. Hit slop used to carry the target, so two marks a step
+    // apart had targets that overlapped by 20pt while the ink read cramped.
+    expect(source).toContain('const HEADER_TARGET_SIZE = 44');
+    expect(source).toContain('const HEADER_MARK_SIZE = 16');
+    expect(styleBlock(source, 'headerAction')).toContain('minHeight: HEADER_TARGET_SIZE');
+    expect(source.match(/style=\{styles\.headerAction\}/g)).toHaveLength(2);
+    expect(source).not.toContain('HEADER_GLYPH_HIT_SLOP');
+
+    // Every mark on this screen is a drawn shape in a fixed box, so none of
+    // them needs a hand-tuned vertical correction to sit level with its peer.
+    expect(source).toMatch(/<BookmarksGlyph\b/);
+    expect(source).toMatch(/<MembersGlyph\b/);
+    expect(source).toMatch(/<ChevronGlyph\b/);
+    expect(source).not.toMatch(/['"][‹›⌃⌄]['"]/u);
+    expect(source).not.toMatch(/OPTICAL|NUDGE|optical|nudge/);
+    expect(source).not.toContain('headerBookmarksGlyph');
   });
 
   it('floats a 44pt brass square compose FAB bottom right, with no header plus', () => {
@@ -376,11 +392,17 @@ describe('Room list layout contract', () => {
       source.indexOf('</TouchableOpacity>', phoneRowStart),
     );
     expect(phoneRow).not.toContain('cornerEndcap');
-    expect(phoneRow.match(/<Text\b/g)).toHaveLength(3);
+    // Two written parts — the title and the state word — plus one DRAWN
+    // chevron. The mark is a shape in a fixed box, so it is centred on that
+    // box rather than on whatever line box a character would have brought.
+    expect(phoneRow.match(/<Text\b/g)).toHaveLength(2);
+    expect(phoneRow).toContain('<ChevronGlyph');
     expect(phoneRow).toContain('styles.cornerTrail');
     expect(styleBlock(source, 'cornerRow')).toContain("alignItems: 'center'");
     expect(styleBlock(source, 'cornerTrail')).toContain("alignItems: 'center'");
-    expect(styleBlock(source, 'cornerChevron')).toContain('...theme.buzz.type.sectionHead');
+    // The chevron style carries colour and nothing else. A drawn mark takes
+    // no font metric, so there is no line box to correct for.
+    expect(styleBlock(source, 'cornerChevron').trim()).toBe('cornerChevron: { color: hull.steel }');
 
     const desktopHeadlineStart = desktopInspectorSource.indexOf(
       '<View style={styles.cornerHeadline}>',
@@ -389,21 +411,35 @@ describe('Room list layout contract', () => {
       desktopHeadlineStart,
       desktopInspectorSource.indexOf('</View>', desktopHeadlineStart),
     );
-    expect(desktopHeadline.match(/<Text\b/g)).toHaveLength(4);
+    // Three written parts — title, state word, the viewer's own ME — plus the
+    // same DRAWN chevron the phone row carries.
+    expect(desktopHeadline.match(/<Text\b/g)).toHaveLength(3);
+    expect(desktopHeadline).toContain('<ChevronGlyph');
     expect(desktopHeadline).toContain('{display.word}');
     expect(styleBlock(desktopInspectorSource, 'cornerHeadline', '  ')).toContain(
       "alignItems: 'center'",
     );
 
+    // Every WRITTEN part of the line sits on its own cap height, not on its
+    // line box, and none of them is nudged into place.
     for (const [text, indent, styles] of [
-      [source, '    ', ['cornerName', 'cornerStatus', 'cornerChevron']],
-      [desktopInspectorSource, '  ', ['cornerTitle', 'cornerStatus', 'cornerMe', 'chevron']],
+      [source, '    ', ['cornerName', 'cornerStatus']],
+      [desktopInspectorSource, '  ', ['cornerTitle', 'cornerStatus', 'cornerMe']],
     ] as const) {
       for (const style of styles) {
         const block = styleBlock(text, style, indent);
         expect(block, style).toContain('includeFontPadding: false');
         expect(block, style).not.toMatch(/\b(?:margin|padding|top|bottom|transform):/);
       }
+    }
+    // The DRAWN chevron takes neither, on either surface: its box centres it.
+    for (const [text, indent, style] of [
+      [source, '    ', 'cornerChevron'],
+      [desktopInspectorSource, '  ', 'chevron'],
+    ] as const) {
+      const block = styleBlock(text, style, indent);
+      expect(block, style).not.toMatch(/fontSize|lineHeight|includeFontPadding/);
+      expect(block, style).not.toMatch(/\b(?:margin|padding|top|bottom|transform):/);
     }
 
     // Both headline faces are Space Grotesk. Read its OpenType cap height and

@@ -71,10 +71,11 @@ describe('DesktopWorkPaneHandle', () => {
       borderTopLeftRadius: 3,
       borderBottomLeftRadius: 3,
     });
-    expect(tree.root.findByType('Text' as any).props.style[0]).toMatchObject({
-      color: '#b08a4a',
-      fontSize: 13,
-    });
+    // The handle's mark is a drawn chevron in a fixed box, not a character.
+    const glyph = tree.root.findAllByProps({ testID: 'desktop-work-pane-handle-glyph' }).at(-1);
+    expect(glyph!.props.width).toBe(14);
+    expect(glyph!.props.height).toBe(14);
+    expect(tree.root.findByType('Polyline' as any).props.stroke).toBe('#b08a4a');
     expect(
       tree.root.findByProps({ 'data-testid': 'desktop-work-pane-drop-target' }).props.style,
     ).toMatchObject({ alignSelf: 'stretch', flexDirection: 'column', width: 0, overflow: 'visible' });
@@ -161,7 +162,7 @@ describe('DesktopWorkPaneHandle', () => {
     expect(tree.root.findByType('Text' as any).props.children).toBe('DROP TO OPEN IN WORK PANE');
     act(() => dropTarget.props.onDrop(event));
     expect(onDropCorner).toHaveBeenCalledWith('corner-1');
-    expect(tree.root.findByType('Text' as any).props.children).toBe('‹');
+    expect(tree.root.findByProps({ testID: 'desktop-work-pane-handle-glyph' })).toBeTruthy();
   });
 
   it('inscribes an arrived marker without opening anything on its own', () => {

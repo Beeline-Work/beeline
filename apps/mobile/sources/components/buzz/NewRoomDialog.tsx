@@ -12,6 +12,7 @@ import {
   hullDialogMinimumHeight,
 } from './HullDialog';
 import { RepoPicker } from './RepoPicker';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 const DIALOG_VIEWPORT_GUTTER = 48;
 const PICKER_DIALOG_HEIGHT = 520;
@@ -119,7 +120,11 @@ export function NewRoomDialog({
               ? `▢ ${pendingRepo.name}`
               : 'No repository (chat only)'}
         </Text>
-        <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
+        <ChevronGlyph
+          color={styles.repoRowChevron.color}
+          direction={showRepoPicker ? 'down' : 'right'}
+          size={CHEVRON_ROW_SIZE}
+        />
       </TouchableOpacity>
     </View>
   );
@@ -203,7 +208,7 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'right',
       color: hull.textSecondary,
     },
-    repoRowChevron: { ...hull.type.body, color: hull.chrome },
+    repoRowChevron: { color: hull.chrome },
     noRepoRow: {
       minHeight: 44,
       justifyContent: 'center',

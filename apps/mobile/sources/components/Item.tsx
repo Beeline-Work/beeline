@@ -13,6 +13,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { BubblePressable } from './BubblePressable';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export interface ItemProps {
     title: string;
@@ -94,12 +95,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         color: theme.buzz.textMuted,
         fontSize: 12,
     },
-    chevron: {
-        fontFamily: theme.buzz.monoRegular,
-        color: theme.buzz.chrome,
-        fontSize: 24,
-        lineHeight: 26,
-    },
+    chevron: { color: theme.buzz.chrome },
     divider: {
         height: StyleSheet.hairlineWidth,
         backgroundColor: theme.buzz.border,
@@ -261,7 +257,13 @@ export const Item = React.memo<ItemProps>((props) => {
                     )}
                     {rightElement}
                     {showAccessory && (
-                        <Text style={[styles.chevron, { marginLeft: 4 }]}>›</Text>
+                        <View style={{ marginLeft: 4 }}>
+                            <ChevronGlyph
+                                color={styles.chevron.color}
+                                direction="right"
+                                size={CHEVRON_ROW_SIZE}
+                            />
+                        </View>
                     )}
                 </View>
             </View>

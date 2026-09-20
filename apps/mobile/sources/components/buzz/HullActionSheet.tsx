@@ -1,5 +1,15 @@
 import React from 'react';
-import { Pressable, Switch, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Keyboard,
+  Pressable,
+  ScrollView,
+  Switch,
+  Text,
+  View,
+  useWindowDimensions,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -8,6 +18,10 @@ import { HullFloatingSurface, HullModal } from './HullDialog';
 
 type HullActionSheetProps = {
   children: React.ReactNode;
+  /** Pinned under the title: cannot scroll away with the sheet body. */
+  sticky?: React.ReactNode;
+  /** Pinned under the body (Cancel). Stays on-screen while the body scrolls. */
+  footer?: React.ReactNode;
   grip?: boolean;
   style?: StyleProp<ViewStyle>;
   subtitle?: string;
@@ -19,14 +33,70 @@ type HullActionSheetProps = {
  * Bottom-sheet member of the Hull family. The surface is the same textured
  * HullSurface used by centered dialogs; a grip and hairlines carry structure.
  */
+const SHEET_MAX_HEIGHT_FRACTION = 0.82;
+const SHEET_GRIP_HEIGHT = 18;
+const SHEET_TITLE_BLOCK = 56;
+const SHEET_SUBTITLE_BLOCK = 32;
+const SHEET_STICKY_BLOCK = 96;
+const SHEET_FOOTER_BLOCK = 54;
+const SHEET_BODY_MIN_HEIGHT = 140;
+
+function useVisualKeyboardHeight(): number {
+  const [height, setHeight] = React.useState(0);
+  React.useEffect(() => {
+    const addListener = Keyboard?.addListener;
+    if (typeof addListener !== 'function') return undefined;
+    const shown = addListener('keyboardDidShow', (event) => {
+      setHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hidden = addListener('keyboardDidHide', () => setHeight(0));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+  return height;
+}
+
 export function HullActionSheet({
   children,
+  footer,
   grip = true,
+  sticky,
   style,
   subtitle,
   testID,
   title,
 }: HullActionSheetProps) {
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const keyboardHeight = useVisualKeyboardHeight();
+  const pinChrome = sticky != null || footer != null;
+  const bodyMaxHeight = pinChrome
+    ? Math.max(
+        SHEET_BODY_MIN_HEIGHT,
+        Math.round(windowHeight * SHEET_MAX_HEIGHT_FRACTION) -
+          (grip ? SHEET_GRIP_HEIGHT : 0) -
+          (title ? SHEET_TITLE_BLOCK : 0) -
+          (subtitle ? SHEET_SUBTITLE_BLOCK : 0) -
+          (sticky != null ? SHEET_STICKY_BLOCK : 0) -
+          (footer != null ? SHEET_FOOTER_BLOCK : 0) -
+          Math.max(insets.bottom, 10) -
+          Math.max(keyboardHeight, 0),
+      )
+    : undefined;
+  const body = pinChrome ? (
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      nestedScrollEnabled
+      style={[styles.bodyScroll, bodyMaxHeight != null && { maxHeight: bodyMaxHeight }]}
+      testID={testID ? `${testID}-body` : undefined}
+    >
+      {children}
+    </ScrollView>
+  ) : (
+    children
+  );
   return (
     <HullFloatingSurface style={[styles.sheet, style]} testID={testID}>
       {grip ? (
@@ -44,7 +114,9 @@ export function HullActionSheet({
         </Text>
       ) : null}
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-      {children}
+      {sticky}
+      {body}
+      {footer}
     </HullFloatingSurface>
   );
 }
@@ -196,6 +268,10 @@ type HullActionSheetModalProps = {
   accessibilityLabel?: string;
   /** Held false while a row's inline editor has unsaved work in flight. */
   dismissOnBackdrop?: boolean;
+  /** Pinned under the title. */
+  sticky?: React.ReactNode;
+  /** Pinned under the scrolling body. */
+  footer?: React.ReactNode;
   modalTestID?: string;
   onClose: () => void;
   scrimTestID?: string;
@@ -209,9 +285,11 @@ export function HullActionSheetModal({
   accessibilityLabel,
   children,
   dismissOnBackdrop,
+  footer,
   modalTestID,
   onClose,
   scrimTestID,
+  sticky,
   subtitle,
   testID,
   title,
@@ -231,7 +309,9 @@ export function HullActionSheetModal({
       visible={visible}
     >
       <HullActionSheet
+        footer={footer}
         grip={!isDesktop}
+        sticky={sticky}
         style={{ paddingBottom: Math.max(insets.bottom, 10) }}
         subtitle={subtitle}
         testID={testID}
@@ -253,6 +333,10 @@ const styles = StyleSheet.create((theme) => {
     modalContent: { paddingHorizontal: 0 },
     sheet: {
       width: '100%',
+    },
+    bodyScroll: {
+      flexGrow: 0,
+      flexShrink: 1,
     },
     gripSlot: { height: 18, alignItems: 'center', justifyContent: 'center' },
     grip: {

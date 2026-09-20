@@ -8057,7 +8057,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('approves grants on the spot under yolo with auto=true and no card, except budget which always asks', async () => {
+  it('approves grants on the spot under yolo with auto=true and no card, except budget and mcp which always ask', async () => {
     await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [AGENT]);
     const auto = (await (
       await daemonOperation('requestAgentGrant', {
@@ -8113,6 +8113,17 @@ describe('monolith integration', () => {
       })
     ).json()) as Record<string, unknown>;
     expect(budget).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
+    );
+    const mcp = (await (
+      await daemonOperation('requestAgentGrant', {
+        roomId: ROOM,
+        kind: 'mcp',
+        target: 'squire',
+        reason: 'route Trusty Squire into this agent home',
+      })
+    ).json()) as Record<string, unknown>;
+    expect(mcp).toEqual(
       expect.objectContaining({ status: 'pending', auto: false, messageId: expect.any(String) }),
     );
   });

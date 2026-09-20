@@ -9,7 +9,7 @@ import {
   launchRuntimeDaemon,
   stageMonolithAgentRuntime,
 } from './runtime.js';
-import { installAgentService } from './systemd.js';
+import { installAgentService, installTrustySquireBrokerService } from './systemd.js';
 
 const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
 
@@ -138,10 +138,21 @@ async function pairDevice(
   try {
     pid = await (
       options.launch ??
-      (async (configPath, publicKey) =>
-        process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0'
-          ? installAgentService(publicKey)
-          : launchRuntimeDaemon(configPath))
+      (async (configPath, publicKey) => {
+        if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
+          try {
+            await installTrustySquireBrokerService();
+          } catch (error) {
+            console.warn(
+              `[beeline] trusty-squire host broker not installed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+          return installAgentService(publicKey);
+        }
+        return launchRuntimeDaemon(configPath);
+      })
     )(staged.configPath, agentIdentity.publicKey);
   } catch (error) {
     throw new Error(

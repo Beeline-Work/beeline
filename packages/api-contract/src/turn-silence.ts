@@ -146,7 +146,11 @@ export function classifyTurnSilence(
     /\bgit clone\b/i.test(text) ||
     /repository state is not verified/i.test(text) ||
     /incomplete repository binding/i.test(text) ||
-    /no authoritative objective fact/i.test(text)
+    /no authoritative objective fact/i.test(text) ||
+    /profile_busy/i.test(text) ||
+    /broker unavailable/i.test(text) ||
+    /Trusty Squire[\s\S]{0,80}browser/i.test(text) ||
+    /browser[\s\S]{0,80}Trusty Squire/i.test(text)
   ) {
     return { kind: 'workspace-failure', repo: repoFromReason(text) };
   }

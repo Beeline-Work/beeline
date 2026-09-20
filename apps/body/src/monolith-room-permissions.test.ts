@@ -249,6 +249,19 @@ describe('top-level Room MCP permission policy', () => {
           ['browser'],
         ),
       ).toBe('reject');
+      expect(
+        roomMcpPermissionDecision(
+          {
+            toolCall: {
+              kind: 'execute',
+              title: 'mcp.squire.use_credential',
+              rawInput: { server: 'squire', tool: 'use_credential', arguments: {} },
+            },
+          },
+          undefined,
+          [],
+        ),
+      ).toBe('allow');
     });
 
     it("refuses grok's own native tools, captured from the same turn", () => {

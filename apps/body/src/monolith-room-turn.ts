@@ -18,11 +18,14 @@ import {
   type ToolCallEntry,
 } from './acp.js';
 import {
+  expectedMountedImportedMcpServerNames,
   harnessStateDirsFromEnv,
   hostImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
+import { grantedHostRoutesFromList, ungatedHostServers } from './host-mcp-route.js';
+import { squireHostBindPaths } from './squire-host.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -97,8 +100,10 @@ type HumanMessage = Pick<
  * host mounted into the session is approved, and nothing that is not an MCP
  * tool call (shell, native reads/writes, unstructured requests) crosses. The
  * read-only sandbox is the boundary, not the tool list. A host-classified
- * server (Squire is code-owned as host) is never copied into the isolated
- * harness home, and a call that reaches one anyway stays host-gated here.
+ * server is kept out of the isolated harness home until an owner grant
+ * rewrites the route in; a call that reaches an ungated host identity stays
+ * refused here. Granted names drop out of that host list so every capability
+ * on that server crosses.
  */
 export function isRoomMcpPermissionRequest(
   request: AcpPermissionRequest,
@@ -498,12 +503,13 @@ export class MonolithRoomTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster] = await Promise.all([
+    const [configuration, roster, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
+      this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     return sessionConfigFingerprint({
@@ -511,8 +517,24 @@ export class MonolithRoomTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
-      mcpServers: this.mountedMcpServers(),
+      mcpServers: expectedMountedImportedMcpServerNames({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+        grantedHostRoutes,
+      }),
     });
+  }
+
+  private async grantedHostRoutes(): Promise<string[]> {
+    try {
+      return grantedHostRoutesFromList(
+        await this.options.api.execute('listAgentGrants', {
+          agentId: this.agent.publicKey,
+        }),
+      );
+    } catch {
+      return [];
+    }
   }
 
   private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
@@ -526,13 +548,14 @@ export class MonolithRoomTurnLoop {
   private async activate(trace?: TurnTrace): Promise<string> {
     if (this.client?.isAlive && this.sessionId) return this.sessionId;
     trace?.noteActivation('cold');
-    const [configuration, roster, repositoryState] = await Promise.all([
+    const [configuration, roster, repositoryState, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
       this.repositoryState(),
+      this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const directMessage =
@@ -545,11 +568,13 @@ export class MonolithRoomTurnLoop {
       selectionModel || selectionEffort
         ? { model: selectionModel, effort: selectionEffort }
         : undefined;
+    const operatorHome = this.options.config.operatorHome ?? homedir();
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
           sharedSkills: this.options.config.sharedSkills ?? [],
           isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
+          grantedHostRoutes,
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -593,7 +618,6 @@ export class MonolithRoomTurnLoop {
       },
       selection,
     );
-    const operatorHome = this.options.config.operatorHome ?? homedir();
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
     this.attachmentDir = tmpDir ? join(tmpDir, 'beeline-attachments') : undefined;
     this.sessionScratchDir = tmpDir;
@@ -613,7 +637,10 @@ export class MonolithRoomTurnLoop {
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
-        ...(attachScratchRoot ? { additionalWritablePaths: [attachScratchRoot] } : {}),
+        additionalWritablePaths: [
+          ...(attachScratchRoot ? [attachScratchRoot] : []),
+          ...squireHostBindPaths(operatorHome, grantedHostRoutes),
+        ],
         maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
       },
       command,
@@ -651,10 +678,13 @@ export class MonolithRoomTurnLoop {
       servers,
     });
     const mountedServers = servers.map((server) => server.name);
-    const hostServers = hostImportedMcpServerNames({
-      operatorHome: this.options.config.operatorHome,
-      agentKind: this.options.config.agentKind,
-    });
+    const hostServers = ungatedHostServers(
+      hostImportedMcpServerNames({
+        operatorHome: this.options.config.operatorHome,
+        agentKind: this.options.config.agentKind,
+      }),
+      grantedHostRoutes,
+    );
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
       agentArgs: spawnCommand.args,

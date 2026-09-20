@@ -51,6 +51,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
   ConnectionDetail,
   ConnectionGrant,
@@ -128,9 +129,9 @@ export function releaseSquireConnectSession(log?: (message: string) => void): vo
   }
 }
 
-/** The profile Squire serializes on, matching `@trusty-squire/mcp` defaults. */
+/** The profile Squire serializes on, matching `@trusty-squire/mcp` host rewrite. */
 export function squireChromeProfileDir(): string {
-  return process.env.TRUSTY_SQUIRE_PROFILE_DIR ?? join(homedir(), '.trusty-squire', 'chrome-profile');
+  return process.env.TRUSTY_SQUIRE_PROFILE_DIR ?? squireHostPaths(homedir()).profileDir;
 }
 
 /**
@@ -328,14 +329,15 @@ export type StreamedCommandResult = {
   readonly abort: () => void;
 };
 
-/** Env for every helper-spawned Squire process. `--target=codex` otherwise
- *  reads that agent's config and can steal a foreign profile (on this
- *  machine, Codex points at signup-test-profile). */
+/** Env for every helper-spawned Squire process. The three host rewrite
+ *  variables point at one broker inode and one Chrome; `--target=codex`
+ *  otherwise reads that agent's config and can steal a foreign profile. */
 export function squireConnectProcessEnv(
   profileDir: string = squireChromeProfileDir(),
 ): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    ...squireHostRewriteEnv(homedir()),
     TRUSTY_SQUIRE_PROFILE_DIR: profileDir,
   };
 }

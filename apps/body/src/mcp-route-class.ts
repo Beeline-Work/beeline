@@ -2,15 +2,14 @@
  * Imported MCP servers are routes to the host, not replicas in the sandbox.
  *
  * Each declaration is `local` (copied into the isolated harness home as-is)
- * or `host` (kept out of it, because reaching that server is the host's job).
+ * or `host` (kept out until an owner grant rewrites the route into the home).
  * Built-ins are code-owned: `squire` is `host`. Everything else is `local`
  * unless the operator marks it `host` with that one key in their own config.
  * The same classification applies to every imported server on every harness,
  * including Goose, and the Room permission matcher reads the same verdict.
  *
- * Routing a host server into a session — route acceptance, façade socket
- * wiring, the host-home broker inode — is a later lane; this module is the
- * import-step classifier alone.
+ * Grant acceptance (`host-mcp-route.ts`) writes the rewritten route; this
+ * module is the import-step classifier alone.
  */
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 

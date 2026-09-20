@@ -86,6 +86,19 @@ describe('sandbox mount plan', () => {
     expect(plan.readOnly).toEqual([]);
   });
 
+  it('binds the host Trusty Squire directory read-write when a host route is granted', () => {
+    const plan = sandboxMountPlan({
+      mode: 'readonly',
+      cwd: '/srv/beeline/repositories/abc',
+      harnessStateDirs: ['/srv/beeline/rooms/r1/agent-home/claude'],
+      additionalWritablePaths: [
+        '/srv/beeline/agents/pk/rooms/r1/agent-home',
+        '/home/op/.trusty-squire',
+      ],
+    });
+    expect(plan.writable).toContain('/home/op/.trusty-squire');
+  });
+
   it('gives a Room its attach-scratch root a writable bind too, not just harness state', () => {
     // The attach scratch root (BEELINE_ATTACH_SCRATCH_ROOT, normally the
     // per-Room agent-home dir) is where `write_scratch_file` writes so

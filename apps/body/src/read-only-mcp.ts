@@ -43,6 +43,7 @@ import {
   CORNER_OBJECTIVE_MAX_WORDS,
   cornerTextRefusal,
   normalizeCornerText,
+  ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
@@ -829,27 +830,6 @@ const TOOLS = youtubeSurface
     );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
-/** The extension→mime map for posting files by path. Formats the artifact
- *  validator knows get their own entry; anything else posts as
- *  application/octet-stream, which is size-checked only. */
-const ATTACH_MIME_BY_EXTENSION: Record<string, string> = {
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
-  '.txt': 'text/plain',
-  '.md': 'text/markdown',
-  '.json': 'application/json',
-  '.csv': 'text/csv',
-  '.log': 'text/plain',
-  '.zip': 'application/zip',
-};
-
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
 // permission check's canonical list) — assert they match so the two can't
 // silently drift apart the way they did before this check existed.
@@ -1892,7 +1872,7 @@ export async function postArtifact(
     const extension = fileName.includes('.')
       ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
       : '';
-    mime = ATTACH_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+    mime = ARTIFACT_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
   }
   if (!isArtifactMime(mime)) {
     throw new Error(`mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);

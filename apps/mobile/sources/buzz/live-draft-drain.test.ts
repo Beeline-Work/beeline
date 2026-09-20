@@ -185,6 +185,58 @@ describe('live draft drain', () => {
     expect(presentation.blocks.join('') + presentation.liveText).toBe(text);
   });
 
+  it('stops the scheduler on leave even with a sink and queued work still attached', () => {
+    // PR 1487's 32ms drain keeps ticking while StreamingProse stays mounted
+    // (native-stack does not unmount the Room on blur). That occupies the JS
+    // thread until the turn ends, so a back press and the next Room open wait
+    // on the message painting. Leave must cancel the timer without flushing.
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    const row = sink();
+    store.attach('turn', row.value);
+    const text = 'word '.repeat(8_000);
+    store.publish('turn', text);
+    expect(clock.timers.size).toBe(1);
+
+    store.setActive(false);
+
+    expect(clock.timers.size).toBe(0);
+    const paintsAtLeave = row.value.paint.mock.calls.length;
+    clock.runAll();
+    expect(clock.timers.size).toBe(0);
+    expect(row.value.paint).toHaveBeenCalledTimes(paintsAtLeave);
+    expect(store.getMetrics('turn').paintedCharacters).toBeLessThan(text.length);
+  });
+
+  it('does not restart the timer from a publish while the Room is unfocused', () => {
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    const row = sink();
+    store.attach('turn', row.value);
+    store.setActive(false);
+    store.publish('turn', 'more tokens while the reader has already left');
+    expect(clock.timers.size).toBe(0);
+    clock.runAll();
+    expect(row.value.paint).not.toHaveBeenCalled();
+  });
+
+  it('catches up in one replace on resume so re-entry does not wait on the drain', () => {
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    const row = sink();
+    store.attach('turn', row.value);
+    const text = `${'word '.repeat(400).trim()}.`;
+    store.publish('turn', text);
+    store.setActive(false);
+    store.setActive(true);
+
+    expect(clock.timers.size).toBe(0);
+    expect(row.replacements.at(-1)).toEqual(store.getPresentation('turn'));
+    expect(store.getPresentation('turn').blocks.join('') + store.getPresentation('turn').liveText).toBe(
+      text,
+    );
+  });
+
   it('publishes text outside structural overlay state after the row opens', () => {
     const clock = new ManualClock();
     const store = createLiveDraftDrainStore({ clock });

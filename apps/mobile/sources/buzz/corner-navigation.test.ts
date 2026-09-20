@@ -3,6 +3,7 @@ import {
   chatBackAction,
   cornerOpenAction,
   cornerHref,
+  navigateToRoom,
   popCountToParentRoom,
   resolveMentionDirectMessageAction,
   roomCornersHref,
@@ -108,6 +109,38 @@ describe('leaving a Room', () => {
     expect(chatBackAction([chatRoute('room-1')], undefined)).toEqual({ type: 'room-list' });
     expect(chatBackAction([], undefined)).toEqual({ type: 'room-list' });
   });
+
+  it('leaves on the first back when the same Room was pushed twice', () => {
+    // PR 1490 mounts the real Room on tap with no covering pixel and
+    // animation:none. A second push of the same channel (double tap, or
+    // navigate that became a push) leaves channels → room → room. A single
+    // back then lands in the Room the reader just tried to leave.
+    const routes = [
+      { name: 'beeline/channels' },
+      chatRoute('room-1'),
+      chatRoute('room-1'),
+    ];
+    expect(chatBackAction(routes, undefined)).toEqual({ type: 'pop', count: 2 });
+  });
+
+  it('does not wait for a later press when three copies sit on top of the list', () => {
+    const routes = [
+      { name: 'beeline/channels' },
+      chatRoute('room-1'),
+      chatRoute('room-1'),
+      chatRoute('room-1'),
+    ];
+    expect(chatBackAction(routes, undefined)).toEqual({ type: 'pop', count: 3 });
+  });
+
+  it('still pops one when the Room under the top is a different channel', () => {
+    const routes = [
+      { name: 'beeline/channels' },
+      chatRoute('room-1'),
+      chatRoute('room-2'),
+    ];
+    expect(chatBackAction(routes, undefined)).toEqual({ type: 'back' });
+  });
 });
 
 describe('corner hrefs', () => {
@@ -142,6 +175,12 @@ describe('corner hrefs', () => {
       pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'room-1' },
     });
+  });
+
+  it('reuses an existing Room copy instead of pushing a second one', () => {
+    const navigate = vi.fn();
+    navigateToRoom({ navigate }, 'room-1');
+    expect(navigate).toHaveBeenCalledWith(roomHref('room-1'), { dangerouslySingular: true });
   });
 
   it('opens the Room’s dedicated corners list', () => {

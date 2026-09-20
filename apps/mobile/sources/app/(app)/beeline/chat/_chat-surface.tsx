@@ -572,6 +572,11 @@ export function BuzzChatSurface({
     refreshSignal,
     outbox,
   } = session;
+  useEffect(() => {
+    return navigation.addListener('beforeRemove', () => {
+      liveDraftStore.setActive(false);
+    });
+  }, [liveDraftStore, navigation]);
   useLayoutEffect(() => {
     if (!roomSurface) return;
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
@@ -3676,6 +3681,10 @@ export function BuzzChatSurface({
    * of calling a `router.back()` that silently does nothing.
    */
   const handleBack = useCallback(() => {
+    // Stop the live-draft drain before the stack moves. The scheduler otherwise
+    // keeps ticking on a still-mounted Room (native-stack does not unmount on
+    // blur) and a back press waits until the turn's text is ready to paint.
+    liveDraftStore.setActive(false);
     const routes = (navigation.getState()?.routes ?? []) as ChatStackRoute[];
     const action = chatBackAction(routes, parentChannelId, cornerReturnTarget);
     if (action.type === 'pop') router.dismiss(action.count);
@@ -3685,7 +3694,7 @@ export function BuzzChatSurface({
     else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
     else if (action.type === 'back') router.back();
     else router.replace('/beeline/channels');
-  }, [cornerReturnTarget, navigation, parentChannelId]);
+  }, [cornerReturnTarget, liveDraftStore, navigation, parentChannelId]);
 
   const handleCloseCorner = useCallback(async () => {
     // `if (!transport) return` — the shape this replaces — made every press a

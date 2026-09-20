@@ -22,6 +22,7 @@ describe('Room open occupancy', () => {
     expect(session.indexOf("markRoomOpen('cache-read-start')")).toBeLessThan(
       session.indexOf("markRoomOpen('auth-start')"),
     );
+    expect(session).toContain('liveDraftDrainStore.setActive(true)');
   });
 
   it('pushes the Room without a stack animation stealing the tap-to-pixel budget', () => {
@@ -48,6 +49,16 @@ describe('Room open occupancy', () => {
     expect(surface).toContain('testID="chat-back"');
     expect(surface).toContain('testID="chat-messages"');
     expect(surface).toContain('<ConversationComposer');
+  });
+
+  it('pauses the live-draft drain before the back action so leave is not queued behind the turn', () => {
+    const back = surface.slice(surface.indexOf('const handleBack = useCallback'));
+    const pauseAt = back.indexOf('liveDraftStore.setActive(false)');
+    const popAt = back.indexOf("if (action.type === 'pop')");
+    expect(pauseAt).toBeGreaterThan(0);
+    expect(popAt).toBeGreaterThan(pauseAt);
+    expect(surface).toContain("navigation.addListener('beforeRemove'");
+    expect(surface).toContain('liveDraftStore.setActive(false)');
   });
 
   it('keeps ROOM_OPEN console probes out of release product', () => {

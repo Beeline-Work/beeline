@@ -33,7 +33,8 @@ describe('legacy session retirement', () => {
     expect(sidebar).toMatch(/client\s*\.\s*chats\(workspaceId\)/);
     expect(sidebar).toContain('filteredChatSections.map');
     expect(sidebar).toContain('dispatchRoomOpenTap');
-    expect(sidebar).toContain('router.push(`/beeline/chat/${encodeURIComponent(id)}`');
+    expect(sidebar).toContain('navigateToRoom');
+    expect(sidebar).not.toContain('router.push(`/beeline/chat/${encodeURIComponent(id)}`');
     expect(sidebar).not.toMatch(/MainView|SessionsList|ActiveSessionsGroupCompact/);
     expect(sidebar).not.toContain("router.push('/settings')");
     expect(sidebar).not.toContain("router.navigate('/new')");

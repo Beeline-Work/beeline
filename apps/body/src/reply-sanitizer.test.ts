@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isDeliberateCornerNoReply,
   isCornerStatusRestatement,
   sanitizeAgentReply,
 } from './reply-sanitizer.js';
@@ -107,5 +108,19 @@ describe('isCornerStatusRestatement', () => {
       true,
     );
     expect(isCornerStatusRestatement('The PR merged.', passed)).toBe(false);
+  });
+});
+
+describe('isDeliberateCornerNoReply', () => {
+  const passed = ['GitHub passed a check Beeline CI'];
+
+  it('names a suppressed status restatement as a deliberate no-reply', () => {
+    expect(isDeliberateCornerNoReply('PR checks have passed.', passed)).toBe(true);
+    expect(isDeliberateCornerNoReply('', passed)).toBe(true);
+  });
+
+  it('does not relabel substantive or ordinary empty turns', () => {
+    expect(isDeliberateCornerNoReply('Merged the PR.', passed)).toBe(false);
+    expect(isDeliberateCornerNoReply('', undefined)).toBe(false);
   });
 });

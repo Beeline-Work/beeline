@@ -487,6 +487,12 @@ export type PostTurnReceiptInput = AgentRoomInput & {
    * party writes it.
    */
   readonly status: 'working' | 'complete' | 'failed' | 'cancelled';
+  /**
+   * A successful turn that intentionally produced no Room message. The server
+   * records that outcome so it cannot be mistaken for a vanished or failed
+   * answer. Omitted for ordinary replies and card-backed handoffs.
+   */
+  readonly completionKind?: 'no-reply';
   readonly generationId?: string;
   /** Refreshes an existing working receipt; never starts or resurrects a turn. */
   readonly heartbeat?: boolean;

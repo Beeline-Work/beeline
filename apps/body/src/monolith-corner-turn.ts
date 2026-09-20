@@ -22,7 +22,7 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isCornerStatusRestatement } from './reply-sanitizer.js';
+import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
@@ -943,6 +943,7 @@ export class MonolithCornerTurnLoop {
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
+    let deliberateNoReply = false;
     try {
       await withTurnReceiptHeartbeat(
         api,
@@ -1292,6 +1293,7 @@ export class MonolithCornerTurnLoop {
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
+              deliberateNoReply = isDeliberateCornerNoReply(reply, restates);
               await trace.measure('publish', () =>
                 stream.settle(
                   durableReply,
@@ -1313,6 +1315,7 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: 'complete',
+        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
       });
       // After the receipt: an operator artifact never delays the answer, and

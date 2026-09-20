@@ -136,3 +136,14 @@ export function isCornerStatusRestatement(reply: string, systemLines: readonly s
   }
   return statusWords(text).every((word) => !word || admitted.has(word));
 }
+
+/**
+ * A checks turn that says nothing beyond the server's own status line is a
+ * deliberate no-reply completion, not an empty provider answer.
+ */
+export function isDeliberateCornerNoReply(
+  reply: string,
+  systemLines: readonly string[] | undefined,
+): boolean {
+  return Boolean(systemLines && isCornerStatusRestatement(reply, systemLines));
+}

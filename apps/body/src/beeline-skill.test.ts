@@ -146,6 +146,33 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('Triage warning — desirable:');
     expect(markdown).toContain('Do not emit a warning merely because evidence is incomplete');
   });
+
+  it('binds the implementer to a recorded reproduction without blocking triage', () => {
+    expect(markdown).toContain(
+      'If the need cannot be established, reproduction fails, or other work may obviate it, warn; do not block.',
+    );
+    expect(markdown).toContain('## Bugfix execution');
+    expect(markdown).toContain('They are instruction, not a server gate');
+    expect(markdown).toContain('They do not condition the fix on reproduction');
+    expect(markdown).toContain('Reproduction <id>: <user path> → <observable wrong result>');
+    expect(markdown).toContain('### 1. Attempt to reproduce');
+    expect(markdown).toContain('emulator, Playwright, browser, test runner');
+    expect(markdown).toContain(
+      'If reproduction fails, warn and continue exactly as triage already does',
+    );
+    expect(markdown).toContain('Never stop');
+    expect(markdown).toContain('Never condition the fix on reproduction');
+    expect(markdown).not.toContain('Do not fix a bug you have not seen');
+    expect(markdown).toContain('### 2. Narrow fix');
+    expect(markdown).toContain('Narrow the fix to the reported behavior');
+    expect(markdown).toContain('### 3. Proof matching triage');
+    expect(markdown).toContain(
+      'When none was obtained, state that plainly and show the regression instead',
+    );
+    expect(markdown).toContain(
+      'the reviewer can check that proof, not merely that some test exists',
+    );
+  });
 });
 
 describe('using-beeline merge ownership', () => {
@@ -208,6 +235,18 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('work warranted evidence:');
     expect(markdown).toContain('desirability evidence:');
   });
+
+  it('fails a bug proof that skips a recorded reproduction identifier', () => {
+    expect(markdown).toContain('if a `Reproduction <id>` was recorded, quote it');
+    expect(markdown).toContain(
+      'FAIL if that proof does not name the identifier, even when other tests pass',
+    );
+    expect(markdown).toContain(
+      'If none was obtained, require the proof to say so plainly and show the regression instead',
+    );
+    expect(markdown).toContain('reproduction id (or none obtained):');
+    expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
+  });
 });
 
 describe('isConfiguredReviewer', () => {
@@ -230,6 +269,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
+    expect(markdown).toContain('YouTube Analytics answers only the channel owner account, not a manager');
     expect(markdown).toContain('Tailscale is not available yet');
   });
 

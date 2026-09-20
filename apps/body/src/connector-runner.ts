@@ -53,6 +53,12 @@ function toolName(call: ToolCallLike): string {
   return match?.[1] ?? '';
 }
 
+function youtubeToolName(call: ToolCallLike): string {
+  const raw = `${call.title ?? ''} ${call.kind ?? ''}`;
+  const match = raw.match(/(?:^|__|\.|\/)(youtube_[a-z0-9_]+)\b/);
+  return match?.[1] ?? '';
+}
+
 /**
  * The event class each Squire verb means to the key's owner. Ordinary
  * `use_credential` spending carries no class: it is recorded, never DM'd.
@@ -161,13 +167,34 @@ export class ConnectorUsageRecorder {
  * record their usage on the turn's batch. Cheap and side-effect free when
  * nothing is a Squire call.
  */
+/** Shape one local YouTube MCP call into a usage record. Ordinary use —
+ *  recorded on the Workbench ledger, never a receipt DM. */
+export function youtubeUsageFromToolCall(call: ToolCallLike): ConnectionUsageRecord | undefined {
+  const tool = youtubeToolName(call);
+  if (!tool.startsWith('youtube_')) return undefined;
+  const result = record(call.content ?? call.rawOutput);
+  const resultPayload = record(result.content ?? result);
+  return {
+    ref: 'google-youtube',
+    service: 'youtube',
+    operation: tool.slice(0, 300),
+    statusCode:
+      typeof resultPayload.status === 'number'
+        ? resultPayload.status
+        : /failed|error|denied/i.test(call.status ?? '')
+          ? 0
+          : 200,
+    bytes: serializedSize(resultPayload),
+  };
+}
+
 export function captureConnectionUsage(
   recorder: ConnectorUsageRecorder,
   turn: ConnectionTurn,
   calls: readonly ToolCallLike[],
 ): void {
   for (const call of calls) {
-    const usage = squireUsageFromToolCall(call);
+    const usage = squireUsageFromToolCall(call) ?? youtubeUsageFromToolCall(call);
     if (usage) recorder.record(turn, usage);
   }
 }

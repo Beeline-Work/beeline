@@ -80,7 +80,11 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+import {
+  notifyConnectorAssignment,
+  notifyConnectorHelper,
+  POSTGRES_LIVE_CHANNEL,
+} from './postgres-live.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
@@ -5993,9 +5997,10 @@ export class PhoneService {
     // machine — a stale disconnected row, or a connected one being re-paired)
     // is re-armed above exactly like a fresh insert: the mobile poll sees
     // `installing` with default steps again, and the helper daemon — which
-    // derives its assignments from `status` AND `helper_agent_id` — receives
-    // the install on its next poll even when the conflict row carried a
-    // different agent of the same machine or a leftover `uninstall` op.
+    // derives its assignments from `status` AND `helper_agent_id` — is woken
+    // by `connector-assignment` (the 5-minute poll is only recovery) even when
+    // the conflict row carried a different agent of the same machine or a
+    // leftover `uninstall` op.
     // ONE Google consent covers all four tool connectors: pairing any Google
     // tool provisions the whole set on this machine, so the single Google
     // connect entry tops up every missing tool. A sibling that is already
@@ -6048,7 +6053,8 @@ export class PhoneService {
       status_steps: defaultConnectorSteps() as ConnectorStep[],
       status_error: null,
     };
-    // The helper sees the install assignment on its next poll.
+    // Push the install to this helper now; the poll is only recovery.
+    await notifyConnectorAssignment(database, matched.agent_id);
     await ensureConnectorDirectMessageRoom(
       database,
       ws.workspace_id,
@@ -6126,13 +6132,15 @@ export class PhoneService {
     if (!connection) throw new Error('connection not found (access denied)');
     // Live detail reads: cached provider metadata older than the TTL asks the
     // helper for a fresh snapshot on its next poll.
-    if (isMetadataStale(connection.last_synced_at))
+    if (isMetadataStale(connection.last_synced_at)) {
       await this.database.query(
         `UPDATE workspace_connectors
          SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
          WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
         [connection.connector_id],
       );
+      await notifyConnectorHelper(this.database, connection.connector_id);
+    }
     const ledger = (
       await this.database.query<{
         id: string;
@@ -6212,13 +6220,15 @@ export class PhoneService {
       `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
       [connection.id, JSON.stringify(updated)],
     );
-    if (live.length)
+    if (live.length) {
       await this.database.query(
         `UPDATE workspace_connectors
          SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
          WHERE id=$1::uuid`,
         [connection.connector_id, JSON.stringify([`revoke-grants:${connection.reference}`])],
       );
+      await notifyConnectorHelper(this.database, connection.connector_id);
+    }
     return { revoked: live.length, failed: 0 };
   }
 

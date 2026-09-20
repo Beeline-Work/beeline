@@ -4,6 +4,35 @@ import type { LiveEvent, LiveHub } from './live.js';
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 
+/** Agent-directed Connect / pending_ops wake. Never a catalog or availability. */
+export async function notifyConnectorAssignment(
+  database: Pick<SqlDatabase, 'query'>,
+  agentId: string,
+): Promise<void> {
+  await database.query(`SELECT pg_notify($1, $2)`, [
+    POSTGRES_LIVE_CHANNEL,
+    JSON.stringify({
+      table: 'connector_assignment',
+      operation: 'UPDATE',
+      roomId: '',
+      agentId,
+    }),
+  ]);
+}
+
+export async function notifyConnectorHelper(
+  database: Pick<SqlDatabase, 'query'>,
+  connectorId: string,
+): Promise<void> {
+  const row = (
+    await database.query<{ helper_agent_id: string | null }>(
+      `SELECT helper_agent_id FROM workspace_connectors WHERE id=$1::uuid`,
+      [connectorId],
+    )
+  ).rows[0];
+  if (row?.helper_agent_id) await notifyConnectorAssignment(database, row.helper_agent_id);
+}
+
 export const POSTGRES_LIVE_SCHEMA = `
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE
@@ -44,13 +73,21 @@ BEGIN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
-        'identityId', COALESCE(NEW.identity_id, OLD.identity_id)
+        'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
+        'parentRoomId', (
+          SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)
+        ),
+        'removed', CASE
+          WHEN TG_OP = 'DELETE' THEN true
+          ELSE COALESCE(NEW.removed_at IS NOT NULL, false)
+        END
       );
     WHEN 'corner_facts' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
-        'cornerId', COALESCE(NEW.corner_id, OLD.corner_id)
+        'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
+        'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false)
       );
     WHEN 'permission_authority' THEN
       payload = jsonb_build_object(
@@ -141,6 +178,9 @@ interface LiveNotificationPayload {
   expiresAt?: number;
   traceId?: string;
   databaseAt?: number;
+  parentRoomId?: string;
+  removed?: boolean;
+  closeRequested?: boolean;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -168,6 +208,11 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.expiresAt === 'number' ? { expiresAt: parsed.expiresAt } : {}),
       ...(typeof parsed.traceId === 'string' ? { traceId: parsed.traceId } : {}),
       ...(typeof parsed.databaseAt === 'number' ? { databaseAt: parsed.databaseAt } : {}),
+      ...(typeof parsed.parentRoomId === 'string' ? { parentRoomId: parsed.parentRoomId } : {}),
+      ...(typeof parsed.removed === 'boolean' ? { removed: parsed.removed } : {}),
+      ...(typeof parsed.closeRequested === 'boolean'
+        ? { closeRequested: parsed.closeRequested }
+        : {}),
     };
   } catch {
     return undefined;
@@ -329,6 +374,16 @@ export class PostgresLiveListener {
       });
       return;
     }
+    if (payload.table === 'connector_assignment' && payload.agentId) {
+      // Connect / pending_ops: one agent-directed wake, never a catalog.
+      this.live.publish({
+        type: 'invalidate',
+        roomId: payload.roomId,
+        reason: 'connector-assignment',
+        targetAgentId: payload.agentId,
+      });
+      return;
+    }
     const event: LiveEvent = {
       type: 'invalidate',
       roomId: payload.roomId,
@@ -340,6 +395,9 @@ export class PostgresLiveListener {
       ...(payload.table === 'memberships' && payload.identityId
         ? { targetAgentId: payload.identityId }
         : {}),
+      ...(payload.parentRoomId ? { parentRoomId: payload.parentRoomId } : {}),
+      ...(payload.removed ? { removed: true } : {}),
+      ...(payload.closeRequested ? { closeRequested: true } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
       ...(payload.traceId && payload.databaseAt
         ? {

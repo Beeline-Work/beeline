@@ -100,6 +100,7 @@ import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js
 import { agentWalletTool } from './wallet.js';
 import { noteFirstSilence, TURN_FAILURE_REASON_MAX, turnSilenceLockKey } from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
+import { notifyConnectorHelper } from './postgres-live.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -1022,13 +1023,15 @@ export class DaemonService {
         state: row.state === 'error' ? ('error' as const) : ('active' as const),
       };
     });
-    for (const connectorId of staleConnectorIds)
+    for (const connectorId of staleConnectorIds) {
       await this.database.query(
         `UPDATE workspace_connectors
          SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
          WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
         [connectorId],
       );
+      await notifyConnectorHelper(this.database, connectorId);
+    }
     return { connections };
   }
 
@@ -1059,13 +1062,15 @@ export class DaemonService {
       )
     ).rows[0];
     if (!row) throw new Error(`unknown connection reference ${input.ref}`);
-    if (isMetadataStale(row.last_synced_at))
+    if (isMetadataStale(row.last_synced_at)) {
       await this.database.query(
         `UPDATE workspace_connectors
          SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
          WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
         [row.connector_id],
       );
+      await notifyConnectorHelper(this.database, row.connector_id);
+    }
     const ledger = (
       await this.database.query<{
         id: string;
@@ -1133,13 +1138,15 @@ export class DaemonService {
       `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
       [row.id, JSON.stringify(updated)],
     );
-    if (live.length)
+    if (live.length) {
       await this.database.query(
         `UPDATE workspace_connectors
          SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
          WHERE id=$1::uuid`,
         [row.connector_id, JSON.stringify([`revoke-grants:${row.reference}`])],
       );
+      await notifyConnectorHelper(this.database, row.connector_id);
+    }
     return { revoked: live.length, failed: 0 };
   }
 
@@ -3770,7 +3777,13 @@ export class DaemonService {
     const parentId = await this.database.transaction(async (database) => {
       return (await closeCornerState(database, cornerId)).parentId;
     });
-    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: cornerId,
+      reason: 'corner',
+      closeRequested: true,
+      agentId,
+    });
     this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return this.writeResult();
   }

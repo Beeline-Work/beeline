@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
-import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
+import {
+  CEREMONY_EXPIRED,
+  CONNECTOR_POLL_INTERVAL_MS,
+  ConnectorAssignmentLoop,
+} from './connector-assignments.js';
 import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
@@ -64,6 +68,33 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('uses a 5-minute recovery poll, not a 10-second ask', () => {
+    expect(CONNECTOR_POLL_INTERVAL_MS).toBe(5 * 60_000);
+  });
+
+  it('drains immediately on wake without waiting for the recovery poll', async () => {
+    const api = apiMock([]);
+    let scheduled = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      intervalMs: 60_000,
+      schedule: () => {
+        scheduled += 1;
+        return 1;
+      },
+      cancel: () => {},
+    });
+    loop.start();
+    await settle();
+    expect(api.calls.filter((call) => call.op === 'getConnectorAssignments')).toHaveLength(1);
+    loop.wake();
+    await settle();
+    expect(api.calls.filter((call) => call.op === 'getConnectorAssignments')).toHaveLength(2);
+    expect(scheduled).toBe(1);
+    loop.stop();
+  });
+
   it('runs an install, reports steps as they settle, then the vault', async () => {
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
     const loop = new ConnectorAssignmentLoop({

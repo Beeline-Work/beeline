@@ -3,14 +3,15 @@
  *
  * The server leaves one row per (connector, owner) in `pending_ops` whenever
  * a human pairs, revokes, or unpairs; `getConnectorAssignments` drains it on
- * read. This loop is what makes that queue REAL on the helper: every 10
- * seconds it asks for work, runs the Squire lifecycle (`connector-squire.ts`),
- * and reports each install step back through `postConnectorStatus` so the
- * phone paints progress live. A completed install reports through
- * `installConnector`, which flips the row to `connected`, records the
- * installed version, and clears the sign-in surface — a run that reaches
- * `connected` printed no ceremony, so no dead tunnel survives it. A failed
- * step reports its error.
+ * read. This loop is what makes that queue REAL on the helper: a Connect tap
+ * pushes `connector-assignment` over the live socket, `wake()` drains then,
+ * and a 5-minute poll is only recovery. It runs the Squire lifecycle
+ * (`connector-squire.ts`) and reports each install step back through
+ * `postConnectorStatus` so the phone paints progress live. A completed
+ * install reports through `installConnector`, which flips the row to
+ * `connected`, records the installed version, and clears the sign-in surface
+ * — a run that reaches `connected` printed no ceremony, so no dead tunnel
+ * survives it. A failed step reports its error.
  *
  * One helper carries ONE Squire account (captain decision 2026-09-14), so
  * after an install or a `sync` assignment the vault list is reported once
@@ -51,7 +52,7 @@ import {
 } from './connector-squire.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 
-export const CONNECTOR_POLL_INTERVAL_MS = 10_000;
+export const CONNECTOR_POLL_INTERVAL_MS = 5 * 60_000;
 
 /** Said once, on the row, when a published ceremony ran out its own clock. */
 export const CEREMONY_EXPIRED =
@@ -149,6 +150,12 @@ export class ConnectorAssignmentLoop {
     this.started = true;
     void this.runOnce();
     this.timer = this.schedule(() => this.poll(), this.intervalMs);
+  }
+
+  /** Event-driven drain. The interval stays the recovery net. */
+  wake(): void {
+    if (this.stopped) return;
+    void this.runOnce();
   }
 
   stop(): void {

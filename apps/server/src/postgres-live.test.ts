@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
-import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import {
+  notifyConnectorAssignment,
+  POSTGRES_LIVE_CHANNEL,
+  PostgresLiveListener,
+  type LivePgClient,
+} from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
 
 const AUTHOR = 'a'.repeat(64);
@@ -224,6 +229,64 @@ describe('Postgres live fanout', () => {
           event.targetAgentId === AUTHOR &&
           event.roomId === freshRoom,
       ),
+    );
+  });
+
+  it('names the parent Room on a corner membership invalidate', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    const corner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, corner, AUTHOR],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === AUTHOR &&
+          event.roomId === corner &&
+          event.parentRoomId === ROOM &&
+          event.removed !== true,
+      ),
+    );
+  });
+
+  it('delivers a connector-assignment wake without a catalog', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    await notifyConnectorAssignment(database, AUTHOR);
+
+    await eventually(
+      () =>
+        received.some(
+          (event) =>
+            event.type === 'invalidate' &&
+            event.reason === 'connector-assignment' &&
+            event.targetAgentId === AUTHOR,
+        ),
     );
   });
 

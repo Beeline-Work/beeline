@@ -10,6 +10,7 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   CORNER_AUTHOR_CONTRACT,
+  CORNER_CLOSE_POLL_BASE_MS,
   CORNER_DELIVERY_NUDGE,
   CORNER_YOLO_MERGE_NUDGE,
   cornerClosePollMs,
@@ -291,11 +292,11 @@ describe('corner merge instructions', () => {
 });
 
 describe('corner close-request polling cadence', () => {
-  it('polls on a 10-15 second interval with jitter, not once per second', () => {
-    expect(cornerClosePollMs(() => 0)).toBeGreaterThanOrEqual(10_000);
-    expect(cornerClosePollMs(() => 0)).toBeLessThanOrEqual(12_000);
-    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThanOrEqual(12_000);
-    expect(cornerClosePollMs(() => 0.999)).toBeLessThanOrEqual(15_000);
+  it('polls on a 10-minute recovery interval with jitter', () => {
+    expect(CORNER_CLOSE_POLL_BASE_MS).toBe(10 * 60_000);
+    expect(cornerClosePollMs(() => 0)).toBe(CORNER_CLOSE_POLL_BASE_MS);
+    expect(cornerClosePollMs(() => 0.999)).toBeGreaterThanOrEqual(CORNER_CLOSE_POLL_BASE_MS);
+    expect(cornerClosePollMs(() => 0.999)).toBeLessThan(CORNER_CLOSE_POLL_BASE_MS + 3_000);
     expect(cornerClosePollMs(() => 0.5)).not.toBe(cornerClosePollMs(() => 0.75));
   });
 
@@ -1664,9 +1665,10 @@ describe('corner close-request polling cadence', () => {
     const running = loop.run();
     await vi.waitFor(() => expect(onPoll).toHaveBeenCalledTimes(1));
     publishWake?.();
+    loop.requestClose();
     await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(2);
+    expect(closeReads).toBe(1);
     expect(execute).not.toHaveBeenCalledWith('waitForCornerWake', expect.anything());
     expect(Date.now() - started).toBeLessThan(5_000);
   });
@@ -1689,9 +1691,12 @@ describe('corner close-request polling cadence', () => {
     // A short poll interval stands in for the wake's failure: the loop still
     // reaches the second intake through the ordinary timed wait.
     const { loop, scheduler } = await cornerHarness(execute, 20);
-    await loop.run();
+    const running = loop.run();
+    await vi.waitFor(() => expect(closeReads).toBe(1));
+    loop.requestClose();
+    await running;
     await scheduler.dispose();
-    expect(closeReads).toBe(2);
+    expect(closeReads).toBe(1);
   });
 
   it('does not use the configured fast recovery cadence after push acknowledgement', async () => {

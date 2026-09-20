@@ -5,7 +5,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient, RoomMembershipChange } from './daemon-api-client.js';
 import {
   isStandingWorkspaceConfigurationFault,
   type CornerRestoreResult,
@@ -35,21 +35,22 @@ export type WorkspaceMembershipStatus = 'member' | 'not-member' | 'unknown';
 export const REMOVAL_CONFIRMATION_READS = 2;
 export const ROOM_JOIN_CONCURRENCY = 4;
 export const DEFAULT_ROOM_WATCHDOG_STALE_MS = 90_000;
-export const DEFAULT_RECONCILE_HEARTBEAT_MS = 60_000;
+export const DEFAULT_RECONCILE_HEARTBEAT_MS = 10 * 60_000;
 export const DEFAULT_DRAIN_DEADLINE_MS = 30 * 60_000;
 export const CORNER_BRANCH_DELETE_ATTEMPTS = 3;
 
 /**
  * The #1369 discovery latch, counted instead of flagged.
  *
- * The server's agent-directed `rooms-changed` wake (a fresh Room or corner
- * membership) re-arms fast reconcile. A boolean cleared unconditionally by the
- * next reconcile swallowed any wake that landed while that reconcile was
- * already running — a corner opened mid-reconcile then waited a heartbeat for
- * a wake the daemon had already received. A reconcile covers exactly the wakes
- * that arrived before it started (its reads happen after that point); anything
- * landing during it re-arms. A reconcile that THROWS covers nothing, so a
- * failed discovery keeps retrying fast.
+ * The unscoped agent-directed `rooms-changed` wake (reconnect, or a membership
+ * change that named no Room) re-arms fast reconcile. A scoped membership
+ * event applies incrementally and does not use this latch. A boolean cleared
+ * unconditionally by the next reconcile swallowed any wake that landed while
+ * that reconcile was already running — a reconnect mid-reconcile then waited
+ * a heartbeat for a wake the daemon had already received. A reconcile covers
+ * exactly the wakes that arrived before it started (its reads happen after
+ * that point); anything landing during it re-arms. A reconcile that THROWS
+ * covers nothing, so a failed discovery keeps retrying fast.
  */
 export class DiscoveryWakes {
   private arrived = 0;
@@ -270,7 +271,9 @@ type RoomLeaf = Pick<
   | 'requestReconciliation'
   | 'refreshPersonaForSoulUpdate'
   | 'forceRecoverRoom'
->;
+> & {
+  requestClose?(): void;
+};
 
 interface RunningRoom {
   body: RoomLeaf;
@@ -433,8 +436,19 @@ export class RoomRuntimeCoordinator {
     // Optional on purpose: test stubs of the API surface predate the wake, and
     // a daemon whose transport cannot deliver it still reconciles on the
     // heartbeat as before.
-    this.options.daemonApi.setRoomsChangedListener?.(() => {
+    this.options.daemonApi.setRoomsChangedListener?.((event) => {
+      if (event && (event.roomId || event.cornerId)) {
+        void this.applyMembershipEvent(event).catch((error) =>
+          console.error('[thin-core] live membership apply failed', error),
+        );
+        return;
+      }
       this.discoveryWakes.wake();
+    });
+    this.options.daemonApi.setCornerCompleteListener?.((roomId) => {
+      void this.applyCornerComplete(roomId).catch((error) =>
+        console.error('[thin-core] live corner-complete apply failed', error),
+      );
     });
     // Hot-restart on a phone-side model/effort selection change: retire every
     // retained session now so the next turn cold-activates against the saved
@@ -590,15 +604,7 @@ export class RoomRuntimeCoordinator {
         this.confirmationPending = true;
         continue;
       }
-      running.controller.abort();
-      await running.promise.catch(() => undefined);
-      try {
-        if (running.worktree) await this.reapCornerWorktree(running.worktree);
-        else if (running.scratch) await this.reapCornerScratch(running.scratch);
-      } catch (error) {
-        console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
-        this.confirmationPending = true;
-      }
+      await this.stopRunning(channelId, running);
     }
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.running.has(roomId)) return;
@@ -623,6 +629,61 @@ export class RoomRuntimeCoordinator {
     for (const running of this.running.values()) running.body.requestReconciliation();
     this.discoveryWakes.completeReconcile(coveredWakes);
     return 'member';
+  }
+
+  /**
+   * Incremental apply of a membership / corner-open / member-left push.
+   * An unscoped wake still uses the slow reconcile as recovery.
+   */
+  async applyMembershipEvent(event: RoomMembershipChange): Promise<void> {
+    const roomId = event.cornerId ?? event.roomId;
+    if (!roomId) {
+      this.discoveryWakes.wake();
+      return;
+    }
+    const left =
+      event.removed === true ||
+      event.operation === 'DELETE' ||
+      event.operation === 'delete';
+    if (left) {
+      const running = this.running.get(roomId);
+      if (running) await this.stopRunning(roomId, running);
+      this.monolithCornerParents.delete(roomId);
+      return;
+    }
+    this.roomRemovalConfirmations.delete(roomId);
+    if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
+    if (event.parentRoomId) {
+      this.monolithCornerParents.set(roomId, event.parentRoomId);
+      await this.startCorner({
+        cornerId: roomId,
+        parentRoomId: event.parentRoomId,
+      });
+      return;
+    }
+    await this.startRoom(roomId);
+  }
+
+  async applyCornerComplete(cornerId: string): Promise<void> {
+    const running = this.running.get(cornerId);
+    if (!running) return;
+    if (running.body.requestClose) {
+      running.body.requestClose();
+      return;
+    }
+    await this.stopRunning(cornerId, running);
+  }
+
+  private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
+    running.controller.abort();
+    await running.promise.catch(() => undefined);
+    try {
+      if (running.worktree) await this.reapCornerWorktree(running.worktree);
+      else if (running.scratch) await this.reapCornerScratch(running.scratch);
+    } catch (error) {
+      console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
+      this.confirmationPending = true;
+    }
   }
 
   private roomRecord(roomId: string): RoomRuntimeRecord | undefined {

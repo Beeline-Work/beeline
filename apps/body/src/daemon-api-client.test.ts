@@ -291,4 +291,66 @@ describe('DaemonApiClient', () => {
     release();
     vi.useRealTimers();
   });
+
+  it('delivers scoped membership and connector wakes without a catalog', async () => {
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient(
+      'http://127.0.0.1:43123',
+      `bdt_${'y'.repeat(43)}`,
+      'b'.repeat(64),
+      fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
+    );
+    const memberships: unknown[] = [];
+    const connectors: unknown[] = [];
+    const completes: string[] = [];
+    client.setRoomsChangedListener((event) => memberships.push(event));
+    client.setConnectorAssignmentListener(() => connectors.push(true));
+    client.setCornerCompleteListener((roomId) => completes.push(roomId));
+    const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.message({ type: 'subscribed', roomId: 'room-1' });
+
+    socket.message({
+      type: 'rooms-changed',
+      roomId: 'room-2',
+      parentRoomId: 'room-1',
+      operation: 'INSERT',
+    });
+    socket.message({ type: 'member-left', roomId: 'room-2', removed: true });
+    socket.message({ type: 'corner-open', cornerId: 'corner-1', parentRoomId: 'room-1' });
+    socket.message({ type: 'corner-complete', roomId: 'corner-1' });
+    socket.message({ type: 'connector-assignment' });
+    socket.message({
+      type: 'inbox',
+      roomId: 'room-1',
+      items: [
+        {
+          id: 'open',
+          authorId: 'a',
+          createdAt: 1,
+          type: 'card',
+          body: 'opened',
+          attachments: [],
+          systemEvent: {
+            subject: { kind: 'agent', name: 'Bee' },
+            verb: 'opened a corner',
+            kind: 'corner-opened',
+            object: { text: 'Fix it', id: 'corner-2' },
+          },
+        },
+      ],
+    });
+
+    expect(memberships.filter(Boolean)).toEqual([
+      { roomId: 'room-2', parentRoomId: 'room-1', operation: 'INSERT' },
+      { roomId: 'room-2', removed: true },
+      { roomId: 'corner-1', cornerId: 'corner-1', parentRoomId: 'room-1' },
+      { roomId: 'corner-2', parentRoomId: 'room-1' },
+    ]);
+    expect(completes).toEqual(['corner-1']);
+    expect(connectors).toEqual([true]);
+    release();
+  });
 });

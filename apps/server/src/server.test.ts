@@ -485,6 +485,78 @@ describe('daemon live command push', () => {
     await expect(restart).resolves.toEqual({ type: 'hiccup-restart', roomId, attempt: 2 });
     expect(inboxCalls()).toBe(1);
   });
+
+  it('pushes scoped rooms-changed, connector-assignment, and corner-complete', async () => {
+    const roomId = 'room-live';
+    const agentId = 'agent-live';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue(agentId),
+      } as unknown as TokenAuth,
+      phone: {
+        canReadRoom: vi.fn().mockResolvedValue(true),
+        canReadRooms: canReadRoomsFrom(async () => true),
+      } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    const initialCommands = nextSocketMessage(socket, 'commands');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await Promise.all([subscribed, initialCommands]);
+
+    const roomsChanged = nextSocketMessage(socket, 'rooms-changed');
+    live.publish({
+      type: 'invalidate',
+      roomId: 'corner-1',
+      reason: 'postgres:memberships',
+      targetAgentId: agentId,
+      operation: 'INSERT',
+      parentRoomId: roomId,
+    });
+    await expect(roomsChanged).resolves.toEqual({
+      type: 'rooms-changed',
+      roomId: 'corner-1',
+      operation: 'INSERT',
+      parentRoomId: roomId,
+    });
+
+    const connector = nextSocketMessage(socket, 'connector-assignment');
+    live.publish({
+      type: 'invalidate',
+      roomId: '',
+      reason: 'connector-assignment',
+      targetAgentId: agentId,
+    });
+    await expect(connector).resolves.toEqual({ type: 'connector-assignment' });
+
+    const closed = nextSocketMessage(socket, 'corner-complete');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:corner_facts',
+      closeRequested: true,
+    });
+    await expect(closed).resolves.toEqual({ type: 'corner-complete', roomId });
+    expect(execute.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
+  });
 });
 
 describe('daemon operation presence evidence', () => {

@@ -17,6 +17,15 @@ type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['in
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 export type InboxItem = Output<'getRoomInbox'>['items'][number];
 
+/** Membership / corner set change pushed on the daemon live socket. */
+export type RoomMembershipChange = {
+  readonly roomId?: string;
+  readonly cornerId?: string;
+  readonly parentRoomId?: string;
+  readonly operation?: string;
+  readonly removed?: boolean;
+};
+
 export type DaemonFetch = typeof fetch;
 export type DaemonWebSocketFactory = (url: string, protocols: string[]) => WebSocket;
 
@@ -81,6 +90,16 @@ export function isAgentRemovedError(error: unknown): boolean {
   );
 }
 
+function membershipChange(event: Record<string, unknown>): RoomMembershipChange {
+  return {
+    ...(typeof event.roomId === 'string' && event.roomId ? { roomId: event.roomId } : {}),
+    ...(typeof event.cornerId === 'string' ? { cornerId: event.cornerId } : {}),
+    ...(typeof event.parentRoomId === 'string' ? { parentRoomId: event.parentRoomId } : {}),
+    ...(typeof event.operation === 'string' ? { operation: event.operation } : {}),
+    ...(event.removed === true ? { removed: true } : {}),
+  };
+}
+
 function endpoint(origin: string, path: string): string {
   return new URL(path, `${origin}/`).toString();
 }
@@ -122,9 +141,11 @@ export class DaemonApiClient {
       presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
     }
   >();
-  private roomsChangedListener?: () => void;
+  private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private hiccupRestartListener?: (attempt: number) => void;
+  private connectorAssignmentListener?: () => void;
+  private cornerCompleteListener?: (roomId: string) => void;
 
   constructor(
     readonly baseUrl: string,
@@ -186,9 +207,9 @@ export class DaemonApiClient {
   }
 
   /** Register the one listener invoked when the server reports this agent's
-   * Room/corner memberships changed — the wake that discovers a freshly
-   * created Room without waiting for the reconciliation heartbeat. */
-  setRoomsChangedListener(listener: () => void): void {
+   * Room/corner memberships changed — a scoped event applies incrementally;
+   * an unscoped wake (reconnect) still runs the recovery reconcile. */
+  setRoomsChangedListener(listener: (event?: RoomMembershipChange) => void): void {
     this.roomsChangedListener = listener;
   }
 
@@ -202,6 +223,16 @@ export class DaemonApiClient {
   /** systemd restart for a transient hiccup. Attempt is 1-indexed. */
   setHiccupRestartListener(listener: (attempt: number) => void): void {
     this.hiccupRestartListener = listener;
+  }
+
+  /** Connect / pending_ops drain wake. Never a catalog. */
+  setConnectorAssignmentListener(listener: () => void): void {
+    this.connectorAssignmentListener = listener;
+  }
+
+  /** corner-complete on the subscribed corner — close now, poll is recovery. */
+  setCornerCompleteListener(listener: (roomId: string) => void): void {
+    this.cornerCompleteListener = listener;
   }
 
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
@@ -266,7 +297,33 @@ export class DaemonApiClient {
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
       if (event.type === 'rooms-changed') {
-        this.roomsChangedListener?.();
+        this.roomsChangedListener?.(membershipChange(event));
+        return;
+      }
+      if (event.type === 'member-joined' || event.type === 'member-left') {
+        this.roomsChangedListener?.(
+          membershipChange({
+            ...event,
+            removed: event.type === 'member-left' || event.removed === true,
+          }),
+        );
+        return;
+      }
+      if (event.type === 'corner-open') {
+        this.roomsChangedListener?.(
+          membershipChange({
+            ...event,
+            roomId: typeof event.cornerId === 'string' ? event.cornerId : event.roomId,
+          }),
+        );
+        return;
+      }
+      if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
+        this.cornerCompleteListener?.(event.roomId);
+        return;
+      }
+      if (event.type === 'connector-assignment') {
+        this.connectorAssignmentListener?.();
         return;
       }
       if (event.type === 'config-changed') {
@@ -324,8 +381,16 @@ export class DaemonApiClient {
       }
       while (room.pushedIds.size > 10_000)
         room.pushedIds.delete(room.pushedIds.values().next().value!);
-      if (items.length)
+      if (items.length) {
         room.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
+        for (const item of items) {
+          const kind = item.systemEvent?.kind;
+          const cornerId = item.systemEvent?.object?.id;
+          if (kind === 'corner-opened' && cornerId) {
+            this.roomsChangedListener?.({ roomId: cornerId, parentRoomId: event.roomId });
+          }
+        }
+      }
     };
     const reconnect = () => {
       if (this.liveSocket !== socket) return;

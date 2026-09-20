@@ -409,12 +409,13 @@ export interface MonolithCornerTurnOptions {
 }
 
 /**
- * Close-request polling cadence: 12 s ± up to 3 s of jitter (10-15 s window).
- * The daemon API has no long-poll, so this keeps continuous request load off
- * the server while staying well inside the <15 s close-request latency budget.
- * Immediately after a turn completes the loop polls without the wait.
+ * Close-request recovery poll: 10 min ± up to 3 s of jitter.
+ * `corner-complete` on the live socket closes immediately via `requestClose`.
+ * The GET is the dropped-socket net: once at intake start, once after a turn
+ * (a close during that turn must not wait the idle interval), then only every
+ * 10 min while idle.
  */
-export const CORNER_CLOSE_POLL_BASE_MS = 12_000;
+export const CORNER_CLOSE_POLL_BASE_MS = 10 * 60_000;
 export function cornerClosePollMs(random: () => number = Math.random): number {
   return CORNER_CLOSE_POLL_BASE_MS + Math.floor(random() * 3_000);
 }
@@ -476,6 +477,10 @@ export class MonolithCornerTurnLoop {
    * by the same replay window the inbox already de-duplicates over.
    */
   private readonly stoppedTurns = new Set<string>();
+  /** Live corner-complete: close now, do not wait for the recovery GET. */
+  private closePushed = false;
+  /** Last durable close read; 0 means the first check still runs. */
+  private lastCloseCheck = 0;
 
   /** In-flight warm-store harvest, awaited at shutdown and never by a turn. */
   private harvest: Promise<void> | undefined;
@@ -503,6 +508,12 @@ export class MonolithCornerTurnLoop {
 
   isBusy(): boolean {
     return this.busy;
+  }
+
+  /** corner-complete on the wire: wake intake so `closed()` reaps now. */
+  requestClose(): void {
+    this.closePushed = true;
+    this.wakeIntake?.();
   }
 
   refreshPersonaForSoulUpdate(): Promise<void> {
@@ -1494,6 +1505,16 @@ export class MonolithCornerTurnLoop {
         onError: (error) => console.error('[thin-core] corner command failed', error),
         stop: (requestId) => this.stopTurn(requestId),
         closed: async () => {
+          if (this.closePushed) {
+            this.closePushed = false;
+            await this.harvest;
+            await this.options.onCloseRequested();
+            return true;
+          }
+          const now = Date.now();
+          if (this.lastCloseCheck !== 0 && now - this.lastCloseCheck < cornerClosePollMs())
+            return false;
+          this.lastCloseCheck = now;
           const state = await api.execute('getCornerRestoreState', { cornerId });
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.
@@ -1508,7 +1529,10 @@ export class MonolithCornerTurnLoop {
             command.source.attachments,
             command.source.authorId,
             command.reason === 'corner_check' ? [command.source.body] : undefined,
-          ),
+          ).finally(() => {
+            // One recovery GET after the turn; idle ticks stay on the 10 min net.
+            this.lastCloseCheck = 0;
+          }),
       });
     } finally {
       this.options.grantRunner?.unregister(cornerId);

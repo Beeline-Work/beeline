@@ -75,6 +75,12 @@ export type LiveEvent =
       requestId?: string;
       operation?: string;
       hiccupAttempt?: number;
+      /** Parent Room when this invalidate names a corner membership. */
+      parentRoomId?: string;
+      /** True when this membership row is no longer a current member. */
+      removed?: boolean;
+      /** True when a corner_facts/archive write requested close. */
+      closeRequested?: boolean;
       trace?: LiveTrace;
       /** Same-process only. PostgreSQL notifications deliberately remain ID-only. */
       committedRow?:

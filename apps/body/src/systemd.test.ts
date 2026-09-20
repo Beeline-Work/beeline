@@ -10,6 +10,7 @@ import {
   installAgentService,
   isCanonicalInstalledLauncher,
   disableAgentService,
+  reconcileAgentServices,
 } from './systemd.js';
 
 const roots: string[] = [];
@@ -147,7 +148,41 @@ describe('systemd supervision contract', () => {
     await disableAgentService(pubkey, { run });
     expect(calls).toEqual([
       ['disable', `beeline-agent@${pubkey}.service`],
+      ['reset-failed', `beeline-agent@${pubkey}.service`],
       ['stop', '--no-block', `beeline-agent@${pubkey}.service`],
     ]);
+  });
+
+  it('reconciles only bounded enabled units whose exact runtime is absent', async () => {
+    const orphan = 'd'.repeat(64);
+    const live = 'e'.repeat(64);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return {
+        stdout:
+          args[0] === 'list-unit-files'
+            ? [
+                `beeline-agent@${orphan}.service enabled`,
+                `beeline-agent@${live}.service enabled`,
+                'beeline-agent@../../operator.service enabled',
+                'beeline-agent@short.service enabled',
+              ].join('\n')
+            : '',
+      };
+    });
+    const hasRuntime = vi.fn(async (path: string) => path.includes(live));
+
+    await expect(
+      reconcileAgentServices({ env: { XDG_STATE_HOME: '/state' }, run, hasRuntime }),
+    ).resolves.toEqual([orphan]);
+    expect(calls).toEqual([
+      ['list-unit-files', 'beeline-agent@*.service', '--state=enabled', '--no-legend', '--no-pager'],
+      ['disable', `beeline-agent@${orphan}.service`],
+      ['reset-failed', `beeline-agent@${orphan}.service`],
+    ]);
+    expect(hasRuntime).toHaveBeenCalledTimes(2);
+    expect(hasRuntime.mock.calls[0]?.[0]).toBe(`/state/beeline/agents/${orphan}/runtime.json`);
+    expect(hasRuntime.mock.calls[1]?.[0]).toBe(`/state/beeline/agents/${live}/runtime.json`);
   });
 });

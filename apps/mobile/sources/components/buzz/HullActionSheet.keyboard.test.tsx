@@ -21,7 +21,9 @@ const keyboard = vi.hoisted(() => {
     _emitter: emitter,
     addListener(event: string, listener: (...args: unknown[]) => void) {
       const target = this == null ? undefined : this._emitter;
-      return target.addListener(event, listener);
+      // Deliberately unbound mock: `target` is undefined when `this` is lost,
+      // matching the store crash. The assertion is for TYPECHECK only.
+      return target!.addListener(event, listener);
     },
   };
   return { emitter, Keyboard };

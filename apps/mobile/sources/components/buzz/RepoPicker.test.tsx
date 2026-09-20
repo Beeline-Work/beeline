@@ -150,6 +150,22 @@ describe('RepoPicker', () => {
     );
     expect(list.props.nestedScrollEnabled).toBe(true);
     expect(list.props.keyboardShouldPersistTaps).toBe('handled');
+    expect(list.props.style).toContainEqual({ maxHeight: 252 });
+    act(() => renderer.unmount());
+  });
+
+  it('paints hairline placeholders while the candidate list is loading', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <RepoPicker busy candidates={[]} onSelect={() => {}} testIDPrefix="room-repo-picker" />,
+      );
+    });
+    const list = renderer.root.findByProps({ testID: 'room-repo-picker-list' });
+    const empty = list.props.ListEmptyComponent as React.ReactElement;
+    expect(empty.props.testID).toBe('room-repo-picker-loading');
+    expect(empty.props.accessibilityLabel).toBe('Loading repositories');
+    expect(empty.props.children).toHaveLength(6);
     act(() => renderer.unmount());
   });
 });

@@ -102,6 +102,7 @@ vi.mock('react-native', async () => {
   return {
     AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Image: host('Image'),
+    Keyboard: { addListener: () => ({ remove: () => undefined }) },
     Modal: host('Modal'),
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
     Pressable: UnistylesPressable,
@@ -116,6 +117,7 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 vi.mock('react-native-svg', async () => {

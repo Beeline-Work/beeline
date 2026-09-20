@@ -59,11 +59,11 @@ describe('RoomRepositoryActions', () => {
     expect(action.props.chevron).toBe('down');
     expect(renderer.root.findByProps({ testID: 'room-repo-picker' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'room-reviewer' })).toBeDefined();
-    expect(source.indexOf('{reviewer}')).toBeGreaterThan(
+    expect(source.indexOf('{pickerVisible ? picker : null}')).toBeGreaterThan(
       source.indexOf('testID="room-repo-action"'),
     );
-    expect(source.indexOf('{reviewer}')).toBeLessThan(
-      source.indexOf('{pickerVisible ? picker : null}'),
+    expect(source.indexOf('{pickerVisible ? picker : null}')).toBeLessThan(
+      source.indexOf('{reviewer}'),
     );
     expect(renderer.root.findAllByProps({ testID: 'room-repo-readonly' })).toHaveLength(0);
     act(() => action.props.onPress());
@@ -121,5 +121,77 @@ describe('RoomRepositoryActions', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-repo-action' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'room-repo-picker' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'room-reviewer' })).toHaveLength(0);
+  });
+
+  it('keeps the bound repo name on the pinned row while candidates load', () => {
+    const renderer = render(
+      <RoomRepositoryActions
+        busy={false}
+        canManage
+        loading
+        onToggle={vi.fn()}
+        picker={<Picker testID="room-repo-picker" />}
+        pickerVisible
+        repositoryName="beeline/mobile"
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'room-repo-action' }).props.metadata).toBe(
+      'beeline/mobile',
+    );
+    expect(renderer.root.findByProps({ testID: 'room-repo-action' }).props.disabled).toBe(false);
+    act(() => renderer.unmount());
+  });
+
+  it('says Loading on the Repo row when no repository is bound yet', () => {
+    const renderer = render(
+      <RoomRepositoryActions
+        busy={false}
+        canManage
+        loading
+        onToggle={vi.fn()}
+        picker={<Picker testID="room-repo-picker" />}
+        pickerVisible
+        repositoryName={null}
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'room-repo-action' }).props.metadata).toBe(
+      'Loading',
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('splits the pinned row from the scrolling picker body', () => {
+    const row = render(
+      <RoomRepositoryActions
+        busy={false}
+        canManage
+        onToggle={vi.fn()}
+        picker={<Picker testID="room-repo-picker" />}
+        pickerVisible
+        reviewer={<Reviewer testID="room-reviewer" />}
+        repositoryName="beeline"
+        slot="row"
+      />,
+    );
+    expect(row.root.findByProps({ testID: 'room-repo-action' })).toBeDefined();
+    expect(row.root.findAllByProps({ testID: 'room-repo-picker' })).toHaveLength(0);
+    act(() => row.unmount());
+
+    const body = render(
+      <RoomRepositoryActions
+        busy={false}
+        canManage
+        onToggle={vi.fn()}
+        picker={<Picker testID="room-repo-picker" />}
+        pickerVisible
+        reviewer={<Reviewer testID="room-reviewer" />}
+        repositoryName="beeline"
+        slot="body"
+      />,
+    );
+    expect(body.root.findAllByProps({ testID: 'room-repo-action' })).toHaveLength(0);
+    expect(body.root.findByProps({ testID: 'room-repo-picker' })).toBeDefined();
+    expect(body.root.findByProps({ testID: 'room-reviewer' })).toBeDefined();
+    act(() => body.unmount());
   });
 });

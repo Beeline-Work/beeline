@@ -49,6 +49,8 @@ vi.mock('react-native', async () => {
     },
     Platform: { OS: 'ios' },
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
+    Keyboard: { addListener: () => ({ remove: () => undefined }) },
     Text: host('Text'),
     TextInput: ReactModule.forwardRef((props: any, _ref) =>
       ReactModule.createElement('TextInput', props),
@@ -289,6 +291,30 @@ describe('Hull dialog family', () => {
     act(() => hostByTestID(renderer, 'cancel-sheet', 'Pressable').props.onPress());
     expect(onClose).toHaveBeenCalledOnce();
     expect(archive).not.toHaveBeenCalled();
+  });
+
+  it('pins sticky chrome and scrolls the body when a footer is supplied', () => {
+    const renderer = render(
+      <HullActionSheetModal
+        footer={<HullActionSheetCancel onPress={() => undefined} testID="pinned-cancel" />}
+        onClose={() => undefined}
+        sticky={<HullActionSheetRow label="Repo" metadata="owner/repo" testID="pinned-repo" />}
+        testID="sheet"
+        title="Room"
+        visible
+      >
+        <HullActionSheetRow label="Members" onPress={() => undefined} testID="body-members" />
+      </HullActionSheetModal>,
+    );
+    const body = hostByTestID(renderer, 'sheet-body', 'ScrollView');
+    expect(body.props.nestedScrollEnabled).toBe(true);
+    expect(body.props.keyboardShouldPersistTaps).toBe('handled');
+    expect(body.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ maxHeight: expect.any(Number) })]),
+    );
+    expect(hostByTestID(renderer, 'pinned-repo', 'View')).toBeDefined();
+    expect(hostByTestID(renderer, 'body-members', 'Pressable')).toBeDefined();
+    expect(hostByTestID(renderer, 'pinned-cancel', 'Pressable')).toBeDefined();
   });
 
   it('keeps a mounted floating surface still across unrelated host renders', () => {

@@ -5411,7 +5411,7 @@ export function BuzzChatSurface({
                     ? 'Turn repository notifications on'
                     : 'Turn repository notifications off'
                 }
-                description="Pushes, pull requests, issues, CI, and reviews posted here."
+                description="Pull requests, issues, and CI posted here."
                 disabled={roomRepoBusy}
                 label="Repo notifications"
                 onPress={() => void handleToggleGitHubEvents()}

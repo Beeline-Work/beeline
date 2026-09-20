@@ -459,30 +459,20 @@ function githubUrl(value: unknown): boolean {
 }
 
 function githubEvent(value: unknown): boolean {
+  // Validate the ENVELOPE only. A card kind this client does not know about
+  // must not fail the whole Room view: a newer server may post one, and
+  // rejecting it here blanks every screen instead of one row. The renderer
+  // draws the kinds it knows and skips the rest.
   const item = record(value);
-  if (
-    !item ||
-    (item.type !== 'pull-request' &&
-      item.type !== 'issue' &&
-      item.type !== 'push' &&
-      item.type !== 'ci' &&
-      item.type !== 'review') ||
-    typeof item.actor !== 'string' ||
-    typeof item.title !== 'string' ||
-    !githubUrl(item.url)
-  ) {
-    return false;
-  }
-  return (
-    (item.type === 'pull-request' &&
-      (item.action === 'opened' || item.action === 'closed' || item.action === 'merged')) ||
-    (item.type === 'issue' && (item.action === 'opened' || item.action === 'closed')) ||
-    (item.type === 'push' && item.action === 'pushed') ||
-    (item.type === 'ci' && (item.action === 'passed' || item.action === 'failed')) ||
-    (item.type === 'review' &&
-      (item.action === 'approved' ||
-        item.action === 'changes_requested' ||
-        item.action === 'commented'))
+  return Boolean(
+    item &&
+    typeof item.type === 'string' &&
+    item.type.length > 0 &&
+    typeof item.action === 'string' &&
+    item.action.length > 0 &&
+    typeof item.actor === 'string' &&
+    typeof item.title === 'string' &&
+    githubUrl(item.url),
   );
 }
 

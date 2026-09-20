@@ -132,7 +132,47 @@ export function rewriteGrantedHostRoutes(
     if (classifyImportedMcpServer({ name, declaration }) !== 'host') continue;
     rewritten[name] = rewriteHostMcpDeclaration(name, declaration, hostHome);
   }
+  // Code-owned host names are the route even when this harness has no
+  // operator declaration (pi has none). Candy's standing squire grant
+  // otherwise produced an empty rewrite and never mounted.
+  for (const name of granted) {
+    if (rewritten[name] || !isCodeOwnedHostMcpName(name)) continue;
+    rewritten[name] = rewriteHostMcpDeclaration(name, {}, hostHome);
+  }
   return rewritten;
+}
+
+/** Session MCP wires for granted host routes, including code-owned Squire. */
+export function grantedHostRouteWires(
+  granted: readonly string[],
+  hostHome: string,
+  declarations: Record<string, Record<string, unknown>> = {},
+): Array<{
+  name: string;
+  command: string;
+  args: string[];
+  env?: Array<{ name: string; value: string }>;
+}> {
+  const routes = rewriteGrantedHostRoutes(declarations, granted, hostHome);
+  return Object.entries(routes).flatMap(([name, declaration]) => {
+    const command =
+      (typeof declaration.command === 'string' && declaration.command) ||
+      (typeof declaration.cmd === 'string' && declaration.cmd) ||
+      '';
+    if (!command) return [];
+    const envRecord = recordValue(declaration.env) ?? recordValue(declaration.envs) ?? {};
+    const env = Object.entries(envRecord).flatMap(([envName, value]) =>
+      typeof value === 'string' ? [{ name: envName, value }] : [],
+    );
+    return [
+      {
+        name,
+        command,
+        args: stringArray(declaration.args),
+        ...(env.length ? { env } : {}),
+      },
+    ];
+  });
 }
 
 export function mergeTomlHostRoutes(

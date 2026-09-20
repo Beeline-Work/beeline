@@ -29,9 +29,13 @@
  * declarations pass through: model/sandbox/approval settings stay out because
  * they fight the daemon's own agent-mode flags. Codex's native web search is
  * enabled explicitly (`[features] standalone_web_search`); Claude Code gets a
- * generated `settings.json` allowing its native `WebSearch` tool. Pi ships no
- * native web-search tool (web access there is extension-package territory,
- * deliberately out of the isolated home). This does NOT touch the #376
+ * generated `settings.json` allowing its native `WebSearch` tool. Pi's
+ * harness MCP inventory is `$PI_CODING_AGENT_DIR/mcp.json` (operator
+ * `~/.pi/agent/mcp.json`); local servers are copied and granted host routes
+ * are rewritten there like Claude's `.claude.json`. Pi 0.85.1 itself does
+ * not read that file — optional `pi-mcp-adapter` does — and isolated homes
+ * still exclude `settings.json`, so Beeline-owned servers and granted routes
+ * also ride `pi-mcp-bridge.ts`. This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
  * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Imported
  * MCP declarations are classified `local` (copied as-is) or `host` (rewritten
@@ -72,7 +76,7 @@ import {
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
-import { classifyImportedMcpServer } from './mcp-route-class.js';
+import { classifyImportedMcpServer, isCodeOwnedHostMcpName } from './mcp-route-class.js';
 import {
   grantedSquireHostRoute,
   mergeGooseHostRoutes,
@@ -204,6 +208,8 @@ const agentHomeProvisionQueues = new Map<string, Promise<void>>();
  *   - `claude`: Claude Code's user-scope MCP lives under the top-level
  *     `mcpServers` key of `~/.claude.json`; the same object is written as a
  *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
+ *   - `pi`: the same JSON `mcpServers` object lives in `~/.pi/agent/mcp.json`
+ *     and is written as `mcp.json` inside the isolated `PI_CODING_AGENT_DIR`.
  *
  * Everything else in those files (models, sandbox modes, approval policy) and
  * every ungranted host-classified server (`mcp-route-class.ts`) stay behind.
@@ -228,6 +234,12 @@ const HARNESS_MCP_CONFIGS = [
 const PI_CUSTOM_MODEL_CONFIG = {
   source: '.pi/agent/models.json',
   target: 'models.json',
+} as const;
+
+/** Pi's harness MCP inventory. Isolated homes write local copies + granted host routes here. */
+const PI_MCP_CONFIG = {
+  source: '.pi/agent/mcp.json',
+  target: 'mcp.json',
 } as const;
 
 /**
@@ -476,6 +488,22 @@ async function provisionAgentSkillsAndMcp(
     console.warn('[body] operator MCP passthrough failed for claude:', error);
   }
 
+  try {
+    const piJson = resolve(operatorHome, PI_MCP_CONFIG.source);
+    const piTarget = resolve(root, 'pi', PI_MCP_CONFIG.target);
+    const mcpServers = existsSync(piJson)
+      ? localMcpServers(recordValue(readJsonObject(piJson)?.mcpServers) ?? {})
+      : undefined;
+    if (mcpServers && Object.keys(mcpServers).length > 0) {
+      await writeIsolatedHarnessFile(piTarget, `${JSON.stringify({ mcpServers }, null, 2)}\n`);
+    } else {
+      await unlink(piTarget).catch(() => undefined);
+    }
+  } catch (error) {
+    if (failClosed) throw error;
+    console.warn('[body] operator MCP passthrough failed for pi:', error);
+  }
+
   // Native web reads for Claude Code: both discovery (`WebSearch`) and direct
   // URL retrieval (`WebFetch`) are permission-gated, so the generated isolated
   // settings allow them explicitly. Regenerated on every activation like every
@@ -541,6 +569,20 @@ async function applyGrantedHostRoutes(
       const routes = routesFor('claude');
       if (Object.keys(routes).length > 0) {
         const target = resolve(root, 'claude', '.claude.json');
+        const parsed = existsSync(target) ? readJsonObject(target) : undefined;
+        const merged = mergeJsonHostRoutes(recordValue(parsed?.mcpServers), routes);
+        if (merged && Object.keys(merged).length > 0) {
+          await writeIsolatedHarnessFile(
+            target,
+            `${JSON.stringify({ mcpServers: merged }, null, 2)}\n`,
+          );
+        }
+      }
+    }
+    if (appliesToHarness(agentKind, 'pi')) {
+      const routes = routesFor('pi');
+      if (Object.keys(routes).length > 0) {
+        const target = resolve(root, 'pi', PI_MCP_CONFIG.target);
         const parsed = existsSync(target) ? readJsonObject(target) : undefined;
         const merged = mergeJsonHostRoutes(recordValue(parsed?.mcpServers), routes);
         if (merged && Object.keys(merged).length > 0) {
@@ -638,6 +680,7 @@ function collectTrustySquireImportedServers(operatorHome: string): string[] {
   addTrustySquireTomlNames(names, resolve(operatorHome, '.codex/config.toml'));
   addTrustySquireTomlNames(names, resolve(operatorHome, '.grok/config.toml'));
   addTrustySquireClaudeNames(names, resolve(operatorHome, '.claude.json'));
+  addTrustySquireClaudeNames(names, resolve(operatorHome, PI_MCP_CONFIG.source));
   addTrustySquireGooseNames(names, resolve(operatorHome, '.config/goose/config.yaml'));
   return [...names];
 }
@@ -790,6 +833,12 @@ export function mountedImportedMcpServerNames(
           : resolve(home, '.config/goose/config.yaml'),
       );
     }
+    if (!kind || kind === 'pi') {
+      addClaudeMcpNames(
+        names,
+        resolve(env.PI_CODING_AGENT_DIR ?? resolve(home, '.pi/agent'), PI_MCP_CONFIG.target),
+      );
+    }
   } else {
     collectImportedMcpNames(input.operatorHome ?? homedir(), names, input.agentKind);
   }
@@ -825,6 +874,9 @@ export function hostImportedMcpDeclarations(
   }
   if (!kind || kind === 'goose') {
     add(readGooseExtensions(resolve(operatorHome, '.config/goose/config.yaml')));
+  }
+  if (!kind || kind === 'pi') {
+    add(recordValue(readJsonObject(resolve(operatorHome, PI_MCP_CONFIG.source))?.mcpServers));
   }
   return declarations;
 }
@@ -877,6 +929,12 @@ export function expectedMountedImportedMcpServerNames(input: {
     operatorHome: input.operatorHome,
     agentKind: input.agentKind,
   }).filter((name) => allowed.has(name));
+  // A code-owned host name is a standing route even when this harness has
+  // no operator declaration to rewrite. The grant target is `squire`; the
+  // operator file may use another key or be missing.
+  for (const name of allowed) {
+    if (isCodeOwnedHostMcpName(name)) grantedHost.push(name);
+  }
   return [...new Set([...local, ...grantedHost])].sort((left, right) => left.localeCompare(right));
 }
 
@@ -897,6 +955,12 @@ function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?
     addLocalMcpNames(
       names,
       readGooseExtensions(resolve(operatorHome, '.config/goose/config.yaml')),
+    );
+  }
+  if (!kind || kind === 'pi') {
+    addLocalMcpNames(
+      names,
+      recordValue(readJsonObject(resolve(operatorHome, PI_MCP_CONFIG.source))?.mcpServers),
     );
   }
 }

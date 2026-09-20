@@ -816,21 +816,107 @@ export class GitHubOperations {
     await this.syncInstallation(owner, install.id);
   }
 
+  /**
+   * Room-level repository activity. Issues and pull requests post on
+   * opened/closed; pushes and check runs/suites/commit statuses (CI) post
+   * too — the Room toggle promises those. Corner branches stay corner-owned
+   * (the corner exclusion below), and pushes and CI are gated to the
+   * repository's DEFAULT branch: a Room reads the repository's mainline
+   * activity, while feature-branch churn belongs to corners and
+   * pull-request heads.
+   */
   private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
-    if (event !== 'issues' && event !== 'pull_request') return;
-    const action = text(body.action);
-    if (action !== 'opened' && action !== 'closed') return;
-    const subject = record(body[event === 'issues' ? 'issue' : 'pull_request']);
+    if (
+      event !== 'issues' &&
+      event !== 'pull_request' &&
+      event !== 'push' &&
+      event !== 'check_run' &&
+      event !== 'check_suite' &&
+      event !== 'status'
+    )
+      return;
     const repository = repositoryName(body);
-    const title = text(subject?.title)?.trim();
-    const url = githubUrl(subject?.html_url);
-    const actor = text(record(body.sender)?.login);
-    if (!repository || !title || !url || !actor) return;
+    if (!repository) return;
 
-    const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
-    const cardAction = merged ? 'merged' : action;
-    const branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
-    const targetBranch = event === 'pull_request' ? text(record(subject?.base)?.ref) : undefined;
+    let card:
+      | {
+          type: 'issue' | 'pull-request' | 'push' | 'ci';
+          action: string;
+          actor: string;
+          title: string;
+          url: string;
+          branch?: string;
+          targetBranch?: string;
+        }
+      | undefined;
+    let dedupeKey: string | undefined;
+    let branch: string | undefined;
+    let targetBranch: string | undefined;
+    const actor = text(record(body.sender)?.login) || 'github';
+
+    if (event === 'issues' || event === 'pull_request') {
+      const action = text(body.action);
+      if (action !== 'opened' && action !== 'closed') return;
+      const subject = record(body[event === 'issues' ? 'issue' : 'pull_request']);
+      const title = text(subject?.title)?.trim();
+      const url = githubUrl(subject?.html_url);
+      if (!title || !url) return;
+      const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
+      const cardAction = merged ? 'merged' : action;
+      branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
+      targetBranch = event === 'pull_request' ? text(record(subject?.base)?.ref) : undefined;
+      card = {
+        type: event === 'issues' ? 'issue' : 'pull-request',
+        action: cardAction,
+        actor,
+        title,
+        url,
+        ...(branch ? { branch } : {}),
+        ...(targetBranch ? { targetBranch } : {}),
+      };
+      dedupeKey = url;
+    } else if (event === 'push') {
+      branch = branchForEvent(event, body);
+      if (!branch) return;
+      const commits = integer(body.size) ?? (Array.isArray(body.commits) ? body.commits.length : 0);
+      const url = githubUrl(text(body.compare));
+      if (!commits || !url) return;
+      card = {
+        type: 'push',
+        action: 'pushed',
+        actor,
+        title: `${commits} ${commits === 1 ? 'commit' : 'commits'} to ${branch}`,
+        url,
+        branch,
+      };
+      dedupeKey = text(body.after) ?? url;
+    } else if (event === 'check_run' || event === 'check_suite' || event === 'status') {
+      const result = checksResult(event, body);
+      if (!result) return;
+      branch = branchForEvent(event, body);
+      const fact = checkFact(event, body);
+      if (!fact || fact.status === 'pending') return;
+      const sha = 'headSha' in fact ? text(fact.headSha) : undefined;
+      const url =
+        githubUrl('url' in fact ? text(fact.url) : undefined) ??
+        (repository && sha ? `https://github.com/${repository}/commit/${sha}` : undefined);
+      if (!url) return;
+      card = {
+        type: 'ci',
+        action: result,
+        actor,
+        title: fact.name,
+        url,
+        ...(branch ? { branch } : {}),
+      };
+      dedupeKey = `${sha ?? ''}:${fact.name}`;
+    }
+    if (!card || !dedupeKey) return;
+
+    // Pushes and CI are mainline events: gate them to the repository's
+    // default branch. Pull-request cards still exclude a matching corner branch.
+    const defaultBranchGate =
+      event === 'push' || event === 'check_run' || event === 'check_suite' || event === 'status';
     const rooms = await this.database.query<{ room_id: string; author_id: string }>(
       `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id
        FROM rooms room
@@ -849,28 +935,25 @@ export class GitHubOperations {
            SELECT 1 FROM rooms corner
            JOIN corner_facts fact ON fact.corner_id=corner.id
            WHERE corner.parent_id=room.id AND fact.feature_branch=$3
+         ))
+         AND ($4::text IS NULL OR EXISTS(
+           SELECT 1 FROM github_repositories repo
+           WHERE repo.installation_id=$1 AND lower(repo.full_name)=lower($2)
+             AND repo.active AND lower(repo.default_branch)=lower($4)
          ))`,
-      [installationId, repository, branch ?? null],
+      [installationId, repository, branch ?? null, defaultBranchGate ? (branch ?? null) : null],
     );
     for (const room of rooms.rows) {
       const note = await systemLine(this.database, {
-        id: hash(`beeline:${room.room_id}:github-event:${event}:${cardAction}:${url}`),
+        id: hash(`beeline:${room.room_id}:github-event:${event}:${card.action}:${dedupeKey}`),
         roomId: room.room_id,
         authorId: room.author_id,
-        subject: { kind: 'github', name: actor },
-        verb: cardAction,
-        object: { text: title, url },
+        subject: { kind: 'github', name: card.actor },
+        verb: card.action,
+        object: { text: card.title, url: card.url },
         presentation: 'card',
         cardType: 'github-event',
-        card: {
-          type: event === 'issues' ? 'issue' : 'pull-request',
-          action: cardAction,
-          actor,
-          title,
-          url,
-          ...(branch ? { branch } : {}),
-          ...(targetBranch ? { targetBranch } : {}),
-        },
+        card,
       });
       if (note.inserted) this.onRoomChanged?.(room.room_id);
     }

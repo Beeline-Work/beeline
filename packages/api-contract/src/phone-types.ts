@@ -87,6 +87,15 @@ export const ROOM_VIEW_WORKSPACE_LIMIT = 50;
 export const ROOM_VIEW_CHAT_LIMIT = 200;
 export const ROOM_VIEW_MEMBER_LIMIT = 200;
 export const ROOM_VIEW_AGENT_LIMIT = 200;
+/**
+ * One page of the Workspace Members roster. MemberRosterRow is `hull.layout.row`
+ * (64pt). After the Members header, search field, and two section heads, a
+ * typical phone viewport paints about eight rows; 20 is roughly two-and-a-half
+ * screens, so the first paint stays cheap on #welcome without copying the
+ * 200-Room settings bound. Load-more is explicit. RoomView.members still uses
+ * ROOM_VIEW_MEMBER_LIMIT.
+ */
+export const WORKSPACE_MEMBER_PAGE_SIZE = 20;
 export const ROOM_VIEW_REQUEST_TIMEOUT_MS = 8_000;
 
 /** Opaque relay filters supplied by the authoritative surface query. */
@@ -245,10 +254,20 @@ export type RoomViewMessage = {
     readonly agent?: RoomViewIdentity;
     readonly requester?: RoomViewIdentity;
   };
-  /** A validated, service-published repository activity card. Never a speaker. */
+  /** A validated, service-published repository activity card. Never a speaker.
+   *  Pushes and CI are mainline (default-branch) facts; reviews ride PRs. */
   readonly githubEvent?: {
-    readonly type: 'pull-request' | 'issue';
-    readonly action: 'opened' | 'closed' | 'merged';
+    readonly type: 'pull-request' | 'issue' | 'push' | 'ci' | 'review';
+    readonly action:
+      | 'opened'
+      | 'closed'
+      | 'merged'
+      | 'pushed'
+      | 'passed'
+      | 'failed'
+      | 'approved'
+      | 'changes_requested'
+      | 'commented';
     readonly actor: string;
     readonly title: string;
     readonly url: string;
@@ -579,10 +598,30 @@ export type WorkspaceView = {
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
+  /** True human membership count, independent of the page in `members`. */
+  readonly peopleTotal: number;
+  /** True agent membership count, independent of the page in `agents`. */
+  readonly agentTotal: number;
   readonly membersTruncated: boolean;
   readonly agentsTruncated: boolean;
   readonly viewer: RoomViewer;
   readonly watchFilters: readonly SurfaceWatchFilter[];
+};
+
+/** One page of the Workspace Members roster, including search and load-more. */
+export type WorkspaceMemberListView = {
+  readonly members: readonly RoomViewMember[];
+  readonly agents: readonly WorkspaceAgentView[];
+  readonly peopleTotal: number;
+  readonly agentTotal: number;
+  readonly membersTruncated: boolean;
+  readonly agentsTruncated: boolean;
+};
+
+export type WorkspaceMemberListQuery = {
+  readonly q?: string;
+  readonly kind?: 'human' | 'agent';
+  readonly offset?: number;
 };
 
 export type AgentDetailView = {

@@ -1,0 +1,35 @@
+import { readFileSync } from 'node:fs';
+
+import { describe, expect, it } from 'vitest';
+
+const rail = readFileSync(new URL('./CommunityRail.tsx', import.meta.url), 'utf8');
+const desktopRail = readFileSync(new URL('./DesktopWorkspaceRail.tsx', import.meta.url), 'utf8');
+
+describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
+  it('draws the mobile drawer tile with the desktop radius and brass bezel', () => {
+    // 48px tile, 14px radius — the desktop tile geometry.
+    expect(rail).toContain('borderRadius: 14');
+    // The current workspace wears the 2px brass bezel; idle tiles sit at
+    // full strength (no opacity fade — the bezel is the whole story).
+    expect(rail).toContain('railButtonCurrent: {\n      borderWidth: 2,\n      borderColor: groknight.selectedBorder,');
+    expect(rail).not.toContain('railButtonIdle');
+    expect(rail).not.toContain('opacity: 0.5');
+  });
+
+  it('scales the room-list header plate to the same treatment', () => {
+    expect(rail).toContain('drawerTriggerPlate: {\n      position: \'relative\',\n      borderRadius: 8,\n      borderWidth: 2,\n      borderColor: groknight.selectedBorder,');
+  });
+
+  it('keeps the named ADD, WORKSPACE and SETTINGS foot commands (never bare glyphs)', () => {
+    expect(rail).toContain("'ADD'");
+    expect(rail).toContain('`ADD ${WORKSPACE_LABEL.toUpperCase()}`');
+    expect(rail).toContain("label=\"WORKSPACE\"");
+    expect(rail).toContain("label=\"SETTINGS\"");
+  });
+
+  it('keeps the desktop rail as the reference tile (48px, 14px radius, 2px bezel, left pill)', () => {
+    expect(desktopRail).toContain('TILE_SIZE = 48');
+    expect(desktopRail).toContain('borderRadius: 14');
+    expect(desktopRail).toContain('currentTile: { borderWidth: 2, borderColor: hull.accent }');
+  });
+});

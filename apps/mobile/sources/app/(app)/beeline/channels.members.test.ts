@@ -25,6 +25,28 @@ describe('Workspace Members entry point', () => {
     expect(source).not.toContain('people-outline');
   });
 
+  it('keeps BookmarksGlyph beside MembersGlyph as a matching 16px header tap target', () => {
+    expect(source).toContain('<BookmarksGlyph');
+    expect(source).toContain('testID="workspace-bookmarks"');
+    expect(source).toContain('testID="workspace-bookmarks-glyph"');
+    expect(source).toContain("pathname: '/beeline/bookmarks'");
+    expect(source).toContain('accessibilityLabel="Bookmarks"');
+    const bookmarks = source.slice(
+      source.indexOf('testID="workspace-bookmarks"') - 400,
+      source.indexOf('testID="workspace-members"'),
+    );
+    expect(bookmarks).toContain('size={16}');
+    expect(bookmarks).toContain('style={styles.headerAction}');
+    const members = source.slice(
+      source.indexOf('testID="workspace-members"') - 200,
+      source.indexOf('testID="workspace-members-glyph"') + 80,
+    );
+    expect(members).toContain('size={16}');
+    expect(members).toContain('style={styles.headerMembersAction}');
+    expect(members).toContain('<MembersGlyph');
+    expect(source.indexOf('workspace-bookmarks')).toBeLessThan(source.indexOf('workspace-members'));
+  });
+
   it('redirects legacy agent-management links to Members', () => {
     expect(legacyAgentsSource).toContain(
       "import { Redirect, useLocalSearchParams, type Href } from 'expo-router';",

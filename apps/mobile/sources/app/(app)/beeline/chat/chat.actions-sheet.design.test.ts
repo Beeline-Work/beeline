@@ -53,6 +53,24 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
+  it('docks the room name and Repo row, and scrolls everything beneath them', () => {
+    expect(chat).toContain('sticky={');
+    expect(chat).toContain('slot="row"');
+    expect(chat).toContain('slot="body"');
+    expect(chat).toContain(
+      'footer={<HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />}',
+    );
+    expect(chat).toContain('loading={roomRepoListLoading}');
+    expect(chat).toContain('busy={roomRepoBusy || roomRepoListLoading}');
+    const picker = readFileSync(
+      new URL('../../../../components/buzz/RepoPicker.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(picker).toContain('REPO_CANDIDATE_LIST_MAX_HEIGHT');
+    expect(picker).toContain('REPO_CANDIDATE_VISIBLE_ROWS = 6');
+    expect(picker).not.toContain('MAX_LIST_HEIGHT_CAP = 420');
+  });
+
   it('renders every row through the one shared row, so none of them wears a box', () => {
     for (const testID of ROOM_ROWS) expect(row(roomSheet, testID)).toContain('<HullActionSheetRow');
     expect(row(cornerSheet, 'close-corner-action')).toContain('<HullActionSheetRow');
@@ -79,7 +97,8 @@ describe('Room and corner actions sheets', () => {
     for (const source of [roomSheet, cornerSheet]) {
       const members = row(source, 'room-participant-roster-trigger');
       expect(members).toContain('label="Members"');
-      expect(members).toContain('leading={<MembersGlyph testID="room-participant-roster-glyph" />}');
+      expect(members).not.toContain('leading=');
+      expect(members).not.toContain('MembersGlyph');
       expect(members).toContain('metadata=');
       expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
       expect(members).toContain('disabled={!memberManagement.canOpenRoster}');

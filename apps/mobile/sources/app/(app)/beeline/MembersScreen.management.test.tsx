@@ -10,7 +10,11 @@ const MEMBER = 'c'.repeat(64);
 const AGENT = 'd'.repeat(64);
 
 const state = vi.hoisted(() => ({ workspace: null as any, agent: null as any }));
-const roomView = vi.hoisted(() => ({ workspace: vi.fn(), agent: vi.fn() }));
+const roomView = vi.hoisted(() => ({
+  workspace: vi.fn(),
+  agent: vi.fn(),
+  workspaceMembers: vi.fn(),
+}));
 const share = vi.hoisted(() => vi.fn(async () => undefined));
 const modal = vi.hoisted(() => ({
   confirm: vi.fn(async () => true),
@@ -54,15 +58,23 @@ const client = vi.hoisted(() => ({
     };
   }),
   removeAgent: vi.fn(async (_workspaceId: string, pubkey: string) => {
+    const agents = state.workspace.agents.filter((member: any) => member.identity.pubkey !== pubkey);
     state.workspace = {
       ...state.workspace,
-      agents: state.workspace.agents.filter((member: any) => member.identity.pubkey !== pubkey),
+      agents,
+      agentTotal: agents.length,
+      agentsTruncated: false,
     };
   }),
   removeMember: vi.fn(async (_workspaceId: string, pubkey: string) => {
+    const members = state.workspace.members.filter(
+      (member: any) => member.identity.pubkey !== pubkey,
+    );
     state.workspace = {
       ...state.workspace,
-      members: state.workspace.members.filter((member: any) => member.identity.pubkey !== pubkey),
+      members,
+      peopleTotal: members.length,
+      membersTruncated: false,
     };
   }),
 }));
@@ -200,6 +212,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    workspaceMembers = roomView.workspaceMembers;
   },
 }));
 vi.mock('@beeline/buzz-client', async (importOriginal) => {
@@ -207,6 +220,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   class RoomViewClient {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    workspaceMembers = roomView.workspaceMembers;
   }
   class SurfaceRefreshScheduler<T> {
     constructor(
@@ -279,6 +293,8 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
       },
     ],
     managerSettings: { visibility: 'invite-only' },
+    peopleTotal: 3,
+    agentTotal: 1,
     membersTruncated: false,
     agentsTruncated: false,
     viewer: {
@@ -346,6 +362,14 @@ beforeEach(() => {
   state.agent = baseAgent();
   roomView.workspace.mockImplementation(async () => state.workspace);
   roomView.agent.mockImplementation(async () => state.agent);
+  roomView.workspaceMembers.mockImplementation(async () => ({
+    members: state.workspace.members,
+    agents: state.workspace.agents,
+    peopleTotal: state.workspace.peopleTotal,
+    agentTotal: state.workspace.agentTotal,
+    membersTruncated: state.workspace.membersTruncated,
+    agentsTruncated: state.workspace.agentsTruncated,
+  }));
   modal.confirm.mockResolvedValue(true);
   modal.prompt.mockResolvedValue(null);
 });
@@ -743,6 +767,12 @@ describe('Members workspace management', () => {
       expect(
         renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` }),
       ).toBeTruthy();
+      const openTexts = renderer.root
+        .findByProps({ testID: `agent-${AGENT}-identity` })
+        .findAllByType('Text' as any)
+        .flatMap((node: any) => node.props.children);
+      expect(openTexts).toContain('⌄');
+      expect(openTexts).not.toContain('›');
     }
   });
 
@@ -1021,5 +1051,102 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: 'agent-grants-empty' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-line' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'agent-grant-g-live-revoke' })).toHaveLength(0);
+  });
+
+  it('keeps the true People total, pages the first screen, searches past it, and load-more appends', async () => {
+    const extras = Array.from({ length: 21 }, (_, index) =>
+      member(`e${String(index).padStart(63, '0')}`, `Zebra ${String(index).padStart(2, '0')}`, 'member'),
+    );
+    const allPeople = [
+      member(VIEWER, 'Viewer', 'owner'),
+      member(OWNER, 'Captain', 'owner'),
+      member(MEMBER, 'Builder', 'member'),
+      ...extras,
+    ];
+    const firstPage = allPeople.slice(0, 20);
+    const offPage = extras[20]!;
+    state.workspace = {
+      ...baseWorkspace(),
+      members: firstPage,
+      peopleTotal: allPeople.length,
+      agentTotal: 1,
+      membersTruncated: true,
+      agentsTruncated: false,
+    };
+    roomView.workspaceMembers.mockImplementation(async (_workspaceId: string, query: any = {}) => {
+      const needle = String(query.q ?? '')
+        .trim()
+        .toLowerCase();
+      const filtered = needle
+        ? allPeople.filter(
+            (item) =>
+              item.identity.name.toLowerCase().includes(needle) ||
+              item.identity.handle.includes(needle),
+          )
+        : allPeople;
+      const offset = Number(query.offset ?? 0);
+      const page = filtered.slice(offset, offset + 20);
+      return {
+        members: query.kind === 'agent' ? [] : page,
+        agents: query.kind === 'human' ? [] : state.workspace.agents,
+        peopleTotal: filtered.length,
+        agentTotal: needle ? 0 : 1,
+        membersTruncated: offset + page.length < filtered.length,
+        agentsTruncated: false,
+      };
+    });
+
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
+      'People ',
+      allPeople.length,
+    ]);
+    expect(renderer.root.findAllByProps({ testID: `member-${firstPage[0]!.identity.pubkey}-identity` }).length).toBeGreaterThan(
+      0,
+    );
+    expect(renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` })).toHaveLength(
+      0,
+    );
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText(offPage.identity.name);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(roomView.workspaceMembers).toHaveBeenCalledWith(
+      WORKSPACE,
+      expect.objectContaining({ q: offPage.identity.name }),
+    );
+    expect(renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }).length).toBeGreaterThan(
+      0,
+    );
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
+      'People ',
+      1,
+    ]);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const row = (pubkey: string) =>
+      renderer.root.findAll(
+        (node: any) =>
+          node.type === 'TouchableOpacity' && node.props.testID === `member-${pubkey}-identity`,
+      );
+    const firstPageRows = firstPage.flatMap((item) => row(item.identity.pubkey)).length;
+    await press(renderer, 'members-load-more-people');
+    expect(roomView.workspaceMembers).toHaveBeenCalledWith(
+      WORKSPACE,
+      expect.objectContaining({ kind: 'human', offset: 20 }),
+    );
+    expect(row(offPage.identity.pubkey)).toHaveLength(1);
+    expect(row(VIEWER)).toHaveLength(1);
+    expect(firstPage.flatMap((item) => row(item.identity.pubkey))).toHaveLength(firstPageRows);
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
+      'People ',
+      allPeople.length,
+    ]);
   });
 });

@@ -525,7 +525,11 @@ WITH candidates AS (
   ) presence ON true
 ), roster AS (
   SELECT r.*,
-    row_number() OVER (PARTITION BY (r.agent_content IS NOT NULL) ORDER BY encode(r.pubkey, 'hex')) AS ordinal,
+    row_number() OVER (
+      PARTITION BY (r.agent_content IS NOT NULL)
+      ORDER BY CASE WHEN r.agent_content IS NULL AND r.role = 'owner' THEN 0 ELSE 1 END,
+        encode(r.pubkey, 'hex')
+    ) AS ordinal,
     count(*) OVER (PARTITION BY (r.agent_content IS NOT NULL)) AS kind_total
   FROM roster_resolved r
 ), managed_rooms AS (

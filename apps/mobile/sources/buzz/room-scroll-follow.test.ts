@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
+  roomOpenLandsOnTail,
   scrollFollowOnArrival,
   scrollFollowOnLayoutChange,
 } from './room-scroll-follow';
@@ -15,30 +17,54 @@ const chatSource = readFileSync(
 );
 
 describe('phoneTranscriptTailPadding', () => {
-  it('keeps thinking + live-Corner WAITING spacing at exact idle parity', () => {
-    const idleWithWaitingCorner = phoneTranscriptTailPadding({
-      turnChromeVisible: false,
-      pushedChromeVisible: true,
-    });
-    const thinkingWithWaitingCorner = phoneTranscriptTailPadding({
-      turnChromeVisible: true,
-      pushedChromeVisible: true,
-    });
-
-    expect(thinkingWithWaitingCorner).toBe(idleWithWaitingCorner);
+  const ordinaryTail = phoneTranscriptTailPadding({
+    turnChromeVisible: false,
+    pushedChromeVisible: false,
   });
 
-  it('reserves the hanging line when no Corner or offline bar pushes the transcript', () => {
-    const idle = phoneTranscriptTailPadding({
-      turnChromeVisible: false,
-      pushedChromeVisible: false,
-    });
+  it('does not step when the thinking line paints or clears', () => {
     const thinking = phoneTranscriptTailPadding({
       turnChromeVisible: true,
       pushedChromeVisible: false,
     });
+    const thinkingThenIdle = phoneTranscriptTailPadding({
+      turnChromeVisible: false,
+      pushedChromeVisible: false,
+    });
 
-    expect(thinking - idle).toBe(30);
+    expect(thinking).toBe(ordinaryTail);
+    expect(thinkingThenIdle).toBe(ordinaryTail);
+  });
+
+  it('stays at the ordinary list tail, never the hanging-line height on top of it', () => {
+    const thinking = phoneTranscriptTailPadding({
+      turnChromeVisible: true,
+      pushedChromeVisible: false,
+    });
+    const thinkingWithOffline = phoneTranscriptTailPadding({
+      turnChromeVisible: true,
+      pushedChromeVisible: true,
+    });
+
+    expect(ordinaryTail).toBe(ROOM_OPEN_LIST_TAIL_PADDING);
+    expect(thinking).toBe(ordinaryTail);
+    expect(thinking).not.toBeGreaterThan(ordinaryTail);
+    expect(thinkingWithOffline).toBe(ordinaryTail);
+    expect(thinking - ordinaryTail).toBe(0);
+  });
+
+  it('keeps thinking + offline chrome at the same ordinary tail', () => {
+    const idleWithOffline = phoneTranscriptTailPadding({
+      turnChromeVisible: false,
+      pushedChromeVisible: true,
+    });
+    const thinkingWithOffline = phoneTranscriptTailPadding({
+      turnChromeVisible: true,
+      pushedChromeVisible: true,
+    });
+
+    expect(thinkingWithOffline).toBe(idleWithOffline);
+    expect(thinkingWithOffline).toBe(ordinaryTail);
   });
 });
 
@@ -324,8 +350,15 @@ describe('the chat screen wires the scroll rule', () => {
 
   it('lands the desktop transcript on the newest message on open', () => {
     // A chronological list starts at its top, so the open must scroll; an
-    // inverted native list already shows the tail.
-    expect(chatSource).toContain('openLandsOnTail: !desktopTranscript');
+    // inverted native list already shows the tail. A bookmark/notification
+    // message id must not take that landing.
+    expect(chatSource).toContain('roomOpenLandsOnTail');
+    expect(chatSource).toContain('messageAnchorId');
+    expect(roomOpenLandsOnTail({ desktopTranscript: false })).toBe(true);
+    expect(roomOpenLandsOnTail({ desktopTranscript: true })).toBe(false);
+    expect(
+      roomOpenLandsOnTail({ desktopTranscript: false, messageAnchorId: 'msg-1' }),
+    ).toBe(false);
     // The immediate scrollToEnd can land short while the tail window is
     // unmeasured (RN Web estimates far frames), so the landing re-runs from
     // measured content sizes until it settles.
@@ -342,15 +375,14 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('bottomChromeLayoutKey');
   });
 
-  it('keeps the phone turn reserve in the transcript rather than the composer footprint', () => {
+  it('keeps the phone turn line out of the composer footprint and the tail padding', () => {
     expect(chatSource).toContain('const composerFootprint = composerHeight + keyboardHeight;');
     expect(chatSource).toContain('styles.hangingTurnChrome');
     expect(chatSource).toContain('paddingTop: phoneTranscriptTailPadding({');
-    // The pinned corner line is retired, so the offline hint is the only
-    // chrome left that pushes the tail above the composer. The zero gap that
-    // leaves is measured in `room-bottom-chrome.test.tsx`.
+    expect(chatSource).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
     expect(chatSource).toContain('pushedChromeVisible: agentsOffline');
     expect(chatSource).toContain('styles.bottomChromeStack');
+    expect(chatSource).not.toContain('(composerAck || settledTurn) && {');
   });
 
   /**

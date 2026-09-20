@@ -22,12 +22,7 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  beginRoomOpenPrefetch,
-  dispatchRoomOpenTap,
-  seedRoomOpenPixel,
-} from '@/buzz/room-open-prefetch';
-import { RoomOpenPixel } from './chat/_room-open-pixel';
+import { beginRoomOpenPrefetch, dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
@@ -56,6 +51,7 @@ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/Co
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MembersGlyph } from '@/components/buzz/MembersGlyph';
+import { BookmarksGlyph } from '@/components/buzz/BookmarksGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -211,10 +207,6 @@ export default function BuzzChannels() {
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
-  const [openingSeed, setOpeningSeed] = useState<{
-    text: string;
-    agentsOffline: boolean;
-  } | null>(null);
   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
@@ -464,7 +456,6 @@ export default function BuzzChannels() {
 
   useFocusEffect(
     useCallback(() => {
-      setOpeningSeed(null);
       refreshNow();
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
@@ -514,23 +505,14 @@ export default function BuzzChannels() {
   );
 
   const openRoom = useCallback(
-    (roomId: string, newestLine?: string, agentsOffline = false) => {
-      if (newestLine) setOpeningSeed({ text: newestLine, agentsOffline });
-      const go = () => {
-        dispatchRoomOpenTap(roomId, newestLine, {
-          agentsOffline,
-          prefetch: prefetchRoom,
-          navigate: (id) => {
-            if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
-            router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
-          },
-        });
-      };
-      if (newestLine && typeof globalThis.requestAnimationFrame === 'function') {
-        globalThis.requestAnimationFrame(() => go());
-        return;
-      }
-      go();
+    (roomId: string) => {
+      dispatchRoomOpenTap(roomId, {
+        prefetch: prefetchRoom,
+        navigate: (id) => {
+          if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
+          router.push(`/beeline/chat/${encodeURIComponent(id)}` as Href);
+        },
+      });
     },
     [activeCommunityId, identity, prefetchRoom],
   );
@@ -786,7 +768,6 @@ export default function BuzzChannels() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
     <BuzzCommunityShell
       communities={communities}
       activeCommunityId={activeCommunityId}
@@ -808,24 +789,44 @@ export default function BuzzChannels() {
         <View style={styles.header}>
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
-            <TouchableOpacity
-              accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/beeline/members',
-                  params: { communityId: activeCommunityId },
-                } as never)
-              }
-              style={styles.headerAction}
-              testID="workspace-members"
-            >
-              <MembersGlyph
-                color={styles.headerActionGlyph.color}
-                size={16}
-                testID="workspace-members-glyph"
-              />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                accessibilityLabel="Bookmarks"
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/bookmarks',
+                    params: { communityId: activeCommunityId },
+                  } as never)
+                }
+                style={styles.headerAction}
+                testID="workspace-bookmarks"
+              >
+                <BookmarksGlyph
+                  color={styles.headerActionGlyph.color}
+                  size={16}
+                  testID="workspace-bookmarks-glyph"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/members',
+                    params: { communityId: activeCommunityId },
+                  } as never)
+                }
+                style={styles.headerMembersAction}
+                testID="workspace-members"
+              >
+                <MembersGlyph
+                  color={styles.headerActionGlyph.color}
+                  size={16}
+                  testID="workspace-members-glyph"
+                />
+              </TouchableOpacity>
+            </View>
           )}
         </View>
         <NewRoomDialog
@@ -945,21 +946,10 @@ export default function BuzzChannels() {
                   testID={`room-${item.room.id}`}
                   onPressIn={() => {
                     prefetchRoom(item.room.id);
-                    if (hasPreview) {
-                      setOpeningSeed({
-                        text: preview.text,
-                        agentsOffline: Boolean(item.agentsOffline),
-                      });
-                      seedRoomOpenPixel(item.room.id, preview.text, item.agentsOffline);
-                    }
                   }}
                   onPress={() => {
                     swipeableRefs.current.get(item.room.id)?.close();
-                    openRoom(
-                      item.room.id,
-                      hasPreview ? preview.text : undefined,
-                      item.agentsOffline,
-                    );
+                    openRoom(item.room.id);
                   }}
                   style={styles.rowMain}
                 >
@@ -1016,7 +1006,6 @@ export default function BuzzChannels() {
                       else swipeableRefs.current.delete(item.room.id);
                     }}
                     friction={1}
-                    onSwipeableWillOpen={() => setOpeningSeed(null)}
                     overshootRight={false}
                     rightThreshold={ROW_HEIGHT}
                     renderRightActions={() => (
@@ -1127,24 +1116,26 @@ export default function BuzzChannels() {
                             >
                               └ {label}
                             </Text>
-                            <CornerWorkingPulse state={display.status}>
-                              <Text
-                                style={[
-                                  styles.cornerStatus,
-                                  display.status === 'working'
-                                    ? styles.cornerStatusWorking
-                                    : display.status === 'review'
-                                      ? styles.cornerStatusReview
-                                      : display.status === 'archived'
-                                        ? styles.cornerStatusArchived
-                                        : styles.cornerStatusWaiting,
-                                ]}
-                                testID={`room-corner-status-${corner.corner.id}`}
-                              >
-                                {display.word}
-                              </Text>
-                            </CornerWorkingPulse>
-                            <Text style={styles.cornerChevron}>›</Text>
+                            <View style={styles.cornerTrail}>
+                              <CornerWorkingPulse state={display.status}>
+                                <Text
+                                  style={[
+                                    styles.cornerStatus,
+                                    display.status === 'working'
+                                      ? styles.cornerStatusWorking
+                                      : display.status === 'review'
+                                        ? styles.cornerStatusReview
+                                        : display.status === 'archived'
+                                          ? styles.cornerStatusArchived
+                                          : styles.cornerStatusWaiting,
+                                  ]}
+                                  testID={`room-corner-status-${corner.corner.id}`}
+                                >
+                                  {display.word}
+                                </Text>
+                              </CornerWorkingPulse>
+                              <Text style={styles.cornerChevron}>›</Text>
+                            </View>
                           </TouchableOpacity>
                         );
                       })
@@ -1175,21 +1166,6 @@ export default function BuzzChannels() {
         />
       </View>
     </BuzzCommunityShell>
-    {openingSeed ? (
-      <View
-        pointerEvents="none"
-        testID="room-open-deck-overlay"
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 30, elevation: 30 }}
-      >
-        <RoomOpenPixel
-          roomSurface={null}
-          seedText={openingSeed.text}
-          agentsOffline={openingSeed.agentsOffline}
-          onFirstPaint={() => undefined}
-        />
-      </View>
-    ) : null}
-    </View>
   );
 }
 
@@ -1207,7 +1183,11 @@ const styles = StyleSheet.create((theme) => {
     },
     header: {
       minHeight: 62,
-      paddingHorizontal: hull.space.lg,
+      paddingLeft: hull.space.lg,
+      // Match the compose FAB (`right: 16`) and the expanded-corner tray
+      // (`paddingRight: 16`) so the Members mark sits on that shared trailing
+      // edge rather than inset by the header's left gutter.
+      paddingRight: 16,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -1220,6 +1200,16 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 8,
+    },
+    headerMembersAction: {
+      minHeight: 44,
+      minWidth: 44,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
     },
     headerActionGlyph: { color: hull.textMuted },
     errorBar: {
@@ -1416,6 +1406,11 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textSecondary,
       includeFontPadding: false,
     },
+    cornerTrail: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
     cornerStatus: {
       ...theme.buzz.type.sectionHead,
       color: hull.textMuted,
@@ -1430,9 +1425,12 @@ const styles = StyleSheet.create((theme) => {
     // one emphasized row rather than a loud chip beside a quiet title.
     cornerNameNeedsYou: { color: hull.textPrimary },
     cornerChevron: {
-      ...theme.buzz.type.bodyStrong,
+      ...theme.buzz.type.sectionHead,
+      fontFamily: theme.buzz.type.bodyStrong.fontFamily,
       color: hull.steel,
       includeFontPadding: false,
+      letterSpacing: 0,
+      textTransform: 'none',
     },
     chatActions: {
       flexDirection: 'row',

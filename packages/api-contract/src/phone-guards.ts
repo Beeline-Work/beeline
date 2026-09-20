@@ -8,6 +8,7 @@ import {
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   ROOM_VIEW_WORKSPACE_LIMIT,
+  WORKSPACE_MEMBER_PAGE_SIZE,
   type AgentDetailView,
   type AgentPairingAbandonView,
   type AgentPairingClaimView,
@@ -26,6 +27,7 @@ import {
   type RoomViewMember,
   type RoomViewMessage,
   type WorkspaceListView,
+  type WorkspaceMemberListView,
   type WorkspaceView,
 } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
@@ -460,7 +462,11 @@ function githubEvent(value: unknown): boolean {
   const item = record(value);
   if (
     !item ||
-    (item.type !== 'pull-request' && item.type !== 'issue') ||
+    (item.type !== 'pull-request' &&
+      item.type !== 'issue' &&
+      item.type !== 'push' &&
+      item.type !== 'ci' &&
+      item.type !== 'review') ||
     typeof item.actor !== 'string' ||
     typeof item.title !== 'string' ||
     !githubUrl(item.url)
@@ -470,7 +476,13 @@ function githubEvent(value: unknown): boolean {
   return (
     (item.type === 'pull-request' &&
       (item.action === 'opened' || item.action === 'closed' || item.action === 'merged')) ||
-    (item.type === 'issue' && (item.action === 'opened' || item.action === 'closed'))
+    (item.type === 'issue' && (item.action === 'opened' || item.action === 'closed')) ||
+    (item.type === 'push' && item.action === 'pushed') ||
+    (item.type === 'ci' && (item.action === 'passed' || item.action === 'failed')) ||
+    (item.type === 'review' &&
+      (item.action === 'approved' ||
+        item.action === 'changes_requested' ||
+        item.action === 'commented'))
   );
 }
 
@@ -981,15 +993,34 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
         (managerSettings.roomsTruncated === undefined ||
           typeof managerSettings.roomsTruncated === 'boolean'))) &&
     Array.isArray(item.members) &&
-    item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
+    item.members.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
     item.members.every(member) &&
     Array.isArray(item.agents) &&
-    item.agents.length <= ROOM_VIEW_AGENT_LIMIT &&
+    item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
     item.agents.every(workspaceAgent) &&
+    integer(item.peopleTotal) &&
+    integer(item.agentTotal) &&
     typeof item.membersTruncated === 'boolean' &&
     typeof item.agentsTruncated === 'boolean' &&
     viewer(item.viewer) &&
     watchFilters(item.watchFilters),
+  );
+}
+
+export function isWorkspaceMemberListView(value: unknown): value is WorkspaceMemberListView {
+  const item = record(value);
+  return Boolean(
+    item &&
+    Array.isArray(item.members) &&
+    item.members.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
+    item.members.every(member) &&
+    Array.isArray(item.agents) &&
+    item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
+    item.agents.every(workspaceAgent) &&
+    integer(item.peopleTotal) &&
+    integer(item.agentTotal) &&
+    typeof item.membersTruncated === 'boolean' &&
+    typeof item.agentsTruncated === 'boolean',
   );
 }
 

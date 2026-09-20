@@ -24,8 +24,17 @@ export type SystemLineMessage = {
   /** The ids of every row folded into this one, oldest first. */
   foldedIds?: string[];
   githubEvent?: {
-    type: 'pull-request' | 'issue';
-    action: 'opened' | 'closed' | 'merged';
+    type: 'pull-request' | 'issue' | 'push' | 'ci' | 'review';
+    action:
+      | 'opened'
+      | 'closed'
+      | 'merged'
+      | 'pushed'
+      | 'passed'
+      | 'failed'
+      | 'approved'
+      | 'changes_requested'
+      | 'commented';
     actor?: string;
     title: string;
     url: string;
@@ -323,6 +332,9 @@ function notificationLifecycleEvent(
 
   if (message.githubEvent) {
     const event = message.githubEvent;
+    // Push/CI/review cards keep their own GitHubEventCard rows; only issue and
+    // PR cards join the folded lifecycle run.
+    if (event.type !== 'pull-request' && event.type !== 'issue') return undefined;
     const prNumber = event.type === 'pull-request' ? pullRequestNumber(event.url) : undefined;
     return {
       id: message.id,

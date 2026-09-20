@@ -1,4 +1,5 @@
 const { withGradleProperties } = require('@expo/config-plugins');
+const withAndroidSplashTheme = require('./android-splash-theme');
 
 /**
  * Keep generated Android projects fast without committing Expo's android/ output.
@@ -24,6 +25,7 @@ function upsert(properties, key, value) {
 }
 
 module.exports = function withAndroidBuildTooling(config) {
+  config = withAndroidSplashTheme(config);
   return withGradleProperties(config, (mod) => {
     for (const [key, value] of Object.entries(GRADLE_PROPERTIES)) {
       upsert(mod.modResults, key, value);

@@ -151,10 +151,9 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    // This box is what the transcript reserves at its tail
-    // (`phoneTranscriptTailPadding`), so the line lands flush on the composer
-    // with no dead band. No border, no fill: a status light in a fixed place
-    // needs no frame to be found.
+    // In-flow band above the composer (`room-bottom-chrome`). The transcript
+    // tail does not grow a matching reserve — that step jumped the last
+    // message — and the line must not paint over the newest row.
     bar: {
       width: '100%',
       minWidth: 0,

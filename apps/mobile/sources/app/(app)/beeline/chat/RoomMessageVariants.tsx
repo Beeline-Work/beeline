@@ -37,6 +37,8 @@ import { liveDraftDrainStore } from '@/buzz/live-draft-drain';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
+import { isLedgerDayOpener } from '@/buzz/message-dates';
+import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
 import {
   type NotificationLifecycleRun,
   type NotificationLifecycleState,
@@ -1088,8 +1090,23 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   onOpenUrl,
 }: GitHubEventCardProps) {
   const event = message.githubEvent!;
-  const subject = event.type === 'pull-request' ? 'PR' : 'Issue';
+  const subject =
+    event.type === 'pull-request'
+      ? 'PR'
+      : event.type === 'issue'
+        ? 'Issue'
+        : event.type === 'push'
+          ? 'Push'
+          : event.type === 'ci'
+            ? 'CI'
+            : 'Review';
   const state = event.action === 'merged' ? 'merged' : event.action;
+  const tone: 'waiting' | 'settled' | 'failed' =
+    state === 'opened' || state === 'pushed'
+      ? 'waiting'
+      : state === 'failed' || state === 'changes_requested'
+        ? 'failed'
+        : 'settled';
   return (
     <RepositoryFactCard
       title={`${subject} 1 ${state}`}
@@ -1101,7 +1118,7 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
           state,
           title: event.title,
           kindLine: subject,
-          tone: state === 'opened' ? 'waiting' : 'settled',
+          tone,
           onPress: () => onOpenUrl(event.url),
         },
       ]}
@@ -1619,6 +1636,7 @@ export interface OrdinaryLedgerMessageProps {
   speakerWorking: boolean;
   continued: boolean;
   immediatelyPrecedingMessage?: ChatDisplayMessage;
+  firstBylineOfDay?: boolean;
   referencedTarget?: MessageReplyDisplayTarget;
   participantHandles: readonly { pubkey: string; handle: string }[];
   channelIndex: ChannelReferenceIndex;
@@ -1718,6 +1736,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   speakerWorking,
   continued,
   immediatelyPrecedingMessage,
+  firstBylineOfDay,
   referencedTarget,
   participantHandles,
   channelIndex,
@@ -1772,6 +1791,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       )
     : null;
   const isSelfSteer = isOwn && !isAgent;
+  const dayOpener = isLedgerDayOpener(message.timestamp, immediatelyPrecedingMessage?.timestamp);
+  const bylineOpener = firstBylineOfDay ?? dayOpener;
+  const stamp = useTranscriptStamp(message.timestamp, bylineOpener && !message.isAgentActivity);
+  const continuedRun = continued && !bylineOpener;
   const voiceName = isAgent
     ? (indexedAuthor?.name ??
       display?.name ??
@@ -1782,12 +1805,12 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined =
-    continued && !isAgent && !announcementFeed && !message.bookmarked
+    continuedRun && !isAgent && !announcementFeed && !message.bookmarked
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
-          stamp: ledgerStamp(message.timestamp),
+          stamp,
           isViewer: isSelfSteer,
           bookmarked: message.bookmarked,
           ...(announcementFeed
@@ -1887,10 +1910,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         >
           <ActivityTimeline
             active={message.isAgentLiveTurn === true}
-            handle={!continued && isAgent ? voiceName : undefined}
+            handle={!continuedRun && isAgent ? voiceName : undefined}
             role={agentBylineLabel(agentModel)}
             mark={
-              !continued && isAgent
+              !continuedRun && isAgent
                 ? {
                     seed: markSeed,
                     kind: 'agent',
@@ -1972,8 +1995,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         {isSelfSteer ? (
           <LedgerSteer
             itemId={message.id}
-            continued={continued}
+            continued={continuedRun}
             chronological={desktopLayout}
+            precededByDayCaption={dayOpener}
             byline={byline}
             bodyText={forwarded.body}
             mentionHandles={mentionHandles}
@@ -1988,8 +2012,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <LedgerEntry
             itemId={message.id}
             byline={byline}
-            continued={continued}
+            continued={continuedRun}
             chronological={desktopLayout}
+            precededByDayCaption={dayOpener}
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}

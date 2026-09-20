@@ -446,6 +446,7 @@ export {
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_AGENT_LIMIT,
+  WORKSPACE_MEMBER_PAGE_SIZE,
   ROOM_VIEW_REQUEST_TIMEOUT_MS,
   MESSAGE_REACTION_EMOJIS,
   RoomViewClient,
@@ -477,6 +478,8 @@ export type {
   MessageReactionView,
   SurfaceWatchFilter,
   WorkspaceListView,
+  WorkspaceMemberListQuery,
+  WorkspaceMemberListView,
   WorkspaceView,
 } from './room-view.js';
 export type { KnownMessageReference } from './reply-proof.js';
@@ -496,6 +499,7 @@ export {
   isRoomView,
   isRoomHistoryView,
   isWorkspaceListView,
+  isWorkspaceMemberListView,
   isWorkspaceView,
   isChatListView,
   isCornerListView,

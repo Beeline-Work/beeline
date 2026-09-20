@@ -8,6 +8,7 @@ import React, {
   useMemo,
   type MutableRefObject,
 } from 'react';
+import { transcriptBylineOpeners } from '@/buzz/message-dates';
 import {
   View,
   Text,
@@ -179,6 +180,7 @@ import { roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
+  roomOpenLandsOnTail,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
   desktopTailLanding,
@@ -319,7 +321,6 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
@@ -464,10 +465,11 @@ export function BuzzChatSurface({
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
+  const messageAnchorId = (notificationMessageId ?? notificationTarget ?? '').trim();
   const allowOlderHistoryRef = useRef(false);
   useEffect(() => {
-    allowOlderHistoryRef.current = false;
-  }, [decodedId]);
+    allowOlderHistoryRef.current = Boolean(messageAnchorId);
+  }, [decodedId, messageAnchorId]);
   const { width: windowWidth } = useWindowDimensions();
   // A desktop browser keeps the permanent Room list even when its window is
   // narrower than the work-pane threshold. Native phones keep their ordinary
@@ -637,6 +639,7 @@ export function BuzzChatSurface({
   const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
+  const [roomRepoListLoading, setRoomRepoListLoading] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
   const [roomRepoNotice, setRoomRepoNotice] = useState<string | null>(null);
   // Typed "the App does not cover this repository yet" state: rendered as a
@@ -2063,9 +2066,13 @@ export function BuzzChatSurface({
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,
     isUserDragging: userDraggingRef.current,
-    openLandsOnTail: !desktopTranscript,
+    openLandsOnTail: roomOpenLandsOnTail({
+      desktopTranscript,
+      messageAnchorId,
+    }),
   });
   useLayoutEffect(() => {
+    if (messageAnchorId) return;
     if (arrivalFollow === 'hold') {
       if (!desktopTranscript && !isPinnedToTailRef.current) {
         // An appended fold row grows inside the existing index-0 card, which
@@ -2108,7 +2115,7 @@ export function BuzzChatSurface({
       }
     }
     scrollToNewestMessage();
-  }, [newestMessageId, scrollToNewestMessage]);
+  }, [messageAnchorId, newestMessageId, scrollToNewestMessage]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
   // in the cached tail; if the target is already resident outside the initial
   // window, widen the window first and scroll on the next render.
@@ -2180,6 +2187,7 @@ export function BuzzChatSurface({
       ),
     [visibleMessages],
   );
+  const bylineOpeners = useMemo(() => transcriptBylineOpeners(visibleMessages), [visibleMessages]);
   const rawImmediatelyPrecedingVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
     for (let index = 1; index < visibleMessages.length; index += 1) {
@@ -2287,10 +2295,11 @@ export function BuzzChatSurface({
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
-  // keyboard, and an offline helper mounts its hint. The phone turn line
-  // hangs above the whole bottom stack instead of growing this footprint.
-  // Native layout can update the pinned ref before an effect runs, preserving
-  // the old offset as an empty gap. Capture the verdict in render.
+  // keyboard, an offline helper mounts its hint, and the phone turn line is
+  // an in-flow band above the composer (`bottomChromeLayoutKey` includes
+  // turn/no-turn). Native layout can update the pinned ref before an effect
+  // runs, preserving the old offset as an empty gap. Capture the verdict in
+  // render.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -3386,6 +3395,7 @@ export function BuzzChatSurface({
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
       if (!transport || !activeCommunityId) return;
+      setRoomRepoListLoading(true);
       try {
         const access = await transport.workspaceGitHubAccess({ refresh });
         setRoomRepoCandidates(access.candidates);
@@ -3399,6 +3409,8 @@ export function BuzzChatSurface({
         if (refresh) throw error;
         setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates());
         setGitHubInstallations([]);
+      } finally {
+        setRoomRepoListLoading(false);
       }
     },
     [activeCommunityId, transport],
@@ -4127,6 +4139,7 @@ export function BuzzChatSurface({
       return (
         <OrdinaryLedgerMessage
           message={renderedItem}
+          firstBylineOfDay={bylineOpeners.has(item.id)}
           // The byline carries the model stamped on the message at
           // generation time (server-side from the producing turn); an agent
           // row with no stamp keeps the plain `AGENT` word — never a live
@@ -4170,6 +4183,7 @@ export function BuzzChatSurface({
       );
     },
     [
+      bylineOpeners,
       agentByPubkey,
       answeredMessageIds,
       isDesktop,
@@ -4499,15 +4513,13 @@ export function BuzzChatSurface({
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail. The offline
-              // hint already pushes that tail above the composer; reserve
-              // the hanging line only when it is absent. This keeps the
-              // offline + thinking gap identical to the Room's idle gap.
+              // Inverted list: paddingTop is the visual tail. Always the
+              // ordinary 12px — the thinking line is an in-flow band above
+              // the composer, not a padding reserve and not an overlay.
               !desktopTranscript &&
-                !isArchived &&
-                (composerAck || settledTurn) && {
+                !isArchived && {
                   paddingTop: phoneTranscriptTailPadding({
-                    turnChromeVisible: true,
+                    turnChromeVisible: Boolean(composerAck || settledTurn),
                     pushedChromeVisible: agentsOffline,
                   }),
                 },
@@ -4820,10 +4832,10 @@ export function BuzzChatSurface({
             </View>
           ) : (
             <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-              {/* Phone turn chrome hangs above the whole bottom stack
-                (corner, offline, composer) so it cannot cover any of them.
-                The inverted list reserves this height; the line fills it.
-                Desktop keeps the reserved slot inside inputBar. */}
+              {/* Phone turn chrome is an in-flow band above the composer —
+                hairline, then the line, then the composer's hairline — so it
+                cannot paint over the last message. The transcript tail stays
+                the ordinary 12px. Desktop keeps the slot inside inputBar. */}
               {!desktopExperience && composerAck && (
                 <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
                   <TurnProgressLine
@@ -5348,17 +5360,101 @@ export function BuzzChatSurface({
       <HullActionSheetModal
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
         dismissOnBackdrop={!renameBusy}
+        footer={<HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />}
         onClose={closeRoomActions}
+        sticky={
+          <RoomRepositoryActions
+            busy={roomRepoBusy}
+            canManage={canManageWorkspace}
+            loading={roomRepoListLoading}
+            onToggle={() => void handleToggleRoomRepoPicker()}
+            picker={null}
+            pickerVisible={showRoomRepoPicker}
+            repositoryName={roomRepository?.binding.name ?? null}
+            slot="row"
+          />
+        }
         testID="room-actions-sheet"
         title={displayRoomName}
         visible={roomActionsVisible}
       >
+        <RoomRepositoryActions
+          busy={roomRepoBusy}
+          canManage={canManageWorkspace}
+          loading={roomRepoListLoading}
+          notifications={
+            roomRepository ? (
+              <HullActionSheetRow
+                accessibilityLabel={
+                  roomRepository.githubEventsEnabled === false
+                    ? 'Turn repository notifications on'
+                    : 'Turn repository notifications off'
+                }
+                description="Pushes, pull requests, issues, CI, and reviews posted here."
+                disabled={roomRepoBusy}
+                label="Repo notifications"
+                onPress={() => void handleToggleGitHubEvents()}
+                testID="room-github-events-toggle"
+                toggle={{
+                  disabled: roomRepoBusy,
+                  onValueChange: () => void handleToggleGitHubEvents(),
+                  value: roomRepository.githubEventsEnabled !== false,
+                }}
+              />
+            ) : null
+          }
+          onToggle={() => void handleToggleRoomRepoPicker()}
+          picker={
+            <View style={styles.roomSheetInset}>
+              <RepoPicker
+                busy={roomRepoBusy || roomRepoListLoading}
+                candidates={roomRepoCandidates}
+                installations={githubInstallations}
+                currentKey={roomRepository?.binding.key ?? null}
+                error={roomRepoError}
+                notice={roomRepoNotice}
+                ownerGrant={ownerGrant}
+                uncoveredOwners={uncoveredOwnersRef.current}
+                onAddAccount={() => void handleAddGitHubAccount()}
+                onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                onCreateRepository={handleCreateGitHubRepository}
+                onManageInstallation={(installation) =>
+                  void handleManageGitHubInstallation(installation)
+                }
+                onSelect={handleSelectRoomRepoCandidate}
+                onUnlink={
+                  canManageWorkspace && roomRepository
+                    ? () => void handleUnlinkRoomRepository()
+                    : undefined
+                }
+                testIDPrefix="room-repo-picker"
+                unlinkRepositoryName={roomRepository?.binding.name}
+              />
+            </View>
+          }
+          pickerVisible={showRoomRepoPicker}
+          reviewer={
+            <RoomReviewerActions
+              agents={(roomSurface?.members ?? [])
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity)}
+              canManage={canManageWorkspace}
+              hasRepository={roomRepository !== null}
+              onSaved={() => refreshSignal.force()}
+              reviewerAgentId={roomSurface?.room.reviewerAgentId}
+              roomId={decodedId}
+              roomName={displayRoomName}
+              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            />
+          }
+          repositoryName={roomRepository?.binding.name ?? null}
+          slot="body"
+        />
         <HullActionSheetRow
           accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
           chevron="right"
           disabled={!memberManagement.canOpenRoster}
           label="Members"
-          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
           metadata={
             participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
           }
@@ -5424,76 +5520,6 @@ export function BuzzChatSurface({
               testID="rename-room-action"
             />
           ))}
-        <RoomRepositoryActions
-          busy={roomRepoBusy}
-          canManage={canManageWorkspace}
-          notifications={
-            roomRepository ? (
-              <HullActionSheetRow
-                accessibilityLabel={
-                  roomRepository.githubEventsEnabled === false
-                    ? 'Turn repository notifications on'
-                    : 'Turn repository notifications off'
-                }
-                description="Pushes, pull requests, issues, CI, and reviews posted here."
-                disabled={roomRepoBusy}
-                label="Repo notifications"
-                onPress={() => void handleToggleGitHubEvents()}
-                testID="room-github-events-toggle"
-                toggle={{
-                  disabled: roomRepoBusy,
-                  onValueChange: () => void handleToggleGitHubEvents(),
-                  value: roomRepository.githubEventsEnabled !== false,
-                }}
-              />
-            ) : null
-          }
-          onToggle={() => void handleToggleRoomRepoPicker()}
-          picker={
-            <View style={styles.roomSheetInset}>
-              <RepoPicker
-                busy={roomRepoBusy}
-                candidates={roomRepoCandidates}
-                installations={githubInstallations}
-                currentKey={roomRepository?.binding.key ?? null}
-                error={roomRepoError}
-                notice={roomRepoNotice}
-                ownerGrant={ownerGrant}
-                uncoveredOwners={uncoveredOwnersRef.current}
-                onAddAccount={() => void handleAddGitHubAccount()}
-                onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                onCreateRepository={handleCreateGitHubRepository}
-                onManageInstallation={(installation) =>
-                  void handleManageGitHubInstallation(installation)
-                }
-                onSelect={handleSelectRoomRepoCandidate}
-                onUnlink={
-                  canManageWorkspace && roomRepository
-                    ? () => void handleUnlinkRoomRepository()
-                    : undefined
-                }
-                testIDPrefix="room-repo-picker"
-                unlinkRepositoryName={roomRepository?.binding.name}
-              />
-            </View>
-          }
-          pickerVisible={showRoomRepoPicker}
-          reviewer={
-            <RoomReviewerActions
-              agents={(roomSurface?.members ?? [])
-                .filter((member) => member.identity.kind === 'agent')
-                .map((member) => member.identity)}
-              canManage={canManageWorkspace}
-              hasRepository={roomRepository !== null}
-              onSaved={() => refreshSignal.force()}
-              reviewerAgentId={roomSurface?.room.reviewerAgentId}
-              roomId={decodedId}
-              roomName={displayRoomName}
-              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
-            />
-          }
-          repositoryName={roomRepository?.binding.name ?? null}
-        />
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
@@ -5536,7 +5562,6 @@ export function BuzzChatSurface({
             <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
           </View>
         )}
-        <HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />
       </HullActionSheetModal>
 
       <HullActionSheetModal
@@ -5551,7 +5576,6 @@ export function BuzzChatSurface({
           chevron="right"
           disabled={!memberManagement.canOpenRoster}
           label="Members"
-          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
           metadata={
             participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
           }
@@ -5991,10 +6015,8 @@ const styles = StyleSheet.create((theme) => {
     emptyState: {
       flexGrow: 1,
     },
-    // The stack, the line hanging off its top edge, and the composer row are
-    // one measured column — `buzz/room-bottom-chrome.ts` owns all three so the
-    // zero gap between the turn line and the composer is a number a test can
-    // read rather than a shape three separate rules happen to agree on.
+    // The stack, the in-flow turn band, and the composer row are one measured
+    // column — `buzz/room-bottom-chrome.ts` owns all three.
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
     hangingTurnChrome: bottomChrome.hangingTurnChrome,

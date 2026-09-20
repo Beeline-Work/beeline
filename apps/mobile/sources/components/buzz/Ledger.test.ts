@@ -39,8 +39,11 @@ import {
   LedgerMarginalia,
   LedgerRoomUpdate,
   LedgerSteer,
+  LedgerDayCaption,
+  withLedgerDayCaption,
   typewriterFrame,
 } from './Ledger';
+import { groknight } from '@/buzz/groknight';
 import { identityPalette } from '@/buzz/identity-mark';
 import { markMessageRevealed, resetMessageReveals } from '@/buzz/message-reveal';
 
@@ -509,6 +512,58 @@ describe('the ledger — a human turn is plain body text', () => {
     expect(chronologicalGap(personContinuedChrono, agentChrono)).toBe(
       chronologicalGap(agentChrono, personChrono),
     );
+  });
+
+  it('keeps a person continuation to the next speaker at the widened facing-edge gap', () => {
+    // bf04a0eed (#1379) set speaker-change at twice the compact same-speaker
+    // run. 02ae83bac (#1422) moved that extra onto the incoming visual-top
+    // edge so both directions match; it did not shrink the widened value.
+    const row = (element: React.ReactElement, id: string) => {
+      const styles = render(element)
+        .root.findByProps({ testID: `chat-message-${id}` })
+        .props.style.filter(Boolean);
+      return Object.assign({}, ...styles) as Record<string, number>;
+    };
+    const invertedGap = (outgoing: Record<string, number>, incoming: Record<string, number>) =>
+      outgoing.paddingTop + incoming.paddingBottom + (incoming.marginBottom ?? 0);
+
+    const lastHuman = row(
+      React.createElement(LedgerSteer, {
+        itemId: 'you-last',
+        continued: true,
+        bodyText: '@charles now tagging testing',
+        bodyTestID: 'steer-body',
+      }),
+      'you-last',
+    );
+    const nextSpeaker = row(
+      React.createElement(LedgerEntry, {
+        itemId: 'charles',
+        luminous: true,
+        byline: { name: 'Charles', role: 'agent', stamp: '16:45' },
+        bodyText: 'On it.',
+        bodyTestID: 'body',
+      }),
+      'charles',
+    );
+    const sameSpeakerFollower = row(
+      React.createElement(LedgerSteer, {
+        itemId: 'you-again',
+        continued: true,
+        bodyText: 'Still me.',
+        bodyTestID: 'steer-body',
+      }),
+      'you-again',
+    );
+
+    const compactRun = groknight.messagePaddingVertical * 2;
+    const widenedSpeakerChange = compactRun * 2;
+    const facing = invertedGap(lastHuman, nextSpeaker);
+    const sameSpeaker = invertedGap(lastHuman, sameSpeakerFollower);
+
+    expect(sameSpeaker).toBe(compactRun);
+    expect(facing).toBe(widenedSpeakerChange);
+    expect(facing).toBeGreaterThan(sameSpeaker);
   });
 });
 
@@ -1103,5 +1158,32 @@ describe('the ledger — explicit #room/#room/corner references', () => {
     );
     expect(pressables(renderer)).toHaveLength(0);
     expect(renderedText(renderer)).toContain('#Roadmap is just prose here');
+  });
+});
+
+describe('the ledger day caption', () => {
+  it('places the caption before the message within its cell', () => {
+    const renderer = render(
+      withLedgerDayCaption(
+        React.createElement('Text', {}, 'Message'),
+        'THU 17 SEP',
+      ) as React.ReactElement,
+    );
+    expect(renderedText(renderer)).toEqual(['THU 17 SEP', 'Message']);
+  });
+
+  it('is in-flow quiet machine type, never sticky or overlayed', () => {
+    const renderer = render(React.createElement(LedgerDayCaption, { label: 'THU 17 SEP' }));
+    expect(renderedText(renderer)).toContain('THU 17 SEP');
+    const node = renderer.root.findByProps({ testID: 'ledger-day-caption' });
+    expect(node.props.style).toMatchObject({
+      fontFamily: 'IBMPlexMono-Regular',
+      fontSize: 10,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: '#90909B',
+      marginVertical: 16,
+    });
+    expect(node.props.style.position).toBeUndefined();
   });
 });

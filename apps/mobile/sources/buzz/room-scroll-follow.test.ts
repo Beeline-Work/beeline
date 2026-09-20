@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
+  roomOpenLandsOnTail,
   scrollFollowOnArrival,
   scrollFollowOnLayoutChange,
 } from './room-scroll-follow';
@@ -324,8 +325,15 @@ describe('the chat screen wires the scroll rule', () => {
 
   it('lands the desktop transcript on the newest message on open', () => {
     // A chronological list starts at its top, so the open must scroll; an
-    // inverted native list already shows the tail.
-    expect(chatSource).toContain('openLandsOnTail: !desktopTranscript');
+    // inverted native list already shows the tail. A bookmark/notification
+    // message id must not take that landing.
+    expect(chatSource).toContain('roomOpenLandsOnTail');
+    expect(chatSource).toContain('messageAnchorId');
+    expect(roomOpenLandsOnTail({ desktopTranscript: false })).toBe(true);
+    expect(roomOpenLandsOnTail({ desktopTranscript: true })).toBe(false);
+    expect(
+      roomOpenLandsOnTail({ desktopTranscript: false, messageAnchorId: 'msg-1' }),
+    ).toBe(false);
     // The immediate scrollToEnd can land short while the tail window is
     // unmeasured (RN Web estimates far frames), so the landing re-runs from
     // measured content sizes until it settles.

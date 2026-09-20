@@ -180,6 +180,7 @@ import { roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
+  roomOpenLandsOnTail,
   useScrollFollowOnArrival,
   useScrollFollowOnLayoutChange,
   desktopTailLanding,
@@ -465,10 +466,11 @@ export function BuzzChatSurface({
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
+  const messageAnchorId = (notificationMessageId ?? notificationTarget ?? '').trim();
   const allowOlderHistoryRef = useRef(false);
   useEffect(() => {
-    allowOlderHistoryRef.current = false;
-  }, [decodedId]);
+    allowOlderHistoryRef.current = Boolean(messageAnchorId);
+  }, [decodedId, messageAnchorId]);
   const { width: windowWidth } = useWindowDimensions();
   // A desktop browser keeps the permanent Room list even when its window is
   // narrower than the work-pane threshold. Native phones keep their ordinary
@@ -2064,9 +2066,13 @@ export function BuzzChatSurface({
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,
     isUserDragging: userDraggingRef.current,
-    openLandsOnTail: !desktopTranscript,
+    openLandsOnTail: roomOpenLandsOnTail({
+      desktopTranscript,
+      messageAnchorId,
+    }),
   });
   useLayoutEffect(() => {
+    if (messageAnchorId) return;
     if (arrivalFollow === 'hold') {
       if (!desktopTranscript && !isPinnedToTailRef.current) {
         // An appended fold row grows inside the existing index-0 card, which
@@ -2109,7 +2115,7 @@ export function BuzzChatSurface({
       }
     }
     scrollToNewestMessage();
-  }, [newestMessageId, scrollToNewestMessage]);
+  }, [messageAnchorId, newestMessageId, scrollToNewestMessage]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
   // in the cached tail; if the target is already resident outside the initial
   // window, widen the window first and scroll on the next render.

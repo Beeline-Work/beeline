@@ -134,6 +134,13 @@ vi.mock('@/components/buzz/FacePickerSheet', async () => {
     FacePickerSheet: (props: unknown) => ReactModule.createElement('FacePickerSheet', props),
   };
 });
+vi.mock('@/components/buzz/BeelineMark', async () => {
+  const ReactModule = await import('react');
+  return { BeelineMark: (props: unknown) => ReactModule.createElement('BeelineMark', props) };
+});
+vi.mock('@/utils/open-external-url', () => ({
+  openExternalUrl: vi.fn(async () => undefined),
+}));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -164,6 +171,12 @@ vi.mock('@/components/buzz/UiSizeSetting', async () => {
   return {
     UiSizeSetting: (props: unknown) =>
       ReactModule.createElement('UiSizeSetting', { ...(props as object), testID: 'ui-size-setting' }),
+  };
+});
+vi.mock('@/components/buzz/SettingsRow', async () => {
+  const ReactModule = await import('react');
+  return {
+    SettingsRow: (props: unknown) => ReactModule.createElement('SettingsRow', props as never),
   };
 });
 // Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
@@ -206,6 +219,7 @@ vi.mock('react-native', async () => {
 });
 
 import IdentitySettingsScreen from './identity';
+import { openExternalUrl } from '@/utils/open-external-url';
 
 const originalConsoleError = console.error;
 
@@ -336,5 +350,27 @@ describe('identity settings push row honesty', () => {
     // …and unregistered / failed states.
     const failed = await renderScreen();
     expect(failed.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
+  });
+});
+
+describe('settings legal links', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    runtime.monolithEnabled = false;
+    permissionInfo.getPushPermissionInfo.mockResolvedValue({
+      status: 'granted',
+      granted: true,
+      canAskAgain: true,
+    });
+  });
+
+  it('opens privacy, terms, and feedback through openExternalUrl', async () => {
+    const renderer = await renderScreen();
+    act(() => renderer.root.findByProps({ testID: 'settings-privacy-row' }).props.onPress());
+    expect(openExternalUrl).toHaveBeenCalledWith('https://usebeeline.app/privacy/');
+    act(() => renderer.root.findByProps({ testID: 'settings-terms-row' }).props.onPress());
+    expect(openExternalUrl).toHaveBeenCalledWith('https://usebeeline.app/terms/');
+    act(() => renderer.root.findByProps({ testID: 'settings-feedback-row' }).props.onPress());
+    expect(openExternalUrl).toHaveBeenCalledWith('mailto:hello@usebeeline.app');
   });
 });

@@ -58,7 +58,7 @@ export function PushLevelSetting({ disabled = false, onSave, value }: Props) {
           setOpen(true);
         }}
         testID="push-notifications-setting"
-        title="Push notifications"
+        title="Notifications"
         value={PUSH_LEVEL_VALUES[value]}
       />
       <HullActionSheetModal

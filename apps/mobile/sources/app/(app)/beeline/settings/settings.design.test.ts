@@ -36,21 +36,49 @@ describe('Settings reads as the Members page', () => {
     expect(settingsLabel.join(' ')).toContain('hull.type.sectionHead');
   });
 
-  it('uses flat divided rows without cards', () => {
-    const row = declarations(styleBlock(settings, 'row')).join(' ');
-    expect(row).toContain('borderBottomWidth: StyleSheet.hairlineWidth');
-    expect(row).not.toMatch(/borderRadius|backgroundColor/);
+  it('uses SettingsRow for the list, without cards', () => {
+    expect(settings).toContain('<SettingsRow');
+    expect(settings).not.toMatch(/borderRadius: hull\.radius/);
+    expect(styleBlock(settings, 'tile')).not.toMatch(/backgroundColor: hull\.bgTerminal/);
   });
 
   it('has no explanatory paragraphs or card headings', () => {
-    expect(settings).not.toMatch(/How people see you|sectionBody|sectionTitle|description=/);
-    expect(settings).not.toContain('<SettingsRow');
+    expect(settings).not.toMatch(/How people see you|sectionBody|sectionTitle|opens your GitHub profile/i);
+    expect(settings).not.toMatch(/Switch GitHub|Linked sign-in|Display</);
+  });
+
+  it('centres a 2px brass-bezelled identity tile above the handle', () => {
+    expect(styleBlock(settings, 'ident')).toContain("alignItems: 'center'");
+    expect(styleBlock(settings, 'tile')).toContain('borderWidth: 2');
+    expect(styleBlock(settings, 'tile')).toContain('borderColor: hull.accent');
+    expect(settings).toContain('testID="identity-face-setting"');
+    expect(settings).toContain('testID="identity-managed-handle"');
+  });
+
+  it('paints the handle @ in brass and the rest in ordinary text', () => {
+    expect(styleBlock(settings, 'handleAt')).toContain('color: hull.accent');
+    expect(styleBlock(settings, 'handle')).toContain('color: hull.textPrimary');
+    expect(settings).toMatch(/handleAt}>@</);
   });
 
   it('keeps danger last and uses a danger tone', () => {
     expect(settings.indexOf('testID="delete-account-setting"')).toBeGreaterThan(
       settings.indexOf('testID="sign-out-setting"'),
     );
-    expect(styleBlock(settings, 'dangerTitle')).toContain('hull.dialogDanger');
+    expect(settings).toMatch(/testID="sign-out-setting"[\s\S]*tone="destructive"/);
+    expect(settings).toMatch(/testID="delete-account-setting"[\s\S]*tone="destructive"/);
+  });
+
+  it('wires privacy, terms, and send-feedback through openExternalUrl', () => {
+    expect(settings).toContain("import { openExternalUrl } from '@/utils/open-external-url'");
+    expect(settings).not.toContain('Linking.openURL');
+    expect(settings).toContain('testID="settings-privacy-row"');
+    expect(settings).toContain('testID="settings-terms-row"');
+    expect(settings).toContain('testID="settings-feedback-row"');
+    expect(settings).toContain("t('settings.privacyPolicy')");
+    expect(settings).toContain("t('settings.termsOfService')");
+    expect(settings).toContain('https://usebeeline.app/privacy/');
+    expect(settings).toContain('https://usebeeline.app/terms/');
+    expect(settings).toContain('mailto:hello@usebeeline.app');
   });
 });

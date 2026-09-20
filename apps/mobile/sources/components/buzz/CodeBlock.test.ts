@@ -93,9 +93,9 @@ describe('CodeBlock', () => {
     expect(renderer.root.findAllByType('ScrollView').some((node) => node.props.horizontal)).toBe(
       false,
     );
-    expect(
-      renderer.root.findAllByType('Text').some((node) => node.props.children === 'TEXT'),
-    ).toBe(false);
+    expect(renderer.root.findAllByType('Text').some((node) => node.props.children === 'TEXT')).toBe(
+      false,
+    );
     expect(renderer.root.findByProps({ accessibilityLabel: 'Copy all text' })).toBeDefined();
   });
 
@@ -143,7 +143,9 @@ describe('CodeBlock', () => {
       'json · 13 lines ·',
     );
     expect(
-      renderer.root.findAllByType('Text').some((node) => node.props.children === hiddenLineLabel(13)),
+      renderer.root
+        .findAllByType('Text')
+        .some((node) => node.props.children === hiddenLineLabel(13)),
     ).toBe(true);
     const highlighters = renderer.root.findAllByProps({ testID: 'code-highlighter' });
     const peekText = collectHostText(highlighters[0]!);

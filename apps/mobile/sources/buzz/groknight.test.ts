@@ -128,8 +128,12 @@ describe('The quiet tier holds a WCAG-AA floor', () => {
       expect(contrast(set.syntaxStructure, set.bgBase)).toBeGreaterThanOrEqual(3);
       expect(contrast(set.syntaxName, set.bgBase)).toBeGreaterThanOrEqual(3);
       expect(contrast(set.syntaxValue, set.bgBase)).toBeGreaterThanOrEqual(3);
-      expect(contrast(set.syntaxName, set.bgBase)).toBeGreaterThan(contrast(set.syntaxStructure, set.bgBase));
-      expect(contrast(set.syntaxValue, set.bgBase)).toBeGreaterThan(contrast(set.syntaxName, set.bgBase));
+      expect(contrast(set.syntaxName, set.bgBase)).toBeGreaterThan(
+        contrast(set.syntaxStructure, set.bgBase),
+      );
+      expect(contrast(set.syntaxValue, set.bgBase)).toBeGreaterThan(
+        contrast(set.syntaxName, set.bgBase),
+      );
     }
   });
 
@@ -143,7 +147,12 @@ describe('The quiet tier holds a WCAG-AA floor', () => {
 });
 
 describe('Borrowing Calm type roles and spacing', () => {
-  const role = (fontFamily: string, fontSize: number, lineHeight: number, letterSpacing: number) => ({
+  const role = (
+    fontFamily: string,
+    fontSize: number,
+    lineHeight: number,
+    letterSpacing: number,
+  ) => ({
     fontFamily,
     fontSize,
     lineHeight,

@@ -52,11 +52,15 @@ afterAll(() => vi.restoreAllMocks());
 // ---------------------------------------------------------------------------
 
 function tokensOf(input: string, lang: string | null = 'typescript'): HighlightToken[] {
-  return tokenizeCode(input, lang).flat().map((s) => s.token);
+  return tokenizeCode(input, lang)
+    .flat()
+    .map((s) => s.token);
 }
 
 function tokenStrings(input: string, lang: string | null = 'typescript'): string[] {
-  return tokenizeCode(input, lang).flat().map((s) => s.text);
+  return tokenizeCode(input, lang)
+    .flat()
+    .map((s) => s.text);
 }
 
 describe('tokenizeCode', () => {
@@ -228,9 +232,7 @@ describe('CodeHighlighter', () => {
     ).join('\n');
     let renderer!: ReactTestRenderer;
     act(() => {
-      renderer = create(
-        React.createElement(CodeHighlighter, { code, language: 'typescript' }),
-      );
+      renderer = create(React.createElement(CodeHighlighter, { code, language: 'typescript' }));
     });
 
     expect(renderedText(renderer)).toBe(code);

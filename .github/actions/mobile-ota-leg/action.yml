@@ -24,6 +24,10 @@ inputs:
   expo_token:
     description: EXPO_TOKEN secret (composite actions cannot read secrets themselves)
     required: true
+  room_open_trace:
+    description: "1 turns on the on-device Room-open timing readout in this bundle; empty leaves it off, which is every ordinary release"
+    required: false
+    default: ""
   embedded_anchor_platforms:
     description: comma list of platforms whose store binary was built in this release (their current runtime pin may use the embedded update as its rollback anchor)
     required: false
@@ -153,6 +157,7 @@ runs:
         RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+        EXPO_PUBLIC_ROOM_OPEN_TRACE: ${{ inputs.room_open_trace }}
         OTA_EMBEDDED_ANCHOR_PLATFORMS: ${{ inputs.embedded_anchor_platforms }}
       run: |
         set -euo pipefail

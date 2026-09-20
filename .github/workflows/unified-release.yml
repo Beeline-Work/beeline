@@ -50,6 +50,11 @@ on:
         type: boolean
         default: false
         required: false
+      room_open_trace:
+        description: Diagnostic only - build the OTA bundle with the on-device Room-open timing readout visible
+        type: boolean
+        default: false
+        required: false
       run_release_proof:
         description: Opt-in only - run the emulator device proof before OTA promotion; default off (OTA promotes without it, release recorded UNPROVEN)
         type: boolean
@@ -629,6 +634,9 @@ jobs:
           release_version: ${{ needs.initialize.outputs.release_version }}
           retry_attempt: ${{ inputs.retry_attempt }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
+          # Diagnostic only, and only on the build leg: the promote leg republishes
+          # an existing bundle and cannot change what was compiled into it.
+          room_open_trace: ${{ inputs.room_open_trace && '1' || '' }}
           # A platform whose store binary was built in this run may treat that
           # binary's embedded update as the rollback anchor for its new runtime.
           embedded_anchor_platforms: ${{ format('{0}{1}', needs.mobile_native_android.result == 'success' && 'android,' || '', needs.mobile_native_ios.result == 'success' && 'ios' || '') }}

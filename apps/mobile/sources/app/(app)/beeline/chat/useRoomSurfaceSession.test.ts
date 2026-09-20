@@ -1152,7 +1152,11 @@ describe('useRoomSurfaceSession', () => {
     const familyFilters: RoomView['watchFilters'] = [
       {
         kinds: [9],
-        '#h': ['workspace', 'room-a', ...Array.from({ length: 58 }, (_, index) => `corner-${index}`)],
+        '#h': [
+          'workspace',
+          'room-a',
+          ...Array.from({ length: 58 }, (_, index) => `corner-${index}`),
+        ],
       },
       {
         kinds: [30078],

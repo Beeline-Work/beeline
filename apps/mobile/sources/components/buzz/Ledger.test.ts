@@ -28,6 +28,7 @@ import {
   LedgerMarginalia,
   LedgerRoomUpdate,
   LedgerSteer,
+  LedgerDayCaption,
   typewriterFrame,
 } from './Ledger';
 import { identityPalette } from '@/buzz/identity-mark';
@@ -1092,5 +1093,24 @@ describe('the ledger — explicit #room/#room/corner references', () => {
     );
     expect(pressables(renderer)).toHaveLength(0);
     expect(renderedText(renderer)).toContain('#Roadmap is just prose here');
+  });
+});
+
+describe('the ledger day caption', () => {
+  it('is in-flow quiet machine type, never sticky or overlayed', () => {
+    const renderer = render(
+      React.createElement(LedgerDayCaption, { label: 'THU 17 SEP' }),
+    );
+    expect(renderedText(renderer)).toContain('THU 17 SEP');
+    const node = renderer.root.findByProps({ testID: 'ledger-day-caption' });
+    expect(node.props.style).toMatchObject({
+      fontFamily: 'IBMPlexMono-Regular',
+      fontSize: 10,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: '#90909B',
+      marginVertical: 16,
+    });
+    expect(node.props.style.position).toBeUndefined();
   });
 });

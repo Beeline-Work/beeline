@@ -11,6 +11,7 @@ import {
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
+import { ledgerDayCaption } from '@/buzz/message-dates';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { inspectorCornerObjective, inspectorCornerWindow } from '@/buzz/inspector-corners';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
@@ -43,7 +44,7 @@ import {
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
   ConversationComposer,
 } from '@/components/buzz/ConversationComposer';
-import { LedgerRoomUpdate, LedgerSystemLine } from '@/components/buzz/Ledger';
+import { LedgerRoomUpdate, LedgerSystemLine, withLedgerDayCaption } from '@/components/buzz/Ledger';
 import {
   DaemonFactCard,
   GitHubEventCard,
@@ -517,8 +518,9 @@ function CornerCockpit({
     }
   }, [detail, input, onRefresh, sending]);
   const renderMessage = React.useCallback(
-    ({ item }: { item: ChatDisplayMessage }) => {
+    ({ item, index }: { item: ChatDisplayMessage; index: number }) => {
       const openUrl = (url: string) => void openExternalUrl(url).catch(() => undefined);
+      const immediatelyPrecedingMessage = index > 0 ? messages[index - 1] : undefined;
       if (item.corner) return null;
       const node = item.roomUpdate ? (
         <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
@@ -547,6 +549,7 @@ function CornerCockpit({
           viewerPubkey={detail?.viewer.identity.pubkey ?? ''}
           speakerWorking={false}
           continued={false}
+          {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
           participantHandles={(detail?.members ?? []).flatMap(({ identity }) =>
             identity.handle ? [{ pubkey: identity.pubkey, handle: identity.handle }] : [],
           )}
@@ -560,16 +563,21 @@ function CornerCockpit({
           desktopLayout
         />
       );
+      const captioned = withLedgerDayCaption(
+        node,
+        ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
+        true,
+      );
       if (focusMessageId && messageMatchesFocus(item, focusMessageId)) {
         return (
           <View style={styles.focusedMessage} testID="desktop-work-focused-message">
-            {node}
+            {captioned}
           </View>
         );
       }
-      return node;
+      return captioned;
     },
-    [channelIndex, detail, focusMessageId, onOpenCorner],
+    [channelIndex, detail, focusMessageId, messages, onOpenCorner],
   );
   const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
   const objective = summary?.corner.about ?? detail?.room.about ?? title;

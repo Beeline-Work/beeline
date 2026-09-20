@@ -4294,6 +4294,7 @@ export function BuzzChatSurface({
     messageById: visibleMessageById,
     arrivingCardIds: transcriptArrivalObservation.arrivingIds,
     cardMotionStore: transcriptCardMotionStore,
+    chronological: desktopTranscript,
   });
 
   if (!roomSurface) {

@@ -1483,7 +1483,8 @@ describe('Room message variant components', () => {
   it('keeps a human continuation compact', () => {
     render(
       <OrdinaryLedgerMessage
-        message={message({ id: 'ada-second-message', pubkey: 'ada' })}
+        message={message({ id: 'ada-second-message', pubkey: 'ada', timestamp: 2 })}
+        immediatelyPrecedingMessage={message({ id: 'ada-first-message', pubkey: 'ada', timestamp: 1 })}
         continued
         participantsHydrated
         viewerPubkey="viewer"
@@ -1500,6 +1501,80 @@ describe('Room message variant components', () => {
     );
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
+  });
+
+  it('dates the first byline of a past day and leaves later same-day stamps as the clock', () => {
+    const thu1658 = Math.floor(new Date(2026, 8, 17, 16, 58).getTime() / 1000);
+    const thu1702 = Math.floor(new Date(2026, 8, 17, 17, 2).getTime() / 1000);
+    const first = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'thu-first', isUser: true, timestamp: thu1658 })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(first.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17 SEP 16:58');
+    expect(first.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(true);
+
+    const later = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'thu-later', isUser: true, timestamp: thu1702 })}
+        immediatelyPrecedingMessage={message({
+          id: 'thu-first',
+          isUser: true,
+          timestamp: thu1658,
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(later.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17:02');
+    expect(later.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(false);
+  });
+
+  it('keeps today’s first byline on the clock', () => {
+    const now = Date.now();
+    const today = Math.floor(now / 1000) - 120;
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'today-first', isUser: true, timestamp: today })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const stamp = renderer.root.findByType('LedgerSteer' as never).props.byline.stamp as string;
+    expect(stamp).toMatch(/^[0-2]\d:[0-5]\d$/);
+    expect(stamp).not.toMatch(/SEP|JAN|TODAY|YESTERDAY/i);
   });
 
   it('renders a complete agent JSON object as a fenced JSON block', () => {

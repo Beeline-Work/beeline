@@ -35,6 +35,7 @@ import {
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
+import { isLedgerDayOpener, transcriptStamp } from '@/buzz/message-dates';
 import {
   type NotificationLifecycleRun,
   type NotificationLifecycleState,
@@ -1733,6 +1734,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       )
     : null;
   const isSelfSteer = isOwn && !isAgent;
+  const dayOpener = isLedgerDayOpener(message.timestamp, immediatelyPrecedingMessage?.timestamp);
+  const continuedRun = continued && !dayOpener;
   const voiceName = isAgent
     ? (indexedAuthor?.name ??
       display?.name ??
@@ -1743,12 +1746,12 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined =
-    continued && !isAgent && !announcementFeed && !message.bookmarked
+    continuedRun && !isAgent && !announcementFeed && !message.bookmarked
       ? undefined
       : {
           name: isSelfSteer ? 'You' : voiceName,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
-          stamp: ledgerStamp(message.timestamp),
+          stamp: transcriptStamp(message.timestamp, immediatelyPrecedingMessage?.timestamp),
           isViewer: isSelfSteer,
           bookmarked: message.bookmarked,
           ...(announcementFeed
@@ -1843,10 +1846,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         >
           <ActivityTimeline
             active={message.isAgentLiveTurn === true}
-            handle={!continued && isAgent ? voiceName : undefined}
+            handle={!continuedRun && isAgent ? voiceName : undefined}
             role={agentBylineLabel(agentModel)}
             mark={
-              !continued && isAgent
+              !continuedRun && isAgent
                 ? {
                     seed: markSeed,
                     kind: 'agent',
@@ -1923,8 +1926,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         {isSelfSteer ? (
           <LedgerSteer
             itemId={message.id}
-            continued={continued}
+            continued={continuedRun}
             chronological={desktopLayout}
+            precededByDayCaption={dayOpener}
             byline={byline}
             bodyText={forwarded.body}
             mentionHandles={mentionHandles}
@@ -1939,8 +1943,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <LedgerEntry
             itemId={message.id}
             byline={byline}
-            continued={continued}
+            continued={continuedRun}
             chronological={desktopLayout}
+            precededByDayCaption={dayOpener}
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}

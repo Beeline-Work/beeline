@@ -89,6 +89,10 @@ vi.mock('@/components/buzz/Ledger', async () => {
   return {
     LedgerRoomUpdate: (props: any) => ReactModule.createElement('LedgerRoomUpdate', props),
     LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
+    withLedgerDayCaption: (node: any, label: string | null) =>
+      label
+        ? ReactModule.createElement('ledger-day-caption-wrap', { label }, node)
+        : node,
   };
 });
 vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', async () => {

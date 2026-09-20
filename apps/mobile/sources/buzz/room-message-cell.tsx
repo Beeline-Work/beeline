@@ -1,5 +1,7 @@
 import React from 'react';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import { ledgerDayCaption } from './message-dates';
+import { withLedgerDayCaption } from '@/components/buzz/Ledger';
 import {
   createTranscriptCardMotionStore,
   TranscriptCardMotionBoundary,
@@ -24,6 +26,7 @@ export function useRoomMessageRenderItem({
   messageById,
   arrivingCardIds = new Set(),
   cardMotionStore,
+  chronological = false,
 }: {
   render: RoomMessageRenderer;
   continuedIds: ReadonlySet<string>;
@@ -31,6 +34,7 @@ export function useRoomMessageRenderItem({
   messageById: ReadonlyMap<string, ChatDisplayMessage>;
   arrivingCardIds?: ReadonlySet<string>;
   cardMotionStore?: TranscriptCardMotionStore;
+  chronological?: boolean;
 }) {
   const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
@@ -44,10 +48,12 @@ export function useRoomMessageRenderItem({
         referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
         cardArriving={arrivingCardIds.has(item.id)}
         cardMotionStore={resolvedCardMotionStore}
+        chronological={chronological}
       />
     ),
     [
       arrivingCardIds,
+      chronological,
       continuedIds,
       messageById,
       precedingMessageById,
@@ -66,6 +72,7 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   referencedMessage,
   cardArriving = false,
   cardMotionStore,
+  chronological = false,
 }: {
   item: ChatDisplayMessage;
   render: RoomMessageRenderer;
@@ -74,6 +81,7 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   referencedMessage?: ChatDisplayMessage;
   cardArriving?: boolean;
   cardMotionStore?: TranscriptCardMotionStore;
+  chronological?: boolean;
 }) {
   const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
   return (
@@ -82,7 +90,11 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
       cardId={item.id}
       store={cardMotionStore ?? fallbackMotionStore}
     >
-      {render(item, { continued, immediatelyPrecedingMessage, referencedMessage })}
+      {withLedgerDayCaption(
+        render(item, { continued, immediatelyPrecedingMessage, referencedMessage }),
+        ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
+        chronological,
+      )}
     </TranscriptCardMotionBoundary>
   );
 });

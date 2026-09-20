@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   ARTIFACT_PDF_BASE_URL,
@@ -127,25 +129,59 @@ describe('the vendored renderer is loaded only when a PDF is on screen', () => {
  * and the reader gets the failure line instead of their PDF. `legacy/build` is
  * the same pdf.js with its core-js polyfills folded in.
  *
- * The marker below is core-js' installer for that primitive. It appears in
- * `legacy/build` and not in `build`, so regenerating from the wrong directory
- * fails here rather than on a reader's phone.
+ * So these load the vendored source the way the WebView does — as a module,
+ * from a runtime with the primitive taken away — and assert it comes back.
+ * Both halves are checked: the fake worker runs the worker build on the main
+ * thread, so it meets the same runtime. Regenerating from `build/` instead of
+ * `legacy/build/` fails here rather than on a reader's phone.
  */
-const CORE_JS_WITH_RESOLVERS = 'withResolvers:function withResolvers(';
-
 describe('the vendored renderer runs on the Android WebViews the app still meets', () => {
   const vendored = readFileSync(
     fileURLToPath(new URL('../vendor/pdfjs/pdfjs.gen.ts', import.meta.url)),
     'utf8',
   );
 
-  it('supplies Promise.withResolvers itself rather than assuming the runtime has it', () => {
-    expect(vendored).toContain(CORE_JS_WITH_RESOLVERS);
+  /** Reads one generated `export const NAME = "…";` string literal back out. */
+  function vendoredSource(name: string): string {
+    const declaration = vendored.indexOf(`export const ${name} = `);
+    expect(declaration).toBeGreaterThan(-1);
+    const open = vendored.indexOf('"', declaration);
+    let close = open + 1;
+    while (close < vendored.length && vendored[close] !== '"') {
+      close += vendored[close] === '\\' ? 2 : 1;
+    }
+    return JSON.parse(vendored.slice(open, close + 1)) as string;
+  }
+
+  // Canvas globals the browser build reaches for as it loads. They are not what
+  // is under test; stubbing them lets the module finish loading under node.
+  beforeAll(() => {
+    class Unused {}
+    for (const name of ['DOMMatrix', 'ImageData', 'Path2D'] as const) {
+      (globalThis as Record<string, unknown>)[name] ??= Unused;
+    }
   });
 
-  it('supplies it to both halves that load in the WebView, the API and the worker', () => {
-    // One installer in `pdf.min.mjs`, one in `pdf.worker.min.mjs`: the fake
-    // worker runs the worker build on the main thread and needs it too.
-    expect(vendored.split(CORE_JS_WITH_RESOLVERS)).toHaveLength(3);
-  });
+  it.each(['PDFJS_MAIN_SOURCE', 'PDFJS_WORKER_SOURCE'])(
+    'loads on a runtime with no Promise.withResolvers and supplies it — %s',
+    async (name) => {
+      const native = Promise.withResolvers;
+      const directory = mkdtempSync(join(tmpdir(), 'pdfjs-runtime-'));
+      const module = join(directory, 'vendored.mjs');
+      writeFileSync(module, vendoredSource(name));
+      try {
+        // Exactly the WebView 108 condition: the primitive is simply absent.
+        delete (Promise as Partial<PromiseConstructor>).withResolvers;
+        expect(Promise.withResolvers).toBeUndefined();
+        await import(/* @vite-ignore */ pathToFileURL(module).href);
+        expect(typeof Promise.withResolvers).toBe('function');
+        const { promise, resolve } = Promise.withResolvers<string>();
+        resolve('settled');
+        await expect(promise).resolves.toBe('settled');
+      } finally {
+        Promise.withResolvers = native;
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

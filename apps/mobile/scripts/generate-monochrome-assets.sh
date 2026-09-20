@@ -68,12 +68,20 @@ render_favicon_svg() {
 }
 
 render_notification_svg() {
-  # White loop silhouette on transparent, sized for the status bar.
+  # White loop silhouette on transparent. Android notification / status-bar
+  # small icons are a 24×24 dp asset whose optical square is 22×22 dp
+  # (Material iconography: 1 dp inset per side, the same 2 px pad on a
+  # 48 px xhdpi status-bar template). The loop's documented 146-unit height
+  # on the 240-unit canvas is scaled to fill that square on the long axis
+  # so it reads beside system icons instead of sitting at natural framing.
   local size="$1" out="$2"
+  local scale
+  scale="$(node -p '240 / 146 * 22 / 24')"
   {
     echo "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 240 240\" width=\"$size\" height=\"$size\">"
+    echo "<g transform=\"translate(124.745 123) scale(${scale}) translate(-124.745 -123)\">"
     grep -o '<path d="[^"]*"' "$image_dir/mark.svg" | head -1 | sed "s|<path d=|<path fill=\"$white\" d=|" | sed 's|$|/>|'
-    echo "</svg>"
+    echo "</g></svg>"
   } | rsvg-convert >"$out"
 }
 

@@ -5051,7 +5051,7 @@ describe('monolith integration', () => {
       }),
     ]);
     // Room-level mainline activity: pushes and CI are gated to the default
-    // branch and reviews ride open PRs; corner branches never reach the Room.
+    // branch; corner branches never reach the Room.
     await webhook('push', 'room-push-main', {
       ...base,
       ref: 'refs/heads/main',
@@ -5084,23 +5084,6 @@ describe('monolith integration', () => {
       },
       sender: { login: 'octocat' },
     });
-    await webhook('pull_request_review', 'room-review-approved', {
-      ...base,
-      action: 'submitted',
-      review: {
-        state: 'approved',
-        user: { login: 'reviewer' },
-        html_url: 'https://github.com/owner/widgets/pull/18#pullrequestreview-1',
-      },
-      pull_request: {
-        number: 18,
-        title: 'Improve documentation',
-        html_url: 'https://github.com/owner/widgets/pull/18',
-        head: { ref: 'docs/readme', sha: '2'.repeat(40) },
-        base: { ref: 'main' },
-      },
-      sender: { login: 'reviewer' },
-    });
     const mainlineCards = await database.query<{ card: Record<string, unknown> }>(
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='github-event'
        ORDER BY created_at`,
@@ -5121,12 +5104,6 @@ describe('monolith integration', () => {
         action: 'passed',
         title: 'Beeline CI check suite',
         branch: 'main',
-      }),
-      expect.objectContaining({
-        type: 'review',
-        action: 'approved',
-        actor: 'reviewer',
-        title: 'Improve documentation',
       }),
     ]);
     await webhook('push', 'corner-push', {

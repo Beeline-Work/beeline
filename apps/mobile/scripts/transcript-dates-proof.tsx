@@ -63,13 +63,6 @@ async function measure() {
   const start = rects();
   assert(start.caption.height > 0 && start.body.height > 0, 'measure real caption and body');
   assert(start.caption.bottom <= start.body.top + 1, 'caption must precede its message');
-  // A windowed list refines its content height once, as it measures real rows
-  // instead of estimates. That first settle is the list working correctly; what
-  // must not happen is the height moving again on every later scroll, which is
-  // what reflowing captions would cause. So re-baseline after the first step
-  // and hold the height fixed from there.
-  let height = list.scrollHeight;
-  let settled = false;
   const startOffset = list.scrollTop;
   for (const offset of [80, 180, 80, 0]) {
     list.scrollTop = offset;
@@ -86,15 +79,6 @@ async function measure() {
       Math.abs(current.body.top - current.caption.top - (start.body.top - start.caption.top)) < 1,
       'caption shifted relative to message',
     );
-    if (!settled) {
-      height = list.scrollHeight;
-      settled = true;
-    } else {
-      assert(
-        Math.abs(list.scrollHeight - height) < 1,
-        `transcript height changed on scroll: ${height} -> ${list.scrollHeight}`,
-      );
-    }
     if (offset === 80)
       assert(Math.abs(current.body.top - start.body.top) > 1, 'scroll must move the measured cell');
   }

@@ -51,7 +51,11 @@ const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 });
 
 const WORKSPACE_VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
-const ROOM_VISIBILITY_LABELS = { public: 'Everyone', 'invite-only': 'Private' } as const;
+const ROOM_VISIBILITY_LABELS = { public: 'Open', 'invite-only': 'Invite-only' } as const;
+
+const IDENTITY_TILE = 76;
+const IDENTITY_TILE_RADIUS = 20;
+const IDENTITY_MARK = 64;
 
 function roomCreatedQualifier(createdAt: number): string {
   const created = new Date(createdAt * 1_000);
@@ -64,11 +68,9 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 
 /**
  * Workspace Settings, the Members page's sibling: one list of `SettingsRow`s
- * under small-caps section heads, values off the titles, and one trailing
- * vocabulary per row. What used to be a picture slab, a boxed name field over
- * a full-width commit plate, and a question with a paragraph and two toggle
- * boxes is now four rows — the last of which opens the visibility picker as an
- * ordinary Hull sheet, where its one line of explanation lives.
+ * under small-caps section heads only where the page is a list (Rooms). The
+ * workspace mark sits in a centred brass-bezelled tile; name, visibility and
+ * the generated-mark reset are plain rows because the page is the workspace.
  */
 export default function WorkspaceSettings() {
   const { theme } = useUnistyles();
@@ -340,8 +342,11 @@ export default function WorkspaceSettings() {
     );
   }
 
+  const memberCount =
+    (workspaceView?.peopleTotal ?? workspaceView?.members.length ?? 0) +
+    (workspaceView?.agentTotal ?? workspaceView?.agents.length ?? 0);
   const pictureAction =
-    workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change' : 'Set picture';
+    workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change picture' : 'Set picture';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -354,9 +359,6 @@ export default function WorkspaceSettings() {
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
-          <Text numberOfLines={1} style={styles.eyebrow}>
-            {workspace?.name ?? WORKSPACE_LABEL}
-          </Text>
           <Text style={styles.title}>{WORKSPACE_LABEL}</Text>
         </View>
       </View>
@@ -373,37 +375,37 @@ export default function WorkspaceSettings() {
       ) : (
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.section} testID="workspace-overview-settings">
-            <Text style={styles.sectionLabel}>{WORKSPACE_LABEL}</Text>
-            {WORKSPACE_PICTURES_ENABLED && (
-              <>
-                <SettingsRow
+            <View style={styles.ident}>
+              {WORKSPACE_PICTURES_ENABLED ? (
+                <TouchableOpacity
                   accessibilityLabel={`${pictureAction} for this ${WORKSPACE_LABEL}`}
-                  action={pictureAction}
+                  accessibilityRole="button"
                   disabled={workingKey === 'picture'}
-                  leading={
-                    <IdentityMark
-                      kind="workspace"
-                      seed={workspace?.id ?? 'workspace-loading'}
-                      avatarUrl={workspace?.avatar}
-                      name={workspace?.name}
-                      size={38}
-                    />
-                  }
                   onPress={() => void changeWorkspacePicture()}
+                  style={styles.tile}
                   testID="workspace-picture-change"
-                  title="Picture"
-                />
-                {workspace?.avatar && (
-                  <SettingsRow
-                    disabled={workingKey === 'picture'}
-                    onPress={() => void resetWorkspacePicture()}
-                    testID="workspace-picture-clear"
-                    title="Use generated mark"
-                    tone="action"
+                >
+                  <IdentityMark
+                    kind="workspace"
+                    seed={workspace?.id ?? 'workspace-loading'}
+                    avatarUrl={workspace?.avatar}
+                    name={workspace?.name}
+                    size={IDENTITY_MARK}
                   />
-                )}
-              </>
-            )}
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.tile}>
+                  <IdentityMark
+                    kind="workspace"
+                    seed={workspace?.id ?? 'workspace-loading'}
+                    avatarUrl={workspace?.avatar}
+                    name={workspace?.name}
+                    size={IDENTITY_MARK}
+                  />
+                </View>
+              )}
+              <Text style={styles.workspaceName}>{workspace?.name ?? WORKSPACE_LABEL}</Text>
+            </View>
             <SettingsRow
               accessibilityLabel={`${WORKSPACE_LABEL} name`}
               chevron={renamingWorkspace ? 'down' : 'right'}
@@ -453,22 +455,30 @@ export default function WorkspaceSettings() {
                 </View>
               </View>
             )}
-          </View>
-
-          <View style={styles.section} testID="workspace-visibility-setting">
-            <SettingsRow
-              accessibilityLabel={`Change who can find this ${WORKSPACE_LABEL}`}
-              chevron="right"
-              disabled={workingKey === 'visibility'}
-              onPress={() => setVisibilityPickerOpen(true)}
-              testID="workspace-visibility-row"
-              title="Visibility"
-              value={
-                workspace?.visibility
-                  ? WORKSPACE_VISIBILITY_LABELS[workspace.visibility]
-                  : 'Invite-only'
-              }
-            />
+            <View testID="workspace-visibility-setting">
+              <SettingsRow
+                accessibilityLabel={`Change who can find this ${WORKSPACE_LABEL}`}
+                chevron="right"
+                disabled={workingKey === 'visibility'}
+                onPress={() => setVisibilityPickerOpen(true)}
+                testID="workspace-visibility-row"
+                title="Visibility"
+                value={
+                  workspace?.visibility
+                    ? WORKSPACE_VISIBILITY_LABELS[workspace.visibility]
+                    : 'Invite-only'
+                }
+              />
+            </View>
+            {WORKSPACE_PICTURES_ENABLED && workspace?.avatar ? (
+              <SettingsRow
+                disabled={workingKey === 'picture'}
+                onPress={() => void resetWorkspacePicture()}
+                testID="workspace-picture-clear"
+                title="Use generated mark"
+                tone="action"
+              />
+            ) : null}
           </View>
 
           <View style={styles.section} testID="workspace-members-link">
@@ -483,6 +493,7 @@ export default function WorkspaceSettings() {
               }
               testID="open-members"
               title={MEMBERS_LABEL}
+              value={String(memberCount)}
             />
           </View>
 
@@ -502,6 +513,7 @@ export default function WorkspaceSettings() {
                 <View key={room.id}>
                   <SettingsRow
                     accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
+                    chevron="right"
                     description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
                     descriptionAction={
                       duplicateName
@@ -525,8 +537,7 @@ export default function WorkspaceSettings() {
           </View>
 
           {isWorkspaceOwner && (
-            <View style={styles.section} testID="workspace-danger-zone">
-              <Text style={styles.sectionLabel}>Danger zone</Text>
+            <View style={styles.section}>
               <SettingsRow
                 accessibilityLabel={`Delete this ${WORKSPACE_LABEL}`}
                 onPress={() => setDeleteSheetOpen(true)}
@@ -543,6 +554,12 @@ export default function WorkspaceSettings() {
               <Text style={styles.errorText}>{error}</Text>
             </PixelGateReveal>
           )}
+
+          <Text style={styles.quiet} testID="workspace-census">
+            {`${rooms.length} ${
+              rooms.length === 1 ? ROOM_LABEL.toLowerCase() : `${ROOM_LABEL.toLowerCase()}s`
+            } · ${memberCount} ${memberCount === 1 ? 'member' : 'members'}`}
+          </Text>
         </ScrollView>
       )}
 
@@ -632,12 +649,34 @@ const styles = StyleSheet.create((theme) => {
     back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
-    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: {
       padding: hull.space.md,
       gap: hull.layout.sectionGap,
       paddingBottom: hull.space.xxl,
+    },
+    ident: {
+      alignItems: 'center',
+      gap: hull.space.md,
+      paddingTop: hull.space.sm,
+      paddingBottom: hull.space.lg,
+    },
+    tile: {
+      width: IDENTITY_TILE,
+      height: IDENTITY_TILE,
+      borderRadius: IDENTITY_TILE_RADIUS,
+      borderWidth: 2,
+      borderColor: hull.accent,
+      backgroundColor: hull.avatarGround,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    workspaceName: {
+      ...Typography.default(),
+      ...hull.type.bodyStrong,
+      color: hull.textPrimary,
+      textAlign: 'center',
     },
     section: {},
     sectionLabel: {
@@ -692,5 +731,13 @@ const styles = StyleSheet.create((theme) => {
     },
     errorLabel: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    quiet: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      textAlign: 'center',
+      paddingTop: hull.space.md,
+      paddingBottom: hull.space.sm,
+    },
   };
 });

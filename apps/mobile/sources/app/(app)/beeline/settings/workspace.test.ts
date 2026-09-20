@@ -194,10 +194,13 @@ function workspaceView(
           },
         }
       : {}),
-    members: [],
-    agents: [],
-    peopleTotal: 0,
-    agentTotal: 0,
+    members: [
+      { identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' } },
+      { identity: { pubkey: 'b'.repeat(64), kind: 'human', name: 'Mate' } },
+    ],
+    agents: [{ identity: { pubkey: 'c'.repeat(64), kind: 'agent', name: 'Foxy' } }],
+    peopleTotal: 2,
+    agentTotal: 1,
     membersTruncated: false,
     agentsTruncated: false,
     viewer: {
@@ -446,7 +449,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const control = renderer.root.findByProps({ testID: 'room-visibility-private-room' });
-    expect(control.props.accessibilityLabel).toBe('Set #captains visibility to Everyone');
+    expect(control.props.accessibilityLabel).toBe('Set #captains visibility to Open');
 
     await act(async () => {
       control.props.onPress();
@@ -458,7 +461,7 @@ describe('Workspace Settings authority', () => {
       visibility: 'public',
     });
     expect(renderer.root.findByProps({ testID: 'room-visibility-private-room' }).props.value).toBe(
-      'Everyone',
+      'Open',
     );
   });
 
@@ -525,7 +528,7 @@ describe('Workspace Settings authority', () => {
       (node) => node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-room-1',
     )[0]!;
     expect(visibilityControl.props).toMatchObject({
-      accessibilityLabel: 'Set #atlas visibility to Private',
+      accessibilityLabel: 'Set #atlas visibility to Invite-only',
       accessibilityRole: 'button',
     });
 
@@ -545,7 +548,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const openRow = renderer.root.findByProps({
-      accessibilityLabel: 'Set #atlas visibility to Private',
+      accessibilityLabel: 'Set #atlas visibility to Invite-only',
     });
     // The title leads the row; the visibility value trails it on the one axis.
     const [rowTitle, rowValue] = openRow
@@ -553,7 +556,7 @@ describe('Workspace Settings authority', () => {
       .map((node: any) => node.props.children);
     // The display form carries exactly one mark...
     expect(rowTitle).toBe('#atlas');
-    expect(rowValue).toBe('Everyone');
+    expect(rowValue).toBe('Open');
     // ...and the duplicate-name qualifier still keys off the RAW name.
     expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });
@@ -623,5 +626,45 @@ describe('Workspace Settings authority', () => {
     );
     expect(phoneOperation).not.toHaveBeenCalledWith('deleteWorkspace', expect.anything());
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('shows the member count on the Members row and a quiet census at the foot', async () => {
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('3');
+    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
+      '0 rooms · 3 members',
+    );
+  });
+
+  it('counts Members from peopleTotal and agentTotal, not the loaded page', async () => {
+    roomViews.workspace.mockResolvedValue({
+      ...workspaceView(),
+      members: workspaceView().members.slice(0, 1),
+      agents: [],
+      peopleTotal: 40,
+      agentTotal: 5,
+      membersTruncated: true,
+      agentsTruncated: true,
+    });
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('45');
+    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
+      '0 rooms · 45 members',
+    );
+  });
+
+  it('retires the Picture row and Danger zone heading', async () => {
+    const renderer = await render();
+    const titles = renderer.root
+      .findAll((node) => node.props?.title !== undefined)
+      .map((node) => node.props.title);
+    expect(titles).not.toContain('Picture');
+    expect(
+      renderer.root.findAllByType('Text').map((node) => node.children.join('')),
+    ).not.toContain('Danger zone');
+    expect(renderer.root.findByProps({ testID: 'workspace-picture-change' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.tone).toBe(
+      'destructive',
+    );
   });
 });

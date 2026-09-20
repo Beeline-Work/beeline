@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 // Settings index re-exports). The captain still could not find light mode
 // (2026-09-18) because that destination was labeled YOU in the switcher and
 // the Settings row contract never named Appearance. Keep the control on this
-// path, first on the page, under a Settings-named entry.
+// path, under a Settings-named entry, in the unheaded run with Text size.
 const index = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
 const settings = readFileSync(new URL('./identity.tsx', import.meta.url), 'utf8');
 const appearance = readFileSync(
@@ -25,11 +25,12 @@ describe('Settings Appearance entry', () => {
     expect(settings).toContain('testID="appearance-section"');
   });
 
-  it('keeps Appearance above Identity so it is not buried in profile rows', () => {
-    expect(settings.indexOf('testID="appearance-section"')).toBeLessThan(
-      settings.indexOf('testID="identity-settings"'),
+  it('keeps Appearance as a plain row with no Display heading', () => {
+    expect(settings).toContain('testID="appearance-section"');
+    expect(settings).not.toMatch(/sectionLabel}>Display</);
+    expect(settings.indexOf('testID="identity-settings"')).toBeLessThan(
+      settings.indexOf('testID="appearance-section"'),
     );
-    expect(settings).toMatch(/sectionLabel}>Display</);
   });
 
   it('names the row Appearance with a light/dark picker', () => {

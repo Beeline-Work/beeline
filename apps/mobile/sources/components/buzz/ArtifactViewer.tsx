@@ -1,28 +1,29 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/buzz/artifact';
 import {
-  artifactImageSource,
   artifactPdfLocalUri,
   fetchArtifactBytes,
   fetchArtifactText,
-  openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sandbox-webview';
+import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 
 /**
- * The full-screen artifact viewer (mock 1c): the whole page, still script off,
- * still no network beyond the initial string load, still guarded — exactly one
- * navigation passes the gate, everything after it is refused. Markdown
- * renders through the app's own renderer; a PDF rides a local cache file on
- * iOS and the system viewer on Android (the modal closes once the handoff
- * fires). Nothing here ever receives an onMessage bridge.
+ * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
+ * exactly one navigation passes the gate, everything after it is refused, and
+ * nothing here ever receives an onMessage bridge. Markdown renders through the
+ * app's own renderer and plain text through the mono reader; an image fits the
+ * screen; a PDF rides a local cache file on iOS and the fitted pdf.js document
+ * on Android. Script stays off for everything except that document, which is
+ * the renderer itself rather than anything an artifact's author wrote.
  */
 export function ArtifactViewerScreen({
   attachment,
@@ -59,59 +60,25 @@ export function ArtifactViewerScreen({
         {format === 'markdown' ? (
           <ArtifactViewerMarkdown attachment={attachment} />
         ) : format === 'image' ? (
-          <ArtifactViewerImage attachment={attachment} />
+          <ArtifactImage
+            attachment={attachment}
+            fit="contain"
+            style={styles.image}
+            testID="artifact-viewer-image"
+          />
+        ) : format === 'text' ? (
+          <ArtifactText attachment={attachment} crop={false} testID="artifact-viewer-text" />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
-          <ArtifactSystemHandoff attachment={attachment} onClose={onClose} />
+          <ArtifactPdfView
+            attachment={attachment}
+            mode="viewer"
+            testID="artifact-viewer-pdf"
+          />
         ) : (
           <ArtifactViewerSandbox attachment={attachment} format={format} />
         )}
       </View>
     </View>
-  );
-}
-
-function ArtifactViewerImage({ attachment }: { attachment: AttachmentReference }) {
-  const [source, setSource] = useState<Awaited<ReturnType<typeof artifactImageSource>> | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let live = true;
-    setFailed(false);
-    setSource(null);
-    void artifactImageSource(attachment)
-      .then((nextSource) => {
-        if (live) setSource(nextSource);
-      })
-      .catch(() => {
-        if (live) setFailed(true);
-      });
-    return () => {
-      live = false;
-    };
-  }, [attachment]);
-  if (failed) {
-    return (
-      <View style={styles.placeholder} testID="artifact-viewer-failed">
-        <Text style={styles.placeholderText}>The image could not be loaded. Try again.</Text>
-      </View>
-    );
-  }
-  if (!source) {
-    return (
-      <View style={styles.placeholder} testID="artifact-viewer-loading">
-        <Text style={styles.placeholderText}>Loading…</Text>
-      </View>
-    );
-  }
-  return (
-    <Image
-      accessibilityIgnoresInvertColors
-      accessibilityLabel={attachment.title ?? attachment.name}
-      onError={() => setFailed(true)}
-      resizeMode="contain"
-      source={source}
-      style={styles.image}
-      testID="artifact-viewer-image"
-    />
   );
 }
 
@@ -215,31 +182,6 @@ function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReferenc
     <ScrollView contentContainerStyle={styles.markdownBody} testID="artifact-viewer-markdown">
       <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} />
     </ScrollView>
-  );
-}
-
-/** Android PDF: one handoff to the system viewer through the signed link, then the modal closes. */
-function ArtifactSystemHandoff({
-  attachment,
-  onClose,
-}: {
-  attachment: AttachmentReference;
-  onClose: () => void;
-}) {
-  const [pending, setPending] = useState(true);
-  useEffect(() => {
-    let live = true;
-    void openArtifactInBrowserOrExplain(attachment).finally(() => {
-      if (live) onClose();
-    });
-    return () => {
-      live = false;
-    };
-  }, [attachment, onClose]);
-  return (
-    <View style={styles.placeholder} testID="artifact-viewer-handoff">
-      <Text style={styles.placeholderText}>{pending ? 'Opening…' : ''}</Text>
-    </View>
   );
 }
 

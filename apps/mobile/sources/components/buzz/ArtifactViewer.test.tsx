@@ -68,6 +68,16 @@ vi.mock('@/buzz/artifact-link', () => ({
 vi.mock('@/components/buzz/MonoMarkdown', () => ({
   MonoMarkdown: (props: Record<string, unknown>) => React.createElement('MonoMarkdown', props, null),
 }));
+// The media views have their own suites; here the viewer is on trial for which
+// view it reaches for and what it hands it.
+vi.mock('@/components/buzz/ArtifactMedia', () => ({
+  ArtifactImage: (props: Record<string, unknown>) => React.createElement('ArtifactImage', props, null),
+  ArtifactText: (props: Record<string, unknown>) => React.createElement('ArtifactText', props, null),
+}));
+vi.mock('@/components/buzz/ArtifactPdfView', () => ({
+  ArtifactPdfView: (props: Record<string, unknown>) =>
+    React.createElement('ArtifactPdfView', props, null),
+}));
 
 import { ARTIFACT_DEFAULT_CANVAS } from '@/buzz/artifact';
 import { ArtifactViewerSandbox, ArtifactViewerScreen } from './ArtifactViewer';
@@ -167,23 +177,32 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(html.includes('background:transparent')).toBe(false);
   });
 
-  it('renders a photo in-app with authenticated media and contain fit', async () => {
-    const source = {
-      uri: 'https://server.usebeeline.app/v1/media/9f0f6a50-1111-4222-8333-444455556666',
-      headers: { authorization: 'Bearer access-token' },
-    };
-    mocks.artifactImageSource.mockResolvedValue(source);
+  it('fits a photo to the screen in-app, never handing it to the browser', async () => {
+    const photo = attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
+    const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+    await flush();
+    const image = renderer.root.findByType('ArtifactImage' as any);
+    expect(image.props.fit).toBe('contain');
+    expect(image.props.testID).toBe('artifact-viewer-image');
+    expect(image.props.attachment).toBe(photo);
+    expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['plain text', 'text/plain', 'notes.txt'],
+    ['JSON', 'application/json', 'payload.json'],
+    ['CSV', 'text/csv', 'rows.csv'],
+  ])('reads %s in-app, whole and uncropped', async (_name, mimeType, fileName) => {
     const renderer = render(
       <ArtifactViewerScreen
-        attachment={attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' })}
+        attachment={attachment({ mimeType, name: fileName })}
         onClose={mocks.onClose}
       />,
     );
     await flush();
-    const image = renderer.root.findByProps({ testID: 'artifact-viewer-image' });
-    expect(image.props.source).toEqual(source);
-    expect(image.props.resizeMode).toBe('contain');
-    expect(image.props.accessibilityLabel).toBe('Photo');
+    const text = renderer.root.findByType('ArtifactText' as any);
+    expect(text.props.crop).toBe(false);
+    expect(text.props.testID).toBe('artifact-viewer-text');
     expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
   });
 
@@ -210,9 +229,12 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(renderer.root.findByType('MonoMarkdown')).toBeDefined();
   });
 
-  it('on Android a PDF is one handoff to the system viewer, then the modal closes', async () => {
+  // The audit found Android had no PDF viewer: opening one threw the reader
+  // out to a browser tab and shut the modal behind them.
+  it('on Android a PDF renders in the viewer instead of bouncing out to the browser', async () => {
     mocks.platformOS.value = 'android';
-    mocks.openArtifactInBrowserOrExplain.mockResolvedValue(undefined);
+    mocks.openArtifactInBrowserOrExplain.mockClear();
+    mocks.onClose.mockClear();
     const renderer = render(
       <ArtifactViewerScreen
         attachment={attachment({ mimeType: 'application/pdf', name: 'spec.pdf' })}
@@ -220,9 +242,12 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
       />,
     );
     await flush();
-    expect(renderer.root.findByProps({ testID: 'artifact-viewer-handoff' })).toBeDefined();
-    expect(mocks.openArtifactInBrowserOrExplain).toHaveBeenCalled();
-    expect(mocks.onClose).toHaveBeenCalled();
+    const pdf = renderer.root.findByType('ArtifactPdfView' as any);
+    // The whole file, not the card's page-one crop.
+    expect(pdf.props.mode).toBe('viewer');
+    expect(pdf.props.testID).toBe('artifact-viewer-pdf');
+    expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
+    expect(mocks.onClose).not.toHaveBeenCalled();
   });
 
   it('on iOS a PDF rides the local cache file in the sandbox', async () => {

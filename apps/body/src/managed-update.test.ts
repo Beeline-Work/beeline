@@ -73,6 +73,28 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
+  it('restarts when this process is still executing a previous release after the anchor moved', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    const restarts: string[] = [];
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+      env: { BEELINE_LIB_DIR: resolve(layout.releasesRoot, 'old', 'lib', 'beeline') },
+    });
+
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => true,
+        async (request) => {
+          restarts.push(request.desiredRelease);
+        },
+      ),
+    ).toBe('restarting');
+    expect(restarts).toEqual(['new']);
+    expect((await readUpdateAttempt(layout))?.previousReleaseId).toBe('old');
+  });
+
   it('lets an active agent turn finish before handing over, then restarts on the next tick', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     let activeTurns = 1;

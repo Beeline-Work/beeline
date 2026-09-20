@@ -255,9 +255,9 @@ export type RoomViewMessage = {
     readonly requester?: RoomViewIdentity;
   };
   /** A validated, service-published repository activity card. Never a speaker.
-   *  CI is a mainline (default-branch) fact. `type` and `action` are plain
-   *  strings on purpose: a client must tolerate a card kind a newer server
-   *  posts and simply not draw it, rather than rejecting the whole Room. */
+   *  Issues and pull requests only. `type` and `action` are plain strings on
+   *  purpose: a client must tolerate a card kind a newer server posts and
+   *  simply not draw it, rather than rejecting the whole Room. */
   readonly githubEvent?: {
     readonly type: string;
     readonly action: string;

@@ -19,6 +19,7 @@ import {
 } from './acp.js';
 import {
   harnessStateDirsFromEnv,
+  hostImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
 } from './agent-home.js';
@@ -35,9 +36,10 @@ import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beel
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
+  isHostMcpPermissionRequest,
   isMountedMcpToolPermissionRequest,
-  isSquireMcpPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
@@ -94,14 +96,15 @@ type HumanMessage = Pick<
  * Rooms and corners share one rule: every MCP tool call from a server the
  * host mounted into the session is approved, and nothing that is not an MCP
  * tool call (shell, native reads/writes, unstructured requests) crosses. The
- * read-only sandbox is the boundary, not the tool list; Trusty Squire stays
- * broker-gated on the host and is never session-mounted.
+ * read-only sandbox is the boundary, not the tool list. A host-classified
+ * server (Squire is code-owned as host) stays host-gated.
  */
 export function isRoomMcpPermissionRequest(
   request: AcpPermissionRequest,
   mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
+  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
 ): boolean {
-  if (isSquireMcpPermissionRequest(request)) return false;
+  if (isHostMcpPermissionRequest(request, hostServers)) return false;
   return isMountedMcpToolPermissionRequest(request, mountedServers);
 }
 
@@ -109,8 +112,9 @@ export function isRoomMcpPermissionRequest(
 export function roomMcpPermissionDecision(
   request: AcpPermissionRequest,
   mountedServers: readonly string[] = ROOM_MOUNTED_MCP_SERVERS,
+  hostServers: readonly string[] = CODE_OWNED_HOST_MCP_NAMES,
 ): AcpPermissionDecision {
-  return isRoomMcpPermissionRequest(request, mountedServers) ? 'allow' : 'reject';
+  return isRoomMcpPermissionRequest(request, mountedServers, hostServers) ? 'allow' : 'reject';
 }
 
 /**
@@ -646,6 +650,11 @@ export class MonolithRoomTurnLoop {
       servers,
     });
     const mountedServers = servers.map((server) => server.name);
+    const hostServers = hostImportedMcpServerNames({
+      operatorHome: this.options.config.operatorHome,
+      agentKind: this.options.config.agentKind,
+      preparedEnv: agentEnv,
+    });
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
       agentArgs: spawnCommand.args,
@@ -656,7 +665,8 @@ export class MonolithRoomTurnLoop {
       // (`config.ts`), which is exactly when `wrapAgentCommand` above wraps.
       osSandbox: Boolean(this.options.config.bwrapPath),
       autoApprovePermissions: false,
-      permissionAllowlist: (request) => isRoomMcpPermissionRequest(request, mountedServers),
+      permissionAllowlist: (request) =>
+        isRoomMcpPermissionRequest(request, mountedServers, hostServers),
     };
     this.client = (this.options.createAcpClient ?? ((value) => new AcpClient(value)))(
       clientOptions,

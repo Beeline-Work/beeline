@@ -278,7 +278,10 @@ describe('Workspace Settings authority', () => {
 
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('3');
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBeUndefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
+      '0 rooms',
+    );
   });
 
   it('does not treat a failed workspace read as a permission denial', async () => {

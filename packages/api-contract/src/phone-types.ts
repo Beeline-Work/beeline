@@ -593,12 +593,12 @@ export type WorkspaceView = {
   readonly agents: readonly WorkspaceAgentView[];
   /**
    * True human membership count, independent of the page in `members`.
-   * Absent on older servers; clients fall back to the page length.
+   * Absent on older servers means unknown — never treat as zero.
    */
   readonly peopleTotal?: number;
   /**
    * True agent membership count, independent of the page in `agents`.
-   * Absent on older servers; clients fall back to the page length.
+   * Absent on older servers means unknown — never treat as zero.
    */
   readonly agentTotal?: number;
   readonly membersTruncated: boolean;
@@ -611,9 +611,9 @@ export type WorkspaceView = {
 export type WorkspaceMemberListView = {
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
-  /** Absent on older servers; clients fall back to the page length. */
+  /** Absent on older servers means unknown — never treat as zero. */
   readonly peopleTotal?: number;
-  /** Absent on older servers; clients fall back to the page length. */
+  /** Absent on older servers means unknown — never treat as zero. */
   readonly agentTotal?: number;
   readonly membersTruncated: boolean;
   readonly agentsTruncated: boolean;

@@ -343,9 +343,12 @@ export default function WorkspaceSettings() {
     );
   }
 
+  const peopleTotal = workspaceView?.peopleTotal;
+  const agentTotal = workspaceView?.agentTotal;
   const memberCount =
-    (workspaceView?.peopleTotal ?? workspaceView?.members.length ?? 0) +
-    (workspaceView?.agentTotal ?? workspaceView?.agents.length ?? 0);
+    peopleTotal === undefined || agentTotal === undefined
+      ? undefined
+      : peopleTotal + agentTotal;
   const pictureAction =
     workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change picture' : 'Set picture';
 
@@ -505,7 +508,7 @@ export default function WorkspaceSettings() {
               }
               testID="open-members"
               title={MEMBERS_LABEL}
-              value={String(memberCount)}
+              value={memberCount === undefined ? undefined : String(memberCount)}
             />
           </View>
 
@@ -570,7 +573,11 @@ export default function WorkspaceSettings() {
           <Text style={styles.quiet} testID="workspace-census">
             {`${rooms.length} ${
               rooms.length === 1 ? ROOM_LABEL.toLowerCase() : `${ROOM_LABEL.toLowerCase()}s`
-            } · ${memberCount} ${memberCount === 1 ? 'member' : 'members'}`}
+            }${
+              memberCount === undefined
+                ? ''
+                : ` · ${memberCount} ${memberCount === 1 ? 'member' : 'members'}`
+            }`}
           </Text>
         </ScrollView>
       )}

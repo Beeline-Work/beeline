@@ -608,7 +608,6 @@ function filteredHarnessMcpToml(source: string): string | undefined {
 export function mountedImportedMcpServerNames(
   input: {
     operatorHome?: string;
-    agentHomeRoot?: string;
     agentKind?: AgentKind;
     preparedEnv?: Record<string, string>;
   } = {},
@@ -645,8 +644,6 @@ export function mountedImportedMcpServerNames(
     }
   } else {
     collectImportedMcpNames(input.operatorHome ?? homedir(), names, input.agentKind);
-    if (input.agentHomeRoot)
-      collectGrantedHostRouteNames(input.agentHomeRoot, names, input.agentKind);
   }
   return [...names].sort((left, right) => left.localeCompare(right));
 }
@@ -666,27 +663,7 @@ function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?
   }
 }
 
-function collectGrantedHostRouteNames(
-  agentHomeRoot: string,
-  names: Set<string>,
-  kind?: AgentKind,
-): void {
-  if (!kind || kind === 'codex') {
-    addTomlMcpNames(names, resolve(agentHomeRoot, 'codex/config.toml'), 'host-route');
-  }
-  if (!kind || kind === 'grok') {
-    addTomlMcpNames(names, resolve(agentHomeRoot, 'grok/config.toml'), 'host-route');
-  }
-  if (!kind || kind === 'claude') {
-    addClaudeMcpNames(names, resolve(agentHomeRoot, 'claude/.claude.json'), 'host-route');
-  }
-}
-
-function addTomlMcpNames(
-  names: Set<string>,
-  path: string,
-  mode: 'imported' | 'host-route' | 'all',
-): void {
+function addTomlMcpNames(names: Set<string>, path: string, mode: 'imported' | 'all'): void {
   const source = readExistingText(path);
   if (source === undefined) return;
   const mountedSource = mode === 'imported' ? filteredHarnessMcpToml(source) : source;
@@ -698,34 +675,14 @@ function addTomlMcpNames(
     return;
   }
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
-  for (const [name, value] of Object.entries(servers)) {
-    if (mode !== 'host-route' || isHostRouteMcpServer(name, value)) names.add(name);
-  }
+  for (const name of Object.keys(servers)) names.add(name);
 }
 
-function addClaudeMcpNames(
-  names: Set<string>,
-  path: string,
-  mode: 'imported' | 'host-route' | 'all',
-): void {
-  const parsed = readJsonObject(path);
-  const servers = parsed?.mcpServers;
+function addClaudeMcpNames(names: Set<string>, path: string, mode: 'imported' | 'all'): void {
+  const servers =
+    mode === 'imported' ? readClaudeUserScopeMcpServers(path) : readJsonObject(path)?.mcpServers;
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
-  for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
-    const hostRoute = isHostRouteMcpServer(name, value);
-    if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(name);
-  }
-}
-
-function isHostRouteMcpServer(name: string, value: unknown): boolean {
-  if (name === 'squire') return true;
-  const server = value as Record<string, unknown> | null;
-  if (!server || typeof server.command !== 'string') return false;
-  const args =
-    Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
-      ? (server.args as string[])
-      : [];
-  return isTrustySquireMcpLaunch(server.command, args);
+  for (const name of Object.keys(servers)) names.add(name);
 }
 
 function addGooseExtensionNames(names: Set<string>, path: string): void {

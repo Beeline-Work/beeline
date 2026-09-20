@@ -261,9 +261,14 @@ describe('retained Room session', () => {
     expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
   });
 
-  it.each(['codex', 'grok'] as const)(
-    'restarts %s when an inline TOML server is removed',
-    async (agentKind) => {
+  it.each([
+    ['codex', 'files'],
+    ['grok', 'files'],
+    ['codex', 'squire'],
+    ['grok', 'squire'],
+  ] as const)(
+    'restarts %s when copied inline server %s is removed',
+    async (agentKind, serverName) => {
       const { activations, traces, mountedInventories } = await twoTurns(
         [unchanged, unchanged],
         [],
@@ -274,7 +279,7 @@ describe('retained Room session', () => {
             await mkdir(join(operatorHome, `.${agentKind}`), { recursive: true });
             await writeFile(
               join(operatorHome, `.${agentKind}/config.toml`),
-              '[mcp_servers]\nfiles = { command = "files-mcp" }\n',
+              `[mcp_servers]\n${serverName} = { command = "${serverName}-mcp" }\n`,
             );
           },
           betweenTurns: async ({ operatorHome }) => {
@@ -282,7 +287,7 @@ describe('retained Room session', () => {
           },
         },
       );
-      expect(mountedInventories).toEqual([['files'], []]);
+      expect(mountedInventories).toEqual([[serverName], []]);
       expect(activations).toBe(2);
       expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual([
         'cold',
@@ -323,7 +328,7 @@ describe('retained Room session', () => {
     },
   );
 
-  it('retains the replacement using the inventory preparation actually supplies', async () => {
+  it('retains the session when only a discarded isolated declaration changes', async () => {
     const { activations, traces, mountedInventories } = await twoTurns([unchanged, unchanged], [], {
       thirdTurn: true,
       betweenTurns: async ({ agentHomeRoot }) => {
@@ -336,8 +341,8 @@ describe('retained Room session', () => {
         );
       },
     });
-    expect(mountedInventories).toEqual([[], []]);
-    expect(activations).toBe(2);
-    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
+    expect(mountedInventories).toEqual([[]]);
+    expect(activations).toBe(1);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'warm', 'warm']);
   });
 });

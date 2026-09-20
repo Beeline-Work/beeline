@@ -511,7 +511,6 @@ export class MonolithRoomTurnLoop {
   private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
     return mountedImportedMcpServerNames({
       operatorHome: this.options.config.operatorHome,
-      agentHomeRoot: this.options.config.agentHomeRoot,
       agentKind: this.options.config.agentKind,
       preparedEnv,
     });

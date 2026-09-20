@@ -222,6 +222,7 @@ export default function BuzzMembers() {
   const requestedAction = first(params.action);
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
   const [agentNameDraft, setAgentNameDraft] = useState('');
   const [agentSoulDraft, setAgentSoulDraft] = useState('');
@@ -359,9 +360,25 @@ export default function BuzzMembers() {
     };
   }, [retryGeneration, workspaceId]);
 
+  const closeAgentSettings = () => {
+    agentRequestGenerationRef.current += 1;
+    setSelectedAgent(null);
+    setSelectedAgentId(null);
+    setEditingAgentSoul(false);
+    setOpenModelAxis(null);
+    setModelAppliesNote(null);
+    setYoloError(null);
+    setAccessError(null);
+  };
+
   const openAgent = async (agentPubkey: string) => {
     if (!identity || !relayUrl || !workspaceId) return;
+    if (selectedAgentId === agentPubkey) {
+      closeAgentSettings();
+      return;
+    }
     const generation = ++agentRequestGenerationRef.current;
+    setSelectedAgentId(agentPubkey);
     setOpenPersonPubkey(null);
     setOpenModelAxis(null);
     setModelAppliesNote(null);
@@ -415,6 +432,7 @@ export default function BuzzMembers() {
     if (!surface || !workspaceId) return;
     setPickerOpen(true);
     setSelectedAgent(null);
+    setSelectedAgentId(null);
     setPairCommand(null);
     setError(null);
     setWorking('pair-agent');
@@ -682,8 +700,7 @@ export default function BuzzMembers() {
         readWorkspace,
         (value) => !value.agents.some((member) => member.identity.pubkey === pubkey),
       );
-      agentRequestGenerationRef.current += 1;
-      setSelectedAgent(null);
+      closeAgentSettings();
       setOpenModelAxis(null);
       setModelSearchQuery('');
     } catch (reason) {
@@ -903,7 +920,9 @@ export default function BuzzMembers() {
             </View>
             {surface.agents.map((member) => {
               const agentDetail = canManage;
+              const open = selectedAgentId === member.identity.pubkey;
               return (
+                <View key={member.identity.pubkey}>
                 <MemberRosterRow
                   avatarUrl={member.identity.avatar}
                   disabled={!agentDetail || busy}
@@ -911,7 +930,6 @@ export default function BuzzMembers() {
                   face={member.identity.face}
                   handle={member.identity.handle}
                   kind="agent"
-                  key={member.identity.pubkey}
                   model={member.model}
                   name={member.identity.name}
                   onPress={
@@ -921,13 +939,14 @@ export default function BuzzMembers() {
                   pubkey={member.identity.pubkey}
                   testID={`agent-${member.identity.pubkey}-identity`}
                   trailing={
-                    agentDetail ? <Text style={styles.chevron}>›</Text> : undefined
+                    agentDetail ? (
+                      <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>
+                    ) : undefined
                   }
                 />
-              );
-            })}
-          </View>
-          {selectedAgent && (
+                {open &&
+                selectedAgent &&
+                selectedAgent.agent.identity.pubkey === member.identity.pubkey ? (
             <HullSurface
               strength="raised"
               style={styles.detailPanel}
@@ -960,13 +979,7 @@ export default function BuzzMembers() {
                 </View>
                 <TouchableOpacity
                   accessibilityLabel="Close agent settings"
-                  onPress={() => {
-                    agentRequestGenerationRef.current += 1;
-                    setSelectedAgent(null);
-                    setEditingAgentSoul(false);
-                    setYoloError(null);
-                    setAccessError(null);
-                  }}
+                  onPress={closeAgentSettings}
                   style={styles.glyphControl}
                   testID="close-agent-settings"
                 >
@@ -1191,7 +1204,11 @@ export default function BuzzMembers() {
                 </View>
               )}
             </HullSurface>
-          )}
+                ) : null}
+                </View>
+              );
+            })}
+          </View>
         </KeyboardAwareScrollView>
         <MemberPickerSheet
           agentConnectOnly

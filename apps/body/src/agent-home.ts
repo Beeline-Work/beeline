@@ -79,7 +79,7 @@ import {
   type OpenRouterRoutingDecision,
   type OpenRouterRoutingHomeInput,
 } from './openrouter-routing.js';
-import { extractTomlSections } from './toml-section.js';
+import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
 import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
@@ -620,7 +620,16 @@ function localHarnessMcpToml(source: string): string | undefined {
     return undefined;
   }
   if (!servers) return undefined;
-  return extractTomlSections(source, ['mcp_servers'], hostMcpServerNames(servers));
+  const hostNames = hostMcpServerNames(servers);
+  const childTables = tomlChildTableNames(source, ['mcp_servers']);
+  if (hostNames.every((name) => childTables.includes(name))) {
+    return extractTomlSections(source, ['mcp_servers'], hostNames);
+  }
+  const sections = childTables
+    .filter((name) => !hostNames.includes(name))
+    .map((name) => extractTomlSections(source, ['mcp_servers', name]))
+    .filter((section): section is string => section !== undefined);
+  return sections.length > 0 ? sections.join('\n') : undefined;
 }
 
 function localGooseConfig(source: string): string {

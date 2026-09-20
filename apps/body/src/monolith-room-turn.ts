@@ -690,11 +690,12 @@ export class MonolithRoomTurnLoop {
         agentKind: this.options.config.agentKind,
       }),
     );
-    // pi never mounts what `session/new` hands it, so its whole daemon tool
-    // panel is written into its own extensions directory instead
-    // (`pi-mcp-bridge.ts`). Granted host routes have to ride that same
-    // bridge: pi has no harness MCP config file for applyGrantedHostRoutes
-    // to rewrite, so a standing squire grant otherwise never appeared.
+    // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
+    // daemon tool panel is written into its own extensions directory instead
+    // (`pi-mcp-bridge.ts`). Granted host routes also ride that bridge:
+    // isolated homes write them into `mcp.json` like the other harnesses,
+    // but pi 0.85.1 itself does not read that file and isolated homes
+    // exclude the settings.json that would load optional pi-mcp-adapter.
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,

@@ -1139,20 +1139,69 @@ describe('mounted imported MCP server names', () => {
     expect(expectedMountedImportedMcpServerNames(input)).toEqual(['files']);
   });
 
-  it('keeps a standing mcp grant on a pi home after a restart', () => {
+  it('rewrites a standing mcp grant into the isolated pi mcp.json', async () => {
     // Candy's shape: kind=mcp target=squire status=approved, expires_at null.
-    // pi has no operator MCP config file, so applyGrantedHostRoutes writes
-    // nothing the harness will read. The standing grant must still enter the
-    // expected mount set so the next session — and every session after a
-    // daemon restart — mounts Squire without another card.
+    // Operator pi keeps MCP in ~/.pi/agent/mcp.json (here named
+    // trusty-squire). Isolated homes write local copies and the granted
+    // squire route into $PI_CODING_AGENT_DIR/mcp.json like the other
+    // harnesses — not a pi-only standing-grant special case.
+    const operatorHome = await scratch('beeline-pi-mcp-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-pi-mcp-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.pi/agent/mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          files: { command: 'files-mcp' },
+          'trusty-squire': {
+            command: 'npx',
+            args: ['-y', '@trusty-squire/mcp@next'],
+          },
+        },
+      }),
+    );
+    const input = { operatorHome, agentKind: 'pi' as const };
+    expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
+    expect(hostImportedMcpServerNames(input)).toEqual(['trusty-squire']);
+    expect(expectedMountedImportedMcpServerNames({ ...input, grantedHostRoutes: ['squire'] })).toEqual(
+      ['files', 'squire'],
+    );
+
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      ...input,
+      grantedHostRoutes: ['squire'],
+    });
+    const isolated = JSON.parse(
+      readFileSync(resolve(preparedEnv.PI_CODING_AGENT_DIR!, 'mcp.json'), 'utf8'),
+    ) as { mcpServers: Record<string, { command?: string; args?: string[] }> };
+    expect(Object.keys(isolated.mcpServers)).toEqual(['files', 'squire']);
+    expect(isolated.mcpServers.files).toEqual({ command: 'files-mcp' });
+    expect(isolated.mcpServers.squire?.args).toEqual(
+      expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
+    );
+    expect(JSON.stringify(isolated)).not.toContain('@trusty-squire/mcp@next');
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
+
+    await prepareRoomAgentHome({ root: agentHomeRoot, ...input });
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
+    expect(expectedMountedImportedMcpServerNames(input)).toEqual(['files']);
+  });
+
+  it('keeps a standing mcp grant on a pi home after a restart', () => {
+    // Grant target is the code-owned name `squire`, even when the operator
+    // file used another key or this harness has no declaration yet.
+    const operatorHome = '/no-such-pi-operator-home';
     expect(
       expectedMountedImportedMcpServerNames({
+        operatorHome,
         agentKind: 'pi',
         grantedHostRoutes: ['squire'],
       }),
     ).toEqual(['squire']);
     expect(
       expectedMountedImportedMcpServerNames({
+        operatorHome,
         agentKind: 'pi',
         grantedHostRoutes: ['squire'],
       }),

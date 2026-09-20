@@ -78,8 +78,8 @@ describe('granted MCP host routes', () => {
   });
 
   it('rewrites a code-owned Squire grant with no operator declaration', () => {
-    // Candy is pi: that harness has no operator MCP config, so the grant
-    // cannot wait on a copied declaration. The name itself is the route.
+    // Grant target is the code-owned name `squire`. The operator file may
+    // use another key or be missing; the name itself is still the route.
     const rewritten = rewriteGrantedHostRoutes({}, ['squire'], '/home/op');
     expect(Object.keys(rewritten)).toEqual(['squire']);
     expect(rewritten.squire?.env).toEqual(squireHostRewriteEnv('/home/op'));

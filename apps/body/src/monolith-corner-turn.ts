@@ -827,10 +827,12 @@ export class MonolithCornerTurnLoop {
         agentKind: this.options.config.agentKind,
       }),
     );
-    // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
-    // on pi would have no `pr_checks_status` and no `post_artifact` either.
-    // Granted host routes ride the same bridge: pi has no harness MCP config
-    // for applyGrantedHostRoutes to rewrite.
+    // See `pi-mcp-bridge.ts`: pi-acp 0.0.33 still drops `session/new`
+    // `mcpServers`, so a corner on pi would have no `pr_checks_status` and
+    // no `post_artifact` either. Granted host routes also ride this
+    // bridge: isolated homes write them into `mcp.json`, but pi 0.85.1
+    // itself does not read that file and the optional adapter is not
+    // loaded (settings.json stays out).
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,

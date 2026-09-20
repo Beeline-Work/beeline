@@ -155,7 +155,10 @@ export function mergeJsonHostRoutes(
   return { ...(existing ?? {}), ...routes };
 }
 
-export function mergeGooseHostRoutes(existing: string | undefined, routes: Record<string, Record<string, unknown>>): string | undefined {
+export function mergeGooseHostRoutes(
+  existing: string | undefined,
+  routes: Record<string, Record<string, unknown>>,
+): string | undefined {
   if (Object.keys(routes).length === 0) return existing;
   let parsed: unknown = {};
   if (existing?.trim()) {

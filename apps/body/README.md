@@ -36,7 +36,7 @@ appears or disappears on the next session, never mid-turn. The inventory contrac
 
 - `beeline connect [code]`
 - `beeline connect-finish <grant>`
-- `beeline start [--agent <pubkey>]` — update the helper, then start every paired host agent (already-running is a no-op)
+- `beeline start [--agent <pubkey>]` — update the helper, then start every paired host agent (already-running is a no-op for the agent; the host Trusty Squire broker unit is installed either way)
 - `beeline stop --agent <pubkey>`
 - `beeline daemon --config <runtime.json>`
 - `beeline update ...`

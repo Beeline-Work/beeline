@@ -817,7 +817,8 @@ export function hostImportedMcpDeclarations(
       if (isHostMcpDeclaration(name, value)) declarations[name] = recordValue(value) ?? {};
     }
   };
-  if (!kind || kind === 'codex') add(readTomlMcpServers(resolve(operatorHome, '.codex/config.toml')));
+  if (!kind || kind === 'codex')
+    add(readTomlMcpServers(resolve(operatorHome, '.codex/config.toml')));
   if (!kind || kind === 'grok') add(readTomlMcpServers(resolve(operatorHome, '.grok/config.toml')));
   if (!kind || kind === 'claude') {
     add(recordValue(readJsonObject(resolve(operatorHome, '.claude.json'))?.mcpServers));

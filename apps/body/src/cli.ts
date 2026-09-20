@@ -21,7 +21,12 @@ import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { loadBodyConfig } from './config.js';
 import { CURSOR_ACP_BRIDGE_FLAG, runCursorAcpStdioServer } from './cursor-acp-bridge.js';
-import { runSquireBroker, runSquireFacade, SQUIRE_BROKER_FLAG, SQUIRE_FACADE_FLAG } from './squire-host.js';
+import {
+  runSquireBroker,
+  runSquireFacade,
+  SQUIRE_BROKER_FLAG,
+  SQUIRE_FACADE_FLAG,
+} from './squire-host.js';
 import { formatAgentCommand } from './agent-command.js';
 import {
   AGENT_ACCESS_POLICIES,

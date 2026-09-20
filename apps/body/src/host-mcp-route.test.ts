@@ -44,7 +44,9 @@ describe('granted MCP host routes', () => {
       '/home/op',
     );
     expect(rewritten.command).toBe(process.execPath);
-    expect(rewritten.args).toEqual(expect.arrayContaining([expect.stringMatching(/squire-facade/)]));
+    expect(rewritten.args).toEqual(
+      expect.arrayContaining([expect.stringMatching(/squire-facade/)]),
+    );
     expect(rewritten.env).toEqual(squireHostRewriteEnv('/home/op'));
     expect(rewritten).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
   });
@@ -89,12 +91,9 @@ describe('granted MCP host routes', () => {
   });
 
   it('merges rewritten routes into an isolated TOML home without the operator copy', () => {
-    const merged = mergeTomlHostRoutes(
-      '[mcp_servers.files]\ncommand = "files-mcp"\n',
-      {
-        squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op'),
-      },
-    );
+    const merged = mergeTomlHostRoutes('[mcp_servers.files]\ncommand = "files-mcp"\n', {
+      squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op'),
+    });
     expect(merged).toContain('files-mcp');
     expect(merged).toContain('TRUSTY_SQUIRE_BROKER_SOCKET');
     expect(merged).not.toContain('squire-mcp');
@@ -106,8 +105,8 @@ describe('granted MCP host routes', () => {
       { squire: rewriteHostMcpDeclaration('squire', { command: 'squire-mcp' }, '/home/op') },
     );
     expect(merged?.files).toEqual({ command: 'files-mcp' });
-    expect((merged?.squire as { env: Record<string, string> }).env.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
-      '/home/op/.trusty-squire/broker.sock',
-    );
+    expect(
+      (merged?.squire as { env: Record<string, string> }).env.TRUSTY_SQUIRE_BROKER_SOCKET,
+    ).toBe('/home/op/.trusty-squire/broker.sock');
   });
 });

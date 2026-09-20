@@ -107,7 +107,9 @@ describe('distillTurnFailureReason', () => {
     expect(distillTurnFailureReason(new Error('profile_busy: chrome in use')).kind).toBe(
       'workspace-failure',
     );
-    expect(distillTurnFailureReason(new Error('broker unavailable')).kind).toBe('workspace-failure');
+    expect(distillTurnFailureReason(new Error('broker unavailable')).kind).toBe(
+      'workspace-failure',
+    );
     expect(
       distillTurnFailureReason(
         new Error(

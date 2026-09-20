@@ -95,7 +95,7 @@ A Room and a corner are the same conversation surface with different permissions
 
 **A corner** is a fresh worktree, its own branch, one owning agent, and one fixed objective of at most 24 words. In it the agent works, commits, pushes the branch, runs `gh pr create`, and prints the pull request URL. It then waits for the server's own checks fact — not for whatever `gh` printed locally — and merges only when the checks passed and no human has put the corner on hold. The merge webhook archives the corner and reaps the worktree.
 
-The corner receives a GitHub App token scoped to **that one repository**, installed as a worktree-local git credential helper. Your host credential stores are masked out of the sandbox.
+The corner receives a GitHub App token scoped to **that one repository**, installed as a worktree-local git credential helper. Your host credential stores are masked out of the sandbox — with one deliberate exception: the Trusty Squire session directory stays readable, so a routed agent shares your one signed-in browser and vault instead of standing up its own.
 
 **Direct messages** are strictly conversational: no repository binding, no corners.
 

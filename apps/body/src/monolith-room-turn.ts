@@ -681,7 +681,15 @@ export class MonolithRoomTurnLoop {
       piHome: agentEnv.PI_CODING_AGENT_DIR,
       servers,
     });
-    const mountedServers = servers.map((server) => server.name);
+    // What this session actually mounted, not only the Beeline-owned servers:
+    // the isolated home also holds every copied local import and every granted
+    // host route. A harness that names the tool but never the protocol (grok's
+    // `use_tool` envelope) can only be resolved against this list, so a name
+    // missing here is a mounted server the agent could never call.
+    const mountedServers = [
+      ...servers.map((server) => server.name),
+      ...this.mountedMcpServers(agentEnv),
+    ];
     const hostServers = ungatedHostServers(
       hostImportedMcpServerNames({
         operatorHome: this.options.config.operatorHome,

@@ -256,7 +256,10 @@ import {
   TargetBranchProposalCard,
   WritePermissionCard,
 } from './RoomMessageVariants';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import {
+  monolithPhoneOperation,
+  phoneOperationFailureReason,
+} from '@/sync/transport/monolith-operation';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
@@ -3068,8 +3071,10 @@ export function BuzzChatSurface({
 
   /**
    * Answer a grant card. The server holds the authority (agent owner or a
-   * Workspace manager) and refuses anyone else; the card re-reads from the
-   * indexed Room, so nothing is decided on the phone.
+   * Workspace manager, and the owner alone for a host MCP route) and refuses
+   * anyone else; the card re-reads from the indexed Room, so nothing is
+   * decided on the phone. A refusal leaves the card pending, so its reason is
+   * shown: a visible control must act or explain itself.
    */
   const handleGrantDecision = useCallback(
     async (grantId: string, decision: 'always' | 'once' | 'deny') => {
@@ -3083,7 +3088,7 @@ export function BuzzChatSurface({
             : Haptics.NotificationFeedbackType.Success,
         );
       } catch (err) {
-        console.warn('Grant decision failed:', err);
+        Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
         setGrantActionId(null);
       }

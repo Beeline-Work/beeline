@@ -16,13 +16,8 @@ warnings but do not block the implementer. The configured reviewer independently
 warranted-work and desirability checks against the completed change, verifies that the diff matches
 the clarified request, and checks tests and regression exposure before approving the exact head.
 
-Once a corner is open for a bug, the same skill's execution contract asks the implementer to
-attempt reproduction with every host tool, record what was tried, and continue if it fails —
-exactly as triage already warns without blocking. A obtained reproduction is recorded under an
-identifier; the fix is narrowed to the reported behavior; proof re-runs that identifier when one
-exists, or states plainly that none was obtained and shows the regression. The reviewer checks the
-named reproduction when one exists, not merely that some test exists. Never stop. Never condition
-the fix on reproduction.
+Once a corner is open for a bug, the same skill carries the
+[bugfix execution contract](#bugfix-execution).
 
 This split keeps pre-work useful without creating a new approval queue. Triage improves the request
 and exposes concerns while the reviewer remains the hard quality gate.
@@ -152,12 +147,9 @@ enforced through the existing reviewer approval gate after implementation.
 - Every Room prompt explicitly requires triage before `Proposed corner:` or `open_corner`.
 - Ambiguity that can alter the outcome asks a question instead of silently choosing scope.
 - Failed reproduction, plausible duplicate work, or desirability conflict warns without blocking.
-- A successful triage reproduction emits `Reproduction <id>` for the implementer to reuse.
-- The implementer attempts reproduction with every host tool, records the attempt, and continues
-  with a warning if it fails; the fix is never conditioned on reproduction.
-- The proof re-runs a recorded identifier when one exists, or states none was obtained and shows
-  the regression; the reviewer fails a proof that skips a recorded identifier or only shows some
-  other test.
+- Bugfix instruction coverage lives in `apps/body/src/beeline-skill.test.ts`; provisioning is
+  covered by `agent-home.test.ts`, and `monolith-corner-turn.test.ts` checks the delivered author
+  prompt. These checks establish instruction delivery, not model compliance.
 - The reviewer independently records warranted-work and desirability evidence.
 - The reviewer still demonstrates the user outcome, runs affected tests, checks regressions, and
   binds approval to the exact head.

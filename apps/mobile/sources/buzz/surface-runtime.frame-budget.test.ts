@@ -93,7 +93,6 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
         role: 'owner',
         permissions: { send: true, manage: true },
       },
-      corners: [],
       watchFilters: [{ kinds: [9], '#h': ['room'] }],
     });
     const first = view([firstMessage]);

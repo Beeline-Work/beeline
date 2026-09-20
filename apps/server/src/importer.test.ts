@@ -451,11 +451,13 @@ describe('direct snapshot importer and RoomView parity', () => {
       observedAt: BASE + 9,
       roomId: ROOM,
     });
-    expect(actual!.corners).toHaveLength(1);
-    expect(actual!.corners[0]).toMatchObject({
-      agent: { pubkey: AGENT },
-      lifecycle: { lifecycle: 'in-review', checks: 'passing', branch: 'fm/monolith' },
-    });
+    expect('corners' in actual!).toBe(false);
+    expect((await phone.readCorners(ROOM, OWNER))?.corners).toMatchObject([
+      {
+        agent: { pubkey: AGENT },
+        lifecycle: { lifecycle: 'in-review', checks: 'passing', branch: 'fm/monolith' },
+      },
+    ]);
     expect(
       (await db.query<{ parent_id: string }>(`SELECT parent_id FROM rooms WHERE id=$1`, [CORNER]))
         .rows[0]?.parent_id,
@@ -467,7 +469,7 @@ describe('direct snapshot importer and RoomView parity', () => {
       items: [{ step: 'Import', status: 'completed' }],
     });
     const cornerView = await phone.readRoom(CORNER, AGENT);
-    expect(cornerView?.corners.map((corner) => corner.corner.id)).toEqual([CORNER]);
+    expect(cornerView && 'corners' in cornerView).toBe(false);
     expect(cornerView?.repository).toMatchObject({
       key: 'acme/beeline',
       updatedAt: BASE + 12,

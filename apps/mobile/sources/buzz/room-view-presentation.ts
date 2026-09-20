@@ -4,6 +4,7 @@ import type {
   ChatListItem,
   ChatListWorkspace,
   CommunityMember,
+  CornerListItem,
   RoomView,
   RoomViewAgentTurn,
   RoomViewIdentity,
@@ -115,11 +116,6 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
     next.members,
     (member) => member.identity.pubkey,
   );
-  const corners = shareResponseArrayByKey(
-    previous.corners,
-    next.corners,
-    (corner) => corner.corner.id,
-  );
   const briefing = next.briefing
     ? shareResponseArrayByKey(previous.briefing ?? [], next.briefing, (message) => message.id)
     : undefined;
@@ -127,7 +123,6 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
     ...next,
     messages,
     members,
-    corners,
     ...(briefing ? { briefing } : {}),
   }) as RoomView;
 }
@@ -611,8 +606,8 @@ export function mergeDisplayPages(
   );
 }
 
-export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[] {
-  return view.corners.map((item) => {
+export function cornerSummaries(corners: readonly CornerListItem[]): CornerSummary[] {
+  return corners.map((item) => {
     return {
       id: item.corner.id,
       // Every consumer of a corner summary — the Room row's fact line, the

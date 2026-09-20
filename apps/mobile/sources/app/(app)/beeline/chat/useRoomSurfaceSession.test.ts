@@ -197,7 +197,7 @@ vi.mock('@beeline/buzz-client', async () => {
 });
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
-import { cornerSummaries } from '@/buzz/room-view-presentation';
+import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -226,7 +226,6 @@ function roomView(id: string, filters: RoomView['watchFilters'] = [{ '#h': [id] 
       permissions: { send: true, manage: true },
     },
     repositoryResolution: { status: 'absent' },
-    corners: [],
     watchFilters: filters,
   };
 }
@@ -269,14 +268,15 @@ function LiveCornerHarness({ channelId }: { channelId: string }) {
     observeRoomSurface: vi.fn(),
   });
   const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
-  const working = (roomSurface ? cornerSummaries(roomSurface) : []).filter(
-    (corner) => corner.state === 'working',
-  );
+  const working =
+    roomSurface?.parent && cornerDisplayFromRoomView(roomSurface).state === 'working'
+      ? [roomSurface.room.id]
+      : [];
   return React.createElement(
     'corner-states',
     { testID: 'corner-states' },
-    ...working.map((corner) =>
-      React.createElement('corner-state', { key: corner.id, testID: `corner-working-${corner.id}` }),
+    ...working.map((id) =>
+      React.createElement('corner-state', { key: id, testID: `corner-working-${id}` }),
     ),
   );
 }
@@ -833,39 +833,25 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('reports a fresh indexed child corner as working, over a stale review card', async () => {
+  it('reports a corner viewing itself as working from its own turn, over a stale review card', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
+      renderer = create(React.createElement(LiveCornerHarness, { channelId: 'corner-a' }));
     });
     await flushEffects();
 
-    const applied = roomView('room-a');
+    const applied = roomView('corner-a');
     const stateAt = Math.floor(Date.now() / 1_000);
     await act(async () => {
       controls.schedulers[0]!.apply({
         ...applied,
+        parent: { ...applied.room, id: 'room-a', name: 'Room room-a' },
         latestAgentTurns: [
           { requestId: 'request-a', agentPubkey: 'agent-a', status: 'working', createdAt: stateAt },
         ],
-        corners: [
-          {
-            corner: {
-              ...applied.room,
-              id: 'corner-a',
-              parentId: 'room-a',
-              name: 'smoke-corner',
-              createdAt: stateAt,
-              updatedAt: stateAt,
-            },
-            // The review card remains mounted during steering. The canonical
-            // daemon state still has to read through as working.
-            lifecycle: { lifecycle: 'REVIEW' },
-            state: 'working',
-            stateAt,
-            agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
-          },
-        ],
+        // The review card remains mounted during steering. The canonical
+        // daemon state still has to read through as working.
+        cornerLifecycle: { lifecycle: 'in-review', checks: 'unknown' },
       });
       await Promise.resolve();
     });
@@ -881,20 +867,6 @@ describe('useRoomSurfaceSession', () => {
     controls.cached = {
       ...parent,
       members: [{ identity: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' }, role: 'member' }],
-      corners: [
-        {
-          corner: {
-            ...parent.room,
-            id: 'corner-a',
-            parentId: 'room-a',
-            name: 'Write corner',
-          },
-          lifecycle: { lifecycle: 'working' },
-          state: 'working',
-          stateAt: 10,
-          agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
-        },
-      ],
     };
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;

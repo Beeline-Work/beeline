@@ -929,8 +929,6 @@ export function isRoomView(value: unknown): value is RoomView {
         item.briefing.every(isRoomViewMessage))) &&
     (item.cornerPlan === undefined ||
       activity({ kind: 'output', title: 'Plan', plan: item.cornerPlan })) &&
-    Array.isArray(item.corners) &&
-    item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&
     repositoryResolution(item.repositoryResolution) &&
     (item.cornerLifecycle === undefined || cornerLifecycle(item.cornerLifecycle)) &&

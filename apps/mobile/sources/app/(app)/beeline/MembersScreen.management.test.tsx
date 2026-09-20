@@ -743,6 +743,12 @@ describe('Members workspace management', () => {
       expect(
         renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` }),
       ).toBeTruthy();
+      const openTexts = renderer.root
+        .findByProps({ testID: `agent-${AGENT}-identity` })
+        .findAllByType('Text' as any)
+        .flatMap((node: any) => node.props.children);
+      expect(openTexts).toContain('⌄');
+      expect(openTexts).not.toContain('›');
     }
   });
 

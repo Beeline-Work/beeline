@@ -13,6 +13,7 @@ import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
+const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn() }));
 const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
 const composerSource = readFileSync(
   new URL('../../../../components/buzz/ConversationComposer.tsx', import.meta.url),
@@ -83,7 +84,7 @@ vi.mock('react-native-unistyles', async () => {
     useUnistyles: () => ({ theme }),
   };
 });
-vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('@/modal', () => ({ Modal: modal }));
 vi.mock('@/buzz/chat-attachment', () => ({
   attachmentOpenUrl: (attachment: { url: string }) => attachment.url,
   formatAttachmentSize: (size: number) => `${size} B`,
@@ -94,6 +95,12 @@ vi.mock('@/utils/open-external-url', () => openExternal);
 vi.mock('@/components/buzz/ArtifactCard', async () => {
   const ReactModule = await import('react');
   return { ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props) };
+});
+vi.mock('@/components/buzz/ArtifactViewer', async () => {
+  const ReactModule = await import('react');
+  return {
+    ArtifactViewerScreen: (props: any) => ReactModule.createElement('ArtifactViewerScreen', props),
+  };
 });
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
@@ -170,6 +177,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   ledgerEntryRender.mockClear();
+  modal.alert.mockClear();
+  modal.show.mockClear();
   openExternal.openExternalUrl.mockClear();
   resetProvisionalDrafts();
 });
@@ -1109,10 +1118,7 @@ describe('Room message variant components', () => {
     expect(text).toContain('IMAGE/PNG');
   });
 
-  it('opens a live attachment through the shared external URL boundary', () => {
-    // The desktop shell hosts the bundle in a webview where Linking.openURL
-    // cannot reach a browser; a live attachment card must route its tap
-    // through openExternalUrl like every other transcript link.
+  it('opens a live image attachment in the full-screen artifact viewer on mobile', () => {
     render(
       <OrdinaryLedgerMessage
         message={message({
@@ -1147,11 +1153,63 @@ describe('Room message variant components', () => {
       React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
     );
     const open = card.root.findByProps({ testID: 'chat-attachment-receipt.png' });
+    expect(open.props.accessibilityRole).toBe('button');
+    act(() => open.props.onPress());
+    expect(modal.show).toHaveBeenCalledWith({
+      component: expect.any(Function),
+      props: {
+        attachment: expect.objectContaining({
+          name: 'receipt.png',
+          mimeType: 'image/png',
+        }),
+      },
+      placement: 'fill',
+    });
+    expect(openExternal.openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps desktop image attachments on the shared external URL boundary', () => {
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'with-file',
+          pubkey: 'ada',
+          attachments: [
+            {
+              url: 'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+              thumbnailUrl: 'https://server.example/v1/media/thumb',
+              name: 'receipt.png',
+              mimeType: 'image/png',
+              size: 13,
+            },
+          ],
+        })}
+        personName="Ada"
+        desktopLayout
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const card = render(
+      React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
+    );
+    const open = card.root.findByProps({ testID: 'chat-attachment-receipt.png' });
     expect(open.props.accessibilityRole).toBe('link');
     act(() => open.props.onPress());
     expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
       'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
     );
+    expect(modal.show).not.toHaveBeenCalled();
   });
 
   it("gives the live draft lane the settled row's identity mark", () => {

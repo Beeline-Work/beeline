@@ -42,6 +42,7 @@ import {
 } from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { ArtifactCard } from '@/components/buzz/ArtifactCard';
+import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
 import {
@@ -1196,7 +1197,13 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
  * framed. Nothing is fetched and nothing opens: there is no longer a file
  * behind the link, and a broken thumbnail or a spinner would say otherwise.
  */
-function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
+function AttachmentCard({
+  attachment,
+  isDesktop,
+}: {
+  attachment: AttachmentReference;
+  isDesktop: boolean;
+}) {
   const image =
     !attachment.expired && attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const [mediaAuthorization, setMediaAuthorization] = useState<string>();
@@ -1214,6 +1221,14 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
     };
   }, [image]);
   const open = () => {
+    if (!isDesktop && attachment.mimeType.startsWith('image/')) {
+      Modal.show({
+        component: ArtifactViewerScreen,
+        props: { attachment },
+        placement: 'fill',
+      });
+      return;
+    }
     void openExternalUrl(attachmentOpenUrl(attachment)).catch(() => {
       Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
     });
@@ -1243,7 +1258,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   return (
     <Pressable
       accessibilityLabel={`Open attachment ${attachment.name}`}
-      accessibilityRole="link"
+      accessibilityRole={!isDesktop && attachment.mimeType.startsWith('image/') ? 'button' : 'link'}
       onPress={open}
       style={styles.attachmentCard}
       testID={`chat-attachment-${attachment.name}`}
@@ -1913,7 +1928,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         key={`${message.id}-${attachment.url}`}
       />
     ) : (
-      <AttachmentCard attachment={attachment} key={`${message.id}-${attachment.url}`} />
+      <AttachmentCard
+        attachment={attachment}
+        isDesktop={desktopLayout}
+        key={`${message.id}-${attachment.url}`}
+      />
     ),
   );
 

@@ -250,6 +250,18 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 });
 
 import MembersScreen from './MembersScreen';
+import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+
+/**
+ * The disclosure mark is a drawn shape, so it is not part of a row's copy any
+ * more. `'right'` is a closed row, `'down'` an open one, and no glyph at all
+ * is a row with nothing to open.
+ */
+function chevronDirections(node: { findAllByType(type: unknown): { props: never }[] }): string[] {
+  return node
+    .findAllByType(ChevronGlyph as never)
+    .map((glyph: { props: { direction?: string } }) => glyph.props.direction ?? 'right');
+}
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -500,14 +512,15 @@ describe('Members workspace management', () => {
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['@clara', 'Sonnet · by @viewer', '›']);
+    expect(agentTexts).toEqual(['@clara', 'Sonnet · by @viewer']);
+    expect(chevronDirections(agentRow)).toEqual(['right']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
     expect(personRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
       '@builder',
       'member',
-      '›',
     ]);
+    expect(chevronDirections(personRow)).toEqual(['right']);
     // The viewer's own row has no detail, so no chevron.
     const selfRow = renderer.root.findByProps({ testID: `member-${VIEWER}-identity` });
     expect(selfRow.props.disabled).toBe(true);
@@ -515,6 +528,7 @@ describe('Members workspace management', () => {
       '@viewer',
       'owner',
     ]);
+    expect(chevronDirections(selfRow)).toEqual([]);
   });
 
   it('shows the connected owner on the agent profile', async () => {
@@ -535,8 +549,8 @@ describe('Members workspace management', () => {
     expect(agentRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
       '@clara',
       'Sonnet',
-      '›',
     ]);
+    expect(chevronDirections(agentRow)).toEqual(['right']);
 
     await press(renderer, `agent-${AGENT}-identity`);
     expect(renderer.root.findAllByProps({ testID: 'agent-owner' })).toHaveLength(0);
@@ -778,12 +792,8 @@ describe('Members workspace management', () => {
       renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` }),
     ).toHaveLength(0);
     expect(
-      renderer.root
-        .findByProps({ testID: `agent-${AGENT}-identity` })
-        .findAllByType('Text' as any)
-        .flatMap((node: any) => node.props.children)
-        .join(' '),
-    ).not.toContain('›');
+      chevronDirections(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })),
+    ).toEqual([]);
   });
 
   it('keeps agent rows clickable with their chevron for admin and owner viewers', async () => {
@@ -797,12 +807,9 @@ describe('Members workspace management', () => {
       expect(
         renderer.root.findByProps({ testID: `agent-${AGENT}-model-config` }),
       ).toBeTruthy();
-      const openTexts = renderer.root
-        .findByProps({ testID: `agent-${AGENT}-identity` })
-        .findAllByType('Text' as any)
-        .flatMap((node: any) => node.props.children);
-      expect(openTexts).toContain('⌄');
-      expect(openTexts).not.toContain('›');
+      expect(
+        chevronDirections(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })),
+      ).toEqual(['down']);
     }
   });
 

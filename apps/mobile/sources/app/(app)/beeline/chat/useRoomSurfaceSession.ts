@@ -22,7 +22,6 @@ import {
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
-import { takeRoomOpenPrefetch } from '@/buzz/room-open-prefetch';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -50,6 +49,8 @@ import {
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+/** A socket that never answers must not hold the open's one Room read. */
+const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 
 type ReceivedLiveTrace = LiveWireTrace & {
   reason: string;
@@ -333,7 +334,8 @@ export function useRoomSurfaceSession({
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
-    let watchKey = '';
+    /** Ends the watch's handshake wait when the reader leaves before it. */
+    let abandonHandshakeWait: (() => void) | undefined;
     let hasPainted = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
@@ -473,8 +475,6 @@ export function useRoomSurfaceSession({
           isRoomView,
         );
       }
-      const nextWatchKey = JSON.stringify(stableView.watchFilters);
-      if (fresh && nextWatchKey !== watchKey) void installWatch(stableView.watchFilters);
     };
 
     const applyView = (
@@ -487,15 +487,24 @@ export function useRoomSurfaceSession({
       if (stableView) enrichView(stableView, identityPubkey, relayUrl, fresh);
     };
 
-    const installWatch = async (filters: RoomView['watchFilters']): Promise<void> => {
+    const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
-      watchKey = JSON.stringify(filters);
+      let handshakeSeen = false;
+      let readRacedAhead = false;
+      let listenReady: (() => void) | undefined;
+      const handshake = new Promise<void>((resolve) => {
+        listenReady = resolve;
+      });
       const currentTransport = transportForEffect;
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
       let replaying = true;
+      // One Room open is one live subscription. watchFilters still name the
+      // workspace, parent, and (from a stale cache) every corner; expanding
+      // those #h/#d keys is the subscribe storm. The opened Room is the only
+      // lane this surface paints.
       const stop = await client.surfaceSubscribe(
-        filters,
+        [{ '#h': [channelId] }],
         (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
           if (cancelled || generation !== watchGeneration) return;
           if ('monolithLive' in event) {
@@ -507,7 +516,19 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
-              if (hasPainted) scheduler?.force();
+              // This watch's first frame is listen-ready, and the read
+              // startAfter then issues is the one covering read of the open.
+              // A later frame on this same watch is a reconnect and must
+              // reread. When the read gave up waiting and ran first, its
+              // snapshot predates this lane, so the frame that finally
+              // arrives is the only thing that can cover it.
+              if (handshakeSeen) {
+                if (hasPainted) scheduler?.force();
+                return;
+              }
+              handshakeSeen = true;
+              listenReady?.();
+              if (readRacedAhead) scheduler?.force();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -711,6 +732,25 @@ export function useRoomSurfaceSession({
         stop();
         return;
       }
+      let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        handshake,
+        new Promise<void>((resolve) => {
+          abandonHandshakeWait = resolve;
+        }),
+        new Promise<void>((resolve) => {
+          handshakeTimer = setTimeout(() => {
+            readRacedAhead = true;
+            resolve();
+          }, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
+        }),
+      ]);
+      if (handshakeTimer) clearTimeout(handshakeTimer);
+      abandonHandshakeWait = undefined;
+      if (cancelled || generation !== watchGeneration) {
+        stop();
+        return;
+      }
       unsubscribe?.();
       unsubscribe = stop;
     };
@@ -807,11 +847,7 @@ export function useRoomSurfaceSession({
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
             try {
-              const prefetched = takeRoomOpenPrefetch(channelId);
-              if (prefetched) markRoomOpen('prefetch-await');
-              const view = prefetched
-                ? ((await prefetched) ?? (await nextRoomClient.room(channelId)))
-                : await nextRoomClient.room(channelId);
+              const view = await nextRoomClient.room(channelId);
               logLiveTrace('room-read-end', traces);
               markRoomOpen('room-read-end', view.messages.at(-1)?.id);
               markRoomOpenWeight(view);
@@ -877,9 +913,8 @@ export function useRoomSurfaceSession({
           },
         });
         schedulerRef.current = scheduler;
-        const initialFilters = cached?.watchFilters ?? [{ '#h': [channelId] }];
         markRoomOpen('watch-install');
-        await scheduler.startAfter(installWatch(initialFilters));
+        await scheduler.startAfter(installWatch());
         markRoomOpen('watch-ready');
 
         appStateSubscription = AppState.addEventListener('change', (state) => {
@@ -895,6 +930,7 @@ export function useRoomSurfaceSession({
     return () => {
       cancelled = true;
       watchGeneration += 1;
+      abandonHandshakeWait?.();
       scheduler?.dispose();
       appStateSubscription?.remove();
       unsubscribe?.();

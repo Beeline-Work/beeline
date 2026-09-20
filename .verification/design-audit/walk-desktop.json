@@ -1,0 +1,54 @@
+[
+  {
+    "name": "deck",
+    "file": ".verification/design-audit/shots/desktop-deck.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\nSelect a Room\nChoose a Room or direct message from the sidebar.",
+    "errors": [
+      "Received `%s` for a non-boolean attribute `%s`.\n\nIf you want to write it to the DOM, pass a string instead: %s=\"%s\" or %s={value.toString()}. true accessible accessible true accessible",
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden",
+      "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden"
+    ]
+  },
+  {
+    "name": "room",
+    "file": ".verification/design-audit/shots/desktop-room.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\naudit-every-surface\nwaiting\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n#ship-the-slab\n◇\n•••\nSUN 20 SEP\nYou\n12:08\nAudit every mobile and desktop surface against DESIGN.md. @niglet take it.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:10\nOn it.\nI will walk the Room index, the transcript, the corners list, Members, and both Settings screens, then the desktop second pane.\nThe first pass is the index rows — state column, sigil, preview attribution, age stamp.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:16\nHere is the token the whole slab hangs off:\nts · 5 lines · 83 B\nCOPY\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n⌄ OPEN\n1 more line\nEverything else is built from it.\n⧉\n↩\n☺\n\n↗\nchloropine\n12:32\nDoes the corners door still read at the same mark-size as the overflow dots?\n⧉\n↩\n☺\n\n↗\nThat was the September 20 captain note.\n⧉\n↩\n☺\n\n↗\nSol\nAGENT\n12:35\nIt does — the sigil takes the body role rather than the metadata role, so the two 44pt boxes read as siblings.\n⧉\n↩\n☺\n\n↗\nYou\n12:52\nGood. Keep the audit to what actually renders.\n⧉\n↩\n☺\n\n↗\n＋\n↑\n‹",
+    "errors": []
+  },
+  {
+    "name": "corners-list",
+    "file": ".verification/design-audit/shots/desktop-corners-list.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n‹\n#ship-the-slab\nCorners\n1\n#ship-the-slab/audit-every-surface\nOpened the corner and started the surface walk. The Room index and the transcript are photographed; Members and Settings are next.\nWAITING",
+    "errors": []
+  },
+  {
+    "name": "corner",
+    "file": ".verification/design-audit/shots/desktop-corner.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\naudit-every-surface\nwaiting\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n‹\n#audit-every-surface\nHISTORY UNAVAILABLE\n! ERROR\nThe server returned an invalid Room response.\nRETRY",
+    "errors": []
+  },
+  {
+    "name": "room-2",
+    "file": ".verification/design-audit/shots/desktop-room-2.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\naudit-every-surface\nwaiting\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n#ship-the-slab\n◇\n•••\nSUN 20 SEP\nYou\n12:08\nAudit every mobile and desktop surface against DESIGN.md. @niglet take it.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:10\nOn it.\nI will walk the Room index, the transcript, the corners list, Members, and both Settings screens, then the desktop second pane.\nThe first pass is the index rows — state column, sigil, preview attribution, age stamp.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:16\nHere is the token the whole slab hangs off:\nts · 5 lines · 83 B\nCOPY\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n⌄ OPEN\n1 more line\nEverything else is built from it.\n⧉\n↩\n☺\n\n↗\nchloropine\n12:32\nDoes the corners door still read at the same mark-size as the overflow dots?\n⧉\n↩\n☺\n\n↗\nThat was the September 20 captain note.\n⧉\n↩\n☺\n\n↗\nSol\nAGENT\n12:35\nIt does — the sigil takes the body role rather than the metadata role, so the two 44pt boxes read as siblings.\n⧉\n↩\n☺\n\n↗\nYou\n12:52\nGood. Keep the audit to what actually renders.\n⧉\n↩\n☺\n\n↗\n＋\n↑\n‹",
+    "errors": []
+  },
+  {
+    "name": "overflow",
+    "file": ".verification/design-audit/shots/desktop-overflow.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\naudit-every-surface\nwaiting\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n#ship-the-slab\n◇\n•••\nSUN 20 SEP\nYou\n12:08\nAudit every mobile and desktop surface against DESIGN.md. @niglet take it.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:10\nOn it.\nI will walk the Room index, the transcript, the corners list, Members, and both Settings screens, then the desktop second pane.\nThe first pass is the index rows — state column, sigil, preview attribution, age stamp.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:16\nHere is the token the whole slab hangs off:\nts · 5 lines · 83 B\nCOPY\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n⌄ OPEN\n1 more line\nEverything else is built from it.\n⧉\n↩\n☺\n\n↗\nchloropine\n12:32\nDoes the corners door still read at the same mark-size as the overflow dots?\n⧉\n↩\n☺\n\n↗\nThat was the September 20 captain note.\n⧉\n↩\n☺\n\n↗\nSol\nAGENT\n12:35\nIt does — the sigil takes the body role rather than the metadata role, so the two 44pt boxes read as siblings.\n⧉\n↩\n☺\n\n↗\nYou\n12:52\nGood. Keep the audit to what actually renders.\n⧉\n↩\n☺\n\n↗\n＋\n↑\n‹\nts\nts · 5 lines · 83 B\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n};\nCopy output\n83 B",
+    "errors": []
+  },
+  {
+    "name": "members",
+    "file": ".verification/design-audit/shots/desktop-members.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\naudit-every-surface\nwaiting\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n#ship-the-slab\n◇\n•••\nSUN 20 SEP\nYou\n12:08\nAudit every mobile and desktop surface against DESIGN.md. @niglet take it.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:10\nOn it.\nI will walk the Room index, the transcript, the corners list, Members, and both Settings screens, then the desktop second pane.\nThe first pass is the index rows — state column, sigil, preview attribution, age stamp.\n⧉\n↩\n☺\n\n↗\nNiglet\nAGENT\n12:16\nHere is the token the whole slab hangs off:\nts · 5 lines · 83 B\nCOPY\nexport const groknight = {\n  radius: 3,\n  canvas: \"#14091A\",\n  brass: \"#b08a4a\",\n⌄ OPEN\n1 more line\nEverything else is built from it.\n⧉\n↩\n☺\n\n↗\nchloropine\n12:32\nDoes the corners door still read at the same mark-size as the overflow dots?\n⧉\n↩\n☺\n\n↗\nThat was the September 20 captain note.\n⧉\n↩\n☺\n\n↗\nSol\nAGENT\n12:35\nIt does — the sigil takes the body role rather than the metadata role, so the two 44pt boxes read as siblings.\n⧉\n↩\n☺\n\n↗\nYou\n12:52\nGood. Keep the audit to what actually renders.\n⧉\n↩\n☺\n\n↗\n＋\n↑\n‹",
+    "errors": []
+  },
+  {
+    "name": "settings",
+    "file": ".verification/design-audit/shots/desktop-settings.png",
+    "text": "Beeline\n⌄\n\n\n\n⌘K\nROOMS\n\n#design-notes\nNo messages yet\n#ship-the-slab\n29M\nyou: Good. Keep the audit to what actually renders.\nDIRECT MESSAGES\n\n@chloropine\n3D\n@chloropine: Can you look at the Bone canvas before the release?\nAlan\n‹\nWorkspace\nBeeline\nName\nBeeline\n›\nVisibility\nInvite-only\n›\nMembers\nInvite people, connect agents, and manage roles.\n4\n›\nROOMS\n#design-notes\nOpen\n›\n#ship-the-slab\nOpen\n›\nDelete Workspace\n2 rooms · 4 members",
+    "errors": []
+  }
+]

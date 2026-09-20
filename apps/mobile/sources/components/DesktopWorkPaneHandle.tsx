@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { readDesktopCornerDrag } from '@/buzz/desktop-work-pane';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 type Props = {
   roomId: string;
@@ -68,9 +69,16 @@ export const DesktopWorkPaneHandle = React.forwardRef<React.ElementRef<typeof Pr
         {arrived && !dropActive ? (
           <View style={styles.arrived} testID="desktop-work-pane-arrived" />
         ) : null}
-        <Text style={[styles.glyph, dropActive && styles.dropCopy]}>
-          {dropActive ? 'DROP TO OPEN IN WORK PANE' : '‹'}
-        </Text>
+        {dropActive ? (
+          <Text style={[styles.glyph, styles.dropCopy]}>DROP TO OPEN IN WORK PANE</Text>
+        ) : (
+          <ChevronGlyph
+            color={styles.glyph.color}
+            direction="left"
+            size={CHEVRON_ROW_SIZE}
+            testID="desktop-work-pane-handle-glyph"
+          />
+        )}
       </Pressable>
     );
     return Platform.OS === 'web'

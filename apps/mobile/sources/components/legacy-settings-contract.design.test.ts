@@ -47,7 +47,11 @@ describe('retained settings leaves use the Beeline design contract', () => {
       header.indexOf('// Component wrapper for navigation header'),
     );
     expect(backButton).not.toMatch(/MobileGlass|Ionicons/);
-    expect(backButton).toContain('>‹</Text>');
+    // The back mark is the shared drawn chevron at the one back size, not a
+    // `‹` set in whatever face this header happened to have to hand.
+    expect(backButton).toContain('<ChevronGlyph');
+    expect(backButton).toContain('direction="left"');
+    expect(backButton).toContain('size={CHEVRON_BACK_SIZE}');
   });
 
   it('reuses the shared navigation and action-sheet idioms on migrated leaves', () => {

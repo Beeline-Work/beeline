@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
 import { ToolOutputSheet } from '@/components/buzz/ToolOutputSheet';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export const PEEK_LINE_COUNT = 4;
 const PLAIN_TEXT_LANGUAGES = new Set(['text', 'txt', 'plaintext', 'markdown', 'md']);
@@ -128,7 +129,12 @@ export function CodeBlock({ code, language }: { code: string; language: string |
         >
           {body}
           <View style={styles.moreRow}>
-            <Text style={styles.openVerb}>⌄ open</Text>
+            <ChevronGlyph
+              color={styles.openVerb.color}
+              direction="down"
+              size={CHEVRON_ROW_SIZE}
+            />
+            <Text style={styles.openVerb}>open</Text>
             <Text style={styles.moreCount}>{hidden}</Text>
           </View>
         </Pressable>

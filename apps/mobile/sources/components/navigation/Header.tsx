@@ -6,6 +6,7 @@ import { layout } from '../layout';
 import { useHeaderHeight, useIsDesktop, useIsTablet, useLayoutClass } from '@/utils/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 interface HeaderProps {
     title?: React.ReactNode;
@@ -113,7 +114,7 @@ const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void }> =
             hitSlop={10}
             style={({ pressed }) => [styles.backButton, pressed && styles.controlPressed]}
         >
-            <Text style={[styles.backGlyph, { color: tintColor }]}>‹</Text>
+      <ChevronGlyph color={tintColor} direction="left" size={CHEVRON_BACK_SIZE} />
         </Pressable>
     );
 };
@@ -292,11 +293,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: 44,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    backGlyph: {
-        fontFamily: theme.buzz.monoRegular,
-        fontSize: 30,
-        lineHeight: 34,
     },
     controlPressed: {
         opacity: 0.68,

@@ -3,6 +3,7 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 const BACK_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 
@@ -26,7 +27,7 @@ export function RoomCornersHeader({
         onPress={onBack}
         style={styles.back}
       >
-        <Text style={styles.backText}>‹</Text>
+        <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
       </TouchableOpacity>
       <View style={styles.headerCopy}>
         <Text numberOfLines={1} style={styles.eyebrow}>
@@ -58,7 +59,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    backText: { color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
     eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },

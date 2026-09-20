@@ -34,6 +34,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { Modal } from '@/modal';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 type WorkspaceRoomSetting = {
   id: string;
@@ -360,7 +361,7 @@ export default function WorkspaceSettings() {
           onPress={() => router.back()}
           style={styles.back}
         >
-          <Text style={styles.backText}>‹</Text>
+          <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
         </TouchableOpacity>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>{WORKSPACE_LABEL}</Text>
@@ -666,7 +667,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    backText: { color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: {

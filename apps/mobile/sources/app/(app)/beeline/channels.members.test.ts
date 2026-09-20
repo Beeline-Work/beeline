@@ -35,17 +35,21 @@ describe('Workspace Members entry point', () => {
       source.indexOf('testID="workspace-bookmarks"') - 400,
       source.indexOf('testID="workspace-members"'),
     );
-    expect(bookmarks).toContain('size={16}');
+    // Both marks draw at one named size in one named box, so the pair cannot
+    // drift apart. The box IS the 44pt target — no slop grows it past the
+    // spacing step of real slab that parts the two.
+    expect(source).toContain('const HEADER_MARK_SIZE = 16');
+    expect(source).toContain('const HEADER_TARGET_SIZE = 44');
+    expect(source).not.toContain('HEADER_GLYPH_HIT_SLOP');
+    expect(source).not.toContain('headerMembersAction');
+    expect(bookmarks).toContain('size={HEADER_MARK_SIZE}');
     expect(bookmarks).toContain('style={styles.headerAction}');
-    expect(bookmarks).toContain('hitSlop={HEADER_GLYPH_HIT_SLOP}');
-    expect(bookmarks).toContain('style={styles.headerBookmarksGlyph}');
     const members = source.slice(
       source.indexOf('testID="workspace-members"') - 400,
       source.indexOf('testID="workspace-members-glyph"') + 80,
     );
-    expect(members).toContain('size={16}');
-    expect(members).toContain('style={styles.headerMembersAction}');
-    expect(members).toContain('hitSlop={HEADER_GLYPH_HIT_SLOP}');
+    expect(members).toContain('size={HEADER_MARK_SIZE}');
+    expect(members).toContain('style={styles.headerAction}');
     expect(members).toContain('<MembersGlyph');
     expect(source.indexOf('workspace-bookmarks')).toBeLessThan(source.indexOf('workspace-members'));
   });

@@ -9,6 +9,7 @@ import { MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { HullFloatingSurface, HullModal } from './HullDialog';
 import { MemberRosterRow } from './MemberRosterRow';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export type RoomRosterParticipant = {
   pubkey: string;
@@ -181,9 +182,11 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                   const agentWorking =
                     participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
                   const trailing = canRemove ? (
-                    <Text accessibilityElementsHidden style={styles.chevron}>
-                      {open ? '⌄' : '›'}
-                    </Text>
+                    <ChevronGlyph
+                      color={styles.chevron.color}
+                      direction={open ? 'down' : 'right'}
+                      size={CHEVRON_ROW_SIZE}
+                    />
                   ) : undefined;
                   return (
                     <View key={participant.pubkey}>
@@ -313,7 +316,7 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
     rosterSectionLabelSpaced: { marginTop: hull.layout.sectionGap },
-    chevron: { ...Typography.default(), ...hull.type.hero, color: hull.textMuted },
+    chevron: { color: hull.textMuted },
     rosterDetail: {
       paddingHorizontal: hull.space.sm,
       paddingBottom: hull.space.sm,

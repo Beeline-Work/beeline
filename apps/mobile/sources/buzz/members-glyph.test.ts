@@ -39,7 +39,13 @@ describe('the members word', () => {
     for (const relativePath of CHROME_ENTRY_POINTS) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
       expect(source, `${relativePath} should use MembersGlyph`).toContain('<MembersGlyph');
-      expect(source, `${relativePath} should keep the 16px chrome size`).toContain('size={16}');
+      // 16 either written out or named on the surface; what must not drift is
+      // the drawn size, since every header mark beside it is the same 16.
+      const size = source.match(/<MembersGlyph[\s\S]*?size=\{([A-Za-z_0-9]+)\}/)?.[1];
+      expect(size, `${relativePath} should pass MembersGlyph a size`).toBeTruthy();
+      const resolved =
+        size === '16' ? 16 : Number(source.match(new RegExp(`const ${size} = (\\d+)`))?.[1]);
+      expect(resolved, `${relativePath} should keep the 16px chrome size`).toBe(16);
       expect(source, `${relativePath} still paints the members word`).not.toContain(
         'MEMBERS_LABEL.toUpperCase()',
       );

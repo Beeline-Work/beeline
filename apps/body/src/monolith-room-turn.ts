@@ -97,7 +97,8 @@ type HumanMessage = Pick<
  * host mounted into the session is approved, and nothing that is not an MCP
  * tool call (shell, native reads/writes, unstructured requests) crosses. The
  * read-only sandbox is the boundary, not the tool list. A host-classified
- * server (Squire is code-owned as host) stays host-gated.
+ * server (Squire is code-owned as host) is never copied into the isolated
+ * harness home, and a call that reaches one anyway stays host-gated here.
  */
 export function isRoomMcpPermissionRequest(
   request: AcpPermissionRequest,
@@ -653,7 +654,6 @@ export class MonolithRoomTurnLoop {
     const hostServers = hostImportedMcpServerNames({
       operatorHome: this.options.config.operatorHome,
       agentKind: this.options.config.agentKind,
-      preparedEnv: agentEnv,
     });
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,

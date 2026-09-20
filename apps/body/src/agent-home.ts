@@ -34,9 +34,9 @@
  * deliberately out of the isolated home). This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
  * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Imported
- * MCP declarations are classified `local` (copied as-is) or `host` (rewritten
- * so the command reaches the host instance); Squire is code-owned as host.
- * Host declarations are never dropped and never copied raw.
+ * MCP declarations are classified `local` (copied as-is) or `host` (kept out
+ * of the isolated home, reachable only through the host); Squire is
+ * code-owned as host.
  *
  * Pi uses `PI_CODING_AGENT_DIR` and the isolated `$HOME`, preventing its
  * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
@@ -72,17 +72,14 @@ import {
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
-import {
-  classifyImportedMcpServer,
-  MCP_ROUTE_CLASS_KEY,
-  rewriteHostMcpDeclaration,
-} from './mcp-route-class.js';
+import { classifyImportedMcpServer } from './mcp-route-class.js';
 import {
   resolveOpenRouterRouting,
   withOpenRouterModelRouting,
   type OpenRouterRoutingDecision,
   type OpenRouterRoutingHomeInput,
 } from './openrouter-routing.js';
+import { extractTomlSections } from './toml-section.js';
 import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
@@ -395,7 +392,7 @@ async function provisionAgentSkillsAndMcp(
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
       const mcpSection = existsSync(source)
-        ? classifiedHarnessMcpToml(readFileSync(source, 'utf8'), operatorHome)
+        ? localHarnessMcpToml(readFileSync(source, 'utf8'))
         : undefined;
       // A Codex Room needs this config even when the operator shares no MCP
       // servers: Codex otherwise enables internal collaboration by default.
@@ -431,7 +428,7 @@ async function provisionAgentSkillsAndMcp(
         const body = readFileSync(source, 'utf8');
         await writeIsolatedHarnessFile(
           target,
-          name === 'config.yaml' ? classifiedGooseConfig(body, operatorHome) : body,
+          name === 'config.yaml' ? localGooseConfig(body) : body,
         );
       } else {
         await unlink(target).catch(() => undefined);
@@ -446,7 +443,7 @@ async function provisionAgentSkillsAndMcp(
     const claudeJson = resolve(operatorHome, '.claude.json');
     const claudeTarget = resolve(root, 'claude', '.claude.json');
     const mcpServers = existsSync(claudeJson)
-      ? readClaudeUserScopeMcpServers(claudeJson, operatorHome)
+      ? readClaudeUserScopeMcpServers(claudeJson)
       : undefined;
     if (mcpServers && Object.keys(mcpServers).length > 0) {
       await writeIsolatedHarnessFile(claudeTarget, `${JSON.stringify({ mcpServers }, null, 2)}\n`);
@@ -604,22 +601,18 @@ function addTrustySquireNamesFromMap(
   }
 }
 
-function readClaudeUserScopeMcpServers(
-  path: string,
-  operatorHome: string,
-): Record<string, unknown> | undefined {
+function readClaudeUserScopeMcpServers(path: string): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-    if (parsed && typeof parsed.mcpServers === 'object' && parsed.mcpServers !== null) {
-      return classifyMcpServerMap(parsed.mcpServers as Record<string, unknown>, operatorHome);
-    }
+    const servers = recordValue(parsed.mcpServers);
+    if (servers) return localMcpServers(servers);
   } catch {
     // Malformed operator config: skip rather than fail the Room.
   }
   return undefined;
 }
 
-function classifiedHarnessMcpToml(source: string, operatorHome: string): string | undefined {
+function localHarnessMcpToml(source: string): string | undefined {
   let servers: Record<string, unknown> | undefined;
   try {
     servers = recordValue(parseToml(source).mcp_servers);
@@ -627,83 +620,38 @@ function classifiedHarnessMcpToml(source: string, operatorHome: string): string 
     return undefined;
   }
   if (!servers) return undefined;
-  const classified = classifyMcpServerMap(servers, operatorHome);
-  return Object.keys(classified).length > 0 ? emitMcpServersToml(classified) : undefined;
+  return extractTomlSections(source, ['mcp_servers'], hostMcpServerNames(servers));
 }
 
-function classifiedGooseConfig(source: string, operatorHome: string): string {
+function localGooseConfig(source: string): string {
   let parsed: unknown;
   try {
     parsed = parseYaml(source);
   } catch {
     return source;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return source;
-  const document = parsed as Record<string, unknown>;
-  const extensions = recordValue(document.extensions);
-  if (!extensions) return source;
-  const classified = classifyMcpServerMap(extensions, operatorHome);
-  const changed = Object.entries(classified).some(([name, value]) => value !== extensions[name]);
-  if (!changed) return source;
-  return stringifyYaml({ ...document, extensions: classified });
+  const document = recordValue(parsed);
+  const extensions = recordValue(document?.extensions);
+  if (!document || !extensions) return source;
+  const local = localMcpServers(extensions);
+  if (Object.keys(local).length === Object.keys(extensions).length) return source;
+  return stringifyYaml({ ...document, extensions: local });
 }
 
-function classifyMcpServerMap(
-  servers: Record<string, unknown>,
-  operatorHome: string,
-): Record<string, Record<string, unknown>> {
-  const next: Record<string, Record<string, unknown>> = {};
-  for (const [name, value] of Object.entries(servers)) {
-    const declaration = recordValue(value) ?? {};
-    next[name] =
-      classifyImportedMcpServer({ name, declaration }) === 'host'
-        ? rewriteHostMcpDeclaration(declaration, operatorHome, name)
-        : declaration;
-  }
-  return next;
+function isHostMcpDeclaration(name: string, value: unknown): boolean {
+  return classifyImportedMcpServer({ name, declaration: recordValue(value) ?? {} }) === 'host';
 }
 
-function emitMcpServersToml(servers: Record<string, Record<string, unknown>>): string {
+function hostMcpServerNames(servers: Record<string, unknown>): string[] {
   return Object.entries(servers)
-    .map(([name, declaration]) => emitMcpServerToml(name, declaration))
-    .join('\n');
+    .filter(([name, value]) => isHostMcpDeclaration(name, value))
+    .map(([name]) => name);
 }
 
-function emitMcpServerToml(name: string, declaration: Record<string, unknown>): string {
-  const key = tomlBareKey(name);
-  const lines = [`[mcp_servers.${key}]`];
-  const env = recordValue(declaration.env) ?? recordValue(declaration.envs);
-  for (const [field, value] of Object.entries(declaration)) {
-    if (field === 'env' || field === 'envs' || field === MCP_ROUTE_CLASS_KEY) continue;
-    const encoded = tomlInlineValue(value);
-    if (encoded === undefined) continue;
-    lines.push(`${tomlBareKey(field)} = ${encoded}`);
-  }
-  if (env) {
-    const entries = Object.entries(env).filter(([, value]) => typeof value === 'string');
-    if (entries.length > 0) {
-      lines.push('', `[mcp_servers.${key}.env]`);
-      for (const [field, value] of entries) {
-        lines.push(`${tomlBareKey(field)} = ${JSON.stringify(value)}`);
-      }
-    }
-  }
-  lines.push('');
-  return lines.join('\n');
-}
-
-function tomlBareKey(value: string): string {
-  return /^[A-Za-z_][A-Za-z0-9_-]*$/.test(value) ? value : JSON.stringify(value);
-}
-
-function tomlInlineValue(value: unknown): string | undefined {
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
-    return `[${value.map((entry) => JSON.stringify(entry)).join(', ')}]`;
-  }
-  return undefined;
+function localMcpServers(servers: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(servers).filter(([name, value]) => !isHostMcpDeclaration(name, value)),
+  );
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -747,83 +695,67 @@ export function mountedImportedMcpServerNames(
   return [...names].sort((left, right) => left.localeCompare(right));
 }
 
+/**
+ * Host-classified imported servers, read from the operator's own configs. They
+ * are never copied into the isolated harness home, so this is the Room
+ * permission matcher's list of identities that stay host-gated.
+ */
 export function hostImportedMcpServerNames(
   input: {
     operatorHome?: string;
     agentKind?: AgentKind;
-    preparedEnv?: Record<string, string>;
   } = {},
 ): string[] {
-  const names = new Set<string>();
   const operatorHome = input.operatorHome ?? homedir();
-  if (input.preparedEnv) {
-    const env = input.preparedEnv;
-    const home = env.HOME ?? operatorHome;
-    const kind = input.agentKind;
-    if (!kind || kind === 'codex') {
-      addHostMcpNames(
-        names,
-        resolve(env.CODEX_HOME ?? resolve(home, '.codex'), 'config.toml'),
-        'toml',
-      );
-    }
-    if (!kind || kind === 'grok') {
-      addHostMcpNames(
-        names,
-        resolve(env.GROK_HOME ?? resolve(home, '.grok'), 'config.toml'),
-        'toml',
-      );
-    }
-    if (!kind || kind === 'claude') {
-      addHostMcpNames(names, resolve(env.CLAUDE_CONFIG_DIR ?? home, '.claude.json'), 'claude');
-    }
-    if (!kind || kind === 'goose') {
-      addHostMcpNames(
-        names,
-        env.GOOSE_PATH_ROOT
-          ? resolve(env.GOOSE_PATH_ROOT, 'config/config.yaml')
-          : resolve(home, '.config/goose/config.yaml'),
-        'goose',
-      );
-    }
-  } else {
-    collectHostImportedMcpNames(operatorHome, names, input.agentKind);
+  const kind = input.agentKind;
+  const names = new Set<string>();
+  if (!kind || kind === 'codex') {
+    addHostMcpNames(names, readTomlMcpServers(resolve(operatorHome, '.codex/config.toml')));
+  }
+  if (!kind || kind === 'grok') {
+    addHostMcpNames(names, readTomlMcpServers(resolve(operatorHome, '.grok/config.toml')));
+  }
+  if (!kind || kind === 'claude') {
+    addHostMcpNames(
+      names,
+      recordValue(readJsonObject(resolve(operatorHome, '.claude.json'))?.mcpServers),
+    );
+  }
+  if (!kind || kind === 'goose') {
+    addHostMcpNames(names, readGooseExtensions(resolve(operatorHome, '.config/goose/config.yaml')));
   }
   return [...names].sort((left, right) => left.localeCompare(right));
 }
 
 function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?: AgentKind): void {
   if (!kind || kind === 'codex') {
-    addTomlMcpNames(names, resolve(operatorHome, '.codex/config.toml'));
+    addLocalMcpNames(names, readTomlMcpServers(resolve(operatorHome, '.codex/config.toml')));
   }
   if (!kind || kind === 'grok') {
-    addTomlMcpNames(names, resolve(operatorHome, '.grok/config.toml'));
+    addLocalMcpNames(names, readTomlMcpServers(resolve(operatorHome, '.grok/config.toml')));
   }
   if (!kind || kind === 'claude') {
-    addClaudeMcpNames(names, resolve(operatorHome, '.claude.json'));
+    addLocalMcpNames(
+      names,
+      recordValue(readJsonObject(resolve(operatorHome, '.claude.json'))?.mcpServers),
+    );
   }
   if (!kind || kind === 'goose') {
-    addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'));
+    addLocalMcpNames(
+      names,
+      readGooseExtensions(resolve(operatorHome, '.config/goose/config.yaml')),
+    );
   }
 }
 
-function collectHostImportedMcpNames(
-  operatorHome: string,
-  names: Set<string>,
-  kind?: AgentKind,
-): void {
-  if (!kind || kind === 'codex') {
-    addHostMcpNames(names, resolve(operatorHome, '.codex/config.toml'), 'toml');
-  }
-  if (!kind || kind === 'grok') {
-    addHostMcpNames(names, resolve(operatorHome, '.grok/config.toml'), 'toml');
-  }
-  if (!kind || kind === 'claude') {
-    addHostMcpNames(names, resolve(operatorHome, '.claude.json'), 'claude');
-  }
-  if (!kind || kind === 'goose') {
-    addHostMcpNames(names, resolve(operatorHome, '.config/goose/config.yaml'), 'goose');
-  }
+function addLocalMcpNames(names: Set<string>, servers: Record<string, unknown> | undefined): void {
+  if (!servers) return;
+  for (const name of Object.keys(localMcpServers(servers))) names.add(name);
+}
+
+function addHostMcpNames(names: Set<string>, servers: Record<string, unknown> | undefined): void {
+  if (!servers) return;
+  for (const name of hostMcpServerNames(servers)) names.add(name);
 }
 
 function addTomlMcpNames(names: Set<string>, path: string): void {
@@ -832,25 +764,6 @@ function addTomlMcpNames(names: Set<string>, path: string): void {
 
 function addClaudeMcpNames(names: Set<string>, path: string): void {
   addMcpNamesFromMap(names, recordValue(readJsonObject(path)?.mcpServers));
-}
-
-function addHostMcpNames(
-  names: Set<string>,
-  path: string,
-  format: 'toml' | 'claude' | 'goose',
-): void {
-  const servers =
-    format === 'toml'
-      ? readTomlMcpServers(path)
-      : format === 'claude'
-        ? recordValue(readJsonObject(path)?.mcpServers)
-        : readGooseExtensions(path);
-  if (!servers) return;
-  for (const [name, value] of Object.entries(servers)) {
-    if (classifyImportedMcpServer({ name, declaration: recordValue(value) ?? {} }) === 'host') {
-      names.add(name);
-    }
-  }
 }
 
 function readTomlMcpServers(path: string): Record<string, unknown> | undefined {

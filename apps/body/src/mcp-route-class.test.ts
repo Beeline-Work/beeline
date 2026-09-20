@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyImportedMcpServer,
-  hostRouteEnv,
   isHostMcpIdentity,
-  MCP_ROUTE_CLASS_ENV_KEY,
   MCP_ROUTE_CLASS_KEY,
   MCP_ROUTE_HOST,
-  rewriteHostMcpDeclaration,
 } from './mcp-route-class.js';
 
 describe('imported MCP host/local classification', () => {
@@ -34,54 +31,15 @@ describe('imported MCP host/local classification', () => {
     expect(
       classifyImportedMcpServer({
         name: 'browser',
-        declaration: { command: 'browser-mcp', env: { [MCP_ROUTE_CLASS_ENV_KEY]: MCP_ROUTE_HOST } },
+        declaration: { cmd: 'browser-mcp', [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST },
       }),
     ).toBe('host');
-  });
-
-  it('rewrites a host declaration by keeping the command and pointing env at the host', () => {
-    const rewritten = rewriteHostMcpDeclaration(
-      { command: 'npx', args: ['-y', '@trusty-squire/mcp'], [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST },
-      '/home/op',
-      'squire',
-    );
-    expect(rewritten.command).toBe('npx');
-    expect(rewritten.args).toEqual(['-y', '@trusty-squire/mcp']);
-    expect(rewritten).not.toHaveProperty(MCP_ROUTE_CLASS_KEY);
-    expect(rewritten.env).toEqual({
-      [MCP_ROUTE_CLASS_ENV_KEY]: MCP_ROUTE_HOST,
-      HOME: '/home/op',
-      TRUSTY_SQUIRE_PROFILE_DIR: '/home/op/.trusty-squire/chrome-profile',
-      XDG_CONFIG_HOME: '/home/op/.config',
-    });
-  });
-
-  it('does not attach Squire env to an operator-marked host that is not Squire', () => {
-    const rewritten = rewriteHostMcpDeclaration(
-      { cmd: 'browser-mcp', [MCP_ROUTE_CLASS_KEY]: MCP_ROUTE_HOST },
-      '/home/op',
-      'browser',
-    );
-    expect(rewritten.cmd).toBe('browser-mcp');
-    expect(rewritten.envs).toEqual({
-      [MCP_ROUTE_CLASS_ENV_KEY]: MCP_ROUTE_HOST,
-      HOME: '/home/op',
-    });
-    expect(rewritten).not.toHaveProperty('env');
-  });
-
-  it('keeps Goose envs as envs when rewriting a host extension', () => {
-    const rewritten = rewriteHostMcpDeclaration(
-      { cmd: 'npx', args: ['-y', '@trusty-squire/mcp'], envs: { EXISTING: '1' } },
-      '/home/op',
-      'squire',
-    );
-    expect(rewritten).not.toHaveProperty('env');
-    expect(rewritten.envs).toMatchObject({
-      EXISTING: '1',
-      [MCP_ROUTE_CLASS_ENV_KEY]: MCP_ROUTE_HOST,
-      HOME: '/home/op',
-    });
+    expect(
+      classifyImportedMcpServer({
+        name: 'browser',
+        declaration: { command: 'browser-mcp', [MCP_ROUTE_CLASS_KEY]: 'local' },
+      }),
+    ).toBe('local');
   });
 
   it('matches host identities across harness permission spellings', () => {
@@ -91,11 +49,5 @@ describe('imported MCP host/local classification', () => {
     expect(isHostMcpIdentity('squire__use_credential')).toBe(true);
     expect(isHostMcpIdentity('files-mcp', ['squire'])).toBe(false);
     expect(isHostMcpIdentity('mcp.browser.read', ['browser'])).toBe(true);
-  });
-
-  it('points host-route env at the operator home without copying a profile path as bytes', () => {
-    const env = hostRouteEnv('squire', '/home/op');
-    expect(env.TRUSTY_SQUIRE_PROFILE_DIR).toBe('/home/op/.trusty-squire/chrome-profile');
-    expect(Object.values(env).every((value) => !value.includes('\0'))).toBe(true);
   });
 });

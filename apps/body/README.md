@@ -22,8 +22,9 @@ When an imported MCP server is added or removed from the selected harness's oper
 configuration, the helper replaces its retained Room or corner session before the next turn.
 An unchanged server-name set retains the session; editing settings under an existing name
 does not trigger replacement. This applies to all imported servers, including Trusty Squire.
-Import classifies each declaration `local` (copy as-is) or `host` (rewrite so the command
-reaches the host instance); Squire is code-owned as host. Goose uses the same classifier.
+Import classifies each declaration `local` (copied into the isolated harness home as-is) or
+`host` (kept out of it — reaching that server is the host's job); Squire is code-owned as host.
+Goose uses the same classifier.
 It does not provision or revoke routes itself. The inventory contract lives in
 [`session-config-fingerprint.ts`](src/session-config-fingerprint.ts); classification lives in
 [`mcp-route-class.ts`](src/mcp-route-class.ts).

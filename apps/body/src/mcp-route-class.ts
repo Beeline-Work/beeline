@@ -1,18 +1,17 @@
 /**
  * Imported MCP servers are routes to the host, not replicas in the sandbox.
  *
- * Each declaration is `local` (copy as-is) or `host` (rewrite so the command
- * reaches the host's instance). Built-ins are code-owned: `squire` is `host`.
- * Everything else is `local` unless the operator marks it `host` with that
- * one key in their own config. The same classification applies to every
- * imported server on every harness, including Goose.
+ * Each declaration is `local` (copied into the isolated harness home as-is)
+ * or `host` (kept out of it, because reaching that server is the host's job).
+ * Built-ins are code-owned: `squire` is `host`. Everything else is `local`
+ * unless the operator marks it `host` with that one key in their own config.
+ * The same classification applies to every imported server on every harness,
+ * including Goose, and the Room permission matcher reads the same verdict.
  *
- * A host rewrite keeps the command and adds environment that points at the
- * host home. Route acceptance, façade socket wiring, and the host-home
- * broker inode are later lanes; this module is the import-step classifier.
+ * Routing a host server into a session — route acceptance, façade socket
+ * wiring, the host-home broker inode — is a later lane; this module is the
+ * import-step classifier alone.
  */
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 
 export type McpRouteClass = 'local' | 'host';
@@ -26,9 +25,6 @@ export const CODE_OWNED_HOST_MCP_NAMES = ['squire'] as const;
  */
 export const MCP_ROUTE_CLASS_KEY = 'beeline_route';
 export const MCP_ROUTE_HOST = 'host';
-
-/** Durable mark written into a rewritten host declaration's env. */
-export const MCP_ROUTE_CLASS_ENV_KEY = 'BEELINE_MCP_ROUTE';
 
 export interface ImportedMcpServerInput {
   name: string;
@@ -49,47 +45,6 @@ export function classifyImportedMcpServer(input: ImportedMcpServerInput): McpRou
   if (command && isTrustySquireMcpLaunch(command, args)) return 'host';
   if (operatorMarkedHost(input.declaration)) return 'host';
   return 'local';
-}
-
-export function rewriteHostMcpDeclaration(
-  declaration: Record<string, unknown> | undefined,
-  operatorHome: string,
-  name: string,
-): Record<string, unknown> {
-  const rest = { ...(declaration ?? {}) };
-  delete rest[MCP_ROUTE_CLASS_KEY];
-  const envKey = mcpEnvKey(rest);
-  const existing = mcpEnvRecord(rest);
-  const nextEnv = {
-    ...existing,
-    ...hostRouteEnv(name, operatorHome, { ...rest, command: mcpLaunchCommand(rest) }),
-  };
-  const rewritten: Record<string, unknown> = { ...rest, [envKey]: nextEnv };
-  if (envKey === 'envs') delete rewritten.env;
-  else delete rewritten.envs;
-  return rewritten;
-}
-
-export function hostRouteEnv(
-  name: string,
-  operatorHome: string,
-  declaration?: Record<string, unknown>,
-): Record<string, string> {
-  const home = operatorHome || homedir();
-  const env: Record<string, string> = {
-    [MCP_ROUTE_CLASS_ENV_KEY]: MCP_ROUTE_HOST,
-    HOME: home,
-  };
-  const command = mcpLaunchCommand(declaration);
-  const args = mcpLaunchArgs(declaration);
-  if (
-    isCodeOwnedHostMcpName(name) ||
-    (command !== undefined && isTrustySquireMcpLaunch(command, args))
-  ) {
-    env.TRUSTY_SQUIRE_PROFILE_DIR = join(home, '.trusty-squire', 'chrome-profile');
-    env.XDG_CONFIG_HOME = join(home, '.config');
-  }
-  return env;
 }
 
 export function hostMcpIdentityPrefixes(name: string): string[] {
@@ -120,9 +75,7 @@ export function isHostMcpIdentity(
 }
 
 function operatorMarkedHost(declaration: Record<string, unknown> | undefined): boolean {
-  if (!declaration) return false;
-  if (declaration[MCP_ROUTE_CLASS_KEY] === MCP_ROUTE_HOST) return true;
-  return mcpEnvRecord(declaration)[MCP_ROUTE_CLASS_ENV_KEY] === MCP_ROUTE_HOST;
+  return declaration?.[MCP_ROUTE_CLASS_KEY] === MCP_ROUTE_HOST;
 }
 
 function mcpLaunchCommand(declaration: Record<string, unknown> | undefined): string | undefined {
@@ -132,24 +85,6 @@ function mcpLaunchCommand(declaration: Record<string, unknown> | undefined): str
 
 function mcpLaunchArgs(declaration: Record<string, unknown> | undefined): string[] {
   return stringArray(declaration?.args);
-}
-
-function mcpEnvKey(declaration: Record<string, unknown>): 'env' | 'envs' {
-  if ('envs' in declaration) return 'envs';
-  if ('env' in declaration) return 'env';
-  if ('cmd' in declaration && !('command' in declaration)) return 'envs';
-  return 'env';
-}
-
-function mcpEnvRecord(declaration: Record<string, unknown> | undefined): Record<string, string> {
-  if (!declaration) return {};
-  const raw = declaration.env ?? declaration.envs;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value === 'string') env[key] = value;
-  }
-  return env;
 }
 
 function stringField(value: unknown): string | undefined {

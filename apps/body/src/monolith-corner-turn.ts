@@ -13,7 +13,11 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  mountedImportedMcpServerNames,
+  prepareRoomAgentHome,
+} from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -26,10 +30,7 @@ import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sa
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
-import {
-  captureConnectionUsage,
-  ConnectorUsageRecorder,
-} from './connector-runner.js';
+import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
@@ -551,7 +552,8 @@ export class MonolithCornerTurnLoop {
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
-   *  session whose persona or model pin the operator has since changed. */
+   *  session whose persona, model pin, or mounted MCP set the operator has
+   *  since changed. */
   private async sessionIsCurrent(): Promise<boolean> {
     return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
   }
@@ -571,7 +573,16 @@ export class MonolithCornerTurnLoop {
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(),
       reviewerHandle: configuration.reviewerHandle,
+    });
+  }
+
+  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
+    return mountedImportedMcpServerNames({
+      operatorHome: this.options.config.operatorHome,
+      agentKind: this.options.config.agentKind,
+      preparedEnv,
     });
   }
 
@@ -586,14 +597,6 @@ export class MonolithCornerTurnLoop {
       this.roster(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      yoloMode: configuration.yoloMode,
-      reviewerHandle: configuration.reviewerHandle,
-    });
     this.yoloMode = configuration.yoloMode;
     this.reviewerHandle = configuration.reviewerHandle;
     const opener = this.options.openedBy
@@ -686,6 +689,15 @@ export class MonolithCornerTurnLoop {
       ...githubEnv,
       npm_config_cache: npmCacheDir,
     };
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(agentEnv),
+      reviewerHandle: configuration.reviewerHandle,
+    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
@@ -824,7 +836,7 @@ export class MonolithCornerTurnLoop {
                       cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer\'s approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+              "Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer's approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.",
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',

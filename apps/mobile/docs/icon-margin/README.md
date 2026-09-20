@@ -18,7 +18,8 @@ The 26%-larger margin is a launcher treatment, not a logo treatment. The
 launcher source and Android adaptive/monochrome foregrounds retain it. Web
 favicon and Android splash sources render the untransformed continuous-line
 mark on their surface background; the Android notification icon renders the
-same untransformed mark transparently.
+same loop as a white silhouette scaled to Material's 22×22 dp optical square
+inside the 24×24 dp status-bar asset.
 
 The comparison boards use the exact generated source assets. Their left tiles
 represent the previously shared launcher-inset source, and their right tiles

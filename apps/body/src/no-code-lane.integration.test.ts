@@ -42,9 +42,20 @@ const AGENT = getPublicKey(AGENT_SECRET);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
+/**
+ * Vitest's default hook timeout is 10s, and setup here is real work: a bare
+ * git remote built with four git children, a pglite migrate, an object store,
+ * an HTTP server and a daemon core. That fits locally and does not fit on a
+ * loaded CI runner, so every hook in this file states its own budget rather
+ * than widening the shared config for the whole suite.
+ */
+const HOOK_TIMEOUT_MS = 60_000;
+
 const roots: string[] = [];
-afterEach(async () =>
-  Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
+afterEach(
+  async () =>
+    Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
+  HOOK_TIMEOUT_MS,
 );
 
 /**
@@ -452,7 +463,7 @@ beforeEach(async () => {
   });
   abort = new AbortController();
   void core.run({ pollMs: 100, signal: abort.signal });
-});
+}, HOOK_TIMEOUT_MS);
 
 afterEach(async () => {
   abort?.abort();
@@ -461,7 +472,7 @@ afterEach(async () => {
   if (server) await new Promise<void>((done) => server.close(() => done()));
   if (objectStorage) await objectStorage.close();
   if (database) await database.close();
-});
+}, HOOK_TIMEOUT_MS);
 
 const request = async (path: string, method = 'GET', payload?: unknown) =>
   fetch(`${origin}${path}`, {

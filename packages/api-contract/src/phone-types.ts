@@ -504,8 +504,10 @@ export type ChatListItem = {
     /** Present so attachment-only latest messages remain visible in compact previews. */
     readonly attachments?: readonly AttachmentReference[];
   };
-  readonly memberCount: number;
-  readonly cornerCount: number;
+  /** Absent when the server omitted it means unknown — never treat as zero. */
+  readonly memberCount?: number;
+  /** Absent when the server omitted it means unknown — never treat as zero. */
+  readonly cornerCount?: number;
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;
@@ -536,7 +538,8 @@ export type ChatListWorkspace = {
   readonly id: string;
   readonly name: string;
   readonly avatar?: string;
-  readonly visibility: 'public' | 'invite-only';
+  /** Absent when the server omitted it or named a value this bundle does not know. */
+  readonly visibility?: 'public' | 'invite-only';
   readonly role: 'owner' | 'admin' | 'member';
   readonly updatedAt: number;
 };

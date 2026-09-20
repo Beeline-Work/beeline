@@ -11,6 +11,8 @@ import {
   isWorkspaceListView,
   isWorkspaceMemberListView,
   isWorkspaceView,
+  readCornerListView,
+  readInviteView,
   readRoomView,
   readWorkspaceView,
   isPushLevel,
@@ -246,57 +248,46 @@ describe('phone contract', () => {
       viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
       watchFilters: [],
     };
+    const cornersFor = (corner: Record<string, unknown>) =>
+      readCornerListView({ ...base, corners: [corner] })?.corners;
+    const lifecycle = { lifecycle: 'unknown', checks: 'unknown' };
+
     for (const state of ['working', 'waiting', 'review', 'archived'] as const) {
-      expect(
-        isCornerListView({
-          ...base,
-          corners: [
-            {
-              corner: header,
-              lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-              state,
-              initiator: identity,
-            },
-          ],
-        }),
-      ).toBe(true);
+      expect(cornersFor({ corner: header, lifecycle, state, initiator: identity })).toEqual([
+        { corner: header, lifecycle, state, initiator: identity },
+      ]);
     }
-    expect(
-      isCornerListView({
-        ...base,
-        corners: [
-          {
-            corner: header,
-            lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-            state: 'working',
-            initiator: { pubkey: 'missing identity fields' },
-          },
-        ],
-      }),
-    ).toBe(true);
-    expect(
-      isCornerListView({
-        ...base,
-        corners: [
-          {
-            corner: header,
-            lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-            state: 'working',
-            initiator: { ...identity, kind: 'agent' },
-          },
-        ],
-      }),
-    ).toBe(true);
+    // The four retired state words are not the contract: the corner is dropped,
+    // and the list it sits in survives.
     for (const state of ['open', 'idle', 'concluded', 'closed']) {
-      expect(
-        isCornerListView({
-          ...base,
-          corners: [
-            { corner: header, lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state },
-          ],
-        }),
-      ).toBe(true);
+      expect(cornersFor({ corner: header, lifecycle, state })).toEqual([]);
     }
+    // A malformed or non-human initiator is omitted; the corner itself stays.
+    expect(
+      cornersFor({
+        corner: header,
+        lifecycle,
+        state: 'working',
+        initiator: { pubkey: 'missing identity fields' },
+      }),
+    ).toEqual([{ corner: header, lifecycle, state: 'working' }]);
+    expect(
+      cornersFor({
+        corner: header,
+        lifecycle,
+        state: 'working',
+        initiator: { ...identity, kind: 'agent' },
+      }),
+    ).toEqual([{ corner: header, lifecycle, state: 'working' }]);
+    // A lifecycle word this bundle does not know reads as unknown rather than
+    // dropping the corner out of the list.
+    expect(
+      cornersFor({
+        corner: header,
+        lifecycle: { lifecycle: 'APPROVED', checks: 'flaky' },
+        state: 'review',
+      }),
+    ).toEqual([{ corner: header, lifecycle, state: 'review' }]);
   });
 
   it('owns the canonical invite-token format while accepting pre-contract monolith tokens', () => {
@@ -312,12 +303,14 @@ describe('phone contract', () => {
     const invite = { name: 'Builders', expiresAt: 2_000_000_000 };
     expect(isInviteView(invite)).toBe(true);
     expect(
-      isInviteView({
+      readInviteView({
         ...invite,
         joinedWorkspaceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-      }),
-    ).toBe(true);
-    expect(isInviteView({ ...invite, joinedWorkspaceId: false })).toBe(true);
+      })?.joinedWorkspaceId,
+    ).toBe('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    expect(
+      readInviteView({ ...invite, joinedWorkspaceId: false })?.joinedWorkspaceId,
+    ).toBeUndefined();
   });
 
   it('owns the prefix-free agent pairing-code format while accepting unexpired legacy codes', () => {

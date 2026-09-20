@@ -29,7 +29,7 @@ export const MEMBERS_LABEL = 'Members';
  * so a Room whose corners are all terminal renders no corner count at all
  * rather than a stale "0 corners".
  */
-export function formatRoomCornerCount(count: number): string | null {
-  if (count <= 0) return null;
+export function formatRoomCornerCount(count: number | undefined): string | null {
+  if (count === undefined || count <= 0) return null;
   return `${count} ${count === 1 ? CORNER_LABEL : CHANGES_LABEL}`;
 }

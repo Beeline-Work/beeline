@@ -1,15 +1,4 @@
-import type { SurfaceReader } from '@beeline/api-contract/phone';
-
 const CONTRACT_VERSION = 'room-surfaces-1';
-
-export type SurfaceCheck<T> = ((value: unknown) => value is T) | SurfaceReader<T>;
-
-function projectSurface<T>(check: SurfaceCheck<T>, value: unknown): T | null {
-  const result = (check as (candidate: unknown) => unknown)(value);
-  if (result === true) return value as T;
-  if (result === false || result === null || result === undefined) return null;
-  return result as T;
-}
 
 export type SurfaceCacheStorage = {
   readonly get: (key: string) => Promise<string | null>;
@@ -42,22 +31,21 @@ export class SurfaceResponseCache {
 
   async read<T>(
     address: SurfaceCacheAddress,
-    check: SurfaceCheck<T>,
+    guard: (value: unknown) => value is T,
   ): Promise<T | null> {
     const value = await this.storage.get(surfaceCacheKey(address));
     if (!value) return null;
     try {
       const parsed = JSON.parse(value) as unknown;
       const normalized = this.normalize(parsed);
-      const projected = projectSurface(check, normalized);
-      if (projected === null) {
+      if (!guard(normalized)) {
         await this.storage.remove(surfaceCacheKey(address));
         return null;
       }
-      if (projected !== parsed) {
-        await this.storage.set(surfaceCacheKey(address), JSON.stringify(projected));
+      if (normalized !== parsed) {
+        await this.storage.set(surfaceCacheKey(address), JSON.stringify(normalized));
       }
-      return projected;
+      return normalized;
     } catch {
       await this.storage.remove(surfaceCacheKey(address));
       return null;
@@ -67,12 +55,11 @@ export class SurfaceResponseCache {
   async write<T>(
     address: SurfaceCacheAddress,
     value: T,
-    check: SurfaceCheck<T>,
+    guard: (value: unknown) => value is T,
   ): Promise<void> {
     const normalized = this.normalize(value);
-    const projected = projectSurface(check, normalized);
-    if (projected === null) throw new Error('refusing to cache an invalid surface response');
-    await this.storage.set(surfaceCacheKey(address), JSON.stringify(projected));
+    if (!guard(normalized)) throw new Error('refusing to cache an invalid surface response');
+    await this.storage.set(surfaceCacheKey(address), JSON.stringify(normalized));
   }
 
   async remove(address: SurfaceCacheAddress): Promise<void> {

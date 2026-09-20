@@ -289,23 +289,26 @@ describe('RoomViewClient', () => {
       })?.repository,
     ).toBeUndefined();
     expect(
-      isRoomView({
+      readRoomView({
         ...room,
         cornerLifecycle: { lifecycle: 'APPROVED', checks: 'unknown' },
-      }),
-    ).toBe(true);
+      })?.cornerLifecycle,
+    ).toEqual({ lifecycle: 'unknown', checks: 'unknown' });
+    const watchFilter = { kinds: [30078], authors: ['a'.repeat(64)], '#t': ['agent-presence'] };
+    expect(readRoomView({ ...room, watchFilters: [watchFilter] })?.watchFilters).toEqual([
+      watchFilter,
+    ]);
+    // A filter whose every recognised key is unreadable would subscribe to the
+    // whole relay as `{}`, so it is dropped rather than projected empty.
     expect(
-      isRoomView({
+      readRoomView({
         ...room,
-        watchFilters: [{ kinds: [30078], authors: ['a'.repeat(64)], '#t': ['agent-presence'] }],
-      }),
-    ).toBe(true);
+        watchFilters: [{ kinds: [30078], '#t': 'agent-presence' }, { '#h': 7 }],
+      })?.watchFilters,
+    ).toEqual([{ kinds: [30078] }]);
     expect(
-      isRoomView({
-        ...room,
-        watchFilters: [{ kinds: [30078], '#t': 'agent-presence' }],
-      }),
-    ).toBe(true);
+      readRoomView({ ...room, watchFilters: [{ '#t': 'agent-presence' }] })?.watchFilters,
+    ).toEqual([]);
   });
 
   it('accepts only valid GitHub activity cards', () => {
@@ -325,18 +328,20 @@ describe('RoomViewClient', () => {
     };
 
     expect(isRoomViewMessage(message)).toBe(true);
+    // A type/action pair minted after this bundle shipped rides through as
+    // written; the card is not discarded for a word the bundle cannot name.
     expect(
-      isRoomViewMessage({
+      readRoomViewMessage({
         ...message,
         githubEvent: { ...message.githubEvent, type: 'not-real' },
-      }),
-    ).toBe(true);
+      })?.githubEvent,
+    ).toEqual({ ...message.githubEvent, type: 'not-real' });
     expect(
-      isRoomViewMessage({
+      readRoomViewMessage({
         ...message,
         githubEvent: { ...message.githubEvent, type: 'issue', action: 'merged' },
-      }),
-    ).toBe(true);
+      })?.githubEvent,
+    ).toEqual({ ...message.githubEvent, type: 'issue', action: 'merged' });
     expect(
       readRoomViewMessage({
         ...message,

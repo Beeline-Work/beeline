@@ -1000,7 +1000,7 @@ export default function BuzzChannels() {
                   <Text style={styles.age}>{age}</Text>
                 </View>
                 <View style={styles.cornerToggleSlot}>
-                  {item.cornerCount > 0 && (
+                  {(item.cornerCount ?? 0) > 0 && (
                     <TouchableOpacity
                       accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
                       accessibilityRole="button"

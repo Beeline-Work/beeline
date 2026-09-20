@@ -342,6 +342,45 @@ describe('phone surface readers', () => {
     expect(view?.messages.map((row) => row.text)).toEqual(['Change course', 'kept']);
   });
 
+  it('keeps the deck when the Workspace names a role or visibility this bundle does not know', () => {
+    const view = readChatListView({
+      workspace: { ...workspace, visibility: 'unlisted', role: 'steward' },
+      chats: [],
+      viewer: identity,
+      truncated: false,
+      watchFilters: [],
+    });
+    expect(view?.workspace.id).toBe(workspaceId);
+    expect(view?.workspace.visibility).toBeUndefined();
+    expect(view?.workspace.role).toBe('member');
+  });
+
+  it('keeps a deck row whose counts the server stopped sending, as unknown rather than zero', () => {
+    const view = readChatListView({
+      workspace,
+      chats: [{ room: header }],
+      viewer: identity,
+      truncated: false,
+      watchFilters: [],
+    });
+    expect(view?.chats).toHaveLength(1);
+    expect(view?.chats[0]?.memberCount).toBeUndefined();
+    expect(view?.chats[0]?.cornerCount).toBeUndefined();
+    expect(view?.chats[0]?.unread).toBe(false);
+  });
+
+  it('drops a watch filter that projects to an unconstrained empty subscription', () => {
+    expect(
+      readRoomView({ ...currentRoom, watchFilters: [{ '#h': 'not-an-array' }] })?.watchFilters,
+    ).toEqual([]);
+    expect(
+      readRoomView({
+        ...currentRoom,
+        watchFilters: Array.from({ length: 40 }, () => ({ '#h': [roomId] })),
+      })?.watchFilters,
+    ).toHaveLength(32);
+  });
+
   it('keeps a message when an optional card field is a kind this bundle does not know', () => {
     const view = readRoomView({
       ...currentRoom,

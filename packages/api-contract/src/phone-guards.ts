@@ -68,6 +68,7 @@ const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA1 = /^[0-9a-f]{40}$/i;
 const NIL_UUID = '00000000-0000-4000-8000-000000000000';
+const WATCH_FILTER_LIMIT = 32;
 const CLOSED_VIEWER: RoomViewer = {
   identity: { pubkey: '0'.repeat(64), kind: 'human', name: '' },
   role: 'member',
@@ -291,7 +292,11 @@ function readWatchFilter(value: unknown): SurfaceWatchFilter | null {
         : undefined,
     ),
   };
-  return Object.keys(filter).length > 0 ? filter : {};
+  return Object.keys(filter).length > 0 ? filter : null;
+}
+
+function readWatchFilters(value: unknown): SurfaceWatchFilter[] {
+  return readList(value, readWatchFilter, WATCH_FILTER_LIMIT) ?? [];
 }
 
 function readAttachment(value: unknown): NonNullable<RoomViewMessage['attachments']>[number] | null {
@@ -965,22 +970,13 @@ function readAgentTurn(value: unknown): RoomViewAgentTurn | null {
 
 function readWorkspace(value: unknown): ChatListWorkspace | null {
   const item = record(value);
-  if (
-    !item ||
-    !uuid(item.id) ||
-    typeof item.name !== 'string' ||
-    (item.visibility !== 'public' && item.visibility !== 'invite-only') ||
-    (item.role !== 'owner' && item.role !== 'admin' && item.role !== 'member') ||
-    !integer(item.updatedAt)
-  ) {
-    return null;
-  }
+  if (!item || !uuid(item.id)) return null;
   return {
     id: item.id,
-    name: item.name,
-    visibility: item.visibility,
-    role: item.role,
-    updatedAt: item.updatedAt,
+    name: typeof item.name === 'string' ? item.name : '',
+    role: oneOf(item.role, ['owner', 'admin', 'member']) ?? 'member',
+    updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
+    ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
   };
 }
@@ -1003,15 +999,7 @@ function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> 
 function readChat(value: unknown): ChatListItem | null {
   const item = record(value);
   const room = readHeader(item?.room);
-  if (
-    !item ||
-    !room ||
-    !integer(item.memberCount) ||
-    !integer(item.cornerCount) ||
-    typeof item.unread !== 'boolean'
-  ) {
-    return null;
-  }
+  if (!item || !room) return null;
   const direct = record(item.directMessage);
   const peer = readIdentity(direct?.peer);
   const presence = record(direct?.presence);
@@ -1022,9 +1010,9 @@ function readChat(value: unknown): ChatListItem | null {
       : undefined;
   return {
     room,
-    memberCount: item.memberCount,
-    cornerCount: item.cornerCount,
-    unread: item.unread,
+    unread: item.unread === true,
+    ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
+    ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
     ...field('agentsOffline', typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined),
     ...field('closed', typeof item.closed === 'boolean' ? item.closed : undefined),
     ...field('latestMessage', readLatest(item.latestMessage)),
@@ -1058,19 +1046,7 @@ function readCheck(value: unknown): NonNullable<
 
 function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
   const item = record(value);
-  if (
-    !item ||
-    (item.lifecycle !== 'working' &&
-      item.lifecycle !== 'in-review' &&
-      item.lifecycle !== 'unknown' &&
-      item.lifecycle !== 'done') ||
-    (item.checks !== 'passing' &&
-      item.checks !== 'failing' &&
-      item.checks !== 'pending' &&
-      item.checks !== 'unknown')
-  ) {
-    return null;
-  }
+  if (!item) return null;
   const checksSummary = record(item.checksSummary);
   const summaryStatus = oneOf(checksSummary?.status, ['passing', 'failing', 'pending', 'unknown']);
   const projectedSummary =
@@ -1111,8 +1087,8 @@ function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
         }
       : undefined;
   return {
-    lifecycle: item.lifecycle,
-    checks: item.checks,
+    lifecycle: oneOf(item.lifecycle, ['working', 'in-review', 'unknown', 'done']) ?? 'unknown',
+    checks: oneOf(item.checks, ['passing', 'failing', 'pending', 'unknown']) ?? 'unknown',
     ...field('branch', typeof item.branch === 'string' ? item.branch : undefined),
     ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
     ...field('reason', typeof item.reason === 'string' ? item.reason : undefined),
@@ -1124,11 +1100,13 @@ function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
 function readCorner(value: unknown): CornerListItem | null {
   const item = record(value);
   const corner = readHeader(item?.corner);
-  const lifecycle = readCornerLifecycle(item?.lifecycle);
+  const lifecycle = readCornerLifecycle(item?.lifecycle) ?? {
+    lifecycle: 'unknown' as const,
+    checks: 'unknown' as const,
+  };
   if (
     !item ||
     !corner ||
-    !lifecycle ||
     (item.state !== 'working' &&
       item.state !== 'waiting' &&
       item.state !== 'review' &&
@@ -1292,7 +1270,7 @@ export function readRoomView(value: unknown): RoomView | null {
     latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
     viewer,
     repositoryResolution: readRepositoryResolution(item.repositoryResolution) ?? 'none',
-    watchFilters: readList(item.watchFilters, readWatchFilter) ?? [],
+    watchFilters: readWatchFilters(item.watchFilters),
     ...field(
       'toolRows',
       readList(item.toolRows, (candidate) => readScopedMessage(candidate, room.id), ROOM_VIEW_TOOL_ROW_LIMIT),
@@ -1340,7 +1318,7 @@ export function readWorkspaceListView(value: unknown): WorkspaceListView | null 
     workspaces,
     viewer,
     truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
-    watchFilters: readList(item.watchFilters, readWatchFilter) ?? [],
+    watchFilters: readWatchFilters(item.watchFilters),
     ...field(
       'deletedNotices',
       readList(item.deletedNotices, (candidate) => {
@@ -1392,7 +1370,7 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
     membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
     agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
     viewer: readViewer(item.viewer),
-    watchFilters: readList(item.watchFilters, readWatchFilter) ?? [],
+    watchFilters: readWatchFilters(item.watchFilters),
     ...field('managerSettings', projectedManager),
     ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
     ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),
@@ -1435,7 +1413,7 @@ export function readChatListView(value: unknown): ChatListView | null {
     chats,
     viewer,
     truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
-    watchFilters: readList(item.watchFilters, readWatchFilter) ?? [],
+    watchFilters: readWatchFilters(item.watchFilters),
   };
 }
 
@@ -1453,7 +1431,7 @@ export function readCornerListView(value: unknown): CornerListView | null {
     room,
     corners,
     viewer: readViewer(item.viewer),
-    watchFilters: readList(item.watchFilters, readWatchFilter) ?? [],
+    watchFilters: readWatchFilters(item.watchFilters),
   };
 }
 
@@ -1484,7 +1462,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     workspaceId: item.workspaceId,
     agent,
     catalog,
-    watchFilters: readList(item.watchFilters, readWatchFilter) ?? [],
+    watchFilters: readWatchFilters(item.watchFilters),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
     ...field('soul', projectedSoul),
     ...field('seededSoul', nonempty(item.seededSoul) ? item.seededSoul : undefined),

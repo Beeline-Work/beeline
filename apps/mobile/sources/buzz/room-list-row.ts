@@ -50,7 +50,7 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
 
 export function expandedCornerRefreshAction(
   expandedRoomId: string | null,
-  chats: readonly { readonly room: { readonly id: string }; readonly cornerCount: number }[],
+  chats: readonly { readonly room: { readonly id: string }; readonly cornerCount?: number }[],
 ): ExpandedCornerRefreshAction {
   if (!expandedRoomId) return { kind: 'none' };
   const room = chats.find((chat) => chat.room.id === expandedRoomId);

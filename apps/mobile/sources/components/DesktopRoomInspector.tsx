@@ -359,6 +359,16 @@ function messageMatchesFocus(message: ChatDisplayMessage, focusMessageId: string
   return message.id === focusMessageId || message.relayId === focusMessageId;
 }
 
+function inspectorMessageKind(message: ChatDisplayMessage) {
+  if (message.corner) return 'hidden';
+  if (message.roomUpdate) return 'room-update';
+  if (message.notificationLifecycleRun) return 'notification';
+  if (message.githubEvent) return 'github';
+  if (message.daemonFact) return 'daemon';
+  if (message.isSystemNotice) return 'system';
+  return 'ordinary';
+}
+
 function CornerCockpit({
   client,
   roomId,
@@ -517,54 +527,63 @@ function CornerCockpit({
       setSending(false);
     }
   }, [detail, input, onRefresh, sending]);
-  const bylineOpeners = React.useMemo(() => transcriptBylineOpeners(messages), [messages]);
+  const bylineOpeners = React.useMemo(
+    () =>
+      transcriptBylineOpeners(
+        messages,
+        (message) => inspectorMessageKind(message) === 'ordinary' && !message.isAgentActivity,
+      ),
+    [messages],
+  );
   const renderMessage = React.useCallback(
     ({ item, index }: { item: ChatDisplayMessage; index: number }) => {
       const openUrl = (url: string) => void openExternalUrl(url).catch(() => undefined);
       const immediatelyPrecedingMessage = index > 0 ? messages[index - 1] : undefined;
-      if (item.corner) return null;
-      const node = item.roomUpdate ? (
-        <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
-      ) : item.notificationLifecycleRun ? (
-        <NotificationLifecycleCard
-          message={item}
-          onOpenCorner={onOpenCorner}
-          onOpenUrl={openUrl}
-        />
-      ) : item.githubEvent ? (
-        <GitHubEventCard message={item} onOpenUrl={openUrl} />
-      ) : item.daemonFact ? (
-        <DaemonFactCard message={item} onOpenCorner={() => undefined} onOpenUrl={openUrl} />
-      ) : item.isSystemNotice ? (
-        <LedgerSystemLine
-          id={item.id}
-          text={item.text}
-          {...(item.systemEvent ? { event: item.systemEvent } : {})}
-          stamp={ledgerStamp(item.timestamp)}
-          onOpenUrl={openUrl}
-        />
-      ) : (
-        <OrdinaryLedgerMessage
-          message={item}
-          firstBylineOfDay={bylineOpeners.has(item.id)}
-          participantsHydrated
-          viewerPubkey={detail?.viewer.identity.pubkey ?? ''}
-          speakerWorking={false}
-          continued={false}
-          {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
-          participantHandles={(detail?.members ?? []).flatMap(({ identity }) =>
-            identity.handle ? [{ pubkey: identity.pubkey, handle: identity.handle }] : [],
-          )}
-          channelIndex={channelIndex}
-          deliveryFailed={false}
-          onChannelReference={() => undefined}
-          onReply={() => undefined}
-          onCopy={() => undefined}
-          onRetry={() => undefined}
-          onDismiss={() => undefined}
-          desktopLayout
-        />
-      );
+      const kind = inspectorMessageKind(item);
+      if (kind === 'hidden') return null;
+      const node =
+        kind === 'room-update' ? (
+          <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
+        ) : kind === 'notification' ? (
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={onOpenCorner}
+            onOpenUrl={openUrl}
+          />
+        ) : kind === 'github' ? (
+          <GitHubEventCard message={item} onOpenUrl={openUrl} />
+        ) : kind === 'daemon' ? (
+          <DaemonFactCard message={item} onOpenCorner={() => undefined} onOpenUrl={openUrl} />
+        ) : kind === 'system' ? (
+          <LedgerSystemLine
+            id={item.id}
+            text={item.text}
+            {...(item.systemEvent ? { event: item.systemEvent } : {})}
+            stamp={ledgerStamp(item.timestamp)}
+            onOpenUrl={openUrl}
+          />
+        ) : (
+          <OrdinaryLedgerMessage
+            message={item}
+            firstBylineOfDay={bylineOpeners.has(item.id)}
+            participantsHydrated
+            viewerPubkey={detail?.viewer.identity.pubkey ?? ''}
+            speakerWorking={false}
+            continued={false}
+            {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
+            participantHandles={(detail?.members ?? []).flatMap(({ identity }) =>
+              identity.handle ? [{ pubkey: identity.pubkey, handle: identity.handle }] : [],
+            )}
+            channelIndex={channelIndex}
+            deliveryFailed={false}
+            onChannelReference={() => undefined}
+            onReply={() => undefined}
+            onCopy={() => undefined}
+            onRetry={() => undefined}
+            onDismiss={() => undefined}
+            desktopLayout
+          />
+        );
       const captioned = withLedgerDayCaption(
         node,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),

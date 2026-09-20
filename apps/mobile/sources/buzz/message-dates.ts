@@ -73,31 +73,37 @@ export function transcriptStamp(
   return `${ledgerDate(timestamp)} ${clock}`;
 }
 
-export function transcriptBylineOpeners(messages: readonly ChatDisplayMessage[]): Set<string> {
+function hasTranscriptByline(message: ChatDisplayMessage): boolean {
+  return !(
+    message.roomUpdate ||
+    message.writePermission ||
+    message.grantRequest ||
+    message.choice ||
+    message.connectorOffer ||
+    message.walletTx ||
+    message.walletInsufficient ||
+    message.walletDelegation ||
+    message.targetBranchProposal ||
+    message.relay ||
+    message.corner ||
+    message.notificationLifecycleRun ||
+    message.githubEvent ||
+    message.daemonFact ||
+    message.isArchivedNotice ||
+    message.isSystemNotice ||
+    message.durableFact ||
+    message.isAgentActivity
+  );
+}
+
+export function transcriptBylineOpeners(
+  messages: readonly ChatDisplayMessage[],
+  hasByline: (message: ChatDisplayMessage) => boolean = hasTranscriptByline,
+): Set<string> {
   const openers = new Set<string>();
   let previousTimestamp: number | undefined;
   for (const message of messages) {
-    if (
-      message.roomUpdate ||
-      message.writePermission ||
-      message.grantRequest ||
-      message.choice ||
-      message.connectorOffer ||
-      message.walletTx ||
-      message.walletInsufficient ||
-      message.walletDelegation ||
-      message.targetBranchProposal ||
-      message.relay ||
-      message.corner ||
-      message.notificationLifecycleRun ||
-      message.githubEvent ||
-      message.daemonFact ||
-      message.isArchivedNotice ||
-      message.isSystemNotice ||
-      message.durableFact ||
-      message.isAgentActivity
-    )
-      continue;
+    if (!hasByline(message)) continue;
     if (isLedgerDayOpener(message.timestamp, previousTimestamp)) openers.add(message.id);
     previousTimestamp = message.timestamp;
   }

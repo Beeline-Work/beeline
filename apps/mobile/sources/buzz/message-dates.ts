@@ -56,17 +56,18 @@ export function ledgerDayCaption(
 }
 
 /**
- * Bylines only: the clock, plus the date on a past day's first byline.
+ * Bylines: the clock, plus the date when the message is not today.
  * Today never carries a date. Gutter stamps stay on `ledgerStamp`.
+ * The date is on every past-day byline so a reader landed at the newest
+ * row still sees it; the day caption remains the opener-only marker.
  */
 export function transcriptStamp(
   timestamp: number | undefined,
-  firstBylineOfDay: boolean,
+  _firstBylineOfDay: boolean,
   nowMs: number = Date.now(),
 ): string {
   const clock = ledgerStamp(timestamp);
   if (!clock) return '';
-  if (!firstBylineOfDay) return clock;
   const at = atDate(timestamp);
   const now = new Date(nowMs);
   if (!at || localDayKey(at) === localDayKey(now)) return clock;

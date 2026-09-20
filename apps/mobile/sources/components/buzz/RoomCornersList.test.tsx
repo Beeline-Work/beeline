@@ -181,7 +181,9 @@ describe('RoomCornersList', () => {
     const tree = render([corner('live', state, 'Fix fixture')]);
     const row = tree.root.findByType('Pressable' as any);
     const circle = tree.root.findByType('StateCircle' as any);
-    const label = row.findAllByType('Text' as any).find((node: any) => node.props.children === state);
+    const label = row
+      .findAllByType('Text' as any)
+      .find((node: any) => node.props.children === state);
     expect(label).toBeDefined();
     expect(resolvedStyle(label.props.style)).toMatchObject({
       ...beelineThemes.obsidian.type.sectionHead,
@@ -262,12 +264,19 @@ describe('RoomCornersHeader', () => {
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
     const texts = tree.root.findAllByType('Text' as any);
-    expect(texts.map((node: any) => node.props.children)).toEqual(['‹', '#alpha', 'Corners', count]);
+    expect(texts.map((node: any) => node.props.children)).toEqual([
+      '‹',
+      '#alpha',
+      'Corners',
+      count,
+    ]);
     expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.meta);
     expect(resolvedStyle(texts[2].props.style)).toMatchObject(hull.type.hero);
     expect(texts[2].props.accessibilityRole).toBe('header');
     expect(resolvedStyle(texts[3].props.style)).toMatchObject(hull.type.meta);
-    expect(texts[3].props.accessibilityLabel).toBe(`${count} ${count === 1 ? 'corner' : 'corners'}`);
+    expect(texts[3].props.accessibilityLabel).toBe(
+      `${count} ${count === 1 ? 'corner' : 'corners'}`,
+    );
     const back = tree.root.findByType('TouchableOpacity' as any);
     expect(back.props).toMatchObject({ accessibilityRole: 'button', accessibilityLabel: 'Back' });
     expect(resolvedStyle(back.props.style)).toMatchObject({ width: 44, height: 44 });

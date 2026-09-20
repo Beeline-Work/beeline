@@ -17,6 +17,13 @@ import {
   snapshotArtifactPreview,
 } from '@/buzz/artifact-preview-cache';
 import {
+  ARTIFACT_PDF_BASE_URL,
+  ARTIFACT_PDF_RENDER_TIMEOUT_MS,
+  loadPdfViewerDocument,
+  pdfRenderedSignalGuard,
+} from '@/buzz/artifact-pdf';
+import {
+  artifactBase64,
   artifactPdfLocalUri,
   fetchArtifactBytes,
   fetchArtifactText,
@@ -26,6 +33,8 @@ import { formatAttachmentSize } from '@/buzz/chat-attachment';
 import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
+import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { Modal } from '@/modal';
@@ -79,14 +88,12 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     });
   }, [attachment, authorHandle, isDesktop]);
 
-  // Android hands the whole PDF to the system viewer (phase one); desktop
-  // previews and opens through the browser. iOS renders the first page here.
-  // Raster images keep the file-style card but open in the native phone viewer.
+  // What is left external is what nothing on the device can paint — a ZIP, an
+  // octet-stream, anything unrecognized. Those keep the file-style row and the
+  // signed browser link, which is the only way to reach their contents.
   if (capabilities.preview === 'external') {
     const actions =
-      capabilities.viewer === 'external' && (format !== 'pdf' || isDesktop)
-        ? (['browser'] as const)
-        : (['browser', 'open'] as const);
+      capabilities.viewer === 'external' ? (['browser'] as const) : (['browser', 'open'] as const);
     return (
       <ArtifactCardShell
         title={title}
@@ -123,6 +130,31 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       >
         {format === 'markdown' ? (
           <ArtifactMarkdownPreview attachment={attachment} />
+        ) : format === 'text' ? (
+          <View style={styles.preview}>
+            <ArtifactText attachment={attachment} crop testID="artifact-preview-text" />
+            <View style={styles.previewFade} pointerEvents="none" />
+          </View>
+        ) : format === 'image' ? (
+          <View style={styles.preview}>
+            <ArtifactImage
+              attachment={attachment}
+              fit="cover"
+              style={styles.previewImage}
+              testID="artifact-preview-image"
+            />
+          </View>
+        ) : format === 'pdf' && Platform.OS === 'web' ? (
+          // The work pane's host has no WebView to snapshot, so the desktop
+          // card paints page one in the frame itself.
+          <View style={styles.preview}>
+            <ArtifactPdfView
+              attachment={attachment}
+              mode="preview"
+              testID="artifact-preview-pdf"
+            />
+            <View style={styles.previewFade} pointerEvents="none" />
+          </View>
         ) : (
           <ArtifactSandboxPreview
             attachment={attachment}
@@ -195,7 +227,9 @@ type SandboxPreviewFormat = 'html' | 'svg' | 'pdf';
 /**
  * The on-device render of the page itself in the script-off sandbox: rendered
  * once, snapshotted to the device cache keyed by object id. HTML/SVG ride the
- * wrapped markup source; an iOS PDF rides a cache file URI (page one).
+ * wrapped markup source; an iOS PDF rides a cache file URI (page one), and an
+ * Android PDF rides the generated pdf.js document, which is what lets the same
+ * cached-thumbnail path serve a PDF card there too.
  */
 export function ArtifactSandboxPreview({
   attachment,
@@ -208,6 +242,7 @@ export function ArtifactSandboxPreview({
   const [snapshotPath, setSnapshotPath] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
   const [documentHtml, setDocumentHtml] = useState<string | null>(null);
+  const [pdfDocument, setPdfDocument] = useState(false);
   const [pdfUri, setPdfUri] = useState<string | null>(null);
   const guardRef = useRef(createInitialLoadGuard());
   useEffect(() => {
@@ -220,8 +255,14 @@ export function ArtifactSandboxPreview({
         return;
       }
       try {
-        if (format === 'pdf') {
+        if (format === 'pdf' && Platform.OS === 'ios') {
           setPdfUri(await artifactPdfLocalUri(attachment));
+        } else if (format === 'pdf') {
+          const pdfBase64 = await artifactBase64(attachment);
+          setDocumentHtml(
+            await loadPdfViewerDocument({ pdfBase64, mode: 'preview', signalRendered: true }),
+          );
+          setPdfDocument(true);
         } else {
           const bytes = await fetchArtifactBytes(attachment);
           setDocumentHtml(wrapArtifactMarkup(new TextDecoder().decode(bytes), format));
@@ -242,13 +283,19 @@ export function ArtifactSandboxPreview({
       setRendering(false);
     }
   }, [attachment.url]);
-  // A page whose load-end never fires still captures once, late; the in-flight
-  // marker in the cache module keeps the timer and onLoadEnd from doubling.
+  // A page whose cue never arrives still captures once, late; the in-flight
+  // marker in the cache module keeps the timer and the cue from doubling. The
+  // pdf.js document gets the longer backstop because it is allowed to spend up
+  // to its own render timeout before it gives up and paints the failure line —
+  // firing at 1.2s there would cache the blank page it had not finished yet.
   useEffect(() => {
     if (!rendering) return;
-    const timer = setTimeout(() => void capture(), PREVIEW_SNAPSHOT_DELAY_MS);
+    const timer = setTimeout(
+      () => void capture(),
+      pdfDocument ? ARTIFACT_PDF_RENDER_TIMEOUT_MS + PREVIEW_SNAPSHOT_DELAY_MS : PREVIEW_SNAPSHOT_DELAY_MS,
+    );
     return () => clearTimeout(timer);
-  }, [capture, rendering]);
+  }, [capture, pdfDocument, rendering]);
   const WebView = useSandboxWebView();
   if (snapshotPath) {
     return (
@@ -267,9 +314,17 @@ export function ArtifactSandboxPreview({
     const source = pdfUri
       ? { uri: pdfUri }
       : documentHtml
-        ? { html: documentHtml }
+        ? { html: documentHtml, ...(pdfDocument ? { baseUrl: ARTIFACT_PDF_BASE_URL } : {}) }
         : null;
     if (source) {
+      // Markup and the iOS PDF have painted by the time the load ends, so the
+      // load event is the cue to snapshot. The pdf.js document has not — it
+      // paints well after its own load — so it says when it is done, through a
+      // navigation the guard refuses on its way past. Snapshotting on load
+      // there would cache a blank page as the thumbnail.
+      const guard = pdfDocument
+        ? pdfRenderedSignalGuard(guardRef.current, () => void capture())
+        : guardRef.current;
       return (
         <View
           ref={viewRef}
@@ -278,8 +333,8 @@ export function ArtifactSandboxPreview({
           testID="artifact-preview-render"
         >
           <WebView
-            {...artifactWebViewProps({ source, guard: guardRef.current })}
-            onLoadEnd={() => void capture()}
+            {...artifactWebViewProps({ source, guard, javaScript: pdfDocument })}
+            onLoadEnd={pdfDocument ? undefined : () => void capture()}
             pointerEvents="none"
             style={styles.previewWeb}
           />

@@ -40,6 +40,7 @@
  * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
@@ -603,22 +604,32 @@ function filteredHarnessMcpToml(source: string): string | undefined {
   return extractTomlSections(source, ['mcp_servers'], excluded);
 }
 
-export function mountedImportedMcpServerNames(input: {
-  operatorHome?: string;
-  agentHomeRoot?: string;
-  agentKind?: AgentKind;
-  preparedEnv?: Record<string, string>;
-} = {}): string[] {
+export function mountedImportedMcpServerNames(
+  input: {
+    operatorHome?: string;
+    agentHomeRoot?: string;
+    agentKind?: AgentKind;
+    preparedEnv?: Record<string, string>;
+  } = {},
+): string[] {
   const names = new Set<string>();
   if (input.preparedEnv) {
     const env = input.preparedEnv;
     const home = env.HOME ?? input.operatorHome ?? homedir();
     const kind = input.agentKind;
     if (!kind || kind === 'codex') {
-      addTomlMcpNames(names, resolve(env.CODEX_HOME ?? resolve(home, '.codex'), 'config.toml'), 'all');
+      addTomlMcpNames(
+        names,
+        resolve(env.CODEX_HOME ?? resolve(home, '.codex'), 'config.toml'),
+        'all',
+      );
     }
     if (!kind || kind === 'grok') {
-      addTomlMcpNames(names, resolve(env.GROK_HOME ?? resolve(home, '.grok'), 'config.toml'), 'all');
+      addTomlMcpNames(
+        names,
+        resolve(env.GROK_HOME ?? resolve(home, '.grok'), 'config.toml'),
+        'all',
+      );
     }
     if (!kind || kind === 'claude') {
       addClaudeMcpNames(names, resolve(env.CLAUDE_CONFIG_DIR ?? home, '.claude.json'), 'all');
@@ -629,12 +640,12 @@ export function mountedImportedMcpServerNames(input: {
         env.GOOSE_PATH_ROOT
           ? resolve(env.GOOSE_PATH_ROOT, 'config/config.yaml')
           : resolve(home, '.config/goose/config.yaml'),
-        'all',
       );
     }
   } else {
     collectImportedMcpNames(input.operatorHome ?? homedir(), names, input.agentKind);
-    if (input.agentHomeRoot) collectGrantedHostRouteNames(input.agentHomeRoot, names, input.agentKind);
+    if (input.agentHomeRoot)
+      collectGrantedHostRouteNames(input.agentHomeRoot, names, input.agentKind);
   }
   return [...names].sort((left, right) => left.localeCompare(right));
 }
@@ -650,7 +661,7 @@ function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?
     addClaudeMcpNames(names, resolve(operatorHome, '.claude.json'), 'imported');
   }
   if (!kind || kind === 'goose') {
-    addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'), 'imported');
+    addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'));
   }
 }
 
@@ -667,9 +678,6 @@ function collectGrantedHostRouteNames(
   }
   if (!kind || kind === 'claude') {
     addClaudeMcpNames(names, resolve(agentHomeRoot, 'claude/.claude.json'), 'host-route');
-  }
-  if (!kind || kind === 'goose') {
-    addGooseExtensionNames(names, resolve(agentHomeRoot, 'goose/config/config.yaml'), 'host-route');
   }
 }
 
@@ -712,50 +720,19 @@ function isClaudeHostRoute(name: string, value: unknown): boolean {
   return isTrustySquireMcpLaunch(server.command, args);
 }
 
-function addGooseExtensionNames(
-  names: Set<string>,
-  path: string,
-  mode: 'imported' | 'host-route' | 'all',
-): void {
+function addGooseExtensionNames(names: Set<string>, path: string): void {
   const source = readExistingText(path);
   if (source === undefined) return;
-  for (const extension of gooseExtensionBodies(source)) {
-    const hostRoute =
-      extension.name === 'squire' || isTrustySquireMcpLaunch(extension.body);
-    if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(extension.name);
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(source);
+  } catch {
+    return;
   }
-}
-
-function gooseExtensionBodies(source: string): Array<{ name: string; body: string }> {
-  const entries: Array<{ name: string; body: string }> = [];
-  let inExtensions = false;
-  let current: { name: string; body: string[] } | undefined;
-  const finish = () => {
-    if (!current) return;
-    entries.push({ name: current.name, body: current.body.join('\n') });
-    current = undefined;
-  };
-  for (const line of source.split(/\r?\n/)) {
-    if (/^extensions:\s*(#.*)?$/.test(line)) {
-      finish();
-      inExtensions = true;
-      continue;
-    }
-    if (inExtensions && /^[^\s#]/.test(line)) {
-      finish();
-      inExtensions = false;
-    }
-    if (!inExtensions) continue;
-    const header = /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line);
-    if (header) {
-      finish();
-      current = { name: header[1]!, body: [] };
-      continue;
-    }
-    current?.body.push(line);
-  }
-  finish();
-  return entries;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+  const extensions = (parsed as Record<string, unknown>).extensions;
+  if (!extensions || typeof extensions !== 'object' || Array.isArray(extensions)) return;
+  for (const name of Object.keys(extensions)) names.add(name);
 }
 
 function readExistingText(path: string): string | undefined {

@@ -850,22 +850,64 @@ describe('mounted imported MCP server names', () => {
       'files',
       'filesystem',
       'linear',
+      'squire',
       'typescript',
     ]);
   });
 
+  it.each([
+    'extensions:\n    files:\n        cmd: files-mcp\n    squire:\n        cmd: squire-mcp\n',
+    'extensions:\n  "files": {cmd: files-mcp}\n  \'squire\': {cmd: squire-mcp}\n',
+    'extensions: {files: {cmd: files-mcp}, squire: {cmd: squire-mcp}}\n',
+  ])('tracks the Goose inventory copied by preparation: %s', async (source) => {
+    const operatorHome = await scratch('beeline-goose-inventory-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-goose-inventory-home-'), 'agent-home');
+    const sourcePath = resolve(operatorHome, '.config/goose/config.yaml');
+    await mkdir(resolve(operatorHome, '.config/goose'), { recursive: true });
+    await writeFile(sourcePath, source);
+    const input = { operatorHome, agentHomeRoot, agentKind: 'goose' as const };
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'goose',
+    });
+    expect(mountedImportedMcpServerNames(input)).toEqual(['files', 'squire']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
+    await writeFile(sourcePath, 'extensions: {}\n');
+    expect(mountedImportedMcpServerNames(input)).toEqual([]);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
+    await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'goose' });
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual([]);
+    await rm(sourcePath);
+    expect(mountedImportedMcpServerNames(input)).toEqual([]);
+  });
+
   it('reads only the selected harness inventory after preparation', async () => {
     const operatorHome = await scratch('beeline-mounted-mcp-prepared-op-');
-    const agentHomeRoot = resolve(await scratch('beeline-mounted-mcp-prepared-home-'), 'agent-home');
+    const agentHomeRoot = resolve(
+      await scratch('beeline-mounted-mcp-prepared-home-'),
+      'agent-home',
+    );
     await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
-    await writeFile(resolve(operatorHome, '.codex/config.toml'), '[mcp_servers.files]\ncommand = "files-mcp"\n');
-    await writeFile(resolve(operatorHome, '.claude.json'), JSON.stringify({
-      mcpServers: { typescript: { command: 'typescript-mcp' } },
-    }));
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      '[mcp_servers.files]\ncommand = "files-mcp"\n',
+    );
+    await writeFile(
+      resolve(operatorHome, '.claude.json'),
+      JSON.stringify({
+        mcpServers: { typescript: { command: 'typescript-mcp' } },
+      }),
+    );
     const preparedEnv = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome });
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
-    expect(mountedImportedMcpServerNames({ agentKind: 'claude', preparedEnv })).toEqual(['typescript']);
-    await writeFile(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), '[mcp_servers.squire]\nurl = "http://localhost:1234/mcp"\n');
+    expect(mountedImportedMcpServerNames({ agentKind: 'claude', preparedEnv })).toEqual([
+      'typescript',
+    ]);
+    await writeFile(
+      resolve(preparedEnv.CODEX_HOME!, 'config.toml'),
+      '[mcp_servers.squire]\nurl = "http://localhost:1234/mcp"\n',
+    );
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['squire']);
     await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome });
     expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);

@@ -2,6 +2,7 @@ import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
@@ -40,6 +41,8 @@ async function twoTurns(
   systemPrompts: string[] = [],
   hooks?: {
     thirdTurn?: boolean;
+    agentKind?: BodyConfig['agentKind'];
+    beforeTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
     betweenTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
   },
 ): Promise<{
@@ -65,7 +68,7 @@ async function twoTurns(
   const traceDir = turnTraceDirectory(root);
   const config: BodyConfig = {
     agentBinary: '/fake-agent',
-    agentKind: 'codex',
+    agentKind: hooks?.agentKind ?? 'codex',
     agentCommand: '/fake-agent',
     agentArgs: [],
     mcpBinary: '/fake-dev-mcp',
@@ -82,6 +85,8 @@ async function twoTurns(
     operatorHome: join(root, 'operator-home'),
     agentHomeRoot: join(root, 'agent-home'),
   };
+
+  await hooks?.beforeTurns?.(paths);
 
   const asks = [
     { id: 'ask-1', body: 'first' },
@@ -152,10 +157,15 @@ async function twoTurns(
   });
   vi.spyOn(acp, 'sessionNew').mockImplementation(async (input: { systemPrompt?: string }) => {
     mountedInventories.push(
-      tomlChildTableNames(
-        await readFile(join(paths.agentHomeRoot, 'codex/config.toml'), 'utf8'),
-        ['mcp_servers'],
-      ),
+      config.agentKind === 'goose'
+        ? Object.keys(
+            parseYaml(await readFile(join(paths.agentHomeRoot, 'goose/config/config.yaml'), 'utf8'))
+              .extensions ?? {},
+          ).sort()
+        : tomlChildTableNames(
+            await readFile(join(paths.agentHomeRoot, 'codex/config.toml'), 'utf8'),
+            ['mcp_servers'],
+          ),
     );
     systemPrompts.push(input.systemPrompt ?? '');
     return { sessionId: `room-session-${activations}`, raw: {} };
@@ -244,6 +254,37 @@ describe('retained Room session', () => {
     expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
   });
 
+  it.each([
+    ['extensions: {}\n', 'extensions:\n    "files": {cmd: files-mcp}\n', [], ['files']],
+    ["extensions:\n    'squire': {cmd: squire-mcp}\n", 'extensions: {}\n', ['squire'], []],
+  ] as const)(
+    'restarts Goose when its copied extension set changes',
+    async (before, after, first, second) => {
+      const { activations, traces, mountedInventories } = await twoTurns(
+        [unchanged, unchanged],
+        [],
+        {
+          agentKind: 'goose',
+          thirdTurn: true,
+          beforeTurns: async ({ operatorHome }) => {
+            await mkdir(join(operatorHome, '.config/goose'), { recursive: true });
+            await writeFile(join(operatorHome, '.config/goose/config.yaml'), before);
+          },
+          betweenTurns: async ({ operatorHome }) => {
+            await writeFile(join(operatorHome, '.config/goose/config.yaml'), after);
+          },
+        },
+      );
+      expect(mountedInventories).toEqual([first, second]);
+      expect(activations).toBe(2);
+      expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual([
+        'cold',
+        'cold',
+        'warm',
+      ]);
+    },
+  );
+
   it('retains the replacement using the inventory preparation actually supplies', async () => {
     const { activations, traces, mountedInventories } = await twoTurns([unchanged, unchanged], [], {
       thirdTurn: true,
@@ -251,11 +292,9 @@ describe('retained Room session', () => {
         await mkdir(join(agentHomeRoot, 'codex'), { recursive: true });
         await writeFile(
           join(agentHomeRoot, 'codex/config.toml'),
-          [
-            '[mcp_servers.squire]',
-            'command = "npx"',
-            'args = ["-y", "@trusty-squire/mcp"]',
-          ].join('\n'),
+          ['[mcp_servers.squire]', 'command = "npx"', 'args = ["-y", "@trusty-squire/mcp"]'].join(
+            '\n',
+          ),
         );
       },
     });

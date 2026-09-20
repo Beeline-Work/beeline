@@ -80,6 +80,7 @@ vi.mock('./HullDialog', async () => {
   return { HullFloatingSurface: host('HullFloatingSurface'), HullModal: host('HullModal') };
 });
 
+import { ChevronGlyph } from './ChevronGlyph';
 import { HULL_SHEET_INSET, HullActionSheetRow } from './HullActionSheet';
 
 const originalConsoleError = console.error;
@@ -128,6 +129,28 @@ function switches(renderer: ReactTestRenderer): unknown[] {
   return renderer.root.findAllByType('Switch' as any);
 }
 
+/**
+ * The row's disclosure mark is a drawn shape, not a written part, so these
+ * two read it the way the surface does: which way it points, and the box it
+ * ends its trailing axis in.
+ */
+function chevronDirections(renderer: ReactTestRenderer, testID: string): string[] {
+  const node = renderer.root
+    .findAll((candidate: any) => candidate.props?.testID === testID)
+    .find((candidate: any) => candidate.type === 'Pressable' || candidate.type === 'View')!;
+  return node
+    .findAllByType(ChevronGlyph as never)
+    .map((glyph: any) => glyph.props.direction ?? 'right');
+}
+
+function chevronBox(renderer: ReactTestRenderer, testID: string): Record<string, unknown> {
+  const node = renderer.root
+    .findAll((candidate: any) => candidate.props?.testID === testID)
+    .find((candidate: any) => candidate.type === 'Pressable' || candidate.type === 'View')!;
+  const glyph = node.findByType(ChevronGlyph as never);
+  return Object.assign({}, ...[glyph.parent!.props.style].flat(Infinity).filter(Boolean));
+}
+
 describe('sheet row trailing vocabulary (C102)', () => {
   it('gives a setting its value, a toggle its switch, an opener its chevron, and an action nothing', () => {
     const renderer = render(
@@ -159,8 +182,10 @@ describe('sheet row trailing vocabulary (C102)', () => {
     // A toggle is the switch, and carries no written On/Off beside it.
     expect(texts(renderer, 'toggle-row')).toEqual(['Repo notifications']);
     expect(switches(renderer)).toHaveLength(1);
-    // An opener is the chevron; open-here is the same mark turned down.
-    expect(texts(renderer, 'chevron-row')).toEqual(['Scheduled work', '›']);
+    // An opener is the chevron; open-here is the same mark turned down. The
+    // mark is DRAWN, so it is not one of the row's written parts.
+    expect(texts(renderer, 'chevron-row')).toEqual(['Scheduled work']);
+    expect(chevronDirections(renderer, 'chevron-row')).toEqual(['right']);
     // A plain action acts on press and shows nothing at all.
     expect(texts(renderer, 'action-row')).toEqual(['Delete Room']);
   });
@@ -169,7 +194,8 @@ describe('sheet row trailing vocabulary (C102)', () => {
     const renderer = render(
       <HullActionSheetRow chevron="down" label="Repo" onPress={() => undefined} testID="open" />,
     );
-    expect(texts(renderer, 'open')).toEqual(['Repo', '⌄']);
+    expect(texts(renderer, 'open')).toEqual(['Repo']);
+    expect(chevronDirections(renderer, 'open')).toEqual(['down']);
   });
 
   it('ends every trailing form on ONE axis: the sheet row inset', () => {
@@ -189,11 +215,17 @@ describe('sheet row trailing vocabulary (C102)', () => {
       .filter((text: any) => typeof text.props.children === 'string')
       .filter((text: any) => text.props.children !== 'Repo')
       .map((text: any) => Object.assign({}, ...[text.props.style].flat(Infinity).filter(Boolean)));
-    expect(trailing).toHaveLength(2);
-    // Both the value and the chevron are right-aligned in their own box, so
-    // each one's trailing EDGE lands on the row's padding edge (C99's fix on
-    // the Members page, now the rule for every sheet row).
+    // The written value right-aligns in its own box so its trailing EDGE
+    // lands on the row's padding edge (C99's fix on the Members page, now the
+    // rule for every sheet row).
+    expect(trailing).toHaveLength(1);
     for (const style of trailing) expect(style.textAlign).toBe('right');
+    // The DRAWN chevron ends on that same axis, but a shape has no text
+    // alignment: its box is the 16 the value's box ends on, and the glyph is
+    // pushed to that box's trailing edge.
+    const box = chevronBox(renderer, 'axis');
+    expect(box.width).toBe(16);
+    expect(box.alignItems).toBe('flex-end');
   });
 
   it('renders a list, never a stack of framed slabs', () => {

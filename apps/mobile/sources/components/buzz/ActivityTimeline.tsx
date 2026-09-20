@@ -21,6 +21,7 @@ import {
 } from './Ledger';
 import { MonoMarkdown } from './MonoMarkdown';
 import { StreamingProse } from './StreamingProse';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
 type ActivityTimelineProps = {
   active?: boolean;
@@ -162,9 +163,13 @@ function ToolRunGroupRow({
         style={styles.groupRow}
         testID={`tool-run-group-${run.id}`}
       >
-        <Text accessibilityElementsHidden style={styles.groupChevron}>
-          {expanded ? '⌃' : '⌄'}
-        </Text>
+        <View style={styles.groupChevron}>
+          <ChevronGlyph
+            color={styles.groupChevronMark.color}
+            direction={expanded ? 'up' : 'down'}
+            size={CHEVRON_ROW_SIZE}
+          />
+        </View>
         <Text ellipsizeMode="middle" numberOfLines={1} style={styles.groupLabel}>
           {`${run.count} ${run.count === 1 ? 'step' : 'steps'}`}
           {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
@@ -326,12 +331,10 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: groknight.space.sm,
     },
-    groupChevron: {
-      ...groknight.type.machine,
-      width: 24,
-      flexShrink: 0,
-      color: groknight.ledgerGhost,
-    },
+    // The 24 gutter the steps hang off stays; the mark inside it is drawn,
+    // so it needs no machine type role to sit on the label's line.
+    groupChevron: { width: 24, flexShrink: 0, justifyContent: 'center' },
+    groupChevronMark: { color: groknight.ledgerGhost },
     groupLabel: {
       ...groknight.type.machine,
       flex: 1,

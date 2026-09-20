@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 import { HullFloatingSurface, HullModal } from './HullDialog';
 
 type HullActionSheetProps = {
@@ -207,9 +208,13 @@ export function HullActionSheetRow({
           />
         </View>
       ) : chevron ? (
-        <Text accessibilityElementsHidden style={styles.chevron}>
-          {chevron === 'down' ? '\u2304' : '\u203a'}
-        </Text>
+        <View style={styles.chevron}>
+          <ChevronGlyph
+            color={styles.chevronMark.color}
+            direction={chevron === 'down' ? 'down' : 'right'}
+            size={CHEVRON_ROW_SIZE}
+          />
+        </View>
       ) : null}
     </>
   );
@@ -403,13 +408,11 @@ const styles = StyleSheet.create((theme) => {
     },
     // Right-aligned in its own column so the glyph's trailing edge lands on the
     // row's padding edge — the one axis every trailing mark shares (C99, C102).
-    chevron: {
-      ...Typography.default(),
-      ...hull.type.hero,
-      width: 16,
-      textAlign: 'right',
-      color: hull.textMuted,
-    },
+    // The mark is drawn, so the row keeps the 16 trailing axis every other
+    // trailing form ends on and the glyph sits centred in it — no type role,
+    // no text alignment, nothing to correct.
+    chevron: { width: 16, alignItems: 'flex-end', justifyContent: 'center' },
+    chevronMark: { color: hull.textMuted },
     destructive: { color: hull.dialogDanger },
     cancel: {
       minHeight: 54,

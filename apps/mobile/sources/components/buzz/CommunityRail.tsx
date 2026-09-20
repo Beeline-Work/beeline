@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -390,7 +391,11 @@ export function CommunitySwitcherTrigger({
       >
         {showingPickerTitle || community?.name || WORKSPACE_LABEL}
       </Text>
-      <Text style={styles.drawerTriggerCaret}>{showingPickerTitle ? '⌃' : '⌄'}</Text>
+      <ChevronGlyph
+        color={styles.drawerTriggerCaret.color}
+        direction={showingPickerTitle ? 'up' : 'down'}
+        size={CHEVRON_ROW_SIZE}
+      />
     </TouchableOpacity>
   );
 }
@@ -739,11 +744,6 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 17,
       lineHeight: 22,
     },
-    drawerTriggerCaret: {
-      ...Typography.default('semiBold'),
-      color: groknight.steel,
-      fontSize: 13,
-      lineHeight: 16,
-    },
+    drawerTriggerCaret: { color: groknight.steel },
   };
 });

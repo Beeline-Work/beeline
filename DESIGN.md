@@ -320,16 +320,15 @@ check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
-trailing slot carries the **corners door**, and it is NAMED — the brass corner
-sigil `◇` at the hero role followed by the word in the calm metadata voice the
-rest of the header speaks in, its own 44pt target, and `space.lg` of bare slab
-before the overflow dots. Three things were wrong with the lone mark that came
-before it: it was unnamed, it was set at the metadata size so it read as a
-speck beside the menu, and it sat close enough to the dots to look like part of
-them. So the sigil is now the largest glyph in the trailing slot — its type box
-is deliberately bigger than the overflow dots' own — the word states the
-destination the way every Workspace-rail command does, and the gap is what
-makes it a second control rather than a second mark on the first. It opens the Room's dedicated corners list
+trailing slot carries the **corners door**: the brass corner sigil `◇` ALONE,
+at the hero role, in its own 44pt box, with `space.lg` of bare slab before the
+overflow dots. No word rides beside it. What was wrong with the mark that came
+before was never that it lacked a label — it was set at the metadata size, so
+it read as a speck, and it sat close enough to the dots to look like part of
+them (captain, 2026-09-20). So the sigil is now the largest glyph in the
+trailing slot, its type box deliberately bigger than the overflow dots' own,
+and the gap is what makes it a second control rather than a second mark on the
+first. The accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
 (`corners/[roomId]`, windowed with the same cap and archived fallback as the
 desktop work-pane corner list) and is the Room's one active-corner affordance.
 The approval panel and diff review exist only in a Corner — that is a
@@ -427,11 +426,17 @@ accent is never the only thing carrying the fact.
 **The standalone corners list is that same index, full height.** The screen
 opened from the Room header's corners door (`corners/[roomId]`) is chrome on
 the slab like every other index: a hairline header with the Room name as the
-eyebrow, the noun as the title, the count alone in the gutter, and rows at the
-index's own height. Its row leads with the opener's tile, names the corner at
-the brightest tier, carries one quiet line — who opened it, and the PR/check
-narration once there is one — and closes with the state WORD beside the state
-circle. The word is not decoration: a circle alone encodes state in colour and
+eyebrow, the noun as the title, the count alone in a reserved gutter, and rows
+at the index's own height as a FLOOR. Its row leads with the opener's 26px face
+tile — the byline size, because the opener is secondary to the work — names the
+corner at the brightest tier, carries one quiet line (who opened it, and the
+PR/check narration once there is one), and closes with the state WORD in a
+reserved cell beside the state circle. **A corner's name is never truncated
+here**: this is the screen whose whole job is telling corners apart, so the
+name prints in full and wraps to as many lines as it needs, and the row grows
+with it. Uneven row heights are the accepted cost (captain, 2026-09-20). That
+is why this one surface composes its label through `fullCornerTitle` rather
+than `displayCornerTitle`'s three-word inline form. The word is not decoration: a circle alone encodes state in colour and
 shape only, which is exactly the encoding a colour-blind reader and a screen
 reader both lose. No explainer paragraph stands above the list; a screen that
 has to describe what its own contents are has not been designed yet.

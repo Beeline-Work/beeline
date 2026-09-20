@@ -610,6 +610,29 @@ export function displayCornerTitle(
 }
 
 /**
+ * The same `#room/corner` composition, with the corner's name UNCAPPED.
+ *
+ * `cornerName` clips to three words because most surfaces show a corner
+ * inline, in a slot that has to stay one line beside other facts. The Room's
+ * dedicated corners list is the opposite case: it exists to tell you which
+ * corner is which, so a silently shortened name defeats the screen (captain,
+ * 2026-09-20 — "print the corner name in full without truncation"). The
+ * empty/`sub-` id-slug fallback is shared, so an unnamed corner still labels
+ * itself the same way everywhere.
+ */
+export function fullCornerTitle(
+  parentRoomName: string | undefined | null,
+  cornerStoredName: string | undefined,
+  cornerId: string,
+): string {
+  const stored = cornerStoredName?.replace(/\s+/g, ' ').trim().replace(/^#+/, '').trim();
+  const corner =
+    !stored || stored.startsWith('sub-') ? cornerName(cornerStoredName, cornerId) : stored;
+  const room = parentRoomName?.trim().replace(/^#+/, '');
+  return room ? `#${room}/${corner}` : `#${corner}`;
+}
+
+/**
  * A corner grouped directly beneath its parent Room needs only its short name:
  * the surrounding Room row or work-pane header already supplies the namespace.
  * Accept legacy pre-decorated names so old cached/server rows cannot reintroduce

@@ -4392,7 +4392,6 @@ export function BuzzChatSurface({
                 testID="room-corners-menu"
               >
                 <Text style={styles.roomCornersGlyph}>◇</Text>
-                <Text style={styles.roomCornersLabel}>{CHANGES_LABEL}</Text>
               </TouchableOpacity>
             )}
             {isCorner && !viewerIsAgent && !isArchived && (
@@ -5714,13 +5713,15 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    // Captain 2026-09-20: the door is the sigil alone — no word beside it. It
+    // still owns a real 44pt target of its own rather than borrowing the
+    // menu's.
     roomCornersButton: {
+      minWidth: 44,
       minHeight: 44,
       marginLeft: 12,
-      paddingHorizontal: groknight.space.sm,
-      flexDirection: 'row',
       alignItems: 'center',
-      gap: groknight.space.xs,
+      justifyContent: 'center',
     },
     // A full space step of bare slab parts the named door from the dots, on
     // top of the door's own padding. Two controls a thumb must hit separately
@@ -5738,14 +5739,6 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       ...groknight.type.hero,
       color: groknight.accent,
-    },
-    // The word carries the destination, so it takes the calm metadata voice
-    // every other piece of header chrome speaks in; the brass stays on the
-    // sigil alone.
-    roomCornersLabel: {
-      ...Typography.default(),
-      ...groknight.type.meta,
-      color: groknight.textMuted,
     },
     roomActionsGlyph: {
       ...Typography.default('semiBold'),

@@ -195,7 +195,9 @@ describe('RoomCornersList', () => {
     expect(row.props.accessibilityLabel).toContain(state);
     expect(row.props.accessibilityLabel).toContain('Opened by Opener live');
     expect(resolvedStyle(row.props.style).minHeight).toBe(beelineThemes.obsidian.layout.row);
-    expect(row.findByType('IdentityMark' as any).props.size).toBe(40);
+    // Captain 2026-09-20: the opener's face is secondary to the corner's
+    // name, so it takes the byline tile size, not the Room-list row's.
+    expect(row.findByType('IdentityMark' as any).props.size).toBe(26);
     const texts = row.findAllByType('Text' as any);
     expect(resolvedStyle(texts[0].props.style)).toMatchObject(beelineThemes.obsidian.type.body);
     expect(resolvedStyle(texts[1].props.style)).toMatchObject(beelineThemes.obsidian.type.meta);
@@ -255,6 +257,29 @@ describe('RoomCornersList', () => {
     }
     const widths = new Set(cells.map((cell: any) => cell.minWidth));
     expect(widths.size).toBe(1);
+  });
+
+  it('prints the corner name in full rather than truncating it', () => {
+    // Captain 2026-09-20: no ellipsis on a corner name. It wraps, and the row
+    // grows to hold it; uneven row heights are the accepted cost.
+    const longName =
+      'Restore the corners index header metrics and reconcile the archived fallback window';
+    const tree = render([corner('long', 'waiting', longName)]);
+    const row = tree.root.findByProps({ testID: 'room-corner-long' });
+    const texts = row
+      .findAllByType('Text' as any)
+      .map((node: any) => ({ node, text: [node.props.children].flat().join('') }));
+    type TitleEntry = { node: any; text: string };
+    const title = texts.find((entry: TitleEntry) => entry.text.includes(longName))?.node;
+    expect(
+      title,
+      `the row must render the whole name, got: ${texts
+        .map((entry: TitleEntry) => entry.text)
+        .join(' | ')}`,
+    ).toBeTruthy();
+    expect(title.props.numberOfLines).toBeUndefined();
+    expect(resolvedStyle(row.props.style).minHeight).toBe(beelineThemes.obsidian.layout.row);
+    expect(resolvedStyle(row.props.style).height).toBeUndefined();
   });
 
   it('opens a row into that corner', () => {

@@ -129,15 +129,13 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(3);
   });
 
-  it('names the Room corners door and parts it from overflow', () => {
-    // A lone brass `◇` a few pixels from the overflow dots read as decoration
-    // on the menu. The door is NAMED instead, the way every rail command is:
-    // the sigil states the kind, the word states the destination, and one
-    // full space step parts the pair from the dots.
+  it('gives the Room corners door a large lone sigil parted from overflow', () => {
+    // Captain 2026-09-20: the door is the diamond ALONE — no word beside it —
+    // visibly larger than the overflow dots and separated from them by bare
+    // slab, with a real 44pt target of its own.
     expect(chatSource).toContain('testID="room-corners-menu"');
     expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
     expect(chatSource).toContain('<Text style={styles.roomCornersGlyph}>◇</Text>');
-    expect(chatSource).toContain('<Text style={styles.roomCornersLabel}>{CHANGES_LABEL}</Text>');
     expect(chatSource).toContain('router.push(roomCornersHref(decodedId))');
     expect(chatSource).toContain("from '@/buzz/corner-navigation'");
     expect(chatSource).toContain('roomCornersHref');
@@ -162,21 +160,17 @@ describe('Chat header — one language for Room and Corner', () => {
     );
     expect(typeRoles.hero.fontSize).toBeGreaterThan(dotsSize);
     expect(typeRoles.hero.lineHeight).toBeGreaterThanOrEqual(dotsSize);
-    const word = chatSource.match(/roomCornersLabel:\s*\{[\s\S]*?\n    \},/);
-    expect(word, 'missing roomCornersLabel style').toBeTruthy();
-    expect(word![0]).toContain('...groknight.type.meta');
-    expect(word![0]).toContain('color: groknight.textMuted');
-    expect(word![0]).not.toMatch(/fontSize:|letterSpacing:|textTransform:/);
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(dots![0]).toContain('color: groknight.steel');
     expect(dots![0]).toContain('fontSize: 12');
     // Its own 44pt-tall target, so it is a destination rather than chrome
     // hanging off the menu.
     const doorButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
+    expect(doorButton![0]).toContain('minWidth: 44');
     expect(doorButton![0]).toContain('minHeight: 44');
     expect(doorButton![0]).toContain('marginLeft: 12');
-    expect(doorButton![0]).toContain("flexDirection: 'row'");
-    expect(doorButton![0]).toContain('gap: groknight.space.xs');
+    // No word rides along any more.
+    expect(chatSource).not.toContain('roomCornersLabel');
     // Bare slab between the named door and the dots, on top of the door's own
     // padding: two controls a thumb must hit separately cannot share an edge.
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);

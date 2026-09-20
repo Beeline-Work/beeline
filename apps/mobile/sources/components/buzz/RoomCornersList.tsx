@@ -6,7 +6,7 @@ import type { CornerListItem } from '@beeline/buzz-client';
 import { inspectorCornerWindow } from '@/buzz/inspector-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
-import { displayCornerTitle } from '@/buzz/room-list-row';
+import { fullCornerTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { StateCircle } from '@/components/buzz/MonoHull';
@@ -20,10 +20,12 @@ import { Typography } from '@/constants/Typography';
  * the room; the inspector remains the desktop work pane's corner list.
  *
  * The row reads in the index vocabulary `DESIGN.md` gives the Room list: the
- * tile, the name at the brightest tier, one quiet line under it, and a
- * trailing column. What the row must NEVER do is leave its state to the
- * circle alone — a coloured dot is the one encoding a colour-blind reader and
- * a screen reader both lose, so the state word travels beside it.
+ * opener's small face tile, the name at the brightest tier, one quiet line
+ * under it, and a reserved trailing column. Two rules the row must keep:
+ * it never leaves its state to the circle alone — a coloured dot is the one
+ * encoding a colour-blind reader and a screen reader both lose, so the state
+ * word travels beside it — and it never truncates the corner's name, which
+ * wraps instead, uneven row heights and all.
  */
 export function RoomCornersList({
   corners,
@@ -59,7 +61,7 @@ export function RoomCornersList({
       ]}
       testID="room-corners-list"
       renderItem={({ item }) => {
-        const label = displayCornerTitle(parentRoomName, item.corner.name, item.corner.id);
+        const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
         const display = cornerDisplayState(item);
         const opener = item.agent ? `Opened by ${item.agent.name}` : item.latestMessage?.text;
         const line = [opener, display.detail].filter(Boolean).join(' · ') || 'No activity yet';
@@ -77,12 +79,14 @@ export function RoomCornersList({
               avatarUrl={item.agent?.avatar}
               face={item.agent?.face}
               name={item.agent?.name ?? 'Corner'}
-              size={40}
+              size={26}
             />
             <View style={styles.rowCopy}>
-              <Text numberOfLines={1} style={styles.rowTitle}>
-                {label}
-              </Text>
+              {/* Captain 2026-09-20: a corner's name is never truncated. It
+                wraps to as many lines as it needs and the row grows with it;
+                uneven row heights are the accepted cost of printing the name
+                in full. */}
+              <Text style={styles.rowTitle}>{label}</Text>
               <Text numberOfLines={1} style={styles.agent}>
                 {line}
               </Text>
@@ -140,6 +144,9 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: hull.space.sm,
       paddingHorizontal: hull.space.md,
+      // `minHeight` is a floor, not a height: a wrapped name grows the row,
+      // and this keeps its last line off the divider when it does.
+      paddingVertical: hull.space.sm,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },

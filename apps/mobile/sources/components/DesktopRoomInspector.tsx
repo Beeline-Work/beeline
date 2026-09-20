@@ -536,7 +536,13 @@ function CornerCockpit({
     [messages],
   );
   const renderMessage = React.useCallback(
-    ({ item, index }: { item: ChatDisplayMessage; index: number }) => {
+    ({
+      item,
+      index,
+    }: {
+      item: ChatDisplayMessage;
+      index: number;
+    }): React.ReactElement | null => {
       const openUrl = (url: string) => void openExternalUrl(url).catch(() => undefined);
       const immediatelyPrecedingMessage = index > 0 ? messages[index - 1] : undefined;
       const kind = inspectorMessageKind(item);
@@ -587,7 +593,7 @@ function CornerCockpit({
       const captioned = withLedgerDayCaption(
         node,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
-      );
+      ) as React.ReactElement | null;
       if (focusMessageId && messageMatchesFocus(item, focusMessageId)) {
         return (
           <View style={styles.focusedMessage} testID="desktop-work-focused-message">

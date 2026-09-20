@@ -1,4 +1,5 @@
 import React from 'react';
+// @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import { FlatList } from 'react-native';
 import { LedgerSteer } from '../sources/components/buzz/Ledger';
@@ -15,7 +16,12 @@ const messages: ChatDisplayMessage[] = Array.from({ length: 48 }, (_, index) => 
 const preceding = new Map(messages.slice(1).map((message, index) => [message.id, messages[index]]));
 const byId = new Map(messages.map((message) => [message.id, message]));
 const render = (item: ChatDisplayMessage) => (
-  <LedgerSteer itemId={item.id} bodyText={item.text} chronological={chronological} />
+  <LedgerSteer
+    itemId={item.id}
+    bodyText={item.text}
+    bodyTestID={`${item.id}-body`}
+    chronological={chronological}
+  />
 );
 
 function Transcript() {

@@ -68,6 +68,14 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function appendUniqueMembers<T extends { identity: { pubkey: string } }>(
+  current: readonly T[],
+  incoming: readonly T[],
+): T[] {
+  const seen = new Set(current.map((item) => item.identity.pubkey));
+  return [...current, ...incoming.filter((item) => !seen.has(item.identity.pubkey))];
+}
+
 async function waitForIndexedSurface<T>(
   read: () => Promise<T>,
   accepts: (value: T) => boolean,
@@ -240,6 +248,14 @@ export default function BuzzMembers() {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
+  const [memberQuery, setMemberQuery] = useState('');
+  const [rosterPeople, setRosterPeople] = useState<WorkspaceView['members'] | null>(null);
+  const [rosterAgents, setRosterAgents] = useState<WorkspaceView['agents'] | null>(null);
+  const [rosterPeopleTotal, setRosterPeopleTotal] = useState<number | null>(null);
+  const [rosterAgentTotal, setRosterAgentTotal] = useState<number | null>(null);
+  const [peopleHasMore, setPeopleHasMore] = useState(false);
+  const [agentsHasMore, setAgentsHasMore] = useState(false);
+  const [rosterLoading, setRosterLoading] = useState(false);
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const agentRequestGenerationRef = useRef(0);
   const requestedActionHandledRef = useRef(false);
@@ -281,6 +297,44 @@ export default function BuzzMembers() {
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
     return new BuzzRigTransport(identity).ensureClient();
+  };
+
+  const applyMemberPage = (
+    page: {
+      members: WorkspaceView['members'];
+      agents: WorkspaceView['agents'];
+      peopleTotal: number;
+      agentTotal: number;
+      membersTruncated: boolean;
+      agentsTruncated: boolean;
+    },
+    kind: 'human' | 'agent' | undefined,
+    append: { people: WorkspaceView['members']; agents: WorkspaceView['agents'] } | false,
+  ) => {
+    setRosterPeopleTotal(page.peopleTotal);
+    setRosterAgentTotal(page.agentTotal);
+    if (kind !== 'agent') {
+      setRosterPeople(
+        append ? appendUniqueMembers(append.people, page.members) : [...page.members],
+      );
+      setPeopleHasMore(page.membersTruncated);
+    }
+    if (kind !== 'human') {
+      setRosterAgents(append ? appendUniqueMembers(append.agents, page.agents) : [...page.agents]);
+      setAgentsHasMore(page.agentsTruncated);
+    }
+  };
+
+  const readMemberPage = async (input: {
+    q?: string;
+    kind?: 'human' | 'agent';
+    offset?: number;
+  }) => {
+    if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
+    return new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(
+      workspaceId,
+      input,
+    );
   };
 
   useEffect(() => {
@@ -357,6 +411,11 @@ export default function BuzzMembers() {
       unsubscribe?.();
       scheduler?.dispose();
       schedulerRef.current = null;
+      setRosterPeople(null);
+      setRosterAgents(null);
+      setRosterPeopleTotal(null);
+      setRosterAgentTotal(null);
+      setMemberQuery('');
     };
   }, [retryGeneration, workspaceId]);
 
@@ -467,9 +526,61 @@ export default function BuzzMembers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedAction, surface]);
 
+  useEffect(() => {
+    if (!identity || !relayUrl || !workspaceId) return;
+    const q = memberQuery.trim();
+    if (!q) {
+      setRosterPeople(null);
+      setRosterAgents(null);
+      setRosterPeopleTotal(null);
+      setRosterAgentTotal(null);
+      return;
+    }
+    let cancelled = false;
+    setRosterLoading(true);
+    void readMemberPage({ q })
+      .then((page) => {
+        if (!cancelled) applyMemberPage(page, undefined, false);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(`Could not search members: ${String(reason)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setRosterLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Search is a dedicated server read; identity/relay are the auth it needs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberQuery, identity, relayUrl, workspaceId]);
+
+  const loadMoreMembers = async (kind: 'human' | 'agent') => {
+    if (!surface || rosterLoading) return;
+    const people = rosterPeople ?? surface.members;
+    const agents = rosterAgents ?? surface.agents;
+    const q = memberQuery.trim();
+    setRosterLoading(true);
+    setError(null);
+    try {
+      const page = await readMemberPage({
+        kind,
+        offset: kind === 'human' ? people.length : agents.length,
+        ...(q ? { q } : {}),
+      });
+      applyMemberPage(page, kind, { people, agents });
+    } catch (reason) {
+      setError(`Could not load more members: ${String(reason)}`);
+    } finally {
+      setRosterLoading(false);
+    }
+  };
+
   const setPersonRole = async (pubkey: string, role: WorkspaceRole) => {
     if (!surface || !workspaceId) return;
-    const target = surface.members.find((member) => member.identity.pubkey === pubkey);
+    const target = (rosterPeople ?? surface.members).find(
+      (member) => member.identity.pubkey === pubkey,
+    );
     if (
       !target ||
       !surface.viewer.permissions.manage ||
@@ -484,7 +595,15 @@ export default function BuzzMembers() {
       await client.addMember(workspaceId, pubkey, role);
       await client.waitUntilMemberRole(workspaceId, pubkey, role);
       await waitForIndexedSurface(readWorkspace, (value) =>
-        value.members.some((member) => member.identity.pubkey === pubkey && member.role === role),
+        value.members.some((member) => member.identity.pubkey === pubkey && member.role === role) ||
+        !value.members.some((member) => member.identity.pubkey === pubkey),
+      );
+      setRosterPeople((current) =>
+        current
+          ? current.map((member) =>
+              member.identity.pubkey === pubkey ? { ...member, role } : member,
+            )
+          : current,
       );
       setOpenPersonPubkey(null);
     } catch (reason) {
@@ -497,7 +616,9 @@ export default function BuzzMembers() {
   /** Removal from the Workspace takes the person out of every live Room with it. */
   const removePerson = async (pubkey: string) => {
     if (!surface || !workspaceId || !surface.viewer.permissions.manage) return;
-    const target = surface.members.find((member) => member.identity.pubkey === pubkey);
+    const target = (rosterPeople ?? surface.members).find(
+      (member) => member.identity.pubkey === pubkey,
+    );
     if (
       !target ||
       !canRemoveRoomParticipant(
@@ -523,6 +644,10 @@ export default function BuzzMembers() {
         readWorkspace,
         (value) => !value.members.some((member) => member.identity.pubkey === pubkey),
       );
+      setRosterPeople((current) =>
+        current ? current.filter((member) => member.identity.pubkey !== pubkey) : current,
+      );
+      setRosterPeopleTotal((current) => (current === null ? current : Math.max(0, current - 1)));
       setOpenPersonPubkey(null);
     } catch (reason) {
       setError(`Could not remove ${name}: ${String(reason)}`);
@@ -570,9 +695,18 @@ export default function BuzzMembers() {
         waitForIndexedSurface(readWorkspace, (value) =>
           value.agents.some(
             (member) => member.identity.pubkey === pubkey && member.identity.name === name,
-          ),
+          ) || !value.agents.some((member) => member.identity.pubkey === pubkey),
         ),
       ]);
+      setRosterAgents((current) =>
+        current
+          ? current.map((member) =>
+              member.identity.pubkey === pubkey
+                ? { ...member, identity: { ...member.identity, name } }
+                : member,
+            )
+          : current,
+      );
       setEditingAgentSoul(false);
     } catch (reason) {
       setError(`Could not save agent settings: ${String(reason)}`);
@@ -700,6 +834,10 @@ export default function BuzzMembers() {
         readWorkspace,
         (value) => !value.agents.some((member) => member.identity.pubkey === pubkey),
       );
+      setRosterAgents((current) =>
+        current ? current.filter((member) => member.identity.pubkey !== pubkey) : current,
+      );
+      setRosterAgentTotal((current) => (current === null ? current : Math.max(0, current - 1)));
       closeAgentSettings();
       setOpenModelAxis(null);
       setModelSearchQuery('');
@@ -751,6 +889,94 @@ export default function BuzzMembers() {
 
   const busy = working !== null;
   const canManage = surface.viewer.permissions.manage;
+  const people = rosterPeople ?? surface.members;
+  const agents = rosterAgents ?? surface.agents;
+  const peopleTotal = rosterPeopleTotal ?? surface.peopleTotal ?? people.length;
+  const agentTotal = rosterAgentTotal ?? surface.agentTotal ?? agents.length;
+  const canLoadMorePeople =
+    (rosterPeople !== null ? peopleHasMore : surface.membersTruncated) && !rosterLoading;
+  const canLoadMoreAgents =
+    (rosterAgents !== null ? agentsHasMore : surface.agentsTruncated) && !rosterLoading;
+  const pinnedOwners = people.filter((member) => member.role === 'owner');
+  const listedPeople = people.filter((member) => member.role !== 'owner');
+
+  const personRow = (member: (typeof people)[number]) => {
+    const editable = canChangeRole(
+      surface.viewer.role,
+      surface.viewer.identity.pubkey,
+      member.identity.pubkey,
+      member.role,
+    );
+    const removable =
+      canManage &&
+      canRemoveRoomParticipant(
+        surface.viewer.role,
+        member.role,
+        member.identity.pubkey === surface.viewer.identity.pubkey,
+      );
+    const hasDetail = editable || removable;
+    const open = openPersonPubkey === member.identity.pubkey;
+    return (
+      <View key={member.identity.pubkey}>
+        <MemberRosterRow
+          avatarUrl={member.identity.avatar}
+          disabled={!hasDetail || busy}
+          divider="bottom"
+          face={member.identity.face}
+          handle={member.identity.handle}
+          kind="human"
+          name={member.identity.name}
+          onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
+          pubkey={member.identity.pubkey}
+          role={member.role}
+          testID={`member-${member.identity.pubkey}-identity`}
+          trailing={
+            hasDetail ? <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text> : undefined
+          }
+        />
+        {open && (
+          <View style={styles.personDetail} testID={`member-${member.identity.pubkey}-detail`}>
+            {editable && (
+              <View style={styles.rolePicker} testID={`member-${member.identity.pubkey}-roles`}>
+                {(['member', 'admin', 'owner'] as const).map((role) => {
+                  const allowed = canAssignRole(surface.viewer.role, role);
+                  return (
+                    <TouchableOpacity
+                      key={role}
+                      disabled={!allowed || member.role === role || busy}
+                      onPress={() => void setPersonRole(member.identity.pubkey, role)}
+                      style={[
+                        styles.choice,
+                        styles.roleChoice,
+                        member.role === role && styles.choiceActive,
+                        !allowed && styles.choiceDisabled,
+                      ]}
+                      testID={`member-${member.identity.pubkey}-${role}`}
+                    >
+                      <Text style={styles.choiceText}>{ROLE_LABELS[role]}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+            {removable && (
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => void removePerson(member.identity.pubkey)}
+                style={styles.removeControl}
+                testID={`remove-person-${member.identity.pubkey}`}
+              >
+                <Text style={styles.removeText}>
+                  {working === 'remove-person' ? 'Removing…' : `Remove from ${WORKSPACE_LABEL}`}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <BuzzCommunityShell
@@ -795,117 +1021,23 @@ export default function BuzzMembers() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.section} testID="members-people-section">
-            <View style={styles.sectionHeadRow}>
-              <Text style={styles.sectionLabel} testID="members-people-head">
-                People {surface.members.length}
-              </Text>
-              {canManage && (
-                <TouchableOpacity
-                  accessibilityLabel="Add people"
-                  disabled={busy}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  onPress={() => {
-                    setError(null);
-                    void invitePerson();
-                  }}
-                  style={styles.sectionAdd}
-                  testID="members-add-people"
-                >
-                  <Text style={styles.sectionAddGlyph}>+</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {surface.members.map((member) => {
-              const editable = canChangeRole(
-                surface.viewer.role,
-                surface.viewer.identity.pubkey,
-                member.identity.pubkey,
-                member.role,
-              );
-              const removable =
-                canManage &&
-                canRemoveRoomParticipant(
-                  surface.viewer.role,
-                  member.role,
-                  member.identity.pubkey === surface.viewer.identity.pubkey,
-                );
-              const hasDetail = editable || removable;
-              const open = openPersonPubkey === member.identity.pubkey;
-              return (
-                <View key={member.identity.pubkey}>
-                  <MemberRosterRow
-                    avatarUrl={member.identity.avatar}
-                    disabled={!hasDetail || busy}
-                    divider="bottom"
-                    face={member.identity.face}
-                    handle={member.identity.handle}
-                    kind="human"
-                    name={member.identity.name}
-                    onPress={() => setOpenPersonPubkey(open ? null : member.identity.pubkey)}
-                    pubkey={member.identity.pubkey}
-                    role={member.role}
-                    testID={`member-${member.identity.pubkey}-identity`}
-                    trailing={
-                      hasDetail ? <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text> : undefined
-                    }
-                  />
-                  {open && (
-                    <View
-                      style={styles.personDetail}
-                      testID={`member-${member.identity.pubkey}-detail`}
-                    >
-                      {editable && (
-                        <View
-                          style={styles.rolePicker}
-                          testID={`member-${member.identity.pubkey}-roles`}
-                        >
-                          {(['member', 'admin', 'owner'] as const).map((role) => {
-                            const allowed = canAssignRole(surface.viewer.role, role);
-                            return (
-                              <TouchableOpacity
-                                key={role}
-                                disabled={!allowed || member.role === role || busy}
-                                onPress={() => void setPersonRole(member.identity.pubkey, role)}
-                                style={[
-                                  styles.choice,
-                                  styles.roleChoice,
-                                  member.role === role && styles.choiceActive,
-                                  !allowed && styles.choiceDisabled,
-                                ]}
-                                testID={`member-${member.identity.pubkey}-${role}`}
-                              >
-                                <Text style={styles.choiceText}>{ROLE_LABELS[role]}</Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      )}
-                      {removable && (
-                        <TouchableOpacity
-                          accessibilityRole="button"
-                          disabled={busy}
-                          onPress={() => void removePerson(member.identity.pubkey)}
-                          style={styles.removeControl}
-                          testID={`remove-person-${member.identity.pubkey}`}
-                        >
-                          <Text style={styles.removeText}>
-                            {working === 'remove-person'
-                              ? 'Removing…'
-                              : `Remove from ${WORKSPACE_LABEL}`}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-          </View>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!busy}
+            onChangeText={setMemberQuery}
+            placeholder="Search members"
+            placeholderTextColor={theme.buzz.textMuted}
+            returnKeyType="search"
+            style={styles.searchInput}
+            testID="members-search"
+            value={memberQuery}
+          />
+          {pinnedOwners.map((member) => personRow(member))}
           <View style={styles.section} testID="members-agents-section">
             <View style={styles.sectionHeadRow}>
               <Text style={styles.sectionLabel} testID="members-agents-head">
-                Agents {surface.agents.length}
+                Agents {agentTotal}
               </Text>
               <TouchableOpacity
                 accessibilityLabel="Add agents"
@@ -918,7 +1050,7 @@ export default function BuzzMembers() {
                 <Text style={styles.sectionAddGlyph}>+</Text>
               </TouchableOpacity>
             </View>
-            {surface.agents.map((member) => {
+            {agents.map((member) => {
               const agentDetail = canManage;
               const open = selectedAgentId === member.identity.pubkey;
               return (
@@ -1208,6 +1340,55 @@ export default function BuzzMembers() {
                 </View>
               );
             })}
+            {canLoadMoreAgents && (
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={busy || rosterLoading}
+                onPress={() => void loadMoreMembers('agent')}
+                style={styles.loadMore}
+                testID="members-load-more-agents"
+              >
+                <Text style={styles.loadMoreText}>
+                  {rosterLoading ? 'Loading…' : 'Show more'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.section} testID="members-people-section">
+            <View style={styles.sectionHeadRow}>
+              <Text style={styles.sectionLabel} testID="members-people-head">
+                People {peopleTotal}
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  accessibilityLabel="Add people"
+                  disabled={busy}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  onPress={() => {
+                    setError(null);
+                    void invitePerson();
+                  }}
+                  style={styles.sectionAdd}
+                  testID="members-add-people"
+                >
+                  <Text style={styles.sectionAddGlyph}>+</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {listedPeople.map((member) => personRow(member))}
+            {canLoadMorePeople && (
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={busy || rosterLoading}
+                onPress={() => void loadMoreMembers('human')}
+                style={styles.loadMore}
+                testID="members-load-more-people"
+              >
+                <Text style={styles.loadMoreText}>
+                  {rosterLoading ? 'Loading…' : 'Show more'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </KeyboardAwareScrollView>
         <MemberPickerSheet
@@ -1281,6 +1462,17 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     sectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
+    searchInput: {
+      ...Typography.default(),
+      ...hull.type.body,
+      minHeight: 44,
+      paddingHorizontal: hull.space.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      color: hull.textPrimary,
+    },
+    loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
+    loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     rowCopy: { flex: 1, minWidth: 0 },
     name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },

@@ -8,6 +8,7 @@ import {
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   ROOM_VIEW_WORKSPACE_LIMIT,
+  WORKSPACE_MEMBER_PAGE_SIZE,
   type AgentDetailView,
   type AgentPairingAbandonView,
   type AgentPairingClaimView,
@@ -26,6 +27,7 @@ import {
   type RoomViewMember,
   type RoomViewMessage,
   type WorkspaceListView,
+  type WorkspaceMemberListView,
   type WorkspaceView,
 } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
@@ -991,15 +993,34 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
         (managerSettings.roomsTruncated === undefined ||
           typeof managerSettings.roomsTruncated === 'boolean'))) &&
     Array.isArray(item.members) &&
-    item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
+    item.members.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
     item.members.every(member) &&
     Array.isArray(item.agents) &&
-    item.agents.length <= ROOM_VIEW_AGENT_LIMIT &&
+    item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
     item.agents.every(workspaceAgent) &&
+    integer(item.peopleTotal) &&
+    integer(item.agentTotal) &&
     typeof item.membersTruncated === 'boolean' &&
     typeof item.agentsTruncated === 'boolean' &&
     viewer(item.viewer) &&
     watchFilters(item.watchFilters),
+  );
+}
+
+export function isWorkspaceMemberListView(value: unknown): value is WorkspaceMemberListView {
+  const item = record(value);
+  return Boolean(
+    item &&
+    Array.isArray(item.members) &&
+    item.members.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
+    item.members.every(member) &&
+    Array.isArray(item.agents) &&
+    item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
+    item.agents.every(workspaceAgent) &&
+    integer(item.peopleTotal) &&
+    integer(item.agentTotal) &&
+    typeof item.membersTruncated === 'boolean' &&
+    typeof item.agentsTruncated === 'boolean',
   );
 }
 

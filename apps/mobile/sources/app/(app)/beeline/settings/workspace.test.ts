@@ -199,6 +199,8 @@ function workspaceView(
       { identity: { pubkey: 'b'.repeat(64), kind: 'human', name: 'Mate' } },
     ],
     agents: [{ identity: { pubkey: 'c'.repeat(64), kind: 'agent', name: 'Foxy' } }],
+    peopleTotal: 2,
+    agentTotal: 1,
     membersTruncated: false,
     agentsTruncated: false,
     viewer: {
@@ -631,6 +633,23 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('3');
     expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
       '0 rooms · 3 members',
+    );
+  });
+
+  it('counts Members from peopleTotal and agentTotal, not the loaded page', async () => {
+    roomViews.workspace.mockResolvedValue({
+      ...workspaceView(),
+      members: workspaceView().members.slice(0, 1),
+      agents: [],
+      peopleTotal: 40,
+      agentTotal: 5,
+      membersTruncated: true,
+      agentsTruncated: true,
+    });
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('45');
+    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
+      '0 rooms · 45 members',
     );
   });
 

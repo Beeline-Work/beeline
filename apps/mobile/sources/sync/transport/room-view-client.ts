@@ -12,6 +12,7 @@ import {
   isRoomHistoryView,
   isRoomView,
   isWorkspaceListView,
+  isWorkspaceMemberListView,
   isWorkspaceView,
   type AgentDetailView,
   type AgentPairingClaimView,
@@ -21,6 +22,8 @@ import {
   type RoomHistoryView,
   type RoomView,
   type WorkspaceListView,
+  type WorkspaceMemberListQuery,
+  type WorkspaceMemberListView,
   type WorkspaceView,
 } from '@beeline/api-contract/phone';
 import {
@@ -51,6 +54,20 @@ class MonolithRoomViewClient {
   }
   workspace(id: string): Promise<WorkspaceView> {
     return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}`, isWorkspaceView);
+  }
+  workspaceMembers(
+    id: string,
+    query: WorkspaceMemberListQuery = {},
+  ): Promise<WorkspaceMemberListView> {
+    const params = new URLSearchParams();
+    if (query.q) params.set('q', query.q);
+    if (query.kind) params.set('kind', query.kind);
+    if (query.offset !== undefined) params.set('offset', String(query.offset));
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return this.get(
+      `/v1/phone/workspaces/${encodeURIComponent(id)}/members${suffix}`,
+      isWorkspaceMemberListView,
+    );
   }
   agent(workspaceId: string, agentId: string): Promise<AgentDetailView> {
     return this.get(
@@ -147,6 +164,9 @@ export class RoomViewClient {
   }
   workspace(id: string) {
     return this.implementation.workspace(id);
+  }
+  workspaceMembers(id: string, query?: WorkspaceMemberListQuery) {
+    return this.implementation.workspaceMembers(id, query);
   }
   agent(workspaceId: string, agentId: string) {
     return this.implementation.agent(workspaceId, agentId);

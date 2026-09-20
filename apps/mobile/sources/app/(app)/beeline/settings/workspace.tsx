@@ -343,7 +343,8 @@ export default function WorkspaceSettings() {
   }
 
   const memberCount =
-    (workspaceView?.members.length ?? 0) + (workspaceView?.agents.length ?? 0);
+    (workspaceView?.peopleTotal ?? workspaceView?.members.length ?? 0) +
+    (workspaceView?.agentTotal ?? workspaceView?.agents.length ?? 0);
   const pictureAction =
     workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change picture' : 'Set picture';
 

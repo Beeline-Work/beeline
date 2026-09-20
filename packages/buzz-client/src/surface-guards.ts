@@ -10,5 +10,6 @@ export {
   isRoomView,
   isRoomViewMessage,
   isWorkspaceListView,
+  isWorkspaceMemberListView,
   isWorkspaceView,
 } from '@beeline/api-contract/phone';

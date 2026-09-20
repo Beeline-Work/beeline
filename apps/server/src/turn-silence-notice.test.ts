@@ -229,6 +229,58 @@ describe('first-silence notice', () => {
       state: 'failed',
     });
   });
+
+  it('records a deliberate no-reply completion without calling it a failure', async () => {
+    const requestId = '0'.repeat(64);
+    const command = await ask(database, requestId);
+    const daemon = new DaemonService(database, new LiveHub());
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        requestId,
+        generationId: 'g1',
+        status: 'complete',
+        completionKind: 'no-reply',
+      },
+      AGENT,
+    );
+    const lines = (
+      await database.query<{ text: string; card_type: string; state: string; completion: string }>(
+        `SELECT text,card_type,card->>'state' state,card->>'completionKind' completion
+         FROM messages WHERE room_id=$1 AND card->>'requestId'=$2 ORDER BY created_at,id`,
+        [ROOM, requestId],
+      )
+    ).rows;
+    expect(lines).toEqual([
+      {
+        text: '@candy had nothing to add · this turn completed normally.',
+        card_type: 'turn-no-reply',
+        state: 'complete',
+        completion: 'no-reply',
+      },
+    ]);
+    expect((await commandState(database, command.id))?.state).toBe('complete');
+  });
+
+  it('rejects a no-reply kind on a failed receipt', async () => {
+    const requestId = 'a'.repeat(64);
+    await ask(database, requestId);
+    await expect(
+      new DaemonService(database, new LiveHub()).execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: ROOM,
+          requestId,
+          generationId: 'g1',
+          status: 'failed',
+          completionKind: 'no-reply',
+        },
+        AGENT,
+      ),
+    ).rejects.toThrow('completion kind requires complete status');
+    expect(await failureLine(database, requestId)).toBeUndefined();
+  });
 });
 
 describe('90-second first silence from presence', () => {

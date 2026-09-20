@@ -1,24 +1,13 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { getRandomBytes } from 'expo-crypto';
-import * as Haptics from 'expo-haptics';
-import * as Linking from 'expo-linking';
-import * as WebBrowser from 'expo-web-browser';
+import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import * as Updates from 'expo-updates';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  buildOidcBindEvent,
-  finishOidcBind,
   fallbackPersonName,
-  lookupRecovery,
   lookupManagedIdentity,
-  normalizePersonHandle,
-  normalizePersonName,
   personHandle,
-  startGitHubBind,
-  type BuzzClient,
   type Identity,
   type ManagedIdentity,
 } from '@beeline/buzz-client';
@@ -40,6 +29,8 @@ import { connectionsForViewer } from '@/buzz/workbench';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { BeelineMark } from '@/components/buzz/BeelineMark';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
@@ -60,22 +51,14 @@ import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
 import { setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { defaultFaceForSeed } from '@/buzz/faces';
-import { authSessionOptions } from '@/auth/auth-session';
-import {
-  clearPendingGitHubSignInState,
-  cancelPendingGitHubSignIn,
-  githubSignInRedirectUri,
-  persistGitHubSignInState,
-  resumeGitHubSignInCallback,
-  runResilientGitHubSignInSession,
-} from '@/auth/github-auth-session';
-import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
-import { markSignInInFlight, waitForAuthCallback } from '@/auth/onboarding-state';
+import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
+import { monolithSession } from '@/auth/monolith-session';
 import { t } from '@/text';
 import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
 import { saveStoredPushLevel } from '@/push/push-level-storage';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
+import { openExternalUrl } from '@/utils/open-external-url';
 import {
   createManualUpdateState,
   isManualUpdateBusy,
@@ -84,42 +67,29 @@ import {
   manualUpdateReducer,
 } from './manual-update-state';
 
-function randomState(): string {
-  return btoa(String.fromCharCode(...getRandomBytes(32)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
+const PRIVACY_URL = 'https://usebeeline.app/privacy/';
+const TERMS_URL = 'https://usebeeline.app/terms/';
+const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
+const IDENTITY_TILE = 76;
+const IDENTITY_TILE_RADIUS = 20;
+const IDENTITY_MARK = 64;
 
 export default function BuzzIdentitySettings() {
   const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [error, setError] = useState<string | null>(null);
-  const [profileClient, setProfileClient] = useState<BuzzClient | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<Identity | null>(null);
   const [profilePubkey, setProfilePubkey] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [profileName, setProfileName] = useState('');
-  const [savedProfileName, setSavedProfileName] = useState('');
-  const [profileHandle, setProfileHandle] = useState('');
-  const [savedProfileHandle, setSavedProfileHandle] = useState('');
-  const [nameWorking, setNameWorking] = useState(false);
-  const [nameFocused, setNameFocused] = useState(false);
-  const [nameSaved, setNameSaved] = useState(false);
   const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
   const [pushRegistration, setPushRegistration] = useState<BuzzPushRegistrationState | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
   const [pushLevel, setPushLevel] = useState<PushLevel>('mine');
-  const [linkedAccount, setLinkedAccount] = useState<
-    'checking' | 'connected' | 'not-linked' | 'unavailable'
-  >('checking');
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
   const [keyCount, setKeyCount] = useState<number | null>(null);
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
-  const [githubWorking, setGitHubWorking] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -232,16 +202,22 @@ export default function BuzzIdentitySettings() {
           await savePreferredPersonName(identity.publicKey, profile.name);
         }
         if (!cancelled) {
-          setProfileClient(client);
           setProfileIdentity(identity);
           setProfilePubkey(identity.publicKey);
-          setAvatarUrl(profile?.avatar);
           const nextName = profile?.name ?? preferredName ?? fallbackPersonName(identity.publicKey);
-          const nextHandle = profile?.handle ?? personHandle(nextName, identity.publicKey);
           setProfileName(nextName);
-          setSavedProfileName(nextName);
-          setProfileHandle(nextHandle);
-          setSavedProfileHandle(nextHandle);
+        if (profile?.handle) {
+          const handle = profile.handle;
+          setManagedIdentity((current) =>
+            current ?? {
+              handle,
+              displayName: nextName,
+              source: 'github',
+              githubLogin: handle,
+              githubRenameAvailable: false,
+            },
+          );
+        }
           setPushEnabledState(enabled);
           setPushRegistration(registration);
           setPushPermission(permission);
@@ -277,27 +253,19 @@ export default function BuzzIdentitySettings() {
                     }
                   : null,
               );
-              setLinkedAccount('connected');
             }
             return;
           }
-          const [links, hostedIdentity] = await Promise.all([
-            lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity),
-            lookupManagedIdentity(getBuzzRuntimeConfig().relayUrl, identity),
-          ]);
-          const linked = links.some((link) => link.provider === 'https://github.com');
-          if (!cancelled) {
+          const hostedIdentity = await lookupManagedIdentity(
+            getBuzzRuntimeConfig().relayUrl,
+            identity,
+          );
+          if (!cancelled && hostedIdentity) {
             setManagedIdentity(hostedIdentity);
-            if (hostedIdentity) {
-              setProfileName(hostedIdentity.displayName);
-              setSavedProfileName(hostedIdentity.displayName);
-              setProfileHandle(hostedIdentity.handle);
-              setSavedProfileHandle(hostedIdentity.handle);
-            }
-            setLinkedAccount(linked ? 'connected' : 'not-linked');
+            setProfileName(hostedIdentity.displayName);
           }
         } catch {
-          if (!cancelled) setLinkedAccount('unavailable');
+          // Handle and face stay on whatever the profile read already supplied.
         }
       } catch (caught) {
         if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
@@ -307,146 +275,6 @@ export default function BuzzIdentitySettings() {
       cancelled = true;
     };
   }, [monolithEnabled]);
-
-  const saveName = useCallback(async () => {
-    if (!profileClient || !profilePubkey) return;
-    const normalized = normalizePersonName(profileName);
-    const normalizedHandle = normalizePersonHandle(managedIdentity?.handle ?? profileHandle);
-    if (!normalized) {
-      setError('Choose a name between 1 and 60 characters.');
-      return;
-    }
-    if (!normalizedHandle) {
-      setError('Choose a handle using 1-30 letters, numbers, dots, dashes, or underscores.');
-      return;
-    }
-    setNameWorking(true);
-    setNameSaved(false);
-    setError(null);
-    try {
-      await profileClient.setGlobalPersonProfile({
-        name: normalized,
-        handle: normalizedHandle,
-        avatar: avatarUrl,
-      });
-      await savePreferredPersonName(profilePubkey, normalized);
-      setProfileName(normalized);
-      setSavedProfileName(normalized);
-      setProfileHandle(normalizedHandle);
-      setSavedProfileHandle(normalizedHandle);
-      setNameSaved(true);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (caught) {
-      setError(`Could not save your name: ${String(caught)}`);
-    } finally {
-      setNameWorking(false);
-    }
-  }, [avatarUrl, managedIdentity, profileClient, profileHandle, profileName, profilePubkey]);
-
-  const applyHostedIdentity = useCallback(
-    async (hosted: ManagedIdentity) => {
-      if (!profileClient || !profilePubkey) return;
-      const nextName = hosted.displayName;
-      await profileClient.setGlobalPersonProfile({
-        name: nextName,
-        handle: hosted.handle,
-        avatar: avatarUrl,
-      });
-      await savePreferredPersonName(profilePubkey, nextName);
-      setProfileName(nextName);
-      setSavedProfileName(nextName);
-      setProfileHandle(hosted.handle);
-      setSavedProfileHandle(hosted.handle);
-      setManagedIdentity(hosted);
-    },
-    [avatarUrl, profileClient, profilePubkey],
-  );
-
-  const connectGitHub = useCallback(async () => {
-    if (!profileIdentity || githubWorking || Platform.OS === 'web') return;
-    setGitHubWorking(true);
-    setGitHubNotice(null);
-    setError(null);
-    markSignInInFlight(true);
-    let startedState: string | undefined;
-    try {
-      const state = randomState();
-      startedState = state;
-      const redirectUri = githubSignInRedirectUri();
-      const monolith = getBuzzRuntimeConfig().monolithEnabled;
-      const challenge = monolith
-        ? await runResilientGitHubSignInSession({
-            state,
-            recoveryToken: randomState(),
-            purpose: 'reconnect',
-            openAuthSession: (authorizationUrl, callbackUri) =>
-              WebBrowser.openAuthSessionAsync(
-                authorizationUrl,
-                callbackUri,
-                authSessionOptions(Platform.OS, callbackUri),
-              ),
-            subscribeToUrls: (listener) =>
-              Linking.addEventListener('url', ({ url }) => listener(url)),
-          })
-        : await (async () => {
-            const start = startGitHubBind(getBuzzRuntimeConfig().relayUrl, {
-              redirectUri,
-              state,
-            });
-            await persistGitHubSignInState(state);
-            const callbackUrl = await waitForAuthCallback({
-              redirectUri: start.redirectUri,
-              openAuthSession: () =>
-                WebBrowser.openAuthSessionAsync(
-                  start.authorizationUrl,
-                  start.redirectUri,
-                  authSessionOptions(Platform.OS, start.redirectUri),
-                ),
-              subscribeToUrls: (listener) =>
-                Linking.addEventListener('url', ({ url }) => listener(url)),
-            });
-            return resumeGitHubSignInCallback(callbackUrl);
-          })();
-      if (monolith) {
-        await monolithSession.reconnectGitHubTicket(challenge.ticket);
-        await clearPendingGitHubSignInState();
-        setGitHubNotice('GitHub reconnected.');
-        router.replace({
-          pathname: '/beeline/settings',
-          params: { githubReconnect: 'success' },
-        });
-        return;
-      }
-      const event = buildOidcBindEvent(challenge, profileIdentity);
-      const result = await finishOidcBind(getBuzzRuntimeConfig().relayUrl, challenge, event);
-      await clearPendingGitHubSignInState();
-      const hosted =
-        result.identity ??
-        (await lookupManagedIdentity(getBuzzRuntimeConfig().relayUrl, profileIdentity));
-      if (hosted) await applyHostedIdentity(hosted);
-      setLinkedAccount('connected');
-      setGitHubNotice(t('beelineIdentity.githubLinkedNotice'));
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (caught) {
-      if (getBuzzRuntimeConfig().monolithEnabled) {
-        await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
-        router.replace({
-          pathname: '/beeline/settings',
-          params: {
-            githubReconnect: caught instanceof GitHubAccountMismatchError ? 'mismatch' : 'failed',
-          },
-        });
-        return;
-      }
-      await clearPendingGitHubSignInState().catch(() => undefined);
-      setError(
-        `Could not link GitHub: ${caught instanceof Error ? caught.message : String(caught)}`,
-      );
-    } finally {
-      markSignInInFlight(false);
-      setGitHubWorking(false);
-    }
-  }, [applyHostedIdentity, githubWorking, profileIdentity]);
 
   const applyPushResult = useCallback(
     async (
@@ -515,18 +343,9 @@ export default function BuzzIdentitySettings() {
     pushRegistration !== null &&
     !pushRegistration.registered &&
     buzzPushPhaseDetail(pushRegistration.phase) !== null;
-  const linkedAccountLabel =
-    linkedAccount === 'connected'
-      ? 'GitHub account connected'
-      : linkedAccount === 'not-linked'
-        ? 'No GitHub account linked'
-        : linkedAccount === 'unavailable'
-          ? 'GitHub link unavailable while offline'
-          : 'Checking linked account';
-  const managedHandle = managedIdentity?.handle ?? profileHandle;
-  const managedHandleLabel = managedHandle ? `@${managedHandle}` : '';
+  const managedHandle = managedIdentity?.handle ?? (profileName ? personHandle(profileName, profilePubkey ?? '') : '');
+  const githubLogin = managedIdentity?.githubLogin ?? managedHandle;
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
-  const githubCanLink = linkedAccount === 'not-linked' && Platform.OS !== 'web';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
   const [uiSize, setUiSize] = useLocalSettingMutable('uiSize');
   const changeAppearance = useCallback(
@@ -544,10 +363,21 @@ export default function BuzzIdentitySettings() {
     [appearance, setUiSize],
   );
 
-  const commitName = () => {
-    if (normalizePersonName(profileName) === savedProfileName) return;
-    void saveName();
-  };
+  const openGitHubProfile = useCallback(() => {
+    if (!githubLogin) return;
+    void openExternalUrl(`https://github.com/${githubLogin}`).catch(() => undefined);
+  }, [githubLogin]);
+
+  const faceMark = profilePubkey ? (
+    <IdentityMark
+      kind="human"
+      seed={profilePubkey}
+      face={face ?? defaultFaceForSeed(profilePubkey)}
+      name={profileName || 'You'}
+      size={IDENTITY_MARK}
+      testID="identity-face-mark"
+    />
+  ) : null;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -565,184 +395,122 @@ export default function BuzzIdentitySettings() {
       </HullSurface>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <View style={styles.section} testID="appearance-section">
-          <Text style={styles.sectionLabel}>Display</Text>
-          <AppearanceSetting onChange={changeAppearance} value={appearance} />
-          <UiSizeSetting onChange={changeUiSize} value={uiSize} />
-        </View>
-
         {profilePubkey && (
-          <View style={styles.section} testID="identity-settings">
-            <Text style={styles.sectionLabel}>Identity</Text>
-            <View style={styles.row} testID="identity-person-name-setting">
-              <Text style={styles.rowTitle}>Name</Text>
-              <TextInput
-                accessibilityLabel="Your display name"
-                autoCapitalize="words"
-                autoCorrect={false}
-                blurOnSubmit
-                editable={!nameWorking}
-                maxLength={60}
-                onBlur={() => {
-                  setNameFocused(false);
-                  commitName();
-                }}
-                onChangeText={(value) => {
-                  setProfileName(value);
-                  setNameSaved(false);
-                }}
-                onFocus={() => setNameFocused(true)}
-                onSubmitEditing={commitName}
-                placeholder="Ada"
-                placeholderTextColor={theme.buzz.dim}
-                returnKeyType="done"
-                style={[styles.inlineInput, nameFocused && styles.inlineInputFocused]}
-                testID="identity-person-name-input"
-                value={profileName}
-              />
-            </View>
-            <View style={styles.row} testID="identity-managed-handle">
-              <Text style={styles.rowTitle}>Handle</Text>
-              <Text numberOfLines={1} style={styles.monoValue}>
-                {managedHandleLabel || '—'}
-              </Text>
-            </View>
-            {monolithEnabled && (
+          <View style={styles.ident} testID="identity-settings">
+            {monolithEnabled ? (
               <TouchableOpacity
                 accessibilityLabel="Change face"
                 accessibilityRole="button"
                 onPress={() => setFacePickerOpen(true)}
-                style={styles.row}
+                style={styles.tile}
                 testID="identity-face-setting"
               >
-                <IdentityMark
-                  kind="human"
-                  seed={profilePubkey}
-                  face={face ?? defaultFaceForSeed(profilePubkey)}
-                  name={profileName || 'You'}
-                  size={38}
-                  testID="identity-face-mark"
-                />
-                <Text style={styles.rowTitle}>Face</Text>
-                <Text style={styles.chevron}>›</Text>
-                <FacePickerSheet
-                  face={face}
-                  onClose={() => setFacePickerOpen(false)}
-                  onFaceChange={setFace}
-                  onSave={(next) => monolithPhoneOperation('updateIdentityFace', { faceId: next })}
-                  seed={profilePubkey}
-                  visible={facePickerOpen}
-                />
+                {faceMark}
               </TouchableOpacity>
+            ) : (
+              <View style={styles.tile} testID="identity-face-setting">
+                {faceMark}
+              </View>
             )}
+            {managedHandle ? (
+              <TouchableOpacity
+                accessibilityLabel={`@${managedHandle}`}
+                accessibilityRole="link"
+                onPress={openGitHubProfile}
+                testID="identity-managed-handle"
+              >
+                <Text style={styles.handle}>
+                  <Text style={styles.handleAt}>@</Text>
+                  <Text style={styles.handle}>{managedHandle}</Text>
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         )}
 
         {monolithEnabled && (
           <View style={styles.section} testID="workbench-section">
             <Text style={styles.sectionLabel}>Workbench</Text>
-            <TouchableOpacity
+            <SettingsRow
               accessibilityLabel="Open your Workbench"
-              accessibilityRole="button"
+              chevron="right"
               onPress={() => router.push('/beeline/settings/workbench' as never)}
-              style={styles.row}
               testID="settings-workbench-row"
-            >
-              <Text style={styles.rowTitle}>Tools &amp; keys</Text>
-              {keyCount !== null ? (
-                <Text style={styles.rowMeta} testID="settings-workbench-key-count">
-                  {keyCount}
-                </Text>
-              ) : null}
-              <Text style={styles.chevron}>›</Text>
-            </TouchableOpacity>
+              title="Tools and keys"
+              value={keyCount !== null ? String(keyCount) : undefined}
+            />
           </View>
         )}
 
-        {pushSupported ? (
-          <View style={styles.section} testID="notifications-section">
-            <Text style={styles.sectionLabel}>Notifications</Text>
-            <PushLevelSetting
-              disabled={pushEnabled === null || pushWorking}
-              onSave={changePushLevel}
-              value={pushLevel}
-            />
-            {pushRegistrationFailed ? (
-              <TouchableOpacity
-                disabled={pushWorking}
-                onPress={() => void retryPushRegistration()}
-                style={styles.pushRetryButton}
-                testID="push-retry-registration"
-              >
-                <Text style={styles.pushRetryText}>{pushWorking ? 'RETRYING…' : 'RETRY NOW'}</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : null}
-
-        <View style={styles.section} testID="linked-sign-in-section">
-          <Text style={styles.sectionLabel}>Linked sign-in</Text>
-          <TouchableOpacity
-            accessibilityLabel={`GitHub. ${linkedAccountLabel}`}
-            accessibilityRole="button"
-            disabled={!githubCanLink || githubWorking}
-            onPress={() => void connectGitHub()}
-            style={styles.row}
-            testID="linked-sign-in-setting"
-          >
-            <View style={styles.githubMark}>
-              <Text style={styles.linkedGlyphText}>GH</Text>
+        <View style={styles.section} testID="appearance-section">
+          {pushSupported ? (
+            <View testID="notifications-section">
+              <PushLevelSetting
+                disabled={pushEnabled === null || pushWorking}
+                onSave={changePushLevel}
+                value={pushLevel}
+              />
+              {pushRegistrationFailed ? (
+                <TouchableOpacity
+                  disabled={pushWorking}
+                  onPress={() => void retryPushRegistration()}
+                  style={styles.pushRetryButton}
+                  testID="push-retry-registration"
+                >
+                  <Text style={styles.pushRetryText}>{pushWorking ? 'RETRYING…' : 'RETRY NOW'}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
-            <Text style={styles.rowTitle}>GitHub</Text>
-            <Text style={styles.stateMark}>{linkedAccount === 'connected' ? '✓' : '·'}</Text>
-          </TouchableOpacity>
+          ) : null}
+          <AppearanceSetting onChange={changeAppearance} value={appearance} />
+          <UiSizeSetting onChange={changeUiSize} value={uiSize} />
+        </View>
+
+        <View style={styles.section} testID="legal-settings">
+          <SettingsRow
+            accessibilityLabel={t('settings.privacyPolicy')}
+            accessibilityRole="link"
+            chevron="right"
+            onPress={() => void openExternalUrl(PRIVACY_URL).catch(() => undefined)}
+            testID="settings-privacy-row"
+            title={t('settings.privacyPolicy')}
+          />
+          <SettingsRow
+            accessibilityLabel={t('settings.termsOfService')}
+            accessibilityRole="link"
+            chevron="right"
+            onPress={() => void openExternalUrl(TERMS_URL).catch(() => undefined)}
+            testID="settings-terms-row"
+            title={t('settings.termsOfService')}
+          />
+          <SettingsRow
+            accessibilityLabel="Send feedback"
+            accessibilityRole="link"
+            chevron="right"
+            onPress={() => void openExternalUrl(FEEDBACK_MAILTO).catch(() => undefined)}
+            testID="settings-feedback-row"
+            title="Send feedback"
+          />
         </View>
 
         <View style={styles.section} testID="account-settings">
-          <Text style={styles.sectionLabel}>Device &amp; account</Text>
-          <TouchableOpacity
-            accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
-            disabled={!Updates.isEnabled || manualUpdateBusy}
-            onPress={() => void checkForUpdate()}
-            style={[styles.row, (!Updates.isEnabled || manualUpdateBusy) && styles.disabled]}
-            testID="ota-update-info"
-          >
-            <View style={styles.rowCopy}>
-              <Text style={styles.rowTitle}>Version</Text>
-              <Text numberOfLines={1} style={styles.rowMeta}>
-                {[releaseValue, manualUpdateMessage(manualUpdate)].filter(Boolean).join(' · ')}
-              </Text>
-            </View>
-            {manualUpdateBusy ? (
-              <View testID="ota-update-progress">
-                <PixelLoader compact />
-              </View>
-            ) : (
-              <Text style={styles.actionMark} testID="ota-update-check">
-                Check
-              </Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
+          <SettingsRow
             accessibilityLabel={confirmSignOut ? 'Confirm sign out' : 'Sign out on this device'}
             onPress={() => void signOut()}
-            style={styles.row}
             testID="sign-out-setting"
-          >
-            <Text style={styles.rowTitle}>Sign out</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+            title="Sign out"
+            tone="destructive"
+          />
+          <SettingsRow
             accessibilityLabel={confirmDelete ? 'Confirm delete account' : 'Delete account'}
             disabled={deleteBusy}
             onPress={() => void deleteAccount()}
-            style={[styles.row, deleteBusy && styles.disabled]}
             testID="delete-account-setting"
-          >
-            <Text style={styles.dangerTitle}>{deleteBusy ? 'Deleting…' : 'Delete account'}</Text>
-          </TouchableOpacity>
+            title={deleteBusy ? 'Deleting…' : 'Delete account'}
+            tone="destructive"
+          />
         </View>
 
-        {nameSaved ? <Text style={styles.savedMark}>✓ Saved</Text> : null}
         {githubNotice ? <Text style={styles.notice}>{githubNotice}</Text> : null}
 
         {confirmSignOut ? (
@@ -772,7 +540,41 @@ export default function BuzzIdentitySettings() {
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
+
+        <View style={styles.foot} testID="ota-update-info">
+          <BeelineMark size={32} />
+          <Text style={styles.version}>Beeline version {releaseValue}</Text>
+          {manualUpdateMessage(manualUpdate) ? (
+            <Text style={styles.version}>{manualUpdateMessage(manualUpdate)}</Text>
+          ) : null}
+          {manualUpdateBusy ? (
+            <View testID="ota-update-progress">
+              <PixelLoader compact />
+            </View>
+          ) : (
+            <TouchableOpacity
+              accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
+              disabled={!Updates.isEnabled}
+              onPress={() => void checkForUpdate()}
+              style={!Updates.isEnabled ? styles.disabled : undefined}
+              testID="ota-update-check"
+            >
+              <Text style={styles.check}>Check</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </ScrollView>
+
+      {profilePubkey && monolithEnabled ? (
+        <FacePickerSheet
+          face={face}
+          onClose={() => setFacePickerOpen(false)}
+          onFaceChange={setFace}
+          onSave={(next) => monolithPhoneOperation('updateIdentityFace', { faceId: next })}
+          seed={profilePubkey}
+          visible={facePickerOpen}
+        />
+      ) : null}
     </View>
   );
 }
@@ -794,79 +596,61 @@ const styles = StyleSheet.create((theme) => {
     headerCopy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: {
-      padding: hull.space.md,
-      gap: hull.layout.sectionGap,
+      paddingHorizontal: hull.space.md,
       paddingBottom: hull.space.xxl,
     },
-    section: {},
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
-    row: {
-      minHeight: hull.layout.row,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
+    ident: {
       alignItems: 'center',
       gap: hull.space.md,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
+      paddingTop: hull.space.lg,
+      paddingBottom: hull.space.lg,
     },
-    rowCopy: { flex: 1, minWidth: 0 },
-    rowTitle: { ...Typography.default(), ...hull.type.body, flex: 1, color: hull.textPrimary },
-    rowMeta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    monoValue: {
-      ...Typography.mono(),
-      ...hull.type.body,
-      flex: 1,
-      color: hull.textSecondary,
-      textAlign: 'right',
-    },
-    inlineInput: {
-      ...Typography.default(),
-      ...hull.type.body,
-      flex: 1,
-      minWidth: 0,
-      paddingVertical: hull.space.sm,
-      color: hull.textPrimary,
-      textAlign: 'right',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: 'transparent',
-    },
-    inlineInputFocused: { borderBottomColor: hull.focus },
-    chevron: {
-      ...Typography.default(),
-      ...hull.type.hero,
-      width: 16,
-      textAlign: 'right',
-      color: hull.textMuted,
-    },
-    githubMark: {
-      width: 38,
-      height: 38,
+    tile: {
+      width: IDENTITY_TILE,
+      height: IDENTITY_TILE,
+      borderRadius: IDENTITY_TILE_RADIUS,
+      borderWidth: 2,
+      borderColor: hull.accent,
+      backgroundColor: hull.bgRaised,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.borderStrong,
+      overflow: 'hidden',
     },
-    linkedGlyphText: {
-      ...Typography.mono('semiBold'),
-      ...hull.type.meta,
-      color: hull.textSecondary,
+    handle: {
+      ...Typography.default(),
+      ...hull.type.bodyStrong,
+      color: hull.textPrimary,
+      textAlign: 'center',
     },
-    stateMark: { ...Typography.mono('semiBold'), ...hull.type.body, color: hull.accent },
-    actionMark: { ...Typography.default(), ...hull.type.body, color: hull.accent },
-    dangerTitle: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
+    handleAt: {
+      ...Typography.default(),
+      ...hull.type.bodyStrong,
+      color: hull.accent,
+    },
+    section: {},
+    sectionLabel: {
+      ...Typography.default(),
+      ...hull.type.sectionHead,
+      color: hull.textMuted,
+      paddingTop: hull.space.md,
+    },
     disabled: { opacity: 0.42 },
     pushRetryButton: {
       minHeight: 44,
-      paddingHorizontal: hull.space.sm,
+      paddingHorizontal: hull.space.md,
       justifyContent: 'center',
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
     pushRetryText: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
-    savedMark: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    notice: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    notice: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      paddingHorizontal: hull.space.md,
+    },
     warning: {
-      padding: hull.space.sm,
+      padding: hull.space.md,
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.md,
@@ -875,11 +659,22 @@ const styles = StyleSheet.create((theme) => {
     cancelAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     cancelText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     errorPanel: {
-      padding: hull.space.sm,
+      padding: hull.space.md,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.borderStrong,
     },
     errorLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.danger },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    foot: {
+      alignItems: 'center',
+      gap: hull.space.sm,
+      paddingHorizontal: hull.space.md,
+      paddingTop: hull.space.xl,
+      paddingBottom: hull.space.lg,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    version: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, textAlign: 'center' },
+    check: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
   };
 });

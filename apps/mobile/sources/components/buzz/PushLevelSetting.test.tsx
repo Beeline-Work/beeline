@@ -33,7 +33,7 @@ describe('PushLevelSetting', () => {
       renderer = create(<PushLevelSetting onSave={onSave} value="mine" />);
     });
     const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
-    expect(row.props.title).toBe('Push notifications');
+    expect(row.props.title).toBe('Notifications');
     expect(row.props.value).toBe('My corners');
 
     act(() => row.props.onPress());

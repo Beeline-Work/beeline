@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { groknight } from './groknight';
+import { roomBottomChromeStyles } from './room-bottom-chrome';
 import {
   ROOM_OPEN_COMPOSER_BOX_BORDER,
   ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT,
@@ -27,8 +28,12 @@ const ledger = readFileSync(path.join(__dirname, '../components/buzz/Ledger.tsx'
 describe('Room-open bottom chrome geometry', () => {
   it('mirrors chrome tokens rather than the 26px single-line input height', () => {
     expect(surface).toContain(`paddingVertical: ${ROOM_OPEN_LIST_TAIL_PADDING}`);
-    expect(surface).toContain(`paddingTop: ${ROOM_OPEN_INPUT_BAR_PADDING_TOP}`);
-    expect(surface).toContain(`borderTopWidth: ${ROOM_OPEN_INPUT_BAR_BORDER_TOP}`);
+    // The composer row is one of the three styles `buzz/room-bottom-chrome.ts`
+    // owns, so this reads its actual values rather than the screen's source.
+    const composerRow = roomBottomChromeStyles(groknight);
+    expect(composerRow.composerRow.paddingTop).toBe(ROOM_OPEN_INPUT_BAR_PADDING_TOP);
+    expect(composerRow.composerRow.borderTopWidth).toBe(ROOM_OPEN_INPUT_BAR_BORDER_TOP);
+    expect(surface).toContain('inputBar: bottomChrome.composerRow,');
     expect(composer).toContain(`minHeight: ${ROOM_OPEN_COMPOSER_BOX_MIN_HEIGHT}`);
     expect(composer).toContain(`borderWidth: ${ROOM_OPEN_COMPOSER_BOX_BORDER}`);
     expect(ledger).toContain('paddingBottom: theme.buzz.messagePaddingVertical * 3,');

@@ -58,13 +58,8 @@ export function isCornerNeedsYou(status: CornerState): boolean {
 }
 
 /**
- * A corner whose life is over: it landed or it was closed. Nothing
- * that reports *current* work may ever name one of these — the pinned corner
- * line above the composer least of all, since it is tappable and a terminal
- * corner is a read-only channel a tap strands the reader in. Written as the
- * complement of the three terminal words rather than as an allowlist of live
- * ones so a new non-terminal `CornerState` is reportable by default, and a
- * new terminal one has to be named here to become terminal.
+ * Confirmed archival overrides a stale lifecycle read so current-work
+ * surfaces cannot report a closed corner as active.
  */
 export function resolveCornerLifecycleStatus(
   known: CornerState,

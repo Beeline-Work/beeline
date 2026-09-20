@@ -238,8 +238,8 @@ same left margin as the prose above it. Only its affordance lifts — `view →`
 hangs in the same right gutter the timestamps do, one tonal step brighter, with
 a faint tonal flash on press and no border at any point. `◇` means corner (the
 lifecycle glyph family) and `→` means enterable, and that pairing is the one
-"enter this corner" vocabulary the product has, shared by
-`WritePermissionOutcome` and the pinned corner line below the transcript.
+"enter this corner" vocabulary used by `WritePermissionOutcome`. The Room
+header uses `◇` with the corners label to open the list rather than one corner.
 
 **A system notification is one sentence in one voice.** The server phrases
 every one of them — a join, a leave, a yolo flip, a grant answer, a failed
@@ -259,15 +259,25 @@ its header sentence is the same grammar.
 not after it ends. A note inscribed the moment a corner opened scrolls away and
 then lies — still saying "open" long after the corner merged — and a terminal
 stamp (`Alden ✕ FAILED`, `◇ OPEN`) interrupts a live conversation with a dead
-record while duplicating the pinned line above the composer. So a Room has
-exactly **one** active-corner affordance, the pinned line, and exactly one place
-a finished corner is recorded, the Room's corners view (opened from the header
-`◇`, and also shown in the desktop work-pane corner list). The transcript keeps the
-conversation and nothing else.
+record. So a Room has exactly **one** active-corner affordance, the named
+corners door in its header, and that door opens the one place every corner —
+running or finished — is recorded, the Room's corners list (also shown in the
+desktop work-pane corner list). The transcript keeps the conversation and
+nothing else.
 
-**A turn in progress and an open corner are two different facts, and they get
-two different lines.** A question being answered is transient and has nowhere
-to go, so it shows as one line with the primary activity verb and elapsed seconds,
+**Nothing pins one corner above the composer.** There used to be a line there
+naming "the" open corner; a Room holds many at once, so it could only ever
+name one of them, and it sat between the reader and the field they were
+typing in — chrome in the one place the product asks for attention. It is
+retired, not dimmed: the door in the header is the way in, the corners list
+answers "what is running", and the Room-list row's own state mark answers it
+from outside. The turn line is now the only thing that hangs above the
+composer. With no offline hint present, it hangs directly on the composer
+with no gap.
+
+**A turn in progress and an open corner are two different facts.** A question
+being answered is transient and has nowhere to go, so it shows as one line with
+the primary activity verb and elapsed seconds,
 without a redundant `thinking` suffix, that disappears when the
 reply lands — it navigates nowhere and cannot strand a reader in a dead
 channel. When the server accepts a human steer into that exact running corner
@@ -285,13 +295,11 @@ already written** — the half-finished answer
 settles as an ordinary message and the conversation carries on from it, the way
 every stop button a person has used already behaves; retracting it would delete
 words they had read and make stopping feel like undoing. The line's last word is
-`stopped`, never `done`. A corner is a place that exists, so the pinned line names it and
-opens it. They may show together, separately, or not at all, and neither
-is ever derived from the other: an agent busy on a plain Room reply must not
-light the corner line, and a corner line must never name a corner that has
-merged, failed, or closed — a tappable dead channel is worse than no line at
-all. Both gates are enforced in code (`buzz/room-indicators.ts`), because this
-rule was once held by care alone and did not hold.
+`stopped`, never `done`. A corner is a place that exists, so the header's corners door names the
+place rather than the moment. Keeping the two apart is why the corner half
+never reaches the turn line: an agent busy on a plain Room reply must not
+report corner work. Finished corners remain accessible in the corners list
+for reading their history; they are never presented as current work.
 
 **There is no reply echo under an agent turn.** Body threads every Room/DM reply
 to the request that triggered it, so the quoted block was always the message
@@ -323,14 +331,18 @@ check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
-trailing slot carries the corner glyph `◇` in brass, slightly larger than the
-steel overflow dots and close enough that colour separates them; it is a second door
-onto the Room's dedicated corners list (`corners/[roomId]`, windowed with the
-same cap and archived fallback as the desktop work-pane corner list), not a second
-live-corner jump. The pinned line below the transcript remains the one
-active-corner affordance. The approval panel and
-diff review exist only in a Corner — that is a difference in content, not in
-shape language.
+trailing slot carries the **corners door**: the brass corner sigil `◇` ALONE,
+in its own 44pt box, with `space.lg` of bare slab before the overflow dots'
+identical 44pt box. No word rides beside it. The two are **siblings** — same
+box, same baseline, parted by slab — and the sigil is sized to read at
+optically the SAME mark-size as the dots: `◇` draws about 0.6em against a wide
+short row of bullets, so the body role matches them by eye where the metadata
+role left a speck and the hero role made it tower (captain, 2026-09-20). The
+accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
+(`corners/[roomId]`, windowed with the same cap and archived fallback as the
+desktop work-pane corner list) and is the Room's one active-corner affordance.
+The approval panel and diff review exist only in a Corner — that is a
+difference in content, not in shape language.
 
 Beneath that header a Corner holds its objective — the human's own request, as
 one inscribed line that stays for the life of the corner. A slug in the header
@@ -420,6 +432,24 @@ has gone silent. A needs-you row takes brass on its state word and lifts its
 name to the primary tone, and the word itself becomes the AFFORDANCE — `REVIEW`,
 `REPLY`, `RETRY` — where every other row reads `WORKING` or `IDLE`, so the
 accent is never the only thing carrying the fact.
+
+**The standalone corners list is that same index, full height.** The screen
+opened from the Room header's corners door (`corners/[roomId]`) is chrome on
+the slab like every other index: a hairline header with the Room name as the
+eyebrow, the noun as the title, the count alone in a reserved gutter, and rows
+at the index's own height as a FLOOR. Its row leads with the opener's 26px face
+tile — the byline size, because the opener is secondary to the work — names the
+corner at the brightest tier, carries one quiet line (who opened it, and the
+PR/check narration once there is one), and closes with the state WORD in a
+reserved cell beside the state circle. **A corner's name is never truncated
+here**: this is the screen whose whole job is telling corners apart, so the
+name prints in full and wraps to as many lines as it needs, and the row grows
+with it. Uneven row heights are the accepted cost (captain, 2026-09-20). That
+is why this one surface composes its label through `fullCornerTitle` rather
+than `displayCornerTitle`'s three-word inline form. The word is not decoration: a circle alone encodes state in colour and
+shape only, which is exactly the encoding a colour-blind reader and a screen
+reader both lose. No explainer paragraph stands above the list; a screen that
+has to describe what its own contents are has not been designed yet.
 
 **The plus is a brass square.** Compose is one 44pt brass square floating at
 the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
@@ -573,7 +603,7 @@ is reading an empty roster, not a different name.
 Vocabulary: "Room," never "Channel." "Members," never "People." Room and corner
 names carry the `#` channel mark everywhere a surface EXPOSES them — chat
 headers (`#<room>`, corners as `#<room>/<corner>`), push-notification titles
-(gateway `mapping.ts` owns those), Room index rows, the pinned-corner line, the
+(gateway `mapping.ts` owns those), Room index rows, the
 Room-list corner dropdown, the standalone corners list, Workspace-settings room
 lists, and Members references — all added at render through one
 presentation-only derivation pair (`displayRoomIndexTitle` /
@@ -649,9 +679,9 @@ settling reply cross-fades opacity with its provisional ghost over 220ms. Both
 are inside the ~240ms bound, both stop the moment they finish, and both are
 skipped outright under reduced motion — the provisional style stays either way.
 
-It is also **the only motion "live" is allowed to have.** The pinned corner line
-and a working agent's gold ring both breathe on it — a calm heartbeat, on the
-one clock. Live state must never be reported by something that _travels_: a
+It is also **the only motion "live" is allowed to have.** A working corner's
+row and a working agent's gold ring both breathe on it — a calm heartbeat, on
+the one clock. Live state must never be reported by something that _travels_: a
 sweeping band, a moving crest, a progress bar, or a row of dashes all read as
 "something is filling up towards a finish", which is a claim the product cannot
 make about an agent's turn, and at rest they read as broken chrome. Breathing
@@ -683,8 +713,8 @@ check), never as a page or Room/Corner load gate.
    chat effect), and
    the moment you act on agent work: the ring around a working agent's identity
    mark (working means a live turn or corner, never presence alone), live work
-   elsewhere (the Corner's LIVE wave, the pinned corner line, and a Room on
-   the index with a live corner), owner role,
+   elsewhere (the Corner's LIVE wave, the Room header's corners sigil, and a
+   Room on the index with a live corner), owner role,
    and the merge-approval action. It is never the _only_ signal for any of
    these — each is redundantly encoded by shape, glyph, or copy. Note what brass
    is _not_: identity itself. An agent's plate carries its own signature colour,

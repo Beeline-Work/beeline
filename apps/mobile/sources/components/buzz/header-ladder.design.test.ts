@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { typeRoles, space } from '@/buzz/groknight';
 
 /**
  * Design invariants for the chat screen's top bar — the Room and its Corners
@@ -123,11 +124,15 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    // Back and lone corner overflow keep the 44-chrome + 4 slop edge.
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(2);
+    // Back, lone corner overflow, and the named corners door all carry 44 of
+    // chrome themselves, so they take the small edge slop.
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(3);
   });
 
-  it('puts a brass corner glyph beside Room overflow that opens the dedicated corners list', () => {
+  it('gives the Room corners door a large lone sigil parted from overflow', () => {
+    // Captain 2026-09-20: the door is the diamond ALONE — no word beside it —
+    // visibly larger than the overflow dots and separated from them by bare
+    // slab, with a real 44pt target of its own.
     expect(chatSource).toContain('testID="room-corners-menu"');
     expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
     expect(chatSource).toContain('<Text style={styles.roomCornersGlyph}>◇</Text>');
@@ -140,30 +145,54 @@ describe('Chat header — one language for Room and Corner', () => {
       chatSource.indexOf('testID="room-corners-menu"'),
     );
     expect(glyph).toContain('!parentChannelId && !isDirectMessage');
-    // Option E: brass of the corner lifecycle family, slightly larger than
-    // the steel dots, clustered by hit slop rather than two 44pt boxes.
+    // Brass stays on the sigil alone — the corner lifecycle family's own mark.
+    // The word takes the calm metadata voice the rest of the header speaks in,
+    // so the pair is never two accents shouting at each other.
     const diamond = chatSource.match(/roomCornersGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
     expect(diamond![0]).toContain('color: groknight.accent');
-    expect(diamond![0]).toContain('fontSize: groknight.type.meta.fontSize');
+    expect(diamond![0]).toContain('...groknight.type.body');
     expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    // Captain 2026-09-20: optically the SAME mark-size as the overflow dots —
+    // neither a speck nor a tower. `◇` draws about 0.6em, so the role that
+    // matches the dots by eye sits just above their own size, and well below
+    // the hero role that made it tower.
+    const dotsSize = Number(
+      chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?fontSize:\s*(\d+)/)![1],
+    );
+    expect(typeRoles.body.fontSize).toBeGreaterThan(dotsSize);
+    expect(typeRoles.body.fontSize).toBeLessThan(typeRoles.hero.fontSize);
+    expect(typeRoles.body.fontSize - dotsSize).toBeLessThanOrEqual(6);
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(dots![0]).toContain('color: groknight.steel');
     expect(dots![0]).toContain('fontSize: 12');
-    const diamondButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
-    expect(diamondButton![0]).toContain('marginLeft: 12');
-    expect(diamondButton![0]).not.toContain('minWidth: 44');
+    // Its own 44pt-tall target, so it is a destination rather than chrome
+    // hanging off the menu.
+    const doorButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
+    expect(doorButton![0]).toContain('minWidth: 44');
+    expect(doorButton![0]).toContain('minHeight: 44');
+    expect(doorButton![0]).toContain('marginLeft: 12');
+    // No word rides along any more.
+    expect(chatSource).not.toContain('roomCornersLabel');
+    // Siblings: the door and the overflow carry the SAME box, so neither
+    // reads as chrome hanging off the other.
+    const overflowBox = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
+    for (const metric of ['minWidth: 44', 'minHeight: 44']) {
+      expect(doorButton![0], metric).toContain(metric);
+      expect(overflowBox![0], metric).toContain(metric);
+    }
+    // Bare slab between the named door and the dots, on top of the door's own
+    // padding: two controls a thumb must hit separately cannot share an edge.
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
-    expect(clustered, 'missing clustered overflow style').toBeTruthy();
-    // Keep one visible small spacing step between the diamond and dots. The
-    // tight 4pt token makes the distinct actions read as one crowded glyph.
-    expect(clustered![0]).toContain('marginLeft: groknight.space.sm');
-    expect(clustered![0]).not.toContain('marginLeft: groknight.space.xs');
-    expect(clustered![0]).not.toContain('minWidth: 44');
+    expect(clustered, 'missing trailing overflow style').toBeTruthy();
+    expect(clustered![0]).toContain('marginLeft: groknight.space.lg');
+    expect(space.lg).toBeGreaterThan(space.md);
     expect(chatSource).toContain(
       'const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',
     );
-    expect(chatSource.match(/hitSlop=\{HEADER_TRAILING_HIT_SLOP\}/g)).toHaveLength(2);
+    expect(chatSource.match(/hitSlop=\{HEADER_TRAILING_HIT_SLOP\}/g)).toHaveLength(1);
+    // No badge, plate or count grows on it: a door says where it goes, and
+    // the list behind it does the counting.
     expect(chatSource).not.toMatch(/roomCorners(?:Badge|Count|Plate)/);
     expect(chatSource).not.toContain('backgroundColor: groknight.brassWash');
   });

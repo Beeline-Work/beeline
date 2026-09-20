@@ -11,8 +11,9 @@ import { describe, expect, it } from 'vitest';
  *   one naming model (`buzz/room-list-row.ts`), never an ad-hoc prefix;
  * - the mark NEVER reaches a mutation path: rename drafts seed from the
  *   STORED name, and cache writes keep raw names;
- * - the pinned corner line composes `#<room>/<corner>` through
- *   `displayCornerTitle`, the same derivation every other surface uses.
+ * - a corner name composes `#<room>/<corner>` through `displayCornerTitle`,
+ *   the same derivation every other surface uses. The Room's retired pinned
+ *   line was one caller; the corners list is the one that survives.
  */
 const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
 const sessionSource = readFileSync(
@@ -21,6 +22,10 @@ const sessionSource = readFileSync(
 );
 const rowSource = readFileSync(
   path.join(__dirname, '..', '..', '..', '..', 'buzz', 'room-list-row.ts'),
+  'utf8',
+);
+const cornersListSource = readFileSync(
+  path.join(__dirname, '..', '..', '..', '..', 'components', 'buzz', 'RoomCornersList.tsx'),
   'utf8',
 );
 
@@ -47,12 +52,20 @@ describe('the # channel-mark convention on the chat surface', () => {
     expect(chatSource).not.toContain("roomName: `#${'");
   });
 
-  it('composes the pinned corner line through displayCornerTitle', () => {
-    expect(chatSource).toContain("import { displayCornerTitle } from '@/buzz/room-list-row'");
-    expect(chatSource).toContain(
-      'displayCornerTitle(\n      resolvedChannelName?.trim() || undefined,',
+  it('composes a corner name through displayCornerTitle, from the Room that owns it', () => {
+    // The Room's retired pinned line was one caller; the corners list is the
+    // other, and it is the one that survives. Both forms stay one model.
+    // The corners list composes the same `#room/corner` mark, but through
+    // `fullCornerTitle`: that screen exists to tell corners apart, so its
+    // name is uncapped (captain, 2026-09-20) while every inline surface keeps
+    // `displayCornerTitle`'s three-word form.
+    expect(cornersListSource).toContain(
+      "import { fullCornerTitle } from '@/buzz/room-list-row'",
     );
-    // One naming model for both forms.
+    expect(cornersListSource).toContain(
+      'fullCornerTitle(parentRoomName, item.corner.name, item.corner.id)',
+    );
+    expect(chatSource).not.toContain('displayCornerTitle');
     expect(rowSource).toContain('export function displayCornerTitle(');
     expect(rowSource).toContain('export function displayRoomIndexTitle(');
   });

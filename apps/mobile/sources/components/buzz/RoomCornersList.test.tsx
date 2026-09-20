@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CornerListItem } from '@beeline/buzz-client';
 import { INSPECTOR_CORNER_LIST_CAP } from '@/buzz/inspector-corners';
 import { RoomCornersList } from './RoomCornersList';
+import { RoomCornersHeader } from './RoomCornersHeader';
+import { beelineThemes } from '@/buzz/groknight';
 
 const routerPush = vi.hoisted(() => vi.fn());
 
@@ -28,26 +30,25 @@ vi.mock('react-native', async () => {
         (props.data ?? []).length === 0 ? props.ListEmptyComponent : null,
       ),
     Pressable: host('Pressable'),
+    TouchableOpacity: host('TouchableOpacity'),
     Platform: { OS: 'web' },
     Text: host('Text'),
     View: host('View'),
   };
 });
 
-const theme = vi.hoisted(() => ({
-  buzz: {
-    border: '#333',
-    textPrimary: '#fff',
-    textMuted: '#aaa',
-    type: { body: {}, meta: {} },
-  },
-}));
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
-  },
-}));
+// The real token set, so row geometry and tone assertions read the same
+// values the app ships rather than a stub that drifts from them.
+vi.mock('react-native-unistyles', async () => {
+  const { beelineThemes } = await import('@/buzz/groknight');
+  const theme = { buzz: beelineThemes.obsidian };
+  return {
+    StyleSheet: {
+      hairlineWidth: 1,
+      create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
+    },
+  };
+});
 vi.mock('expo-router', () => ({ router: { push: routerPush } }));
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
@@ -171,6 +172,116 @@ describe('RoomCornersList', () => {
     expect(tree.root.findAllByProps({ testID: 'room-corners-more' })).toHaveLength(0);
   });
 
+  it.each([
+    ['working', 'working', 'quiet', 'ledgerQuiet'],
+    ['waiting', 'idle', 'brass', 'accent'],
+    ['review', 'needs-you', 'quiet', 'ledgerQuiet'],
+    ['archived', 'idle', 'ghost', 'ledgerGhost'],
+  ] as const)('renders %s with its state word, circle and tone', (state, visual, tone, color) => {
+    const tree = render([corner('live', state, 'Fix fixture')]);
+    const row = tree.root.findByType('Pressable' as any);
+    const circle = tree.root.findByType('StateCircle' as any);
+    const label = row
+      .findAllByType('Text' as any)
+      .find((node: any) => node.props.children === state);
+    expect(label).toBeDefined();
+    expect(resolvedStyle(label.props.style)).toMatchObject({
+      ...beelineThemes.obsidian.type.sectionHead,
+      color: beelineThemes.obsidian[color],
+    });
+    expect(circle.props).toMatchObject({ state: visual, tone });
+    expect(row.children[row.children.length - 2].findByType('Text' as any)).toBe(label);
+    expect(row.children[row.children.length - 1].findByType('StateCircle' as any)).toBe(circle);
+    expect(row.props.accessibilityLabel).toContain(state);
+    expect(row.props.accessibilityLabel).toContain('Opened by Opener live');
+    expect(resolvedStyle(row.props.style).minHeight).toBe(beelineThemes.obsidian.layout.row);
+    // Captain 2026-09-20: the opener's face is secondary to the corner's
+    // name, so it takes the byline tile size, not the Room-list row's.
+    expect(row.findByType('IdentityMark' as any).props.size).toBe(26);
+    const texts = row.findAllByType('Text' as any);
+    expect(resolvedStyle(texts[0].props.style)).toMatchObject(beelineThemes.obsidian.type.body);
+    expect(resolvedStyle(texts[1].props.style)).toMatchObject(beelineThemes.obsidian.type.meta);
+  });
+
+  it('carries the corner PR/check narration on the row it belongs to', () => {
+    const item = corner('live', 'working', 'Fix fixture');
+    const tree = render([
+      {
+        ...item,
+        lifecycle: {
+          ...item.lifecycle,
+          pr: { number: 12, url: 'https://example.invalid/12' },
+          checks: 'passing',
+          checksSummary: { status: 'passing', total: 3, checks: [], failing: [] },
+        },
+      } as unknown as CornerListItem,
+    ]);
+    expect(text(tree)).toContain('Opened by Opener live · PR #12 · all 3 tests passed');
+  });
+
+  it.each([0, 24, 48])('keeps the last row clear of a %s-point gesture bar', (bottomInset) => {
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = create(
+        <RoomCornersList
+          corners={[corner('live', 'working')]}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          bottomInset={bottomInset}
+        />,
+      );
+    });
+    const list = tree.root.findByType('FlatList' as any);
+    expect(resolvedStyle(list.props.contentContainerStyle).paddingBottom).toBe(bottomInset);
+  });
+
+  it('reserves the trailing state column so every title truncates at one x', () => {
+    // F2 from the impeccable audit: `working`, `waiting`, `review` and
+    // `archived` are four different widths. Without a reserved cell the title
+    // ends at a different x on each row and the words do not read down one
+    // edge, which is what DESIGN.md's index rule forbids.
+    const tree = render([
+      corner('a', 'working', 'Alpha'),
+      corner('b', 'waiting', 'Beta'),
+      corner('c', 'review', 'Gamma'),
+    ]);
+    const flatten = (style: any): any[] => ([] as any[]).concat(style ?? []).filter(Boolean);
+    const cells = tree.root
+      .findAllByType('Text' as any)
+      .flatMap((node: any) => flatten(node.props.style))
+      .filter((style: any) => style.textTransform === 'uppercase');
+    expect(cells.length).toBeGreaterThanOrEqual(3);
+    for (const cell of cells) {
+      expect(cell.minWidth).toBeGreaterThan(0);
+      expect(cell.textAlign).toBe('right');
+    }
+    const widths = new Set(cells.map((cell: any) => cell.minWidth));
+    expect(widths.size).toBe(1);
+  });
+
+  it('prints the corner name in full rather than truncating it', () => {
+    // Captain 2026-09-20: no ellipsis on a corner name. It wraps, and the row
+    // grows to hold it; uneven row heights are the accepted cost.
+    const longName =
+      'Restore the corners index header metrics and reconcile the archived fallback window';
+    const tree = render([corner('long', 'waiting', longName)]);
+    const row = tree.root.findByProps({ testID: 'room-corner-long' });
+    const texts = row
+      .findAllByType('Text' as any)
+      .map((node: any) => ({ node, text: [node.props.children].flat().join('') }));
+    type TitleEntry = { node: any; text: string };
+    const title = texts.find((entry: TitleEntry) => entry.text.includes(longName))?.node;
+    expect(
+      title,
+      `the row must render the whole name, got: ${texts
+        .map((entry: TitleEntry) => entry.text)
+        .join(' | ')}`,
+    ).toBeTruthy();
+    expect(title.props.numberOfLines).toBeUndefined();
+    expect(resolvedStyle(row.props.style).minHeight).toBe(beelineThemes.obsidian.layout.row);
+    expect(resolvedStyle(row.props.style).height).toBeUndefined();
+  });
+
   it('opens a row into that corner', () => {
     const tree = render([corner('live', 'working', 'Fix fixture')]);
     act(() => tree.root.findByProps({ testID: 'room-corner-live' }).props.onPress());
@@ -178,5 +289,47 @@ describe('RoomCornersList', () => {
       pathname: '/beeline/chat/[channelId]',
       params: { channelId: 'live', parent: 'room-1', title: 'Fix fixture' },
     });
+  });
+});
+
+function resolvedStyle(style: any): Record<string, any> {
+  return Object.assign({}, ...[style].flat(Infinity).filter(Boolean));
+}
+
+describe('RoomCornersHeader', () => {
+  it.each([0, 1, 2])('renders the slab header and accessible count for %s corners', (count) => {
+    const onBack = vi.fn();
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = create(<RoomCornersHeader title="#alpha" count={count} onBack={onBack} />);
+    });
+    const hull = beelineThemes.obsidian;
+    const header = tree.root.findAllByType('View' as any)[0];
+    expect(resolvedStyle(header.props.style)).toMatchObject({
+      borderBottomWidth: 1,
+      borderBottomColor: hull.border,
+      paddingHorizontal: hull.space.sm,
+    });
+    expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
+    expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
+    const texts = tree.root.findAllByType('Text' as any);
+    expect(texts.map((node: any) => node.props.children)).toEqual([
+      '‹',
+      '#alpha',
+      'Corners',
+      count,
+    ]);
+    expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.meta);
+    expect(resolvedStyle(texts[2].props.style)).toMatchObject(hull.type.hero);
+    expect(texts[2].props.accessibilityRole).toBe('header');
+    expect(resolvedStyle(texts[3].props.style)).toMatchObject(hull.type.meta);
+    expect(texts[3].props.accessibilityLabel).toBe(
+      `${count} ${count === 1 ? 'corner' : 'corners'}`,
+    );
+    const back = tree.root.findByType('TouchableOpacity' as any);
+    expect(back.props).toMatchObject({ accessibilityRole: 'button', accessibilityLabel: 'Back' });
+    expect(resolvedStyle(back.props.style)).toMatchObject({ width: 44, height: 44 });
+    act(() => back.props.onPress());
+    expect(onBack).toHaveBeenCalledOnce();
   });
 });

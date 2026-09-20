@@ -6,6 +6,7 @@ import {
   connectorOfferActionLabel,
   connectorOfferConsequence,
   connectorOfferTitle,
+  connectorPurpose,
   formatConnectorOfferDecisionLine,
   isOfferableConnectorKind,
   parseConnectorOfferDecisionLine,
@@ -44,6 +45,7 @@ describe('connector offers (R5)', () => {
     expect(google).toContain('never see your password');
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');
     expect(connectorOfferActionLabel('Trusty Squire')).toBe('Add Trusty Squire');
+    expect(connectorPurpose('google-youtube')).toContain('channel owner account, not a manager');
   });
 
   it('round-trips the hidden decision line the daemon resumes on', () => {

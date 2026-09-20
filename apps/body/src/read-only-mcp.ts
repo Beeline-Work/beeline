@@ -83,6 +83,13 @@ import {
   type CornerLifecycleView,
 } from '@beeline/api-contract/phone';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
+import {
+  YOUTUBE_MCP_SERVER_NAME,
+  YOUTUBE_MCP_SURFACE,
+  YOUTUBE_MCP_TOOLS,
+  callYoutubeTool,
+  youtubeClientFromToken,
+} from './youtube-mcp.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
   BoundedSizeError,
@@ -790,6 +797,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
+const youtubeSurface = process.env.BEELINE_MCP_SURFACE === YOUTUBE_MCP_SURFACE;
 
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
@@ -811,12 +819,14 @@ export function agentToolsFor(
   });
 }
 
-const TOOLS = agentToolsFor(
-  agentSurface,
-  process.env.BEELINE_AGENT_DM === '1',
-  Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
-  process.env.BEELINE_CORNER_REVIEWER === '1',
-);
+const TOOLS = youtubeSurface
+  ? [...YOUTUBE_MCP_TOOLS]
+  : agentToolsFor(
+      agentSurface,
+      process.env.BEELINE_AGENT_DM === '1',
+      Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
+      process.env.BEELINE_CORNER_REVIEWER === '1',
+    );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 /** The extension→mime map for posting files by path. Formats the artifact
@@ -2619,7 +2629,11 @@ async function handleLine(line: string): Promise<void> {
           typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: {
-          name: agentSurface ? 'beeline-agent' : 'beeline-readonly-mcp',
+          name: youtubeSurface
+            ? YOUTUBE_MCP_SERVER_NAME
+            : agentSurface
+              ? 'beeline-agent'
+              : 'beeline-readonly-mcp',
           version: '1.0.0',
         },
       });
@@ -2643,9 +2657,15 @@ async function handleLine(line: string): Promise<void> {
       // why buried in a transport frame (C90).
       let output: string;
       try {
-        output = agentSurface
-          ? await callAgentTool(params.name, asObject(params.arguments))
-          : callTool(params.name, asObject(params.arguments));
+        output = youtubeSurface
+          ? await callYoutubeTool(
+              params.name,
+              asObject(params.arguments),
+              youtubeClientFromToken(process.env.BEELINE_YOUTUBE_ACCESS_TOKEN ?? ''),
+            )
+          : agentSurface
+            ? await callAgentTool(params.name, asObject(params.arguments))
+            : callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],

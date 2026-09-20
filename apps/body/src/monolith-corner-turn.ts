@@ -34,7 +34,7 @@ import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reaso
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -398,6 +398,8 @@ export interface MonolithCornerTurnOptions {
   grantRunnerEndpoint?: GrantRunnerEndpoint;
   /** Connection usage capture: batched per turn into one postConnectionUsage. */
   connectorUsage?: ConnectorUsageRecorder;
+  /** Local YouTube MCP — only when this helper already holds the Google grant. */
+  youtubeAccessToken?: string;
 }
 
 /**
@@ -778,6 +780,8 @@ export class MonolithCornerTurnLoop {
           : {}),
       }),
     ];
+    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
+    if (youtube) servers.push(youtube);
     // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
     // on pi would have no `pr_checks_status` and no `post_artifact` either.
     await installPiMcpBridge({

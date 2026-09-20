@@ -1,7 +1,10 @@
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConnectorStep } from '@beeline/api-contract/daemon';
 import type { SquireMcpClient } from './connector-squire.js';
-import { installGoogleTool, outputTail } from './connector-google.js';
+import { GOOGLE_TOOL_SCOPES, installGoogleTool, outputTail } from './connector-google.js';
 import type { GoogleWorkspaceClient } from './google-workspace-client.js';
 
 function fakeSquire(call: (tool: string, args: unknown) => unknown): SquireMcpClient {
@@ -142,6 +145,35 @@ describe('installGoogleTool', () => {
       'Trusty Squire is still using the browser — connect Trusty Squire first',
     );
     expect(result.errorMessage).not.toMatch(/another Trusty Squire session is already using the browser/i);
+  });
+});
+
+describe('YouTube Google scopes', () => {
+  it('asks for Data API read plus Analytics, never upload', () => {
+    expect(GOOGLE_TOOL_SCOPES['google-youtube']).toEqual([
+      'https://www.googleapis.com/auth/youtube.readonly',
+      'https://www.googleapis.com/auth/yt-analytics.readonly',
+    ]);
+  });
+});
+
+describe('installGoogleTool persistence', () => {
+  it('writes the resolved grant onto the helper so YouTube can mount later', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'beeline-google-'));
+    const result = await installGoogleTool({
+      connectorType: 'google-youtube',
+      home,
+      client: okClient,
+      resolveCredentials: async () => ({
+        source: 'squire',
+        credentials: { accessToken: 'ya29.persist', accountEmail: 'dana@gmail.test' },
+      }),
+    });
+    expect(result.status).toBe('connected');
+    const stored = JSON.parse(readFileSync(join(home, 'google-credentials.json'), 'utf8')) as {
+      accessToken: string;
+    };
+    expect(stored.accessToken).toBe('ya29.persist');
   });
 });
 

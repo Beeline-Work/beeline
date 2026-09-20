@@ -1,7 +1,8 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
@@ -9,6 +10,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { parse as parseToml } from 'smol-toml';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
 const roots: string[] = [];
@@ -37,7 +39,18 @@ type AgentConfiguration = {
 async function twoTurns(
   configurations: readonly [AgentConfiguration, AgentConfiguration],
   systemPrompts: string[] = [],
-): Promise<{ activations: number; traces: TurnTraceRecord[]; sessionPrompts: string[] }> {
+  hooks?: {
+    thirdTurn?: boolean;
+    agentKind?: BodyConfig['agentKind'];
+    beforeTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
+    betweenTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
+  },
+): Promise<{
+  activations: number;
+  traces: TurnTraceRecord[];
+  sessionPrompts: string[];
+  mountedInventories: string[][];
+}> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-retention-'));
   roots.push(root);
   const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -55,7 +68,7 @@ async function twoTurns(
   const traceDir = turnTraceDirectory(root);
   const config: BodyConfig = {
     agentBinary: '/fake-agent',
-    agentKind: 'codex',
+    agentKind: hooks?.agentKind ?? 'codex',
     agentCommand: '/fake-agent',
     agentArgs: [],
     mcpBinary: '/fake-dev-mcp',
@@ -68,10 +81,17 @@ async function twoTurns(
     operatorHome: join(root, 'operator-home'),
     turnTraceDir: traceDir,
   } as BodyConfig;
+  const paths = {
+    operatorHome: join(root, 'operator-home'),
+    agentHomeRoot: join(root, 'agent-home'),
+  };
+
+  await hooks?.beforeTurns?.(paths);
 
   const asks = [
     { id: 'ask-1', body: 'first' },
     { id: 'ask-2', body: 'second' },
+    ...(hooks?.thirdTurn ? [{ id: 'ask-3', body: 'third' }] : []),
   ];
   const receipts: Array<Record<string, unknown>> = [];
   const settled = () => receipts.filter((receipt) => receipt.status !== 'working').length;
@@ -95,6 +115,9 @@ async function twoTurns(
         return { items: [], cursor: 'latest' };
       }
       if (delivered < asks.length && settled() === delivered) {
+        if (delivered === 1 && hooks?.betweenTurns) {
+          await hooks.betweenTurns(paths);
+        }
         const ask = asks[delivered]!;
         delivered += 1;
         return {
@@ -126,12 +149,31 @@ async function twoTurns(
     }),
   } as unknown as DaemonApiClient;
 
+  const mountedInventories: string[][] = [];
   let activations = 0;
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
   vi.spyOn(acp, 'start').mockImplementation(async () => {
     activations += 1;
   });
   vi.spyOn(acp, 'sessionNew').mockImplementation(async (input: { systemPrompt?: string }) => {
+    mountedInventories.push(
+      config.agentKind === 'goose'
+        ? Object.keys(
+            parseYaml(await readFile(join(paths.agentHomeRoot, 'goose/config/config.yaml'), 'utf8'))
+              .extensions ?? {},
+          ).sort()
+        : Object.keys(
+            parseToml(
+              await readFile(
+                join(paths.agentHomeRoot, `${config.agentKind}/config.toml`),
+                'utf8',
+              ).catch((error: NodeJS.ErrnoException) => {
+                if (error.code === 'ENOENT') return '';
+                throw error;
+              }),
+            ).mcp_servers ?? {},
+          ).sort(),
+    );
     systemPrompts.push(input.systemPrompt ?? '');
     return { sessionId: `room-session-${activations}`, raw: {} };
   });
@@ -172,7 +214,7 @@ async function twoTurns(
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as TurnTraceRecord);
-  return { activations, traces, sessionPrompts: systemPrompts };
+  return { activations, traces, sessionPrompts: systemPrompts, mountedInventories };
 }
 
 const unchanged: AgentConfiguration = { commands: [], yoloMode: false };
@@ -200,5 +242,107 @@ describe('retained Room session', () => {
       expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
       if (changed.soul) expect(prompts[1]).toContain('Answer as an otter.');
     }
+  });
+
+  it('discards the retained session when any imported MCP server is added', async () => {
+    const { activations, traces, mountedInventories } = await twoTurns([unchanged, unchanged], [], {
+      thirdTurn: true,
+      betweenTurns: async ({ operatorHome }) => {
+        await mkdir(join(operatorHome, '.codex'), { recursive: true });
+        await writeFile(
+          join(operatorHome, '.codex/config.toml'),
+          '[mcp_servers.files]\ncommand = "files-mcp"\n',
+        );
+      },
+    });
+
+    expect(mountedInventories).toEqual([[], ['files']]);
+    expect(activations).toBe(2);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
+  });
+
+  it.each([
+    ['codex', 'files'],
+    ['grok', 'files'],
+    ['codex', 'squire'],
+    ['grok', 'squire'],
+  ] as const)(
+    'restarts %s when copied inline server %s is removed',
+    async (agentKind, serverName) => {
+      const { activations, traces, mountedInventories } = await twoTurns(
+        [unchanged, unchanged],
+        [],
+        {
+          agentKind,
+          thirdTurn: true,
+          beforeTurns: async ({ operatorHome }) => {
+            await mkdir(join(operatorHome, `.${agentKind}`), { recursive: true });
+            await writeFile(
+              join(operatorHome, `.${agentKind}/config.toml`),
+              `[mcp_servers]\n${serverName} = { command = "${serverName}-mcp" }\n`,
+            );
+          },
+          betweenTurns: async ({ operatorHome }) => {
+            await writeFile(join(operatorHome, `.${agentKind}/config.toml`), '');
+          },
+        },
+      );
+      expect(mountedInventories).toEqual([[serverName], []]);
+      expect(activations).toBe(2);
+      expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual([
+        'cold',
+        'cold',
+        'warm',
+      ]);
+    },
+  );
+
+  it.each([
+    ['extensions: {}\n', 'extensions:\n    "files": {cmd: files-mcp}\n', [], ['files']],
+    ["extensions:\n    'squire': {cmd: squire-mcp}\n", 'extensions: {}\n', ['squire'], []],
+  ] as const)(
+    'restarts Goose when its copied extension set changes',
+    async (before, after, first, second) => {
+      const { activations, traces, mountedInventories } = await twoTurns(
+        [unchanged, unchanged],
+        [],
+        {
+          agentKind: 'goose',
+          thirdTurn: true,
+          beforeTurns: async ({ operatorHome }) => {
+            await mkdir(join(operatorHome, '.config/goose'), { recursive: true });
+            await writeFile(join(operatorHome, '.config/goose/config.yaml'), before);
+          },
+          betweenTurns: async ({ operatorHome }) => {
+            await writeFile(join(operatorHome, '.config/goose/config.yaml'), after);
+          },
+        },
+      );
+      expect(mountedInventories).toEqual([first, second]);
+      expect(activations).toBe(2);
+      expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual([
+        'cold',
+        'cold',
+        'warm',
+      ]);
+    },
+  );
+
+  it('retains the session when only a discarded isolated declaration changes', async () => {
+    const { activations, traces, mountedInventories } = await twoTurns([unchanged, unchanged], [], {
+      thirdTurn: true,
+      betweenTurns: async ({ agentHomeRoot }) => {
+        await mkdir(join(agentHomeRoot, 'codex'), { recursive: true });
+        await writeFile(
+          join(agentHomeRoot, 'codex/config.toml'),
+          ['[mcp_servers.squire]', 'command = "npx"', 'args = ["-y", "@trusty-squire/mcp"]'].join(
+            '\n',
+          ),
+        );
+      },
+    });
+    expect(mountedInventories).toEqual([[]]);
+    expect(activations).toBe(1);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'warm', 'warm']);
   });
 });

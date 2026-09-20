@@ -12,7 +12,7 @@
  * A pinned corner line used to sit between the two, which is why the turn line
  * could be 30px off the composer and nobody noticed. With the line gone there
  * is nothing to absorb a stray margin or padding, so any gap introduced here
- * is dead space the reader sees. `room-bottom-chrome.test.ts` measures it.
+ * is dead space the reader sees. `room-bottom-chrome.test.tsx` measures it.
  */
 export function roomBottomChromeStyles(hull: { bgTerminal: string; border: string }) {
   return {

@@ -140,10 +140,7 @@ import {
   selectedMentionAgentPubkey,
   shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
-import {
-  resolveAgentDisplayIdentity,
-  resolvePendingAgentDisplay,
-} from '@/buzz/agent-display';
+import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { roomListCorners, type CornerSummary } from '@/buzz/corners';
 import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
 import {
@@ -4824,9 +4821,7 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-              {agentsOffline && (
-                <AgentOfflineHint />
-              )}
+              {agentsOffline && <AgentOfflineHint />}
               {isReadOnlyDirectMessage ? (
                 <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                   <Text style={styles.archivedInputText}>

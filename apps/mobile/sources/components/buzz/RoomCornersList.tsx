@@ -67,9 +67,7 @@ export function RoomCornersList({
           <Pressable
             accessibilityLabel={`${label}. ${display.word}. ${line}`}
             accessibilityRole="button"
-            onPress={() =>
-              router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name))
-            }
+            onPress={() => router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name))}
             style={styles.row}
             testID={`room-corner-${item.corner.id}`}
           >

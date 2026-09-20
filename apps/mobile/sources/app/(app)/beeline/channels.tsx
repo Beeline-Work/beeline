@@ -56,6 +56,7 @@ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/Co
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MembersGlyph } from '@/components/buzz/MembersGlyph';
+import { BookmarksGlyph } from '@/components/buzz/BookmarksGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -808,24 +809,44 @@ export default function BuzzChannels() {
         <View style={styles.header}>
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
-            <TouchableOpacity
-              accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/beeline/members',
-                  params: { communityId: activeCommunityId },
-                } as never)
-              }
-              style={styles.headerAction}
-              testID="workspace-members"
-            >
-              <MembersGlyph
-                color={styles.headerActionGlyph.color}
-                size={16}
-                testID="workspace-members-glyph"
-              />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                accessibilityLabel="Bookmarks"
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/bookmarks',
+                    params: { communityId: activeCommunityId },
+                  } as never)
+                }
+                style={styles.headerAction}
+                testID="workspace-bookmarks"
+              >
+                <BookmarksGlyph
+                  color={styles.headerActionGlyph.color}
+                  size={16}
+                  testID="workspace-bookmarks-glyph"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/members',
+                    params: { communityId: activeCommunityId },
+                  } as never)
+                }
+                style={styles.headerAction}
+                testID="workspace-members"
+              >
+                <MembersGlyph
+                  color={styles.headerActionGlyph.color}
+                  size={16}
+                  testID="workspace-members-glyph"
+                />
+              </TouchableOpacity>
+            </View>
           )}
         </View>
         <NewRoomDialog
@@ -1220,6 +1241,10 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 8,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
     },
     headerActionGlyph: { color: hull.textMuted },
     errorBar: {

@@ -9,10 +9,9 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
-import {
-  type ConnectorInstallState,
-  type WorkbenchHelper,
-} from '@/buzz/workbench';
+import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { type ConnectorInstallState, type WorkbenchHelper } from '@/buzz/workbench';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -58,10 +57,17 @@ export default function ConnectTrustySquireScreen() {
     workspaceId?: string | string[];
     viewerId?: string | string[];
     connectorId?: string | string[];
+    pairedConnectorId?: string | string[];
+    offerId?: string | string[];
+    roomId?: string | string[];
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const viewerId = firstParam(params.viewerId) ?? '';
   const connectorId = firstParam(params.connectorId) ?? 'trusty-squire';
+  const pairedConnectorId = firstParam(params.pairedConnectorId);
+  const offerId = firstParam(params.offerId);
+  const roomId = firstParam(params.roomId);
+  const offerCeremony = Boolean(offerId && pairedConnectorId && roomId);
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[] | null>(null);
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +76,7 @@ export default function ConnectTrustySquireScreen() {
   const pairedHelperRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (offerCeremony) return;
     let cancelled = false;
     void getWorkbenchSource()
       .listHelpers({ workspaceId })
@@ -82,7 +89,7 @@ export default function ConnectTrustySquireScreen() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [offerCeremony, workspaceId]);
 
   useEffect(
     () => () => {
@@ -102,10 +109,10 @@ export default function ConnectTrustySquireScreen() {
     (state: ConnectorInstallState) => {
       stopPolling();
       if (state.connected) {
-        router.replace('/beeline/settings/workbench' as unknown as Href);
+        router.replace(connectorOfferCompletionRoute(roomId) as unknown as Href);
       }
     },
-    [stopPolling],
+    [roomId, stopPolling],
   );
 
   const startPolling = useCallback(
@@ -144,6 +151,10 @@ export default function ConnectTrustySquireScreen() {
     [finishPolling, stopPolling, workspaceId],
   );
 
+  useEffect(() => {
+    if (pairedConnectorId) startPolling(pairedConnectorId);
+  }, [pairedConnectorId, startPolling]);
+
   const pair = useCallback(
     async (helperId: string) => {
       stopPolling();
@@ -177,9 +188,17 @@ export default function ConnectTrustySquireScreen() {
 
   const retry = useCallback(() => {
     setInstall(null);
+    if (offerId) {
+      void monolithPhoneOperation('acceptConnectorOffer', { offerId })
+        .then((accepted) => startPolling(accepted.connectorId))
+        .catch((cause) => {
+          setError(cause instanceof Error ? cause.message : 'Pairing failed');
+        });
+      return;
+    }
     const helperId = pairedHelperRef.current;
     if (helperId) void pair(helperId);
-  }, [pair]);
+  }, [offerId, pair, startPolling]);
 
   const connectorName = connectorNameFor(connectorId);
 
@@ -205,13 +224,13 @@ export default function ConnectTrustySquireScreen() {
         </View>
       </HullSurface>
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
-        {helpers === null ? (
+        {helpers === null && !offerCeremony ? (
           <View style={styles.loading} testID="connect-loading">
             <SurfaceGlyphLoader testID="connect-loader" />
             <Text style={styles.note}>Looking for your machine…</Text>
           </View>
         ) : null}
-        {noHelpers ? (
+        {noHelpers && !offerCeremony ? (
           <View testID="connect-no-helper">
             <Text style={styles.note}>
               Squire runs on a helper. Every agent on that helper can use its connections, within
@@ -229,7 +248,13 @@ export default function ConnectTrustySquireScreen() {
             </View>
           </View>
         ) : null}
-        {install === null && someHelpers ? (
+        {install === null && offerCeremony ? (
+          <View style={styles.loading} testID="connect-offer-loading">
+            <SurfaceGlyphLoader testID="connect-offer-loader" />
+            <Text style={styles.note}>Starting sign-in on the offered helper…</Text>
+          </View>
+        ) : null}
+        {install === null && someHelpers && !offerCeremony ? (
           <View testID="connect-machine-picker">
             <Text style={styles.sectionLabel}>Helpers</Text>
             {helpers!.map((helper) => (
@@ -251,12 +276,13 @@ export default function ConnectTrustySquireScreen() {
         ) : null}
         {install !== null ? (
           <View testID="connect-install-progress">
-            <Text style={styles.note}>
-              Installing on {install.helperName ?? 'your machine'}
-            </Text>
+            <Text style={styles.note}>Installing on {install.helperName ?? 'your machine'}</Text>
             <View style={styles.steps}>
               {install.steps.map((step, index) => (
-                <View key={`${step.label}-${index}`} testID={`connect-step-${index}-${step.status}`}>
+                <View
+                  key={`${step.label}-${index}`}
+                  testID={`connect-step-${index}-${step.status}`}
+                >
                   {step.status === 'active' ? (
                     <PulsingText style={[styles.stepText, styles.stepActive]}>
                       ● {step.label}
@@ -319,15 +345,15 @@ export default function ConnectTrustySquireScreen() {
                       connectorId: install.connectorId,
                       url: signIn.url,
                       method: signIn.method,
+                      ...(offerId ? { offerId } : {}),
+                      ...(roomId ? { roomId } : {}),
                     },
                   });
                 }}
                 style={styles.signInButton}
                 testID="connect-sign-in"
               >
-                <Text style={styles.signInText}>
-                  Sign in to Squire
-                </Text>
+                <Text style={styles.signInText}>Sign in to Squire</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -359,7 +385,11 @@ const styles = StyleSheet.create((theme) => {
     headerCopy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: { flex: 1 },
-    contentInner: { padding: hull.space.md, gap: hull.layout.sectionGap, paddingBottom: hull.space.xxl },
+    contentInner: {
+      padding: hull.space.md,
+      gap: hull.layout.sectionGap,
+      paddingBottom: hull.space.xxl,
+    },
     loading: { alignItems: 'center', gap: hull.space.sm, paddingVertical: hull.space.xl },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     note: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },

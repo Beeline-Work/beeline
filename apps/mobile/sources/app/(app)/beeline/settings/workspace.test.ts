@@ -196,6 +196,8 @@ function workspaceView(
       : {}),
     members: [],
     agents: [],
+    peopleTotal: 0,
+    agentTotal: 0,
     membersTruncated: false,
     agentsTruncated: false,
     viewer: {

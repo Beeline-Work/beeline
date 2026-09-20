@@ -1026,6 +1026,54 @@ describe('monolith integration', () => {
     ).toBe(200);
   });
 
+  it('pages Workspace members at the query, keeps totals, searches past the first page, and load-more appends', async () => {
+    const extras = Array.from({ length: 21 }, (_, index) => ({
+      id: createHash('sha256').update(`member-page-${index}`).digest('hex'),
+      name: `Zebra ${String(index).padStart(2, '0')}`,
+    }));
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle)
+       SELECT extra->>'id','human',extra->>'name',lower(replace(extra->>'name',' ',''))
+       FROM jsonb_array_elements($1::jsonb) extra`,
+      [JSON.stringify(extras)],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT $1,NULL,extra->>'id','member'
+       FROM jsonb_array_elements($2::jsonb) extra`,
+      [WORKSPACE, JSON.stringify(extras)],
+    );
+    const first = (await (await request(`/v1/phone/workspaces/${WORKSPACE}`)).json()) as {
+      members: Array<{ identity: { pubkey: string; name: string }; role: string }>;
+      peopleTotal: number;
+      membersTruncated: boolean;
+    };
+    expect(first.peopleTotal).toBe(1 + extras.length);
+    expect(first.members.length).toBeLessThan(first.peopleTotal);
+    expect(first.membersTruncated).toBe(true);
+    expect(first.members[0]?.role).toBe('owner');
+    const offPage = extras[extras.length - 1]!;
+    expect(first.members.map((member) => member.identity.pubkey)).not.toContain(offPage.id);
+
+    const search = (await (
+      await request(
+        `/v1/phone/workspaces/${WORKSPACE}/members?q=${encodeURIComponent(offPage.name)}`,
+      )
+    ).json()) as typeof first;
+    expect(search.peopleTotal).toBe(1);
+    expect(search.members.map((member) => member.identity.pubkey)).toEqual([offPage.id]);
+
+    const more = (await (
+      await request(
+        `/v1/phone/workspaces/${WORKSPACE}/members?kind=human&offset=${first.members.length}`,
+      )
+    ).json()) as typeof first;
+    const ids = [...first.members, ...more.members].map((member) => member.identity.pubkey);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain(offPage.id);
+    expect(more.peopleTotal).toBe(first.peopleTotal);
+  });
+
   it('bounds Room membership and direct messages to current Workspace members', async () => {
     const aliceToken = await phoneToken('alice');
     const outsiderToken = await phoneToken('outsider');

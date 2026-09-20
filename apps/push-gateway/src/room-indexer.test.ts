@@ -2320,7 +2320,7 @@ describe('RoomIndexer', () => {
     expect(capped?.truncated).toBe(true);
   });
 
-  it('returns the observed 82-human/54-agent roster whole, caps overflow, and projects privilege', async () => {
+  it('pages the observed 82-human/54-agent roster, keeps totals, and projects privilege', async () => {
     const addRoster = async (
       humanFrom: number,
       humanThrough: number,
@@ -2360,10 +2360,12 @@ describe('RoomIndexer', () => {
     physicalQueries = 0;
     const observed = await indexer.readWorkspace(WORKSPACE, VIEWER);
     expect(physicalQueries).toBe(1);
-    expect(observed?.members).toHaveLength(82);
-    expect(observed?.agents).toHaveLength(54);
-    expect(observed?.membersTruncated).toBe(false);
-    expect(observed?.agentsTruncated).toBe(false);
+    expect(observed?.members).toHaveLength(20);
+    expect(observed?.agents).toHaveLength(20);
+    expect(observed?.peopleTotal).toBe(82);
+    expect(observed?.agentTotal).toBe(54);
+    expect(observed?.membersTruncated).toBe(true);
+    expect(observed?.agentsTruncated).toBe(true);
     expect(JSON.stringify(observed)).not.toContain('catalog');
 
     await postgres.query(
@@ -2421,8 +2423,10 @@ describe('RoomIndexer', () => {
     physicalQueries = 0;
     const capped = await indexer.readWorkspace(WORKSPACE, VIEWER);
     expect(physicalQueries).toBe(1);
-    expect(capped?.members).toHaveLength(200);
-    expect(capped?.agents).toHaveLength(200);
+    expect(capped?.members).toHaveLength(20);
+    expect(capped?.agents).toHaveLength(20);
+    expect(capped?.peopleTotal).toBeGreaterThan(20);
+    expect(capped?.agentTotal).toBeGreaterThan(20);
     expect(capped?.membersTruncated).toBe(true);
     expect(capped?.agentsTruncated).toBe(true);
   });

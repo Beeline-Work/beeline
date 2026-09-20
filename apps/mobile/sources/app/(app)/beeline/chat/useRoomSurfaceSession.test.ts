@@ -929,8 +929,9 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
 
     // The corner's own id has to reach the live subscription, or nothing the
-    // turn writes can ever be delivered to the reader sitting in it.
-    expect(controls.subscriptions[0]!.filters).toEqual(cornerFilters);
+    // turn writes can ever be delivered to the reader sitting in it. Family
+    // ids in watchFilters must not become extra subscriptions.
+    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['corner-a'] }]);
 
     const emit = (live: Record<string, unknown>) =>
       controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'corner-a', ...live } });
@@ -1147,8 +1148,22 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('paints cache first, then replaces the watch when verified filters change', async () => {
-    controls.cached = roomView('room-a', [{ '#h': ['room-a'] }]);
+  it('subscribes once to the opened Room even when watchFilters name a family', async () => {
+    const familyFilters: RoomView['watchFilters'] = [
+      {
+        kinds: [9],
+        '#h': [
+          'workspace',
+          'room-a',
+          ...Array.from({ length: 58 }, (_, index) => `corner-${index}`),
+        ],
+      },
+      {
+        kinds: [30078],
+        '#d': ['agent-draft:room-a', 'agent-thought:room-a', 'agent-presence:room-a'],
+      },
+    ];
+    controls.cached = roomView('room-a', familyFilters);
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1163,14 +1178,15 @@ describe('useRoomSurfaceSession', () => {
 
     expect(current.roomSurface).toBe(controls.cached);
     expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['room-a'] }]);
     const firstStop = controls.subscriptions[0]!.stop;
 
     await act(async () => {
       controls.schedulers[0]!.apply(roomView('room-a', [{ '#d': ['agent-a'] }]));
       await Promise.resolve();
     });
-    expect(controls.subscriptions).toHaveLength(2);
-    expect(firstStop).toHaveBeenCalledOnce();
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(firstStop).not.toHaveBeenCalled();
     expect(current.roomSurface?.watchFilters).toEqual([{ '#d': ['agent-a'] }]);
     await act(async () => renderer.unmount());
   });

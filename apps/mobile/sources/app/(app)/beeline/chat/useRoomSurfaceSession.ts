@@ -333,7 +333,6 @@ export function useRoomSurfaceSession({
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
-    let watchKey = '';
     let hasPainted = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
@@ -473,8 +472,6 @@ export function useRoomSurfaceSession({
           isRoomView,
         );
       }
-      const nextWatchKey = JSON.stringify(stableView.watchFilters);
-      if (fresh && nextWatchKey !== watchKey) void installWatch(stableView.watchFilters);
     };
 
     const applyView = (
@@ -487,15 +484,18 @@ export function useRoomSurfaceSession({
       if (stableView) enrichView(stableView, identityPubkey, relayUrl, fresh);
     };
 
-    const installWatch = async (filters: RoomView['watchFilters']): Promise<void> => {
+    const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
-      watchKey = JSON.stringify(filters);
       const currentTransport = transportForEffect;
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
       let replaying = true;
+      // One Room open is one live subscription. watchFilters still name the
+      // workspace, parent, and (from a stale cache) every corner; expanding
+      // those #h/#d keys is the subscribe storm. The opened Room is the only
+      // lane this surface paints.
       const stop = await client.surfaceSubscribe(
-        filters,
+        [{ '#h': [channelId] }],
         (event: Parameters<LiveOverlayDecoder['decode']>[0] | MonolithSurfaceEvent) => {
           if (cancelled || generation !== watchGeneration) return;
           if ('monolithLive' in event) {
@@ -877,9 +877,8 @@ export function useRoomSurfaceSession({
           },
         });
         schedulerRef.current = scheduler;
-        const initialFilters = cached?.watchFilters ?? [{ '#h': [channelId] }];
         markRoomOpen('watch-install');
-        await scheduler.startAfter(installWatch(initialFilters));
+        await scheduler.startAfter(installWatch());
         markRoomOpen('watch-ready');
 
         appStateSubscription = AppState.addEventListener('change', (state) => {

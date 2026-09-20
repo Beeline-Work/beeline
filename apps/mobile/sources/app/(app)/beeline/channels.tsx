@@ -86,6 +86,16 @@ const ROW_COPY_GAP = 12;
  *  stem under the name rather than a block floating off to its right. */
 const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
+/**
+ * 16px chrome plus 14 all round is a 44pt target without a 44-wide box. The
+ * 44-wide members box left 28px of air to the bookmark; shrinking the box to
+ * the mark and restoring the target here keeps the trailing edge on the
+ * compose FAB / row chevron while the pair can sit a spacing step apart.
+ */
+const HEADER_GLYPH_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
+/** Bookmark notch lifts the silhouette above its box; 1px down sits the ink
+ *  on the workspace name's cap centre (Space Grotesk cap ≈ line-box centre). */
+const BOOKMARKS_GLYPH_OPTICAL_Y = 1;
 
 type EmptyRoomActionsProps = {
   canAddRoom: boolean;
@@ -793,6 +803,7 @@ export default function BuzzChannels() {
               <TouchableOpacity
                 accessibilityLabel="Bookmarks"
                 accessibilityRole="button"
+                hitSlop={HEADER_GLYPH_HIT_SLOP}
                 onPress={() =>
                   router.push({
                     pathname: '/beeline/bookmarks',
@@ -802,15 +813,18 @@ export default function BuzzChannels() {
                 style={styles.headerAction}
                 testID="workspace-bookmarks"
               >
-                <BookmarksGlyph
-                  color={styles.headerActionGlyph.color}
-                  size={16}
-                  testID="workspace-bookmarks-glyph"
-                />
+                <View style={styles.headerBookmarksGlyph}>
+                  <BookmarksGlyph
+                    color={styles.headerActionGlyph.color}
+                    size={16}
+                    testID="workspace-bookmarks-glyph"
+                  />
+                </View>
               </TouchableOpacity>
               <TouchableOpacity
                 accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
                 accessibilityRole="button"
+                hitSlop={HEADER_GLYPH_HIT_SLOP}
                 onPress={() =>
                   router.push({
                     pathname: '/beeline/members',
@@ -1196,21 +1210,22 @@ const styles = StyleSheet.create((theme) => {
     },
     headerAction: {
       minHeight: 44,
-      minWidth: 44,
+      minWidth: 16,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 8,
     },
     headerMembersAction: {
       minHeight: 44,
-      minWidth: 44,
-      alignItems: 'flex-end',
+      minWidth: 16,
+      alignItems: 'center',
       justifyContent: 'center',
     },
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',
+      gap: hull.space.sm,
     },
+    headerBookmarksGlyph: { transform: [{ translateY: BOOKMARKS_GLYPH_OPTICAL_Y }] },
     headerActionGlyph: { color: hull.textMuted },
     errorBar: {
       paddingHorizontal: 16,

@@ -89,11 +89,12 @@ export default function WorkspaceSettings() {
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryGeneration, setRetryGeneration] = useState(0);
   const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const chatsSchedulerRef = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
 
   const workspace = workspaceView?.workspace;
-  const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
+  const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
   const isWorkspaceOwner = isWorkspaceOwnerRole(workspaceView?.viewer.role);
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
@@ -206,7 +207,7 @@ export default function WorkspaceSettings() {
         workspaceSchedulerRef.current = null;
         chatsSchedulerRef.current = null;
       };
-    }, [communityId]),
+    }, [communityId, retryGeneration]),
   );
 
   const saveWorkspaceName = useCallback(async () => {
@@ -342,9 +343,12 @@ export default function WorkspaceSettings() {
     );
   }
 
+  const peopleTotal = workspaceView?.peopleTotal;
+  const agentTotal = workspaceView?.agentTotal;
   const memberCount =
-    (workspaceView?.peopleTotal ?? workspaceView?.members.length ?? 0) +
-    (workspaceView?.agentTotal ?? workspaceView?.agents.length ?? 0);
+    peopleTotal === undefined || agentTotal === undefined
+      ? undefined
+      : peopleTotal + agentTotal;
   const pictureAction =
     workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change picture' : 'Set picture';
 
@@ -363,7 +367,18 @@ export default function WorkspaceSettings() {
         </View>
       </View>
 
-      {!canManageWorkspace ? (
+      {!workspaceView ? (
+        <View style={styles.denied} testID="workspace-settings-load-failed">
+          <Text style={styles.deniedTitle}>
+            {error ?? `Could not load ${WORKSPACE_LABEL} settings`}
+          </Text>
+          <MonoButton
+            label="RETRY"
+            onPress={() => setRetryGeneration((value) => value + 1)}
+            testID="workspace-settings-retry"
+          />
+        </View>
+      ) : !canManageWorkspace ? (
         <View style={styles.denied} testID="workspace-settings-denied">
           <Text style={styles.deniedGlyph}>⌁</Text>
           <Text style={styles.deniedTitle}>Admin access required</Text>
@@ -493,7 +508,7 @@ export default function WorkspaceSettings() {
               }
               testID="open-members"
               title={MEMBERS_LABEL}
-              value={String(memberCount)}
+              value={memberCount === undefined ? undefined : String(memberCount)}
             />
           </View>
 
@@ -558,7 +573,11 @@ export default function WorkspaceSettings() {
           <Text style={styles.quiet} testID="workspace-census">
             {`${rooms.length} ${
               rooms.length === 1 ? ROOM_LABEL.toLowerCase() : `${ROOM_LABEL.toLowerCase()}s`
-            } · ${memberCount} ${memberCount === 1 ? 'member' : 'members'}`}
+            }${
+              memberCount === undefined
+                ? ''
+                : ` · ${memberCount} ${memberCount === 1 ? 'member' : 'members'}`
+            }`}
           </Text>
         </ScrollView>
       )}

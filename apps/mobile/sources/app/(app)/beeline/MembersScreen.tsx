@@ -76,6 +76,13 @@ function appendUniqueMembers<T extends { identity: { pubkey: string } }>(
   return [...current, ...incoming.filter((item) => !seen.has(item.identity.pubkey))];
 }
 
+function countedKindLabel(
+  kind: 'People' | 'Agents',
+  total: number | undefined,
+): 'People' | 'Agents' | [string, number] {
+  return total === undefined ? kind : [`${kind} `, total];
+}
+
 async function waitForIndexedSurface<T>(
   read: () => Promise<T>,
   accepts: (value: T) => boolean,
@@ -303,16 +310,16 @@ export default function BuzzMembers() {
     page: {
       members: WorkspaceView['members'];
       agents: WorkspaceView['agents'];
-      peopleTotal: number;
-      agentTotal: number;
+      peopleTotal?: number;
+      agentTotal?: number;
       membersTruncated: boolean;
       agentsTruncated: boolean;
     },
     kind: 'human' | 'agent' | undefined,
     append: { people: WorkspaceView['members']; agents: WorkspaceView['agents'] } | false,
   ) => {
-    setRosterPeopleTotal(page.peopleTotal);
-    setRosterAgentTotal(page.agentTotal);
+    setRosterPeopleTotal(page.peopleTotal ?? null);
+    setRosterAgentTotal(page.agentTotal ?? null);
     if (kind !== 'agent') {
       setRosterPeople(
         append ? appendUniqueMembers(append.people, page.members) : [...page.members],
@@ -891,8 +898,8 @@ export default function BuzzMembers() {
   const canManage = surface.viewer.permissions.manage;
   const people = rosterPeople ?? surface.members;
   const agents = rosterAgents ?? surface.agents;
-  const peopleTotal = rosterPeopleTotal ?? surface.peopleTotal ?? people.length;
-  const agentTotal = rosterAgentTotal ?? surface.agentTotal ?? agents.length;
+  const peopleTotal = rosterPeopleTotal ?? surface.peopleTotal;
+  const agentTotal = rosterAgentTotal ?? surface.agentTotal;
   const canLoadMorePeople =
     (rosterPeople !== null ? peopleHasMore : surface.membersTruncated) && !rosterLoading;
   const canLoadMoreAgents =
@@ -1037,7 +1044,7 @@ export default function BuzzMembers() {
           <View style={styles.section} testID="members-agents-section">
             <View style={styles.sectionHeadRow}>
               <Text style={styles.sectionLabel} testID="members-agents-head">
-                Agents {agentTotal}
+                {countedKindLabel('Agents', agentTotal)}
               </Text>
               <TouchableOpacity
                 accessibilityLabel="Add agents"
@@ -1357,7 +1364,7 @@ export default function BuzzMembers() {
           <View style={styles.section} testID="members-people-section">
             <View style={styles.sectionHeadRow}>
               <Text style={styles.sectionLabel} testID="members-people-head">
-                People {peopleTotal}
+                {countedKindLabel('People', peopleTotal)}
               </Text>
               {canManage && (
                 <TouchableOpacity

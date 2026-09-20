@@ -447,6 +447,36 @@ describe('Members workspace management', () => {
     expect(agents.props.style.height).toBeGreaterThanOrEqual(44);
   });
 
+  it('shows People and Agents without a count when the server omits totals', async () => {
+    const { peopleTotal: _people, agentTotal: _agents, ...legacy } = baseWorkspace();
+    state.workspace = legacy;
+    roomView.workspaceMembers.mockImplementation(async () => ({
+      members: legacy.members,
+      agents: legacy.agents,
+      membersTruncated: false,
+      agentsTruncated: false,
+    }));
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toBe(
+      'People',
+    );
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toBe(
+      'Agents',
+    );
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: `agent-${AGENT}-identity` })).toBeDefined();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Builder');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toBe(
+      'People',
+    );
+    expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
+  });
+
   it('shows the word alone over counted section heads and no loose total (C73, C79)', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'members-title' }).props.children).toBe('Members');

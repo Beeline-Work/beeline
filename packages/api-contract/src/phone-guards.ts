@@ -48,6 +48,10 @@ function integer(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
+function optionalInteger(value: unknown): boolean {
+  return value === undefined || integer(value);
+}
+
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
 }
@@ -574,9 +578,10 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
             integer(reaction.count) &&
             Number(reaction.count) > 0 &&
             typeof reaction.reacted === 'boolean' &&
-            Array.isArray(reaction.members) &&
-            reaction.members.length === reaction.count &&
-            reaction.members.every(identity),
+            (reaction.members === undefined ||
+              (Array.isArray(reaction.members) &&
+                reaction.members.length === reaction.count &&
+                reaction.members.every(identity))),
           );
         }))) &&
     (item.activity === undefined ||
@@ -986,8 +991,8 @@ export function isWorkspaceView(value: unknown): value is WorkspaceView {
     Array.isArray(item.agents) &&
     item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
     item.agents.every(workspaceAgent) &&
-    integer(item.peopleTotal) &&
-    integer(item.agentTotal) &&
+    optionalInteger(item.peopleTotal) &&
+    optionalInteger(item.agentTotal) &&
     typeof item.membersTruncated === 'boolean' &&
     typeof item.agentsTruncated === 'boolean' &&
     viewer(item.viewer) &&
@@ -1005,8 +1010,8 @@ export function isWorkspaceMemberListView(value: unknown): value is WorkspaceMem
     Array.isArray(item.agents) &&
     item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
     item.agents.every(workspaceAgent) &&
-    integer(item.peopleTotal) &&
-    integer(item.agentTotal) &&
+    optionalInteger(item.peopleTotal) &&
+    optionalInteger(item.agentTotal) &&
     typeof item.membersTruncated === 'boolean' &&
     typeof item.agentsTruncated === 'boolean',
   );

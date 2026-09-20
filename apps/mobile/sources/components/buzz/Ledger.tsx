@@ -754,15 +754,13 @@ export function LedgerDayCaption({ label }: { label: string }) {
 export function withLedgerDayCaption(
   node: React.ReactNode,
   label: string | null,
-  chronological: boolean,
 ): React.ReactNode {
   if (!label) return node;
   const caption = <LedgerDayCaption label={label} />;
   return (
     <View>
-      {chronological ? caption : null}
+      {caption}
       {node}
-      {chronological ? null : caption}
     </View>
   );
 }

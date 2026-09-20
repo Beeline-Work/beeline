@@ -1581,6 +1581,7 @@ export interface OrdinaryLedgerMessageProps {
   speakerWorking: boolean;
   continued: boolean;
   immediatelyPrecedingMessage?: ChatDisplayMessage;
+  firstBylineOfDay?: boolean;
   referencedTarget?: MessageReplyDisplayTarget;
   participantHandles: readonly { pubkey: string; handle: string }[];
   channelIndex: ChannelReferenceIndex;
@@ -1680,6 +1681,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   speakerWorking,
   continued,
   immediatelyPrecedingMessage,
+  firstBylineOfDay,
   referencedTarget,
   participantHandles,
   channelIndex,
@@ -1735,7 +1737,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     : null;
   const isSelfSteer = isOwn && !isAgent;
   const dayOpener = isLedgerDayOpener(message.timestamp, immediatelyPrecedingMessage?.timestamp);
-  const continuedRun = continued && !dayOpener;
+  const bylineOpener = firstBylineOfDay ?? dayOpener;
+  const continuedRun = continued && !bylineOpener;
   const voiceName = isAgent
     ? (indexedAuthor?.name ??
       display?.name ??
@@ -1751,7 +1754,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       : {
           name: isSelfSteer ? 'You' : voiceName,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
-          stamp: transcriptStamp(message.timestamp, immediatelyPrecedingMessage?.timestamp),
+          stamp: transcriptStamp(message.timestamp, bylineOpener),
           isViewer: isSelfSteer,
           bookmarked: message.bookmarked,
           ...(announcementFeed

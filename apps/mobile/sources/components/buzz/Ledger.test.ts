@@ -29,6 +29,7 @@ import {
   LedgerRoomUpdate,
   LedgerSteer,
   LedgerDayCaption,
+  withLedgerDayCaption,
   typewriterFrame,
 } from './Ledger';
 import { identityPalette } from '@/buzz/identity-mark';
@@ -1097,10 +1098,18 @@ describe('the ledger — explicit #room/#room/corner references', () => {
 });
 
 describe('the ledger day caption', () => {
-  it('is in-flow quiet machine type, never sticky or overlayed', () => {
+  it('places the caption before the message within its cell', () => {
     const renderer = render(
-      React.createElement(LedgerDayCaption, { label: 'THU 17 SEP' }),
+      withLedgerDayCaption(
+        React.createElement('Text', {}, 'Message'),
+        'THU 17 SEP',
+      ) as React.ReactElement,
     );
+    expect(renderedText(renderer)).toEqual(['THU 17 SEP', 'Message']);
+  });
+
+  it('is in-flow quiet machine type, never sticky or overlayed', () => {
+    const renderer = render(React.createElement(LedgerDayCaption, { label: 'THU 17 SEP' }));
     expect(renderedText(renderer)).toContain('THU 17 SEP');
     const node = renderer.root.findByProps({ testID: 'ledger-day-caption' });
     expect(node.props.style).toMatchObject({

@@ -1484,7 +1484,11 @@ describe('Room message variant components', () => {
     render(
       <OrdinaryLedgerMessage
         message={message({ id: 'ada-second-message', pubkey: 'ada', timestamp: 2 })}
-        immediatelyPrecedingMessage={message({ id: 'ada-first-message', pubkey: 'ada', timestamp: 1 })}
+        immediatelyPrecedingMessage={message({
+          id: 'ada-first-message',
+          pubkey: 'ada',
+          timestamp: 1,
+        })}
         continued
         participantsHydrated
         viewerPubkey="viewer"
@@ -1503,16 +1507,22 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
   });
 
-  it('dates the first byline of a past day and leaves later same-day stamps as the clock', () => {
+  it.each([false, true])('dates the first byline with preceding notice: %s', (afterNotice) => {
     const thu1658 = Math.floor(new Date(2026, 8, 17, 16, 58).getTime() / 1000);
     const thu1702 = Math.floor(new Date(2026, 8, 17, 17, 2).getTime() / 1000);
     const first = render(
       <OrdinaryLedgerMessage
         message={message({ id: 'thu-first', isUser: true, timestamp: thu1658 })}
+        firstBylineOfDay
+        immediatelyPrecedingMessage={
+          afterNotice
+            ? message({ id: 'notice', timestamp: thu1658 - 60, isSystemNotice: true })
+            : undefined
+        }
         participantsHydrated
         viewerPubkey="viewer"
         speakerWorking={false}
-        continued={false}
+        continued={true}
         participantHandles={[]}
         channelIndex={{ rooms: [], corners: [] }}
         deliveryFailed={false}
@@ -1524,13 +1534,17 @@ describe('Room message variant components', () => {
       />,
     );
     expect(first.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17 SEP 16:58');
-    expect(first.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(true);
+    expect(first.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(
+      !afterNotice,
+    );
 
     const later = render(
       <OrdinaryLedgerMessage
+        firstBylineOfDay={false}
         message={message({ id: 'thu-later', isUser: true, timestamp: thu1702 })}
         immediatelyPrecedingMessage={message({
-          id: 'thu-first',
+          id: 'intervening-notice',
+          isSystemNotice: true,
           isUser: true,
           timestamp: thu1658,
         })}
@@ -1953,9 +1967,9 @@ describe('Room message variant components', () => {
         .filter((node: ReactTestInstance) => node.props.accessibilityLabel !== undefined)
         .map((node: ReactTestInstance) => node.props.accessibilityLabel);
       expect(actionLabels).toEqual(['✓ Add Trusty Squire']);
-      expect(card.root.findAllByProps({ testID: 'connector-offer-offer-1-workbench' })).toHaveLength(
-        0,
-      );
+      expect(
+        card.root.findAllByProps({ testID: 'connector-offer-offer-1-workbench' }),
+      ).toHaveLength(0);
       act(() => accept.props.onPress());
       expect(onAccept).toHaveBeenCalledWith('offer-1');
     });
@@ -2033,9 +2047,9 @@ describe('Room message variant components', () => {
         />,
       );
       expect(settled.root.findByProps({ testID: 'connector-offer-settled' })).toBeDefined();
-      expect(settled.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' })).toHaveLength(
-        0,
-      );
+      expect(
+        settled.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
+      ).toHaveLength(0);
       // The record names the actor — a manager, not the addressee — because a
       // Room has many possible tappers where the reference product had one.
       const outcome = settled.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props
@@ -2049,7 +2063,9 @@ describe('Room message variant components', () => {
 
     it('is mounted by the one Room renderItem branch beside the grant card, with the accept operation and Workbench door wired', () => {
       expect(conversationSource).toContain('if (item.connectorOffer) {');
-      expect(conversationSource).toContain("monolithPhoneOperation('acceptConnectorOffer', { offerId })");
+      expect(conversationSource).toContain(
+        "monolithPhoneOperation('acceptConnectorOffer', { offerId })",
+      );
       expect(conversationSource).toContain("pathname: '/beeline/settings/workbench'");
     });
   });
@@ -2237,15 +2253,15 @@ describe('Room message variant components', () => {
     const json = JSON.stringify(renderer.toJSON());
     expect(json).toContain('closed · 3 of 4 voted');
     expect(json).not.toContain('Skip');
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-wash-A' }).props.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ width: '100%' })]),
-    );
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-wash-B' }).props.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ width: '50%' })]),
-    );
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-count-A' }).props.children).toBe(
-      2,
-    );
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-wash-A' }).props.style,
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ width: '100%' })]));
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-wash-B' }).props.style,
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ width: '50%' })]));
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-count-A' }).props.children,
+    ).toBe(2);
   });
 
   it('opens the message actions sheet on long press while retaining tap dismissal', () => {

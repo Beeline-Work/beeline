@@ -11,7 +11,7 @@ import {
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
-import { ledgerDayCaption } from '@/buzz/message-dates';
+import { ledgerDayCaption, transcriptBylineOpeners } from '@/buzz/message-dates';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { inspectorCornerObjective, inspectorCornerWindow } from '@/buzz/inspector-corners';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
@@ -517,6 +517,7 @@ function CornerCockpit({
       setSending(false);
     }
   }, [detail, input, onRefresh, sending]);
+  const bylineOpeners = React.useMemo(() => transcriptBylineOpeners(messages), [messages]);
   const renderMessage = React.useCallback(
     ({ item, index }: { item: ChatDisplayMessage; index: number }) => {
       const openUrl = (url: string) => void openExternalUrl(url).catch(() => undefined);
@@ -545,6 +546,7 @@ function CornerCockpit({
       ) : (
         <OrdinaryLedgerMessage
           message={item}
+          firstBylineOfDay={bylineOpeners.has(item.id)}
           participantsHydrated
           viewerPubkey={detail?.viewer.identity.pubkey ?? ''}
           speakerWorking={false}
@@ -566,7 +568,6 @@ function CornerCockpit({
       const captioned = withLedgerDayCaption(
         node,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
-        true,
       );
       if (focusMessageId && messageMatchesFocus(item, focusMessageId)) {
         return (
@@ -577,7 +578,7 @@ function CornerCockpit({
       }
       return captioned;
     },
-    [channelIndex, detail, focusMessageId, messages, onOpenCorner],
+    [bylineOpeners, channelIndex, detail, focusMessageId, messages, onOpenCorner],
   );
   const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
   const objective = summary?.corner.about ?? detail?.room.about ?? title;

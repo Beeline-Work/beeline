@@ -1,4 +1,4 @@
-import { space, typeRoles } from './groknight';
+import type { ChatDisplayMessage } from './room-view-presentation';
 import { ledgerStamp } from './relative-time';
 
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
@@ -16,12 +16,6 @@ const MONTHS = [
   'NOV',
   'DEC',
 ] as const;
-
-/** sectionHead line + space.md above and below — the in-flow caption block. */
-export const LEDGER_DAY_CAPTION_LINE_HEIGHT = typeRoles.sectionHead.lineHeight;
-export const LEDGER_DAY_CAPTION_MARGIN = space.md;
-export const LEDGER_DAY_CAPTION_HEIGHT =
-  LEDGER_DAY_CAPTION_LINE_HEIGHT + LEDGER_DAY_CAPTION_MARGIN * 2;
 
 function atDate(seconds: number | undefined): Date | null {
   if (!seconds || seconds <= 0) return null;
@@ -67,75 +61,45 @@ export function ledgerDayCaption(
  */
 export function transcriptStamp(
   timestamp: number | undefined,
-  previousTimestamp?: number | undefined,
+  firstBylineOfDay: boolean,
   nowMs: number = Date.now(),
 ): string {
   const clock = ledgerStamp(timestamp);
   if (!clock) return '';
-  if (!isLedgerDayOpener(timestamp, previousTimestamp)) return clock;
+  if (!firstBylineOfDay) return clock;
   const at = atDate(timestamp);
   const now = new Date(nowMs);
   if (!at || localDayKey(at) === localDayKey(now)) return clock;
   return `${ledgerDate(timestamp)} ${clock}`;
 }
 
-export type LedgerFlowCell = {
-  id: string;
-  bodyHeight: number;
-  captionHeight: number;
-};
-
-export type LedgerFlowSlice = {
-  id: string;
-  viewportY: number;
-  height: number;
-  kind: 'caption' | 'body';
-};
-
-function overlaps(y: number, height: number, viewY: number, viewH: number): boolean {
-  return y < viewY + viewH && y + height > viewY;
-}
-
-/**
- * Native inverted transcript geometry: offset 0 is the visual tail (newest).
- * y grows toward older history. A caption is in-flow at the visual-top of its
- * day-opener cell, never a separate list item and never sticky.
- */
-export function measureInvertedTranscript(
-  cellsNewestFirst: readonly LedgerFlowCell[],
-  viewportHeight: number,
-  offset: number,
-): LedgerFlowSlice[] {
-  const visible: LedgerFlowSlice[] = [];
-  let y = -offset;
-  for (const cell of cellsNewestFirst) {
-    const bodyY = y;
-    const captionY = y + cell.bodyHeight;
-    if (overlaps(bodyY, cell.bodyHeight, 0, viewportHeight)) {
-      visible.push({ id: cell.id, viewportY: bodyY, height: cell.bodyHeight, kind: 'body' });
-    }
-    if (cell.captionHeight > 0 && overlaps(captionY, cell.captionHeight, 0, viewportHeight)) {
-      visible.push({
-        id: cell.id,
-        viewportY: captionY,
-        height: cell.captionHeight,
-        kind: 'caption',
-      });
-    }
-    y += cell.bodyHeight + cell.captionHeight;
+export function transcriptBylineOpeners(messages: readonly ChatDisplayMessage[]): Set<string> {
+  const openers = new Set<string>();
+  let previousTimestamp: number | undefined;
+  for (const message of messages) {
+    if (
+      message.roomUpdate ||
+      message.writePermission ||
+      message.grantRequest ||
+      message.choice ||
+      message.connectorOffer ||
+      message.walletTx ||
+      message.walletInsufficient ||
+      message.walletDelegation ||
+      message.targetBranchProposal ||
+      message.relay ||
+      message.corner ||
+      message.notificationLifecycleRun ||
+      message.githubEvent ||
+      message.daemonFact ||
+      message.isArchivedNotice ||
+      message.isSystemNotice ||
+      message.durableFact ||
+      message.isAgentActivity
+    )
+      continue;
+    if (isLedgerDayOpener(message.timestamp, previousTimestamp)) openers.add(message.id);
+    previousTimestamp = message.timestamp;
   }
-  return visible;
-}
-
-export function invertedAnchorOffset(
-  cellsNewestFirst: readonly LedgerFlowCell[],
-  anchorId: string,
-  viewportY: number,
-): number {
-  let y = 0;
-  for (const cell of cellsNewestFirst) {
-    if (cell.id === anchorId) return y - viewportY;
-    y += cell.bodyHeight + cell.captionHeight;
-  }
-  throw new Error(`anchor ${anchorId} is not in the transcript`);
+  return openers;
 }

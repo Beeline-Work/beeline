@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, useWindowDimensions } from 'react-native';
+import { ScrollView, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { CodeHighlighter } from './CodeHighlighter';
@@ -34,7 +34,6 @@ export function ToolOutputSheet({
   copyMetadata,
   testID = 'tool-output-sheet',
 }: ToolOutputSheetProps) {
-  const { height } = useWindowDimensions();
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -63,10 +62,7 @@ export function ToolOutputSheet({
       title={title}
       visible={visible}
     >
-      <ScrollView
-        contentContainerStyle={styles.sheetContent}
-        style={[styles.sheetScroll, { maxHeight: height * 0.45 }]}
-      >
+      <ScrollView contentContainerStyle={styles.sheetContent} style={styles.sheetScroll}>
         {highlight ? (
           <CodeHighlighter code={detail ?? ''} language={language} />
         ) : (

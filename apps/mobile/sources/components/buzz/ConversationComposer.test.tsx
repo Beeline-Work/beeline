@@ -307,6 +307,21 @@ describe('one composer', () => {
     expect(render('one line').renderer.root.findByType('TextInput').props.style[2]).toBe(false);
   });
 
+  it('keeps the Android landscape keyboard out of the OS fullscreen extract editor', () => {
+    // Android IMEs go fullscreen in landscape by default and type into their
+    // own plain extract field, which covers this composer and every control on
+    // it. `disableFullscreenUI` sets IME_FLAG_NO_FULLSCREEN so the keyboard
+    // stays a keyboard. It is unconditional: no platform branch to fall out of.
+    platform.OS = 'android';
+    expect(render('one line').renderer.root.findByType('TextInput').props.disableFullscreenUI).toBe(
+      true,
+    );
+    platform.OS = 'ios';
+    expect(render('one line').renderer.root.findByType('TextInput').props.disableFullscreenUI).toBe(
+      true,
+    );
+  });
+
   it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
     const f = render(value);
     expect(f.button().findByType('Text').props.children).toBe('↑');

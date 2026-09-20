@@ -95,6 +95,18 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'empty')).toContain('paddingHorizontal: hull.space.lg');
     expect(styleBlock(source, 'header')).toContain('paddingLeft: hull.space.lg');
     expect(styleBlock(source, 'header')).toContain('paddingRight: 16');
+    expect(styleBlock(source, 'headerActions')).toContain('gap: hull.space.sm');
+    expect(styleBlock(source, 'headerAction')).toContain('minWidth: 16');
+    expect(styleBlock(source, 'headerAction')).not.toContain('paddingHorizontal: 8');
+    expect(styleBlock(source, 'headerMembersAction')).toContain('minWidth: 16');
+    expect(styleBlock(source, 'headerMembersAction')).not.toContain("alignItems: 'flex-end'");
+    expect(styleBlock(source, 'headerBookmarksGlyph')).toContain(
+      'transform: [{ translateY: BOOKMARKS_GLYPH_OPTICAL_Y }]',
+    );
+    expect(source).toContain('const BOOKMARKS_GLYPH_OPTICAL_Y = 1');
+    expect(source).toContain(
+      'const HEADER_GLYPH_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',
+    );
     expect(styleBlock(source, 'empty')).not.toMatch(/\bpadding: \d/);
     expect(styleBlock(source, 'emptyTitle')).toContain('...hull.type.body,');
     expect(styleBlock(source, 'emptyTitle')).toContain('color: hull.textPrimary');

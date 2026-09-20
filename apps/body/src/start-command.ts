@@ -91,11 +91,6 @@ async function startRuntime(
   const selectedAgent = runtimeAgentCommand(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
   if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
-    const existingPid = await runtimeDaemonPid(configPath);
-    if (existingPid) {
-      report(`[beeline] agent already running (pid ${existingPid})`);
-      return { status: 'already-running', pid: existingPid };
-    }
     try {
       await installTrustySquireBrokerService();
     } catch (error) {
@@ -104,6 +99,11 @@ async function startRuntime(
           error instanceof Error ? error.message : String(error)
         }`,
       );
+    }
+    const existingPid = await runtimeDaemonPid(configPath);
+    if (existingPid) {
+      report(`[beeline] agent already running (pid ${existingPid})`);
+      return { status: 'already-running', pid: existingPid };
     }
     const pid = await installAgentService(runtime.agent.publicKey);
     report(`[beeline] agent daemon supervised by systemd (pid ${pid})`);

@@ -9,6 +9,14 @@ export type SurfaceRefreshOptions<T> = {
   readonly onError?: (error: unknown) => void;
 };
 
+/**
+ * 500 ms caps saturated refresh near two physical GETs/s so a busy Workspace
+ * cannot flood the 10-slot app pool. Exported because it is the measured cost
+ * of a live update on a surface that refreshes rather than paints a delta —
+ * see `live-interaction-latency.test.ts` and the fanout audit.
+ */
+export const SURFACE_REFRESH_MINIMUM_INTERVAL_MS = 500;
+
 type SurfaceExpectation<T> = {
   readonly satisfied: (value: T) => boolean;
   readonly expiresAt: number;
@@ -37,13 +45,11 @@ export class SurfaceRefreshScheduler<T> {
   private expectations: SurfaceExpectation<T>[] = [];
 
   constructor(private readonly options: SurfaceRefreshOptions<T>) {
-    // 500 ms caps saturated refresh near two physical GETs/s so a busy
-    // Workspace cannot flood the 10-slot app pool. Forced refreshes still
-    // bypass this floor so same-process committed deltas stay immediate.
-    // The 150 ms miss-path product target is not closed by this floor alone;
-    // see the fanout audit and monolith-client-paint-budgets for measured
-    // GET+paint (F5) before any further floor change.
-    this.minimumIntervalMs = options.minimumIntervalMs ?? 500;
+    // Forced refreshes bypass this floor so same-process committed deltas stay
+    // immediate. A surface that only signals waits out the remainder of the
+    // floor, which is the measured cost the fanout audit ranks against the
+    // 150 ms interaction target.
+    this.minimumIntervalMs = options.minimumIntervalMs ?? SURFACE_REFRESH_MINIMUM_INTERVAL_MS;
     this.maximumWaitMs = options.maximumWaitMs ?? 1_000;
     this.now = options.now ?? Date.now;
     this.setTimer =

@@ -4,6 +4,7 @@ import {
   buildChannelReferenceIndex,
   findChannelReferences,
   isUnavailableChannelReferenceError,
+  resolveCornerFromList,
   type ChannelReferenceCornerInput,
   type ChannelReferenceRoomInput,
 } from './channel-reference';
@@ -106,9 +107,29 @@ describe('findChannelReferences — unknown tokens stay ordinary text', () => {
     expect(targets('the Roadmap room is quiet')).toEqual([]);
   });
 
-  it('does not link a corner-shaped token whose corner is unknown', () => {
-    // The room alone must NOT degrade into a link plus "/unknown" text.
-    expect(targets('#infra/unknown-corner stays plain')).toEqual([]);
+  it('keeps a corner-shaped token tappable when the corner is not in the index', () => {
+    const roomsOnly = buildChannelReferenceIndex(rooms, []);
+    expect(findChannelReferences('#infra/unknown-corner stays plain.', roomsOnly)).toEqual([
+      {
+        text: '#infra/unknown-corner stays plain',
+        start: 0,
+        end: 33,
+        target: {
+          kind: 'corner',
+          parentChannelId: 'room-infra',
+          name: 'unknown-corner stays plain',
+        },
+      },
+    ]);
+    expect(
+      resolveCornerFromList('#infra/unknown-corner stays plain.', { id: 'room-infra', name: 'infra' }, [
+        { id: 'corner-unknown', name: 'unknown-corner' },
+      ]),
+    ).toEqual({
+      kind: 'corner',
+      channelId: 'corner-unknown',
+      parentChannelId: 'room-infra',
+    });
   });
 
   it('does not link a token from another workspace (absent from this index)', () => {
@@ -234,9 +255,16 @@ describe('findChannelReferences — boundaries', () => {
     expect(targets('"#Roadmap"')[0]?.end).toBe(9);
   });
 
-  it('suppresses a room link when / follows (an unresolved corner shape)', () => {
-    expect(targets('#Roadmap/something-else')).toEqual([]);
-    // Even trailing-slash noise suppresses rather than half-links.
+  it('does not half-link a room when / follows; a name becomes a tap-resolved corner', () => {
+    expect(targets('#Roadmap/something-else')).toEqual([
+      {
+        text: '#Roadmap/something-else',
+        start: 0,
+        end: 23,
+        target: { kind: 'corner', parentChannelId: 'room-roadmap', name: 'something-else' },
+      },
+    ]);
+    // Trailing-slash noise still suppresses rather than half-linking the room.
     expect(targets('#Roadmap/')).toEqual([]);
   });
 
@@ -273,5 +301,27 @@ describe('findChannelReferences — boundaries', () => {
     // '#' before '#' is blocked, so none of the run links.
     expect(found).toEqual([]);
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+describe('resolveCornerFromList — tap resolves one live corner', () => {
+  it('returns the matching corner id from the parent list', () => {
+    expect(
+      resolveCornerFromList('#infra/deploy-watch', { id: 'room-infra', name: 'infra' }, [
+        { id: 'corner-deploy', name: 'deploy-watch' },
+      ]),
+    ).toEqual({
+      kind: 'corner',
+      channelId: 'corner-deploy',
+      parentChannelId: 'room-infra',
+    });
+  });
+
+  it('returns nothing when that name is not on the list', () => {
+    expect(
+      resolveCornerFromList('#infra/unknown-corner', { id: 'room-infra', name: 'infra' }, [
+        { id: 'corner-deploy', name: 'deploy-watch' },
+      ]),
+    ).toBeUndefined();
   });
 });

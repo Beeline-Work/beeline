@@ -76,6 +76,7 @@ import {
 import {
   buildChannelReferenceIndex,
   isUnavailableChannelReferenceError,
+  resolveCornerFromList,
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
@@ -990,7 +991,8 @@ export function BuzzChatSurface({
   const openingChannelReferenceRef = useRef<string | null>(null);
   const handleOpenChannelReference = useCallback(
     async (target: ChannelReferenceTarget, text?: string) => {
-      if (!target.channelId || target.channelId === decodedId) return;
+      if (target.kind === 'room' && (!target.channelId || target.channelId === decodedId)) return;
+      if (target.kind === 'corner' && target.channelId === decodedId) return;
       if (openingChannelReferenceRef.current) return;
       const referenceLabel = text ?? 'this destination';
       if (!roomClient) {
@@ -1000,14 +1002,36 @@ export function BuzzChatSurface({
         );
         return;
       }
-      openingChannelReferenceRef.current = target.channelId;
+      const lock =
+        target.kind === 'corner'
+          ? (target.channelId ?? `pending:${target.parentChannelId}:${target.name ?? text ?? ''}`)
+          : target.channelId;
+      openingChannelReferenceRef.current = lock;
       try {
+        let resolved = target;
+        if (resolved.kind === 'corner' && !resolved.channelId) {
+          const list = await roomClient.corners(resolved.parentChannelId);
+          const found = resolveCornerFromList(
+            text ?? '',
+            { id: list.room.id, name: list.room.name },
+            list.corners.map((item) => ({ id: item.corner.id, name: item.corner.name })),
+          );
+          if (!found) {
+            Modal.alert(
+              'Access denied',
+              `${referenceLabel} is unavailable or you no longer have access.`,
+            );
+            return;
+          }
+          resolved = found;
+        }
+        if (!resolved.channelId || resolved.channelId === decodedId) return;
         // The list that made this token linkable can be stale after a leave,
         // removal, or deletion. The Room read is the current authorization
         // verdict; only a successful read earns navigation.
-        await roomClient.room(target.channelId);
-        if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
-        else router.push(roomHref(target.channelId));
+        await roomClient.room(resolved.channelId);
+        if (resolved.kind === 'corner') openDesktopCorner(resolved.parentChannelId, resolved.channelId);
+        else router.push(roomHref(resolved.channelId));
       } catch (error) {
         if (isUnavailableChannelReferenceError(error)) {
           Modal.alert(

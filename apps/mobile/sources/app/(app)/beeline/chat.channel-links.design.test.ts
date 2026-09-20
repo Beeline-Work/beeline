@@ -47,38 +47,36 @@ function blockFrom(text: string, marker: string, label: string): string {
 describe('channel reference links — workspace-scoped exact resolution', () => {
   const indexBlock = blockFrom(chatSource, 'const channelReferenceIndex', 'channelReferenceIndex');
 
-  it('builds its index from the viewer’s verified Workspace chats and this transcript’s corners', () => {
+  it('builds its index from the viewer’s verified Workspace chats, not a Room-open corner list', () => {
     expect(indexBlock).toContain('workspaceChats');
     expect(indexBlock).toContain('!item.directMessage');
     expect(indexBlock).toContain('roomSurface?.parent');
     expect(indexBlock).toContain('resolvedChannelName');
     expect(chatSource).toContain('buildChannelReferenceIndex');
-    // A corner viewing itself is the only corner this transcript can name
-    // without the Room GET. Sibling history stays on the corners endpoint.
-    expect(indexBlock).toContain('parentChannelId');
-    expect(indexBlock).toContain('channelId: decodedId');
-    expect(indexBlock).not.toContain('cornerLifecycle');
+    expect(indexBlock).not.toContain('roomClient.corners');
     expect(indexBlock).not.toMatch(/roomSurface\?\.corners|roomSurface\.corners/);
     // No second persisted store: nothing here writes a new cache entry.
     expect(chatSource.match(/channelReferenceIndex/g)?.length).toBeGreaterThan(1);
     expect(chatSource).not.toContain('persistChannelReferenceIndex');
   });
 
-  it('routes Room links normally and gives corner links to the shared placement decision', () => {
+  it('navigates a corner reference: resolve on tap, then the existing Room read', () => {
     const handler = blockFrom(
       chatSource,
       'handleOpenChannelReference',
       'handleOpenChannelReference',
     );
-    expect(handler).toContain("target.kind === 'corner'");
-    expect(handler).toContain('await roomClient.room(target.channelId)');
+    expect(handler).toContain("resolved.kind === 'corner' && !resolved.channelId");
+    expect(handler).toContain('roomClient.corners(resolved.parentChannelId)');
+    expect(handler).toContain('resolveCornerFromList');
+    expect(handler).toContain('await roomClient.room(resolved.channelId)');
     expect(handler).toContain('isUnavailableChannelReferenceError(error)');
     expect(handler).toContain("'Access denied'");
-    expect(handler).toContain('openDesktopCorner(target.parentChannelId, target.channelId)');
-    expect(handler).toContain('router.push(roomHref(target.channelId))');
+    expect(handler).toContain('openDesktopCorner(resolved.parentChannelId, resolved.channelId)');
+    expect(handler).toContain('router.push(roomHref(resolved.channelId))');
     // A reference to the transcript you are already reading must not push a
     // duplicate of the same route onto the stack.
-    expect(handler).toContain('target.channelId === decodedId');
+    expect(handler).toContain('resolved.channelId === decodedId');
     expect(handler).not.toContain('router.navigate');
     expect(handler).not.toContain('/beeline/chat/');
   });

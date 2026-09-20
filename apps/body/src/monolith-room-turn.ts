@@ -17,7 +17,11 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  mountedImportedMcpServerNames,
+  prepareRoomAgentHome,
+} from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -478,10 +482,11 @@ export class MonolithRoomTurnLoop {
   /**
    * Whether the retained session still matches the agent's server-side
    * configuration. Retention (C104) is a saving only while what it keeps is
-   * still current, and a session's persona and model pin are fixed when it
-   * opens: they cannot be corrected in place, so a changed one has to cost a
-   * respawn. The check is one round trip — the roster half of which the turn
-   * was going to fetch anyway — against a cold spawn measured in seconds.
+   * still current, and a session's persona, model pin, and mounted MCP set are
+   * fixed when it opens: they cannot be corrected in place, so a changed one
+   * has to cost a respawn. The check is one round trip — the roster half of
+   * which the turn was going to fetch anyway — against a cold spawn measured
+   * in seconds.
    */
   private async sessionIsCurrent(): Promise<boolean> {
     return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
@@ -501,6 +506,15 @@ export class MonolithRoomTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
+      mcpServers: this.mountedMcpServers(),
+    });
+  }
+
+  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
+    return mountedImportedMcpServerNames({
+      operatorHome: this.options.config.operatorHome,
+      agentKind: this.options.config.agentKind,
+      preparedEnv,
     });
   }
 
@@ -516,12 +530,6 @@ export class MonolithRoomTurnLoop {
       this.repositoryState(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-    });
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
       repositoryState.directParticipants.length === 2;
@@ -564,6 +572,13 @@ export class MonolithRoomTurnLoop {
       command,
     });
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      mcpServers: this.mountedMcpServers(agentEnv),
+    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {

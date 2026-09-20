@@ -35,7 +35,10 @@ export function clackPromptOutput(output: NodeJS.WriteStream = stdout): NodeJS.W
  * the cancel symbol propagate into caller logic. `process.exit` is typed
  * `never`, so callers get `value` narrowed to `T` after this returns.
  */
-export function unwrapPrompt<T>(value: T | symbol, cancelMessage = 'Cancelled.'): T {
+export function unwrapPrompt<T>(
+  value: T | Extract<Awaited<ReturnType<typeof clack.text>>, symbol>,
+  cancelMessage = 'Cancelled.',
+): T {
   if (clack.isCancel(value)) {
     clack.cancel(cancelMessage);
     process.exit(1);

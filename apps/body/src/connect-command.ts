@@ -54,13 +54,7 @@ function isReasonableAgentName(value: string): boolean {
   );
 }
 export const CONNECT_PROVIDER_HARNESSES = new Set<AgentKind>(['goose', 'pi']);
-export const CONNECT_PROVIDERS = [
-  'openrouter',
-  'openai',
-  'anthropic',
-  'google',
-  'xai',
-] as const;
+export const CONNECT_PROVIDERS = ['openrouter', 'openai', 'anthropic', 'google', 'xai'] as const;
 export type ConnectProvider = (typeof CONNECT_PROVIDERS)[number];
 
 /** Saved-key access seam so tests can stub the on-disk store. */
@@ -434,14 +428,12 @@ export interface ConnectWizardSeams {
  */
 export async function collectConnectWizard(
   prompts: ConnectPrompts = clackPrompts,
-  loadModels: (input: ConnectModelCatalogRequest) => Promise<ConnectModelCatalog> =
-    loadConnectModelCatalog,
+  loadModels: (
+    input: ConnectModelCatalogRequest,
+  ) => Promise<ConnectModelCatalog> = loadConnectModelCatalog,
   keyStore: ConnectKeyStore = fileConnectKeyStore,
   env: NodeJS.ProcessEnv = process.env,
-  verifyKey: (input: {
-    provider: ConnectProvider;
-    apiKey: string;
-  }) => Promise<void> = (input) =>
+  verifyKey: (input: { provider: ConnectProvider; apiKey: string }) => Promise<void> = (input) =>
     verifyProviderKey(input as { provider: ConnectKeyProvider; apiKey: string }),
   seams: ConnectWizardSeams = {},
 ): Promise<ConnectWizardResult> {
@@ -701,10 +693,7 @@ export async function readMachineId(
     } catch {
       // Home directory is unwritable; fall back to a hash of the hostname so
       // every agent on this host at least shares one id for the session.
-      machineId = createHash('sha256')
-        .update(machineName)
-        .digest('hex')
-        .slice(0, 36);
+      machineId = createHash('sha256').update(machineName).digest('hex').slice(0, 36);
     }
   }
   return { machineId, machineName };
@@ -739,7 +728,9 @@ export function requestConnectGrant(
       // called once the rename prompt below settles), so the claim must not
       // join Rooms or announce yet.
       defer_join: true,
-      ...(machineInfo ? { machine_id: machineInfo.machineId, machine_name: machineInfo.machineName } : {}),
+      ...(machineInfo
+        ? { machine_id: machineInfo.machineId, machine_name: machineInfo.machineName }
+        : {}),
     },
     fetchImpl,
   );
@@ -793,10 +784,7 @@ export async function finishConnectedAgentPairing(
 }
 
 /** `Foxy the fox` — one line naming what to look for in the app. */
-export function seededIdentityLine(grant: {
-  agent_name: string;
-  agent_face?: string;
-}): string {
+export function seededIdentityLine(grant: { agent_name: string; agent_face?: string }): string {
   return grant.agent_face ? `${grant.agent_name} the ${grant.agent_face}` : grant.agent_name;
 }
 
@@ -968,7 +956,10 @@ async function runConnectWizard(
   // The server seeded this agent's animal, name and soul from its Workspace
   // roster. Show what to look for in the app, and offer the one rename the
   // terminal gets before the helper starts under that name.
-  const grant = { ...claimed, agent_name: await confirmSeededName(baseUrl, pairingCode, claimed, fetchImpl) };
+  const grant = {
+    ...claimed,
+    agent_name: await confirmSeededName(baseUrl, pairingCode, claimed, fetchImpl),
+  };
   // Only now is the agent's final name on record: join it into the Workspace's
   // Rooms and let the "joined" line land under that name, not the seeded one.
   await finishConnectedAgentPairing(

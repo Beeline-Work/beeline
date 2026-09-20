@@ -9,19 +9,20 @@
  * agent. Under the previous five-minute window that staleness was bounded by
  * the window itself; a thirty-minute one has to invalidate explicitly.
  *
- * This is deliberately the *whole* server-owned configuration a session bakes
+ * This is deliberately the *whole* effective configuration a session bakes
  * in and nothing else: a fingerprint that skipped a field would reintroduce
  * exactly the bug it exists to prevent, and one that included session-local
  * state (a C92 provider re-pin, say) would throw away a good session for a
  * fact the session itself chose.
  *
- * The mounted MCP set is part of that configuration. It is the pattern for
- * every imported server the operator currently has (Codex, Claude, Grok,
- * Goose, Cursor, a TypeScript MCP, Linear, filesystem, …), not a Squire-only
- * or TypeScript-only special case. A granted or revoked host route, or an
- * add/remove of any imported server, must change this set so a warm session
- * restarts with the route the next turn actually mounts. Names only: never
- * copy server state (cookies, `session.json`, profile bytes) into a sandbox.
+ * The MCP input is the selected harness's post-prepare imported server names,
+ * supplied by mountedImportedMcpServerNames in agent-home.ts. Retention derives
+ * the next inventory using the same preparation rules, never treating stale
+ * isolated copies as independent grant authority. This applies to every
+ * imported server, including TypeScript, rather than special-casing Squire.
+ * Route grant/revoke provisioning is outside this fingerprint's responsibility.
+ * Only names enter the fingerprint, not server settings or credential state;
+ * changing settings under an unchanged name does not invalidate the session.
  */
 export interface SessionConfigInput {
   /** The model this activation would select, after the Room's own override. */

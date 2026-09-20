@@ -4,15 +4,16 @@ import { describe, expect, it } from 'vitest';
 import { MEMBERS_LABEL } from './vocabulary';
 
 /**
- * Chrome that opens the members screen next to bookmarks uses the same
- * Ionicons outline family. In-list titles keep the word. The retired hexagon
- * never returns, and no Speakeasy animal stands in for "members" — animals
- * are identity faces.
+ * Chrome that opens the members screen next to bookmarks uses MembersGlyph.
+ * In-list titles keep the word. The retired hexagon never returns, and no
+ * Speakeasy animal stands in for "members" — animals are identity faces.
  */
 const CHROME_ENTRY_POINTS = [
   '../app/(app)/beeline/channels.tsx',
   '../components/SidebarView.tsx',
 ];
+
+const ROOM_ENTRY_POINTS = ['../app/(app)/beeline/chat/_chat-surface.tsx'];
 
 const WORD_ENTRY_POINTS = [
   '../app/(app)/beeline/MembersScreen.tsx',
@@ -34,14 +35,16 @@ describe('the members word', () => {
     }
   });
 
-  it('draws the Room-list and desktop heading as an outline people glyph', () => {
+  it('draws the Room-list and desktop heading as MembersGlyph', () => {
     for (const relativePath of CHROME_ENTRY_POINTS) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
-      expect(source, `${relativePath} should use the people outline glyph`).toContain(
-        'name="people-outline"',
-      );
+      expect(source, `${relativePath} should use MembersGlyph`).toContain('<MembersGlyph');
+      expect(source, `${relativePath} should keep the 16px chrome size`).toContain('size={16}');
       expect(source, `${relativePath} still paints the members word`).not.toContain(
         'MEMBERS_LABEL.toUpperCase()',
+      );
+      expect(source, `${relativePath} still uses the retired Ionicons people mark`).not.toContain(
+        'people-outline',
       );
     }
     const phone = readFileSync(new URL(CHROME_ENTRY_POINTS[0], import.meta.url), 'utf8');
@@ -49,6 +52,21 @@ describe('the members word', () => {
     const desktop = readFileSync(new URL(CHROME_ENTRY_POINTS[1], import.meta.url), 'utf8');
     expect(desktop).toContain('accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}');
     expect(desktop).toContain('testID="desktop-members"');
+  });
+
+  it('puts the same mark on both overflow roster rows and leaves the work pane alone', () => {
+    const chat = readFileSync(new URL(ROOM_ENTRY_POINTS[0], import.meta.url), 'utf8');
+    expect(chat.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(2);
+    expect(chat.match(/leading=\{<MembersGlyph testID="room-participant-roster-glyph" \/>\}/g)).toHaveLength(
+      2,
+    );
+    const inspector = readFileSync(
+      new URL('../components/DesktopRoomInspector.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(inspector).not.toContain('MembersGlyph');
+    expect(inspector).not.toContain('title="MEMBERS"');
+    expect(inspector).not.toContain('desktop-work-members');
   });
 
   it('keeps the retired hexagon and any animal-as-members mark out of every entry', () => {

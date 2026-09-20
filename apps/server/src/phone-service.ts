@@ -101,11 +101,7 @@ import {
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
-import {
-  answerRoomChoice,
-  hiddenWakeCardSql,
-  skipRoomChoice,
-} from './room-choice.js';
+import { answerRoomChoice, hiddenWakeCardSql, skipRoomChoice } from './room-choice.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -135,6 +131,7 @@ import {
   walletHistory,
 } from './wallet.js';
 import { mediaIdFromUrl } from './media-ttl.js';
+import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
@@ -271,6 +268,11 @@ interface MemberRow extends IdentityRow {
 interface CornerRow extends RoomRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
   objective: string | null;
+  initiator_id: string | null;
+  initiator_name: string | null;
+  initiator_handle: string | null;
+  initiator_avatar: string | null;
+  initiator_face: string | null;
   latest_id: string | null;
   latest_text: string | null;
   latest_created_at: Date | null;
@@ -412,9 +414,10 @@ function withAttachmentExpiry<Message extends RoomViewMessage>(
 }
 
 /**
- * Stamp artifact facts onto attachments whose media id names a `kind='artifact'`
+ * Stamp artifact-card facts onto attachments whose media id names a ready
  * object row: `{ kind:'artifact', title, author }` alongside the mime and size
- * the attachment already carries. The message row is never edited.
+ * the attachment already carries. Person file shares and agent artifacts
+ * share this card. The message row is never edited.
  */
 function withArtifactFacts<Message extends RoomViewMessage>(
   messages: readonly Message[],
@@ -636,6 +639,7 @@ export class PhoneService {
     private readonly live?: LiveHub,
     private readonly routingTransaction = false,
     private readonly enrichmentDatabase: SqlDatabase = database,
+    private readonly objects?: ObjectService,
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -671,6 +675,26 @@ export class PhoneService {
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
     return this.hasRoomAccess(roomId, identityId);
+  }
+
+  /** One membership query for a live subscribe batch (Room deck watchFilters). */
+  async canReadRooms(roomIds: readonly string[], identityId: string): Promise<ReadonlySet<string>> {
+    const unique = [...new Set(roomIds.filter((id) => typeof id === 'string' && id.length > 0))];
+    if (unique.length === 0) return new Set();
+    const result = await this.database.query<{ room_id: string }>(
+      `SELECT room_member.room_id::text AS room_id FROM memberships room_member
+       JOIN rooms room ON room.id=room_member.room_id
+       WHERE room_member.room_id = ANY($1::uuid[]) AND room_member.identity_id=$2
+         AND room_member.removed_at IS NULL
+         AND ($2=$3 OR EXISTS(
+           SELECT 1 FROM memberships workspace_member
+           WHERE workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+         ))`,
+      [unique, identityId, SYSTEM_IDENTITY_ID],
+    );
+    return new Set(result.rows.map((row) => row.room_id));
   }
 
   /** Project a row the daemon's committing transaction already returned. The
@@ -1015,6 +1039,7 @@ export class PhoneService {
         working: boolean;
         needs_you: boolean;
         closed: boolean;
+        agents_offline: boolean;
       }
     >(
       `
@@ -1026,6 +1051,7 @@ export class PhoneService {
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
         NULL::timestamptz peer_activity_at,false unread,
+        false agents_offline,
         EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
         EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
         (r.direct_participants IS NOT NULL AND EXISTS(
@@ -1069,6 +1095,7 @@ export class PhoneService {
           peer_presence_body: Record<string, unknown> | null;
           peer_presence_updated_at: Date | null;
           peer_activity_at: Date | null;
+          agents_offline: boolean;
         }>(
           `SELECT room.id room_id,presence.body peer_presence_body,
              presence.updated_at peer_presence_updated_at,
@@ -1077,9 +1104,12 @@ export class PhoneService {
                 WHERE message.room_id=room.id AND message.author_id=peer.id),
                (SELECT max(mark.updated_at) FROM room_read_marks mark
                 WHERE mark.room_id=room.id AND mark.identity_id=peer.id)
-             ) peer_activity_at
+             ) peer_activity_at,
+             agent_presence.agent_count > 0
+               AND agent_presence.known_presence_count = agent_presence.agent_count
+               AND agent_presence.online_agent_count = 0 agents_offline
            FROM rooms room
-           JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
+           LEFT JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
              CASE WHEN jsonb_typeof(room.direct_participants)='array'
                THEN room.direct_participants ELSE '[]'::jsonb END
            ) participant WHERE participant<>$2 LIMIT 1)
@@ -1087,8 +1117,25 @@ export class PhoneService {
              SELECT body,updated_at FROM live_outputs
              WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
            ) presence ON peer.kind='agent'
+           LEFT JOIN LATERAL(
+             SELECT count(*)::int agent_count,
+               count(agent_status.body)::int known_presence_count,
+               count(*) FILTER(
+                 WHERE agent_status.body->>'status'='online'
+                   AND agent_status.updated_at>$3
+               )::int online_agent_count
+             FROM memberships member
+             JOIN identities agent ON agent.id=member.identity_id
+               AND agent.kind='agent' AND agent.hidden_from_roster=false
+             LEFT JOIN LATERAL(
+               SELECT body,updated_at FROM live_outputs
+               WHERE agent_id=member.identity_id AND kind='presence'
+               ORDER BY updated_at DESC LIMIT 1
+             ) agent_status ON true
+             WHERE member.room_id=room.id AND member.removed_at IS NULL
+           ) agent_presence ON true
            WHERE room.id=ANY($1::uuid[])`,
-          [roomIds, viewerId],
+          [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)],
         ),
       ),
       this.optionalEnrichment(
@@ -1119,6 +1166,7 @@ export class PhoneService {
       room.peer_presence_body = item?.peer_presence_body ?? null;
       room.peer_presence_updated_at = item?.peer_presence_updated_at ?? null;
       room.peer_activity_at = item?.peer_activity_at ?? null;
+      room.agents_offline = item?.agents_offline ?? false;
       room.unread = cursorByRoom.get(room.id) ?? false;
     }
     return {
@@ -1132,6 +1180,7 @@ export class PhoneService {
       },
       chats: rooms.rows.slice(0, 200).map((row) => ({
         room: roomHeader(row, this.publicOrigin),
+        ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
         cornerCount: Number(row.corner_count),
@@ -1595,6 +1644,9 @@ export class PhoneService {
            ORDER BY m.created_at DESC,m.id DESC
          ), corner_rows AS (
            SELECT corner.*,fact.lifecycle,fact.objective,
+             initiator.id initiator_id,initiator.name initiator_name,
+             initiator.handle initiator_handle,initiator.avatar initiator_avatar,
+             initiator.face_id initiator_face,
              latest.id latest_id,latest.text latest_text,latest.created_at latest_created_at,
              latest.author_id latest_author_id,latest_identity.kind latest_author_kind,
              latest_identity.name latest_author_name,agent.identity_id agent_id,
@@ -1603,6 +1655,8 @@ export class PhoneService {
            FROM authorized_room room
            JOIN rooms corner ON corner.parent_id=room.id
            LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
+           LEFT JOIN identities initiator
+             ON initiator.id=fact.commissioned_by AND initiator.kind='human'
            LEFT JOIN LATERAL(
              SELECT * FROM messages WHERE room_id=corner.id
                AND presentation IN ('message','system')
@@ -1728,10 +1782,15 @@ export class PhoneService {
       await this.database.query<CornerRow>(
         `
       SELECT c.*,f.lifecycle,f.objective,lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
+        initiator.id initiator_id,initiator.name initiator_name,
+        initiator.handle initiator_handle,initiator.avatar initiator_avatar,
+        initiator.face_id initiator_face,
         li.kind latest_author_kind,li.name latest_author_name,agent.identity_id agent_id,
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
         turn.status latest_turn_status,turn.created_at latest_turn_created_at
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+      LEFT JOIN identities initiator
+        ON initiator.id=f.commissioned_by AND initiator.kind='human'
       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
@@ -1778,6 +1837,20 @@ export class PhoneService {
           hasLiveWorkingTurn && corner.latest_turn_created_at
             ? unix(corner.latest_turn_created_at)
             : unix(corner.updated_at),
+        ...(corner.initiator_id && corner.initiator_name
+          ? {
+              initiator: {
+                pubkey: corner.initiator_id,
+                kind: 'human' as const,
+                name: corner.initiator_name,
+                ...(corner.initiator_handle ? { handle: corner.initiator_handle } : {}),
+                ...(corner.initiator_avatar
+                  ? { avatar: assetUrl(corner.initiator_avatar, this.publicOrigin) }
+                  : {}),
+                ...(corner.initiator_face ? { face: corner.initiator_face } : {}),
+              },
+            }
+          : {}),
         ...(corner.agent_id && corner.agent_name
           ? {
               agent: {
@@ -2848,32 +2921,16 @@ export class PhoneService {
     name: string,
     maximumBytes: number,
   ) {
+    if (!this.objects) throw new Error('object storage is not configured');
     if (!bytes.length || bytes.length > maximumBytes)
       throw new Error('media size is outside the allowed range');
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    const id = randomUUID();
-    // Posting a file again is an upload: identical bytes deduplicate onto the
-    // existing row, and its TTL window restarts, so the second message never
-    // inherits the first one's remaining hours. The tombstone delete keeps the
-    // invariant a read depends on - a row in `media` is never also expired.
-    const result = await this.database.query<{ id: string }>(
-      `WITH stored AS (
-         INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256) VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT(owner_id,sha256) DO UPDATE SET name=EXCLUDED.name,created_at=now()
-         RETURNING id
-       ), revived AS (
-         DELETE FROM media_expirations WHERE id IN (SELECT id FROM stored)
-       )
-       SELECT id FROM stored`,
-      [id, viewerId, Buffer.from(bytes), mimeType, name, digest],
-    );
-    const storedId = result.rows[0]!.id;
+    const stored = await this.objects.uploadSharedFile(viewerId, bytes, mimeType, name);
     return {
-      url: `${this.publicOrigin}/v1/media/${storedId}`,
-      name,
-      mimeType,
-      size: bytes.length,
-      sha256: digest,
+      url: stored.url,
+      name: stored.title,
+      mimeType: stored.mimeType,
+      size: stored.size,
+      sha256: stored.sha256,
     };
   }
 
@@ -3767,6 +3824,9 @@ export class PhoneService {
               viewerId,
               input.avatar,
               this.publicOrigin,
+              this.objects
+                ? (id, ownerId) => this.objects!.readOwnedBytes(ownerId, id, database)
+                : undefined,
             );
       await database.query(
         `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
@@ -4698,26 +4758,24 @@ export class PhoneService {
     return grant;
   }
   /**
-   * The one affirmative tap on a connector-offer card (R5). Authorization is
+   * Start the connector offer's full sign-in ceremony. Authorization is
    * the captain's Q4 answer, decided here and never on the phone: the person
    * the agent ADDRESSED — whose keys the tool will hold — or a current
    * Workspace manager, who already owns Workspace configuration. Nobody else
    * can act on the card, whatever the phone shows.
    *
-   * Accepting is configuration, not authority: it pairs the connector on the
+   * Starting the ceremony is configuration, not authority: it pairs the connector on the
    * OFFERING agent's machine through the very row the Workbench page's own
    * Connect writes (`armConnectorPairing`), so every later credential use goes
    * through the connector's unchanged receipts and approvals, and the vault
-   * stays write-only. The card settles in place naming who acted, and one
-   * hidden `connector-offer-decided` line resumes the paused turn — kept for
-   * that wake and never shown, exactly like `grant-decision` (C101).
+   * stays write-only. The card remains `connecting`; the helper's connected
+   * report settles it and emits the hidden resume line.
    */
   private async acceptConnectorOffer(
     input: Input<'acceptConnectorOffer'>,
     viewerId: string,
   ): Promise<Output<'acceptConnectorOffer'>> {
-    if (typeof input.offerId !== 'string' || !input.offerId)
-      throw new Error('offerId is required');
+    if (typeof input.offerId !== 'string' || !input.offerId) throw new Error('offerId is required');
     const offer = (
       await this.database.query<{
         id: string;
@@ -4728,16 +4786,17 @@ export class PhoneService {
         connector_type: string;
         machine_id: string;
         status: ConnectorOfferStatus;
-        command_id: string | null;
+        accepted_by: string | null;
+        accepted_at: Date | null;
       }>(
-        `SELECT id,agent_id,workspace_id,room_id,addressee_id,connector_type,machine_id,status,command_id
+        `SELECT id,agent_id,workspace_id,room_id,addressee_id,connector_type,machine_id,status,
+                accepted_by,accepted_at
          FROM connector_offers WHERE id::text=$1`,
         [input.offerId],
       )
     ).rows[0];
     if (!offer) throw new Error('connector offer not found');
-    if (offer.status !== 'pending')
-      throw new Error('connector offer conflict: already accepted');
+    if (offer.status === 'accepted') throw new Error('connector offer conflict: already accepted');
     if (!isOfferableConnectorKind(offer.connector_type))
       throw new Error(`connector offer is invalid: ${offer.connector_type} cannot be added`);
     const connectorType: ConnectorKind = offer.connector_type;
@@ -4751,6 +4810,8 @@ export class PhoneService {
     }
     // The addressee decides only while they are still in the Workspace.
     await this.requireWorkspaceMember(offer.workspace_id, viewerId);
+    if (offer.status === 'connecting' && offer.accepted_by !== viewerId)
+      throw new Error('connector offer conflict: sign-in is already in progress');
     // The helper is the offering agent's machine; it must still be here to install.
     const helper = await this.database.query(
       `SELECT 1 FROM agents a
@@ -4762,15 +4823,16 @@ export class PhoneService {
     if (!helper.rowCount)
       throw new Error('connector offer conflict: the offering agent has left this Workspace');
     const acceptor = await this.requireIdentity(viewerId);
-    const connectorName = connectorDisplayName(connectorType);
     const paired = await this.database.transaction(async (database) => {
       const updated = await database.query<{ accepted_at: Date }>(
-        `UPDATE connector_offers SET status='accepted',accepted_by=$2,accepted_at=now()
+        `UPDATE connector_offers SET status='connecting',accepted_by=$2,
+             accepted_at=COALESCE(accepted_at,now())
          WHERE id::text=$1 AND status='pending' RETURNING accepted_at`,
         [input.offerId, viewerId],
       );
-      const acceptedAt = updated.rows[0]?.accepted_at;
-      if (!acceptedAt) throw new Error('connector offer conflict: already accepted');
+      const acceptedAt = updated.rows[0]?.accepted_at ?? offer.accepted_at;
+      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting'))
+        throw new Error('connector offer conflict: already accepted');
       const pairing = await this.armConnectorPairing(database, {
         workspaceId: offer.workspace_id,
         ownerIdentityId: viewerId,
@@ -4782,44 +4844,28 @@ export class PhoneService {
         input.offerId,
         pairing.connectorId,
       ]);
-      await this.settleConnectorOfferCard(database, {
+      await this.markConnectorOfferConnecting(database, {
         roomId: offer.room_id,
         offerId: input.offerId,
         acceptedBy: acceptor,
         acceptedAt,
         connectorId: pairing.connectorId,
       });
-      // `<@handle> added Trusty Squire`: exactly `formatConnectorOfferDecisionLine`'s
-      // shape, so the daemon recognises the answer structurally. A resume kind
-      // (`RESUME_KINDS`): it answers the paused turn and never starts a second.
-      await systemLine(database, {
-        roomId: offer.room_id,
-        authorId: viewerId,
-        subject: identitySubject({ id: acceptor.pubkey, kind: acceptor.kind, name: acceptor.name }),
-        verb: 'added',
-        object: connectorName,
-        kind: 'connector-offer-decided',
-        ...(offer.command_id ? { commandId: offer.command_id } : {}),
-        wakes: [offer.agent_id],
-        cardType: 'connector-offer-decision',
-        card: { offerId: input.offerId, status: 'accepted', connectorId: pairing.connectorId },
-      });
       return pairing;
     });
     return {
       offerId: input.offerId,
-      status: 'accepted',
+      status: 'connecting',
       roomId: offer.room_id,
       connectorId: paired.connectorId,
     };
   }
   /**
-   * Settle the offer card in place: the button goes, and the record names who
-   * acted and when — a Room has many people, and the simplification must not
-   * erase the actor. The Workbench row id rides along for the settled card's
-   * `Manage in Workbench ›` link.
+   * Mark the card as an in-progress ceremony. It still names who acted and
+   * carries the Workbench row id, but it cannot claim the tool was added until
+   * the helper's connected report settles it.
    */
-  private async settleConnectorOfferCard(
+  private async markConnectorOfferConnecting(
     database: SqlDatabase,
     input: {
       roomId: string;
@@ -4837,17 +4883,17 @@ export class PhoneService {
         [input.roomId, input.offerId],
       )
     ).rows[0];
-    if (!card || card.card.status !== 'pending') return;
-    const settled: ConnectorOfferCardView = {
+    if (!card || !['pending', 'connecting'].includes(card.card.status)) return;
+    const connecting: ConnectorOfferCardView = {
       ...card.card,
-      status: 'accepted',
+      status: 'connecting',
       acceptedBy: input.acceptedBy,
       acceptedAt: unix(input.acceptedAt),
       connectorId: input.connectorId,
     };
     await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [
       card.id,
-      JSON.stringify(settled),
+      JSON.stringify(connecting),
     ]);
   }
   /**
@@ -5289,11 +5335,11 @@ export class PhoneService {
         [gone],
       );
 
-      // Media bytes are personal data: the rows go, and a tombstone keeps the
+      // Object bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).
       await database.query(
-        `WITH swept AS (DELETE FROM media WHERE owner_id=ANY($1) RETURNING id)
-         INSERT INTO media_expirations(id) SELECT id FROM swept`,
+        `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id)
+         INSERT INTO object_expirations(id) SELECT id FROM swept ON CONFLICT(id) DO NOTHING`,
         [gone],
       );
 
@@ -6350,8 +6396,8 @@ export class PhoneService {
   }
   /**
    * Which media ids referenced by these messages have expired, and which name
-   * artifact object rows. Two queries per read, both over indexed id sets: expiry
-   * is a fact the sweep wrote, and artifact facts live on the `objects` row.
+   * ready object rows. Two queries per read, both over indexed id sets: expiry
+   * is a fact the sweep wrote, and card facts live on the `objects` row.
    */
   private async attachmentFacts(
     ...groups: readonly (readonly RoomViewMessage[])[]
@@ -6366,7 +6412,7 @@ export class PhoneService {
     if (!ids.size) return { expired: new Set(), artifacts: new Map() };
     const [expired, objectRows] = await Promise.all([
       this.database.query<{ id: string }>(
-        `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+        `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
         [[...ids]],
       ),
       this.database.query<{
@@ -6376,10 +6422,10 @@ export class PhoneService {
         size: string;
         author: string;
       }>(
-        `SELECT o.id::text id,o.title title,o.mime mime,o.size::text size,
+        `SELECT o.id::text id,COALESCE(o.title, '') title,o.mime mime,o.size::text size,
                 COALESCE(i.handle, i.name) author
          FROM objects o JOIN identities i ON i.id=o.owner_id
-         WHERE o.kind='artifact' AND o.state='ready' AND o.id=ANY($1::uuid[])`,
+         WHERE o.state='ready' AND o.id=ANY($1::uuid[])`,
         [[...ids]],
       ),
     ]);

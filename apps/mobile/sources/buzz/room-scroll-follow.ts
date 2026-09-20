@@ -23,6 +23,26 @@ import { useLayoutEffect, useRef } from 'react';
  */
 export type ScrollFollowDecision = 'scroll' | 'hold';
 
+const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 12;
+const HANGING_TURN_CHROME_HEIGHT = 30;
+
+/** The inverted phone transcript's visual-tail padding. Fixed Corner/offline
+ * chrome already moves the list edge above the composer, so adding the hanging
+ * line's reserve there a second time opens a dead band. Without pushed chrome,
+ * the reserve remains necessary to keep the absolute line off the last row. */
+export function phoneTranscriptTailPadding({
+  turnChromeVisible,
+  pushedChromeVisible,
+}: {
+  turnChromeVisible: boolean;
+  pushedChromeVisible: boolean;
+}): number {
+  return (
+    PHONE_TRANSCRIPT_BASE_TAIL_PADDING +
+    (turnChromeVisible && !pushedChromeVisible ? HANGING_TURN_CHROME_HEIGHT : 0)
+  );
+}
+
 export type DesktopOpenLandingDecision = 'scroll' | 'settle' | 'hold';
 
 /**

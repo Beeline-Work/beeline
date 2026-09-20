@@ -132,9 +132,12 @@ export type DaemonOperationMap = {
       checks: 'passed' | 'failed' | 'pending';
       pullRequest: string;
       headSha: string;
+      /** True when the configured reviewer's exact-head outcome has not passed. */
       approvalPending: boolean;
       /** The parent Room's currently-configured reviewer, as `@handle`, or null when none is configured. */
       reviewer: string | null;
+      /** True when the parent Room has a configured reviewer, even if that identity has no handle. */
+      reviewerExists: boolean;
       /** True when `reviewer` is also this corner's opener/author — self-review is not required. */
       reviewerIsAuthor: boolean;
       /**
@@ -436,7 +439,13 @@ export type RequestCompletionResult = {
   readonly openedCornerId?: string;
   readonly completed: boolean;
 };
-export type WriteResult = { readonly id: string; readonly createdAt: number };
+export type WriteResult = {
+  readonly id: string;
+  readonly createdAt: number;
+  /** Set on a failed hiccup receipt the helper should exit so systemd restarts it. */
+  readonly hiccupRestart?: boolean;
+  readonly hiccupAttempt?: number;
+};
 export type PostRoomMessageResult = WriteResult;
 export type PostRoomMessageInput = TurnOutputAuthority &
   RoomInput & {
@@ -478,13 +487,27 @@ export type PostTurnReceiptInput = AgentRoomInput & {
    * party writes it.
    */
   readonly status: 'working' | 'complete' | 'failed' | 'cancelled';
+  /**
+   * A successful turn that intentionally produced no Room message. The server
+   * records that outcome so it cannot be mistaken for a vanished or failed
+   * answer. Omitted for ordinary replies and card-backed handoffs.
+   */
+  readonly completionKind?: 'no-reply';
   readonly generationId?: string;
   /** Refreshes an existing working receipt; never starts or resurrects a turn. */
   readonly heartbeat?: boolean;
   /** One distilled line (≤200 chars, no stack, secrets scrubbed) sent only with `failed`. */
   readonly reason?: string;
   /** Typed Room-safe classification; detail stays in the daemon log. */
-  readonly reasonKind?: 'model-selection-unavailable';
+  readonly reasonKind?:
+    | 'hiccup'
+    | 'wrong-model'
+    | 'allowance-spent'
+    | 'not-signed-in'
+    | 'workspace-failure'
+    | 'helper-out-of-date'
+    | 'offline'
+    | 'model-selection-unavailable';
 };
 export type PostAgentActivityInput = TurnOutputAuthority &
   AgentRoomInput & {

@@ -25,6 +25,8 @@ describe('using-beeline Room guidance', () => {
     );
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('open_corner');
+    expect(beelinePrimer()).toContain('beeline-agent fetch_image');
+    expect(beelinePrimer()).toContain('embed as a data: URL');
     // The primer asks for the corner's NAME as well as its objective (C89).
     expect(beelinePrimer()).toContain(
       'call beeline-agent open_corner with a name of at most three words - it titles the corner everywhere - and a complete objective of no more than 24 words',
@@ -104,6 +106,21 @@ describe('using-beeline Room guidance', () => {
     );
     expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
   });
+
+  it('puts every user request on the generic Workbench discovery path in the assembled turn context', () => {
+    for (const directMessage of [false, true]) {
+      const context = beelineCapabilityContextForHarness('codex-acp', undefined, directMessage);
+      expect(context.sessionPrompt).toContain(
+        'For every user request, first call beeline-agent workbench_status to check whether a Workbench connector can solve it',
+      );
+      expect(context.sessionPrompt).toContain(
+        'use an applicable connector when it is already added, or call offer_connector when it is available but not added',
+      );
+      expect(context.sessionPrompt).not.toContain('sign up for an account');
+      expect(context.sessionPrompt).not.toContain('API key or other credential');
+      expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
+    }
+  });
 });
 
 describe('beeline-triage request skill', () => {
@@ -129,6 +146,33 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('Triage warning — desirable:');
     expect(markdown).toContain('Do not emit a warning merely because evidence is incomplete');
   });
+
+  it('binds the implementer to a recorded reproduction without blocking triage', () => {
+    expect(markdown).toContain(
+      'If the need cannot be established, reproduction fails, or other work may obviate it, warn; do not block.',
+    );
+    expect(markdown).toContain('## Bugfix execution');
+    expect(markdown).toContain('They are instruction, not a server gate');
+    expect(markdown).toContain('They do not condition the fix on reproduction');
+    expect(markdown).toContain('Reproduction <id>: <user path> → <observable wrong result>');
+    expect(markdown).toContain('### 1. Attempt to reproduce');
+    expect(markdown).toContain('emulator, Playwright, browser, test runner');
+    expect(markdown).toContain(
+      'If reproduction fails, warn and continue exactly as triage already does',
+    );
+    expect(markdown).toContain('Never stop');
+    expect(markdown).toContain('Never condition the fix on reproduction');
+    expect(markdown).not.toContain('Do not fix a bug you have not seen');
+    expect(markdown).toContain('### 2. Narrow fix');
+    expect(markdown).toContain('Narrow the fix to the reported behavior');
+    expect(markdown).toContain('### 3. Proof matching triage');
+    expect(markdown).toContain(
+      'When none was obtained, state that plainly and show the regression instead',
+    );
+    expect(markdown).toContain(
+      'the reviewer can check that proof, not merely that some test exists',
+    );
+  });
 });
 
 describe('using-beeline merge ownership', () => {
@@ -144,6 +188,28 @@ describe('using-beeline merge ownership', () => {
 
   it('carries no never-merge rule for the implementer', () => {
     expect(markdown).not.toContain('Never merge');
+  });
+});
+
+describe('using-beeline human instruction ranking', () => {
+  // Soft prompt only: no hold ledger, no refusal check. Independent same-tier
+  // holds cannot collapse because this design adds no holder state; the agent
+  // reasons from the conversation.
+  it('ranks owner then workspace master/admin then member, and forbids field syntax in Room replies', () => {
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).toContain('## Conflicting human instructions');
+    expect(markdown).toMatch(/your own owner first/i);
+    expect(markdown).toMatch(/workspace'?s master and admins/i);
+    expect(markdown).toMatch(/then members/i);
+    expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
+    expect(markdown).toContain("A human at the same standing cannot clear another human's hold");
+    expect(markdown).toMatch(/only that holder or someone of higher standing can/i);
+    expect(markdown).toContain('Never tell a higher-tier human that a lower-tier hold binds them');
+    expect(markdown).toMatch(/name the person and their standing in ordinary words/i);
+    expect(markdown).toContain('workspaceRole=');
+    expect(markdown).toContain('agentOwner');
+    expect(markdown).toMatch(/Never write field names or field=value syntax/i);
+    expect(beelinePrimer()).not.toContain('## Conflicting human instructions');
   });
 });
 
@@ -169,6 +235,18 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('work warranted evidence:');
     expect(markdown).toContain('desirability evidence:');
   });
+
+  it('fails a bug proof that skips a recorded reproduction identifier', () => {
+    expect(markdown).toContain('if a `Reproduction <id>` was recorded, quote it');
+    expect(markdown).toContain(
+      'FAIL if that proof does not name the identifier, even when other tests pass',
+    );
+    expect(markdown).toContain(
+      'If none was obtained, require the proof to say so plainly and show the regression instead',
+    );
+    expect(markdown).toContain('reproduction id (or none obtained):');
+    expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
+  });
 });
 
 describe('isConfiguredReviewer', () => {
@@ -191,6 +269,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
+    expect(markdown).toContain('YouTube Analytics answers only the channel owner account, not a manager');
     expect(markdown).toContain('Tailscale is not available yet');
   });
 
@@ -254,5 +333,19 @@ describe('using-beeline "Showing a mock" section', () => {
     expect(markdown).toContain('#d7af5f');
     expect(markdown).toContain('<script>');
     expect(markdown).toContain('http(s) URL');
+  });
+});
+
+describe('using-beeline "Showing a photograph" section', () => {
+  const markdown = usingBeelineSkillMarkdown('test-release');
+
+  it('teaches fetch_image next to Showing a mock, and keeps the validator closed', () => {
+    expect(markdown).toContain('## Showing a photograph');
+    expect(markdown.indexOf('## Showing a photograph')).toBeGreaterThan(markdown.indexOf('## Showing a mock'));
+    expect(markdown).toContain('beeline-agent fetch_image');
+    expect(markdown).toContain('data:image/jpeg;base64');
+    expect(markdown).toContain('do not draw an SVG stand-in');
+    expect(markdown).toContain('The validator still refuses every http(s) image reference');
+    expect(markdown).toContain('The artifact is a snapshot');
   });
 });

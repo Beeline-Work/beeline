@@ -13,7 +13,11 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  mountedImportedMcpServerNames,
+  prepareRoomAgentHome,
+} from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -22,19 +26,16 @@ import {
   promptWithImages,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isCornerStatusRestatement } from './reply-sanitizer.js';
+import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { toolCallFailureLine } from './tool-call-failure.js';
-import {
-  captureConnectionUsage,
-  ConnectorUsageRecorder,
-} from './connector-runner.js';
+import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, youtubeMcpServer } from './room-session.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -81,10 +82,10 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (reviewerHandle)
-    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then merge with gh pr merge --squash --match-head-commit <sha>.`;
+    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only if the complete gate passes.`;
   return yoloMode
     ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
-    : 'Yolo is off: never merge; wait for explicit human approval in the app.';
+    : 'Yolo is off: never merge; wait for a human owner to turn yolo on or merge the pull request themselves.';
 }
 
 export function cornerReviewerInstruction(input: {
@@ -131,14 +132,15 @@ export function cornerSelfReviewerInstruction(input: {
 
 export const CORNER_AUTHOR_CONTRACT = `The objective text is the user's ask. Keep it verbatim in your head and do not reinterpret it.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
-If the objective reports a defect, reproduce it first at the layer where it lives: the command, request, or tap sequence, and what was observed.
-Do not write a fix before you have seen the defect. Turn the reproduction into the regression test.
+Follow the beeline-triage skill's bugfix execution contract when the objective reports a defect.
+Attempt to reproduce it as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner. Record what was tried and what was observed. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
+Narrow the fix to the reported behavior. When a reproduction exists, change only what removes it.
 Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
 If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
 A unit test of an inner function, a log line, or reading the code is not a demonstration.
 The pull request body MUST contain two sections with exactly these headings: ## Reproduced and ## Demonstrated.
-Under ## Reproduced, give the steps or command and what was observed; write "not a defect report" for feature work.
-Under ## Demonstrated, give the command or steps that produced Y and what was observed.
+Under ## Reproduced, name Reproduction <id> and give the steps or command and what was observed; write "not obtained" when reproduction failed, or "not a defect report" for feature work.
+Under ## Demonstrated, cite the same identifier and show that reproduction now passing when one exists; when none was obtained, state that plainly and show the regression instead.
 A pull request without both sections is not deliverable and the Room's reviewer will fail it.
 Change only what the objective asks. No unrequested features, flags, compatibility shims, or refactors.`;
 
@@ -397,6 +399,8 @@ export interface MonolithCornerTurnOptions {
   grantRunnerEndpoint?: GrantRunnerEndpoint;
   /** Connection usage capture: batched per turn into one postConnectionUsage. */
   connectorUsage?: ConnectorUsageRecorder;
+  /** Local YouTube MCP — only when this helper already holds the Google grant. */
+  youtubeAccessToken?: string;
 }
 
 /**
@@ -548,7 +552,8 @@ export class MonolithCornerTurnLoop {
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
-   *  session whose persona or model pin the operator has since changed. */
+   *  session whose persona, model pin, or mounted MCP set the operator has
+   *  since changed. */
   private async sessionIsCurrent(): Promise<boolean> {
     return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
   }
@@ -568,7 +573,16 @@ export class MonolithCornerTurnLoop {
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(),
       reviewerHandle: configuration.reviewerHandle,
+    });
+  }
+
+  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
+    return mountedImportedMcpServerNames({
+      operatorHome: this.options.config.operatorHome,
+      agentKind: this.options.config.agentKind,
+      preparedEnv,
     });
   }
 
@@ -583,14 +597,6 @@ export class MonolithCornerTurnLoop {
       this.roster(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      yoloMode: configuration.yoloMode,
-      reviewerHandle: configuration.reviewerHandle,
-    });
     this.yoloMode = configuration.yoloMode;
     this.reviewerHandle = configuration.reviewerHandle;
     const opener = this.options.openedBy
@@ -683,6 +689,15 @@ export class MonolithCornerTurnLoop {
       ...githubEnv,
       npm_config_cache: npmCacheDir,
     };
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(agentEnv),
+      reviewerHandle: configuration.reviewerHandle,
+    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
@@ -777,6 +792,8 @@ export class MonolithCornerTurnLoop {
           : {}),
       }),
     ];
+    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
+    if (youtube) servers.push(youtube);
     // See `pi-mcp-bridge.ts`: pi drops `session/new`'s `mcpServers`, so a corner
     // on pi would have no `pr_checks_status` and no `post_artifact` either.
     await installPiMcpBridge({
@@ -819,7 +836,7 @@ export class MonolithCornerTurnLoop {
                       cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer\'s approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
+              "Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer's approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.",
             ]
           : [
               'This is a chat-only corner with no repository or GitHub workflow.',
@@ -943,6 +960,7 @@ export class MonolithCornerTurnLoop {
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
+    let deliberateNoReply = false;
     try {
       await withTurnReceiptHeartbeat(
         api,
@@ -1292,6 +1310,7 @@ export class MonolithCornerTurnLoop {
               // only restates the server's own check notes says nothing new, and
               // that turn settles through its receipt instead.
               const durableReply = spoken(reply);
+              deliberateNoReply = isDeliberateCornerNoReply(reply, restates);
               await trace.measure('publish', () =>
                 stream.settle(
                   durableReply,
@@ -1313,6 +1332,7 @@ export class MonolithCornerTurnLoop {
         roomId: cornerId,
         requestId,
         status: 'complete',
+        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
       });
       // After the receipt: an operator artifact never delays the answer, and

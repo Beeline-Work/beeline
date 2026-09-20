@@ -6,8 +6,13 @@ import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import type { CornerRestoreResult } from '@beeline/api-contract/daemon';
+import {
+  isStandingWorkspaceConfigurationFault,
+  type CornerRestoreResult,
+  type RoomRepositoryStateResult,
+} from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
+import { loadManualGoogleCredentials } from './connector-google.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -81,6 +86,23 @@ export function shouldPostInitialCornerWorkingState(
   isOpener = true,
 ): boolean {
   return isOpener && !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr;
+}
+
+export function cornerStartConfigKey(
+  repository: Pick<RoomRepositoryStateResult, 'resolution' | 'key' | 'remote'>,
+  objective: string,
+): string {
+  return JSON.stringify({
+    resolution: repository.resolution,
+    key: repository.key ?? null,
+    remote: repository.remote ?? null,
+    objective: objective.trim(),
+  });
+}
+
+export function isStandingCornerStartFault(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return isStandingWorkspaceConfigurationFault(text);
 }
 
 /**
@@ -358,6 +380,8 @@ export class RoomRuntimeCoordinator {
   private readonly startingCorners = new Set<string>();
   /** Corners whose start failure has already been said out loud, once each. */
   private readonly reportedCornerStartFailures = new Set<string>();
+  /** Standing workspace-configuration faults, keyed by the config that failed. */
+  private readonly standingCornerStartFaults = new Map<string, string>();
   private readonly scheduler: SessionScheduler;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
@@ -380,6 +404,8 @@ export class RoomRuntimeCoordinator {
   private readonly grantRunnerServer: GrantRunnerServer;
   /** Connection usage capture, batched per agent turn. */
   private readonly connectorUsage: ConnectorUsageRecorder;
+  /** Cached local Google grant for the YouTube MCP mount. */
+  private youtubeToken: string | null | undefined;
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -391,6 +417,7 @@ export class RoomRuntimeCoordinator {
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
+      onHiccupRestart?: (attempt: number) => void;
     },
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
@@ -419,6 +446,9 @@ export class RoomRuntimeCoordinator {
       void this.scheduler.suspendIdle().catch((error) =>
         console.error('[body] config-change session restart failed', error),
       );
+    });
+    this.options.daemonApi.setHiccupRestartListener?.((attempt) => {
+      this.options.onHiccupRestart?.(attempt);
     });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? DEFAULT_RECONCILE_HEARTBEAT_MS;
@@ -631,6 +661,17 @@ export class RoomRuntimeCoordinator {
     };
   }
 
+  /** Local Google grant for the YouTube MCP. File/env only — never spawns
+   *  Squire at session start. Connect persists the grant onto this path. */
+  private youtubeAccessToken(): string | undefined {
+    if (this.youtubeToken === undefined) {
+      const home = process.env.BEELINE_AGENT_HOME ?? process.cwd();
+      const resolved = loadManualGoogleCredentials(home, process.env);
+      this.youtubeToken = resolved.source === 'manual' ? resolved.credentials.accessToken : null;
+    }
+    return this.youtubeToken ?? undefined;
+  }
+
   /** The loopback door for run_granted_command; started once, on first use. */
   private grantRunnerEndpoint(): Promise<GrantRunnerEndpoint | undefined> {
     return this.grantRunnerServer.start().catch((error) => {
@@ -650,6 +691,7 @@ export class RoomRuntimeCoordinator {
       cwd,
       grantRunner: this.grantRunner,
       ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
+      ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
       runtime: this.runtime,
       config: this.roomConfig(roomId),
       api: this.options.daemonApi,
@@ -739,6 +781,7 @@ export class RoomRuntimeCoordinator {
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
     this.startingCorners.add(corner.cornerId);
+    let configKey: string | undefined;
     try {
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
@@ -746,13 +789,20 @@ export class RoomRuntimeCoordinator {
           roomId: corner.parentRoomId,
         }),
       ]);
+      configKey = cornerStartConfigKey(repository, restore.objective ?? '');
+      const previousStanding = this.standingCornerStartFaults.get(corner.cornerId);
+      if (previousStanding === configKey) return;
+      if (previousStanding) {
+        this.standingCornerStartFaults.delete(corner.cornerId);
+        this.reportedCornerStartFailures.delete(corner.cornerId);
+      }
       if (repository.resolution === 'unverified') {
         throw new Error('corner parent Room repository state is not verified yet');
       }
       if (repository.resolution === 'repository' && (!repository.remote || !repository.key)) {
         throw new Error('corner parent Room has an incomplete repository binding');
       }
-      const objective = restore.objective.trim();
+      const objective = (restore.objective ?? '').trim();
       if (!objective) throw new Error('corner has no authoritative objective fact');
       const repositoryBacked = repository.resolution === 'repository';
       const targetBranch = repositoryBacked ? repository.targetBranch || 'main' : undefined;
@@ -793,6 +843,7 @@ export class RoomRuntimeCoordinator {
         grantRunner: this.grantRunner,
         ...(grantRunnerEndpoint ? { grantRunnerEndpoint } : {}),
         connectorUsage: this.connectorUsage,
+        ...(this.youtubeAccessToken() ? { youtubeAccessToken: this.youtubeAccessToken() } : {}),
         parentRoomId: corner.parentRoomId,
         workspaceId: this.runtime.communityId,
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
@@ -858,6 +909,7 @@ export class RoomRuntimeCoordinator {
           : {}),
         ...(!worktree ? { scratch: { path: workspacePath, cornerId: corner.cornerId } } : {}),
       });
+      this.standingCornerStartFaults.delete(corner.cornerId);
       this.reportedCornerStartFailures.delete(corner.cornerId);
       console.log(
         worktree
@@ -866,7 +918,10 @@ export class RoomRuntimeCoordinator {
       );
     } catch (error) {
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
-      await this.reportCornerStartFailure(corner.cornerId, error);
+      const reported = await this.reportCornerStartFailure(corner.cornerId, error);
+      if (reported && isStandingCornerStartFault(error) && configKey) {
+        this.standingCornerStartFaults.set(corner.cornerId, configKey);
+      }
     } finally {
       this.startingCorners.delete(corner.cornerId);
     }
@@ -876,40 +931,36 @@ export class RoomRuntimeCoordinator {
    * An agent addressed in a corner it then could not restore must not be
    * silent about it.
    *
-   * The corner never starts, so no turn ever runs and nothing else in the
-   * daemon has a Room to say it in. This posts a FAILED receipt against the
-   * message that asked, which the server inscribes as `<agent> could not
-   * answer · <reason>` in the corner itself. Once per corner per process: the
-   * reconciliation heartbeat retries the start for as long as it keeps
-   * failing, and the fact is worth saying once, not once a minute.
+   * The corner never starts, so no turn ever runs. Report against the actual
+   * pending command — never a fabricated generation — so the server can
+   * authorize the failed receipt and inscribe the Room line. Standing
+   * workspace-configuration faults are said once and suppressed until that
+   * configuration changes; clone/network failures keep retrying.
    */
-  private async reportCornerStartFailure(cornerId: string, error: unknown): Promise<void> {
-    if (this.reportedCornerStartFailures.has(cornerId)) return;
-    this.reportedCornerStartFailures.add(cornerId);
+  private async reportCornerStartFailure(cornerId: string, error: unknown): Promise<boolean> {
+    if (this.reportedCornerStartFailures.has(cornerId)) return true;
     try {
-      const conversation = await this.options.daemonApi.execute('getRoomConversation', {
+      const { commands } = await this.options.daemonApi.execute('getAgentCommands', {
         roomId: cornerId,
-        limit: 50,
       });
-      // The message that asked is the newest one this agent did not write. A
-      // corner has exactly one helper, so there is nobody else it could be —
-      // and no stored address to consult, since a tag is read from text.
-      const asked = [...conversation.items]
-        .reverse()
-        .find((item) => item.type === 'message' && item.authorId !== this.agent.publicKey);
-      if (!asked) return;
+      const pending = commands.find(
+        (command) => command.action === 'input' || command.action === 'resume',
+      );
+      if (!pending) return false;
       const reason = distillTurnFailureReason(error);
       await this.options.daemonApi.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
-        requestId: asked.id,
+        requestId: pending.turnRequestId,
         status: 'failed',
-        generationId: `${this.agent.publicKey}:${cornerId}`,
         reason: reason.text,
         ...(reason.kind ? { reasonKind: reason.kind } : {}),
       });
+      this.reportedCornerStartFailures.add(cornerId);
+      return true;
     } catch (reportError) {
       console.error(`[thin-core] corner ${cornerId} start-failure report failed:`, reportError);
+      return false;
     }
   }
 

@@ -42,6 +42,7 @@ import {
   personLastSeen,
   roomListFeed,
   roomRowPresentation,
+  fullCornerTitle,
 } from './room-list-row';
 
 describe('expanded corner watch refresh', () => {
@@ -919,5 +920,55 @@ describe('roomRowNeedsAttention — the one brass square', () => {
 
   it('never hides unread behind a working agent', () => {
     expect(roomRowNeedsAttention({ unread: true, agentState: 'working' })).toBe(true);
+  });
+});
+
+describe('fullCornerTitle', () => {
+  it('prints the whole corner name where displayCornerTitle clips it', () => {
+    const long = 'Restore the corners index header metrics and reconcile it';
+    expect(displayCornerTitle('alpha', long, 'abcdef0123')).toBe('#alpha/Restore the corners');
+    expect(fullCornerTitle('alpha', long, 'abcdef0123')).toBe(`#alpha/${long}`);
+  });
+
+  it('never doubles the parent when a legacy name already carries it', () => {
+    // The stored name of an older corner can already be `#room/corner`. Both
+    // composing titles strip that exact segment, case-insensitively, so the
+    // room is named once.
+    expect(fullCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
+      '#alpha/Fix fixture',
+    );
+    expect(fullCornerTitle('alpha', 'ALPHA/Fix fixture', 'abcdef0123')).toBe(
+      '#alpha/Fix fixture',
+    );
+    expect(displayGroupedCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
+      'Fix fixture',
+    );
+  });
+
+  it('keeps a name that merely resembles the room, since only an exact segment is stripped', () => {
+    expect(fullCornerTitle('alpha', 'alphabet soup and then some', 'abcdef0123')).toBe(
+      '#alpha/alphabet soup and then some',
+    );
+    expect(fullCornerTitle('alpha', 'alpha-two/Fix fixture', 'abcdef0123')).toBe(
+      '#alpha/alpha-two/Fix fixture',
+    );
+  });
+
+  it('keeps the shared mark rules: one prefix, no double mark, room optional', () => {
+    expect(fullCornerTitle('#alpha', '#Fix the fixture now', 'abcdef0123')).toBe(
+      '#alpha/Fix the fixture now',
+    );
+    expect(fullCornerTitle(undefined, 'Fix the fixture now', 'abcdef0123')).toBe(
+      '#Fix the fixture now',
+    );
+  });
+
+  it('falls back to the shared id slug for an unnamed or generated corner', () => {
+    expect(fullCornerTitle('alpha', undefined, 'abcdef0123')).toBe(
+      displayCornerTitle('alpha', undefined, 'abcdef0123'),
+    );
+    expect(fullCornerTitle('alpha', 'sub-9f9f9f', 'abcdef0123')).toBe(
+      displayCornerTitle('alpha', 'sub-9f9f9f', 'abcdef0123'),
+    );
   });
 });

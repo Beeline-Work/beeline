@@ -65,9 +65,11 @@ vi.mock('@/components/buzz/CommunityRail', async () => {
       ReactModule.createElement('BuzzCommunityShell', props, props.children),
   };
 });
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
-  return { PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props) };
+  return {
+    SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
+  };
 });
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },

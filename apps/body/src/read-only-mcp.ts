@@ -34,7 +34,7 @@ import {
   writeFileSync,
   type Dirent,
 } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   CORNER_NAME_MAX_LENGTH,
@@ -83,7 +83,20 @@ import {
   type CornerLifecycleView,
 } from '@beeline/api-contract/phone';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
+import {
+  YOUTUBE_MCP_SERVER_NAME,
+  YOUTUBE_MCP_SURFACE,
+  YOUTUBE_MCP_TOOLS,
+  callYoutubeTool,
+  youtubeClientFromToken,
+} from './youtube-mcp.js';
 import { validateArtifact } from './artifact-validation.js';
+import {
+  BoundedSizeError,
+  FETCH_TIMEOUT_MS,
+  MAX_ATTACHMENT_BYTES,
+  fetchBoundedBytes,
+} from './attachment-delivery.js';
 import { computePatchId } from './patch-identity.js';
 
 type JsonObject = Record<string, unknown>;
@@ -539,7 +552,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the reviewer approval gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result names the Room’s configured reviewer, states which actor’s approve_merge clears the gate, and reports reviewerWake so you can say whether that reviewer was woken — when you opened this corner and are also that reviewer, self-review is not required and approvalPending is false. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
+      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; approvalPending stays true unless all four authorize the merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -589,6 +602,23 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           enum: ['utf8', 'base64'],
           description: 'How to interpret content. Defaults to utf8.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'fetch_image',
+    description:
+      'Download one photograph from an http(s) URL into your writable session home and return its path, mime, and size. Use this when a mock needs a real product photo: read the bytes, base64-encode them, and put them in your HTML as a data: URL, then post_artifact. The artifact validator still refuses every http(s) image reference, and the phone viewer only paints data: images — an <img src="https://…"> never shows. Capped at 25 MB with a 30-second timeout. JPEG, PNG, GIF, and WebP only; SVG and HTML are refused. The artifact stays a snapshot — this fetch happens now, on the daemon, not when someone opens the page.',
+    inputSchema: {
+      type: 'object',
+      required: ['url'],
+      properties: {
+        url: {
+          type: 'string',
+          description: 'http(s) URL of a JPEG, PNG, GIF, or WebP photograph.',
+          maxLength: 2048,
         },
       },
       additionalProperties: false,
@@ -767,6 +797,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
+const youtubeSurface = process.env.BEELINE_MCP_SURFACE === YOUTUBE_MCP_SURFACE;
 
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
@@ -788,12 +819,14 @@ export function agentToolsFor(
   });
 }
 
-const TOOLS = agentToolsFor(
-  agentSurface,
-  process.env.BEELINE_AGENT_DM === '1',
-  Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
-  process.env.BEELINE_CORNER_REVIEWER === '1',
-);
+const TOOLS = youtubeSurface
+  ? [...YOUTUBE_MCP_TOOLS]
+  : agentToolsFor(
+      agentSurface,
+      process.env.BEELINE_AGENT_DM === '1',
+      Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
+      process.env.BEELINE_CORNER_REVIEWER === '1',
+    );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 /** The extension→mime map for posting files by path. Formats the artifact
@@ -1433,17 +1466,31 @@ async function cornerPatchId(cornerId: string): Promise<string | undefined> {
   }
 }
 
+function cornerMergeAllowed(input: {
+  reviewFailed: boolean;
+  isWorkerYolo: boolean;
+  didHumanSayDontMerge: boolean;
+  reviewerExists: boolean;
+}): boolean {
+  if (input.reviewFailed) return false;
+  if (!input.isWorkerYolo) return false;
+  if (input.didHumanSayDontMerge) return false;
+  if (!input.reviewerExists) return false;
+  return true;
+}
+
 export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
-  const [restore, conversation, roster, authority] = await Promise.all([
+  const [restore, conversation, roster, authority, configuration] = await Promise.all([
     daemonExecute('getCornerRestoreState', { cornerId }),
     // Newest page: a hold, an approval and a PR link are questions about where
     // the corner stands NOW, and this scan is last-write-wins over the page.
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
     daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
+    daemonExecute('getAgentConfiguration', { agentId, roomId: cornerId }),
   ]);
   const humans = new Set(
     Array.isArray(roster.members)
@@ -1503,20 +1550,35 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
           ? 'one or more recorded checks failed'
           : 'recorded checks are still pending';
   const reviewer = typeof verdict?.reviewer === 'string' ? verdict.reviewer : null;
+  const reviewerExists = verdict?.reviewerExists === true;
   const reviewerIsAuthor = verdict?.reviewerIsAuthor === true;
   const reviewerRule = typeof verdict?.rule === 'string' ? verdict.rule : undefined;
   const reviewerWake =
     verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'
       ? verdict.reviewerWake
       : undefined;
+  const reviewFailed = verdict ? verdict.approvalPending !== false : true;
+  const isWorkerYolo = configuration.yoloMode === true;
+  const didHumanSayDontMerge = held;
+  const mergeAllowed = cornerMergeAllowed({
+    reviewFailed,
+    isWorkerYolo,
+    didHumanSayDontMerge,
+    reviewerExists,
+  });
   const mergeConditionsRule =
-    "Merge only when checks is passed, held is false, and approvalPending is false — then YOU merge it yourself with gh; the server never merges a corner's pull request and never sends a closing request of any kind, so waiting for one will wait forever. A local or gh checks result is not authorization on its own. approvalPending reflects only whether the reviewer's recorded PASS covers this exact head sha; it is not a hold on you merging once it is false. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
+    "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
   return JSON.stringify({
     checks,
     reason,
     ...(headSha ? { headSha } : {}),
     held,
-    approvalPending: verdict?.approvalPending ?? false,
+    didHumanSayDontMerge,
+    reviewFailed,
+    isWorkerYolo,
+    reviewerExists,
+    mergeAllowed,
+    approvalPending: !mergeAllowed,
     reviewer,
     reviewerIsAuthor,
     ...(reviewerWake ? { reviewerWake } : {}),
@@ -1600,6 +1662,109 @@ export async function writeScratchFile(
   const resolved = resolveWriteScratchPath(deps.root, path);
   writeFileSync(resolved, bytes);
   return `Wrote ${bytes.length} bytes to ${resolved}; post_artifact with this path sends it.`;
+}
+
+const FETCH_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+type FetchImageMime = (typeof FETCH_IMAGE_MIMES)[number];
+
+export interface FetchImageDeps {
+  /** Same writable session area write_scratch_file and post_artifact use. */
+  root: string;
+  fetchImpl?: typeof fetch;
+}
+
+export function fetchImageDepsFromEnv(): FetchImageDeps {
+  return { root: requiredEnv('BEELINE_ATTACH_SCRATCH_ROOT') };
+}
+
+function parseImageUrl(input: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new Error('url must be an http(s) URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('url must be an http(s) URL');
+  }
+  return parsed;
+}
+
+function sniffRasterImageMime(bytes: Buffer): FetchImageMime | undefined {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return 'image/png';
+  }
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+    return 'image/gif';
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.toString('ascii', 0, 4) === 'RIFF' &&
+    bytes.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  return undefined;
+}
+
+function resolveFetchedImageMime(contentType: string, bytes: Buffer): FetchImageMime {
+  if (contentType === 'image/svg+xml' || contentType.startsWith('image/svg')) {
+    throw new Error('fetch_image is for photographs, not SVG; embed a JPEG or PNG as a data: URL');
+  }
+  if ((FETCH_IMAGE_MIMES as readonly string[]).includes(contentType)) {
+    return contentType as FetchImageMime;
+  }
+  if (!contentType || contentType === 'application/octet-stream') {
+    const sniffed = sniffRasterImageMime(bytes);
+    if (sniffed) return sniffed;
+  }
+  throw new Error(
+    `response is not a photograph (${contentType || 'unknown type'}); fetch_image accepts JPEG, PNG, GIF, and WebP`,
+  );
+}
+
+function fetchedImageFileName(url: URL, mime: FetchImageMime): string {
+  const ext =
+    mime === 'image/jpeg' ? '.jpg' : mime === 'image/png' ? '.png' : mime === 'image/gif' ? '.gif' : '.webp';
+  const raw = basename(url.pathname)
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/^\.+/, '');
+  if (raw && /\.(jpe?g|png|gif|webp)$/i.test(raw)) return raw;
+  if (raw) return raw.toLowerCase().endsWith(ext) ? raw : `${raw}${ext}`;
+  return `photo${ext}`;
+}
+
+/** fetch_image: daemon-side photograph download into session scratch. */
+export async function fetchImage(
+  args: JsonObject,
+  deps: FetchImageDeps = fetchImageDepsFromEnv(),
+): Promise<string> {
+  const url = stringArg(args, 'url')?.trim();
+  if (!url) throw new Error('url must be a non-empty http(s) URL');
+  const parsed = parseImageUrl(url);
+  let fetched;
+  try {
+    fetched = await fetchBoundedBytes(parsed.href, deps.fetchImpl ?? fetch);
+  } catch (error) {
+    if (error instanceof BoundedSizeError) {
+      throw new Error(`image exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit (${error.bytes} bytes)`);
+    }
+    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+      throw new Error(`image fetch timed out after ${FETCH_TIMEOUT_MS / 1000} seconds`);
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+  if (!fetched.ok) {
+    throw new Error(`image fetch failed: HTTP ${fetched.status}`);
+  }
+  if (fetched.bytes.length === 0) throw new Error('image fetch returned no bytes');
+  const mime = resolveFetchedImageMime(fetched.mimeType, fetched.bytes);
+  const resolved = resolveWriteScratchPath(deps.root, join('fetched-images', fetchedImageFileName(parsed, mime)));
+  writeFileSync(resolved, fetched.bytes);
+  return JSON.stringify({ path: resolved, mime, size: fetched.bytes.length });
 }
 
 function withinRoot(root: string, resolved: string): boolean {
@@ -2402,6 +2567,8 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return approveMerge(args);
     case 'write_scratch_file':
       return writeScratchFile(args);
+    case 'fetch_image':
+      return fetchImage(args);
     case 'post_artifact':
       return postArtifact(args);
     case 'create_schedule':
@@ -2462,7 +2629,11 @@ async function handleLine(line: string): Promise<void> {
           typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: {
-          name: agentSurface ? 'beeline-agent' : 'beeline-readonly-mcp',
+          name: youtubeSurface
+            ? YOUTUBE_MCP_SERVER_NAME
+            : agentSurface
+              ? 'beeline-agent'
+              : 'beeline-readonly-mcp',
           version: '1.0.0',
         },
       });
@@ -2486,9 +2657,15 @@ async function handleLine(line: string): Promise<void> {
       // why buried in a transport frame (C90).
       let output: string;
       try {
-        output = agentSurface
-          ? await callAgentTool(params.name, asObject(params.arguments))
-          : callTool(params.name, asObject(params.arguments));
+        output = youtubeSurface
+          ? await callYoutubeTool(
+              params.name,
+              asObject(params.arguments),
+              youtubeClientFromToken(process.env.BEELINE_YOUTUBE_ACCESS_TOKEN ?? ''),
+            )
+          : agentSurface
+            ? await callAgentTool(params.name, asObject(params.arguments))
+            : callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],

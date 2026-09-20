@@ -3,6 +3,7 @@ import {
   BackgroundLeader,
   createPushTestSender,
   MediaExpiryLoop,
+  PUSH_DELIVERY_CONCURRENCY,
   PushDeliveryLoop,
   runMaintenance,
   type LeaderConnection,
@@ -10,8 +11,9 @@ import {
 import { migrate } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { MEDIA_SWEEP_INTERVAL_MS, MEDIA_TTL_HOURS, mediaTtlHours } from './media-ttl.js';
+import { ObjectService } from './object-service.js';
 import { ApnsPushError } from './apns-push.js';
 
 describe('background advisory-lock ownership', () => {
@@ -177,6 +179,60 @@ describe('background advisory-lock ownership', () => {
       expect(await loop.runOnce()).toBe(7);
       expect(send).toHaveBeenCalledTimes(7);
       expect(await loop.runOnce()).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('sends claimed push candidates with bounded concurrency', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64);
+      const agent = 'b'.repeat(64);
+      const workspace = '11111111-1111-4111-8111-111111111121';
+      const room = '22222222-2222-4222-8222-222222222221';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle)
+         VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Push concurrency')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         SELECT 'conc-token-' || n::text || '-12345678901234567890',$1,'android','physical',
+           now()-interval '2 days' FROM generate_series(1,12) n`,
+        [human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_floors(id,started_at)
+         VALUES('message-delivery',now()-interval '2 days')`,
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner concurrent')`,
+        ['e'.repeat(64), room, agent],
+      );
+      let inFlight = 0;
+      let peak = 0;
+      const send = vi.fn(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        inFlight -= 1;
+      });
+      expect(await new PushDeliveryLoop(db, { send }).runOnce()).toBe(12);
+      expect(send).toHaveBeenCalledTimes(12);
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(PUSH_DELIVERY_CONCURRENCY);
     } finally {
       await db.close();
     }
@@ -931,25 +987,39 @@ describe('media TTL sweep', () => {
     const db = new PgliteDatabase();
     await migrate(db);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
+    const storage = new MemoryObjectStorage();
+    await storage.putObject(`media/${owner}/${'a'.repeat(64)}`, Buffer.from([0]), 'image/png');
+    await storage.putObject(`media/${owner}/${'b'.repeat(64)}`, Buffer.from([1]), 'image/png');
     await db.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256,created_at)
-       VALUES($1,$3,'\\x00','image/png','fresh.png',$4,now()-interval '23 hours'),
-             ($2,$3,'\\x01','image/png','stale.png',$5,now()-interval '25 hours')`,
-      [fresh, stale, owner, 'a'.repeat(64), 'b'.repeat(64)],
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,created_at,expires_at)
+       VALUES($1,$3,'media',$6,'image/png','fresh.png',1,$4,'ready',now()-interval '23 hours',now()+interval '1 hour'),
+             ($2,$3,'media',$7,'image/png','stale.png',1,$5,'ready',now()-interval '25 hours',now()-interval '1 hour')`,
+      [
+        fresh,
+        stale,
+        owner,
+        'a'.repeat(64),
+        'b'.repeat(64),
+        `media/${owner}/${'a'.repeat(64)}`,
+        `media/${owner}/${'b'.repeat(64)}`,
+      ],
     );
-    return db;
+    const service = new ObjectService(db, storage.asStorage(), 'http://x');
+    return { db, storage, service };
   }
 
-  it('deletes only media past the TTL and tombstones exactly what it deleted', async () => {
-    const db = await seed();
+  it('deletes only objects past expires_at and tombstones exactly what it deleted', async () => {
+    const { db, storage, service } = await seed();
     try {
       expect(MEDIA_TTL_HOURS).toBe(24);
-      expect(await new MediaExpiryLoop(db).runOnce()).toBe(1);
-      expect((await db.query<{ id: string }>(`SELECT id::text id FROM media`)).rows).toEqual([
+      expect(
+        await new MediaExpiryLoop(db, 24, 0, { storage: storage.asStorage(), service }).runOnce(),
+      ).toBe(1);
+      expect((await db.query<{ id: string }>(`SELECT id::text id FROM objects`)).rows).toEqual([
         { id: fresh },
       ]);
       expect(
-        (await db.query<{ id: string }>(`SELECT id::text id FROM media_expirations`)).rows,
+        (await db.query<{ id: string }>(`SELECT id::text id FROM object_expirations`)).rows,
       ).toEqual([{ id: stale }]);
     } finally {
       await db.close();
@@ -957,18 +1027,21 @@ describe('media TTL sweep', () => {
   });
 
   it('sweeps hourly, not on every one-second background cycle', async () => {
-    const db = await seed();
+    const { db, storage, service } = await seed();
     try {
-      const loop = new MediaExpiryLoop(db);
+      const loop = new MediaExpiryLoop(db, 24, MEDIA_SWEEP_INTERVAL_MS, {
+        storage: storage.asStorage(),
+        service,
+      });
       const started = Date.now();
       expect(await loop.runOnce(started)).toBe(1);
-      // The 23-hour-old row is past the TTL by the time an hour goes by, and is
-      // still there because the second cycle never ran a DELETE.
-      await db.query(`UPDATE media SET created_at=now()-interval '48 hours'`);
+      // The still-live row is past expires_at by the time an hour goes by, and
+      // is still there because the second cycle never ran a DELETE.
+      await db.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
       expect(await loop.runOnce(started + MEDIA_SWEEP_INTERVAL_MS - 1)).toBe(0);
-      expect((await db.query(`SELECT id FROM media`)).rows).toHaveLength(1);
+      expect((await db.query(`SELECT id FROM objects`)).rows).toHaveLength(1);
       expect(await loop.runOnce(started + MEDIA_SWEEP_INTERVAL_MS)).toBe(1);
-      expect((await db.query(`SELECT id FROM media`)).rows).toHaveLength(0);
+      expect((await db.query(`SELECT id FROM objects`)).rows).toHaveLength(0);
     } finally {
       await db.close();
     }
@@ -979,10 +1052,13 @@ describe('media TTL sweep', () => {
     expect(mediaTtlHours({ MEDIA_TTL_HOURS: 'soon' } as NodeJS.ProcessEnv)).toBe(MEDIA_TTL_HOURS);
     expect(mediaTtlHours({ MEDIA_TTL_HOURS: '0' } as NodeJS.ProcessEnv)).toBe(MEDIA_TTL_HOURS);
     expect(mediaTtlHours({ MEDIA_TTL_HOURS: '72' } as NodeJS.ProcessEnv)).toBe(72);
-    const db = await seed();
+    const { db, storage, service } = await seed();
     try {
-      expect(await new MediaExpiryLoop(db, 72).runOnce()).toBe(0);
-      expect((await db.query(`SELECT id FROM media`)).rows).toHaveLength(2);
+      await db.query(`UPDATE objects SET expires_at=now()+interval '48 hours'`);
+      expect(
+        await new MediaExpiryLoop(db, 72, 0, { storage: storage.asStorage(), service }).runOnce(),
+      ).toBe(0);
+      expect((await db.query(`SELECT id FROM objects`)).rows).toHaveLength(2);
     } finally {
       await db.close();
     }

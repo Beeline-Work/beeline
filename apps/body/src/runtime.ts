@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { closeSync, openSync } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { closeSync, openSync, readFileSync } from 'node:fs';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -271,15 +271,48 @@ export async function selectRuntimeConfigPaths(options: {
   return { paths, hostScope };
 }
 
-export async function runtimeDaemonPid(configPath: string): Promise<number | null> {
+export function daemonPidPath(configPath: string): string {
+  return resolve(dirname(configPath), 'daemon.pid');
+}
+
+export function daemonBirthPath(configPath: string): string {
+  return resolve(dirname(configPath), 'daemon.birth');
+}
+
+/**
+ * Linux process birth (`/proc/<pid>/stat` starttime). Same field Squire's
+ * profile lock uses to tell a live pid from a recycled one.
+ */
+export function processBirthIdentity(pid: number): string | undefined {
   try {
-    const pid = Number((await readFile(resolve(dirname(configPath), 'daemon.pid'), 'utf8')).trim());
-    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-    process.kill(pid, 0);
-    return pid;
+    const statText = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const close = statText.lastIndexOf(')');
+    return close < 0 ? undefined : statText.slice(close + 2).split(' ')[19];
   } catch {
-    return null;
+    return undefined;
   }
+}
+
+export async function writeDaemonPidRecord(configPath: string, pid: number): Promise<void> {
+  const directory = dirname(configPath);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(daemonPidPath(configPath), `${pid}\n`, { mode: 0o600 });
+  const birth = processBirthIdentity(pid);
+  if (birth) await writeFile(daemonBirthPath(configPath), `${birth}\n`, { mode: 0o600 });
+}
+
+export async function clearDaemonPidRecordIfPid(configPath: string, pid: number): Promise<void> {
+  const recorded = Number(
+    (await readFile(daemonPidPath(configPath), 'utf8').catch(() => '')).trim().split(/\s+/)[0],
+  );
+  if (recorded !== pid) return;
+  await unlink(daemonPidPath(configPath)).catch(() => undefined);
+  await unlink(daemonBirthPath(configPath)).catch(() => undefined);
+}
+
+async function reclaimStaleDaemonRecord(configPath: string): Promise<void> {
+  await unlink(daemonPidPath(configPath)).catch(() => undefined);
+  await unlink(daemonBirthPath(configPath)).catch(() => undefined);
 }
 
 async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boolean> {
@@ -297,6 +330,40 @@ async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boo
   }
 }
 
+/**
+ * Live daemon pid for this runtime, or null. A gone pid and a recycled pid
+ * (birth mismatch, or a live process that is not this daemon) both reclaim
+ * the stale record instead of looking "already running".
+ */
+export async function runtimeDaemonPid(configPath: string): Promise<number | null> {
+  try {
+    const raw = (await readFile(daemonPidPath(configPath), 'utf8')).trim();
+    const pid = Number(raw.split(/\s+/)[0]);
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      await reclaimStaleDaemonRecord(configPath);
+      return null;
+    }
+    try {
+      process.kill(pid, 0);
+    } catch {
+      await reclaimStaleDaemonRecord(configPath);
+      return null;
+    }
+    const recordedBirth = (await readFile(daemonBirthPath(configPath), 'utf8').catch(() => '')).trim();
+    const liveBirth = processBirthIdentity(pid);
+    if (recordedBirth && liveBirth && recordedBirth !== liveBirth) {
+      await reclaimStaleDaemonRecord(configPath);
+      return null;
+    }
+    if (await daemonIsThisRuntime(pid, configPath)) return pid;
+    if (recordedBirth && liveBirth && recordedBirth === liveBirth) return pid;
+    await reclaimStaleDaemonRecord(configPath);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function stopRuntimeDaemon(
   path: string,
   opts: { timeoutMs?: number; pollMs?: number; onWait?: (pid: number, waitedMs: number) => void } = {},
@@ -304,9 +371,6 @@ export async function stopRuntimeDaemon(
   const configPath = await resolveRuntimeConfigPath(path);
   const pid = await runtimeDaemonPid(configPath);
   if (!pid) return null;
-  if (!(await daemonIsThisRuntime(pid, configPath))) {
-    throw new Error(`pid ${pid} does not belong to the daemon for ${configPath}`);
-  }
   process.kill(pid, 'SIGTERM');
   const started = Date.now();
   const timeout = opts.timeoutMs ?? 10_000;
@@ -340,13 +404,4 @@ export async function launchRuntimeDaemon(
   }
   if (!child.pid) throw new Error('daemon process did not start');
   return child.pid;
-}
-
-export async function removeAgentRuntime(runtime: AgentRuntimeRecord): Promise<string> {
-  const source = runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey);
-  const deletedRoot = resolve(runtime.supervisorRoot, 'beeline', 'deleted-runtimes');
-  await mkdir(deletedRoot, { recursive: true, mode: 0o700 });
-  const target = resolve(deletedRoot, `${runtime.agent.publicKey}-${Date.now()}`);
-  await rename(source, target);
-  return target;
 }

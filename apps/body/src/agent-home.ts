@@ -40,6 +40,8 @@
  * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
+import { parse as parseToml } from 'smol-toml';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
@@ -85,7 +87,7 @@ const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
  * relative to the operator's real `$HOME`; `target` to the isolated dir.
  */
 const SHARED_CREDENTIALS: Array<{
-  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor';
+  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor' | 'user';
   source: string;
   target: string;
 }> = [
@@ -98,9 +100,14 @@ const SHARED_CREDENTIALS: Array<{
   // shape as codex).
   { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
   { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
-  // Cursor CLI stores auth state under ~/.cursor/; cursor-agent reads
-  // CURSOR_HOME to relocate the data directory.
+  // Cursor CLI stores chat/MCP state under ~/.cursor/; cursor-agent reads
+  // CURSOR_HOME to relocate that data directory. The login is NOT there:
+  // cursor-agent reads ~/.config/cursor/auth.json (XDG config). Beeline
+  // remaps HOME to the isolated user/ dir, so the login has to be linked
+  // into that HOME or every Room/corner except one that was patched by
+  // hand fails with "Authentication required".
   { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
+  { dir: 'user', source: '.config/cursor/auth.json', target: '.config/cursor/auth.json' },
 ];
 
 /**
@@ -310,6 +317,8 @@ export async function prepareRoomAgentHome(
     const source = resolve(operatorHome, credential.source);
     const target = resolve(root, credential.dir, credential.target);
     if (!existsSync(source) || existsSync(target)) continue;
+    // Nested targets (Cursor's XDG login) need their parent created first.
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 }).catch(() => undefined);
     // Symlink, not copy: a refreshed token written through the link stays
     // shared with every other room-instance and with the operator's own CLI.
     await symlink(source, target).catch(() => undefined);
@@ -594,6 +603,123 @@ function filteredHarnessMcpToml(source: string): string | undefined {
     return name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
   });
   return extractTomlSections(source, ['mcp_servers'], excluded);
+}
+
+export function mountedImportedMcpServerNames(
+  input: {
+    operatorHome?: string;
+    agentKind?: AgentKind;
+    preparedEnv?: Record<string, string>;
+  } = {},
+): string[] {
+  const names = new Set<string>();
+  if (input.preparedEnv) {
+    const env = input.preparedEnv;
+    const home = env.HOME ?? input.operatorHome ?? homedir();
+    const kind = input.agentKind;
+    if (!kind || kind === 'codex') {
+      addTomlMcpNames(
+        names,
+        resolve(env.CODEX_HOME ?? resolve(home, '.codex'), 'config.toml'),
+        'all',
+      );
+    }
+    if (!kind || kind === 'grok') {
+      addTomlMcpNames(
+        names,
+        resolve(env.GROK_HOME ?? resolve(home, '.grok'), 'config.toml'),
+        'all',
+      );
+    }
+    if (!kind || kind === 'claude') {
+      addClaudeMcpNames(names, resolve(env.CLAUDE_CONFIG_DIR ?? home, '.claude.json'), 'all');
+    }
+    if (!kind || kind === 'goose') {
+      addGooseExtensionNames(
+        names,
+        env.GOOSE_PATH_ROOT
+          ? resolve(env.GOOSE_PATH_ROOT, 'config/config.yaml')
+          : resolve(home, '.config/goose/config.yaml'),
+      );
+    }
+  } else {
+    collectImportedMcpNames(input.operatorHome ?? homedir(), names, input.agentKind);
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?: AgentKind): void {
+  if (!kind || kind === 'codex') {
+    addTomlMcpNames(names, resolve(operatorHome, '.codex/config.toml'), 'imported');
+  }
+  if (!kind || kind === 'grok') {
+    addTomlMcpNames(names, resolve(operatorHome, '.grok/config.toml'), 'imported');
+  }
+  if (!kind || kind === 'claude') {
+    addClaudeMcpNames(names, resolve(operatorHome, '.claude.json'), 'imported');
+  }
+  if (!kind || kind === 'goose') {
+    addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'));
+  }
+}
+
+function addTomlMcpNames(names: Set<string>, path: string, mode: 'imported' | 'all'): void {
+  const source = readExistingText(path);
+  if (source === undefined) return;
+  const mountedSource = mode === 'imported' ? filteredHarnessMcpToml(source) : source;
+  if (!mountedSource) return;
+  let servers: unknown;
+  try {
+    servers = parseToml(mountedSource).mcp_servers;
+  } catch {
+    return;
+  }
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
+  for (const name of Object.keys(servers)) names.add(name);
+}
+
+function addClaudeMcpNames(names: Set<string>, path: string, mode: 'imported' | 'all'): void {
+  const servers =
+    mode === 'imported' ? readClaudeUserScopeMcpServers(path) : readJsonObject(path)?.mcpServers;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
+  for (const name of Object.keys(servers)) names.add(name);
+}
+
+function addGooseExtensionNames(names: Set<string>, path: string): void {
+  const source = readExistingText(path);
+  if (source === undefined) return;
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(source);
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+  const extensions = (parsed as Record<string, unknown>).extensions;
+  if (!extensions || typeof extensions !== 'object' || Array.isArray(extensions)) return;
+  for (const name of Object.keys(extensions)) names.add(name);
+}
+
+function readExistingText(path: string): string | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function readJsonObject(path: string): Record<string, unknown> | undefined {
+  const source = readExistingText(path);
+  if (source === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(source) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

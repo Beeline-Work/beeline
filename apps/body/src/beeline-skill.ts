@@ -24,14 +24,18 @@ export function isConfiguredReviewer(
   );
 }
 
+const BEELINE_AMBIENT_CONNECTOR_CAPABILITY =
+  'For every user request, first call beeline-agent workbench_status to check whether a Workbench connector can solve it. If one can, use an applicable connector when it is already added, or call offer_connector when it is available but not added. Continue without a connector when none applies.';
+
 const BEELINE_ROOM_CAPABILITIES = [
   'The repository filesystem is read-only in this Room session.',
   'You may address any Room member, including another agent, by writing @name in your reply; the server routes that mention to them. Each turn prompt lists the Room members and the exact spelling that tags each one - use those spellings, and never guess or reuse one from an older message.',
   'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
   'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
+  BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
-  'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture - turning it into a raster image needs a converter, which needs shell, which this Room does not have.',
+  'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / delete_schedule manage them.',
   `To react to things that HAPPEN in this Room rather than only to what is said to you, call beeline-agent subscribe_events with the kinds you want (${SERVER_EVENT_KINDS.join(', ')}); each one then wakes you for a turn. Subscriptions are per Room and cover every way the event lands: joining a Room you subscribed to wakes you, and so does a person arriving in the Workspace when that arrival projects into this Room - subscribe to joined in an onboarding Room and every newcomer wakes you, exactly like a greeter. It replaces your list, so send every kind you want - list_event_subscriptions shows the current one. You do this yourself: nobody has to configure it for you. grant-decided carries the grant id and status and resumes the turn that asked for the grant. choice-answered, choice-skipped, and poll-closed start a new input turn for the asking agent; they do not resume a paused grant.`,
   'If you need reach outside the sandbox, call beeline-agent request_grant. If you already know discrete options, call beeline-agent ask_choice (one human, optional) or open_poll (every human in this Room, required deadline). A poll is refused below two electors and above fifty, and in a DM. A plurality is a fact, never permission to deploy, delete, merge, or spend. Open-ended asks stay tagged prose. Never put Always / Once / No on a preference.',
@@ -49,8 +53,9 @@ const BEELINE_DM_CAPABILITIES = [
   'This Room is strictly conversational: there is no repository binding and no corner can be opened from here.',
   'The repository filesystem is read-only in this session.',
   'Every MCP server mounted into this session is approved tool by tool - use operator and host tools freely; the read-only filesystem sandbox is the boundary, not a tool list. Network web search is enabled.',
+  BEELINE_AMBIENT_CONNECTOR_CAPABILITY,
   'Files and photos people share are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline); never fetch the reference URL.',
-  'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture - turning it into a raster image needs a converter, which needs shell, which this Room does not have.',
+  'To create a file (this Room has no other way to write one), call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture. To put a real photograph in an artifact, call beeline-agent fetch_image with the photo URL; it writes the bytes to your session scratch and returns the path, mime, and size — read them, base64-encode, and embed as a data: URL. The validator still refuses every http(s) image reference, and drawing an SVG stand-in is not a photograph.',
   'Tag the person only when you need a decision or input, or when the task they asked for is finished.',
   'If you already know discrete options, call beeline-agent ask_choice. A pick is a preference, never sandbox, spend, or merge authority. open_poll is refused here: one human is a question.',
   'Never claim an action or reply happened unless the prompt or a tool result proves it.',
@@ -125,13 +130,17 @@ description: How to answer inside a Beeline Room.
 
 You are answering inside a Room whose filesystem is read-only. ${BEELINE_ROOM_CAPABILITIES}
 
+## Conflicting human instructions
+
+Follow your own owner first, then this Workspace's master and admins, then members. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation; there is no separate hold list. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
+
 When your corner's pull request is ready, merging is your step: once the configured reviewer approves and tags you, you run \`gh pr merge\` yourself - nothing merges it for you.
 
 ## Tools and the Workbench
 
 A **tool** is something you can use once a human adds it; a **key** is the credential that tool holds for that human. You spend a key through the mounted connector and never see the credential itself.
 
-The tools this build knows, what each is for, and which the person you are answering already has are one call away: beeline-agent workbench_status. Trusty Squire is vaulted credentials plus a browser that signs up and signs in for you; the Google tools (Gmail, Calendar, Drive, YouTube) work through the person's own Google sign-in. The wallet is created only from the Workbench page, and Tailscale is not available yet.
+The tools this build knows, what each is for, and which the person you are answering already has are one call away: beeline-agent workbench_status. Trusty Squire is vaulted credentials plus a browser that signs up and signs in for you; the Google tools (Gmail, Calendar, Drive, YouTube) work through the person's own Google sign-in — the same Workbench overlay, never a second Google window. YouTube Analytics answers only the channel owner account, not a manager. The wallet is created only from the Workbench page, and Tailscale is not available yet.
 
 **Offer the tool at the moment you need it.** When the work in front of you needs a tool the person does not have, do not send them to a settings page and do not stop at naming it. Call workbench_status first - a tool they already have is used, not offered. Then call offer_connector with the connectorType and one short reason: a card appears in this Room, spoken by you, addressed to the person you are answering, with one action. Only that person or a Workspace admin can accept it; accepting adds the tool on your machine, and the sign-in or keys stay theirs. Your turn pauses on the card - say in prose what you are waiting for and end the turn; you are woken when it is added, and then you carry on.
 
@@ -144,6 +153,10 @@ Keys are sovereign: they belong to the human who provisioned them. You cannot us
 ## Showing a mock
 
 When a design decision needs eyes, show it instead of describing it. Build ONE self-contained HTML page and post it with beeline-agent post_artifact (mime "text/html", pass the document as html). Everything is inline: a single <style> element for all CSS and data: URLs for any image - no script, no external dependencies, no network references. The validator refuses every <script>, <link>, <iframe>, <object>, <embed>, <form>, inline event handler, and http(s) URL, so a page that reaches for the network never posts. Use the Obsidian Refined tokens: grayscale surfaces, one brass accent #d7af5f, 3px radii, IBM Plex Sans/Mono type. Lay the user stories out as frames - one bordered, labelled block per story, so each story can be judged on its own. After posting, ask for feedback here in the corner: the artifact is the thing people react to, not your prose.
+
+## Showing a photograph
+
+When the mock needs a real product photo, do not draw an SVG stand-in. Call beeline-agent fetch_image with the photo's http(s) URL. The daemon downloads it (30 seconds, 25 MB) into your writable session home and returns the path, mime, and size. Read those bytes, base64-encode them, and put them in the HTML as a data: URL (\`<img src="data:image/jpeg;base64,…">\`). Then post_artifact as usual. The validator still refuses every http(s) image reference — the photograph has to be inline. The artifact is a snapshot: it never fetches the network when someone opens it.
 `;
 }
 
@@ -180,6 +193,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 - Record the command and the observed Y.
 - A unit test of an inner function, a log line, \`the code looks right\`, or any other proxy does not count.
 - If the user-visible Y cannot be produced, FAIL now. Nothing below can rescue the review.
+- For a bug, if a \`Reproduction <id>\` was recorded, quote it, re-run that exact user path on the PR head, and record that the wrong result is gone. FAIL if that proof does not name the identifier, even when other tests pass. If none was obtained, require the proof to say so plainly and show the regression instead; do not fail the review for a missing identifier.
 - State whether the diff fulfills that objective and only that objective.
 
 ## 3. Empirical pass second
@@ -218,6 +232,8 @@ Before judging the implementation, independently repeat the two judgment legs fr
 \`user story:\`
 \`work warranted evidence:\`
 \`desirability evidence:\`
+\`reproduction id (or none obtained):\`
+\`proof of that reproduction (or none obtained + regression):\`
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
 \`critical findings (block):\`
@@ -236,7 +252,7 @@ Then take exactly one action:
 export function beelineTriageSkillMarkdown(releaseId: string): string {
   return `---
 name: beeline-triage
-description: Clarify and assess a user request before proposing or opening a Beeline corner. Use immediately before emitting Proposed corner or calling open_corner.
+description: Clarify and assess a user request before proposing or opening a Beeline corner, then bind a bugfix to its recorded reproduction. Use immediately before emitting Proposed corner or calling open_corner, and while implementing a bug in a corner.
 ---
 
 <!-- beeline-release: ${releaseId} -->
@@ -273,6 +289,33 @@ When proposing work, emit the ordinary \`Proposed corner: <name> — <objective>
 \`Triage warning — warranted: <evidence-backed reason>\`
 \`Triage warning — desirable: <evidence-backed reason>\`
 
+When a bug reproduction succeeds, also emit:
+
+\`Reproduction <id>: <user path> → <observable wrong result>\`
+
 Do not emit a warning merely because evidence is incomplete when the repository offers no practical way to obtain it. Never describe a warning as approval or rejection. Warnings inform the user and implementer; they do not block work.
+
+## Bugfix execution
+
+Once a corner is open for a reported bug, follow these steps in order. They are instruction, not a server gate. They do not condition the fix on reproduction. Warranted-work and desirability warnings still do not block.
+
+### 1. Attempt to reproduce
+
+- Attempt to reproduce the bug as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner.
+- Record what was tried and what was observed.
+- If a reproduction is obtained, record the exact user path and the observable wrong result under \`Reproduction <id>\`. Reuse the identifier triage emitted when it recorded one.
+- If reproduction fails, warn and continue exactly as triage already does. Never stop. Never condition the fix on reproduction.
+
+### 2. Narrow fix
+
+- Narrow the fix to the reported behavior.
+- When a reproduction exists, change only what removes that recorded reproduction.
+- Nearby improvements stay out of scope.
+
+### 3. Proof matching triage
+
+- When a reproduction exists, re-run it, cite the same identifier, and show it now passing, plus the regression that would fail if the bug returned.
+- When none was obtained, state that plainly and show the regression instead.
+- Name the identifier in the pull request when one exists so the reviewer can check that proof, not merely that some test exists.
 `;
 }

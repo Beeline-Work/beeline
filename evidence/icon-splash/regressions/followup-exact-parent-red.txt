@@ -1,0 +1,9 @@
+Exact PR parent: c43c0198c8b2f9cc9a7d0f3a125c8352843803da
+FAIL iOS uses one full-color source for every OS icon appearance: actual={ light: "./sources/assets/images/icon-light.png", dark: "./sources/assets/images/icon-ios.png", tinted: "./sources/assets/images/icon-ios-tinted.png", }; expected=single icon-ios.png string
+FAIL favicon optical mark width: actual=406; expected=720..739
+FAIL desktop natural mark width: actual=524; expected=480..499
+FAIL desktop source plate is full bleed: actual=824x824; expected=1024x1024
+
+4 exact-parent regression assertions failed.
+
+Exact-parent expected RED exit code: 1

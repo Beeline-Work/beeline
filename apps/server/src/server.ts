@@ -25,26 +25,6 @@ import type { ConnectionPresence } from './connection-presence.js';
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
-const LIVE_DELTA_DEADLINE_MS = 400;
-
-async function withinLiveDeltaDeadline<T>(work: Promise<T>): Promise<T> {
-  let deadline: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_resolve, reject) => {
-        deadline = setTimeout(
-          () => reject(new Error('committed row delivery deadline exceeded')),
-          LIVE_DELTA_DEADLINE_MS,
-        );
-        deadline.unref?.();
-      }),
-    ]);
-  } finally {
-    if (deadline) clearTimeout(deadline);
-  }
-}
-
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
@@ -64,7 +44,7 @@ export interface ServerOptions {
   connectionPresence?: ConnectionPresence;
   mediaMaximumBytes: number;
   /** Absent when no S3 env is configured: object writes then refuse with a
-   *  clear 503 and every read keeps the legacy bytea path. */
+   *  clear 503. */
   objectService?: ObjectService;
   github?: GitHubServerHooks;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
@@ -353,14 +333,26 @@ export function createBeelineServer(options: ServerOptions): Server {
             );
             return;
           }
-          if (
-            item.type === 'subscribe' &&
-            typeof item.roomId === 'string' &&
-            (await options.phone.canReadRoom(item.roomId, principal.identityId)) &&
-            !releases.has(item.roomId)
-          ) {
+          if (item.type === 'subscribe') {
+            const requestedRoomIds = Array.isArray(item.roomIds)
+              ? [
+                  ...new Set(
+                    (item.roomIds as unknown[]).filter(
+                      (id): id is string => typeof id === 'string' && id.length > 0,
+                    ),
+                  ),
+                ]
+              : typeof item.roomId === 'string'
+                ? [item.roomId]
+                : [];
+            if (requestedRoomIds.length === 0) return;
+            const readableRooms = await options.phone.canReadRooms(
+              requestedRoomIds,
+              principal.identityId,
+            );
+            for (const roomId of requestedRoomIds) {
+              if (!readableRooms.has(roomId) || releases.has(roomId)) continue;
             if (principal.kind === 'daemon') {
-              const roomId = item.roomId;
               let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
               let replaying = false;
               let replayRequested = false;
@@ -466,6 +458,21 @@ export function createBeelineServer(options: ServerOptions): Server {
                     }
                     return;
                   }
+                  if (event.reason === 'hiccup-restart') {
+                    if (
+                      event.targetAgentId === principal.identityId &&
+                      client.readyState === client.OPEN
+                    ) {
+                      client.send(
+                        JSON.stringify({
+                          type: 'hiccup-restart',
+                          roomId,
+                          attempt: event.hiccupAttempt ?? 1,
+                        }),
+                      );
+                    }
+                    return;
+                  }
                   if (event.reason === 'postgres:agent_commands') {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
                     return;
@@ -504,17 +511,16 @@ export function createBeelineServer(options: ServerOptions): Server {
                 }),
               );
               await Promise.all([replay(), pushCommands()]);
-              return;
+              continue;
             }
             // Agents whose draft this socket has already been handed live.
             // The snapshot below is read asynchronously, so a delta can land
             // first; replacing it with the older row would show the reader the
             // answer going backwards.
             const streamed = new Set<string>();
-            let deltaDelivery = Promise.resolve();
             releases.set(
-              item.roomId,
-              options.live.subscribe(item.roomId, (event) => {
+              roomId,
+              options.live.subscribe(roomId, (event) => {
                 if (event.type === 'draft') streamed.add(event.agentId);
                 if (event.type !== 'invalidate') {
                   if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
@@ -547,14 +553,17 @@ export function createBeelineServer(options: ServerOptions): Server {
                   ...(wireTrace ? { trace: wireTrace } : {}),
                   reason: `delta-fallback:${event.reason}`,
                 };
-                // Begin every bounded row read immediately. Only delivery is
-                // serialized, preserving commit-notification order without a
-                // slow lookup preventing later reads from making progress.
+                // Cross-process notifications carry only the committed row
+                // identity. Resolve every row independently: the result stays
+                // on the direct socket-delta path even when the app pool takes
+                // longer than an arbitrary UI deadline, and one slow/bad read
+                // cannot hold later committed messages behind it. The client
+                // reconciler restores causal order from createdAt/id.
                 let projectionError: unknown;
                 let committedDelta;
                 try {
                   committedDelta = committedRow
-                    ? options.phone.projectCommittedLiveDelta(item.roomId as string, committedRow)
+                    ? options.phone.projectCommittedLiveDelta(roomId, committedRow)
                     : undefined;
                 } catch (error) {
                   projectionError = error;
@@ -569,20 +578,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                     ? Promise.reject(projectionError)
                     : committedDelta
                       ? Promise.resolve(committedDelta)
-                      : withinLiveDeltaDeadline(
-                          options.phone.readLiveDelta(
-                            item.roomId as string,
-                            principal.identityId,
-                            target,
-                          ),
-                        )
+                      : options.phone.readLiveDelta(roomId, principal.identityId, target)
                 ).then(
                   (delta) => ({ delta }) as const,
                   (error: unknown) => ({ error }) as const,
                 );
-                deltaDelivery = deltaDelivery
-                  .then(async () => {
-                    const result = await pendingDelta;
+                void pendingDelta
+                  .then((result) => {
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
                     rememberPaintTrace(wireTrace);
@@ -606,21 +608,22 @@ export function createBeelineServer(options: ServerOptions): Server {
                   });
               }),
             );
-            client.send(JSON.stringify({ type: 'subscribed', roomId: item.roomId }));
+            client.send(JSON.stringify({ type: 'subscribed', roomId: roomId }));
             // A live lane carries only what is written after this point, so a
             // reader who joins a turn already in progress has missed the draft
             // it is writing. Hand over the running one now; every later delta
             // arrives through the subscription above and replaces it. A read
             // that fails leaves the lane exactly as it was before.
             const snapshot = await options.phone
-              .liveDraftSnapshot(item.roomId)
+              .liveDraftSnapshot(roomId)
               .catch(() => [] as LiveEvent[]);
             for (const event of snapshot) {
               if (event.type === 'draft' && streamed.has(event.agentId)) continue;
               if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
             }
-            for (const event of options.live.presenceSnapshot(item.roomId)) {
+            for (const event of options.live.presenceSnapshot(roomId)) {
               if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+            }
             }
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
@@ -991,31 +994,15 @@ async function route(
         return;
       }
     }
-    const media = (
-      await options.database.query<{ bytes: Uint8Array; mime_type: string; name: string }>(
-        `SELECT bytes,mime_type,name FROM media WHERE id=$1`,
-        [mediaId],
-      )
-    ).rows[0];
-    if (!media) {
-      // Bytes past the media TTL are gone for good, and say so: a client that
-      // reads 410 renders "expired" instead of retrying a 404 forever.
-      const expired = (
-        await options.database.query(`SELECT 1 FROM media_expirations WHERE id=$1`, [mediaId])
-      ).rows.length;
-      json(response, expired ? 410 : 404, {
-        error: expired ? 'media_expired' : 'media_not_found',
-        ...(expired ? { ttlHours: mediaTtlHours() } : {}),
-      });
-      return;
-    }
-    response.writeHead(200, {
-      'content-type': media.mime_type,
-      'content-length': String(media.bytes.length),
-      'cache-control': 'public, max-age=31536000, immutable',
-      'content-disposition': `inline; filename="${media.name.replaceAll('"', '')}"`,
+    // No bytea fallback: every file lives in `objects`. A tombstone is
+    // expired; anything else never existed for readers.
+    const expired = (
+      await options.database.query(`SELECT 1 FROM object_expirations WHERE id=$1`, [mediaId])
+    ).rows.length;
+    json(response, expired ? 410 : 404, {
+      error: expired ? 'media_expired' : 'media_not_found',
+      ...(expired ? { ttlHours: mediaTtlHours() } : {}),
     });
-    response.end(Buffer.from(media.bytes));
     return;
   }
   if (url.pathname.startsWith('/v1/phone/') && !identityId) {
@@ -1078,6 +1065,10 @@ async function route(
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/media') {
+    if (!options.objectService) {
+      json(response, 503, { error: 'object_storage_unavailable' });
+      return;
+    }
     const raw = await bytes(request, options.mediaMaximumBytes + 1);
     const mime =
       typeof request.headers['content-type'] === 'string'
@@ -1087,11 +1078,20 @@ async function route(
       typeof request.headers['x-file-name'] === 'string'
         ? request.headers['x-file-name']
         : 'upload';
-    json(
-      response,
-      201,
-      await options.phone.uploadMedia(identityId!, raw, mime, name, options.mediaMaximumBytes),
-    );
+    try {
+      json(
+        response,
+        201,
+        await options.phone.uploadMedia(identityId!, raw, mime, name, options.mediaMaximumBytes),
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'invalid upload';
+      if (reason.includes('object storage is not configured')) {
+        json(response, 503, { error: 'object_storage_unavailable' });
+        return;
+      }
+      json(response, 400, { error: 'upload_rejected', reason });
+    }
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/github\/room-token\/([0-9a-f-]+)$/);
@@ -1121,8 +1121,18 @@ async function route(
         : result && typeof (result as { roomId?: unknown }).roomId === 'string'
           ? (result as { roomId: string }).roomId
           : undefined;
-    if (invalidatedRoom)
-      options.live.publish({ type: 'invalidate', roomId: invalidatedRoom, reason: 'phone-write' });
+    if (invalidatedRoom) {
+      const messageId =
+        result && typeof (result as { messageId?: unknown }).messageId === 'string'
+          ? (result as { messageId: string }).messageId
+          : undefined;
+      options.live.publish({
+        type: 'invalidate',
+        roomId: invalidatedRoom,
+        reason: 'phone-write',
+        ...(messageId ? { messageId } : {}),
+      });
+    }
     if (result === undefined) {
       response.writeHead(204, { 'cache-control': 'private, no-store' });
       response.end();

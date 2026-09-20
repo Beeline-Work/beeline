@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./chat/_chat-surface.tsx', import.meta.url), 'utf8');
 const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
 const ledger = readFileSync(
   new URL('../../../components/buzz/Ledger.tsx', import.meta.url),
@@ -49,12 +49,44 @@ describe('Room composer status layout', () => {
     expect(inputStyle).toContain('maxHeight: COMPOSER_MAX_INPUT_HEIGHT');
   });
 
-  it('keeps turn progress inside the growing composer stack, above the field', () => {
-    const inputBar = source.slice(source.indexOf('<View style={[styles.inputBar'));
+  it('keeps turn progress inside the composer stack, above the field', () => {
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
     const composer = inputBar.indexOf('<ConversationComposer');
     expect(progress).toBeGreaterThanOrEqual(0);
     expect(composer).toBeGreaterThan(progress);
+  });
+
+  it('hangs the phone turn line over the transcript so it does not open a composer gap', () => {
+    // The geometry itself is measured in `buzz/room-bottom-chrome.test.tsx`;
+    // what this file holds is that the screen mounts that shared column
+    // rather than a second hand-rolled copy of it.
+    expect(source).toContain('const bottomChrome = roomBottomChromeStyles(groknight);');
+    expect(source).toContain('hangingTurnChrome: bottomChrome.hangingTurnChrome,');
+    expect(source).toContain('inputBar: bottomChrome.composerRow,');
+    expect(source).toContain('styles.bottomChromeStack');
+    const stack = source.slice(source.indexOf('styles.bottomChromeStack'));
+    expect(stack.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);
+    expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<ConversationComposer'));
+    const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
+    expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
+    expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
+    // The pinned corner line is gone, so the offline hint is the only chrome
+    // left that pushes the tail. The turn line lands directly on the
+    // composer — measured in `buzz/room-bottom-chrome.test.tsx`.
+    expect(source).toContain('pushedChromeVisible: agentsOffline');
+    expect(source).not.toContain('CornerLiveBar');
+  });
+
+  it('keeps the Room header outside the Android keyboard translation surface', () => {
+    const conversation = source.slice(
+      source.indexOf('<View style={styles.desktopConversationFrame}>'),
+    );
+    const header = conversation.indexOf('{/* Header. No surface of its own');
+    const keyboardSurface = conversation.indexOf('<KeyboardAvoidingView');
+
+    expect(header).toBeGreaterThanOrEqual(0);
+    expect(keyboardSurface).toBeGreaterThan(header);
   });
 
   it('keeps the send arrow separated from the text field', () => {
@@ -144,10 +176,10 @@ describe('Room composer keyboard inset', () => {
     expect(source).not.toContain('keyboardVerticalOffset=');
   });
 
-  it('keeps the safe-area inset only while the software keyboard is closed', () => {
+  it('moves the safe-area inset with keyboard progress instead of snapping at event boundaries', () => {
     expect(source).toContain(
-      'const composerBottomInset = composerBottomPadding(Platform.OS, insets.bottom, keyboardHeight);',
+      'paddingBottom: composerBottomPadding(Platform.OS, insets.bottom, keyboardProgress.value)',
     );
-    expect(source).toContain('{ paddingBottom: composerBottomInset }');
+    expect(source).toContain('<Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>');
   });
 });

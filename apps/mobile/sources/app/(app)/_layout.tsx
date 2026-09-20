@@ -171,6 +171,7 @@ export default function RootLayout() {
           name="beeline/chat/[channelId]"
           options={{
             headerShown: false,
+            animation: 'none',
             contentStyle: { backgroundColor: theme.buzz.bgBase },
           }}
         />

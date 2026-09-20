@@ -1,5 +1,6 @@
 import {
   authorizeCommandOutput,
+  authorizeFailedTurnOutput,
   claimAgentCommand,
   commandInbox,
   createAgentCommand,
@@ -17,8 +18,10 @@ import type {
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
+  classifyTurnSilence,
   cornerTextRefusal,
   normalizeCornerText,
+  shouldCompletePendingFailedCommand,
 } from '@beeline/api-contract/daemon';
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
@@ -94,43 +97,22 @@ import {
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { agentWalletTool } from './wallet.js';
+import { noteFirstSilence, TURN_FAILURE_REASON_MAX, turnSilenceLockKey } from './turn-silence-notice.js';
+import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
-
-/** Server-side cap on the daemon's distilled failure reason (matches the daemon's own cap). */
-const TURN_FAILURE_REASON_MAX = 200;
 export const INBOX_REPLAY_REWIND_MS = 5_000;
 
-/** A durable success after a failed line settles that line in place. */
+/** A durable silence line stays in the transcript; a later answer does not rewrite it. */
 async function settleTurnFailureLine(
-  database: SqlDatabase,
-  roomId: string,
-  requestId: string,
-  agentId: string,
+  _database: SqlDatabase,
+  _roomId: string,
+  _requestId: string,
+  _agentId: string,
 ) {
-  const failed = await database.query<{
-    id: string;
-    card: Record<string, unknown>;
-    agent_name: string;
-  }>(
-    `SELECT message.id,message.card,COALESCE(NULLIF(agent.name,''),'The agent') agent_name
-     FROM messages message JOIN identities agent ON agent.id=$3
-     WHERE message.room_id=$1 AND message.card_type='turn-failed' AND message.card->>'requestId'=$2
-       AND message.card->>'agentId'=$3 AND message.card->>'state'='failed'`,
-    [roomId, requestId, agentId],
-  );
-  for (const row of failed.rows)
-    await restateSystemLine(
-      database,
-      row.id,
-      {
-        subject: { kind: 'agent', id: agentId, name: row.agent_name },
-        verb: 'answered after a retry',
-      },
-      { ...row.card, state: 'recovered' },
-    );
+  return;
 }
 /**
  * Corner operations that stay with the opener. Membership authorizes every
@@ -236,6 +218,11 @@ export class DaemonService {
       };
       const output = await this.database.transaction(async (db) => {
         const requestId = candidate.requestId ?? candidate.turnId;
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
+          await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+            turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
+          ]);
+        }
         if (
           name === 'postAgentTurnReceipt' &&
           candidate.status === 'working' &&
@@ -263,14 +250,23 @@ export class DaemonService {
           (name === 'postRoomMessage' && candidate.relay === undefined) ||
           name === 'retractAgentLiveOutput' ||
           (name === 'postAgentTurnReceipt' && candidate.status === 'complete');
-        const command = await authorizeCommandOutput(
-          db,
-          scopedRoom,
-          authenticatedAgentId,
-          requestId,
-          candidate.generationId,
-          allowCompleted,
-        );
+        const command =
+          name === 'postAgentTurnReceipt' && candidate.status === 'failed'
+            ? await authorizeFailedTurnOutput(
+                db,
+                scopedRoom,
+                authenticatedAgentId,
+                requestId,
+                candidate.generationId,
+              )
+            : await authorizeCommandOutput(
+                db,
+                scopedRoom,
+                authenticatedAgentId,
+                requestId,
+                candidate.generationId,
+                allowCompleted,
+              );
         if (command.state === 'complete') {
           if (name === 'postRoomMessage' && command.result_message_id) {
             const saved = (
@@ -326,7 +322,26 @@ export class DaemonService {
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
               [command.id],
             );
-          else
+          else if (
+            candidate.status === 'failed' &&
+            (result as { hiccupRestart?: boolean }).hiccupRestart
+          ) {
+            // noteFirstSilence already reopened this command for re-delivery.
+          } else if (
+            candidate.status === 'failed' &&
+            command.state === 'pending' &&
+            !shouldCompletePendingFailedCommand(
+              classifyTurnSilence(
+                typeof candidate.reason === 'string' ? candidate.reason : undefined,
+                typeof candidate.reasonKind === 'string' ? candidate.reasonKind : undefined,
+              ).kind,
+              typeof candidate.reason === 'string' ? candidate.reason : '',
+            )
+          ) {
+            // Transient corner-start clone/network: the helper retries startCorner.
+            // Leave the original pending command for that attempt; do not ask
+            // systemd to restart, and do not consume the request.
+          } else
             await db.query(`UPDATE agent_commands SET state=$2,completed_at=now() WHERE id=$1`, [
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
@@ -779,29 +794,44 @@ export class DaemonService {
     input: Input<'installConnector'>,
     agentId: string,
   ): Promise<Output<'installConnector'>> {
-    const row = (
-      await this.database.query<{ id: string }>(
-        `SELECT id FROM workspace_connectors WHERE id=$1::uuid AND helper_agent_id=$2`,
-        [input.connectorId, agentId],
-      )
-    ).rows[0];
-    if (!row) throw new Error('connector not found for this helper');
-    await this.database.query(
-      `UPDATE workspace_connectors
-       SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
-           squire_version=COALESCE($2,squire_version),
-           signed_in_as=COALESCE($3,signed_in_as),
-           sign_in=COALESCE($4::jsonb,sign_in),
-           connected_at=COALESCE(connected_at, now()), updated_at=now()
-       WHERE id=$1::uuid`,
-      [
-        row.id,
-        input.squireVersion ?? null,
-        input.signedInAs ?? null,
-        input.signIn ? JSON.stringify(input.signIn) : null,
-      ],
-    );
-    return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+    const result = await this.database.transaction(async (database) => {
+      const row = (
+        await database.query<{ id: string }>(
+          `SELECT id FROM workspace_connectors
+            WHERE id=$1::uuid AND helper_agent_id=$2 FOR UPDATE`,
+          [input.connectorId, agentId],
+        )
+      ).rows[0];
+      if (!row) throw new Error('connector not found for this helper');
+      await database.query(
+        `UPDATE workspace_connectors
+         SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
+             squire_version=COALESCE($2,squire_version),
+             signed_in_as=COALESCE($3,signed_in_as),
+             sign_in=COALESCE($4::jsonb,sign_in),
+             connected_at=COALESCE(connected_at, now()), updated_at=now()
+         WHERE id=$1::uuid`,
+        [
+          row.id,
+          input.squireVersion ?? null,
+          input.signedInAs ?? null,
+          input.signIn ? JSON.stringify(input.signIn) : null,
+        ],
+      );
+      return {
+        row,
+        completedOffers: await completeConnectorOffersForConnector(database, row.id),
+      };
+    });
+    for (const offer of result.completedOffers) {
+      this.live.publish({
+        type: 'invalidate',
+        roomId: offer.roomId,
+        reason: 'connector-offer',
+        agentId: offer.agentId,
+      });
+    }
+    return { id: result.row.id, createdAt: Math.floor(Date.now() / 1000) };
   }
 
   /**
@@ -1332,7 +1362,7 @@ export class DaemonService {
     }
     if (!ids.size) return ids;
     const expired = await this.database.query<{ id: string }>(
-      `SELECT id::text id FROM media_expirations WHERE id=ANY($1::uuid[])`,
+      `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
       [[...ids]],
     );
     return new Set(expired.rows.map((row) => row.id));
@@ -1606,25 +1636,27 @@ export class DaemonService {
         repository_key: string | null;
         repository_remote: string | null;
         repository_target_branch: string;
+        repository_resolution: 'repository' | 'none' | 'unverified';
         direct_participants: string[] | null;
       }>(
-        `SELECT repository_key,repository_remote,repository_target_branch,direct_participants FROM rooms WHERE id=$1`,
+        `SELECT repository_key,repository_remote,repository_target_branch,repository_resolution,direct_participants FROM rooms WHERE id=$1`,
         [roomId],
       )
     ).rows[0];
-    return row?.repository_key
-      ? {
-          key: row.repository_key,
-          remote: row.repository_remote ?? undefined,
-          targetBranch: row.repository_target_branch,
-          resolution: 'repository' as const,
-        }
-      : {
-          resolution: 'none' as const,
-          ...(row?.direct_participants?.length === 2
-            ? { directParticipants: row.direct_participants }
-            : {}),
-        };
+    if (row?.repository_resolution === 'unverified') return { resolution: 'unverified' as const };
+    if (row?.repository_resolution === 'repository' || row?.repository_key)
+      return {
+        key: row.repository_key ?? undefined,
+        remote: row.repository_remote ?? undefined,
+        targetBranch: row.repository_target_branch,
+        resolution: 'repository' as const,
+      };
+    return {
+      resolution: 'none' as const,
+      ...(row?.direct_participants?.length === 2
+        ? { directParticipants: row.direct_participants }
+        : {}),
+    };
   }
   private async targetBranch(roomId: string, agentId: string) {
     await this.access(roomId, agentId);
@@ -2064,7 +2096,7 @@ export class DaemonService {
              FROM settled,identities agent
              WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
                AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
-               AND failure.card->>'state'='failed'
+               AND failure.card->>'state'='failed' AND false
              RETURNING failure.*
            ), recovered_public AS (
              SELECT recovered.*,author.kind author_kind,author.name author_name,
@@ -2218,16 +2250,8 @@ export class DaemonService {
       throw new Error('attachment mimeType is invalid');
     const mediaId = MEDIA_URL_PATTERN.exec(attachment.url)?.[1];
     if (!mediaId) throw new Error('attachment url is not a server media reference');
-    // An artifact lives in `objects`, not `media`, yet `uploadArtifact` hands
-    // the agent the same `/v1/media/<id>` reference, so `post_artifact` used to
-    // fail here with "attachment media is not owned by this agent" (captain,
-    // 2026-09-15, every artifact rejected once storage was wired). Accept a
-    // reference the agent owns in EITHER store; an object still has to be
-    // `ready` and unexpired, the same bar the media read path applies.
     const owned = await this.database.query(
-      `SELECT 1 FROM media WHERE id=$1 AND owner_id=$2
-       UNION ALL
-       SELECT 1 FROM objects
+      `SELECT 1 FROM objects
         WHERE id=$1 AND owner_id=$2 AND state='ready' AND expires_at > now()`,
       [mediaId, agentId],
     );
@@ -2293,11 +2317,15 @@ export class DaemonService {
     if (input.heartbeat && input.status !== 'working') {
       throw new Error('turn receipt heartbeat must be working');
     }
+    if (input.completionKind && input.status !== 'complete') {
+      throw new Error('turn receipt completion kind requires complete status');
+    }
     const reason =
       input.status === 'failed' && typeof input.reason === 'string'
         ? input.reason.replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX) || null
         : null;
     let committedTurn: CommittedTurnLiveRow | undefined;
+    let silence: { hiccupRestart: boolean; attempt: number } | undefined;
     await this.database.transaction(async (database) => {
       if (input.heartbeat) {
         committedTurn = (
@@ -2350,7 +2378,7 @@ export class DaemonService {
         committedTurn = written.rows[0];
       }
       if (input.status === 'failed') {
-        await this.inscribeTurnFailure(
+        silence = await this.inscribeTurnFailure(
           database,
           input.roomId,
           input.requestId,
@@ -2370,6 +2398,35 @@ export class DaemonService {
           [input.roomId, agentId, input.requestId],
         );
         await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
+        if (input.completionKind === 'no-reply') {
+          const agent = (
+            await database.query<{ name: string }>(
+              `SELECT COALESCE(NULLIF(name,''),'The agent') name FROM identities WHERE id=$1`,
+              [agentId],
+            )
+          ).rows[0];
+          const existing = await database.query(
+            `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-no-reply'
+               AND card->>'requestId'=$2 AND card->>'agentId'=$3 LIMIT 1`,
+            [input.roomId, input.requestId, agentId],
+          );
+          if (agent && !existing.rowCount) {
+            await systemLine(database, {
+              roomId: input.roomId,
+              subject: { kind: 'agent', id: agentId, name: agent.name },
+              verb: 'had nothing to add',
+              consequence: 'this turn completed normally.',
+              cardType: 'turn-no-reply',
+              card: {
+                requestId: input.requestId,
+                agentId,
+                state: 'complete',
+                completionKind: 'no-reply',
+              },
+              afterMessageId: input.requestId,
+            });
+          }
+        }
       }
     });
     this.live.publish({
@@ -2380,20 +2437,17 @@ export class DaemonService {
       requestId: input.requestId,
       ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
     });
-    return this.writeResult();
+    return this.writeResult(
+      silence?.hiccupRestart
+        ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
+        : undefined,
+    );
   }
   /**
-   * A failed turn is a fact the Room must carry. When a human asked, ONE
-   * `presentation='system'` line names the agent and the reason; retries of
-   * the same request within ten minutes update that line in place. A later
-   * success settles the same row to "answered after a retry" — an inscribed
-   * record that stays true, never a stamped stale failure.
-   *
-   * The line carries NO mention. A push comes from exactly three sources — a
-   * person tags you, a corner opens or closes, one push per member join — and
-   * a system line never claims one through a synthetic mention (captain
-   * report C68: "Candy could not answer" pushed to the requester's phone).
-   * `background.ts` also excludes `turn-failed` rows outright.
+   * A failed turn is a fact the Room must carry. The approved first-silence
+   * line is inscribed here; a hiccup reopens the original command so the
+   * recovered helper answers without another human request. The line carries
+   * NO mention — `background.ts` also excludes `turn-failed` rows outright.
    */
   private async inscribeTurnFailure(
     database: SqlDatabase,
@@ -2401,55 +2455,14 @@ export class DaemonService {
     requestId: string,
     agentId: string,
     reason: string | null,
-    reasonKind?: 'model-selection-unavailable',
+    reasonKind?: string,
   ) {
-    const trigger = (
-      await database.query<{ author_id: string; agent_name: string; agent_handle: string | null }>(
-        `SELECT message.author_id,COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
-                agent.handle agent_handle
-         FROM messages message
-         JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
-         JOIN identities agent ON agent.id=$3
-         WHERE message.id=$2 AND message.presentation IN ('message','system')
-           AND (message.room_id=$1 OR message.room_id=(SELECT parent_id FROM rooms WHERE id=$1))`,
-        [roomId, requestId, agentId],
-      )
-    ).rows[0];
-    if (!trigger) return;
-    const phrase: SystemPhrase =
-      reasonKind === 'model-selection-unavailable'
-        ? {
-            subject: {
-              kind: 'agent',
-              id: agentId,
-              name: trigger.agent_handle ? `@${trigger.agent_handle}` : trigger.agent_name,
-            },
-            verb: 'is not available',
-            consequence: 'ask its owner',
-          }
-        : {
-            subject: { kind: 'agent', id: agentId, name: trigger.agent_name },
-            verb: 'could not answer',
-            ...(reason ? { consequence: reason } : {}),
-          };
-    const recent = (
-      await database.query<{ id: string }>(
-        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
-           AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
-           AND created_at>now()-interval '10 minutes'
-         ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [roomId, requestId, agentId],
-      )
-    ).rows[0];
-    if (recent) {
-      await restateSystemLine(database, recent.id, phrase);
-      return;
-    }
-    await systemLine(database, {
+    return noteFirstSilence(database, this.live, {
       roomId,
-      ...phrase,
-      cardType: 'turn-failed',
-      card: { requestId, agentId, state: 'failed' },
+      requestId,
+      agentId,
+      reason,
+      reasonKind,
     });
   }
   private async activity(input: Input<'postAgentActivity'>, agentId: string) {
@@ -3799,8 +3812,8 @@ export class DaemonService {
     const opener = corner.rows[0]?.owner_agent_id;
     if (corner.rowCount && opener !== agentId) throw new Error('daemon corner access denied');
   }
-  private writeResult() {
-    return { id: id(), createdAt: Math.floor(Date.now() / 1000) };
+  private writeResult(extra?: { hiccupRestart?: boolean; hiccupAttempt?: number }) {
+    return { id: id(), createdAt: Math.floor(Date.now() / 1000), ...extra };
   }
 }
 

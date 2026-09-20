@@ -7,7 +7,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Platform: { OS: 'web' }, Pressable: host('Pressable'), Text: host('Text') };
+  return { Platform: { OS: 'web' }, Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
@@ -162,5 +162,29 @@ describe('DesktopWorkPaneHandle', () => {
     act(() => dropTarget.props.onDrop(event));
     expect(onDropCorner).toHaveBeenCalledWith('corner-1');
     expect(tree.root.findByType('Text' as any).props.children).toBe('‹');
+  });
+
+  it('inscribes an arrived marker without opening anything on its own', () => {
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(
+        <DesktopWorkPaneHandle
+          arrived
+          roomId="room-1"
+          onOpen={vi.fn()}
+          onDropCorner={vi.fn()}
+        />,
+      );
+    });
+    const handle = tree.root.findByProps({ testID: 'desktop-work-pane-handle' });
+    expect(handle.props.accessibilityLabel).toBe('Open work pane, new corner');
+    expect(tree.root.findByProps({ testID: 'desktop-work-pane-arrived' })).toBeTruthy();
+    expect(renderedStyle(handle.props.style)).toMatchObject({
+      backgroundColor: '#1e1326',
+      borderTopColor: '#b08a4a',
+      borderLeftColor: '#b08a4a',
+      borderBottomColor: '#b08a4a',
+    });
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-pane-tooltip' })).toHaveLength(0);
   });
 });

@@ -14,7 +14,7 @@ import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn() }));
-const conversationSource = readFileSync(new URL('./[channelId].tsx', import.meta.url), 'utf8');
+const conversationSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const composerSource = readFileSync(
   new URL('../../../../components/buzz/ConversationComposer.tsx', import.meta.url),
   'utf8',
@@ -1936,11 +1936,48 @@ describe('Room message variant components', () => {
         .filter((node: ReactTestInstance) => node.props.accessibilityLabel !== undefined)
         .map((node: ReactTestInstance) => node.props.accessibilityLabel);
       expect(actionLabels).toEqual(['✓ Add Trusty Squire']);
-      expect(card.root.findAllByProps({ testID: 'connector-offer-offer-1-workbench' })).toHaveLength(
-        0,
-      );
+      expect(
+        card.root.findAllByProps({ testID: 'connector-offer-offer-1-workbench' }),
+      ).toHaveLength(0);
       act(() => accept.props.onPress());
-      expect(onAccept).toHaveBeenCalledWith('offer-1');
+      expect(onAccept).toHaveBeenCalledWith('offer-1', 'trusty-squire');
+    });
+
+    it('keeps an in-progress ceremony resumable without claiming the tool was added', () => {
+      const onContinue = vi.fn();
+      const connecting = render(
+        <ConnectorOfferCard
+          message={message({
+            connectorOffer: {
+              ...pending.connectorOffer!,
+              status: 'connecting',
+              acceptedBy: zeke,
+              acceptedAt: 1_756_900_030,
+              connectorId: 'connector-row-1',
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          viewerRole="member"
+          actionId={null}
+          onAccept={vi.fn()}
+          onContinue={onContinue}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      expect(connecting.root.findByProps({ testID: 'connector-offer-connecting' })).toBeDefined();
+      expect(
+        connecting.root.findByProps({ testID: 'connector-offer-offer-1-connecting' }).props
+          .children,
+      ).toBe('connecting for @zeke');
+      expect(
+        connecting.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
+      ).toHaveLength(0);
+      const resume = connecting.root.findByProps({
+        testID: 'connector-offer-offer-1-continue',
+      });
+      act(() => resume.props.onPress());
+      expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });
 
     it('lets a Workspace manager who is not the addressee accept (Q4)', () => {
@@ -2016,9 +2053,9 @@ describe('Room message variant components', () => {
         />,
       );
       expect(settled.root.findByProps({ testID: 'connector-offer-settled' })).toBeDefined();
-      expect(settled.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' })).toHaveLength(
-        0,
-      );
+      expect(
+        settled.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
+      ).toHaveLength(0);
       // The record names the actor — a manager, not the addressee — because a
       // Room has many possible tappers where the reference product had one.
       const outcome = settled.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props
@@ -2032,7 +2069,10 @@ describe('Room message variant components', () => {
 
     it('is mounted by the one Room renderItem branch beside the grant card, with the accept operation and Workbench door wired', () => {
       expect(conversationSource).toContain('if (item.connectorOffer) {');
-      expect(conversationSource).toContain("monolithPhoneOperation('acceptConnectorOffer', { offerId })");
+      expect(conversationSource).toContain(
+        "monolithPhoneOperation('acceptConnectorOffer', { offerId })",
+      );
+      expect(conversationSource).toContain('openConnectorOfferCeremony');
       expect(conversationSource).toContain("pathname: '/beeline/settings/workbench'");
     });
   });
@@ -2220,15 +2260,15 @@ describe('Room message variant components', () => {
     const json = JSON.stringify(renderer.toJSON());
     expect(json).toContain('closed · 3 of 4 voted');
     expect(json).not.toContain('Skip');
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-wash-A' }).props.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ width: '100%' })]),
-    );
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-wash-B' }).props.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ width: '50%' })]),
-    );
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-count-A' }).props.children).toBe(
-      2,
-    );
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-wash-A' }).props.style,
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ width: '100%' })]));
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-wash-B' }).props.style,
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ width: '50%' })]));
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-count-A' }).props.children,
+    ).toBe(2);
   });
 
   it('opens the message actions sheet on long press while retaining tap dismissal', () => {

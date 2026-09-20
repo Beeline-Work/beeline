@@ -391,7 +391,7 @@ describe('monolith-only thin daemon', () => {
       'Handoff from the parent Room: add a `--dry-run` flag to the importer CLI.',
       'It must print the plan it would apply and exit 0 without touching the database.',
     ].join(' ');
-    const conversationReads: Array<Record<string, unknown>> = [];
+    const commandReads: Array<Record<string, unknown>> = [];
     const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
       if (name === 'getCornerRestoreState') {
         return { cornerId: 'corner', objective: HANDOFF, closeRequested: false, lifecycle: {} };
@@ -400,13 +400,14 @@ describe('monolith-only thin daemon', () => {
       if (name === 'getRoomRepositoryState') {
         return {
           resolution: 'repository' as const,
+          key: 'x/y',
           remote: 'https://github.example/x/y',
           targetBranch: 'main',
         };
       }
-      if (name === 'getRoomConversation') {
-        conversationReads.push(input);
-        return { items: [], cursor: 'c' };
+      if (name === 'getAgentCommands') {
+        commandReads.push(input);
+        return { commandProtocol: 1, commands: [] };
       }
       throw new Error(`unexpected daemon operation: ${name}`);
     });
@@ -431,9 +432,9 @@ describe('monolith-only thin daemon', () => {
     ).startCorner({ cornerId: 'corner', parentRoomId: 'room' });
     error.mockRestore();
 
-    // The only conversation read is the best-effort failure report after the
+    // The only command read is the best-effort failure report after the
     // deliberately bogus clone. Startup itself used the corner fact.
-    expect(conversationReads).toEqual([{ roomId: 'corner', limit: 50 }]);
+    expect(commandReads).toEqual([{ roomId: 'corner' }]);
     expect(failures.join('\n')).not.toContain('corner has no authoritative objective fact');
     expect(failures.join('\n')).toContain('failed to start corner corner');
   });
@@ -470,27 +471,31 @@ describe('monolith-only thin daemon', () => {
           targetBranch: 'main',
         };
       }
-      if (name === 'getRoomConversation') {
+      if (name === 'getAgentCommands') {
         return {
-          items: [
+          commandProtocol: 1,
+          commands: [
             {
-              id: 'objective-row',
-              authorId: 'human',
-              createdAt: 1,
-              type: 'message',
-              body: 'Rip out the legacy path.',
-              attachments: [],
-            },
-            {
-              id: 'handoff-row',
-              authorId: 'human',
-              createdAt: 2,
-              type: 'message',
-              body: '@Goosy can you pick up where Codex left off?',
-              attachments: [],
+              id: 'cmd',
+              roomId: 'corner',
+              agentId,
+              sourceMessageId: 'handoff-row',
+              turnRequestId: 'handoff-row',
+              action: 'input' as const,
+              reason: 'human_tag',
+              rootCommandId: 'cmd',
+              rootSourceMessageId: 'handoff-row',
+              agentDepth: 0,
+              source: {
+                id: 'handoff-row',
+                authorId: 'human',
+                createdAt: 2,
+                type: 'message',
+                body: '@Goosy can you pick up where Codex left off?',
+                attachments: [],
+              },
             },
           ],
-          cursor: 'c',
         };
       }
       if (name === 'postAgentTurnReceipt') {
@@ -520,7 +525,9 @@ describe('monolith-only thin daemon', () => {
       requestId: 'handoff-row',
       status: 'failed',
       agentId,
+      reasonKind: 'workspace-failure',
     });
+    expect(receipts[0]).not.toHaveProperty('generationId');
     expect(String(receipts[0]!.reason)).not.toBe('');
   });
 

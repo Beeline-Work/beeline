@@ -18,11 +18,18 @@ steering: `read-only-mcp.ts` exposes `open_corner` and `steer_corner` in top-lev
 `pr_checks_status` in corners through the `beeline-agent` MCP surface. Corners do not post reports
 back to their parent Room; their Room-facing output is server-owned cards.
 
+When an imported MCP server is added or removed from the selected harness's operator
+configuration, the helper replaces its retained Room or corner session before the next turn.
+An unchanged server-name set retains the session; editing settings under an existing name
+does not trigger replacement. This applies to all imported servers, including Trusty Squire.
+It does not provision or revoke routes itself. The inventory contract lives in
+[`session-config-fingerprint.ts`](src/session-config-fingerprint.ts).
+
 ## Commands
 
 - `beeline connect [code]`
 - `beeline connect-finish <grant>`
-- `beeline start [--agent <pubkey>]`
+- `beeline start [--agent <pubkey>]` — update the helper, then start every paired host agent (already-running is a no-op)
 - `beeline stop --agent <pubkey>`
 - `beeline daemon --config <runtime.json>`
 - `beeline update ...`

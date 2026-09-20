@@ -16,6 +16,9 @@ warnings but do not block the implementer. The configured reviewer independently
 warranted-work and desirability checks against the completed change, verifies that the diff matches
 the clarified request, and checks tests and regression exposure before approving the exact head.
 
+Once a corner is open for a bug, the same skill carries the
+[bugfix execution contract](#bugfix-execution).
+
 This split keeps pre-work useful without creating a new approval queue. Triage improves the request
 and exposes concerns while the reviewer remains the hard quality gate.
 
@@ -74,7 +77,25 @@ Triage warning — desirable: <evidence-backed reason>
 
 Emit only applicable warnings. A failed reproduction is a warning, not proof that the report is
 false. A similar title is a search candidate, not proof of duplication. Missing evidence alone is
-not a warning when the repository offers no practical way to obtain it.
+not a warning when the repository offers no practical way to obtain it. When a bug reproduction
+succeeds, emit `Reproduction <id>: <user path> → <observable wrong result>` beside the proposal so
+the implementer can cite it.
+
+## Bugfix execution
+
+The same `beeline-triage` skill carries the implementer contract. No new server gate, receipt, or
+tooling. Once the corner is open for a reported bug:
+
+1. **Attempt to reproduce.** Use every tool the host offers — emulator, Playwright, browser, test
+   runner. Record what was tried and what was observed. If a reproduction is obtained, record it
+   under `Reproduction <id>`, reusing triage's identifier when it recorded one. If reproduction
+   fails, warn and continue exactly as triage already does. Never stop. Never condition the fix on
+   reproduction.
+2. **Narrow fix.** Narrow the change to the reported behavior. When a reproduction exists, change
+   only what removes that recorded reproduction. Nearby improvements are out of scope.
+3. **Proof matching triage.** Re-run the same reproduction where one exists, cited by the same
+   identifier, plus the regression that would fail if the bug returned. Where none was obtained,
+   state that plainly and show the regression instead.
 
 ## Desirability rubric
 
@@ -99,16 +120,19 @@ Before judging implementation details, the reviewer must independently establish
 - no current or recently merged work resolves or supersedes it;
 - the change has concrete user benefit and fits repository direction;
 - the diff implements the clarified request and no unapproved additions;
-- tests exercise the user outcome and credible regression paths.
+- tests exercise the user outcome and credible regression paths;
+- for a bug, when a `Reproduction <id>` exists, the proof names it, re-runs that path, and shows
+  the wrong result is gone — some other test existing is not that proof. When none was obtained,
+  the proof says so and shows the regression.
 
 Confirmed duplicate or obsolete work, a confirmed product conflict, unapproved scope, missing
-demonstration, or insufficient regression proof fails review. The author still owns merging after
-approval; the reviewer never merges.
+demonstration, a proof that skips a recorded reproduction identifier, or insufficient regression
+proof fails review. The author still owns merging after approval; the reviewer never merges.
 
 ## Placement
 
-- `apps/body/src/beeline-skill.ts` owns the release-versioned `beeline-triage` skill, the mandatory
-  pre-corner instruction, and the expanded `beeline-review` rubric.
+- `apps/body/src/beeline-skill.ts` owns the release-versioned `beeline-triage` skill (triage plus
+  bugfix execution), the mandatory pre-corner instruction, and the expanded `beeline-review` rubric.
 - `apps/body/src/agent-home.ts` provisions `beeline-triage` to every agent home and keeps
   `beeline-review` exclusive to configured reviewers.
 - The existing Room prompt invokes triage before proposal or opening. The existing green-check
@@ -123,6 +147,9 @@ enforced through the existing reviewer approval gate after implementation.
 - Every Room prompt explicitly requires triage before `Proposed corner:` or `open_corner`.
 - Ambiguity that can alter the outcome asks a question instead of silently choosing scope.
 - Failed reproduction, plausible duplicate work, or desirability conflict warns without blocking.
+- Bugfix instruction coverage lives in `apps/body/src/beeline-skill.test.ts`; provisioning is
+  covered by `agent-home.test.ts`, and `monolith-corner-turn.test.ts` checks the delivered author
+  prompt. These checks establish instruction delivery, not model compliance.
 - The reviewer independently records warranted-work and desirability evidence.
 - The reviewer still demonstrates the user outcome, runs affected tests, checks regressions, and
   binds approval to the exact head.
@@ -134,3 +161,4 @@ enforced through the existing reviewer approval gate after implementation.
 - Claiming that green CI alone proves an absence of regressions.
 - Adding a server receipt, mobile approval queue, or separate pre-work reviewer.
 - Allowing triage warnings to approve or reject work.
+- Blocking the implementer on a failed reproduction, or conditioning the fix on obtaining one.

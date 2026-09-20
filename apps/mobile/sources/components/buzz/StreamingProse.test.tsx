@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -12,15 +12,32 @@ vi.mock('react-native', async () => {
     Linking: { openURL: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles },
     Text: host('Text'),
+    TextInput: ReactModule.forwardRef((props: any, ref) =>
+      ReactModule.createElement('TextInput', { ...props, ref }, props.children),
+    ),
     View: host('View'),
     ScrollView: host('ScrollView'),
   };
 });
 
-let reducedMotion = false;
-vi.mock('react-native-reanimated', () => ({ useReducedMotion: () => reducedMotion }));
+// Code fences share the native output sheet; keep its platform shell out of Node.
+vi.mock('./HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    HULL_SHEET_INSET: 22,
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
+  };
+});
+
+vi.mock('react-native-reanimated', () => ({ useReducedMotion: () => false }));
 
 import { groknight } from '@/buzz/groknight';
+import {
+  createLiveDraftDrainStore,
+  type LiveDraftClock,
+} from '@/buzz/live-draft-drain';
 import { StreamingProse } from './StreamingProse';
 
 const PROVISIONAL = { color: groknight.ledgerQuiet, fontSize: groknight.proseSize };
@@ -37,21 +54,37 @@ beforeAll(() => {
   });
 });
 afterAll(() => vi.restoreAllMocks());
-beforeEach(() => {
-  reducedMotion = false;
-  vi.useFakeTimers();
-});
-afterEach(() => vi.useRealTimers());
 
-function render(element: React.ReactElement): ReactTestRenderer {
-  let renderer!: ReactTestRenderer;
-  act(() => {
-    renderer = create(element);
-  });
-  return renderer;
+class ManualClock implements LiveDraftClock {
+  at = 0;
+  nextId = 1;
+  timers = new Map<number, { at: number; callback: () => void }>();
+
+  now() {
+    return this.at;
+  }
+
+  setTimer(callback: () => void, delayMs: number) {
+    const id = this.nextId++;
+    this.timers.set(id, { at: this.at + delayMs, callback });
+    return id;
+  }
+
+  clearTimer(id: number) {
+    this.timers.delete(id);
+  }
+
+  runNext() {
+    const next = [...this.timers.entries()].sort((left, right) => left[1].at - right[1].at)[0];
+    if (!next) return false;
+    const [id, timer] = next;
+    this.timers.delete(id);
+    this.at = timer.at;
+    timer.callback();
+    return true;
+  }
 }
 
-/** Every rendered string, in order — what the reader can actually see. */
 function collectText(node: unknown): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string') return node;
@@ -61,89 +94,88 @@ function collectText(node: unknown): string {
   return '';
 }
 
-/** The spans carrying the arriving-tail tone, and the colour they carry. */
-function tailSpans(renderer: ReactTestRenderer): { text: string; color: string }[] {
-  return renderer.root
-    .findAll(
-      (node: { type: unknown; props: { style?: unknown } }) =>
-        node.type === 'Text' &&
-        Array.isArray(node.props.style) &&
-        node.props.style.some(
-          (entry: unknown) =>
-            Boolean(entry) &&
-            typeof entry === 'object' &&
-            'color' in (entry as Record<string, unknown>) &&
-            Object.keys(entry as Record<string, unknown>).length === 1,
-        ),
-    )
-    .map((node: any) => ({
-      text: collectText(node.props.children),
-      color: node.props.style.find(
-        (entry: unknown) =>
-          Boolean(entry) &&
-          typeof entry === 'object' &&
-          Object.keys(entry as Record<string, unknown>).length === 1 &&
-          'color' in (entry as Record<string, unknown>),
-      ).color as string,
-    }));
-}
-
 describe('StreamingProse', () => {
-  it('shows exactly the text produced, with only the new characters arriving', () => {
-    const renderer = render(<StreamingProse markdown="The answer" textStyle={PROVISIONAL} />);
-    // The opening chunk has just arrived, so all of it is the tail.
-    expect(collectText(renderer.toJSON())).toBe('The answer');
-    expect(tailSpans(renderer).map((span) => span.text).join('')).toBe('The answer');
-
-    // Let it settle, then stream a delta.
-    act(() => vi.advanceTimersByTime(200));
-    expect(tailSpans(renderer)).toEqual([]);
-    act(() => renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />));
-
-    expect(collectText(renderer.toJSON())).toBe('The answer is 42');
-    // Only the delta animates; the words already read hold still.
-    expect(tailSpans(renderer).map((span) => span.text).join('')).toBe(' is 42');
+  it('keeps the static compatibility seam on the ordinary markdown renderer', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<StreamingProse markdown="**Finished**" textStyle={PROVISIONAL} />);
+    });
+    expect(collectText(renderer.toJSON())).toContain('Finished');
   });
 
-  it('walks the arriving tail up from the ground to the body tone, once', () => {
-    const renderer = render(<StreamingProse markdown="Arriving" textStyle={PROVISIONAL} />);
-    expect(tailSpans(renderer)[0]?.color).toBe(groknight.bgBase.toLowerCase());
+  it('renders far fewer times than the 800 cumulative deltas it receives', () => {
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    const nativeUpdates: string[] = [];
+    let commits = 0;
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <React.Profiler id="live-row" onRender={() => (commits += 1)}>
+          <StreamingProse streamKey="agent:turn" store={store} textStyle={PROVISIONAL} />
+        </React.Profiler>,
+        {
+          createNodeMock: (element: { type: unknown }) =>
+            element.type === 'TextInput'
+              ? {
+                  setNativeProps: (props: { text?: string }) =>
+                    nativeUpdates.push(props.text ?? ''),
+                }
+              : {},
+        },
+      );
+    });
+    const mountedCommits = commits;
+    const nativeUpdatesBeforeArrivals = nativeUpdates.length;
 
-    act(() => vi.advanceTimersByTime(40));
-    const midway = tailSpans(renderer)[0]?.color;
-    expect(midway).not.toBe(groknight.bgBase.toLowerCase());
-    expect(midway).not.toBe(groknight.ledgerQuiet);
+    let cumulative = '';
+    act(() => {
+      for (let chunk = 0; chunk < 800; chunk += 1) {
+        cumulative += `${String(chunk).padStart(4, '0')} arriving words${chunk % 3 === 2 ? '\n' : ' '}`;
+        store.publish('agent:turn', cumulative);
+      }
+    });
 
-    act(() => vi.advanceTimersByTime(160));
-    // Settled: the tail is gone and the text simply carries the body tone.
-    expect(tailSpans(renderer)).toEqual([]);
-    expect(collectText(renderer.toJSON())).toBe('Arriving');
-    // And no timer is left running to move it again.
-    expect(vi.getTimerCount()).toBe(0);
+    // Arrival is queueing, not paint and not React work.
+    expect(commits).toBe(mountedCommits);
+    expect(nativeUpdates).toHaveLength(nativeUpdatesBeforeArrivals);
+
+    let ticks = 0;
+    while (clock.timers.size) {
+      act(() => clock.runNext());
+      ticks += 1;
+      if (ticks > 2_000) throw new Error('live drain did not become idle');
+    }
+
+    const metrics = store.getMetrics('agent:turn');
+    expect(metrics.arrivals).toBe(800);
+    expect(metrics.paints).toBeLessThan(800 / 3);
+    expect(commits - mountedCommits).toBeLessThanOrEqual(metrics.paints);
+    expect(commits - mountedCommits).toBeLessThan(800 / 3);
+    expect(nativeUpdates.length).toBeGreaterThan(0);
+    expect(nativeUpdates.length).toBeGreaterThanOrEqual(metrics.paints);
+    const presentation = store.getPresentation('agent:turn');
+    expect(presentation.blocks.join('') + presentation.liveText).toBe(cumulative);
+    act(() => renderer.unmount());
   });
 
-  it('never re-animates text the harness rewrote rather than appended', () => {
-    const renderer = render(<StreamingProse markdown="The answer is 41" textStyle={PROVISIONAL} />);
-    act(() => vi.advanceTimersByTime(200));
-    act(() =>
-      renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />),
-    );
-    expect(collectText(renderer.toJSON())).toBe('The answer is 42');
-    expect(tailSpans(renderer)).toEqual([]);
-  });
+  it('makes a non-prefix rewrite visible immediately without a drain animation', () => {
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <StreamingProse streamKey="agent:turn" store={store} textStyle={PROVISIONAL} />,
+        { createNodeMock: () => ({ setNativeProps: vi.fn() }) },
+      );
+    });
 
-  it('skips the typewriter entirely under reduced motion', () => {
-    reducedMotion = true;
-    const renderer = render(<StreamingProse markdown="The answer" textStyle={PROVISIONAL} />);
-    expect(collectText(renderer.toJSON())).toBe('The answer');
-    expect(tailSpans(renderer)).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
+    act(() => store.publish('agent:turn', 'first version'));
+    act(() => clock.runNext());
+    act(() => store.publish('agent:turn', 'replacement'));
 
-    act(() =>
-      renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />),
-    );
-    expect(collectText(renderer.toJSON())).toBe('The answer is 42');
-    expect(tailSpans(renderer)).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(store.getPresentation('agent:turn')).toEqual({ blocks: [], liveText: 'replacement' });
+    expect(store.getMetrics('agent:turn').rewrites).toBe(1);
+    act(() => renderer.unmount());
   });
 });

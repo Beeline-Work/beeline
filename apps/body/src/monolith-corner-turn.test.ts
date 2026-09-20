@@ -47,11 +47,12 @@ describe('corner merge instructions', () => {
   it('selects the no-reviewer and reviewer matrix', () => {
     expect(cornerMergeInstruction(true)).toContain('merge this pull request with gh');
     expect(cornerMergeInstruction(false)).toContain('never merge');
-    expect(cornerMergeInstruction(false)).toContain('explicit human approval');
+    expect(cornerMergeInstruction(false)).toContain('human owner to turn yolo on');
     for (const yolo of [false, true]) {
       const instruction = cornerMergeInstruction(yolo, 'echo');
       expect(instruction).not.toContain('please review');
       expect(instruction).toContain('do not merge until @echo tags you with approval');
+      expect(instruction).toContain('only if the complete gate passes');
       expect(instruction).toContain('gh pr merge --squash --match-head-commit <sha>');
     }
   });
@@ -1807,8 +1808,9 @@ describe('thin monolith corner turn', () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
     const worktree = join(root, 'worktree');
-    const gitCommonDir = join(root, 'repo.git');
-    await Promise.all([mkdir(worktree), mkdir(gitCommonDir)]);
+    const gitCommonDir = join(worktree, '.git');
+    await mkdir(worktree);
+    await execFileAsync('git', ['init', worktree]);
     const runtime: AgentRuntimeRecord = {
       version: 2,
       communityId: 'workspace',
@@ -2040,6 +2042,13 @@ describe('thin monolith corner turn', () => {
     );
     const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
+    expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
+    expect(repositorySystemPrompt).toContain(
+      'never stop and never condition the fix on reproduction',
+    );
+    expect(repositorySystemPrompt).toContain('when none was obtained, state that plainly');
+    expect(repositorySystemPrompt).not.toContain('do not write a fix for a bug you have not seen');
     expect(repositorySystemPrompt).not.toContain('report_to_room');
     expect(repositorySystemPrompt).not.toMatch(/report .* to the Room/i);
     expect(repositorySystemPrompt).not.toContain('Proposed corner:');

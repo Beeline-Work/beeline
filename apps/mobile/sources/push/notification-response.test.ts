@@ -6,8 +6,11 @@ import {
   suppressInitialLandingNavigation,
 } from '../navigation/initial-landing';
 import {
+  CONSUMED_NOTIFICATION_RESPONSE_IDS_KEY,
+  createConsumedNotificationResponseStore,
   routeBuzzNotificationResponse,
   startNotificationResponseEntries,
+  type ConsumedNotificationResponseStore,
   type NotificationResponseRouting,
   type TappedNotificationResponse,
 } from './notification-response';
@@ -35,6 +38,19 @@ function tap(
       },
     },
   } satisfies TappedNotificationResponse;
+}
+
+function memoryConsumed(
+  initial: readonly string[] = [],
+): ConsumedNotificationResponseStore & { ids: Set<string> } {
+  const ids = new Set(initial);
+  return {
+    ids,
+    has: async (id) => ids.has(id),
+    add: async (id) => {
+      ids.add(id);
+    },
+  };
 }
 
 function routing(overrides: Partial<NotificationResponseRouting> = {}) {
@@ -266,20 +282,98 @@ describe('notification response wiring', () => {
 
   it('passes a killed-app response payload to the resolver as cold', async () => {
     const response = tap('msg-cold-entry', 'room-cold-entry');
+    const consumed = memoryConsumed();
     const route = vi.fn().mockResolvedValue(undefined);
     startNotificationResponseEntries({
       addResponseListener: () => ({ remove() {} }),
       getLastResponse: async () => response,
       getAppState: () => 'active',
+      consumedResponses: consumed,
       route,
     });
     await vi.waitFor(() => expect(route).toHaveBeenCalledWith(response, 'cold'));
+  });
+
+  // The leftover last-response is not a tap: Expo's Android onCreate synthesizes
+  // a DEFAULT response from any Activity extras that carry google.message_id,
+  // including a launcher reopen of a previous notification intent. Current main
+  // routes that payload as cold; after the fix a previously routed id is skipped.
+  it('does not route a leftover last notification when this launch had no tap', async () => {
+    const leftover = tap('leftover-msg', 'room-beeline');
+    const consumed = memoryConsumed(['leftover-msg']);
+    const route = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    startNotificationResponseEntries({
+      addResponseListener: () => ({ remove() {} }),
+      getLastResponse: async () => leftover,
+      getAppState: () => 'active',
+      consumedResponses: consumed,
+      route,
+      log,
+    });
+    await vi.waitFor(() =>
+      expect(log.mock.calls.some((call) => String(call[0]).includes('Skipping leftover'))).toBe(
+        true,
+      ),
+    );
+    expect(route).not.toHaveBeenCalled();
+  });
+
+  it('does not re-route a leftover listener replay of an already-routed response', async () => {
+    let listener: ((response: TappedNotificationResponse) => void) | undefined;
+    const leftover = tap('leftover-listener', 'room-beeline');
+    const consumed = memoryConsumed(['leftover-listener']);
+    const route = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    startNotificationResponseEntries({
+      addResponseListener: (next) => {
+        listener = next;
+        return { remove() {} };
+      },
+      getLastResponse: async () => null,
+      getAppState: () => 'active',
+      consumedResponses: consumed,
+      route,
+      log,
+    });
+    listener?.(leftover);
+    await vi.waitFor(() =>
+      expect(log.mock.calls.some((call) => String(call[0]).includes('Skipping leftover'))).toBe(
+        true,
+      ),
+    );
+    expect(route).not.toHaveBeenCalled();
+  });
+
+  it('remembers a routed cold response so a later leftover replay is skipped', async () => {
+    const response = tap('msg-then-leftover', 'room-beeline');
+    const storage = new Map<string, string>();
+    const consumed = createConsumedNotificationResponseStore({
+      getItem: async (key) => storage.get(key) ?? null,
+      setItem: async (key, value) => {
+        storage.set(key, value);
+      },
+    });
+    const { navigate, routing: deps } = routing({ consumedResponses: consumed });
+    await routeBuzzNotificationResponse(response, deps);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(await consumed.has('msg-then-leftover')).toBe(true);
+    expect(storage.get(CONSUMED_NOTIFICATION_RESPONSE_IDS_KEY)).toContain('msg-then-leftover');
+
+    navigate.mockClear();
+    await routeBuzzNotificationResponse(response, {
+      ...deps,
+      handled: new Set(),
+    });
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('routes all Expo taps through the one entry adapter', () => {
     expect(appLayoutSource).toContain('Notifications.addNotificationResponseReceivedListener');
     expect(appLayoutSource).toContain('Notifications.getLastNotificationResponseAsync');
     expect(appLayoutSource).toContain('startNotificationResponseEntries({');
+    expect(appLayoutSource).toContain('createConsumedNotificationResponseStore(AsyncStorage)');
+    expect(appLayoutSource).toContain('consumedResponses: consumedNotificationResponses');
     expect(appLayoutSource).toContain('routeBuzzNotificationResponse(response, {');
     expect(appLayoutSource).toContain('waitForInitialLanding: whenInitialLandingResolved');
     expect(appLayoutSource).toContain(

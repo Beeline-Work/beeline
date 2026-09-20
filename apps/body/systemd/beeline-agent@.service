@@ -15,6 +15,7 @@ RestartSec=5s
 RestartSteps=5
 RestartMaxDelaySec=60s
 RestartPreventExitStatus=77 78 79
+SuccessExitStatus=79
 WatchdogSec=180s
 TimeoutStartSec=90s
 TimeoutStopSec=10min

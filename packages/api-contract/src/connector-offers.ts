@@ -10,14 +10,15 @@
  * and a connector is a Workspace configuration change, not a reach.
  *
  * The offer is a preference and setup affordance, never an authority
- * escalation: accepting it pairs the connector exactly the way the Workbench
- * page's own Connect does (`pairConnector`), and every later credential use
- * still goes through the connector's own receipts and approvals.
+ * escalation: accepting it starts the same install + sign-in ceremony as the
+ * Workbench Connect screen. The offer settles, and the paused turn resumes,
+ * only after the helper reports connected. Every later credential use still
+ * goes through the connector's own receipts and approvals.
  */
 import type { RoomViewIdentity } from './phone-types.js';
 import { CONNECTABLE_CONNECTOR_KINDS, type ConnectorKind } from './workbench.js';
 
-export const CONNECTOR_OFFER_STATUSES = ['pending', 'accepted'] as const;
+export const CONNECTOR_OFFER_STATUSES = ['pending', 'connecting', 'accepted'] as const;
 export type ConnectorOfferStatus = (typeof CONNECTOR_OFFER_STATUSES)[number];
 
 export function isConnectorOfferStatus(value: unknown): value is ConnectorOfferStatus {
@@ -44,9 +45,8 @@ export const CONNECTOR_OFFER_KEY_BOUNDARY = 'still no raw key in chat';
  * (creating a wallet binds a signing key to a person; that is not a helper
  * install and has no offer shape).
  */
-export const OFFERABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = CONNECTABLE_CONNECTOR_KINDS.filter(
-  (kind) => kind !== 'wallet',
-);
+export const OFFERABLE_CONNECTOR_KINDS: readonly ConnectorKind[] =
+  CONNECTABLE_CONNECTOR_KINDS.filter((kind) => kind !== 'wallet');
 
 export function isOfferableConnectorKind(value: unknown): value is ConnectorKind {
   return (OFFERABLE_CONNECTOR_KINDS as readonly string[]).includes(value as string);
@@ -110,7 +110,7 @@ export function connectorPurpose(kind: ConnectorKind): string {
     case 'google-drive':
       return 'Read and organise Drive files through the person’s own Google sign-in.';
     case 'google-youtube':
-      return 'Read YouTube channel and video data through the person’s own Google sign-in.';
+      return 'Read YouTube channel, video, and playlist data through the person’s own Google sign-in. Analytics (watch time, traffic, demographics) requires the channel owner account, not a manager.';
   }
 }
 
@@ -150,7 +150,7 @@ export type ConnectorOfferCardView = {
 };
 
 /**
- * The hidden system line the server posts when a person accepts the offer.
+ * The hidden system line the server posts once the offered connector is connected.
  * Kept for the daemon wake and never shown (the settled card carries the same
  * answer for a reader); the daemon recognises it structurally. Shape:
  * `<name> added Trusty Squire`.

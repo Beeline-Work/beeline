@@ -6,7 +6,6 @@ import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
   SurfaceRefreshScheduler,
-  applyLiveOverlay,
   isRoomView,
   type LiveOverlay,
   type RoomView,
@@ -17,7 +16,13 @@ import {
   RoomViewHttpError,
 } from '@/sync/transport/room-view-client';
 
-import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
+import {
+  loadBuzzIdentity,
+  loadBuzzViewerPubkey,
+  getEffectiveRelayUrl,
+} from '@/auth/buzz-identity-storage';
+import { markRoomOpen } from '@/buzz/room-open-trace';
+import { takeRoomOpenPrefetch } from '@/buzz/room-open-prefetch';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -27,6 +32,12 @@ import {
 } from '@/buzz/room-view-presentation';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { liveDraftRowId } from '@/buzz/draft-settle';
+import {
+  applyLiveOverlayStructure,
+  liveDraftDrainKey,
+  liveDraftDrainStore,
+  type LiveDraftDrainStore,
+} from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -75,6 +86,33 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
   liveTraceWrite = liveTraceWrite
     .then(() => AsyncStorage.setItem(LIVE_TRACE_STORAGE_KEY, snapshot))
     .catch(() => undefined);
+}
+
+export { markRoomOpen };
+
+function queueNewestFrameMark(detail?: string): void {
+  const raf = globalThis.requestAnimationFrame;
+  if (typeof raf !== 'function') {
+    markRoomOpen('newest-js', detail);
+    return;
+  }
+  raf(() => {
+    raf(() => markRoomOpen('newest-frame', detail));
+  });
+}
+
+/** Give React Native a turn to commit the cached (or fetched) transcript
+ * before listen/GET occupy the JS thread. Tests have no frame pump, so they
+ * yield a macrotask instead of hanging on a stub rAF. */
+function yieldToPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    const raf = globalThis.requestAnimationFrame;
+    if (typeof raf === 'function') {
+      raf(() => raf(() => resolve()));
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
 }
 
 function logLivePaintAck(event: {
@@ -145,6 +183,7 @@ export interface UseRoomSurfaceSessionResult {
   roomClient: RoomViewClient | null;
   roomSurface: RoomView | null;
   liveOverlays: readonly LiveOverlay[];
+  liveDraftStore: LiveDraftDrainStore;
   userPubkey: string;
   heartbeatPresences: Record<string, RoomAgentPresence>;
   presenceResolved: boolean;
@@ -180,6 +219,7 @@ export function useRoomSurfaceSession({
   const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
 
   const outboxRef = useRef<RoomOutbox | null>(null);
+  const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(null);
   const agentPresencesRef = useRef(heartbeatPresences);
@@ -188,6 +228,7 @@ export function useRoomSurfaceSession({
   const deltaReconcilePendingRef = useRef(false);
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
+  liveOverlaysRef.current = liveOverlays;
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
@@ -301,6 +342,7 @@ export function useRoomSurfaceSession({
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
+    liveOverlaysRef.current = [];
     setLiveOverlays([]);
     reconciledViewRef.current = null;
     setFailedIds(new Set());
@@ -324,23 +366,51 @@ export function useRoomSurfaceSession({
         });
         return;
       }
-      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
+      // A cumulative draft arrival mutates only the keyed drain queue; React
+      // state changes once to open/close a lane, never for text.
+      const current = liveOverlaysRef.current;
+      const next = applyLiveOverlayStructure(current, overlay, liveDraftDrainStore);
+      if (next === current) return;
+      liveOverlaysRef.current = next;
+      setLiveOverlays(next);
     };
 
-    const applyView = (
-      view: RoomView,
+    const paintView = (view: RoomView, fresh: boolean): RoomView | null => {
+      if (cancelled) return null;
+      const stableView = reconcileRoomView(reconciledViewRef.current, view);
+      for (const message of stableView.messages) {
+        if (message.requestId) {
+          liveDraftDrainStore.finalize(
+            liveDraftDrainKey(message.author.pubkey, message.requestId),
+          );
+        }
+      }
+      for (const turn of stableView.latestAgentTurns) {
+        if (turn.status === 'complete') {
+          liveDraftDrainStore.finalize(liveDraftDrainKey(turn.agentPubkey, turn.requestId));
+        }
+      }
+      reconciledViewRef.current = stableView;
+      hasPainted = true;
+      bindingsRef.current.observeRoomSurface();
+      setRoomSurface(stableView);
+      if (fresh) {
+        const newest = stableView.messages.at(-1)?.id;
+        markRoomOpen('fresh-apply', newest);
+        queueNewestFrameMark(newest);
+      }
+      setHydrationFailed(false);
+      setHydrationError(null);
+      return stableView;
+    };
+
+    const enrichView = (
+      stableView: RoomView,
       identityPubkey: string,
       relayUrl: string,
       fresh: boolean,
     ) => {
       if (cancelled) return;
-      const stableView = reconcileRoomView(reconciledViewRef.current, view);
-      reconciledViewRef.current = stableView;
-      hasPainted = true;
-      bindingsRef.current.observeRoomSurface();
-      setRoomSurface(stableView);
-      setHydrationFailed(false);
-      setHydrationError(null);
       void Promise.all([
         saveActiveCommunityId(identityPubkey, stableView.room.workspaceId),
         saveLastViewedChannel(identityPubkey, stableView.room.workspaceId, channelId),
@@ -407,6 +477,16 @@ export function useRoomSurfaceSession({
       if (fresh && nextWatchKey !== watchKey) void installWatch(stableView.watchFilters);
     };
 
+    const applyView = (
+      view: RoomView,
+      identityPubkey: string,
+      relayUrl: string,
+      fresh: boolean,
+    ) => {
+      const stableView = paintView(view, fresh);
+      if (stableView) enrichView(stableView, identityPubkey, relayUrl, fresh);
+    };
+
     const installWatch = async (filters: RoomView['watchFilters']): Promise<void> => {
       const generation = ++watchGeneration;
       watchKey = JSON.stringify(filters);
@@ -426,11 +506,21 @@ export function useRoomSurfaceSession({
               return;
             }
             if (live.type === 'subscribed') {
+              markRoomOpen('subscribed', live.roomId);
               if (hasPainted) scheduler?.force();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
               if (live.roomId !== channelId) return;
+              if (live.type === 'message-delta' && live.message.requestId) {
+                liveDraftDrainStore.finalize(
+                  liveDraftDrainKey(live.message.author.pubkey, live.message.requestId),
+                );
+              } else if (live.type === 'turn-delta' && live.turn.status === 'complete') {
+                liveDraftDrainStore.finalize(
+                  liveDraftDrainKey(live.turn.agentPubkey, live.turn.requestId),
+                );
+              }
               const received = live.trace
                 ? {
                     ...live.trace,
@@ -496,8 +586,14 @@ export function useRoomSurfaceSession({
               // authoritative read instead of placing it behind ordinary
               // surface coalescing, where a short turn can complete first.
               if (['message', 'turn', 'activity', 'phone-write'].includes(live.reason)) {
-                // The committed-row delta follows this same-process hint. The
-                // periodic/reconnect read remains the lossless fallback.
+                // A same-process committed-row delta follows only when the
+                // invalidation names its row. A targetless phone-write is the
+                // whole hint — swallowing it leaves the newest message
+                // unpainted until remount or the 30s poll.
+                const namedRow =
+                  typeof live.messageId === 'string' ||
+                  (typeof live.agentId === 'string' && typeof live.requestId === 'string');
+                if (!namedRow) scheduler?.signal();
               } else if (live.reason === 'postgres:agent_turns') {
                 scheduler?.force();
               } else {
@@ -622,22 +718,53 @@ export function useRoomSurfaceSession({
     let transportForEffect: BuzzRigTransport | undefined;
     void (async () => {
       try {
+        markRoomOpen('session-effect', channelId);
+        markRoomOpen('identity-start');
+        const viewerPubkey = await loadBuzzViewerPubkey();
+        markRoomOpen('identity-ready');
+        if (!viewerPubkey) {
+          router.replace('/beeline/onboarding');
+          return;
+        }
+        if (cancelled) return;
+        setUserPubkey(viewerPubkey);
+
+        markRoomOpen('relay-start');
+        const relayUrl = await getEffectiveRelayUrl();
+        markRoomOpen('relay-ready');
+        if (cancelled) return;
+        const address = surfaceAddress(relayUrl, viewerPubkey, `/room/${channelId}`);
+        markRoomOpen('session-start', channelId);
+        markRoomOpen('cache-read-start');
+        const cached = await mobileSurfaceCache.read(address, isRoomView);
+        markRoomOpen('cache-read-end', cached ? 'hit' : 'miss');
+        let paintedCache: RoomView | null = null;
+        if (cached && !cancelled) {
+          paintedCache = paintView(cached, false);
+          const cachedNewest = cached.messages.at(-1)?.id;
+          markRoomOpen('cache-apply', cachedNewest);
+          queueNewestFrameMark(cachedNewest);
+        }
+        markRoomOpen('occupancy-yield-start');
+        await yieldToPaint();
+        markRoomOpen('occupancy-yield-end');
+        if (cancelled) return;
+
+        markRoomOpen('auth-start');
         const identity = await loadBuzzIdentity();
+        markRoomOpen('auth-ready');
         if (!identity) {
           router.replace('/beeline/onboarding');
           return;
         }
         if (cancelled) return;
-        setUserPubkey(identity.publicKey);
 
-        const relayUrl = await getEffectiveRelayUrl();
-        if (cancelled) return;
         const nextTransport = new BuzzRigTransport(identity);
         const nextRoomClient = new RoomViewClient({
           baseUrl: relayUrl,
           identity,
           onPhysicalRequest: ({ method, path }) => {
-            console.warn(`[room-surface] physical-request ${method} ${path}`);
+            markRoomOpen('physical-request', `${method} ${path}`);
           },
         });
         transportForEffect = nextTransport;
@@ -670,19 +797,23 @@ export function useRoomSurfaceSession({
             () => void markFailed(record.event.id),
           );
         }
-
-        const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${channelId}`);
-        const cached = await mobileSurfaceCache.read(address, isRoomView);
-        if (cached && !cancelled) applyView(cached, identity.publicKey, relayUrl, false);
+        if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
+        if (cancelled) return;
 
         scheduler = new SurfaceRefreshScheduler({
           fetch: async () => {
             const traces = pendingReadTraces;
             pendingReadTraces = [];
             logLiveTrace('room-read-start', traces);
+            markRoomOpen('room-read-start');
             try {
-              const view = await nextRoomClient.room(channelId);
+              const prefetched = takeRoomOpenPrefetch(channelId);
+              if (prefetched) markRoomOpen('prefetch-await');
+              const view = prefetched
+                ? ((await prefetched) ?? (await nextRoomClient.room(channelId)))
+                : await nextRoomClient.room(channelId);
               logLiveTrace('room-read-end', traces);
+              markRoomOpen('room-read-end', view.messages.at(-1)?.id);
               pendingPaintTracesRef.current = traces;
               return view;
             } catch (error) {
@@ -717,6 +848,14 @@ export function useRoomSurfaceSession({
                 error.status === 502);
             if (terminal) {
               setRoomSurface(null);
+              for (const overlay of liveOverlaysRef.current) {
+                if (overlay.kind === 'draft') {
+                  liveDraftDrainStore.remove(
+                    liveDraftDrainKey(overlay.agentPubkey, overlay.requestId),
+                  );
+                }
+              }
+              liveOverlaysRef.current = [];
               setLiveOverlays([]);
               unsubscribe?.();
               unsubscribe = undefined;
@@ -738,7 +877,9 @@ export function useRoomSurfaceSession({
         });
         schedulerRef.current = scheduler;
         const initialFilters = cached?.watchFilters ?? [{ '#h': [channelId] }];
+        markRoomOpen('watch-install');
         await scheduler.startAfter(installWatch(initialFilters));
+        markRoomOpen('watch-ready');
 
         appStateSubscription = AppState.addEventListener('change', (state) => {
           if (state === 'active') scheduler?.force();
@@ -759,6 +900,12 @@ export function useRoomSurfaceSession({
       outboxRef.current = null;
       schedulerRef.current = null;
       reconciledViewRef.current = null;
+      for (const overlay of liveOverlaysRef.current) {
+        if (overlay.kind === 'draft') {
+          liveDraftDrainStore.remove(liveDraftDrainKey(overlay.agentPubkey, overlay.requestId));
+        }
+      }
+      liveOverlaysRef.current = [];
     };
   }, [
     applyAgentPresence,
@@ -789,6 +936,7 @@ export function useRoomSurfaceSession({
     roomClient,
     roomSurface,
     liveOverlays,
+    liveDraftStore: liveDraftDrainStore,
     userPubkey,
     heartbeatPresences,
     presenceResolved,

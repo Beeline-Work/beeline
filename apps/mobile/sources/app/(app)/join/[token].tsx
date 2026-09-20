@@ -11,7 +11,7 @@ import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
-import { PixelLoader } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -132,7 +132,7 @@ export default function CommunityInviteJoin() {
         <View style={styles.content}>
           {loading ? (
             <View style={styles.loadingBlock}>
-              <PixelLoader compact />
+              <SurfaceGlyphLoader compact testID="invite-loader" />
               <Text style={styles.loadingText}>verifying signed invite…</Text>
             </View>
           ) : preview ? (

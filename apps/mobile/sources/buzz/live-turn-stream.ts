@@ -1,5 +1,6 @@
 import { visibleLiveOverlays, type LiveOverlay, type RoomViewAgentTurn, type RoomViewMessage } from '@beeline/buzz-client';
 import { joinedTurnRowId, liveDraftRowId } from './draft-settle';
+import { liveDraftDrainKey } from './live-draft-drain';
 import type { ChatDisplayMessage } from './room-view-presentation';
 
 /**
@@ -45,7 +46,7 @@ export function liveDraftMessages(
         // but stops pulsing as the live turn.
         isAgentLiveTurn: !overlay.closed,
         isAgentDraft: true,
-        agentMessageDraft: overlay.text ?? '',
+        agentMessageDraftKey: liveDraftDrainKey(overlay.agentPubkey, overlay.requestId),
       },
     ];
   });
@@ -95,12 +96,12 @@ export function projectActiveTurnStream(
     if (!sources.length) continue;
     for (const source of sources) consumed.add(source.id);
 
-    const draft = [...sources]
+    const draftKey = [...sources]
       .reverse()
       .find((message) => message.id === liveDraftRowId(turn.agentPubkey, turn.requestId))
-      ?.agentMessageDraft;
+      ?.agentMessageDraftKey;
     const activity = sources.flatMap((message) => message.activity ?? []);
-    if (!draft && !activity.length) continue;
+    if (!draftKey && !activity.length) continue;
 
     lanes.push({
       id: joinedTurnRowId(turn.agentPubkey, turn.requestId),
@@ -119,7 +120,7 @@ export function projectActiveTurnStream(
       isAgentActivity: true,
       isAgentLiveTurn: true,
       ...(activity.length ? { activity } : {}),
-      ...(draft ? { agentMessageDraft: draft } : {}),
+      ...(draftKey ? { agentMessageDraftKey: draftKey } : {}),
     });
   }
   if (!consumed.size) return messages;

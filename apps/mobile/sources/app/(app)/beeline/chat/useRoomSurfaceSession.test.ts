@@ -28,6 +28,7 @@ const controls = vi.hoisted(() => ({
   transportCount: 0,
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
+  viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
@@ -79,6 +80,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
       controls.identityPromise ??
       Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
   ),
+  loadBuzzViewerPubkey: vi.fn(async () => controls.viewerPubkey),
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));
 
@@ -196,8 +198,6 @@ vi.mock('@beeline/buzz-client', async () => {
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { cornerSummaries } from '@/buzz/room-view-presentation';
-import { selectPinnedCorner, isPinnedCornerLive } from '@/buzz/room-indicators';
-import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -262,33 +262,43 @@ function Harness({
 }
 
 function LiveCornerHarness({ channelId }: { channelId: string }) {
-  // Match the OTA smoke: this Room has already been open longer than the
-  // canonical working-lease horizon before its new corner starts working.
-  const [cornerNow, setCornerNow] = React.useState(() => Date.now() - 180_000);
   const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
-    observeRoomSurface: () => setCornerNow(Date.now()),
+    observeRoomSurface: vi.fn(),
   });
   const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
-  const pinned = roomSurface
-    ? selectPinnedCorner({ lifecycle: cornerSummaries(roomSurface), now: cornerNow })
-    : null;
-  return pinned
-    ? React.createElement(CornerLiveBar, {
-        label: `agent active: ${pinned.cornerId}`,
-        live: isPinnedCornerLive(pinned.status),
-      })
-    : null;
+  const working = (roomSurface ? cornerSummaries(roomSurface) : []).filter(
+    (corner) => corner.state === 'working',
+  );
+  return React.createElement(
+    'corner-states',
+    { testID: 'corner-states' },
+    ...working.map((corner) =>
+      React.createElement('corner-state', { key: corner.id, testID: `corner-working-${corner.id}` }),
+    ),
+  );
 }
 
-async function flushEffects() {
+async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+async function flushEffects() {
+  await flushMicrotasks();
+  await act(async () => {
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(0);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  });
+  await flushMicrotasks();
 }
 
 beforeAll(() => {
@@ -305,6 +315,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
   controls.cached = null;
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
@@ -312,6 +324,7 @@ beforeEach(() => {
   controls.reopenChat.mockClear();
   controls.replayEvents.length = 0;
   controls.identityPromise = null;
+  controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
   controls.roomError = null;
   controls.outboxFail.mockClear();
@@ -477,6 +490,81 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('yields a paint turn after cache apply before installing the live watch', async () => {
+    const queued: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) => queued.push(callback),
+    );
+    controls.cached = roomView('room-a');
+    controls.roomResponse = null;
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushMicrotasks();
+    expect(current.roomSurface?.room.id).toBe('room-a');
+    expect(controls.subscriptions).toHaveLength(0);
+    expect(controls.transportCount).toBe(0);
+
+    await act(async () => {
+      const first = queued.splice(0);
+      first.forEach((callback) => callback(0));
+      const second = queued.splice(0);
+      second.forEach((callback) => callback(0));
+    });
+    await flushMicrotasks();
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.transportCount).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('paints cached newest row before authorization occupies the session', async () => {
+    const queued: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) => queued.push(callback),
+    );
+    let resolveAuth!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
+    controls.identityPromise = new Promise((resolve) => {
+      resolveAuth = resolve;
+    });
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushMicrotasks();
+    expect(current.roomSurface?.room.id).toBe('room-a');
+    expect(controls.transportCount).toBe(0);
+
+    await act(async () => {
+      queued.splice(0).forEach((callback) => callback(0));
+      queued.splice(0).forEach((callback) => callback(0));
+    });
+    await flushMicrotasks();
+    expect(controls.transportCount).toBe(0);
+
+    await act(async () => {
+      resolveAuth({ publicKey: 'viewer', secretKey: new Uint8Array(32) });
+    });
+    await flushMicrotasks();
+    expect(controls.transportCount).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
   it('acknowledges every burst delta after its committed render and then reconciles', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
@@ -605,6 +693,51 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('signals a targetless phone-write so an open Room can paint without remounting', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' },
+      });
+    });
+
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('still waits for the committed-row delta when a phone-write names its message', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: 'room-a',
+          reason: 'phone-write',
+          messageId: 'posted-message',
+        },
+      });
+    });
+
+    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
   it('reconciles immediately when a committed delta cannot be delivered', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
@@ -700,7 +833,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('lights the gold bar from a fresh indexed child-turn receipt', async () => {
+  it('reports a fresh indexed child corner as working, over a stale review card', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
@@ -725,8 +858,8 @@ describe('useRoomSurfaceSession', () => {
               createdAt: stateAt,
               updatedAt: stateAt,
             },
-            // The review card remains mounted during steering. The fresh
-            // receipt must temporarily light the Room bar anyway.
+            // The review card remains mounted during steering. The canonical
+            // daemon state still has to read through as working.
             lifecycle: { lifecycle: 'REVIEW' },
             state: 'working',
             stateAt,
@@ -738,7 +871,7 @@ describe('useRoomSurfaceSession', () => {
     });
 
     expect(
-      renderer.root.findAllByProps({ testID: 'corner-status-working' }).length,
+      renderer.root.findAllByProps({ testID: 'corner-working-corner-a' }).length,
     ).toBeGreaterThan(0);
     await act(async () => renderer.unmount());
   });
@@ -852,8 +985,10 @@ describe('useRoomSurfaceSession', () => {
       agentPubkey: 'agent-a',
       requestId: 'turn-c',
       closed: false,
-      text: "I'll trace the producer, then make the smallest correction",
     });
+    expect(current.liveDraftStore.getReceived('agent-a:turn-c')).toBe(
+      "I'll trace the producer, then make the smallest correction",
+    );
 
     // Exactly as a Room settles: the durable reply carries the turn's request
     // id, and the provisional row stops being visible the moment it lands.
@@ -874,6 +1009,50 @@ describe('useRoomSurfaceSession', () => {
       });
     });
     expect(visibleLiveOverlays(current.liveOverlays, [reply])).toEqual([]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps cumulative draft arrivals out of Room React state after opening the live row', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let roomRenders = 0;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => {
+            current = result;
+            roomRenders += 1;
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    const emitDraft = (text: string) =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'draft',
+          roomId: 'room-a',
+          agentId: 'agent-a',
+          turnId: 'turn-a',
+          text,
+        },
+      });
+
+    await act(async () => emitDraft('0'));
+    const structuralRows = current.liveOverlays;
+    const rendersAfterOpeningRow = roomRenders;
+
+    // Separate React turns are intentional. Batching a burst would hide the
+    // one Room render currently paid for by every network arrival.
+    for (let chunk = 1; chunk < 40; chunk += 1) {
+      await act(async () => emitDraft(String(chunk).padStart(chunk + 1, 'x')));
+    }
+
+    expect(current.liveOverlays).toBe(structuralRows);
+    expect(roomRenders).toBe(rendersAfterOpeningRow);
     await act(async () => renderer.unmount());
   });
 
@@ -925,7 +1104,9 @@ describe('useRoomSurfaceSession', () => {
     expect(
       current.liveOverlays.map((overlay) => [
         overlay.agentPubkey,
-        overlay.kind === 'draft' ? overlay.text : '',
+        overlay.kind === 'draft'
+          ? current.liveDraftStore.getReceived(`${overlay.agentPubkey}:${overlay.requestId}`)
+          : '',
         overlay.createdAt,
       ]),
     ).toEqual([
@@ -971,8 +1152,10 @@ describe('useRoomSurfaceSession', () => {
       kind: 'draft',
       requestId: 'turn-1',
       closed: true,
-      text: 'I will update only X, then commit.',
     });
+    expect(current.liveDraftStore.getReceived('agent-a:turn-1')).toBe(
+      'I will update only X, then commit.',
+    );
 
     // The durable final lands with the same request id and takes over the
     // row's slot: no gap, no duplicate bubble.

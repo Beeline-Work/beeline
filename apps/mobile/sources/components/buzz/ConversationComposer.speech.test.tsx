@@ -250,6 +250,10 @@ describe('listening flow', () => {
     flattened.length = 0;
     collect(statusLine.props.children);
     expect(flattened.join('')).not.toContain('hello world');
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('');
+    expect(String(statusLine.findByType('Text').props.children)).toBe(
+      'listening \u00b7 tap mic to send',
+    );
   });
 
   it('does not truncate a long interim transcript to one line', async () => {
@@ -291,6 +295,8 @@ describe('listening flow', () => {
     });
     const mic = renderer.root.findByProps({ testID: 'chat-mic' });
     expect(mic.props.accessibilityState).toEqual({ selected: true });
+    expect(mic.props.accessibilityLabel).toBe('Stop listening and send');
+    expect(mic.props.accessibilityHint).toBe('Stops dictation and sends');
     expect(mic.props.accessibilityValue).toEqual({ text: 'Listening: accessible words' });
     const status = renderer.root.findByProps({ testID: 'chat-speech-status' });
     expect(status.props.accessibilityLiveRegion).toBe('polite');
@@ -549,6 +555,132 @@ describe('send and mic state', () => {
     // Stop listening
     await act(async () => micBtn.props.onPress());
     await act(async () => {});
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
+  });
+
+  it('drops the Listening placeholder as soon as a final transcript fills the field', async () => {
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState('');
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={setValue}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={vi.fn()}
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />);
+    });
+    renderers.push(renderer);
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'final words' }], isFinal: true });
+    });
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('final words');
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('');
+  });
+
+  it('one mic press after speech sends the captured words and clears the composer', async () => {
+    const onSend = vi.fn();
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState('');
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={setValue}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={() => {
+            onSend();
+            setValue('');
+          }}
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />);
+    });
+    renderers.push(renderer);
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'send these words' }], isFinal: false });
+    });
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
+    expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
+  });
+
+  it('one mic press after a committed final sends that text and clears', async () => {
+    const onSend = vi.fn();
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState('');
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={setValue}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={() => {
+            onSend();
+            setValue('');
+          }}
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />);
+    });
+    renderers.push(renderer);
+
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'already final' }], isFinal: true });
+    });
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('already final');
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+  });
+
+  it('an empty mic press only stops and does not send', async () => {
+    const { renderer, onSend } = render({ value: '' });
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    expect(onSend).not.toHaveBeenCalled();
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
   });
 });

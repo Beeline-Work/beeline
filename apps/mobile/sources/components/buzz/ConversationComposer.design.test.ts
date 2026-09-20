@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { groknight } from '@/buzz/groknight';
+import { roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
 
 const composer = readFileSync(new URL('./ConversationComposer.tsx', import.meta.url), 'utf8');
 const room = readFileSync(
-  new URL('../../app/(app)/beeline/chat/[channelId].tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
   'utf8',
 );
 const desktop = readFileSync(new URL('../DesktopRoomInspector.tsx', import.meta.url), 'utf8');
@@ -62,7 +64,8 @@ describe('Option A composer chrome', () => {
   });
 
   it('holds Rooms, DMs, corners, and desktop to 16px side margins', () => {
-    expect(room).toContain('inputBar: {\n      paddingHorizontal: 16');
+    expect(roomBottomChromeStyles(groknight).composerRow.paddingHorizontal).toBe(16);
+    expect(room).toContain('inputBar: bottomChrome.composerRow,');
     expect(desktop).toContain('cockpitComposer: { paddingHorizontal: 16');
     expect(room).toContain('<ConversationComposer');
     expect(desktop).toContain('<ConversationComposer');

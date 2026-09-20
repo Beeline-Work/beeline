@@ -29,7 +29,8 @@ import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
-import { HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -717,7 +718,7 @@ export default function BuzzMembers() {
   if (!surface && !error) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <PixelLoader />
+        <SurfaceGlyphLoader testID="members-loader" />
         <Text style={styles.loadingText}>Loading {MEMBERS_LABEL.toLowerCase()}…</Text>
       </View>
     );

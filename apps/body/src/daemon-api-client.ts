@@ -124,6 +124,7 @@ export class DaemonApiClient {
   >();
   private roomsChangedListener?: () => void;
   private configChangedListener?: () => void;
+  private hiccupRestartListener?: (attempt: number) => void;
 
   constructor(
     readonly baseUrl: string,
@@ -198,6 +199,11 @@ export class DaemonApiClient {
     this.configChangedListener = listener;
   }
 
+  /** systemd restart for a transient hiccup. Attempt is 1-indexed. */
+  setHiccupRestartListener(listener: (attempt: number) => void): void {
+    this.hiccupRestartListener = listener;
+  }
+
   updateLiveCursor(roomId: string, cursor: string | undefined): void {
     const room = this.liveRooms.get(roomId);
     if (room && cursor) room.cursor = cursor;
@@ -223,7 +229,16 @@ export class DaemonApiClient {
       },
     );
     if (!response.ok) throw await responseError(response);
-    return (await response.json()) as Output<Name>;
+    const output = (await response.json()) as Output<Name>;
+    if (name === 'postAgentTurnReceipt') {
+      const receipt = output as { hiccupRestart?: unknown; hiccupAttempt?: unknown };
+      if (receipt.hiccupRestart === true) {
+        this.hiccupRestartListener?.(
+          typeof receipt.hiccupAttempt === 'number' ? receipt.hiccupAttempt : 1,
+        );
+      }
+    }
+    return output;
   }
 
   private ensureLiveSocket(): void {
@@ -256,6 +271,10 @@ export class DaemonApiClient {
       }
       if (event.type === 'config-changed') {
         this.configChangedListener?.();
+        return;
+      }
+      if (event.type === 'hiccup-restart') {
+        this.hiccupRestartListener?.(typeof event.attempt === 'number' ? event.attempt : 1);
         return;
       }
       if (event.type === 'subscribed' && typeof event.roomId === 'string') {

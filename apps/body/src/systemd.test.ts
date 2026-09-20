@@ -10,6 +10,7 @@ import {
   installAgentService,
   isCanonicalInstalledLauncher,
   disableAgentService,
+  reconcileAgentServices,
 } from './systemd.js';
 
 const roots: string[] = [];
@@ -27,6 +28,7 @@ describe('systemd supervision contract', () => {
     expect(unit).toContain(
       `RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXIT_STATUS} ${UNKNOWN_AGENT_EXIT_STATUS}`,
     );
+    expect(unit).toContain(`SuccessExitStatus=${UNKNOWN_AGENT_EXIT_STATUS}`);
     expect(unit).toContain('WatchdogSec=180s');
     expect(unit).toContain('TimeoutStopSec=10min');
     expect(unit).toContain('KillMode=control-group');
@@ -147,7 +149,72 @@ describe('systemd supervision contract', () => {
     await disableAgentService(pubkey, { run });
     expect(calls).toEqual([
       ['disable', `beeline-agent@${pubkey}.service`],
+      ['reset-failed', `beeline-agent@${pubkey}.service`],
       ['stop', '--no-block', `beeline-agent@${pubkey}.service`],
+    ]);
+  });
+
+  it('isolates orphan cleanup failures while preserving exact-unit and live-runtime boundaries', async () => {
+    const disableFailure = 'c'.repeat(64);
+    const resetFailure = 'd'.repeat(64);
+    const reconciled = 'e'.repeat(64);
+    const live = 'f'.repeat(64);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'disable' && args[1]?.includes(disableFailure)) {
+        throw new Error('simulated disable failure');
+      }
+      if (args[0] === 'reset-failed' && args[1]?.includes(resetFailure)) {
+        throw new Error('simulated reset failure');
+      }
+      return {
+        stdout:
+          args[0] === 'list-unit-files'
+            ? [
+                `beeline-agent@${disableFailure}.service enabled`,
+                `beeline-agent@${resetFailure}.service enabled`,
+                `beeline-agent@${reconciled}.service enabled`,
+                `beeline-agent@${live}.service enabled`,
+                `beeline-agent@${'a'.repeat(64)}.service enabled-runtime`,
+                'beeline-agent@../../operator.service enabled',
+                'beeline-agent@short.service enabled',
+              ].join('\n')
+            : '',
+      };
+    });
+    const hasRuntime = vi.fn(async (path: string) => path.includes(live));
+    const reportFailure = vi.fn();
+
+    await expect(
+      reconcileAgentServices({
+        env: { XDG_STATE_HOME: '/state' },
+        run,
+        hasRuntime,
+        reportFailure,
+      }),
+    ).resolves.toEqual([reconciled]);
+    expect(calls).toEqual([
+      ['list-unit-files', 'beeline-agent@*.service', '--state=enabled', '--no-legend', '--no-pager'],
+      ['disable', `beeline-agent@${disableFailure}.service`],
+      ['disable', `beeline-agent@${resetFailure}.service`],
+      ['reset-failed', `beeline-agent@${resetFailure}.service`],
+      ['disable', `beeline-agent@${reconciled}.service`],
+      ['reset-failed', `beeline-agent@${reconciled}.service`],
+    ]);
+    expect(reportFailure).toHaveBeenCalledTimes(2);
+    expect(reportFailure.mock.calls[0]?.[0]).toBe(
+      `beeline-agent@${disableFailure}.service`,
+    );
+    expect(reportFailure.mock.calls[0]?.[1]).toEqual(new Error('simulated disable failure'));
+    expect(reportFailure.mock.calls[1]?.[0]).toBe(`beeline-agent@${resetFailure}.service`);
+    expect(reportFailure.mock.calls[1]?.[1]).toEqual(new Error('simulated reset failure'));
+    expect(hasRuntime).toHaveBeenCalledTimes(4);
+    expect(hasRuntime.mock.calls.map(([path]) => path)).toEqual([
+      `/state/beeline/agents/${disableFailure}/runtime.json`,
+      `/state/beeline/agents/${resetFailure}/runtime.json`,
+      `/state/beeline/agents/${reconciled}/runtime.json`,
+      `/state/beeline/agents/${live}/runtime.json`,
     ]);
   });
 });

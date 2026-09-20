@@ -629,8 +629,9 @@ export class GitHubOperations {
       ? false
       : configuredReviewerId
         ? approval.rowCount === 0
-        : approval.rowCount > 0;
+        : false;
     const reviewer = corner.reviewer_handle ? `@${corner.reviewer_handle}` : null;
+    const reviewerExists = Boolean(configuredReviewerId);
     const reviewerLabel = reviewer ?? 'the configured reviewer';
     const reviewerWake = reviewerWakeFromFacts({
       configuredReviewerId,
@@ -645,18 +646,19 @@ export class GitHubOperations {
       commandCheckState: corner.command_check_state,
     });
     const rule = reviewerIsAuthor
-      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. approvalPending is false; merge once checks pass.`
+      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the helper still applies worker yolo mode, human hold, and reviewer-existence conditions.`
       : configuredReviewerId
         ? reviewerWake.status === 'unreachable'
-          ? `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
-          : `Only ${reviewerLabel}'s approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can clear this gate.`
-        : 'This Room has no configured reviewer, so no agent approval gates this pull request.';
+          ? `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
+          : `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
+        : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the complete merge gate still requires reviewerExists=true.';
     return {
       checks,
       pullRequest: pr.url,
       headSha: pr.headSha,
       approvalPending,
       reviewer,
+      reviewerExists,
       reviewerIsAuthor,
       reviewerWake,
       rule,

@@ -40,8 +40,8 @@ ground: `#90909B` in Obsidian, `#6F6455` in Bone (pinned in
 `groknight.test.ts`; never re-dim it). `#83838d` and `#6c6c76` remain
 reserved for chrome, muted labels, and the gutter's ghost tier. Brass is
 `#b08a4a` in Obsidian (the Editorial direction's single accent; the older
-gold `#c9a24b` is retired); diff green/red remains the one domain-color
-exception.
+gold `#c9a24b` is retired); diff green/red remains a domain-color
+exception, and Two Inks is the fenced-block exception (see Color exceptions).
 
 Bone is Obsidian's construction rules run in reverse: a warm bone canvas
 (`#F3EEE4`) instead of the warm-dark aubergine, "content near-black, chrome
@@ -51,9 +51,10 @@ near-black and reads too light against bone. Every elevation, border, and
 divider step keeps Obsidian's relative position on the ladder, re-based on
 the bone canvas. Diff green/red ships as text color, not a swatch, so it is
 tuned per canvas the same way brass is: Obsidian keeps `#3FB950`/`#F85149`,
-Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — the domain
-color is still the one exception (never a third hue), it is just no longer
-one literal hex shared by every canvas. The ledger's quiet ink is tuned per
+Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — that domain
+color stays the diff exception (never a third hue on the slab), it is just no
+longer one literal hex shared by every canvas. Two Inks lives only inside a
+fenced block. The ledger's quiet ink is tuned per
 canvas the same way: the gray bone shares with chrome (`#8B7F6E`) falls to
 3.4:1 on the bone canvas, so Bone darkens `ledgerQuiet` to `#6F6455` (5.0:1)
 while Obsidian lifts its own to `#90909B` (6.1:1). Both hold the AA floor
@@ -197,8 +198,18 @@ blank-line-delimited block — a dump is usually written directly under the
 sentence introducing it, and a block rule would either swallow that sentence or
 miss the dump. The summary truncates; the disclosure copy beside it never does,
 because the affordance is the reason the line exists. A fenced code block marks
-itself with a 2px left rule in the theme's peak steel — the same vocabulary tool
-readouts use — never a panel.
+itself with a 2px left rule in Two Inks structure (see Color exceptions) —
+the same vocabulary tool readouts use — never a panel.
+Fences of up to four source lines stay inline with a Copy control and no inscription.
+A longer fence is one inscribed line (language, line count, and byte size)
+plus a four-line peek labelled with what it hides,
+and opens full-width in `ToolOutputSheet` (`CodeBlock.tsx`) where long lines
+wrap. Copy copies the complete block, including lines hidden by the peek;
+selectable text preserves source spaces and tabs. Unlabelled fences and the
+`text`, `txt`, `plaintext`, `markdown`, and `md` labels stay monochrome.
+Other labelled fences use Two Inks: `json` distinguishes keys from values;
+all other labels use the generic scanner (see `syntax-highlight.ts`). Very
+large bodies use the full-fidelity monochrome fallback in `CodeHighlighter.tsx`.
 
 **Text still being written says so, and settles by dissolving.** A streaming
 turn is not a finished message, and reading like one is a lie the reader pays
@@ -227,8 +238,8 @@ same left margin as the prose above it. Only its affordance lifts — `view →`
 hangs in the same right gutter the timestamps do, one tonal step brighter, with
 a faint tonal flash on press and no border at any point. `◇` means corner (the
 lifecycle glyph family) and `→` means enterable, and that pairing is the one
-"enter this corner" vocabulary the product has, shared by
-`WritePermissionOutcome` and the pinned corner line below the transcript.
+"enter this corner" vocabulary used by `WritePermissionOutcome`. The Room
+header uses `◇` with the corners label to open the list rather than one corner.
 
 **A system notification is one sentence in one voice.** The server phrases
 every one of them — a join, a leave, a yolo flip, a grant answer, a failed
@@ -248,15 +259,25 @@ its header sentence is the same grammar.
 not after it ends. A note inscribed the moment a corner opened scrolls away and
 then lies — still saying "open" long after the corner merged — and a terminal
 stamp (`Alden ✕ FAILED`, `◇ OPEN`) interrupts a live conversation with a dead
-record while duplicating the pinned line above the composer. So a Room has
-exactly **one** active-corner affordance, the pinned line, and exactly one place
-a finished corner is recorded, the Room's corners view (opened from the header
-`◇`, and also shown in the desktop inspector overview). The transcript keeps the
-conversation and nothing else.
+record. So a Room has exactly **one** active-corner affordance, the named
+corners door in its header, and that door opens the one place every corner —
+running or finished — is recorded, the Room's corners list (also shown in the
+desktop work-pane corner list). The transcript keeps the conversation and
+nothing else.
 
-**A turn in progress and an open corner are two different facts, and they get
-two different lines.** A question being answered is transient and has nowhere
-to go, so it shows as one line with the primary activity verb and elapsed seconds,
+**Nothing pins one corner above the composer.** There used to be a line there
+naming "the" open corner; a Room holds many at once, so it could only ever
+name one of them, and it sat between the reader and the field they were
+typing in — chrome in the one place the product asks for attention. It is
+retired, not dimmed: the door in the header is the way in, the corners list
+answers "what is running", and the Room-list row's own state mark answers it
+from outside. The turn line is now the only thing that hangs above the
+composer. With no offline hint present, it hangs directly on the composer
+with no gap.
+
+**A turn in progress and an open corner are two different facts.** A question
+being answered is transient and has nowhere to go, so it shows as one line with
+the primary activity verb and elapsed seconds,
 without a redundant `thinking` suffix, that disappears when the
 reply lands — it navigates nowhere and cannot strand a reader in a dead
 channel. When the server accepts a human steer into that exact running corner
@@ -274,13 +295,11 @@ already written** — the half-finished answer
 settles as an ordinary message and the conversation carries on from it, the way
 every stop button a person has used already behaves; retracting it would delete
 words they had read and make stopping feel like undoing. The line's last word is
-`stopped`, never `done`. A corner is a place that exists, so the pinned line names it and
-opens it. They may show together, separately, or not at all, and neither
-is ever derived from the other: an agent busy on a plain Room reply must not
-light the corner line, and a corner line must never name a corner that has
-merged, failed, or closed — a tappable dead channel is worse than no line at
-all. Both gates are enforced in code (`buzz/room-indicators.ts`), because this
-rule was once held by care alone and did not hold.
+`stopped`, never `done`. A corner is a place that exists, so the header's corners door names the
+place rather than the moment. Keeping the two apart is why the corner half
+never reaches the turn line: an agent busy on a plain Room reply must not
+report corner work. Finished corners remain accessible in the corners list
+for reading their history; they are never presented as current work.
 
 **There is no reply echo under an agent turn.** Body threads every Room/DM reply
 to the request that triggered it, so the quoted block was always the message
@@ -312,13 +331,18 @@ check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
-trailing slot carries the corner glyph `◇` beside overflow; it is a second door
-onto the Room's dedicated corners list (`corners/[roomId]`, windowed with the
-same cap and archived fallback as the desktop inspector overview), not a second
-live-corner jump. The pinned line below the transcript remains the one
-active-corner affordance. The approval panel and
-diff review exist only in a Corner — that is a difference in content, not in
-shape language.
+trailing slot carries the **corners door**: the brass corner sigil `◇` ALONE,
+in its own 44pt box, with `space.lg` of bare slab before the overflow dots'
+identical 44pt box. No word rides beside it. The two are **siblings** — same
+box, same baseline, parted by slab — and the sigil is sized to read at
+optically the SAME mark-size as the dots: `◇` draws about 0.6em against a wide
+short row of bullets, so the body role matches them by eye where the metadata
+role left a speck and the hero role made it tower (captain, 2026-09-20). The
+accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
+(`corners/[roomId]`, windowed with the same cap and archived fallback as the
+desktop work-pane corner list) and is the Room's one active-corner affordance.
+The approval panel and diff review exist only in a Corner — that is a
+difference in content, not in shape language.
 
 Beneath that header a Corner holds its objective — the human's own request, as
 one inscribed line that stays for the life of the corner. A slug in the header
@@ -409,14 +433,30 @@ name to the primary tone, and the word itself becomes the AFFORDANCE — `REVIEW
 `REPLY`, `RETRY` — where every other row reads `WORKING` or `IDLE`, so the
 accent is never the only thing carrying the fact.
 
+**The standalone corners list is that same index, full height.** The screen
+opened from the Room header's corners door (`corners/[roomId]`) is chrome on
+the slab like every other index: a hairline header with the Room name as the
+eyebrow, the noun as the title, the count alone in a reserved gutter, and rows
+at the index's own height as a FLOOR. Its row leads with the opener's 26px face
+tile — the byline size, because the opener is secondary to the work — names the
+corner at the brightest tier, carries one quiet line (who opened it, and the
+PR/check narration once there is one), and closes with the state WORD in a
+reserved cell beside the state circle. **A corner's name is never truncated
+here**: this is the screen whose whole job is telling corners apart, so the
+name prints in full and wraps to as many lines as it needs, and the row grows
+with it. Uneven row heights are the accepted cost (captain, 2026-09-20). That
+is why this one surface composes its label through `fullCornerTitle` rather
+than `displayCornerTitle`'s three-word inline form. The word is not decoration: a circle alone encodes state in colour and
+shape only, which is exactly the encoding a colour-blind reader and a screen
+reader both lose. No explainer paragraph stands above the list; a screen that
+has to describe what its own contents are has not been designed yet.
+
 **The plus is a brass square.** Compose is one 44pt brass square floating at
 the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
 the slab its only affordance — opening the compose sheet. The header carries
-no plus: it is the Workspace name and nothing louder, with an outline people
-glyph (`people-outline`, the same Ionicons family as bookmarks) as the Members
-door. The word remains the accessible name. The retired hexagon `⌬` never
-returns; a Speakeasy animal is an identity face, not a chrome mark for the
-roster.
+no plus: it is the Workspace name and nothing louder, with `MembersGlyph`
+as the Members door. See [Identity](#identity) for the shared glyph and
+accessible-name contract.
 
 The Workspace rail is the same slab with one hairline edge. Selection reads
 three redundant ways and none of them is a box or a fill: an edge bar (never a
@@ -533,13 +573,16 @@ header, and switcher, falling back to the generated Workspace mark when absent
 or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
 
 One concept gets one glyph, product-wide. Members chrome on the Room-list
-header and the desktop workspace heading is the outline people glyph, a peer of
-bookmarks, with `Members` as the accessible name (`MEMBERS_LABEL`,
+header, the desktop workspace heading, and the corner roster row is
+`MembersGlyph` (`components/buzz/MembersGlyph.tsx`), a peer of `RoomGlyph`:
+stroke-only circle over a right-isosceles triangle (equal legs from the apex,
+90° apex angle), no fill, no second person, with a heavier stroke than
+`RoomGlyph`. The desktop work pane no longer offers members. `Members` is the accessible name (`MEMBERS_LABEL`,
 `buzz/vocabulary.ts`). In-list titles (the Members page, Workspace settings, the
-roster sheet) keep the word. The retired hexagon `⌬` stays gone. That mark stays
-visually distinct from the corner
-lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on any
-Buzz surface means live corner work, never people.
+roster sheet) keep the word. The retired hexagon `⌬` and the Ionicons
+`people-outline` stand-in stay gone. That mark stays visually distinct from the
+corner lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on
+any Buzz surface means live corner work, never people.
 
 An agent's _name_ is human-authored and never guessed twice. Every surface
 resolves it through `resolveAgentDisplayIdentity` — validated soul overlay, then
@@ -560,7 +603,7 @@ is reading an empty roster, not a different name.
 Vocabulary: "Room," never "Channel." "Members," never "People." Room and corner
 names carry the `#` channel mark everywhere a surface EXPOSES them — chat
 headers (`#<room>`, corners as `#<room>/<corner>`), push-notification titles
-(gateway `mapping.ts` owns those), Room index rows, the pinned-corner line, the
+(gateway `mapping.ts` owns those), Room index rows, the
 Room-list corner dropdown, the standalone corners list, Workspace-settings room
 lists, and Members references — all added at render through one
 presentation-only derivation pair (`displayRoomIndexTitle` /
@@ -612,7 +655,8 @@ is the transcript seam. Bricolage Grotesque is the logo lockup only.
 
 Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
 `HullSurface` (the lifted-region texture), `BrittlePress` (70ms in / 110ms out
-press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps), `HullWaveSignal`
+press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps — labeled-control busy
+only), `HullWaveSignal`
 (9-segment sin² live wave), `HullLivePulse` (the same wave reduced to one
 mark), `StatusGlyph`, `PixelGateReveal` (176ms strip reveal),
 `NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
@@ -635,9 +679,9 @@ settling reply cross-fades opacity with its provisional ghost over 220ms. Both
 are inside the ~240ms bound, both stop the moment they finish, and both are
 skipped outright under reduced motion — the provisional style stays either way.
 
-It is also **the only motion "live" is allowed to have.** The pinned corner line
-and a working agent's gold ring both breathe on it — a calm heartbeat, on the
-one clock. Live state must never be reported by something that _travels_: a
+It is also **the only motion "live" is allowed to have.** A working corner's
+row and a working agent's gold ring both breathe on it — a calm heartbeat, on
+the one clock. Live state must never be reported by something that _travels_: a
 sweeping band, a moving crest, a progress bar, or a row of dashes all read as
 "something is filling up towards a finish", which is a claim the product cannot
 make about an agent's turn, and at rest they read as broken chrome. Breathing
@@ -651,12 +695,16 @@ leading option's votes (the leader fills the track). The fill does not animate,
 pulse, or sweep. Counts stay inscribed. Reduced motion changes nothing because
 nothing moves. This is not a license for progress bars elsewhere.
 
-The one drawn exception is the thinking line's glyph, `BeelineMarkSpinner`: a
-brass stroke draws the Beeline mark's outline from nothing, lingers complete,
-unwinds and redraws, on a 2s ping-pong. It is allowed because the loop returns
-to nothing every cycle — it never fills up towards a finish — and because the
-mark sits in a fixed 18px cell so nothing around it moves. Reduced motion, a
-backgrounded app, and the settled row all show the same completed static mark.
+The one drawn exception is the self-painting glyph: splash (`BootPaint`) paints
+once and holds because that load ends; in-app load gates (`SurfaceGlyphLoader`)
+and the thinking line (`BeelineMarkSpinner`) use the release loop — a brass
+stroke draws the Beeline mark, immediately unwinds, and rests empty before
+redrawing. It is allowed because the loop returns to nothing every cycle — it
+never fills up towards a finish — and because the mark sits in a fixed cell so
+nothing around it moves. Reduced motion, a backgrounded app, and a settled mark
+all show the same completed static glyph. `PixelLoader`'s four dots stay only
+on labeled-control busy (`MonoButton` / `BrassButton` / the Settings version
+check), never as a page or Room/Corner load gate.
 
 ## Color exceptions, stated so no one re-litigates them
 
@@ -665,8 +713,8 @@ backgrounded app, and the settled row all show the same completed static mark.
    chat effect), and
    the moment you act on agent work: the ring around a working agent's identity
    mark (working means a live turn or corner, never presence alone), live work
-   elsewhere (the Corner's LIVE wave, the pinned corner line, and a Room on
-   the index with a live corner), owner role,
+   elsewhere (the Corner's LIVE wave, the Room header's corners sigil, and a
+   Room on the index with a live corner), owner role,
    and the merge-approval action. It is never the _only_ signal for any of
    these — each is redundantly encoded by shape, glyph, or copy. Note what brass
    is _not_: identity itself. An agent's plate carries its own signature colour,
@@ -694,3 +742,12 @@ backgrounded app, and the settled row all show the same completed static mark.
 3. **Ledger speaker rails** use human blue and agent green only in the dense
    Ledger theme. They are redundant with speaker position/identity and do not
    authorize colored prose, chrome, or status decoration.
+4. **Two Inks** (captain 2026-09-19, C composed with B) is the fenced-block
+   palette: three roles — structure, name, value — in two theme-tuned hues
+   drawn from the canvas family (aubergine lifted, and its cool complement),
+   laddered by luminance so the block still parses in greyscale. The theme's
+   `syntaxStructure`, `syntaxName`, and `syntaxValue` in
+   `apps/mobile/sources/buzz/groknight.ts` own the palette values for each canvas;
+   `groknight.test.ts` pins their contrast and luminance order. Hue is the redundant
+   channel. It lives only inside a fenced block and the sheet that opens one;
+   it does not authorize a fifth exception.

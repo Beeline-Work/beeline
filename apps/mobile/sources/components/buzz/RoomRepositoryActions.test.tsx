@@ -85,6 +85,23 @@ describe('RoomRepositoryActions', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-repo-picker' })).toHaveLength(0);
   });
 
+  it('capitalizes the Room and Corner product terms in repository descriptions', () => {
+    const renderDescription = (repositoryName: string | null) =>
+      render(
+        <RoomRepositoryActions
+          busy={false}
+          canManage
+          onToggle={vi.fn()}
+          picker={<Picker testID="room-repo-picker" />}
+          pickerVisible={false}
+          repositoryName={repositoryName}
+        />,
+      ).root.findByProps({ testID: 'room-repo-action' }).props.description;
+
+    expect(renderDescription('beeline')).toBe('Corners in this Room tree off this repo.');
+    expect(renderDescription(null)).toBe('A Room needs a repo before a Corner can open.');
+  });
+
   it('renders only a read-only repository fact for a non-manager', () => {
     const renderer = render(
       <RoomRepositoryActions

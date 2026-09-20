@@ -63,10 +63,17 @@ export function desktopWorkPaneWidthMode(
 
 export function initialDesktopWorkPaneState(width: number): DesktopWorkPaneState {
   return {
-    preference: 'present',
+    preference: 'dismissed',
     widthMode: desktopWorkPaneWidthMode(width),
     selectedCornerId: null,
   };
+}
+
+/** Live work a handle or toggle may present — archived rows do not count. */
+export function desktopWorkPaneHasLiveCorners(
+  corners: readonly { state: string }[] | null | undefined,
+): boolean {
+  return Boolean(corners?.some((corner) => corner.state !== 'archived'));
 }
 
 /**
@@ -107,6 +114,7 @@ export function transitionDesktopWorkPane(
         ? { state: { ...state, preference: 'dismissed', selectedCornerId: null } }
         : { state: { ...state, preference: 'present', selectedCornerId: null } };
     case 'open-overview':
+      // Handle and toggle present the corner list, never the last corner.
       return { state: { ...state, preference: 'present', selectedCornerId: null } };
     case 'drop-corner':
       return {
@@ -114,9 +122,13 @@ export function transitionDesktopWorkPane(
         placement: 'work',
       };
     case 'open-corner':
-      return desktopWorkPaneMode(state) === 'present'
-        ? { state: { ...state, selectedCornerId: event.cornerId }, placement: 'work' }
-        : { state, placement: 'main' };
+      // A corner card opens the pane on that corner. A suppressed pane cannot
+      // host it, so the caller falls through to the main transcript.
+      if (desktopWorkPaneMode(state) === 'suppressed') return { state, placement: 'main' };
+      return {
+        state: { ...state, preference: 'present', selectedCornerId: event.cornerId },
+        placement: 'work',
+      };
     // An artifact opened from the transcript must never land silently: a
     // dismissed pane re-presents around it, a suppressed pane cannot host it
     // at all so the caller falls back, and a present pane already shows it.
@@ -127,10 +139,9 @@ export function transitionDesktopWorkPane(
         placement: 'work',
       };
     case 'open-corner-in-main':
-      return {
-        state: { ...state, preference: 'present', selectedCornerId: null },
-        placement: 'main',
-      };
+      // Maximize is a temporary zoom: the corner goes to main and the side
+      // pane stays exactly as it was — including dismissed.
+      return { state, placement: 'main' };
   }
 }
 
@@ -169,9 +180,9 @@ function desktopWorkPanePreferenceKey(windowClass: DesktopWorkPaneWindowClass): 
 export async function loadDesktopWorkPanePreference(
   windowClass: DesktopWorkPaneWindowClass,
 ): Promise<DesktopWorkPanePreference> {
-  return (await AsyncStorage.getItem(desktopWorkPanePreferenceKey(windowClass))) === 'dismissed'
-    ? 'dismissed'
-    : 'present';
+  return (await AsyncStorage.getItem(desktopWorkPanePreferenceKey(windowClass))) === 'present'
+    ? 'present'
+    : 'dismissed';
 }
 
 export async function saveDesktopWorkPanePreference(

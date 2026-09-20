@@ -6,6 +6,7 @@ import {
   connectorOfferActionLabel,
   connectorOfferConsequence,
   connectorOfferTitle,
+  connectorPurpose,
   formatConnectorOfferDecisionLine,
   isOfferableConnectorKind,
   parseConnectorOfferDecisionLine,
@@ -23,7 +24,7 @@ describe('connector offers (R5)', () => {
     expect(isOfferableConnectorKind('wallet')).toBe(false);
     expect(isOfferableConnectorKind('tailscale')).toBe(false);
     expect(isOfferableConnectorKind('nonsense')).toBe(false);
-    expect([...CONNECTOR_OFFER_STATUSES]).toEqual(['pending', 'accepted']);
+    expect([...CONNECTOR_OFFER_STATUSES]).toEqual(['pending', 'connecting', 'accepted']);
     expect(CONNECTOR_OFFER_WINDOW_MS).toBe(2 * 60_000);
   });
 
@@ -44,6 +45,7 @@ describe('connector offers (R5)', () => {
     expect(google).toContain('never see your password');
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');
     expect(connectorOfferActionLabel('Trusty Squire')).toBe('Add Trusty Squire');
+    expect(connectorPurpose('google-youtube')).toContain('channel owner account, not a manager');
   });
 
   it('round-trips the hidden decision line the daemon resumes on', () => {
@@ -86,6 +88,15 @@ describe('connector offers (R5)', () => {
       createdAt: 1_758_000_000,
     };
     expect(isConnectorOfferCardView(card)).toBe(true);
+    expect(
+      isConnectorOfferCardView({
+        ...card,
+        status: 'connecting',
+        acceptedBy: addressee,
+        acceptedAt: 1_758_000_030,
+        connectorId: '22222222-2222-4222-8222-222222222222',
+      }),
+    ).toBe(true);
     expect(
       isConnectorOfferCardView({
         ...card,

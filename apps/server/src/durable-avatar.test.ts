@@ -4,13 +4,14 @@ import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAvatar, AVATAR_MAX_BYTES, AVATAR_INPUT_MAX_BYTES } from './durable-avatar.js';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { MediaExpiryLoop } from './background.js';
+import { ObjectService } from './object-service.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const OWNER = createHash('sha256').update('github:owner').digest('hex');
@@ -59,6 +60,8 @@ describe('durable workspace avatars through the installed phone contract', () =>
   let database: PgliteDatabase;
   let auth: TokenAuth;
   let phone: PhoneService;
+  let objectStorage: MemoryObjectStorage;
+  let objectService: ObjectService;
   let server: ReturnType<typeof createBeelineServer>;
   let origin: string;
   let token: string;
@@ -73,7 +76,24 @@ describe('durable workspace avatars through the installed phone contract', () =>
       `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`,
       [WORKSPACE, OWNER],
     );
-    phone = new PhoneService(database, 'http://placeholder');
+    objectStorage = new MemoryObjectStorage();
+    await objectStorage.listen();
+    objectService = new ObjectService(
+      database,
+      objectStorage.asStorage(),
+      'http://placeholder',
+      AVATAR_INPUT_MAX_BYTES,
+    );
+    phone = new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      undefined,
+      undefined,
+      false,
+      database,
+      objectService,
+    );
     const live = new LiveHub();
     server = createBeelineServer({
       database,
@@ -82,13 +102,16 @@ describe('durable workspace avatars through the installed phone contract', () =>
       live,
       daemon: new DaemonService(database, live),
       mediaMaximumBytes: AVATAR_INPUT_MAX_BYTES,
+      objectService,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     (phone as unknown as { publicOrigin: string }).publicOrigin = origin;
+    (objectService as unknown as { publicOrigin: string }).publicOrigin = origin;
   });
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (objectStorage) await objectStorage.close();
     if (database) await database.close();
   });
   const set = (avatar: string, accessToken = token) =>
@@ -126,8 +149,13 @@ describe('durable workspace avatars through the installed phone contract', () =>
     const bytes = Buffer.from(await first.arrayBuffer());
     expect(await sharp(bytes).metadata()).toMatchObject({ width: 256, height: 256 });
 
-    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
-    expect(await new MediaExpiryLoop(database, 24).runOnce()).toBe(1);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBe(1);
     expect((await fetch(uploaded)).status).toBe(410);
     // Fresh session + fresh HTTP reads model the server boundary of reinstall.
     // Nothing from AsyncStorage, an old image cache or the previous read is used.

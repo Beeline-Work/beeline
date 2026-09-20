@@ -4,6 +4,7 @@ import {
   beelineAgentMcpServer,
   readOnlyMcpServer,
   ReadOnlyToolsUnavailableError,
+  youtubeMcpServer,
 } from './room-session.js';
 
 describe('monolith Room inspection mount', () => {
@@ -80,5 +81,27 @@ describe('monolith Room inspection mount', () => {
         { name: 'BEELINE_DAEMON_TOKEN', value: 'daemon-secret' },
       ]),
     );
+  });
+
+  it('mounts YouTube locally on the Workbench grant and never without a token', () => {
+    const config = {
+      agentBinary: 'agent',
+      mcpBinary: 'unused',
+      readonlyMcpCommand: '/bin/beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: '/room',
+      autoApprovePermissions: false,
+    };
+    expect(youtubeMcpServer(config, undefined)).toBeUndefined();
+    const server = youtubeMcpServer(config, 'ya29.local');
+    expect(server).toMatchObject({
+      name: 'youtube',
+      command: '/bin/beeline-mcp',
+    });
+    expect(server!.env).toEqual([
+      { name: 'BEELINE_MCP_SURFACE', value: 'youtube' },
+      { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: 'ya29.local' },
+    ]);
+    expect(server!.command).not.toMatch(/smithery|npx/i);
   });
 });

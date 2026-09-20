@@ -8,6 +8,29 @@ import { expect, test } from 'vitest';
 const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
 const repoRoot = resolve(dirname(cliPath), '..', '..', '..');
 
+test('start help describes update-then-start-all, not a single-agent restart', () => {
+  const home = mkdtempSync(resolve(tmpdir(), 'beeline-start-help-'));
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', cliPath], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: {
+        HOME: home,
+        PATH: '',
+        BEELINE_HARNESS_PATH_AUGMENT: '0',
+        NO_COLOR: '1',
+      },
+    });
+    const text = `${result.stdout}${result.stderr}`;
+    expect(text).toContain('Update the helper, then start every');
+    expect(text).toContain('Already-');
+    expect(text).toContain('running agents are left untouched');
+    expect(text).not.toMatch(/RESTART when already running/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('version boots without external agent binaries or binary overrides', () => {
   const home = mkdtempSync(resolve(tmpdir(), 'beeline-version-home-'));
   try {

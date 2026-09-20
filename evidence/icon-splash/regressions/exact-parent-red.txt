@@ -1,0 +1,2927 @@
+
+ RUN  v3.2.7 /home/lunchbox/.treehouse/buzzy-e37bbb/18/buzzy/node_modules/.parent-proof-icon-splash-e37bbb/apps/mobile
+
+ ❯ sources/config/nativeSplashHandoff.test.ts (1 test | 1 failed) 17ms
+   × native splash handoff > hands directly from the OS splash to the real app tree 16ms
+     → expected 'import \'react-native-quick-base64\';…' to contain 'if (initialized) hideNativeSplash()'
+ ❯ sources/app/(app)/beeline/channels.bootstrap.test.ts (11 tests | 1 failed) 14ms
+   ✓ Room deck bootstrap > turns a fresh server Workspace response into the first chats request 1ms
+   ✓ Room deck bootstrap > restores the persisted Workspace before choosing server recency order 0ms
+   × Room deck bootstrap > shows the Room loader whenever the Room deck itself is loading 8ms
+     → expected 'import React, { useCallback, useEffec…' not to contain 'consumeFirstRoomDeckAfterBoot'
+   ✓ Room deck bootstrap > renders a terminal state when the server returns zero Workspaces 0ms
+   ✓ Room deck bootstrap > puts start-Room and connect-Agent buttons directly on the empty Room deck 0ms
+   ✓ Room deck bootstrap > wires the buttons to the existing Room dialog and shared agent-connect sheet 1ms
+   ✓ Room deck bootstrap > opens the existing Room dialog for a fresh desktop navigation request 0ms
+   ✓ Room deck bootstrap > opens the shared direct-message picker for a fresh desktop DM request 0ms
+   ✓ Room deck bootstrap > refetches an acknowledged Room write without leaving the refreshed deck 0ms
+   ✓ Room deck bootstrap > does not auto-open a Room before the stored Workspace is read 0ms
+   ✓ Room deck bootstrap > reinstalls Room-deck watches from chats watchFilters and never seeds a Workspace #h 0ms
+ ✓ sources/components/buzz/SurfaceGlyphLoader.test.ts (6 tests) 49ms
+ ❯ sources/config/logoAssets.test.ts (7 tests | 5 failed) 131ms
+   ✓ Beeline continuous-line logo assets > locks every vector and the in-app mark to the original loop geometry 3ms
+   × Beeline continuous-line logo assets > keeps brass on aubergine across icon and web surfaces 15ms
+     → expected { ios: { …(5) }, android: { …(5) } } to match object { ios: { …(5) }, android: { …(5) } }
+   × Beeline continuous-line logo assets > uses ink on cream for the default iOS light icon and white on transparent for tinted/monochrome 15ms
+     → expected '<svg xmlns="http://www.w3.org/2000/sv…' not to contain 'transform="translate(20.087671 20.087…'
+   ✓ Beeline continuous-line logo assets > generates 1024x1024 PNGs for the new icon variants 1ms
+   × Beeline continuous-line logo assets > uses the canonical swirl in ink on ivory for the light splash 3ms
+     → expected 'a2d224d4309181456f8ca6f1d777efd95abcd…' to be '5941f621854629123fc877f4bd9825cc9ae72…' // Object.is equality
+   × Beeline continuous-line logo assets > limits the safe-zone inset to Android adaptive foregrounds 10ms
+     → expected '<svg xmlns="http://www.w3.org/2000/sv…' not to contain 'transform="translate(20.087671 20.087…'
+   × Beeline continuous-line logo assets > ships full-size marks on unmasked rasters and preserves adaptive bounds 83ms
+     → icon.png width: expected 406 to be greater than or equal to 480
+ ❯ sources/config/mobileOtaRelease.test.ts (78 tests | 14 failed) 15912ms
+   × mobile OTA release governor > publishes the committed compatibility runtime targets alongside the store pins 16ms
+     → expected [ { platform: 'android', …(1) }, …(4) ] to deeply equal [ { platform: 'android', …(1) }, …(6) ]
+   × mobile OTA release governor > covers every shipped or submitted native runtime, including runtimes the pins moved away from 1ms
+     → expected [ …(2) ] to deeply equal []
+   × mobile OTA release governor > refuses release planning while a shipped runtime is neither planned nor explicitly retired 2ms
+     → expected [ …(3) ] to have a length of 1 but got 3
+   ✓ mobile OTA release governor > fails publish planning before any EAS call when the plan strands a shipped runtime  469ms
+   ✓ mobile OTA release governor > reserves the runtime override for release-script child processes 1ms
+   ✓ mobile OTA release governor > pins the final-cut OTA transport to the monolith in source 0ms
+   × mobile OTA release governor > dry-runs beta publish and exact-group production operations with pinned EAS CLI 350ms
+     → expected [ …(7) ] to have a length of 9 but got 7
+   ✓ mobile OTA release governor > refuses production promotion while the canary is still pending 31ms
+   ✓ mobile OTA release governor > prints EAS JSON failure details captured on stdout  342ms
+   × mobile OTA release governor > publishes and promotes every committed platform-runtime rollout target 813ms
+     → expected { schemaVersion: 4, …(17) } to match object { status: 'production', …(6) }
+(29 matching properties omitted from actual)
+   × mobile OTA release governor > carries duplicate-platform runtime groups through publish, promotion, and delivery 445ms
+     → expected { schemaVersion: 4, …(17) } to match object { status: 'beta', …(5) }
+(17 matching properties omitted from actual)
+   ✓ mobile OTA release governor > proves every production target and group through eas update:list 63ms
+   × mobile OTA release governor > anchors a shipped compatibility runtime on its store binary and still refuses an unreadable production lookup 532ms
+     → expected 'ota_plan_targets=android@24,android@2…' to contain 'ios@25: first production release on t…'
+   × mobile OTA release governor > refuses a publish that silently covers only one of the built platforms 414ms
+     → expected 'Beta publish android@24 must return e…' to contain 'Beta publish android@26 must return e…'
+   × mobile OTA release governor > refuses a publish whose updates belong to no update group 380ms
+     → expected 'Beta publish android@23 returned upda…' to contain 'Beta publish android@26 returned upda…'
+   × mobile OTA release governor > reads a publish payload that names each group around its updates 438ms
+     → expected { schemaVersion: 4, …(17) } to match object { candidateGroupIds: { …(2) }, …(1) }
+(19 matching properties omitted from actual)
+   × mobile OTA release governor > rolls production back to one known-good group per platform 405ms
+     → expected { schemaVersion: 2, …(7) } to match object { status: 'rolled-back', …(3) }
+(4 matching properties omitted from actual)
+   × mobile OTA release governor > rolls back every target when the previous runtime shared one group 424ms
+     → expected { schemaVersion: 2, …(8) } to match object { status: 'rolled-back', …(4) }
+(4 matching properties omitted from actual)
+   × mobile OTA release governor > rolls a first production release back to the embedded update with no predecessor group 438ms
+     → expected { schemaVersion: 2, …(9) } to match object { status: 'rolled-back', …(5) }
+(4 matching properties omitted from actual)
+   ✓ mobile OTA release governor > prints the embedded rollback plan on a dry run without touching EAS  349ms
+   ✓ mobile OTA release governor > refuses an embedded rollback that also names a group or omits the current group 58ms
+   ✓ mobile OTA release governor > refuses a rollback that leaves a platform on the failed production group  344ms
+   ✓ mobile OTA release governor > promotes and rolls back a ledger whose single group covered both platforms  712ms
+   ✓ mobile OTA release governor > reads the rollback anchor and the canary group per platform, legacy ledgers included 0ms
+   ✓ mobile OTA release governor > fails loudly unless the ledger and delivery index prove exact production promotion 65ms
+   ✓ mobile OTA release governor > never lets a stale failed canary roll back a newer production group  329ms
+   ✓ mobile OTA release governor > records an automatic rollback only when the failed group is still production  344ms
+   ✓ mobile OTA release governor > fails closed before republishing when the guarded current-group query is unavailable  349ms
+   × mobile OTA release governor > tracks every merge through pending, built, published, and physical-device confirmation 799ms
+     → expected [ 'published', 'published' ] to deeply equal [ 'confirmed', 'confirmed' ]
+   ✓ mobile OTA release governor > classifies failed attempts and keeps every undelivered merge queryable for escalation 231ms
+   ✓ mobile OTA release governor > discovers every untracked commit behind the delivery-index boundary 45ms
+   ✓ mobile OTA release governor > accepts dispatch delivery initialization without a push before sha 127ms
+   ✓ mobile OTA release governor > selects only the newest published delivery for receipt reconciliation 57ms
+   ✓ mobile OTA release governor > rebases receipt confirmation onto a concurrent release without dropping its merges 35ms
+   ✓ mobile OTA release governor > does not confirm delivery from a non-physical or unrelated receipt 31ms
+   ✓ mobile OTA release governor > refuses a physical app receipt from a different aligned release 32ms
+   ✓ mobile OTA release governor > keeps owner receipt evidence inside the selected OTA leg 0ms
+   ✓ mobile OTA release governor > measures the selective release from dispatch and enforces the 20-minute default budget 0ms
+   ✓ mobile OTA release governor > runs validation beside candidate export and safely supersedes stale cumulative releases 0ms
+   ✓ mobile OTA release governor > promotes through the OTA ledger without an Actions device rehearsal 0ms
+   ✓ mobile OTA release governor > bounds the canary and tests either the beta or promoted production runtime without rebuilding native code 0ms
+   ✓ mobile OTA release governor > makes update identity a mandatory gate before every requested Maestro flow 0ms
+   ✓ mobile OTA release governor > binds deep-link canary steps to the production package on a shared AVD 0ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks with an actionable reason when no adb is reachable from the runner environment 6ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks with an actionable reason when Node.js is absent from the runner environment 21ms
+   ✓ mobile OTA release governor > canary runner environment classification > resolves adb from ANDROID_HOME when PATH lacks it and proceeds past the device gate 99ms
+   ✓ mobile OTA release governor > canary runner environment classification > selects the production APK and promoted Android identity for post-promotion rehearsal 94ms
+   ✓ mobile OTA release governor > canary runner environment classification > resolves the runner-local Maestro install when the non-login PATH omits it 15ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks with an actionable persisted reason when Maestro is absent 5ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks when the sanctioned emulator is not attached to the adb server 15ms
+   ✓ mobile OTA release governor > canary runner environment classification > recovers an offline emulator when adb reconnect offline returns it to device within the readiness window 105ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks with the existing not-ready message class when an offline emulator outlives the readiness window  1031ms
+   ✓ mobile OTA release governor > canary runner environment classification > validates the bounded device-readiness timeout before touching adb 13ms
+   ✓ mobile OTA release governor > canary runner environment classification > writes the parked reason to OTA_CANARY_REASON_FILE on a device-gate failure 14ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks with a self-describing reason when EAS has no finished beta-apk build for the runtime version 112ms
+   ✓ mobile OTA release governor > canary runner environment classification > refuses a direct Maestro invocation when the expected update id is empty 14ms
+   ✓ mobile OTA release governor > canary runner environment classification > refuses a custom MAESTRO_FLOW when the device reports a stale update  2026ms
+   ✓ mobile OTA release governor > canary runner environment classification > accepts the gate only when both the expected update and beta channel match 19ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks before product smoke when the expected OTA update never becomes active  2120ms
+   ✓ mobile OTA release governor > canary runner environment classification > removes exactly the canary package and retries once when the existing install has a different signature 103ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks honestly when the incompatible existing package cannot be removed 102ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks honestly when the install still fails after removing the differently-signed package 102ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks when the EAS build listing itself fails 109ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks when the ledger is unreadable by the canary process 90ms
+   ✓ mobile OTA release governor > canary runner environment classification > parks when the beta APK download fails after a successful build lookup 122ms
+   ✓ mobile OTA release governor > records a blocked canary and parks production promotion behind the stored reason 96ms
+   ✓ mobile OTA release governor > the final release record relies on bounded component checks, not fleet or Actions device work 0ms
+   ✓ mobile OTA release governor > the canary script owns the parked-reason contract for every preflight stage 0ms
+   ✓ mobile OTA release governor > a provisioning-bootstrap death parks self-describingly instead of exiting as a generic smoke failure 0ms
+   ✓ mobile OTA release governor > bridges the root smoke scripts to the mobile workspace modules they import 0ms
+   ✓ mobile OTA release governor > starts each propagation budget at relay observation and proves RoomView visibility within seconds 1ms
+   ✓ mobile OTA release governor > provisions a human-accessible corner and publishes its durable turn lifecycle 1ms
+   ✓ mobile OTA release governor > types a unique valid handle before claiming in every Maestro onboarding flow 1ms
+   ✓ mobile OTA release governor > reuses fixed relay Workspaces and exercises a real round-trip Workspace switch 0ms
+   ✓ mobile OTA release governor > does not repeat the script-level update identity gate in the Maestro flow 0ms
+   ✓ mobile OTA release governor > keeps one Room reply assertion and clears the still-focused composer directly 0ms
+   ✓ mobile OTA release governor > waits for the transcript surface before interacting with its bottom-edge composer 0ms
+   ✓ mobile OTA release governor > runs the governor on a node with a global WebSocket for relay provisioning 0ms
+ ❯ sources/config/nativeFingerprint.test.ts (12 tests | 2 failed) 19843ms
+   × native fingerprint gate > pins the runtime version by hand, because a computed stamp orphans installed binaries 19ms
+     → expected 'const { execFileSync } = require(\'no…' to contain 'runtimeVersion: runtimeVersionOverrid…'
+   ✓ native fingerprint gate > records one committed fingerprint per platform beside the runtime it belongs to 1ms
+   ✓ native fingerprint gate > keeps the runtime pin out of its own fingerprint, so bumping it settles the gate 0ms
+   ✓ native fingerprint gate > runs as a named PR gate over exactly the inputs that can move the stamp 0ms
+   ✓ native fingerprint gate > passes when the committed record still describes the tree 1ms
+   ✓ native fingerprint gate > fails a native change on an unchanged pin with the bump instruction 0ms
+   ✓ native fingerprint gate > names the platform that did not move, so a one-sided change is still legible 0ms
+   ✓ native fingerprint gate > fails a bumped pin whose stamps were never re-recorded 0ms
+   ✓ native fingerprint gate > fails a pin that moved with no native change, because a bump alone strands binaries 0ms
+   ✓ native fingerprint gate > migrates global pins and honors platform overrides, while refusing missing or computed pins 1ms
+   ✓ native fingerprint gate > requires the changed platform pin, not merely a bump on the other platform 0ms
+   × native fingerprint gate > accepts this tree and rejects a real native edit, end to end 19817ms
+     → expected 'Native inputs changed but android.run…' to be '' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 23 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/config/logoAssets.test.ts > Beeline continuous-line logo assets > keeps brass on aubergine across icon and web surfaces
+AssertionError: expected { ios: { …(5) }, android: { …(5) } } to match object { ios: { …(5) }, android: { …(5) } }
+
+- Expected
++ Received
+
+@@ -4,19 +4,19 @@
+      "dark": {
+        "backgroundColor": "#14091A",
+        "image": "./sources/assets/images/splash-android-dark.png",
+      },
+      "image": "./sources/assets/images/splash-android-light.png",
+-     "imageWidth": 125,
++     "imageWidth": 150,
+      "resizeMode": "contain",
+    },
+    "ios": {
+      "backgroundColor": "#F3EEE4",
+      "dark": {
+        "backgroundColor": "#14091A",
+        "image": "./sources/assets/images/splash-android-dark.png",
+      },
+      "image": "./sources/assets/images/splash-android-light.png",
+-     "imageWidth": 125,
++     "imageWidth": 150,
+      "resizeMode": "contain",
+    },
+  }
+
+ ❯ sources/config/logoAssets.test.ts:91:31
+     89|       (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'exp…
+     90|     );
+     91|     expect(splashPlugin?.[1]).toMatchObject({
+       |                               ^
+     92|       ios: {
+     93|         image: './sources/assets/images/splash-android-light.png',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/23]⎯
+
+ FAIL  sources/config/logoAssets.test.ts > Beeline continuous-line logo assets > uses ink on cream for the default iOS light icon and white on transparent for tinted/monochrome
+AssertionError: expected '<svg xmlns="http://www.w3.org/2000/sv…' not to contain 'transform="translate(20.087671 20.087…'
+
+- Expected
++ Received
+
+- transform="translate(20.087671 20.087671) scale(0.83260274)"
++ <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
++   <title>Beeline app icon — light/default variant, ink loop on cream field</title>
++   <rect width="1024" height="1024" fill="#F3EEE4"/>
++   <g transform="translate(512 512) scale(4.266666667) translate(-120 -120)">
++     <g transform="translate(20.087671 20.087671) scale(0.83260274)">
++       <path fill="#171310" d="M 70.00 196.00 L 69.81 195.22 L 69.66 194.44 L 69.54 193.65 L 69.46 192.85 L 69.41 192.05 L 69.40 191.26 L 69.42 190.46 L 69.47 189.66 L 69.56 188.88 L 69.68 188.09 L 69.84 187.32 L 70.03 186.56 L 70.26 185.81 L 70.51 185.07 L 70.80 184.35 L 71.11 183.65 L 71.46 182.96 L 71.83 182.30 L 72.23 181.65 L 72.65 181.03 L 73.10 180.43 L 73.56 179.84 L 74.05 179.29 L 74.55 178.75 L 75.07 178.23 L 75.61 177.74 L 76.16 177.26 L 76.72 176.80 L 77.29 176.36 L 77.87 175.94 L 78.46 175.53 L 79.06 175.14 L 79.67 174.76 L 80.28 174.40 L 80.90 174.04 L 81.52 173.70 L 82.15 173.36 L 82.78 173.04 L 83.42 172.71 L 84.06 172.40 L 84.70 172.09 L 85.34 171.78 L 85.98 171.47 L 86.63 171.17 L 87.27 170.86 L 87.92 170.56 L 88.56 170.25 L 89.21 169.94 L 89.86 169.63 L 90.50 169.31 L 91.14 168.98 L 91.78 168.65 L 92.42 168.31 L 93.06 167.97 L 93.70 167.61 L 94.33 167.25 L 94.96 166.87 L 95.59 166.48 L 96.21 166.08 L 96.84 165.67 L 97.47 165.27 L 98.11 164.87 L 98.75 164.47 L 99.40 164.06 L 100.05 163.66 L 100.70 163.26 L 101.36 162.86 L 102.03 162.46 L 102.70 162.06 L 103.37 161.66 L 104.04 161.26 L 104.72 160.85 L 105.41 160.45 L 106.09 160.04 L 106.78 159.63 L 107.47 159.22 L 108.17 158.81 L 108.87 158.40 L 109.57 157.98 L 110.27 157.55 L 110.98 157.13 L 111.69 156.69 L 112.40 156.26 L 113.11 155.82 L 113.83 155.37 L 114.55 154.91 L 115.27 154.45 L 115.99 153.98 L 116.72 153.51 L 117.45 153.02 L 118.18 152.52 L 118.91 152.02 L 119.64 151.50 L 120.38 150.97 L 121.11 150.42 L 121.85 149.86 L 122.59 149.28 L 123.33 148.68 L 124.07 148.06 L 124.80 147.42 L 125.54 146.76 L 126.28 146.07 L 127.01 145.35 L 127.74 144.60 L 128.46 143.82 L 129.18 143.00 L 129.88 142.13 L 130.58 141.22 L 131.25 140.27 L 131.90 139.27 L 132.52 138.21 L 133.11 137.10 L 133.66 135.94 L 134.15 134.73 L 134.59 133.47 L 134.96 132.17 L 135.26 130.84 L 135.48 129.49 L 135.62 128.13 L 135.67 126.76 L 135.65 125.41 L 135.55 124.09 L 135.38 122.79 L 135.15 121.52 L 134.86 120.30 L 134.51 119.12 L 134.13 117.99 L 133.70 116.90 L 133.25 115.85 L 132.77 114.84 L 132.26 113.86 L 131.73 112.93 L 131.19 112.03 L 130.63 111.15 L 130.06 110.31 L 129.47 109.50 L 128.88 108.70 L 128.27 107.94 L 127.66 107.19 L 127.03 106.44 L 126.39 105.72 L 125.76 105.03 L 125.11 104.35 L 124.46 103.68 L 123.78 103.02 L 123.10 102.36 L 122.40 101.71 L 121.69 101.08 L 120.96 100.45 L 120.22 99.83 L 119.46 99.23 L 118.69 98.64 L 117.90 98.06 L 117.09 97.49 L 116.27 96.94 L 115.44 96.40 L 114.58 95.88 L 113.71 95.38 L 112.83 94.89 L 111.92 94.43 L 111.00 93.98 L 110.06 93.56 L 109.11 93.16 L 108.14 92.78 L 107.15 92.43 L 106.14 92.11 L 105.12 91.81 L 104.08 91.55 L 103.03 91.32 L 101.96 91.12 L 100.88 90.96 L 99.79 90.83 L 98.69 90.75 L 97.58 90.70 L 96.46 90.70 L 95.34 90.74 L 94.21 90.83 L 93.09 90.97 L 91.96 91.15 L 90.83 91.38 L 89.72 91.65 L 88.61 91.98 L 87.51 92.36 L 86.43 92.78 L 85.36 93.26 L 84.31 93.79 L 83.29 94.36 L 82.28 94.98 L 81.31 95.65 L 80.37 96.37 L 79.46 97.12 L 78.58 97.93 L 77.74 98.77 L 76.95 99.65 L 76.19 100.57 L 75.47 101.53 L 74.81 102.51 L 74.18 103.53 L 73.61 104.58 L 73.08 105.65 L 72.61 106.74 L 72.18 107.85 L 71.81 108.98 L 71.49 110.13 L 71.22 111.28 L 71.01 112.44 L 70.84 113.60 L 70.72 114.77 L 70.66 115.93 L 70.64 117.10 L 70.67 118.25 L 70.75 119.40 L 70.86 120.54 L 71.03 121.66 L 71.23 122.77 L 71.47 123.87 L 71.75 124.95 L 72.06 126.01 L 72.41 127.06 L 72.78 128.08 L 73.19 129.09 L 73.62 130.07 L 74.09 131.04 L 74.57 131.98 L 75.08 132.90 L 75.61 133.81 L 76.16 134.69 L 76.72 135.55 L 77.31 136.39 L 77.91 137.22 L 78.52 138.02 L 79.18 138.83 L 79.91 139.67 L 80.66 140.49 L 81.45 141.29 L 82.26 142.06 L 83.10 142.80 L 83.96 143.51 L 84.84 144.20 L 85.75 144.85 L 86.67 145.47 L 87.62 146.06 L 88.58 146.61 L 89.55 147.14 L 90.53 147.63 L 91.53 148.09 L 92.53 148.51 L 93.54 148.91 L 94.56 149.27 L 95.58 149.60 L 96.60 149.90 L 97.63 150.18 L 98.66 150.42 L 99.69 150.63 L 100.71 150.82 L 101.74 150.98 L 102.77 151.12 L 103.79 151.23 L 104.81 151.32 L 105.82 151.38 L 106.84 151.42 L 107.85 151.44 L 108.85 151.44 L 109.85 151.42 L 110.84 151.38 L 111.83 151.31 L 112.82 151.23 L 113.80 151.14 L 114.77 151.02 L 115.74 150.89 L 116.70 150.74 L 117.66 150.57 L 118.61 150.39 L 119.55 150.19 L 120.49 149.98 L 121.42 149.76 L 122.35 149.52 L 123.27 149.26 L 124.18 148.99 L 125.09 148.71 L 125.99 148.42 L 126.89 148.11 L 127.78 147.79 L 128.66 147.46 L 129.54 147.11 L 130.41 146.75 L 131.28 146.39 L 132.13 146.01 L 132.99 145.62 L 133.83 145.21 L 134.67 144.80 L 135.50 144.37 L 136.33 143.94 L 137.15 143.49 L 137.96 143.04 L 138.77 142.57 L 139.57 142.09 L 140.36 141.60 L 141.15 141.10 L 141.93 140.60 L 142.70 140.08 L 143.47 139.55 L 144.23 139.01 L 144.98 138.46 L 145.72 137.91 L 146.46 137.34 L 147.19 136.76 L 147.91 136.18 L 148.62 135.58 L 149.33 134.98 L 150.03 134.36 L 150.72 133.74 L 151.40 133.11 L 152.08 132.47 L 152.74 131.82 L 153.40 131.16 L 154.05 130.49 L 154.69 129.82 L 155.32 129.13 L 155.95 128.44 L 156.56 127.73 L 157.17 127.02 L 157.81 126.25 L 158.40 125.49 L 158.92 124.82 L 159.43 124.15 L 159.95 123.48 L 160.45 122.80 L 160.96 122.12 L 161.46 121.44 L 161.96 120.76 L 162.46 120.07 L 162.96 119.38 L 163.45 118.69 L 163.93 118.00 L 164.42 117.30 L 164.90 116.60 L 165.38 115.89 L 165.85 115.19 L 166.33 114.48 L 166.79 113.77 L 167.26 113.05 L 167.72 112.34 L 168.18 111.62 L 168.63 110.89 L 169.08 110.17 L 169.53 109.44 L 169.97 108.71 L 170.41 107.98 L 170.84 107.24 L 171.27 106.50 L 171.70 105.76 L 172.12 105.02 L 172.54 104.27 L 172.96 103.52 L 173.37 102.77 L 173.78 102.01 L 174.18 101.26 L 174.58 100.50 L 174.97 99.74 L 175.36 98.97 L 175.74 98.21 L 176.10 97.43 L 176.44 96.64 L 176.76 95.85 L 177.07 95.04 L 177.35 94.23 L 177.62 93.41 L 177.87 92.59 L 178.11 91.76 L 178.33 90.92 L 178.53 90.09 L 178.72 89.24 L 178.89 88.39 L 179.05 87.54 L 179.20 86.69 L 179.33 85.83 L 179.45 84.97 L 179.55 84.11 L 179.65 83.25 L 179.73 82.39 L 179.81 81.52 L 179.87 80.66 L 179.93 79.79 L 179.98 78.93 L 180.02 78.07 L 180.05 77.20 L 180.08 76.34 L 180.10 75.48 L 180.11 74.62 L 180.12 73.76 L 180.13 72.91 L 180.14 72.05 L 180.14 71.20 L 180.14 70.35 L 180.14 69.50 L 180.14 68.65 L 180.15 67.81 L 180.15 66.97 L 180.16 66.13 L 180.17 65.29 L 180.18 64.46 L 180.20 63.63 L 180.22 62.80 L 180.25 61.98 L 180.29 61.15 L 180.33 60.33 L 180.38 59.52 L 180.45 58.70 L 180.52 57.89 L 180.61 57.09 L 180.70 56.28 L 180.81 55.48 L 180.93 54.69 L 181.07 53.89 L 181.22 53.11 L 181.39 52.32 L 181.58 51.54 L 181.78 50.77 L 182.00 50.00 L 182.00 50.00 L 181.76 50.76 L 181.51 51.52 L 181.25 52.28 L 180.97 53.03 L 180.68 53.78 L 180.38 54.53 L 180.06 55.27 L 179.73 56.01 L 179.39 56.74 L 179.04 57.47 L 178.68 58.20 L 178.31 58.93 L 177.93 59.65 L 177.53 60.37 L 177.13 61.09 L 176.72 61.80 L 176.31 62.51 L 175.88 63.22 L 175.45 63.92 L 175.01 64.62 L 174.56 65.31 L 174.11 66.00 L 173.65 66.69 L 173.18 67.38 L 172.72 68.06 L 172.24 68.73 L 171.77 69.41 L 171.29 70.08 L 170.81 70.74 L 170.32 71.41 L 169.84 72.07 L 169.35 72.72 L 168.86 73.37 L 168.37 74.02 L 167.88 74.67 L 167.40 75.31 L 166.91 75.95 L 166.43 76.59 L 165.94 77.23 L 165.46 77.86 L 164.99 78.49 L 164.52 79.12 L 164.05 79.75 L 163.58 80.38 L 163.13 81.01 L 162.67 81.64 L 162.23 82.26 L 161.79 82.89 L 161.35 83.52 L 160.93 84.15 L 160.51 84.78 L 160.10 85.41 L 159.70 86.05 L 159.31 86.69 L 158.93 87.33 L 158.56 87.98 L 158.20 88.63 L 157.85 89.28 L 157.51 89.94 L 157.18 90.60 L 156.84 91.26 L 156.49 91.92 L 156.14 92.58 L 155.79 93.23 L 155.43 93.88 L 155.07 94.53 L 154.71 95.18 L 154.34 95.83 L 153.97 96.47 L 153.60 97.12 L 153.22 97.76 L 152.83 98.40 L 152.45 99.03 L 152.06 99.67 L 151.67 100.30 L 151.27 100.94 L 150.87 101.57 L 150.46 102.19 L 150.06 102.82 L 149.65 103.45 L 149.23 104.07 L 148.81 104.69 L 148.39 105.31 L 147.97 105.93 L 147.54 106.54 L 147.11 107.16 L 146.67 107.77 L 146.23 108.38 L 145.79 108.99 L 145.35 109.60 L 144.90 110.20 L 144.45 110.81 L 144.00 111.41 L 143.54 112.01 L 143.08 112.61 L 142.62 113.20 L 142.23 113.71 L 141.85 114.16 L 141.42 114.67 L 140.98 115.17 L 140.53 115.67 L 140.08 116.16 L 139.62 116.64 L 139.16 117.12 L 138.68 117.59 L 138.21 118.06 L 137.72 118.52 L 137.23 118.98 L 136.73 119.43 L 136.23 119.87 L 135.72 120.30 L 135.21 120.73 L 134.68 121.15 L 134.16 121.57 L 133.63 121.98 L 133.09 122.38 L 132.55 122.77 L 132.00 123.16 L 131.45 123.54 L 130.90 123.92 L 130.34 124.28 L 129.77 124.64 L 129.20 124.99 L 128.63 125.33 L 128.05 125.67 L 127.47 125.99 L 126.89 126.31 L 126.30 126.62 L 125.70 126.92 L 125.11 127.22 L 124.51 127.50 L 123.91 127.78 L 123.31 128.05 L 122.70 128.31 L 122.09 128.56 L 121.48 128.80 L 120.86 129.03 L 120.25 129.25 L 119.63 129.46 L 119.02 129.67 L 118.40 129.86 L 117.78 130.04 L 117.16 130.22 L 116.53 130.38 L 115.91 130.53 L 115.29 130.67 L 114.67 130.80 L 114.05 130.93 L 113.43 131.03 L 112.81 131.13 L 112.19 131.22 L 111.58 131.30 L 110.97 131.36 L 110.36 131.42 L 109.75 131.46 L 109.15 131.49 L 108.55 131.51 L 107.95 131.51 L 107.36 131.51 L 106.77 131.49 L 106.19 131.46 L 105.62 131.42 L 105.05 131.36 L 104.49 131.30 L 103.93 131.22 L 103.39 131.13 L 102.85 131.02 L 102.32 130.91 L 101.79 130.78 L 101.28 130.64 L 100.78 130.50 L 100.28 130.33 L 99.80 130.16 L 99.32 129.98 L 98.86 129.78 L 98.40 129.57 L 97.96 129.36 L 97.52 129.13 L 97.10 128.89 L 96.68 128.63 L 96.28 128.37 L 95.88 128.10 L 95.49 127.81 L 95.12 127.51 L 94.75 127.20 L 94.39 126.88 L 94.04 126.55 L 93.69 126.20 L 93.32 125.79 L 92.92 125.35 L 92.55 124.90 L 92.18 124.46 L 91.83 124.01 L 91.50 123.56 L 91.18 123.11 L 90.87 122.65 L 90.58 122.20 L 90.31 121.74 L 90.05 121.29 L 89.81 120.83 L 89.58 120.37 L 89.37 119.92 L 89.18 119.46 L 89.00 119.01 L 88.84 118.56 L 88.70 118.11 L 88.57 117.66 L 88.47 117.21 L 88.38 116.77 L 88.30 116.33 L 88.25 115.89 L 88.21 115.46 L 88.19 115.03 L 88.19 114.60 L 88.21 114.18 L 88.24 113.76 L 88.30 113.35 L 88.37 112.94 L 88.46 112.54 L 88.57 112.14 L 88.70 111.75 L 88.84 111.37 L 89.01 110.99 L 89.19 110.63 L 89.39 110.27 L 89.61 109.92 L 89.85 109.59 L 90.11 109.27 L 90.38 108.96 L 90.67 108.66 L 90.98 108.37 L 91.30 108.11 L 91.64 107.85 L 91.99 107.62 L 92.36 107.40 L 92.74 107.20 L 93.14 107.02 L 93.55 106.86 L 93.97 106.72 L 94.40 106.60 L 94.84 106.49 L 95.29 106.42 L 95.75 106.36 L 96.22 106.32 L 96.69 106.31 L 97.18 106.31 L 97.66 106.34 L 98.16 106.40 L 98.65 106.47 L 99.15 106.57 L 99.65 106.68 L 100.16 106.82 L 100.66 106.99 L 101.17 107.17 L 101.67 107.37 L 102.18 107.59 L 102.68 107.84 L 103.18 108.10 L 103.68 108.38 L 104.17 108.68 L 104.66 109.00 L 105.15 109.33 L 105.63 109.68 L 106.11 110.05 L 106.58 110.43 L 107.05 110.82 L 107.52 111.23 L 107.97 111.66 L 108.42 112.09 L 108.87 112.54 L 109.31 113.00 L 109.74 113.48 L 110.17 113.96 L 110.60 114.45 L 111.01 114.96 L 111.42 115.47 L 111.83 115.99 L 112.23 116.52 L 112.62 117.06 L 112.99 117.58 L 113.34 118.10 L 113.68 118.64 L 114.02 119.17 L 114.33 119.69 L 114.62 120.21 L 114.90 120.73 L 115.16 121.23 L 115.39 121.73 L 115.60 122.21 L 115.79 122.68 L 115.95 123.13 L 116.09 123.57 L 116.21 123.98 L 116.30 124.37 L 116.36 124.74 L 116.41 125.08 L 116.43 125.40 L 116.44 125.69 L 116.43 125.96 L 116.41 126.21 L 116.37 126.44 L 116.32 126.66 L 116.26 126.89 L 116.19 127.11 L 116.10 127.34 L 115.99 127.59 L 115.86 127.85 L 115.71 128.13 L 115.53 128.42 L 115.32 128.74 L 115.09 129.06 L 114.83 129.41 L 114.54 129.76 L 114.22 130.13 L 113.87 130.50 L 113.50 130.88 L 113.10 131.27 L 112.69 131.66 L 112.25 132.06 L 111.79 132.45 L 111.31 132.85 L 110.81 133.25 L 110.30 133.65 L 109.78 134.05 L 109.23 134.46 L 108.68 134.86 L 108.12 135.26 L 107.54 135.65 L 106.95 136.05 L 106.36 136.45 L 105.75 136.85 L 105.14 137.25 L 104.52 137.65 L 103.89 138.04 L 103.25 138.44 L 102.61 138.84 L 101.96 139.23 L 101.31 139.63 L 100.65 140.03 L 99.99 140.43 L 99.32 140.83 L 98.65 141.22 L 97.97 141.63 L 97.29 142.03 L 96.60 142.43 L 95.92 142.84 L 95.23 143.25 L 94.53 143.66 L 93.84 144.07 L 93.14 144.48 L 92.43 144.90 L 91.73 145.33 L 91.03 145.75 L 90.32 146.18 L 89.61 146.61 L 88.90 147.05 L 88.18 147.49 L 87.47 147.94 L 86.75 148.39 L 86.03 148.84 L 85.32 149.31 L 84.60 149.78 L 83.90 150.28 L 83.20 150.79 L 82.51 151.33 L 81.83 151.88 L 81.16 152.45 L 80.50 153.05 L 79.85 153.66 L 79.21 154.29 L 78.58 154.94 L 77.96 155.60 L 77.35 156.29 L 76.76 156.99 L 76.17 157.71 L 75.60 158.44 L 75.05 159.19 L 74.50 159.96 L 73.97 160.74 L 73.46 161.54 L 72.96 162.35 L 72.48 163.17 L 72.02 164.01 L 71.57 164.86 L 71.15 165.72 L 70.74 166.59 L 70.35 167.48 L 69.99 168.37 L 69.64 169.27 L 69.32 170.18 L 69.03 171.09 L 68.76 172.02 L 68.51 172.94 L 68.29 173.87 L 68.10 174.80 L 67.93 175.72 L 67.79 176.65 L 67.68 177.58 L 67.59 178.50 L 67.53 179.41 L 67.50 180.32 L 67.49 181.22 L 67.50 182.11 L 67.54 183.00 L 67.59 183.87 L 67.67 184.74 L 67.76 185.59 L 67.88 186.44 L 68.00 187.27 L 68.14 188.10 L 68.30 188.92 L 68.46 189.73 L 68.64 190.53 L 68.82 191.32 L 69.01 192.11 L 69.20 192.89 L 69.40 193.67 L 69.60 194.45 L 69.80 195.23 L 70.00 196.00 Z"/>
++     </g>
++   </g>
++ </svg>
+
+ ❯ sources/config/logoAssets.test.ts:130:26
+    128|     expect(lightSvg).toContain('fill="#171310"');
+    129|     expect(lightSvg).toContain(adaptiveFraming);
+    130|     expect(lightSvg).not.toContain(canonicalInset);
+       |                          ^
+    131|
+    132|     // Monochrome icon: white loop on transparent, no background rect
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/23]⎯
+
+ FAIL  sources/config/logoAssets.test.ts > Beeline continuous-line logo assets > uses the canonical swirl in ink on ivory for the light splash
+AssertionError: expected 'a2d224d4309181456f8ca6f1d777efd95abcd…' to be '5941f621854629123fc877f4bd9825cc9ae72…' // Object.is equality
+
+Expected: "5941f621854629123fc877f4bd9825cc9ae7249b9c527937244e7da93df7e697"
+Received: "a2d224d4309181456f8ca6f1d777efd95abcdb78cb650e339baa6653f6df6992"
+
+ ❯ sources/config/logoAssets.test.ts:168:68
+    166|     );
+    167|
+    168|     expect(createHash('sha256').update(lightSplash).digest('hex')).toB…
+       |                                                                    ^
+    169|     expect(createHash('sha256').update(darkSplash).digest('hex')).toBe…
+    170|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/23]⎯
+
+ FAIL  sources/config/logoAssets.test.ts > Beeline continuous-line logo assets > limits the safe-zone inset to Android adaptive foregrounds
+AssertionError: expected '<svg xmlns="http://www.w3.org/2000/sv…' not to contain 'transform="translate(20.087671 20.087…'
+
+- Expected
++ Received
+
+- transform="translate(20.087671 20.087671) scale(0.83260274)"
++ <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
++   <title>Beeline app icon — the loop, brass on aubergine</title>
++   <rect width="240" height="240" fill="#14091A"/>
++   <g transform="translate(20.087671 20.087671) scale(0.83260274)">
++   <path d="M 70.00 196.00 L 69.81 195.22 L 69.66 194.44 L 69.54 193.65 L 69.46 192.85 L 69.41 192.05 L 69.40 191.26 L 69.42 190.46 L 69.47 189.66 L 69.56 188.88 L 69.68 188.09 L 69.84 187.32 L 70.03 186.56 L 70.26 185.81 L 70.51 185.07 L 70.80 184.35 L 71.11 183.65 L 71.46 182.96 L 71.83 182.30 L 72.23 181.65 L 72.65 181.03 L 73.10 180.43 L 73.56 179.84 L 74.05 179.29 L 74.55 178.75 L 75.07 178.23 L 75.61 177.74 L 76.16 177.26 L 76.72 176.80 L 77.29 176.36 L 77.87 175.94 L 78.46 175.53 L 79.06 175.14 L 79.67 174.76 L 80.28 174.40 L 80.90 174.04 L 81.52 173.70 L 82.15 173.36 L 82.78 173.04 L 83.42 172.71 L 84.06 172.40 L 84.70 172.09 L 85.34 171.78 L 85.98 171.47 L 86.63 171.17 L 87.27 170.86 L 87.92 170.56 L 88.56 170.25 L 89.21 169.94 L 89.86 169.63 L 90.50 169.31 L 91.14 168.98 L 91.78 168.65 L 92.42 168.31 L 93.06 167.97 L 93.70 167.61 L 94.33 167.25 L 94.96 166.87 L 95.59 166.48 L 96.21 166.08 L 96.84 165.67 L 97.47 165.27 L 98.11 164.87 L 98.75 164.47 L 99.40 164.06 L 100.05 163.66 L 100.70 163.26 L 101.36 162.86 L 102.03 162.46 L 102.70 162.06 L 103.37 161.66 L 104.04 161.26 L 104.72 160.85 L 105.41 160.45 L 106.09 160.04 L 106.78 159.63 L 107.47 159.22 L 108.17 158.81 L 108.87 158.40 L 109.57 157.98 L 110.27 157.55 L 110.98 157.13 L 111.69 156.69 L 112.40 156.26 L 113.11 155.82 L 113.83 155.37 L 114.55 154.91 L 115.27 154.45 L 115.99 153.98 L 116.72 153.51 L 117.45 153.02 L 118.18 152.52 L 118.91 152.02 L 119.64 151.50 L 120.38 150.97 L 121.11 150.42 L 121.85 149.86 L 122.59 149.28 L 123.33 148.68 L 124.07 148.06 L 124.80 147.42 L 125.54 146.76 L 126.28 146.07 L 127.01 145.35 L 127.74 144.60 L 128.46 143.82 L 129.18 143.00 L 129.88 142.13 L 130.58 141.22 L 131.25 140.27 L 131.90 139.27 L 132.52 138.21 L 133.11 137.10 L 133.66 135.94 L 134.15 134.73 L 134.59 133.47 L 134.96 132.17 L 135.26 130.84 L 135.48 129.49 L 135.62 128.13 L 135.67 126.76 L 135.65 125.41 L 135.55 124.09 L 135.38 122.79 L 135.15 121.52 L 134.86 120.30 L 134.51 119.12 L 134.13 117.99 L 133.70 116.90 L 133.25 115.85 L 132.77 114.84 L 132.26 113.86 L 131.73 112.93 L 131.19 112.03 L 130.63 111.15 L 130.06 110.31 L 129.47 109.50 L 128.88 108.70 L 128.27 107.94 L 127.66 107.19 L 127.03 106.44 L 126.39 105.72 L 125.76 105.03 L 125.11 104.35 L 124.46 103.68 L 123.78 103.02 L 123.10 102.36 L 122.40 101.71 L 121.69 101.08 L 120.96 100.45 L 120.22 99.83 L 119.46 99.23 L 118.69 98.64 L 117.90 98.06 L 117.09 97.49 L 116.27 96.94 L 115.44 96.40 L 114.58 95.88 L 113.71 95.38 L 112.83 94.89 L 111.92 94.43 L 111.00 93.98 L 110.06 93.56 L 109.11 93.16 L 108.14 92.78 L 107.15 92.43 L 106.14 92.11 L 105.12 91.81 L 104.08 91.55 L 103.03 91.32 L 101.96 91.12 L 100.88 90.96 L 99.79 90.83 L 98.69 90.75 L 97.58 90.70 L 96.46 90.70 L 95.34 90.74 L 94.21 90.83 L 93.09 90.97 L 91.96 91.15 L 90.83 91.38 L 89.72 91.65 L 88.61 91.98 L 87.51 92.36 L 86.43 92.78 L 85.36 93.26 L 84.31 93.79 L 83.29 94.36 L 82.28 94.98 L 81.31 95.65 L 80.37 96.37 L 79.46 97.12 L 78.58 97.93 L 77.74 98.77 L 76.95 99.65 L 76.19 100.57 L 75.47 101.53 L 74.81 102.51 L 74.18 103.53 L 73.61 104.58 L 73.08 105.65 L 72.61 106.74 L 72.18 107.85 L 71.81 108.98 L 71.49 110.13 L 71.22 111.28 L 71.01 112.44 L 70.84 113.60 L 70.72 114.77 L 70.66 115.93 L 70.64 117.10 L 70.67 118.25 L 70.75 119.40 L 70.86 120.54 L 71.03 121.66 L 71.23 122.77 L 71.47 123.87 L 71.75 124.95 L 72.06 126.01 L 72.41 127.06 L 72.78 128.08 L 73.19 129.09 L 73.62 130.07 L 74.09 131.04 L 74.57 131.98 L 75.08 132.90 L 75.61 133.81 L 76.16 134.69 L 76.72 135.55 L 77.31 136.39 L 77.91 137.22 L 78.52 138.02 L 79.18 138.83 L 79.91 139.67 L 80.66 140.49 L 81.45 141.29 L 82.26 142.06 L 83.10 142.80 L 83.96 143.51 L 84.84 144.20 L 85.75 144.85 L 86.67 145.47 L 87.62 146.06 L 88.58 146.61 L 89.55 147.14 L 90.53 147.63 L 91.53 148.09 L 92.53 148.51 L 93.54 148.91 L 94.56 149.27 L 95.58 149.60 L 96.60 149.90 L 97.63 150.18 L 98.66 150.42 L 99.69 150.63 L 100.71 150.82 L 101.74 150.98 L 102.77 151.12 L 103.79 151.23 L 104.81 151.32 L 105.82 151.38 L 106.84 151.42 L 107.85 151.44 L 108.85 151.44 L 109.85 151.42 L 110.84 151.38 L 111.83 151.31 L 112.82 151.23 L 113.80 151.14 L 114.77 151.02 L 115.74 150.89 L 116.70 150.74 L 117.66 150.57 L 118.61 150.39 L 119.55 150.19 L 120.49 149.98 L 121.42 149.76 L 122.35 149.52 L 123.27 149.26 L 124.18 148.99 L 125.09 148.71 L 125.99 148.42 L 126.89 148.11 L 127.78 147.79 L 128.66 147.46 L 129.54 147.11 L 130.41 146.75 L 131.28 146.39 L 132.13 146.01 L 132.99 145.62 L 133.83 145.21 L 134.67 144.80 L 135.50 144.37 L 136.33 143.94 L 137.15 143.49 L 137.96 143.04 L 138.77 142.57 L 139.57 142.09 L 140.36 141.60 L 141.15 141.10 L 141.93 140.60 L 142.70 140.08 L 143.47 139.55 L 144.23 139.01 L 144.98 138.46 L 145.72 137.91 L 146.46 137.34 L 147.19 136.76 L 147.91 136.18 L 148.62 135.58 L 149.33 134.98 L 150.03 134.36 L 150.72 133.74 L 151.40 133.11 L 152.08 132.47 L 152.74 131.82 L 153.40 131.16 L 154.05 130.49 L 154.69 129.82 L 155.32 129.13 L 155.95 128.44 L 156.56 127.73 L 157.17 127.02 L 157.81 126.25 L 158.40 125.49 L 158.92 124.82 L 159.43 124.15 L 159.95 123.48 L 160.45 122.80 L 160.96 122.12 L 161.46 121.44 L 161.96 120.76 L 162.46 120.07 L 162.96 119.38 L 163.45 118.69 L 163.93 118.00 L 164.42 117.30 L 164.90 116.60 L 165.38 115.89 L 165.85 115.19 L 166.33 114.48 L 166.79 113.77 L 167.26 113.05 L 167.72 112.34 L 168.18 111.62 L 168.63 110.89 L 169.08 110.17 L 169.53 109.44 L 169.97 108.71 L 170.41 107.98 L 170.84 107.24 L 171.27 106.50 L 171.70 105.76 L 172.12 105.02 L 172.54 104.27 L 172.96 103.52 L 173.37 102.77 L 173.78 102.01 L 174.18 101.26 L 174.58 100.50 L 174.97 99.74 L 175.36 98.97 L 175.74 98.21 L 176.10 97.43 L 176.44 96.64 L 176.76 95.85 L 177.07 95.04 L 177.35 94.23 L 177.62 93.41 L 177.87 92.59 L 178.11 91.76 L 178.33 90.92 L 178.53 90.09 L 178.72 89.24 L 178.89 88.39 L 179.05 87.54 L 179.20 86.69 L 179.33 85.83 L 179.45 84.97 L 179.55 84.11 L 179.65 83.25 L 179.73 82.39 L 179.81 81.52 L 179.87 80.66 L 179.93 79.79 L 179.98 78.93 L 180.02 78.07 L 180.05 77.20 L 180.08 76.34 L 180.10 75.48 L 180.11 74.62 L 180.12 73.76 L 180.13 72.91 L 180.14 72.05 L 180.14 71.20 L 180.14 70.35 L 180.14 69.50 L 180.14 68.65 L 180.15 67.81 L 180.15 66.97 L 180.16 66.13 L 180.17 65.29 L 180.18 64.46 L 180.20 63.63 L 180.22 62.80 L 180.25 61.98 L 180.29 61.15 L 180.33 60.33 L 180.38 59.52 L 180.45 58.70 L 180.52 57.89 L 180.61 57.09 L 180.70 56.28 L 180.81 55.48 L 180.93 54.69 L 181.07 53.89 L 181.22 53.11 L 181.39 52.32 L 181.58 51.54 L 181.78 50.77 L 182.00 50.00 L 182.00 50.00 L 181.76 50.76 L 181.51 51.52 L 181.25 52.28 L 180.97 53.03 L 180.68 53.78 L 180.38 54.53 L 180.06 55.27 L 179.73 56.01 L 179.39 56.74 L 179.04 57.47 L 178.68 58.20 L 178.31 58.93 L 177.93 59.65 L 177.53 60.37 L 177.13 61.09 L 176.72 61.80 L 176.31 62.51 L 175.88 63.22 L 175.45 63.92 L 175.01 64.62 L 174.56 65.31 L 174.11 66.00 L 173.65 66.69 L 173.18 67.38 L 172.72 68.06 L 172.24 68.73 L 171.77 69.41 L 171.29 70.08 L 170.81 70.74 L 170.32 71.41 L 169.84 72.07 L 169.35 72.72 L 168.86 73.37 L 168.37 74.02 L 167.88 74.67 L 167.40 75.31 L 166.91 75.95 L 166.43 76.59 L 165.94 77.23 L 165.46 77.86 L 164.99 78.49 L 164.52 79.12 L 164.05 79.75 L 163.58 80.38 L 163.13 81.01 L 162.67 81.64 L 162.23 82.26 L 161.79 82.89 L 161.35 83.52 L 160.93 84.15 L 160.51 84.78 L 160.10 85.41 L 159.70 86.05 L 159.31 86.69 L 158.93 87.33 L 158.56 87.98 L 158.20 88.63 L 157.85 89.28 L 157.51 89.94 L 157.18 90.60 L 156.84 91.26 L 156.49 91.92 L 156.14 92.58 L 155.79 93.23 L 155.43 93.88 L 155.07 94.53 L 154.71 95.18 L 154.34 95.83 L 153.97 96.47 L 153.60 97.12 L 153.22 97.76 L 152.83 98.40 L 152.45 99.03 L 152.06 99.67 L 151.67 100.30 L 151.27 100.94 L 150.87 101.57 L 150.46 102.19 L 150.06 102.82 L 149.65 103.45 L 149.23 104.07 L 148.81 104.69 L 148.39 105.31 L 147.97 105.93 L 147.54 106.54 L 147.11 107.16 L 146.67 107.77 L 146.23 108.38 L 145.79 108.99 L 145.35 109.60 L 144.90 110.20 L 144.45 110.81 L 144.00 111.41 L 143.54 112.01 L 143.08 112.61 L 142.62 113.20 L 142.23 113.71 L 141.85 114.16 L 141.42 114.67 L 140.98 115.17 L 140.53 115.67 L 140.08 116.16 L 139.62 116.64 L 139.16 117.12 L 138.68 117.59 L 138.21 118.06 L 137.72 118.52 L 137.23 118.98 L 136.73 119.43 L 136.23 119.87 L 135.72 120.30 L 135.21 120.73 L 134.68 121.15 L 134.16 121.57 L 133.63 121.98 L 133.09 122.38 L 132.55 122.77 L 132.00 123.16 L 131.45 123.54 L 130.90 123.92 L 130.34 124.28 L 129.77 124.64 L 129.20 124.99 L 128.63 125.33 L 128.05 125.67 L 127.47 125.99 L 126.89 126.31 L 126.30 126.62 L 125.70 126.92 L 125.11 127.22 L 124.51 127.50 L 123.91 127.78 L 123.31 128.05 L 122.70 128.31 L 122.09 128.56 L 121.48 128.80 L 120.86 129.03 L 120.25 129.25 L 119.63 129.46 L 119.02 129.67 L 118.40 129.86 L 117.78 130.04 L 117.16 130.22 L 116.53 130.38 L 115.91 130.53 L 115.29 130.67 L 114.67 130.80 L 114.05 130.93 L 113.43 131.03 L 112.81 131.13 L 112.19 131.22 L 111.58 131.30 L 110.97 131.36 L 110.36 131.42 L 109.75 131.46 L 109.15 131.49 L 108.55 131.51 L 107.95 131.51 L 107.36 131.51 L 106.77 131.49 L 106.19 131.46 L 105.62 131.42 L 105.05 131.36 L 104.49 131.30 L 103.93 131.22 L 103.39 131.13 L 102.85 131.02 L 102.32 130.91 L 101.79 130.78 L 101.28 130.64 L 100.78 130.50 L 100.28 130.33 L 99.80 130.16 L 99.32 129.98 L 98.86 129.78 L 98.40 129.57 L 97.96 129.36 L 97.52 129.13 L 97.10 128.89 L 96.68 128.63 L 96.28 128.37 L 95.88 128.10 L 95.49 127.81 L 95.12 127.51 L 94.75 127.20 L 94.39 126.88 L 94.04 126.55 L 93.69 126.20 L 93.32 125.79 L 92.92 125.35 L 92.55 124.90 L 92.18 124.46 L 91.83 124.01 L 91.50 123.56 L 91.18 123.11 L 90.87 122.65 L 90.58 122.20 L 90.31 121.74 L 90.05 121.29 L 89.81 120.83 L 89.58 120.37 L 89.37 119.92 L 89.18 119.46 L 89.00 119.01 L 88.84 118.56 L 88.70 118.11 L 88.57 117.66 L 88.47 117.21 L 88.38 116.77 L 88.30 116.33 L 88.25 115.89 L 88.21 115.46 L 88.19 115.03 L 88.19 114.60 L 88.21 114.18 L 88.24 113.76 L 88.30 113.35 L 88.37 112.94 L 88.46 112.54 L 88.57 112.14 L 88.70 111.75 L 88.84 111.37 L 89.01 110.99 L 89.19 110.63 L 89.39 110.27 L 89.61 109.92 L 89.85 109.59 L 90.11 109.27 L 90.38 108.96 L 90.67 108.66 L 90.98 108.37 L 91.30 108.11 L 91.64 107.85 L 91.99 107.62 L 92.36 107.40 L 92.74 107.20 L 93.14 107.02 L 93.55 106.86 L 93.97 106.72 L 94.40 106.60 L 94.84 106.49 L 95.29 106.42 L 95.75 106.36 L 96.22 106.32 L 96.69 106.31 L 97.18 106.31 L 97.66 106.34 L 98.16 106.40 L 98.65 106.47 L 99.15 106.57 L 99.65 106.68 L 100.16 106.82 L 100.66 106.99 L 101.17 107.17 L 101.67 107.37 L 102.18 107.59 L 102.68 107.84 L 103.18 108.10 L 103.68 108.38 L 104.17 108.68 L 104.66 109.00 L 105.15 109.33 L 105.63 109.68 L 106.11 110.05 L 106.58 110.43 L 107.05 110.82 L 107.52 111.23 L 107.97 111.66 L 108.42 112.09 L 108.87 112.54 L 109.31 113.00 L 109.74 113.48 L 110.17 113.96 L 110.60 114.45 L 111.01 114.96 L 111.42 115.47 L 111.83 115.99 L 112.23 116.52 L 112.62 117.06 L 112.99 117.58 L 113.34 118.10 L 113.68 118.64 L 114.02 119.17 L 114.33 119.69 L 114.62 120.21 L 114.90 120.73 L 115.16 121.23 L 115.39 121.73 L 115.60 122.21 L 115.79 122.68 L 115.95 123.13 L 116.09 123.57 L 116.21 123.98 L 116.30 124.37 L 116.36 124.74 L 116.41 125.08 L 116.43 125.40 L 116.44 125.69 L 116.43 125.96 L 116.41 126.21 L 116.37 126.44 L 116.32 126.66 L 116.26 126.89 L 116.19 127.11 L 116.10 127.34 L 115.99 127.59 L 115.86 127.85 L 115.71 128.13 L 115.53 128.42 L 115.32 128.74 L 115.09 129.06 L 114.83 129.41 L 114.54 129.76 L 114.22 130.13 L 113.87 130.50 L 113.50 130.88 L 113.10 131.27 L 112.69 131.66 L 112.25 132.06 L 111.79 132.45 L 111.31 132.85 L 110.81 133.25 L 110.30 133.65 L 109.78 134.05 L 109.23 134.46 L 108.68 134.86 L 108.12 135.26 L 107.54 135.65 L 106.95 136.05 L 106.36 136.45 L 105.75 136.85 L 105.14 137.25 L 104.52 137.65 L 103.89 138.04 L 103.25 138.44 L 102.61 138.84 L 101.96 139.23 L 101.31 139.63 L 100.65 140.03 L 99.99 140.43 L 99.32 140.83 L 98.65 141.22 L 97.97 141.63 L 97.29 142.03 L 96.60 142.43 L 95.92 142.84 L 95.23 143.25 L 94.53 143.66 L 93.84 144.07 L 93.14 144.48 L 92.43 144.90 L 91.73 145.33 L 91.03 145.75 L 90.32 146.18 L 89.61 146.61 L 88.90 147.05 L 88.18 147.49 L 87.47 147.94 L 86.75 148.39 L 86.03 148.84 L 85.32 149.31 L 84.60 149.78 L 83.90 150.28 L 83.20 150.79 L 82.51 151.33 L 81.83 151.88 L 81.16 152.45 L 80.50 153.05 L 79.85 153.66 L 79.21 154.29 L 78.58 154.94 L 77.96 155.60 L 77.35 156.29 L 76.76 156.99 L 76.17 157.71 L 75.60 158.44 L 75.05 159.19 L 74.50 159.96 L 73.97 160.74 L 73.46 161.54 L 72.96 162.35 L 72.48 163.17 L 72.02 164.01 L 71.57 164.86 L 71.15 165.72 L 70.74 166.59 L 70.35 167.48 L 69.99 168.37 L 69.64 169.27 L 69.32 170.18 L 69.03 171.09 L 68.76 172.02 L 68.51 172.94 L 68.29 173.87 L 68.10 174.80 L 67.93 175.72 L 67.79 176.65 L 67.68 177.58 L 67.59 178.50 L 67.53 179.41 L 67.50 180.32 L 67.49 181.22 L 67.50 182.11 L 67.54 183.00 L 67.59 183.87 L 67.67 184.74 L 67.76 185.59 L 67.88 186.44 L 68.00 187.27 L 68.14 188.10 L 68.30 188.92 L 68.46 189.73 L 68.64 190.53 L 68.82 191.32 L 69.01 192.11 L 69.20 192.89 L 69.40 193.67 L 69.60 194.45 L 69.80 195.23 L 70.00 196.00 Z" fill="#E5A645"/>
++   </g>
++ </svg>
++
+
+ ❯ sources/config/logoAssets.test.ts:173:28
+    171|
+    172|   it('limits the safe-zone inset to Android adaptive foregrounds', () …
+    173|     expect(vectors[0]).not.toContain(canonicalInset);
+       |                            ^
+    174|     expect(vectors[1]).toContain(canonicalInset);
+    175|     expect(vectors[1]).toContain(adaptiveFraming);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/23]⎯
+
+ FAIL  sources/config/logoAssets.test.ts > Beeline continuous-line logo assets > ships full-size marks on unmasked rasters and preserves adaptive bounds
+AssertionError: icon.png width: expected 406 to be greater than or equal to 480
+ ❯ sources/config/logoAssets.test.ts:212:38
+    210|     ] as const) {
+    211|       const [width, height] = await bounds(name, background);
+    212|       expect(width, `${name} width`).toBeGreaterThanOrEqual(480);
+       |                                      ^
+    213|       expect(height, `${name} height`).toBeGreaterThanOrEqual(600);
+    214|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > publishes the committed compatibility runtime targets alongside the store pins
+AssertionError: expected [ { platform: 'android', …(1) }, …(4) ] to deeply equal [ { platform: 'android', …(1) }, …(6) ]
+
+- Expected
++ Received
+
+@@ -3,27 +3,19 @@
+      "platform": "android",
+      "runtimeVersion": "23",
+    },
+    {
+      "platform": "android",
+-     "runtimeVersion": "24",
+-   },
+-   {
+-     "platform": "android",
+      "runtimeVersion": "25",
+    },
+    {
+      "platform": "ios",
+      "runtimeVersion": "23",
+    },
+    {
+      "platform": "ios",
+      "runtimeVersion": "24",
+-   },
+-   {
+-     "platform": "ios",
+-     "runtimeVersion": "25",
+    },
+    {
+      "platform": "ios",
+      "runtimeVersion": "26",
+    },
+
+ ❯ sources/config/mobileOtaRelease.test.ts:73:29
+     71| describe('mobile OTA release governor', () => {
+     72|   it('publishes the committed compatibility runtime targets alongside …
+     73|     expect(COMPAT_RUNTIMES).toEqual([
+       |                             ^
+     74|       { platform: 'android', runtimeVersion: '23' },
+     75|       { platform: 'android', runtimeVersion: '24' },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > covers every shipped or submitted native runtime, including runtimes the pins moved away from
+AssertionError: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "android@24 was shipped or submitted (store binaries built on the android@24 pin (128ffd47, #1228) and submitted by successful unified release run 34894012548 (head 01127118)) but is absent from the release plan; add it to COMPAT_RUNTIMES or record its retirement in RETIRED_COMPAT_RUNTIMES.",
++   "ios@25 was shipped or submitted (store binaries built on the ios@25 pin (128ffd47) and submitted by successful unified release run 35141982984 (head 63b1ef08); #1373 briefly dropped ios@25 coverage and #1382 reverted that) but is absent from the release plan; add it to COMPAT_RUNTIMES or record its retirement in RETIRED_COMPAT_RUNTIMES.",
++ ]
+
+ ❯ sources/config/mobileOtaRelease.test.ts:102:45
+    100|     // refuse any plan that does not cover every shipped or submitted …
+    101|     const currentPins = { android: '26', ios: '27' };
+    102|     expect(planCoverageErrors(currentPins)).toEqual([]);
+       |                                             ^
+    103|     const targets = releaseUpdateTargets(mobileRoot, currentPins).map(
+    104|       (target) => `${target.platform}@${target.runtimeVersion}`,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > refuses release planning while a shipped runtime is neither planned nor explicitly retired
+AssertionError: expected [ …(3) ] to have a length of 1 but got 3
+
+- Expected
++ Received
+
+- 1
++ 3
+
+ ❯ sources/config/mobileOtaRelease.test.ts:127:20
+    125|       ),
+    126|     );
+    127|     expect(shrunk).toHaveLength(1);
+       |                    ^
+    128|     expect(shrunk[0]).toContain('android@25 was shipped or submitted');
+    129|     expect(shrunk[0]).toContain('run 35250884374');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > dry-runs beta publish and exact-group production operations with pinned EAS CLI
+AssertionError: expected [ …(7) ] to have a length of 9 but got 7
+
+- Expected
++ Received
+
+- 9
++ 7
+
+ ❯ sources/config/mobileOtaRelease.test.ts:224:29
+    222|       .split('\n')
+    223|       .filter((line) => line.includes('eas-cli@22.2.0 update --branch …
+    224|     expect(targetPublishes).toHaveLength(9);
+       |                             ^
+    225|     expect(targetPublishes[0]).toContain('EXPO_RUNTIME_OVERRIDE=26');
+    226|     expect(targetPublishes[0]).toContain('--platform android');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > publishes and promotes every committed platform-runtime rollout target
+AssertionError: expected { schemaVersion: 4, …(17) } to match object { status: 'production', …(6) }
+(29 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -1,76 +1,69 @@
+  {
+-   "androidUpdateId": "beta-android-26",
++   "androidUpdateId": "beta-android-24",
+    "canary": {
+      "status": "passed",
+    },
+-   "candidateGroupId": "candidate-android-26,candidate-android-23,candidate-android-24,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-25,candidate-ios-26,candidate-ios-27",
+-   "previousProductionGroupId": "known-good-android-23,known-good-android-24,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios,known-good-ios-26",
++   "candidateGroupId": "candidate-android-24,candidate-android-23,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-26,candidate-ios-25",
++   "previousProductionGroupId": "known-good-android-24,known-good-android-23,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-26,known-good-ios",
+    "production": {
+-     "groupId": "production-android-26,production-android-23,production-android-24,production-android-25,production-ios-23,production-ios-24,production-ios-25,production-ios-26,production-ios-27",
+-     "sourceGroupId": "candidate-android-26,candidate-android-23,candidate-android-24,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-25,candidate-ios-26,candidate-ios-27",
++     "groupId": "production-android-24,production-android-23,production-android-25,production-ios-23,production-ios-24,production-ios-26,production-ios-25",
++     "sourceGroupId": "candidate-android-24,candidate-android-23,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-26,candidate-ios-25",
+      "targets": [
+        {
+-         "group": "production-android-26",
++         "group": "production-android-24",
+          "platform": "android",
+-         "runtimeVersion": "26",
++         "runtimeVersion": "24",
++         "updateId": "prod-next-android-24",
+        },
+        {
+          "group": "production-android-23",
+          "platform": "android",
+          "runtimeVersion": "23",
+-       },
+-       {
+-         "group": "production-android-24",
+-         "platform": "android",
+-         "runtimeVersion": "24",
++         "updateId": "prod-next-android-23",
+        },
+        {
+          "group": "production-android-25",
+          "platform": "android",
+          "runtimeVersion": "25",
++         "updateId": "prod-next-android-25",
+        },
+        {
+          "group": "production-ios-23",
+          "platform": "ios",
+          "runtimeVersion": "23",
++         "updateId": "prod-next-ios-23",
+        },
+        {
+          "group": "production-ios-24",
+          "platform": "ios",
+          "runtimeVersion": "24",
+-       },
+-       {
+-         "group": "production-ios-25",
+-         "platform": "ios",
+-         "runtimeVersion": "25",
++         "updateId": "prod-next-ios-24",
+        },
+        {
+          "group": "production-ios-26",
+          "platform": "ios",
+          "runtimeVersion": "26",
++         "updateId": "prod-next-ios-26",
+        },
+        {
+-         "group": "production-ios-27",
++         "group": "production-ios-25",
+          "platform": "ios",
+-         "runtimeVersion": "27",
++         "runtimeVersion": "25",
++         "updateId": "prod-next-ios-25",
+        },
+      ],
+    },
+    "status": "production",
+    "updateTargets": [
+      {
+        "platform": "android",
+-       "runtimeVersion": "26",
++       "runtimeVersion": "24",
+      },
+      {
+        "platform": "android",
+        "runtimeVersion": "23",
+-     },
+-     {
+-       "platform": "android",
+-       "runtimeVersion": "24",
+      },
+      {
+        "platform": "android",
+        "runtimeVersion": "25",
+      },
+@@ -82,17 +75,13 @@
+        "platform": "ios",
+        "runtimeVersion": "24",
+      },
+      {
+        "platform": "ios",
+-       "runtimeVersion": "25",
+-     },
+-     {
+-       "platform": "ios",
+        "runtimeVersion": "26",
+      },
+      {
+        "platform": "ios",
+-       "runtimeVersion": "27",
++       "runtimeVersion": "25",
+      },
+    ],
+  }
+
+ ❯ sources/config/mobileOtaRelease.test.ts:391:20
+    389|
+    390|     const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+    391|     expect(ledger).toMatchObject({
+       |                    ^
+    392|       status: 'production',
+    393|       updateTargets: [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > carries duplicate-platform runtime groups through publish, promotion, and delivery
+AssertionError: expected { schemaVersion: 4, …(17) } to match object { status: 'beta', …(5) }
+(17 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "candidateGroupId": "candidate-android-26,candidate-android-23,candidate-android-24,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-25,candidate-ios-26,candidate-ios-27",
++   "candidateGroupId": "candidate-android-24,candidate-android-23,candidate-android-25,candidate-ios-23,candidate-ios-24,candidate-ios-26,candidate-ios-25",
+    "candidateGroupIds": {
+-     "android": "candidate-android-26",
+-     "ios": "candidate-ios-27",
++     "android": "candidate-android-24",
++     "ios": "candidate-ios-25",
+    },
+-   "previousProductionGroupId": "known-good-android-23,known-good-android-24,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-25,known-good-ios-26",
++   "previousProductionGroupId": "known-good-android-24,known-good-android-23,known-good-android-25,known-good-ios-23,known-good-ios-24,known-good-ios-26,known-good-ios-25",
+    "previousProductionGroupIds": {
+-     "android": "known-good-android-23",
+-     "ios": "known-good-ios-23",
++     "android": "known-good-android-24",
++     "ios": "known-good-ios-25",
+    },
+    "runtimeVersions": [
+-     "26",
++     "24",
+      "23",
+-     "24",
+      "25",
+-     "27",
++     "26",
+    ],
+    "status": "beta",
+  }
+
+ ❯ sources/config/mobileOtaRelease.test.ts:492:58
+    490|     ).toBe(0);
+    491|
+    492|     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject…
+       |                                                          ^
+    493|       status: 'beta',
+    494|       candidateGroupIds: { android: 'candidate-android-26', ios: 'cand…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > anchors a shipped compatibility runtime on its store binary and still refuses an unreadable production lookup
+AssertionError: expected 'ota_plan_targets=android@24,android@2…' to contain 'ios@25: first production release on t…'
+
+- Expected
++ Received
+
+- ios@25: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary
++ ota_plan_targets=android@24,android@23,android@25,ios@23,ios@24,ios@26,ios@25
++ release_plan_targets=android@24,android@23,android@25,ios@23,ios@24,ios@26,ios@25
++ android@23: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary
++ android@25: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary
++ ios@23: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary
++ ios@24: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary
++ ios@26: first production release on this runtime; rollback anchor = embedded update of its already-shipped store binary
++
+
+ ❯ sources/config/mobileOtaRelease.test.ts:710:33
+    708|     expect(incomplete.stderr).toContain('EAS command failed (9');
+    709|     for (const key of ['android@23', 'android@25', 'ios@23', 'ios@24',…
+    710|       expect(incomplete.stdout).toContain(
+       |                                 ^
+    711|         `${key}: first production release on this runtime; rollback an…
+    712|       );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > refuses a publish that silently covers only one of the built platforms
+AssertionError: expected 'Beta publish android@24 must return e…' to contain 'Beta publish android@26 must return e…'
+
+- Expected
++ Received
+
+- Beta publish android@26 must return exactly android@26
++ Beta publish android@24 must return exactly android@24; received android@null.
++
+
+ ❯ sources/config/mobileOtaRelease.test.ts:771:27
+    769|
+    770|     expect(result.status).toBe(1);
+    771|     expect(result.stderr).toContain('Beta publish android@26 must retu…
+       |                           ^
+    772|     expect(existsSync(join(directory, 'ledger.json'))).toBe(false);
+    773|   }, 60_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > refuses a publish whose updates belong to no update group
+AssertionError: expected 'Beta publish android@23 returned upda…' to contain 'Beta publish android@26 returned upda…'
+
+- Expected
++ Received
+
+- Beta publish android@26 returned updates that belong to no update group: ios/beta-ios.
++ Beta publish android@23 returned updates that belong to no update group: ios/beta-ios.
++
+
+ ❯ sources/config/mobileOtaRelease.test.ts:810:27
+    808|
+    809|     expect(result.status).toBe(1);
+    810|     expect(result.stderr).toContain(
+       |                           ^
+    811|       'Beta publish android@26 returned updates that belong to no upda…
+    812|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > reads a publish payload that names each group around its updates
+AssertionError: expected { schemaVersion: 4, …(17) } to match object { candidateGroupIds: { …(2) }, …(1) }
+(19 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "candidateGroupIds": {
+-     "android": "candidate-android-26",
+-     "ios": "candidate-ios-27",
++     "android": "candidate-android-24",
++     "ios": "candidate-ios-25",
+    },
+    "previousProductionGroupIds": {
+-     "android": "known-good-android-23",
+-     "ios": "known-good-runtime-23",
++     "android": "known-good-android-24",
++     "ios": "known-good-ios-25",
+    },
+  }
+
+ ❯ sources/config/mobileOtaRelease.test.ts:840:58
+    838|       ).status,
+    839|     ).toBe(0);
+    840|     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject…
+       |                                                          ^
+    841|       candidateGroupIds: { android: 'candidate-android-26', ios: 'cand…
+    842|       previousProductionGroupIds: {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > rolls production back to one known-good group per platform
+AssertionError: expected { schemaVersion: 2, …(7) } to match object { status: 'rolled-back', …(3) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -1,10 +1,10 @@
+  {
+    "productionGroupId": "restored-android,restored-android-23,restored-android-25,restored-ios-23,restored-ios-24,restored-ios-26,restored-ios-25",
+    "productionGroupIds": {
+      "android": "restored-android",
+-     "ios": "restored-ios-23",
++     "ios": "restored-ios-25",
+    },
+    "sourceGroupIds": [
+      "known-good-android",
+      "known-good-android-23",
+      "known-good-android-25",
+
+ ❯ sources/config/mobileOtaRelease.test.ts:891:58
+    889|
+    890|     expect(result.status).toBe(0);
+    891|     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject…
+       |                                                          ^
+    892|       status: 'rolled-back',
+    893|       sourceGroupIds: [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > rolls back every target when the previous runtime shared one group
+AssertionError: expected { schemaVersion: 2, …(8) } to match object { status: 'rolled-back', …(4) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -7,11 +7,11 @@
+      },
+    ],
+    "productionGroupId": "restored-runtime-23,restored-ios-25-embedded",
+    "productionGroupIds": {
+      "android": "restored-runtime-23",
+-     "ios": "restored-runtime-23",
++     "ios": "restored-ios-25-embedded",
+    },
+    "sourceGroupIds": [
+      "known-good-runtime-23",
+    ],
+    "status": "rolled-back",
+
+ ❯ sources/config/mobileOtaRelease.test.ts:949:58
+    947|
+    948|     expect(result.status).toBe(0);
+    949|     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject…
+       |                                                          ^
+    950|       status: 'rolled-back',
+    951|       sourceGroupIds: ['known-good-runtime-23'],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > rolls a first production release back to the embedded update with no predecessor group
+AssertionError: expected { schemaVersion: 2, …(9) } to match object { status: 'rolled-back', …(5) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -18,10 +18,10 @@
+      },
+    ],
+    "productionGroupId": "restored-android-embedded,restored-ios-23-embedded,restored-ios-25-embedded",
+    "productionGroupIds": {
+      "android": "restored-android-embedded",
+-     "ios": "restored-ios-23-embedded",
++     "ios": "restored-ios-25-embedded",
+    },
+    "sourceGroupIds": [],
+    "status": "rolled-back",
+  }
+
+ ❯ sources/config/mobileOtaRelease.test.ts:1007:58
+    1005|
+    1006|     expect(result.status).toBe(0);
+    1007|     expect(JSON.parse(readFileSync(ledgerPath, 'utf8'))).toMatchObject…
+       |                                                          ^
+    1008|       status: 'rolled-back',
+    1009|       embeddedOnly: true,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/23]⎯
+
+ FAIL  sources/config/mobileOtaRelease.test.ts > mobile OTA release governor > tracks every merge through pending, built, published, and physical-device confirmation
+AssertionError: expected [ 'published', 'published' ] to deeply equal [ 'confirmed', 'confirmed' ]
+
+- Expected
++ Received
+
+  [
+-   "confirmed",
+-   "confirmed",
++   "published",
++   "published",
+  ]
+
+ ❯ sources/config/mobileOtaRelease.test.ts:1531:7
+    1529|         (merge: { state: string }) => merge.state,
+    1530|       ),
+    1531|     ).toEqual(['confirmed', 'confirmed']);
+       |       ^
+    1532|     expect(JSON.parse(readFileSync(ledgerPath, 'utf8')).delivery.state…
+    1533|   }, 60_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/23]⎯
+
+ FAIL  sources/config/nativeFingerprint.test.ts > native fingerprint gate > pins the runtime version by hand, because a computed stamp orphans installed binaries
+AssertionError: expected 'const { execFileSync } = require(\'no…' to contain 'runtimeVersion: runtimeVersionOverrid…'
+
+- Expected
++ Received
+
+- runtimeVersion: runtimeVersionOverride || "27"
++ const { execFileSync } = require('node:child_process');
++ const { version: releaseVersion } = require('./package.json');
++
++ const name = "Beeline";
++ const bundleId = "app.usebeeline.mobile";
++ // Android ships under its own Play record (`app.usebeeline`); the iOS bundle
++ // identifier keeps the original `app.usebeeline.mobile` App Store identity.
++ const androidPackage = "app.usebeeline";
++ const scheme = "beeline";
++ const updatesChannel = process.env.EXPO_UPDATES_CHANNEL || "production";
++ const runtimeVersionOverride = process.env.EXPO_RUNTIME_OVERRIDE?.trim();
++ if (runtimeVersionOverride && !/^\d+$/.test(runtimeVersionOverride)) {
++     throw new Error('EXPO_RUNTIME_OVERRIDE must be a numeric runtime version');
++ }
++ const consoleLoggingDefault = process.env.NODE_ENV !== 'production';
++ const buzzyMonolithUrl = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL || 'https://server.usebeeline.app';
++
++ function git(args) {
++     try {
++         return execFileSync('git', args, {
++             encoding: 'utf8',
++             stdio: ['ignore', 'pipe', 'ignore'],
++         }).trim() || undefined;
++     } catch {
++         return undefined;
++     }
++ }
++
++ function loadBuildMetadata() {
++     const commitSha =
++         process.env.EAS_BUILD_GIT_COMMIT_HASH ||
++         process.env.GITHUB_SHA ||
++         git(['rev-parse', 'HEAD']);
++     const commitTimestamp =
++         commitSha
++             ? git(['show', '-s', '--format=%cI', commitSha])
++             : git(['show', '-s', '--format=%cI', 'HEAD']);
++
++     return {
++         commitSha,
++         commitTimestamp,
++     };
++ }
++
++ const buildMetadata = loadBuildMetadata();
++
++ export default {
++     expo: {
++         name,
++         // The EAS project slug is operational metadata; native identity is
++         // fixed independently by the bundleId and scheme constants above.
++         slug: "buzzy",
++         // Android versionName and iOS CFBundleShortVersionString both derive
++         // from this package's release version. `version:check` rejects a tag
++         // that does not match it before a release build starts.
++         version: releaseVersion,
++         // The runtime is a hand-pinned label, not a computed policy: an
++         // installed binary carries whatever stamp it was BUILT with, so a
++         // policy that recomputes the stamp per commit silently cuts every
++         // already-installed app off from OTA updates (v0.0.42 did exactly
++         // that). Each platform pins its own runtime below. A bump says
++         // "a new native build is shipping for this platform". `scripts/native-fingerprint.mjs`
++         // (the NATIVE FINGERPRINT gate) fails a PR that changes native inputs
++         // without bumping it.
++         orientation: "default",
++         icon: "./sources/assets/images/icon.png",
++         scheme,
++         userInterfaceStyle: "automatic",
++         ios: {
++             runtimeVersion: runtimeVersionOverride || "25",
++             icon: {
++                 light: "./sources/assets/images/icon-light.png",
++                 dark: "./sources/assets/images/icon-ios.png",
++                 tinted: "./sources/assets/images/icon-ios-tinted.png",
++             },
++             supportsTablet: true,
++             bundleIdentifier: bundleId,
++             buildNumber: "1",
++             // Retained so already-issued HTTPS invite links can still enter an installed app.
++             // This is an OS routing declaration, not an API/relay transport.
++             associatedDomains: ["applinks:usebeeline.app", "applinks:relay.buzzrouter.com"],
++             config: {
++                 usesNonExemptEncryption: false
++             },
++             infoPlist: {
++                 // Free platform speech recognition
++                 NSSpeechRecognitionUsageDescription: "Allow Beeline to recognize your speech so it can type what you say.",
++                 NSMicrophoneUsageDescription: "Allow Beeline to use the microphone for speech input.",
++                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
++                 NSBonjourServices: ["_http._tcp", "_https._tcp"],
++                 // ATS:
++                 // - NSAllowsLocalNetworking: lets HTTP fetches reach LAN
++                 //   addresses (e.g. self-hosted server at 192.168.x.y) without
++                 //   forcing TLS. Production cloud server is HTTPS, so the
++                 //   default policy still applies there.
++                 // - In local development only, allow arbitrary HTTP loads so a
++                 //   developer pointing the app at their machine doesn't have
++                 //   to ship a TLS cert just to test attachment uploads.
++                 NSAppTransportSecurity: process.env.NODE_ENV === 'production'
++                     ? { NSAllowsLocalNetworking: true }
++                     : { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
++             }
++         },
++         android: {
++             runtimeVersion: runtimeVersionOverride || "24",
++             versionCode: 27,
++             adaptiveIcon: {
++                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
++                 // Owner-final treatment: brass loop on a flat aubergine field. Keep the
++                 // fallback in sync if a toolchain drops the generated background image.
++                 backgroundImage: "./sources/assets/images/icon-adaptive-background.png",
++                 backgroundColor: "#14091A",
++                 monochromeImage: "./sources/assets/images/icon-adaptive-monochrome.png"
++             },
++             permissions: [
++                 "android.permission.ACCESS_NETWORK_STATE",
++                 "android.permission.POST_NOTIFICATIONS",
++                 "android.permission.RECORD_AUDIO",
++             ],
++             blockedPermissions: [
++                 "android.permission.ACTIVITY_RECOGNITION",
++                 // Not using external storage/media access for now — blocks Google Play photo/video permission declaration
++                 "android.permission.READ_EXTERNAL_STORAGE",
++                 "android.permission.WRITE_EXTERNAL_STORAGE",
++                 "android.permission.READ_MEDIA_IMAGES",
++                 "android.permission.READ_MEDIA_VIDEO",
++             ],
++             package: androidPackage,
++             googleServicesFile: "./google-services.json",
++             intentFilters: [
++                 {
++                     "action": "VIEW",
++                     "autoVerify": true,
++                     "data": [
++                         {
++                             "scheme": "https",
++                             "host": "usebeeline.app",
++                             "pathPrefix": "/join/"
++                         },
++                         {
++                             "scheme": "https",
++                             "host": "usebeeline.app",
++                             "pathPrefix": "/auth/github/mobile-callback"
++                         },
++                         // The Google Play review link. Verified like every other
++                         // app link on this host; the app exposes no control for
++                         // it and the server judges the secret.
++                         {
++                             "scheme": "https",
++                             "host": "usebeeline.app",
++                             "pathPrefix": "/review/"
++                         },
++                         {
++                             "scheme": "https",
++                             "host": "relay.buzzrouter.com",
++                             "pathPrefix": "/join/"
++                         },
++                         {
++                             "scheme": "https",
++                             "host": "relay.buzzrouter.com",
++                             "pathPrefix": "/auth/github/mobile-callback"
++                         },
++                     ],
++                     "category": ["BROWSABLE", "DEFAULT"]
++                 }
++             ]
++         },
++         web: {
++             bundler: "metro",
++             output: "single",
++             favicon: "./sources/assets/images/favicon.png"
++         },
++         plugins: [
++             require("./plugins/withEinkCompatibility.js"),
++             require("./plugins/withAndroidBuildTooling.js"),
++             [
++                 "expo-router",
++                 {
++                     root: "./sources/app"
++                 }
++             ],
++             "expo-updates",
++             "expo-asset",
++             "expo-localization",
++             [
++                 "expo-local-authentication",
++                 {
++                     faceIDPermission: "Allow Beeline to verify it is you before showing your secret key."
++                 }
++             ],
++             "expo-secure-store",
++             "expo-web-browser",
++             [
++                 "expo-notifications",
++                 {
++                     "enableBackgroundRemoteNotifications": true,
++                     "icon": "./sources/assets/images/icon-notification.png"
++                 }
++             ],
++             [
++                 'expo-splash-screen',
++                 {
++                     ios: {
++                         image: "./sources/assets/images/splash-android-light.png",
++                         imageWidth: 150,
++                         resizeMode: "contain",
++                         backgroundColor: "#F3EEE4",
++                         dark: {
++                             image: "./sources/assets/images/splash-android-dark.png",
++                             backgroundColor: "#14091A",
++                         }
++                     },
++                     android: {
++                         image: "./sources/assets/images/splash-android-light.png",
++                         imageWidth: 150,
++                         resizeMode: "contain",
++                         backgroundColor: "#F3EEE4",
++                         dark: {
++                             image: "./sources/assets/images/splash-android-dark.png",
++                             backgroundColor: "#14091A",
++                         }
++                     }
++                 }
++             ]
++         ],
++         experiments: {
++             typedRoutes: true
++         },
++         updates: {
++             url: "https://u.expo.dev/58f1e94e-5ce5-475e-9dde-3eaa9e36699c",
++             requestHeaders: {
++                 "expo-channel-name": updatesChannel
++             }
++         },
++         extra: {
++             router: {
++                 root: "./sources/app"
++             },
++             eas: {
++                 projectId: "58f1e94e-5ce5-475e-9dde-3eaa9e36699c"
++             },
++             app: {
++                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
++                 consoleLoggingDefault,
++                 buildCommitSha: buildMetadata.commitSha,
++                 buildCommitTimestamp: buildMetadata.commitTimestamp,
++                 releaseVersion: process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION,
++                 releaseSha: process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA || buildMetadata.commitSha,
++                 buzzyMonolithUrl,
++             }
++         },
++         owner: "lunchboxfortwo"
++     }
++ };
++
+
+ ❯ sources/config/nativeFingerprint.test.ts:63:23
+     61|     // could never match the published updates and reported NoUpdatesA…
+     62|     // Each platform pin moves by hand only when that platform's nativ…
+     63|     expect(appConfig).toContain('runtimeVersion: runtimeVersionOverrid…
+       |                       ^
+     64|     expect(appConfig).toContain('runtimeVersion: runtimeVersionOverrid…
+     65|     expect(appConfig).not.toContain('policy: "fingerprint"');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/23]⎯
+
+ FAIL  sources/config/nativeFingerprint.test.ts > native fingerprint gate > accepts this tree and rejects a real native edit, end to end
+AssertionError: expected 'Native inputs changed but android.run…' to be '' // Object.is equality
+
+- Expected
++ Received
+
++ Native inputs changed but android.runtimeVersion is still "24".
++ Fix: bump android.runtimeVersion in apps/mobile/app.config.js to "25" and ship that platform's new native build.
++ Native inputs changed but ios.runtimeVersion is still "25".
++ Fix: bump ios.runtimeVersion in apps/mobile/app.config.js to "26" and ship that platform's new native build.
++   android: 464d8d4ca9c16960d8a0f086e2db72a456bbf31b -> bc03d7df34c8ee1cc2f5c8de945c3f1fc6d28cb6
++   ios: 4c0a91b1e6743ea1939f802a44cc0fb21c24350f -> ac392c9430931c2cb56c8e6baf093457b1f663ce
++ Run `npm run fingerprint:write --prefix apps/mobile` and commit native-fingerprint.json.
++
+
+ ❯ sources/config/nativeFingerprint.test.ts:205:28
+    203|       // the NATIVE FINGERPRINT job does.
+    204|       const clean = await runGate([]);
+    205|       expect(clean.stderr).toBe('');
+       |                            ^
+    206|       expect(clean.status).toBe(0);
+    207|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/23]⎯
+
+ FAIL  sources/config/nativeSplashHandoff.test.ts > native splash handoff > hands directly from the OS splash to the real app tree
+AssertionError: expected 'import \'react-native-quick-base64\';…' to contain 'if (initialized) hideNativeSplash()'
+
+- Expected
++ Received
+
+- if (initialized) hideNativeSplash()
++ import 'react-native-quick-base64';
++ import '../theme.css';
++ import * as React from 'react';
++ import * as SplashScreen from 'expo-splash-screen';
++ import * as Fonts from 'expo-font';
++ import * as Notifications from 'expo-notifications';
++ import AsyncStorage from '@react-native-async-storage/async-storage';
++ import { FontAwesome } from '@expo/vector-icons';
++ import { usePathname, useRouter } from 'expo-router';
++ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
++ import { KeyboardProvider } from 'react-native-keyboard-controller';
++ import {
++   initialWindowMetrics,
++   SafeAreaProvider,
++   useSafeAreaInsets,
++ } from 'react-native-safe-area-context';
++ import { GestureHandlerRootView } from 'react-native-gesture-handler';
++ import { SidebarNavigator } from '@/components/SidebarNavigator';
++ import { AppState, View, Platform } from 'react-native';
++ import { ModalProvider } from '@/modal';
++ import { PostHogProvider } from 'posthog-react-native';
++ import { tracking } from '@/track/tracking';
++ import { useTrackScreens } from '@/track/useTrackScreens';
++ import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
++ import { StatusBarProvider } from '@/components/StatusBarProvider';
++ // import * as SystemUI from 'expo-system-ui';
++ import { initConsoleLogging, setConsoleOutputEnabled } from '@/utils/consoleLogging';
++ import { useLocalSetting } from '@/sync/storage';
++ import { useUnistyles } from 'react-native-unistyles';
++ import { AsyncLock } from '@/utils/lock';
++ import {
++   createConsumedNotificationResponseStore,
++   routeBuzzNotificationResponse,
++   startNotificationResponseEntries,
++   type TappedNotificationResponse,
++ } from '@/push/notification-response';
++ import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
++ import {
++   markInitialLandingResolved,
++   suppressInitialLandingNavigation,
++   whenInitialLandingResolved,
++ } from '@/navigation/initial-landing';
++ import { useTauriZoom } from '@/hooks/useTauriZoom';
++ import { useTauriDrag } from '@/hooks/useTauriDrag';
++ import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
++ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
++ import {
++   registerBuzzPushNotifications,
++   retryBuzzPushRegistration,
++ } from '@/push/buzz-push-registration';
++ import { monolithSession } from '@/auth/monolith-session';
++ import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
++ import { reportRunningUpdateReceipt } from '@/push/update-receipt';
++ import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
++ import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
++ import {
++   clearLegacyPresentedNotificationsOnce,
++   reconcilePresentedNotificationBadge,
++ } from '@/push/presented-notifications';
++ import { loadStoredPushLevel, saveStoredPushLevel } from '@/push/push-level-storage';
++ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
++ import { UpdateProvider } from '@/hooks/useUpdates';
++ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
++ import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
++ import { useIsDesktop } from '@/utils/responsive';
++ import { BootPaint } from '@/components/buzz/BootPaint';
++
++ const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
++
++ // Foreground banner policy: suppress banners while the app is active, and
++ // always for the Room the person currently has open. Background display and
++ // response routing are untouched; see push/foreground-policy.ts.
++ Notifications.setNotificationHandler({
++   handleNotification: async (notification) => {
++     const decision = decideForegroundNotificationDisplay({
++       appState: AppState.currentState,
++       openChannelId: getOpenBuzzChannelId(),
++       data: notification.request.content.data,
++     });
++     return {
++       shouldShowAlert: decision.shouldPresent,
++       shouldPlaySound: decision.shouldPresent,
++       shouldSetBadge: decision.shouldPresent,
++       shouldShowBanner: decision.shouldPresent,
++       shouldShowList: decision.shouldPresent,
++     };
++   },
++ });
++
++ // Setup Android notification channels (required for Android 8.0+)
++ if (Platform.OS === 'android') {
++   Notifications.setNotificationChannelAsync('default', {
++     name: 'Default',
++     importance: Notifications.AndroidImportance.MAX,
++     vibrationPattern: [0, 250, 250, 250],
++     lightColor: '#FF231F7C',
++   });
++   Notifications.setNotificationChannelAsync('mentions', {
++     name: 'Mentions',
++     importance: Notifications.AndroidImportance.HIGH,
++     vibrationPattern: [0, 250, 250, 250],
++     lightColor: '#FF231F7C',
++   });
++   Notifications.setNotificationChannelAsync('attention', {
++     name: 'Agent attention',
++     importance: Notifications.AndroidImportance.HIGH,
++     vibrationPattern: [0, 250, 250, 250],
++     lightColor: '#FF231F7C',
++   });
++   Notifications.setNotificationChannelAsync('activity', {
++     name: 'Direct messages',
++     importance: Notifications.AndroidImportance.DEFAULT,
++     lightColor: '#FF231F7C',
++   });
++ }
++
++ export {
++   // Catch any errors thrown by the Layout component.
++   ErrorBoundary,
++ } from 'expo-router';
++
++ // The OS splash is a static image and cannot animate. Keep it up until
++ // BootPaint has laid out on the SAME ground, then hide with no fade so the
++ // handoff is a colour match rather than a flash. The glyph paints itself
++ // on that first screen.
++ SplashScreen.setOptions({
++   fade: false,
++   duration: 0,
++ });
++ SplashScreen.preventAutoHideAsync();
++
++ // Set window background color - now handled by Unistyles
++ // SystemUI.setBackgroundColorAsync('white');
++
++ // Remote logging to local log server (configured via Dev > Log Server setting)
++ initConsoleLogging();
++
++ // Component to apply horizontal safe area padding
++ function HorizontalSafeAreaWrapper({ children }: { children: React.ReactNode }) {
++   const insets = useSafeAreaInsets();
++   return (
++     <View
++       style={{
++         flex: 1,
++         paddingLeft: insets.left,
++         paddingRight: insets.right,
++       }}
++     >
++       {children}
++     </View>
++   );
++ }
++
++ let lock = new AsyncLock();
++ let loaded = false;
++
++ async function loadFonts() {
++   await lock.inLock(async () => {
++     if (loaded) {
++       return;
++     }
++     loaded = true;
++     // Check if running in Tauri
++     const isTauri =
++       Platform.OS === 'web' &&
++       typeof window !== 'undefined' &&
++       (window as any).__TAURI_INTERNALS__ !== undefined;
++
++     if (!isTauri) {
++       // Normal font loading for non-Tauri environments (native and regular web)
++       await Fonts.loadAsync({
++         // IBM Plex Sans family
++         'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
++         'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
++         'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
++
++         // IBM Plex Mono family
++         'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
++         'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
++         'IBMPlexMono-SemiBold': require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'),
++
++         // Space Grotesk family (transcript prose)
++         'SpaceGrotesk-Regular': require('@/assets/fonts/SpaceGrotesk-Regular.ttf'),
++         'SpaceGrotesk-Medium': require('@/assets/fonts/SpaceGrotesk-Medium.ttf'),
++         'SpaceGrotesk-SemiBold': require('@/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
++
++         // Bricolage Grotesque
++         'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
++
++         ...FontAwesome.font,
++       });
++     } else {
++       // For Tauri, skip Font Face Observer as fonts are loaded via CSS
++       console.log('Do not wait for fonts to load');
++       (async () => {
++         try {
++           await Fonts.loadAsync({
++             // IBM Plex Sans family
++             'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
++             'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
++             'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
++
++             // IBM Plex Mono family
++             'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
++             'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
++             'IBMPlexMono-SemiBold': require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'),
++
++             // Space Grotesk family (transcript prose)
++             'SpaceGrotesk-Regular': require('@/assets/fonts/SpaceGrotesk-Regular.ttf'),
++             'SpaceGrotesk-Medium': require('@/assets/fonts/SpaceGrotesk-Medium.ttf'),
++             'SpaceGrotesk-SemiBold': require('@/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
++
++             // Bricolage Grotesque
++             'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
++
++             ...FontAwesome.font,
++           });
++         } catch (e) {
++           // Ignore
++         }
++       })();
++     }
++   });
++ }
++
++ export default function RootLayout() {
++   const isDesktop = useIsDesktop();
++   React.useEffect(() => {
++     const reconcileBadge = () => {
++       if (AppState.currentState !== 'active') return;
++       void (async () => {
++         const identity = await loadBuzzIdentity();
++         let pushLevel = identity ? await loadStoredPushLevel(identity.publicKey) : 'mine';
++         if (identity) {
++           const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
++           if (managed) {
++             pushLevel = managed.pushLevel;
++             await saveStoredPushLevel(identity.publicKey, pushLevel);
++           }
++         }
++         if (pushLevel !== 'off' && getOpenBuzzChannelId()) return;
++         await reconcilePresentedNotificationBadge(Notifications, Platform.OS, pushLevel);
++       })().catch((error) => {
++         console.log('Failed to reconcile the presented notification badge:', error);
++       });
++     };
++     void clearLegacyPresentedNotificationsOnce(Notifications, Platform.OS, AsyncStorage).catch(
++       (error) => {
++         console.log('Failed to clear legacy presented notifications:', error);
++       },
++     );
++     reconcileBadge();
++     const subscription = AppState.addEventListener('change', reconcileBadge);
++     return () => subscription.remove();
++   }, []);
++
++   React.useEffect(
++     () =>
++       startPushRegistrationLifecycle({
++         loadIdentity: loadBuzzIdentity,
++         subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
++         subscribeForeground: (listener) => {
++           const subscription = AppState.addEventListener('change', (state) => {
++             if (state === 'active') listener();
++           });
++           return () => subscription.remove();
++         },
++         register: registerBuzzPushNotifications,
++         retry: retryBuzzPushRegistration,
++         reportUpdate: reportRunningUpdateReceipt,
++         reportFailure: (error) =>
++           console.warn(
++             '[beeline-push] lifecycle:',
++             error instanceof Error ? error.message : String(error),
++           ),
++       }),
++     [],
++   );
++
++   useTauriZoom();
++   useTauriDrag();
++   const router = useRouter();
++   const pathname = usePathname();
++   React.useEffect(() => {
++     // `router.replace` only schedules the landing transition. Resolve the
++     // notification gate after Expo Router reports the committed destination,
++     // so a cold-start replace cannot overwrite the notification navigation.
++     if (pathname !== '/') markInitialLandingResolved();
++   }, [pathname]);
++   const { theme } = useUnistyles();
++   const navigationTheme = React.useMemo(() => {
++     if (theme.dark) {
++       return {
++         ...DarkTheme,
++         colors: {
++           ...DarkTheme.colors,
++           background: theme.colors.groupped.background,
++         },
++       };
++     }
++     return {
++       ...DefaultTheme,
++       colors: {
++         ...DefaultTheme.colors,
++         background: theme.colors.groupped.background,
++       },
++     };
++   }, [theme]);
++
++   //
++   // Init sequence
++   //
++   const [initialized, setInitialized] = React.useState(false);
++   const [painted, setPainted] = React.useState(false);
++   const splashHidden = React.useRef(false);
++   const hideNativeSplash = React.useCallback(() => {
++     if (splashHidden.current) return;
++     splashHidden.current = true;
++     void SplashScreen.hideAsync();
++   }, []);
++   React.useEffect(() => {
++     (async () => {
++       try {
++         await loadFonts();
++         setInitialized(true);
++       } catch (error) {
++         console.error('Error initializing:', error);
++       }
++     })();
++   }, []);
++
++   const handledNotificationIds = React.useRef<Set<string>>(new Set());
++   const handleNotificationResponse = React.useCallback(
++     async (response: TappedNotificationResponse | null) => {
++       await routeBuzzNotificationResponse(response, {
++         router,
++         handled: handledNotificationIds.current,
++         defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
++         waitForInitialLanding: whenInitialLandingResolved,
++         suppressPendingInitialLanding: suppressInitialLandingNavigation,
++         clearLastResponse: Notifications.clearLastNotificationResponseAsync,
++         resolveTarget: resolveBuzzNotificationDestination,
++         consumedResponses: consumedNotificationResponses,
++         log: (message) => console.warn(message),
++       });
++     },
++     [router],
++   );
++
++   React.useEffect(() => {
++     if (!initialized) {
++       return;
++     }
++
++     return startNotificationResponseEntries({
++       addResponseListener: Notifications.addNotificationResponseReceivedListener,
++       getLastResponse: Notifications.getLastNotificationResponseAsync,
++       getAppState: () => AppState.currentState,
++       consumedResponses: consumedNotificationResponses,
++       route: (response) => handleNotificationResponse(response),
++       log: (message, error) =>
++         error == null ? console.warn(message) : console.warn(message, error),
++     });
++   }, [handleNotificationResponse, initialized]);
++
++   // Track the screens
++   useTrackScreens();
++
++   // Sync console output toggle from Dev screen
++   const consoleLoggingEnabled = useLocalSetting('consoleLoggingEnabled');
++   React.useEffect(() => {
++     setConsoleOutputEnabled(consoleLoggingEnabled);
++   }, [consoleLoggingEnabled]);
++
++   //
++   // Not inited
++   //
++
++   if (!initialized || !painted) {
++     return (
++       <BootPaint
++         onPainted={() => setPainted(true)}
++         onReady={hideNativeSplash}
++       />
++     );
++   }
++
++   //
++   // Boot
++   //
++
++   let providers = (
++     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
++       <KeyboardProvider preload={false}>
++         <GestureHandlerRootView
++           style={
++             isDesktop
++               ? { flex: 1 }
++               : { flex: 1, backgroundColor: theme.colors.groupped.background }
++           }
++         >
++           <UpdateProvider>
++             <ThemeProvider value={navigationTheme}>
++               <StatusBarProvider />
++               <ModalProvider>
++                 <DesktopDeepLinkBridge />
++                 <BrowserNavigationShortcuts />
++                 <CommandPaletteProvider>
++                   <HorizontalSafeAreaWrapper>
++                     <SidebarNavigator />
++                   </HorizontalSafeAreaWrapper>
++                 </CommandPaletteProvider>
++               </ModalProvider>
++               <UpdateReadyPrompt />
++             </ThemeProvider>
++           </UpdateProvider>
++         </GestureHandlerRootView>
++       </KeyboardProvider>
++     </SafeAreaProvider>
++   );
++   if (tracking) {
++     providers = <PostHogProvider client={tracking}>{providers}</PostHogProvider>;
++   }
++
++   return providers;
++ }
++
+
+ ❯ sources/config/nativeSplashHandoff.test.ts:9:20
+      7|   it('hands directly from the OS splash to the real app tree', () => {
+      8|     expect(layout).toContain('SplashScreen.preventAutoHideAsync()');
+      9|     expect(layout).toContain('if (initialized) hideNativeSplash()');
+       |                    ^
+     10|     expect(layout).toContain('if (!initialized) return null');
+     11|     expect(layout).not.toContain('BootPaint');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/23]⎯
+
+ FAIL  sources/app/(app)/beeline/channels.bootstrap.test.ts > Room deck bootstrap > shows the Room loader whenever the Room deck itself is loading
+AssertionError: expected 'import React, { useCallback, useEffec…' not to contain 'consumeFirstRoomDeckAfterBoot'
+
+- Expected
++ Received
+
+- consumeFirstRoomDeckAfterBoot
++ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++ import { Keyboard, Pressable, SectionList, Text, TouchableOpacity, View } from 'react-native';
++ import { StyleSheet } from 'react-native-unistyles';
++ import { Swipeable } from 'react-native-gesture-handler';
++ import * as Haptics from 'expo-haptics';
++ import { router, useLocalSearchParams, type Href } from 'expo-router';
++ import { useFocusEffect } from '@react-navigation/native';
++ import { useSafeAreaInsets } from 'react-native-safe-area-context';
++ import {
++   SurfaceRefreshScheduler,
++   isChatListView,
++   isWorkspaceListView,
++   isWorkspaceView,
++   type ChatListItem,
++   type ChatListView,
++   type CornerListItem,
++   type GitHubInstallationAccess,
++   type Identity,
++   type WorkspaceListView,
++   type WorkspaceView,
++ } from '@beeline/buzz-client';
++ import { RoomViewClient } from '@/sync/transport/room-view-client';
++ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
++ import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
++ import { useGitHubInstallationSession } from '@/auth/github-installation-host';
++ import {
++   loadActiveCommunityId,
++   saveActiveCommunityId,
++   saveLastViewedChannel,
++ } from '@/buzz/community-storage';
++ import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
++ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
++ import { compactRelativeTime } from '@/buzz/relative-time';
++ import { cornerHref } from '@/buzz/corner-navigation';
++ import { cornerDisplayItems, cornerDisplayState } from '@/buzz/corner-display-state';
++ import {
++   displayGroupedCornerTitle,
++   expandedCornerRefreshAction,
++   roomRowName,
++   roomRowNeedsAttention,
++   roomRowPreview,
++   roomListSections,
++   NO_ACTIVITY_PREVIEW,
++ } from '@/buzz/room-list-row';
++ import { formatRoomCornerCount } from '@/buzz/vocabulary';
++ import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
++ import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
++ import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
++ import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
++ import { ExitGlyph } from '@/components/buzz/ExitGlyph';
++ import { MembersGlyph } from '@/components/buzz/MembersGlyph';
++ import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
++ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
++ import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
++ import { CornerWorkingPulse } from '@/components/buzz/CornerLiveBar';
++ import { MonoButton } from '@/components/buzz/MonoHull';
++ import { consumeFirstRoomDeckAfterBoot } from '@/buzz/boot-paint-handoff';
++ import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
++ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
++ import {
++   RoomDeckComposeMenu,
++   type RoomDeckComposeAction,
++ } from '@/components/buzz/RoomDeckComposeMenu';
++ import { BuzzRigTransport } from '@/sync/transport';
++ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
++ import type { RepoCandidate } from '@/buzz/room-repo-picker';
++ import { Typography } from '@/constants/Typography';
++ import { Modal } from '@/modal';
++ import { useIsDesktop } from '@/utils/responsive';
++
++ const AGE_TICK_MS = 60_000;
++ const COMPOSE_FAB_CLEARANCE = 80;
++ const CONNECT_AGENT_COMMAND = 'npx usebeeline connect';
++ /** Speakeasy index row: 64 tall. Room and DM copy share one leading edge;
++  *  the brass `#`/`@` sigil states the row kind without a separate tile. */
++ const ROW_HEIGHT = 64;
++ /** The trailing brass unread/attention square — lit or reserved, never absent. */
++ const ATTENTION_SQUARE = 7;
++ /** The row's leading gutter, in order: slab padding, state column, gap. */
++ const ROW_PADDING_LEFT = 16;
++ const ROW_COPY_GAP = 12;
++ /** Where a Room's copy starts. The corner tray indents to the same number so
++  *  its `└` sits on the Room title's left margin and the tree reads as one
++  *  stem under the name rather than a block floating off to its right. */
++ const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
++ const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
++
++ type EmptyRoomActionsProps = {
++   canAddRoom: boolean;
++   canConnectAgent: boolean;
++   onAddRoom: () => void;
++   onConnectAgent: () => void;
++   desktop?: boolean;
++   testID?: string;
++ };
++
++ /** The first Workspace view: quiet orientation, then two restrained actions. */
++ function EmptyRoomActions({
++   canAddRoom,
++   canConnectAgent,
++   desktop = false,
++   onAddRoom,
++   onConnectAgent,
++   testID = 'room-list-empty',
++ }: EmptyRoomActionsProps) {
++   return (
++     <View style={[styles.empty, desktop && styles.desktopEmpty]} testID={testID}>
++       <Text style={styles.emptyTitle}>No Rooms yet</Text>
++       <Text style={styles.emptyCopy}>
++         A Room holds one repository and the people and agents working on it.
++       </Text>
++       <View style={styles.emptyActionList}>
++         {canAddRoom && (
++           <Pressable
++             accessibilityLabel="Add a Room"
++             accessibilityRole="button"
++             onPress={onAddRoom}
++             style={({ pressed }) => [styles.emptyButton, pressed && styles.emptyButtonPressed]}
++             testID="empty-add-room"
++           >
++             <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
++           </Pressable>
++         )}
++         {canConnectAgent && (
++           <Pressable
++             accessibilityLabel="Connect an agent"
++             accessibilityRole="button"
++             onPress={onConnectAgent}
++             style={({ pressed }) => [styles.emptyButton, pressed && styles.emptyButtonPressed]}
++             testID="empty-connect-agent"
++           >
++             <Text style={styles.emptySecondaryLabel}>Connect an agent</Text>
++           </Pressable>
++         )}
++       </View>
++     </View>
++   );
++ }
++
++ function firstParam(value: string | string[] | undefined): string | undefined {
++   return Array.isArray(value) ? value[0] : value;
++ }
++
++ /**
++  * The dropdown lists what the row's count promised. Both now read the daemon
++  * state through `resolveCornerDisplayState`; filtering on `lifecycle` alone
++  * used to leave a daemon-concluded corner listed under a count that had
++  * already dropped it.
++  */
++ function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
++   return cornerDisplayItems(corners).map((entry) => entry.item);
++ }
++
++ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayItem[] {
++   if (!view) return [];
++   return [...view.members, ...view.agents]
++     .filter((member) => member.identity.pubkey !== view.viewer.identity.pubkey)
++     .map((member) => ({
++       peerPubkey: member.identity.pubkey,
++       peerName: member.identity.name,
++       peerKind: member.identity.kind === 'agent' ? 'agent' : 'person',
++       ...(member.identity.avatar ? { avatarUrl: member.identity.avatar } : {}),
++       ...(member.identity.face ? { face: member.identity.face } : {}),
++       ...(member.identity.kind === 'human' ? { role: member.role } : {}),
++     }));
++ }
++
++ export default function BuzzChannels() {
++   const insets = useSafeAreaInsets();
++   const suppressFirstDeckPaint = useRef(consumeFirstRoomDeckAfterBoot()).current;
++   const isDesktop = useIsDesktop();
++   const params = useLocalSearchParams<{
++     communityId?: string | string[];
++     newRoom?: string | string[];
++     newDirectMessage?: string | string[];
++   }>();
++   const requestedWorkspaceId = firstParam(params.communityId);
++   const requestedNewRoom = firstParam(params.newRoom);
++   const requestedNewDirectMessage = firstParam(params.newDirectMessage);
++   const [identity, setIdentity] = useState<Identity | null>(null);
++   const [relayUrl, setRelayUrl] = useState<string | null>(null);
++   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
++   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
++   const [chatList, setChatList] = useState<ChatListView | null>(null);
++   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
++   const [refreshing, setRefreshing] = useState(false);
++   const [error, setError] = useState<string | null>(null);
++   const [deletedWorkspaceNotice, setDeletedWorkspaceNotice] = useState<string | null>(null);
++   const [ageNow, setAgeNow] = useState(() => Date.now());
++   const [memberPickerVisible, setMemberPickerVisible] = useState(false);
++   const [agentConnectVisible, setAgentConnectVisible] = useState(false);
++   const [pairCommand, setPairCommand] = useState<string | null>(null);
++   const [pairingBusy, setPairingBusy] = useState(false);
++   const [pairingError, setPairingError] = useState<string | null>(null);
++   const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
++   const [showCreateRoom, setShowCreateRoom] = useState(false);
++   const [roomName, setRoomName] = useState('');
++   const [creatingRoom, setCreatingRoom] = useState(false);
++   const [showRepoPicker, setShowRepoPicker] = useState(false);
++   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
++   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
++   const [repoInstallations, setRepoInstallations] = useState<GitHubInstallationAccess[]>([]);
++   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
++   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
++   const [retryGeneration, setRetryGeneration] = useState(0);
++   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
++   const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
++   const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
++   const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
++   const handledNewRoomRequest = useRef<string | null>(null);
++   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
++   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
++
++   const communities = useMemo(
++     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
++     [workspaceList],
++   );
++   const activeCommunityId =
++     requestedWorkspaceId ?? chatList?.workspace.id ?? communities[0]?.communityId ?? null;
++   const activeCommunity =
++     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
++   const viewerIsAgent = chatList?.viewer.kind === 'agent';
++   const canManageWorkspace =
++     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
++   const canLeaveRooms = chatList?.workspace.role === 'member';
++   const chatSections = useMemo(() => roomListSections(chatList?.chats ?? []), [chatList?.chats]);
++
++   useEffect(() => {
++     if (
++       !isDesktop ||
++       !requestedNewRoom ||
++       requestedNewRoom === handledNewRoomRequest.current ||
++       !chatList ||
++       viewerIsAgent ||
++       !canManageWorkspace
++     ) {
++       return;
++     }
++     handledNewRoomRequest.current = requestedNewRoom;
++     setShowCreateRoom(true);
++   }, [canManageWorkspace, chatList, isDesktop, requestedNewRoom, viewerIsAgent]);
++
++   // Desktop's one door into the shared direct-message picker: the sidebar's
++   // DIRECT MESSAGES `+` arrives as a one-shot route param, same pattern as
++   // `newRoom` above. The picker itself (and `handleStartDirectMessage`) are
++   // unchanged components.
++   const handledNewDirectMessageRequest = useRef<string | null>(null);
++   useEffect(() => {
++     if (
++       !isDesktop ||
++       !requestedNewDirectMessage ||
++       requestedNewDirectMessage === handledNewDirectMessageRequest.current ||
++       viewerIsAgent
++     ) {
++       return;
++     }
++     handledNewDirectMessageRequest.current = requestedNewDirectMessage;
++     setMemberPickerVisible(true);
++   }, [isDesktop, requestedNewDirectMessage, viewerIsAgent]);
++
++   const refreshNow = useCallback(() => {
++     workspaceScheduler.current?.force();
++     chatScheduler.current?.force();
++   }, []);
++
++   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
++
++   const handleCloseChat = useCallback(async (item: ChatListItem) => {
++     swipeableRefs.current.get(item.room.id)?.close();
++     if (!transport) {
++       Modal.alert('Cannot close yet', 'Connection is still starting. Try again.');
++       return;
++     }
++     try {
++       await transport.closeChat(item.room.id);
++       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
++       chatScheduler.current?.force();
++     } catch (reason) {
++       setError(`Could not close chat: ${String(reason)}`);
++     }
++   }, [transport]);
++
++   const handleLeaveRoom = useCallback(async (item: ChatListItem) => {
++     swipeableRefs.current.get(item.room.id)?.close();
++     if (!transport) {
++       Modal.alert('Cannot leave yet', 'Connection is still starting. Try again.');
++       return;
++     }
++     const heading = roomRowName(item);
++     const title = `${heading.sigil}${heading.name}`;
++     const confirmed = await Modal.confirm(
++       `Leave ${title}?`,
++       'Other members keep their access.',
++       { cancelText: 'No', confirmText: 'Yes', destructive: true },
++     );
++     if (!confirmed) return;
++     try {
++       await transport.leaveRoom(item.room.id);
++       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
++       chatScheduler.current?.force();
++     } catch (reason) {
++       setError(`Could not leave ${ROOM_LABEL}: ${String(reason)}`);
++     }
++   }, [transport]);
++
++   const explainRoomLeaveConstraint = useCallback((item: ChatListItem) => {
++     const heading = roomRowName(item);
++     const title = `${heading.sigil}${heading.name}`;
++     Modal.alert(
++       `Cannot leave ${title}`,
++       'Workspace owners and admins cannot leave Rooms. Change your Workspace role first.',
++     );
++   }, []);
++
++   useEffect(() => {
++     let cancelled = false;
++     let unsubscribeWorkspaces: (() => void) | undefined;
++     let unsubscribeChats: (() => void) | undefined;
++     let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView> | undefined;
++     let chatsRefresh: SurfaceRefreshScheduler<ChatListView> | undefined;
++     void (async () => {
++       setError(null);
++       const nextIdentity = await loadBuzzIdentity();
++       if (!nextIdentity) {
++         router.replace('/beeline/onboarding');
++         return;
++       }
++       const nextRelayUrl = await getEffectiveRelayUrl();
++       if (cancelled) return;
++       const nextTransport = new BuzzRigTransport(nextIdentity);
++       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
++       const relay = await nextTransport.ensureClient();
++       if (cancelled) return;
++       setIdentity(nextIdentity);
++       setRelayUrl(nextRelayUrl);
++       setTransport(nextTransport);
++
++       const workspaceCacheAddress = surfaceAddress(
++         nextRelayUrl,
++         nextIdentity.publicKey,
++         '/workspaces',
++       );
++       const storedWorkspaceId = await loadActiveCommunityId(nextIdentity.publicKey);
++       const cachedWorkspaces = await mobileSurfaceCache.read(
++         workspaceCacheAddress,
++         isWorkspaceListView,
++       );
++       if (cancelled) return;
++       if (cachedWorkspaces) setWorkspaceList(cachedWorkspaces);
++       const selectedId =
++         requestedWorkspaceId ?? storedWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
++       const chatCacheAddress = selectedId
++         ? surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id/chats', {
++             workspaceId: selectedId,
++           })
++         : null;
++       const cachedChats = chatCacheAddress
++         ? await mobileSurfaceCache.read(chatCacheAddress, isChatListView)
++         : null;
++       if (cancelled) return;
++       if (cachedChats) setChatList(cachedChats);
++
++       workspaceRefresh = new SurfaceRefreshScheduler({
++         fetch: () => http.workspaces(),
++         apply: (value) => {
++           setWorkspaceList(value);
++           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
++           if (value.deletedNotices?.length) {
++             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
++           }
++           if (
++             value.workspaces[0]?.id &&
++             (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId))
++           ) {
++             router.replace({
++               pathname: '/beeline/channels',
++               params: { communityId: value.workspaces[0].id },
++             } as never);
++           }
++         },
++         onError: (reason) => setError(String(reason)),
++       });
++       workspaceScheduler.current = workspaceRefresh;
++
++       let chatListenReady: Promise<void> = Promise.resolve();
++       if (selectedId && chatCacheAddress) {
++         let chatWatchKey = '';
++         let chatWatchGeneration = 0;
++         const installChatWatch = async (
++           filters: ChatListView['watchFilters'],
++         ): Promise<void> => {
++           const generation = ++chatWatchGeneration;
++           chatWatchKey = JSON.stringify(filters);
++           unsubscribeChats?.();
++           unsubscribeChats = undefined;
++           // Cold deck without Room ids must not subscribe the Workspace UUID as
++           // #h — canReadRoom refuses it and live invalidation never lands.
++           if (filters.length === 0) return;
++           const stop = await relay.surfaceSubscribe(filters, () => chatsRefresh?.signal());
++           if (cancelled || generation !== chatWatchGeneration) {
++             stop();
++             return;
++           }
++           unsubscribeChats = stop;
++         };
++         chatsRefresh = new SurfaceRefreshScheduler({
++           fetch: () => http.chats(selectedId),
++           apply: (value) => {
++             setChatList(value);
++             setRefreshing(false);
++             setError(null);
++             void mobileSurfaceCache.write(chatCacheAddress, value, isChatListView);
++             const nextWatchKey = JSON.stringify(value.watchFilters);
++             if (nextWatchKey !== chatWatchKey) void installChatWatch(value.watchFilters);
++           },
++           onError: (reason) => {
++             setRefreshing(false);
++             setError(String(reason));
++           },
++         });
++         chatScheduler.current = chatsRefresh;
++         // Seed from cache when present; otherwise the first chats GET apply
++         // reinstalls so the deck never watches a Workspace id.
++         chatListenReady = installChatWatch(cachedChats?.watchFilters ?? []);
++       }
++
++       const workspaceListenReady = relay
++         .surfaceSubscribe(
++           cachedWorkspaces?.watchFilters ?? [
++             { kinds: [9000, 9001, 9007], '#p': [nextIdentity.publicKey] },
++           ],
++           () => workspaceRefresh?.signal(),
++         )
++         .then((stop) => {
++           if (cancelled) stop();
++           else unsubscribeWorkspaces = stop;
++         });
++       await Promise.all([
++         workspaceRefresh.startAfter(workspaceListenReady),
++         chatsRefresh?.startAfter(chatListenReady),
++       ]);
++     })().catch((reason) => {
++       if (!cancelled) setError(String(reason));
++     });
++     return () => {
++       cancelled = true;
++       unsubscribeWorkspaces?.();
++       unsubscribeChats?.();
++       workspaceRefresh?.dispose();
++       chatsRefresh?.dispose();
++       workspaceScheduler.current = null;
++       chatScheduler.current = null;
++     };
++   }, [requestedWorkspaceId, retryGeneration]);
++
++   useFocusEffect(
++     useCallback(() => {
++       refreshNow();
++       setAgeNow(Date.now());
++       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
++       return () => clearInterval(timer);
++     }, [activeCommunityId, refreshNow]),
++   );
++
++   useEffect(() => {
++     if (!memberPickerVisible || !identity || !relayUrl || !activeCommunityId) return;
++     let cancelled = false;
++     const http = new RoomViewClient({ baseUrl: relayUrl, identity });
++     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', {
++       workspaceId: activeCommunityId,
++     });
++     void mobileSurfaceCache
++       .read(address, isWorkspaceView)
++       .then((cached) => {
++         if (!cancelled && cached) setWorkspaceDetail(cached);
++         return http.workspace(activeCommunityId);
++       })
++       .then((value) => {
++         if (cancelled) return;
++         setWorkspaceDetail(value);
++         return mobileSurfaceCache.write(address, value, isWorkspaceView);
++       })
++       .catch((reason) => {
++         if (!cancelled) setError(String(reason));
++       });
++     return () => {
++       cancelled = true;
++     };
++   }, [activeCommunityId, identity, memberPickerVisible, relayUrl]);
++
++   const openRoom = useCallback(
++     (roomId: string) => {
++       if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, roomId);
++       router.push(`/beeline/chat/${encodeURIComponent(roomId)}` as Href);
++     },
++     [activeCommunityId, identity],
++   );
++
++   const loadRoomCorners = useCallback(
++     async (roomId: string) => {
++       if (!identity || !relayUrl) {
++         setCornerLoadErrors((current) => ({
++           ...current,
++           [roomId]: 'Corner navigation is still connecting. Try again.',
++         }));
++         return;
++       }
++       setCornerLoadingRoomId(roomId);
++       setCornerLoadErrors((current) => {
++         const next = { ...current };
++         delete next[roomId];
++         return next;
++       });
++       try {
++         const view = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(roomId);
++         setCornersByRoom((current) => ({ ...current, [roomId]: openCornerItems(view.corners) }));
++       } catch (reason) {
++         setCornerLoadErrors((current) => ({
++           ...current,
++           [roomId]: `Could not load corners: ${String(reason)}`,
++         }));
++       } finally {
++         setCornerLoadingRoomId((current) => (current === roomId ? null : current));
++       }
++     },
++     [identity, relayUrl],
++   );
++
++   const toggleRoomCorners = useCallback((roomId: string) => {
++     setExpandedRoomId((current) => (current === roomId ? null : roomId));
++   }, []);
++
++   useEffect(() => {
++     const action = expandedCornerRefreshAction(expandedRoomId, chatList?.chats ?? []);
++     if (action.kind === 'reload') {
++       void loadRoomCorners(action.roomId);
++       return;
++     }
++     if (action.kind === 'drop') {
++       setExpandedRoomId(null);
++       setCornersByRoom((current) => {
++         const next = { ...current };
++         delete next[action.roomId];
++         return next;
++       });
++     }
++   }, [chatList, expandedRoomId, loadRoomCorners]);
++
++   const selectWorkspace = useCallback(
++     (workspaceId: string | null) => {
++       if (!workspaceId) return;
++       if (identity) void saveActiveCommunityId(identity.publicKey, workspaceId);
++       router.replace({ pathname: '/beeline/channels', params: { communityId: workspaceId } });
++     },
++     [identity],
++   );
++
++   const handleStartDirectMessage = useCallback(
++     async (member: WorkspaceMemberDisplayItem) => {
++       if (!transport || !activeCommunityId || messagingPubkey) return;
++       setMessagingPubkey(member.peerPubkey);
++       try {
++         const room = await transport.resolveDirectMessage(activeCommunityId, member.peerPubkey);
++         setMemberPickerVisible(false);
++         openRoom(room.channelId);
++       } catch (reason) {
++         setError(String(reason));
++       } finally {
++         setMessagingPubkey(null);
++       }
++     },
++     [activeCommunityId, messagingPubkey, openRoom, transport],
++   );
++
++   const loadRepoPicker = useCallback(
++     async (refresh = false) => {
++       if (!transport || !activeCommunityId) return;
++       const access = await transport.workspaceGitHubAccess({ refresh });
++       setRepoCandidates(access.candidates);
++       setRepoInstallations(access.installations);
++       setRepoPickerError(
++         access.githubReconnectNeeded
++           ? 'GitHub sign-in expired — reconnect GitHub in Settings to see new repositories.'
++           : null,
++       );
++     },
++     [activeCommunityId, transport],
++   );
++
++   const handleToggleRepoPicker = useCallback(async () => {
++     Keyboard.dismiss();
++     setShowRepoPicker((value) => !value);
++     if (showRepoPicker || !transport || !activeCommunityId) return;
++     setRepoPickerError(null);
++     try {
++       await loadRepoPicker(true);
++     } catch (reason) {
++       setRepoPickerError('Could not load repos. Check your connection and try again.');
++     }
++   }, [activeCommunityId, loadRepoPicker, showRepoPicker, transport]);
++
++   const handleSelectRepoCandidate = useCallback((candidate: RepoCandidate) => {
++     setPendingRepo(candidate);
++     setShowRepoPicker(false);
++     setRepoPickerError(null);
++   }, []);
++
++   const startGitHubInstallation = useCallback(
++     async (installationId?: number) => {
++       if (!transport) throw new Error('GitHub transport is unavailable');
++       return transport.githubInstallationStart(githubInstallationRedirectUri(), installationId);
++     },
++     [transport],
++   );
++   const refreshGitHubRepositories = useCallback(() => loadRepoPicker(true), [loadRepoPicker]);
++   const resumeRepoPicker = useCallback(async () => {
++     setShowCreateRoom(true);
++     setShowRepoPicker(true);
++   }, []);
++   const { handleAddGitHubAccount, handleManageGitHubInstallation } = useGitHubInstallationSession({
++     ready: Boolean(transport && activeCommunityId),
++     returnPath: '/beeline/channels',
++     startInstallation: startGitHubInstallation,
++     refreshRepositories: refreshGitHubRepositories,
++     onError: setRepoPickerError,
++     onNotice: setRepoPickerNotice,
++     onColdResume: resumeRepoPicker,
++   });
++
++   const handleSelectNoRepository = useCallback(() => {
++     setPendingRepo(null);
++     setShowRepoPicker(false);
++     setRepoPickerError(null);
++   }, []);
++
++   const createRoom = useCallback(async () => {
++     const name = roomName.trim();
++     if (!name || !transport || !activeCommunityId || creatingRoom || !canManageWorkspace) return;
++     setCreatingRoom(true);
++     setError(null);
++     let publishAcknowledged = false;
++     try {
++       await transport.createRoom(name, {
++         communityId: activeCommunityId,
++         repository: pendingRepo ?? undefined,
++         onPublished: () => {
++           publishAcknowledged = true;
++           setRoomName('');
++           setPendingRepo(null);
++           setShowRepoPicker(false);
++           setShowCreateRoom(false);
++           chatScheduler.current?.force();
++         },
++       });
++       if (!publishAcknowledged) {
++         setRoomName('');
++         setPendingRepo(null);
++         setShowRepoPicker(false);
++         setShowCreateRoom(false);
++       }
++       chatScheduler.current?.force();
++     } catch (reason) {
++       setError(
++         publishAcknowledged
++           ? `${ROOM_LABEL} created, but membership is still syncing: ${String(reason)}`
++           : `Could not create ${ROOM_LABEL}: ${String(reason)}`,
++       );
++     } finally {
++       setCreatingRoom(false);
++     }
++   }, [activeCommunityId, canManageWorkspace, creatingRoom, pendingRepo, roomName, transport]);
++
++   const connectAgent = useCallback(async () => {
++     if (!transport || !activeCommunityId || pairingBusy || viewerIsAgent) return;
++     setAgentConnectVisible(true);
++     setPairCommand(null);
++     setPairingError(null);
++     setPairingBusy(true);
++     try {
++       const pairing = await (
++         await transport.ensureClient()
++       ).createAgentPairingCode(activeCommunityId);
++       setPairCommand(`${CONNECT_AGENT_COMMAND} ${pairing.code}`);
++     } catch (reason) {
++       setPairingError(`Could not create agent invite: ${String(reason)}`);
++     } finally {
++       setPairingBusy(false);
++     }
++   }, [activeCommunityId, pairingBusy, transport, viewerIsAgent]);
++
++   const closeAgentConnect = useCallback(() => {
++     setAgentConnectVisible(false);
++     setPairCommand(null);
++     setPairingError(null);
++   }, []);
++
++   const copyPairCommand = useCallback(async (command: string) => {
++     await (await import('expo-clipboard')).setStringAsync(command);
++   }, []);
++
++   const compose = useCallback(
++     (action: RoomDeckComposeAction) => {
++       if (!canManageWorkspace && (action === 'room' || action === 'invite')) return;
++       runRoomDeckComposeAction(action, {
++         communityId: activeCommunityId,
++         openMessagePicker: () => setMemberPickerVisible(true),
++         openRoomCreator: () => setShowCreateRoom(true),
++         invitePerson: () =>
++           router.push({
++             pathname: '/beeline/members',
++             params: {
++               ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
++               action: 'invite',
++             },
++           } as never),
++         navigate: (target) => router.push(target as Href),
++       });
++     },
++     [activeCommunityId, canManageWorkspace],
++   );
++
++   if (workspaceList?.workspaces.length === 0) {
++     return (
++       <View style={[styles.center, { paddingTop: insets.top }]} testID="workspace-list-empty">
++         <Text style={styles.emptyTitle}>No Rooms yet</Text>
++         <Text style={styles.emptyCopy}>Create a Workspace to start adding Rooms.</Text>
++         <MonoButton
++           label="CREATE WORKSPACE"
++           onPress={() => router.push('/beeline/community' as Href)}
++           testID="empty-create-workspace"
++         />
++       </View>
++     );
++   }
++   if (!chatList && !error) {
++     return (
++       <RoomDeckLoadingView
++         style={{ paddingTop: insets.top }}
++         suppressPaint={suppressFirstDeckPaint}
++       />
++     );
++   }
++   if (!chatList) {
++     return (
++       <View style={[styles.center, { paddingTop: insets.top }]}>
++         <Text style={styles.error}>{error}</Text>
++         <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
++       </View>
++     );
++   }
++
++   return (
++     <BuzzCommunityShell
++       communities={communities}
++       activeCommunityId={activeCommunityId}
++       onSelect={selectWorkspace}
++       onAdd={() => router.push('/beeline/community' as Href)}
++       onSettings={() => router.push('/beeline/settings' as Href)}
++       onWorkspaceSettings={(communityId) =>
++         router.push({ pathname: '/beeline/settings/workspace', params: { communityId } } as never)
++       }
++       canManageActiveCommunity={canManageWorkspace}
++       viewerPubkey={identity?.publicKey}
++       viewerAvatarUrl={chatList.viewer.avatar}
++       viewerFace={chatList.viewer.face}
++     >
++       <View
++         style={[styles.container, { paddingTop: insets.top }]}
++         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
++       >
++         <View style={styles.header}>
++           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
++           {!isDesktop && activeCommunityId && (
++             <TouchableOpacity
++               accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
++               accessibilityRole="button"
++               onPress={() =>
++                 router.push({
++                   pathname: '/beeline/members',
++                   params: { communityId: activeCommunityId },
++                 } as never)
++               }
++               style={styles.headerAction}
++               testID="workspace-members"
++             >
++               <MembersGlyph
++                 color={styles.headerActionGlyph.color}
++                 size={16}
++                 testID="workspace-members-glyph"
++               />
++             </TouchableOpacity>
++           )}
++         </View>
++         <NewRoomDialog
++           visible={showCreateRoom}
++           workspaceName={activeCommunity?.name ?? WORKSPACE_LABEL}
++           roomName={roomName}
++           setRoomName={setRoomName}
++           creatingRoom={creatingRoom}
++           createRoom={createRoom}
++           onClose={() => setShowCreateRoom(false)}
++           pendingRepo={pendingRepo}
++           showRepoPicker={showRepoPicker}
++           handleToggleRepoPicker={handleToggleRepoPicker}
++           handleSelectNoRepository={handleSelectNoRepository}
++           handleSelectRepoCandidate={handleSelectRepoCandidate}
++           repoCandidates={repoCandidates}
++           repoInstallations={repoInstallations}
++           repoPickerError={repoPickerError}
++           repoPickerNotice={repoPickerNotice}
++           handleAddGitHubAccount={() => void handleAddGitHubAccount()}
++           handleManageGitHubInstallation={(installation) =>
++             void handleManageGitHubInstallation(installation)
++           }
++         />
++         <MemberPickerSheet
++           agentConnectOnly
++           busy={pairingBusy}
++           canManage={canManageWorkspace}
++           canConnectAgent={!viewerIsAgent}
++           candidates={undefined}
++           error={agentConnectVisible ? pairingError : null}
++           onAdd={() => undefined}
++           onClose={closeAgentConnect}
++           onConnectAgent={() => void connectAgent()}
++           onCopyPairCommand={(command) => void copyPairCommand(command)}
++           onInvitePerson={() => undefined}
++           pairCommand={pairCommand}
++           testID="empty-agent-connect-sheet"
++           visible={agentConnectVisible}
++         />
++         {!!deletedWorkspaceNotice && (
++           <TouchableOpacity
++             onPress={() => setDeletedWorkspaceNotice(null)}
++             style={styles.errorBar}
++             testID="workspace-deleted-notice"
++           >
++             <Text style={styles.error}>{deletedWorkspaceNotice}</Text>
++           </TouchableOpacity>
++         )}
++         {!!error && (
++           <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>
++             <Text style={styles.error}>{error}</Text>
++           </TouchableOpacity>
++         )}
++         {isDesktop ? (
++           chatList.chats.length === 0 ? (
++             <EmptyRoomActions
++               canAddRoom={canManageWorkspace}
++               canConnectAgent={!viewerIsAgent}
++               desktop
++               onAddRoom={() => setShowCreateRoom(true)}
++               onConnectAgent={() => void connectAgent()}
++               testID="desktop-room-list-empty"
++             />
++           ) : (
++             <View style={styles.center} testID="desktop-room-selection-empty">
++               <Text style={styles.emptyTitle}>Select a Room</Text>
++               <Text style={styles.emptyCopy}>Choose a Room or direct message from the sidebar.</Text>
++             </View>
++           )
++         ) : (
++           <SectionList
++           testID="room-list"
++           sections={chatSections}
++           keyExtractor={(item) => item.room.id}
++           stickySectionHeadersEnabled={false}
++           refreshing={refreshing}
++           onRefresh={() => {
++             setRefreshing(true);
++             refreshNow();
++           }}
++           contentContainerStyle={chatList.chats.length ? styles.list : styles.emptyList}
++           renderSectionHeader={({ section }) =>
++             section.title ? <RoomListSectionHeader title={section.title} /> : null
++           }
++           ListEmptyComponent={
++             <EmptyRoomActions
++               canAddRoom={!viewerIsAgent && canManageWorkspace}
++               canConnectAgent={!viewerIsAgent}
++               onAddRoom={() => setShowCreateRoom(true)}
++               onConnectAgent={() => void connectAgent()}
++             />
++           }
++           renderItem={({ item }: { item: ChatListItem }) => {
++             // Every row-level fact is derived once in room-list-row.ts: the
++             // sigil and name (`@peer` for a DM, `#room` for a Room), the
++             // preview attribution, and whether the trailing brass
++             // square is lit. `unread` is server-owned and cross-device; a
++             // corner waiting on a human (`agentState === 'needs-you'`) lights
++             // the same square. The screen renders answers, never re-derives.
++             const heading = roomRowName(item);
++             const preview = roomRowPreview(item, chatList.viewer.pubkey);
++             const hasPreview = preview.text !== NO_ACTIVITY_PREVIEW;
++             const attention = roomRowNeedsAttention(item);
++             const title = `${heading.sigil}${heading.name}`;
++             const age = compactRelativeTime(
++               item.latestMessage?.createdAt ?? item.room.updatedAt,
++               ageNow,
++             );
++             const cornerCount = formatRoomCornerCount(item.cornerCount);
++             const expanded = expandedRoomId === item.room.id;
++             const corners = cornersByRoom[item.room.id];
++             const row = (
++               <View style={styles.row}>
++                 <TouchableOpacity
++                   accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
++                   testID={`room-${item.room.id}`}
++                   onPress={() => {
++                     swipeableRefs.current.get(item.room.id)?.close();
++                     openRoom(item.room.id);
++                   }}
++                   style={styles.rowMain}
++                 >
++                   <View style={styles.rowStateSlot} accessibilityElementsHidden>
++                     {attention && (
++                       <View style={styles.rowStateMark} testID={`room-attention-${item.room.id}`} />
++                     )}
++                   </View>
++                   <View style={styles.rowCopy}>
++                     <View style={styles.titleLine}>
++                       <Text numberOfLines={1} style={styles.title}>
++                         <Text style={styles.sigil} testID={`room-sigil-${item.room.id}`}>
++                           {heading.sigil}
++                         </Text>
++                         {heading.name}
++                       </Text>
++                     </View>
++                     <Text numberOfLines={1} style={styles.preview} testID={`room-preview-${item.room.id}`}>
++                       {hasPreview && preview.attribution === 'self' && (
++                         <Text style={styles.previewSelf}>you: </Text>
++                       )}
++                       {hasPreview && preview.attribution === 'other' && (
++                         <Text style={styles.previewAuthor}>@{preview.handle}: </Text>
++                       )}
++                       {preview.text}
++                     </Text>
++                   </View>
++                 </TouchableOpacity>
++                 <View style={styles.gutter}>
++                   <Text style={styles.age}>{age}</Text>
++                 </View>
++                 <View style={styles.cornerToggleSlot}>
++                   {item.cornerCount > 0 && (
++                     <TouchableOpacity
++                       accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
++                       accessibilityRole="button"
++                       accessibilityState={{ expanded }}
++                       onPress={() => toggleRoomCorners(item.room.id)}
++                       style={styles.cornerToggle}
++                       testID={`room-corners-toggle-${item.room.id}`}
++                     >
++                       <Text style={styles.cornerToggleText}>{expanded ? '⌃' : '⌄'}</Text>
++                     </TouchableOpacity>
++                   )}
++                 </View>
++               </View>
++             );
++             return (
++               <View style={styles.roomCell}>
++                 {!viewerIsAgent ? (
++                   <Swipeable
++                     ref={(ref) => {
++                       if (ref) swipeableRefs.current.set(item.room.id, ref);
++                       else swipeableRefs.current.delete(item.room.id);
++                     }}
++                     friction={1}
++                     overshootRight={false}
++                     rightThreshold={ROW_HEIGHT}
++                     renderRightActions={() => (
++                       <View style={styles.chatActions}>
++                         {!item.directMessage && canLeaveRooms && (
++                           <View style={styles.swipeAction}>
++                             <TouchableOpacity
++                               accessibilityLabel={`Leave ${title}`}
++                               accessibilityRole="button"
++                               hitSlop={LEAVE_TILE_HIT_SLOP}
++                               onPress={() => handleLeaveRoom(item)}
++                               style={styles.swipeActionButton}
++                               testID={`room-leave-action-${item.room.id}`}
++                             >
++                               <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
++                             </TouchableOpacity>
++                           </View>
++                         )}
++                         {!item.directMessage && canManageWorkspace && (
++                           <View style={styles.swipeAction}>
++                             <TouchableOpacity
++                               accessibilityLabel={`Cannot leave ${title}`}
++                               accessibilityRole="button"
++                               hitSlop={LEAVE_TILE_HIT_SLOP}
++                               onPress={() => explainRoomLeaveConstraint(item)}
++                               style={styles.swipeActionButton}
++                               testID={`room-leave-constraint-${item.room.id}`}
++                             >
++                               <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
++                             </TouchableOpacity>
++                           </View>
++                         )}
++                         {item.directMessage && (
++                           <View style={styles.swipeAction}>
++                             <TouchableOpacity
++                               accessibilityLabel={`Close ${title}`}
++                               accessibilityRole="button"
++                               hitSlop={LEAVE_TILE_HIT_SLOP}
++                               onPress={() => handleCloseChat(item)}
++                               style={styles.swipeActionButton}
++                               testID={`chat-close-action-${item.room.id}`}
++                             >
++                               <ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />
++                             </TouchableOpacity>
++                           </View>
++                         )}
++                       </View>
++                     )}
++                     testID={`chat-close-swipe-${item.room.id}`}
++                   >
++                     {row}
++                   </Swipeable>
++                 ) : row}
++                 {expanded && (
++                   <View style={styles.cornerDropdown} testID={`room-corners-${item.room.id}`}>
++                     {cornerLoadingRoomId === item.room.id && !corners ? (
++                       <View style={styles.cornerLoading}>
++                         <SurfaceGlyphLoader compact testID="corners-loader" />
++                         <Text style={styles.cornerLoadingText}>LOADING CORNERS</Text>
++                       </View>
++                     ) : cornerLoadErrors[item.room.id] ? (
++                       <TouchableOpacity
++                         accessibilityRole="button"
++                         onPress={() => void loadRoomCorners(item.room.id)}
++                         style={styles.cornerNotice}
++                         testID={`room-corners-retry-${item.room.id}`}
++                       >
++                         <Text style={styles.cornerNoticeText}>
++                           {cornerLoadErrors[item.room.id]}
++                         </Text>
++                         <Text style={styles.cornerRetryText}>RETRY</Text>
++                       </TouchableOpacity>
++                     ) : corners?.length ? (
++                       corners.map((corner) => {
++                         const label = displayGroupedCornerTitle(
++                           item.room.name,
++                           corner.corner.name,
++                           corner.corner.id,
++                         );
++                         // The server owns the state; this maps it only to the
++                         // shared visual tokens and optional PR narration.
++                         const display = cornerDisplayState(corner);
++                         return (
++                           <TouchableOpacity
++                             accessibilityLabel={`Open ${label}, ${display.word.toLowerCase()}${
++                               display.needsYou ? ', needs you' : ''
++                             }`}
++                             accessibilityRole="button"
++                             key={corner.corner.id}
++                             onPress={() =>
++                               router.push(
++                                 cornerHref(
++                                   corner.corner.id,
++                                   item.room.id,
++                                   corner.corner.name,
++                                   'room-list',
++                                 ),
++                               )
++                             }
++                             style={styles.cornerRow}
++                             testID={`room-corner-${corner.corner.id}`}
++                           >
++                             <Text
++                               style={[
++                                 styles.cornerName,
++                                 display.needsYou && styles.cornerNameNeedsYou,
++                               ]}
++                             >
++                               └ {label}
++                             </Text>
++                             <CornerWorkingPulse state={display.status}>
++                               <Text
++                                 style={[
++                                   styles.cornerStatus,
++                                   display.status === 'working'
++                                     ? styles.cornerStatusWorking
++                                     : display.status === 'review'
++                                       ? styles.cornerStatusReview
++                                       : display.status === 'archived'
++                                         ? styles.cornerStatusArchived
++                                         : styles.cornerStatusWaiting,
++                                 ]}
++                                 testID={`room-corner-status-${corner.corner.id}`}
++                               >
++                                 {display.word}
++                               </Text>
++                             </CornerWorkingPulse>
++                             <Text style={styles.cornerChevron}>›</Text>
++                           </TouchableOpacity>
++                         );
++                       })
++                     ) : (
++                       <Text style={styles.cornerNoticeText}>No open corners now.</Text>
++                     )}
++                   </View>
++                 )}
++               </View>
++             );
++           }}
++           />
++         )}
++         {!isDesktop && !viewerIsAgent && (
++           <View
++             pointerEvents="box-none"
++             style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}
++           >
++             <RoomDeckComposeMenu canManageWorkspace={canManageWorkspace} onSelect={compose} />
++           </View>
++         )}
++         <DirectMessagePickerSheet
++           busyPubkey={messagingPubkey}
++           members={workspaceMembers(workspaceDetail)}
++           onClose={() => setMemberPickerVisible(false)}
++           onMessage={(member) => void handleStartDirectMessage(member)}
++           visible={memberPickerVisible}
++         />
++       </View>
++     </BuzzCommunityShell>
++   );
++ }
++
++ const styles = StyleSheet.create((theme) => {
++   const hull = theme.buzz;
++   return {
++     container: { flex: 1, backgroundColor: hull.bgTerminal },
++     center: {
++       flex: 1,
++       alignItems: 'center',
++       justifyContent: 'center',
++       gap: 14,
++       backgroundColor: hull.bgTerminal,
++       paddingHorizontal: 28,
++     },
++     header: {
++       minHeight: 62,
++       paddingHorizontal: hull.space.lg,
++       flexDirection: 'row',
++       alignItems: 'center',
++       justifyContent: 'space-between',
++       borderBottomWidth: StyleSheet.hairlineWidth,
++       borderBottomColor: hull.border,
++     },
++     headerAction: {
++       minHeight: 44,
++       minWidth: 44,
++       alignItems: 'center',
++       justifyContent: 'center',
++       paddingHorizontal: 8,
++     },
++     headerActionGlyph: { color: hull.textMuted },
++     errorBar: {
++       paddingHorizontal: 16,
++       paddingVertical: 8,
++       borderBottomWidth: StyleSheet.hairlineWidth,
++       borderBottomColor: hull.danger,
++     },
++     error: { ...Typography.default(), color: hull.danger, fontSize: 12, textAlign: 'center' },
++     // The list owns the whole deck. Its bottom inset lets the final row scroll
++     // clear of the floating compose control without turning that control into
++     // a visually separate footer cell.
++     list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
++     emptyList: {
++       flexGrow: 1,
++       justifyContent: 'flex-start',
++       paddingTop: hull.space.xxl,
++       paddingBottom: COMPOSE_FAB_CLEARANCE,
++     },
++     empty: {
++       alignItems: 'flex-start',
++       gap: hull.space.sm,
++       paddingHorizontal: hull.space.lg,
++       width: '100%',
++     },
++     desktopEmpty: { paddingTop: hull.space.xxl },
++     emptyTitle: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
++     emptyCopy: {
++       ...Typography.default(),
++       ...hull.type.meta,
++       color: hull.ledgerQuiet,
++       maxWidth: 330,
++     },
++     emptyActionList: {
++       flexDirection: 'row',
++       alignItems: 'center',
++       gap: 10,
++       marginTop: hull.space.md,
++     },
++     emptyButton: {
++       height: 44,
++       justifyContent: 'center',
++       paddingHorizontal: hull.space.md,
++       borderWidth: 1,
++       borderColor: hull.borderStrong,
++       borderRadius: 10,
++     },
++     emptyButtonPressed: { backgroundColor: hull.bgPressed },
++     emptyPrimaryLabel: {
++       ...Typography.ledger('medium'),
++       color: hull.accent,
++       fontSize: hull.type.body.fontSize - 1,
++       lineHeight: hull.type.body.lineHeight,
++     },
++     emptySecondaryLabel: {
++       ...Typography.ledger(),
++       color: hull.ledgerQuiet,
++       fontSize: hull.type.body.fontSize - 1,
++       lineHeight: hull.type.body.lineHeight,
++     },
++     roomCell: {
++       borderBottomWidth: StyleSheet.hairlineWidth,
++       borderBottomColor: hull.border,
++     },
++     row: {
++       minHeight: ROW_HEIGHT,
++       flexDirection: 'row',
++       alignItems: 'center',
++       // The shifted row stays on the slab and lifts just enough for its
++       // trailing edge to separate from the recessed swipe action beneath it.
++       backgroundColor: hull.bgBase,
++       shadowColor: hull.bgVoid,
++       shadowOffset: { width: 6, height: 0 },
++       shadowOpacity: 0.28,
++       shadowRadius: 8,
++       elevation: 4,
++       boxShadow: `6px 0 8px color-mix(in srgb, ${hull.bgVoid} 28%, transparent)`,
++     },
++     rowMain: {
++       flex: 1,
++       minWidth: 0,
++       minHeight: ROW_HEIGHT,
++       flexDirection: 'row',
++       alignItems: 'center',
++       gap: ROW_COPY_GAP,
++       paddingLeft: ROW_PADDING_LEFT,
++       paddingVertical: 10,
++     },
++     // The row's leading unit: the STATE column, on every row. Its width is
++     // reserved whether or not the row is lit, so the tile (a DM) or the copy
++     // (a Room) that follows starts at the same edge either way.
++     rowStateSlot: { width: ATTENTION_SQUARE, height: ATTENTION_SQUARE },
++     rowStateMark: {
++       width: ATTENTION_SQUARE,
++       height: ATTENTION_SQUARE,
++       backgroundColor: hull.accent,
++     },
++     rowCopy: { flex: 1, minWidth: 0, gap: 3 },
++     titleLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
++     // The row leads with the name: one size, one weight, the brightest thing
++     // on the row. Ownership and unread never bold or enlarge it.
++     title: {
++       ...Typography.default('semiBold'),
++       color: hull.textPrimary,
++       fontSize: 18,
++       lineHeight: 22,
++       flexShrink: 1,
++     },
++     // The sigil is the name's first glyph in brass: `@` for a DM, `#` for a Room.
++     sigil: { ...Typography.default('semiBold'), color: hull.accent },
++     preview: { ...Typography.default(), color: hull.ledgerQuiet, fontSize: 13, lineHeight: 17 },
++     previewSelf: { ...Typography.default(), color: hull.textMuted },
++     previewAuthor: { ...Typography.default(), color: hull.accent },
++     // The gutter carries the timestamp only now; state lives in the leading
++     // column (`rowStateSlot`).
++     gutter: {
++       width: 46,
++       minHeight: ROW_HEIGHT,
++       alignItems: 'flex-end',
++       justifyContent: 'center',
++       paddingRight: 4,
++     },
++     age: { ...Typography.mono(), color: hull.ledgerGhost, fontSize: 11 },
++     // Reserved whether or not the Room has corners, so the age column keeps
++     // one straight right edge down the whole index.
++     cornerToggleSlot: {
++       width: 32,
++       minHeight: ROW_HEIGHT,
++       alignItems: 'center',
++       justifyContent: 'center',
++       marginRight: 8,
++     },
++     cornerToggle: {
++       minWidth: 32,
++       minHeight: 32,
++       alignItems: 'center',
++       justifyContent: 'center',
++     },
++     cornerToggleText: {
++       ...Typography.mono('semiBold'),
++       color: hull.chrome,
++       fontSize: 16,
++       lineHeight: 18,
++     },
++     // Indented to the parent Room's text edge, not past it: the tray is the
++     // Room's own continuation, so it starts where the Room's name starts.
++     cornerDropdown: {
++       paddingLeft: ROW_TEXT_INSET,
++       paddingRight: 16,
++       paddingBottom: 8,
++       borderTopWidth: StyleSheet.hairlineWidth,
++       borderTopColor: hull.border,
++     },
++     cornerLoading: {
++       minHeight: 44,
++       flexDirection: 'row',
++       alignItems: 'center',
++       gap: 8,
++     },
++     cornerLoadingText: {
++       ...Typography.mono('semiBold'),
++       color: hull.textMuted,
++       fontSize: 9,
++       letterSpacing: 0.6,
++     },
++     cornerNotice: {
++       minHeight: 44,
++       flexDirection: 'row',
++       alignItems: 'center',
++       gap: 10,
++     },
++     cornerNoticeText: {
++       ...Typography.default(),
++       flex: 1,
++       color: hull.textMuted,
++       fontSize: 11,
++     },
++     cornerRetryText: {
++       ...Typography.mono('semiBold'),
++       color: hull.chrome,
++       fontSize: 9,
++     },
++     cornerRow: {
++       minHeight: 44,
++       flexDirection: 'row',
++       alignItems: 'center',
++       gap: 8,
++     },
++     cornerName: {
++       ...theme.buzz.type.meta,
++       fontFamily: theme.buzz.type.bodyStrong.fontFamily,
++       flex: 1,
++       minWidth: 0,
++       color: hull.textSecondary,
++       includeFontPadding: false,
++     },
++     cornerStatus: {
++       ...theme.buzz.type.sectionHead,
++       color: hull.textMuted,
++       includeFontPadding: false,
++     },
++     // Brass is reserved for the state that wants the viewer.
++     cornerStatusWorking: { color: hull.ledgerBright },
++     cornerStatusReview: { color: hull.ledgerQuiet },
++     cornerStatusWaiting: { color: hull.accent },
++     cornerStatusArchived: { color: hull.ledgerGhost },
++     // The name lifts out of the secondary tone with it, so the pair reads as
++     // one emphasized row rather than a loud chip beside a quiet title.
++     cornerNameNeedsYou: { color: hull.textPrimary },
++     cornerChevron: {
++       ...theme.buzz.type.bodyStrong,
++       color: hull.steel,
++       includeFontPadding: false,
++     },
++     chatActions: {
++       flexDirection: 'row',
++       minHeight: ROW_HEIGHT,
++       backgroundColor: hull.bgHighlight,
++     },
++     swipeAction: {
++       width: ROW_HEIGHT,
++       height: ROW_HEIGHT,
++       alignItems: 'center',
++       justifyContent: 'center',
++     },
++     swipeActionButton: {
++       width: 26,
++       height: 26,
++       alignItems: 'center',
++       justifyContent: 'center',
++     },
++     composeOverlay: {
++       position: 'absolute',
++       right: 16,
++     },
++   };
++ });
++
+
+ ❯ sources/app/(app)/beeline/channels.bootstrap.test.ts:27:24
+     25|   it('shows the Room loader whenever the Room deck itself is loading',…
+     26|     expect(source).toContain('<RoomDeckLoadingView');
+     27|     expect(source).not.toContain('consumeFirstRoomDeckAfterBoot');
+       |                        ^
+     28|     expect(source).not.toContain('suppressFirstDeckPaint');
+     29|     expect(source).not.toContain('suppressPaint=');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/23]⎯
+
+
+ Test Files  5 failed | 1 passed (6)
+      Tests  23 failed | 92 passed (115)
+   Start at  12:14:30
+   Duration  20.29s (transform 317ms, setup 346ms, collect 676ms, tests 35.97s, environment 1ms, prepare 501ms)
+
+
+EXACT_PARENT=17ffcc3a82236bd154ad1bc4e69611a76a3e94b7
+EXPECTED_RED_EXIT=1

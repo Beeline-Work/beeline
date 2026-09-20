@@ -3,6 +3,8 @@ import brand from './brand.json';
 
 /** The square the thinking mark sits in: as tall as the 12px mono label's 18px line. */
 export const MARK_CELL = 18;
+/** In-app load gates: larger than the thinking cell, smaller than the splash. */
+export const SURFACE_GLYPH_SIZE = 48;
 /** Fraction of the cell the mark's height takes — the optical size of the label's glyphs. */
 const MARK_CELL_FILL = 13 / 18;
 /** Stroke width in path units while the glyph is painting. */

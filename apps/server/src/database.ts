@@ -794,35 +794,9 @@ CREATE TABLE IF NOT EXISTS avatars (
   bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 131072)
 );
 
-CREATE TABLE IF NOT EXISTS media (
-  id uuid PRIMARY KEY,
-  owner_id text NOT NULL REFERENCES identities(id),
-  bytes bytea NOT NULL,
-  mime_type text NOT NULL,
-  name text NOT NULL,
-  sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (owner_id, sha256)
-);
-CREATE INDEX IF NOT EXISTS media_sha_idx ON media(sha256);
-CREATE INDEX IF NOT EXISTS media_created_idx ON media(created_at);
-
--- Bytes expire (media-ttl.ts); the fact that they existed does not. One row per
--- swept media id, so the media endpoint answers 410 Gone instead of 404 and the
--- attachment projection can state expiry as a fact rather than infer it.
-CREATE TABLE IF NOT EXISTS media_expirations (
-  id uuid PRIMARY KEY,
-  expired_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS legacy_media_urls (
-  legacy_url text PRIMARY KEY,
-  media_id uuid NOT NULL REFERENCES media(id) ON DELETE CASCADE
-);
-
--- Object-storage rows (object-storage.ts): the same lifecycle vocabulary as
--- media, with the bytes in S3-compatible storage instead of bytea. The key is
--- kind/owner/sha256; owner+sha256 dedupes exactly like media.
+-- Object-storage rows (object-storage.ts): person file shares and agent
+-- artifacts. Bytes live in S3-compatible storage. The key is kind/owner/sha256;
+-- owner+sha256 dedupes. The retired bytea media store is dropped below.
 CREATE TABLE IF NOT EXISTS objects (
   id uuid PRIMARY KEY,
   owner_id text NOT NULL REFERENCES identities(id),
@@ -840,12 +814,16 @@ CREATE TABLE IF NOT EXISTS objects (
 CREATE INDEX IF NOT EXISTS objects_expires_idx ON objects(expires_at);
 CREATE INDEX IF NOT EXISTS objects_pending_idx ON objects(created_at) WHERE state='pending';
 
--- The same tombstone semantics as media_expirations: one row per swept
--- object id, so the media read answers 410 Gone instead of 404.
+-- One row per swept object id, so the media read answers 410 Gone instead of 404.
 CREATE TABLE IF NOT EXISTS object_expirations (
   id uuid PRIMARY KEY,
   expired_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- The bytea media store is retired: person files share the objects/Tigris path.
+DROP TABLE IF EXISTS legacy_media_urls;
+DROP TABLE IF EXISTS media;
+DROP TABLE IF EXISTS media_expirations;
 
 CREATE TABLE IF NOT EXISTS github_installations (
   installation_id bigint PRIMARY KEY,
@@ -1143,8 +1121,9 @@ CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
 -- R5: an agent's offer to add one connector, made from a Room at the moment
 -- of need. The addressee is the person whose message woke the offering turn
 -- (whose keys the tool will hold); they or a Workspace manager accept it.
--- Accepting pairs the connector on the offering agent's machine through the
--- same row pairConnector writes, and settles the Room's card in place.
+-- Accepting starts the connector on the offering agent's machine through the
+-- same row pairConnector writes. The helper's connected report settles the
+-- Room card and resumes the paused turn.
 CREATE TABLE IF NOT EXISTS connector_offers (
   id uuid PRIMARY KEY,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -1154,7 +1133,8 @@ CREATE TABLE IF NOT EXISTS connector_offers (
   connector_type text NOT NULL,
   reason text NOT NULL,
   machine_id text NOT NULL,
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted')),
+  status text NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','connecting','accepted')),
   message_id text REFERENCES messages(id) ON DELETE SET NULL,
   command_id text,
   accepted_by text REFERENCES identities(id),
@@ -1164,8 +1144,12 @@ CREATE TABLE IF NOT EXISTS connector_offers (
 );
 CREATE INDEX IF NOT EXISTS connector_offers_room_idx
   ON connector_offers(room_id, connector_type, status, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS connector_offers_open_idx
-  ON connector_offers(room_id, connector_type) WHERE status='pending';
+ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_status_check;
+ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check
+  CHECK (status IN ('pending','connecting','accepted'));
+DROP INDEX IF EXISTS connector_offers_open_idx;
+CREATE UNIQUE INDEX connector_offers_open_idx
+  ON connector_offers(room_id, connector_type) WHERE status IN ('pending','connecting');
 
 
 
@@ -1440,11 +1424,11 @@ export async function measureDatabaseBreakdown(database: SqlDatabase): Promise<{
       CROSS JOIN LATERAL (VALUES(a->>'url'),(a->>'thumbnailUrl')) candidate(url)
       WHERE candidate.url ~ '/v1/media/[0-9a-f-]+$'
     ), classified AS (
-      SELECT octet_length(m.bytes)::bigint bytes,
+      SELECT o.size::bigint bytes,
         CASE WHEN refs.id IS NOT NULL THEN 'referenced-by-kept-message'
-          WHEN m.name ~* '(canary|test|fixture|sample|probe)' OR EXISTS(SELECT 1 FROM legacy_media_urls l WHERE l.media_id=m.id AND l.legacy_url ~* '(canary|test|fixture|sample|probe)') THEN 'orphan-likely-canary-or-test'
+          WHEN COALESCE(o.title,'') ~* '(canary|test|fixture|sample|probe)' THEN 'orphan-likely-canary-or-test'
           ELSE 'orphan-unreferenced' END type
-      FROM media m LEFT JOIN refs ON refs.id=m.id::text
+      FROM objects o LEFT JOIN refs ON refs.id=o.id::text
     ) SELECT type,count(*)::text objects,sum(bytes)::text bytes FROM classified GROUP BY type ORDER BY sum(bytes) DESC,type`);
   const eventByType = new Map(
     events.rows.map((row) => [

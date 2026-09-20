@@ -2,8 +2,9 @@ import { isServerEventKind } from '@beeline/api-contract/phone';
 import { randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
-import type { LiveHub } from './live.js';
+import type { CommittedTurnLiveRow, LiveHub } from './live.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
+import { noteFirstSilence } from './turn-silence-notice.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
 export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
@@ -38,6 +39,8 @@ export class ConnectionPresence {
     { roomId: string | undefined; pending: boolean; worker: Promise<void> }
   >();
   readonly #authenticatedAt = new Map<string, number>();
+  /** Last helper-process announce; a newer value than the stalled receipt means systemd already revived it. */
+  readonly #announcedAt = new Map<string, number>();
   readonly #observePending = new Set<string | undefined>();
   readonly #observeDebounces = new Map<string, ReturnType<typeof setTimeout>>();
   #observeWorker: Promise<void> | undefined;
@@ -50,7 +53,10 @@ export class ConnectionPresence {
     private readonly live: LiveHub,
     private readonly pickupWindowMs = DELIVERY_PICKUP_WINDOW_MS,
   ) {
-    this.#releaseResync = live.subscribeResync(() => this.scheduleObserve());
+    this.#releaseResync = live.subscribeResync(() => {
+      void this.recoverWorkingStalls().catch(this.report);
+      this.scheduleObserve();
+    });
     this.#release = live.subscribeAll((event) => {
       if (
         event.type === 'invalidate' &&
@@ -58,12 +64,29 @@ export class ConnectionPresence {
       ) {
         this.scheduleObserve(event.roomId);
       }
+      if (event.type === 'invalidate' && event.committedRow?.type === 'turn') {
+        try {
+          this.watchTurn(event.committedRow.row);
+        } catch (error) {
+          this.report(error);
+        }
+      } else if (
+        event.type === 'invalidate' &&
+        event.reason === 'postgres:agent_turns' &&
+        event.requestId &&
+        event.agentId
+      ) {
+        void this.watchTurnFromStore(event.roomId, event.requestId, event.agentId).catch(
+          this.report,
+        );
+      }
     });
   }
 
   /** One recovery read on server startup; pending deadlines come from messages,
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
+    await this.recoverWorkingStalls();
     await this.observe();
   }
 
@@ -71,6 +94,7 @@ export class ConnectionPresence {
     const lifecycleId = metadata.lifecycleId;
     if (!lifecycleId) return;
     if (this.#stopped) return;
+    this.#announcedAt.set(agentId, Date.now());
     await announceAgentLifecycle(this.database, this.live, roomId, agentId, {
       ...metadata,
       lifecycleId,
@@ -115,6 +139,7 @@ export class ConnectionPresence {
     this.#observeDebounces.clear();
     this.#observePending.clear();
     this.#authenticatedAt.clear();
+    this.#announcedAt.clear();
     this.#evidence.clear();
   }
 
@@ -273,7 +298,115 @@ export class ConnectionPresence {
         delivery.evidence_token,
       ],
     );
-    if (changed.rowCount) await broadcastAgentPresence(this.database, this.live, delivery.agent_id);
+    if (changed.rowCount) {
+      await broadcastAgentPresence(this.database, this.live, delivery.agent_id);
+    }
+    // Presence is one canonical row; the unanswered-delivery fact is per request
+    // and per Room. Losing the demotion race must not skip the Room line.
+    const unanswered = await this.database.query(
+      `SELECT 1 FROM memberships member
+       WHERE member.identity_id=$1 AND member.room_id=$2 AND member.removed_at IS NULL
+         AND NOT EXISTS(
+           SELECT 1 FROM agent_turns turn
+           WHERE turn.agent_id=$1 AND turn.room_id=$2
+             AND (turn.request_id=$3 OR turn.created_at>=$4::timestamptz)
+         )`,
+      [delivery.agent_id, delivery.room_id, delivery.message_id, delivery.created_at],
+    );
+    if (!unanswered.rowCount) return;
+    await noteFirstSilence(this.database, this.live, {
+      roomId: delivery.room_id,
+      requestId: delivery.message_id,
+      agentId: delivery.agent_id,
+      reason: "her helper isn't running",
+      reasonKind: 'offline',
+      liveRestart: true,
+    }).catch(this.report);
+  }
+
+  private turnTimerKey(roomId: string, requestId: string, agentId: string): string {
+    return `turn:${agentId}:${roomId}:${requestId}`;
+  }
+
+  private async recoverWorkingStalls(): Promise<void> {
+    if (this.#stopped) return;
+    const turns = await this.database.query<CommittedTurnLiveRow>(
+      `SELECT room_id,request_id,agent_id,status,started_at,created_at,generation_id,NULL::text requested_by
+       FROM agent_turns WHERE status='working' AND created_at>now()-interval '24 hours'`,
+    );
+    for (const turn of turns.rows) this.watchTurn(turn);
+  }
+
+  private async watchTurnFromStore(
+    roomId: string,
+    requestId: string,
+    agentId: string,
+  ): Promise<void> {
+    if (this.#stopped) return;
+    const turn = (
+      await this.database.query<CommittedTurnLiveRow>(
+        `SELECT room_id,request_id,agent_id,status,started_at,created_at,generation_id,NULL::text requested_by
+         FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [roomId, requestId, agentId],
+      )
+    ).rows[0];
+    if (turn) this.watchTurn(turn);
+    else this.clearTurnTimer(roomId, requestId, agentId);
+  }
+
+  private watchTurn(turn: CommittedTurnLiveRow): void {
+    const createdAt = new Date(turn.created_at);
+    const key = this.turnTimerKey(turn.room_id, turn.request_id, turn.agent_id);
+    const previous = this.#timers.get(key);
+    if (previous) clearTimeout(previous);
+    if (this.#stopped || turn.status !== 'working') {
+      this.#timers.delete(key);
+      return;
+    }
+    const remaining = createdAt.getTime() + this.pickupWindowMs - Date.now();
+    const timer = setTimeout(
+      () => {
+        void this.failStalledTurn({ ...turn, created_at: createdAt })
+          .catch(this.report)
+          .finally(() => this.#timers.delete(key));
+      },
+      Math.max(0, remaining),
+    );
+    timer.unref?.();
+    this.#timers.set(key, timer);
+  }
+
+  private clearTurnTimer(roomId: string, requestId: string, agentId: string): void {
+    const key = this.turnTimerKey(roomId, requestId, agentId);
+    const timer = this.#timers.get(key);
+    if (timer) clearTimeout(timer);
+    this.#timers.delete(key);
+  }
+
+  private async failStalledTurn(turn: CommittedTurnLiveRow): Promise<void> {
+    if (this.#stopped) return;
+    const current = (
+      await this.database.query<{ status: string; created_at: Date }>(
+        `SELECT status,created_at FROM agent_turns
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [turn.room_id, turn.request_id, turn.agent_id],
+      )
+    ).rows[0];
+    if (!current || current.status !== 'working') return;
+    if (current.created_at.getTime() + this.pickupWindowMs > Date.now()) {
+      this.watchTurn({ ...turn, status: 'working', created_at: current.created_at });
+      return;
+    }
+    const announcedAt = this.#announcedAt.get(turn.agent_id) ?? 0;
+    await noteFirstSilence(this.database, this.live, {
+      roomId: turn.room_id,
+      requestId: turn.request_id,
+      agentId: turn.agent_id,
+      reason: 'the turn stalled',
+      reasonKind: 'hiccup',
+      liveRestart: true,
+      helperAlreadyRestarted: announcedAt > current.created_at.getTime(),
+    });
   }
 }
 
@@ -377,6 +510,10 @@ async function broadcastAgentPresence(
   live: LiveHub,
   agentId: string,
 ): Promise<void> {
+  // Production arms listener-owned fanout so the NOTIFY path alone expands one
+  // durable row across memberships. A second writer-local query would duplicate
+  // that work on every evidence write.
+  if (live.listenerOwnsPresenceFanout()) return;
   const result = await database.query<{
     room_id: string;
     body: { status: 'online' | 'offline'; observedAt: number };

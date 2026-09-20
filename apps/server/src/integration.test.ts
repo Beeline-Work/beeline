@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -75,6 +76,8 @@ describe('monolith integration', () => {
   let processWebhook: ReturnType<typeof vi.fn>;
   let githubOperations: GitHubOperations;
   let phone: PhoneService;
+  let objectStorage: MemoryObjectStorage;
+  let objectService: ObjectService;
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
@@ -147,7 +150,24 @@ describe('monolith integration', () => {
       defaultBranch: 'main',
     }));
     sendPushTest = vi.fn(async () => undefined);
-    phone = new PhoneService(database, 'http://placeholder', githubOperations, sendPushTest);
+    objectStorage = new MemoryObjectStorage();
+    await objectStorage.listen();
+    objectService = new ObjectService(
+      database,
+      objectStorage.asStorage(),
+      'http://placeholder',
+      1024 * 1024,
+    );
+    phone = new PhoneService(
+      database,
+      'http://placeholder',
+      githubOperations,
+      sendPushTest,
+      undefined,
+      false,
+      database,
+      objectService,
+    );
     const live = new LiveHub();
     const daemon = new DaemonService(database, live, async () => ({
       token: 'github-room-token',
@@ -188,6 +208,7 @@ describe('monolith integration', () => {
       }),
       authHandler: mountedAuth.handle,
       mediaMaximumBytes: 1024 * 1024,
+      objectService,
       github: {
         webhookSecret: 'webhook-secret',
         roomToken: async () => ({ token: 'github-room-token', expiresAt: Date.now() + 60_000 }),
@@ -198,6 +219,7 @@ describe('monolith integration', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     (phone as unknown as { publicOrigin: string }).publicOrigin = origin;
+    (objectService as unknown as { publicOrigin: string }).publicOrigin = origin;
     const phoneTokens = await auth.exchangeGitHubOidc('proof');
     accessToken = phoneTokens.accessToken;
     const exchange = await auth.createDaemonExchange(AGENT);
@@ -206,6 +228,7 @@ describe('monolith integration', () => {
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (mountedAuth) await mountedAuth.close();
+    if (objectStorage) await objectStorage.close();
     if (database) await database.close();
   });
   const request = async (path: string, method = 'GET', payload?: unknown, token = accessToken) =>
@@ -2198,6 +2221,33 @@ describe('monolith integration', () => {
     expect((await readChats()).unread).toBe(false);
   });
 
+  it('carries the resolved all-offline Room footer state on the deck item', async () => {
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence',$3::jsonb)`,
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({ status: 'offline', observedAt: Math.floor(Date.now() / 1_000) }),
+      ],
+    );
+
+    const readRoomItem = async () =>
+      (await phone.readChats(WORKSPACE, HUMAN))?.chats.find((chat) => chat.room.id === ROOM);
+    expect(await readRoomItem()).toMatchObject({ agentsOffline: true });
+
+    await database.query(
+      `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
+       WHERE room_id=$1 AND agent_id=$2 AND kind='presence'`,
+      [
+        ROOM,
+        AGENT,
+        JSON.stringify({ status: 'online', observedAt: Math.floor(Date.now() / 1_000) }),
+      ],
+    );
+    expect((await readRoomItem())?.agentsOffline).toBeUndefined();
+  });
+
   it('repairs millisecond-truncated read marks and treats their marked message as read', async () => {
     const messageId = 'e'.repeat(64);
     await database.query(
@@ -4047,8 +4097,13 @@ describe('monolith integration', () => {
     });
     expect(sent.status).toBe(200);
 
-    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
-    expect(await new MediaExpiryLoop(database).runOnce()).toBeGreaterThan(0);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBeGreaterThan(0);
 
     // The bytes are gone for good, and the endpoint says so in one status.
     const gone = await fetch(attachment.url, {
@@ -4105,9 +4160,14 @@ describe('monolith integration', () => {
         })
       ).json()) as { url: string };
     const reposted = await repost();
-    await database.query(`UPDATE media SET created_at=now()-interval '25 hours'`);
+    await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute'`);
     expect((await repost()).url).toBe(reposted.url);
-    expect(await new MediaExpiryLoop(database).runOnce()).toBe(0);
+    expect(
+      await new MediaExpiryLoop(database, 24, 0, {
+        storage: objectStorage.asStorage(),
+        service: objectService,
+      }).runOnce(),
+    ).toBe(0);
     expect(
       (await fetch(reposted.url, { headers: { authorization: `Bearer ${accessToken}` } })).status,
     ).toBe(200);
@@ -4137,15 +4197,16 @@ describe('monolith integration', () => {
     // Attachment queueing and the final-reply drain survive the retirement:
     // post_artifact rows land in the same bounded pending-attachment lane.
     const mediaId = '22222222-2222-4222-8222-222222222222';
+    const notesDigest = createHash('sha256').update('agent-file-bytes').digest('hex');
+    await objectStorage.putObject(
+      `media/${AGENT}/${notesDigest}`,
+      Buffer.from('agent-file-bytes'),
+      'text/plain',
+    );
     await database.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
-       VALUES($1,$2,$3,'text/plain','notes.txt',$4)`,
-      [
-        mediaId,
-        AGENT,
-        Buffer.from('agent-file-bytes'),
-        createHash('sha256').update('agent-file-bytes').digest('hex'),
-      ],
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/plain','notes.txt',$4,$5,'ready',now()+interval '24 hours')`,
+      [mediaId, AGENT, `media/${AGENT}/${notesDigest}`, 16, notesDigest],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -4232,15 +4293,16 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
     const mediaId = '66666666-6666-4666-8666-666666666666';
+    const clipDigest = createHash('sha256').update('video-bytes').digest('hex');
+    await objectStorage.putObject(
+      `media/${AGENT}/${clipDigest}`,
+      Buffer.from('video-bytes'),
+      'video/mp4',
+    );
     await database.query(
-      `INSERT INTO media(id,owner_id,bytes,mime_type,name,sha256)
-       VALUES($1,$2,$3,'video/mp4','clip.mp4',$4)`,
-      [
-        mediaId,
-        AGENT,
-        Buffer.from('video-bytes'),
-        createHash('sha256').update('video-bytes').digest('hex'),
-      ],
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'video/mp4','clip.mp4',$4,$5,'ready',now()+interval '24 hours')`,
+      [mediaId, AGENT, `media/${AGENT}/${clipDigest}`, 11, clipDigest],
     );
     const attachment = {
       url: `${origin}/v1/media/${mediaId}`,
@@ -6019,7 +6081,7 @@ describe('monolith integration', () => {
     ).toEqual([expect.objectContaining({ woke: [AGENT], request_id: requestId })]);
   });
 
-  it('inscribes a failed turn once and does not retry its terminal command', async () => {
+  it('inscribes a hiccup, reopens the original command, and keeps the durable line', async () => {
     const requestId = '8'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -6033,8 +6095,10 @@ describe('monolith integration', () => {
       requestId,
       status: 'failed',
       reason: 'provider error 429 concurrency_limit',
+      reasonKind: 'hiccup',
     });
     expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
     expect(
       (
         await database.query(
@@ -6059,11 +6123,67 @@ describe('monolith integration', () => {
     expect(first).toEqual([
       expect.objectContaining({
         author_id: AGENT,
-        text: '@bee could not answer · provider error 429 concurrency_limit',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
         tagged_ids: [],
-        card: { requestId, agentId: AGENT, state: 'failed' },
+        card: { requestId, agentId: AGENT, state: 'failed', silenceKind: 'hiccup' },
       }),
     ]);
+    expect(
+      (
+        await database.query<{ state: string; hiccup_attempts: number }>(
+          `SELECT state,hiccup_attempts FROM agent_commands WHERE turn_request_id=$1 AND agent_id=$2`,
+          [requestId, AGENT],
+        )
+      ).rows[0],
+    ).toEqual({ state: 'pending', hiccup_attempts: 1 });
+    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
+    expect(room.messages).toContainEqual(
+      expect.objectContaining({
+        id: first[0]!.id,
+        presentation: 'system',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
+      }),
+    );
+    await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId: '9'.repeat(64),
+      status: 'failed',
+      reason: 'ACP agent exited (code 1)',
+    });
+    expect((await lines()).rows).toHaveLength(1);
+  });
+
+  it('does not restart a standing wrong-model failure', async () => {
+    const requestId = 'a'.repeat(64);
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: requestId,
+      text: '@bee pick a model',
+      mentions: [AGENT],
+    });
+    await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
+    const failed = await daemonOperation('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      status: 'failed',
+      reason: 'model selection unavailable',
+      reasonKind: 'wrong-model',
+    });
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).not.toMatchObject({ hiccupRestart: true });
+    expect(
+      (
+        await database.query<{ text: string; state: string }>(
+          `SELECT message.text,command.state FROM agent_commands command
+           JOIN messages message ON message.card_type='turn-failed' AND message.card->>'requestId'=command.turn_request_id
+           WHERE command.turn_request_id=$1`,
+          [requestId],
+        )
+      ).rows[0],
+    ).toEqual({
+      text: "@bee could not answer · she's set to a model that isn't available. Pick another in her settings.",
+      state: 'complete',
+    });
     expect(
       (
         await daemonOperation('postAgentTurnReceipt', {
@@ -6073,13 +6193,6 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(403);
-    const repeated = await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId,
-      status: 'failed',
-      reason: 'stale retry',
-    });
-    expect(repeated.status).toBe(403);
     const lateReply = await daemonOperation('postRoomMessage', {
       roomId: ROOM,
       requestId,
@@ -6087,40 +6200,6 @@ describe('monolith integration', () => {
       text: 'Not much!',
     });
     expect(lateReply.status).toBe(403);
-    expect((await lines()).rows).toEqual(first);
-    const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
-    expect(room.messages).toContainEqual(
-      expect.objectContaining({
-        id: first[0]!.id,
-        presentation: 'system',
-        text: '@bee could not answer · provider error 429 concurrency_limit',
-      }),
-    );
-    expect(room.latestAgentTurns).toContainEqual(
-      expect.objectContaining({ requestId, agentPubkey: AGENT, status: 'failed' }),
-    );
-    // A failure with no human trigger (an unknown request id) carries no Room line.
-    await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId: '9'.repeat(64),
-      status: 'failed',
-      reason: 'ACP agent exited (code 1)',
-    });
-    expect((await lines()).rows).toHaveLength(1);
-    // Aging the line does not revive the completed command.
-    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
-      first[0]!.id,
-    ]);
-    await database.query(`UPDATE messages SET card=card||'{"state":"failed"}'::jsonb WHERE id=$1`, [
-      first[0]!.id,
-    ]);
-    await daemonOperation('postAgentTurnReceipt', {
-      roomId: ROOM,
-      requestId,
-      status: 'failed',
-      reason: 'ACP agent exited (code 1)',
-    });
-    expect((await lines()).rows).toHaveLength(1);
   });
 
   it('keeps cached repositories usable without a reconnect flag during a transient refresh failure', async () => {
@@ -6616,6 +6695,20 @@ describe('monolith integration', () => {
       objective: 'Ship the widget end to end',
       commissioned_by: HUMAN,
     });
+    const roomView = await new PhoneService(database, origin).readRoom(ROOM, HUMAN);
+    expect(roomView?.corners.find((item) => item.corner.id === cornerId)).toEqual(
+      expect.objectContaining({
+        initiator: expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
+        agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent' }),
+      }),
+    );
+    const cornerList = await new PhoneService(database, origin).readCorners(ROOM, HUMAN);
+    expect(cornerList?.corners.find((item) => item.corner.id === cornerId)).toEqual(
+      expect.objectContaining({
+        initiator: expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
+        agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent' }),
+      }),
+    );
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith(
       'owner-device-token-12345678901234567890',
@@ -7630,8 +7723,11 @@ describe('monolith integration', () => {
       error: 'Only the person the agent addressed or a workspace admin can add this tool',
     });
     expect(
-      (await database.query(`SELECT 1 FROM workspace_connectors WHERE workspace_id=$1`, [WORKSPACE]))
-        .rowCount,
+      (
+        await database.query(`SELECT 1 FROM workspace_connectors WHERE workspace_id=$1`, [
+          WORKSPACE,
+        ])
+      ).rowCount,
     ).toBe(0);
     expect(
       (
@@ -7650,10 +7746,14 @@ describe('monolith integration', () => {
       zeke.token,
     );
     expect(accepted.status).toBe(200);
-    const acceptance = (await accepted.json()) as { connectorId: string; roomId: string; status: string };
+    const acceptance = (await accepted.json()) as {
+      connectorId: string;
+      roomId: string;
+      status: string;
+    };
     expect(acceptance).toEqual({
       offerId: offer.offerId,
-      status: 'accepted',
+      status: 'connecting',
       roomId: ROOM,
       connectorId: expect.any(String),
     });
@@ -7684,25 +7784,59 @@ describe('monolith integration', () => {
     expect(assignments.assignments).toEqual([
       expect.objectContaining({ kind: 'install', connectorId: acceptance.connectorId }),
     ]);
+    // The same actor can retry the ceremony after an install failure without
+    // minting a second connector row or prematurely resuming the turn.
+    const retry = await operation('acceptConnectorOffer', { offerId: offer.offerId }, zeke.token);
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({
+      ...acceptance,
+      status: 'connecting',
+    });
     // A second tap is a conflict, not a second pairing.
     expect(
       (await operation('acceptConnectorOffer', { offerId: offer.offerId }, mara.token)).status,
     ).toBe(409);
-    // The card settled in place: same row, and it names WHO acted.
-    const settled = await database.query<{ id: string; card: Record<string, any> }>(
+    // Accepting starts the full ceremony but does not answer the paused turn.
+    // The card records who is connecting, while no hidden decision or resume
+    // exists until the helper reports that sign-in actually completed.
+    const connecting = await database.query<{ id: string; card: Record<string, any> }>(
       `SELECT id,card FROM messages WHERE card_type='connector-offer'`,
     );
-    expect(settled.rows).toHaveLength(1);
-    expect(settled.rows[0]!.id).toBe(offer.messageId);
-    expect(settled.rows[0]!.card).toEqual(
+    expect(connecting.rows).toHaveLength(1);
+    expect(connecting.rows[0]!.id).toBe(offer.messageId);
+    expect(connecting.rows[0]!.card).toEqual(
       expect.objectContaining({
-        status: 'accepted',
+        status: 'connecting',
         acceptedAt: expect.any(Number),
         connectorId: acceptance.connectorId,
       }),
     );
-    expect(settled.rows[0]!.card.acceptedBy).toEqual(
+    expect(connecting.rows[0]!.card.acceptedBy).toEqual(
       expect.objectContaining({ pubkey: zeke.id, kind: 'human', name: 'Zeke', handle: 'zeke' }),
+    );
+    expect(
+      await database.query(
+        `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='connector-offer-decision'`,
+        [ROOM],
+      ),
+    ).toEqual(expect.objectContaining({ rowCount: 0 }));
+    expect(
+      await database.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action='resume'`,
+        [ROOM, AGENT],
+      ),
+    ).toEqual(expect.objectContaining({ rowCount: 0 }));
+
+    // Completing sign-in is the acceptance boundary: the helper's connected
+    // report settles the card and only then resumes the paused agent.
+    expect(
+      (await daemonOperation('installConnector', { connectorId: acceptance.connectorId })).status,
+    ).toBe(200);
+    const settled = await database.query<{ id: string; card: Record<string, any> }>(
+      `SELECT id,card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(settled.rows[0]!.card).toEqual(
+      expect.objectContaining({ status: 'accepted', connectorId: acceptance.connectorId }),
     );
     // One hidden line resumes the paused turn: it reaches the agent's inbox as
     // a RESUME kind and is never drawn in the Room (C101).
@@ -7733,9 +7867,9 @@ describe('monolith integration', () => {
         await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, token)
       ).json()) as RoomView;
       expect(isRoomView(room)).toBe(true);
-      expect(room.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text))).toEqual(
-        [],
-      );
+      expect(
+        room.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text)),
+      ).toEqual([]);
       const settledCard = room.messages.find((message) => message.connectorOffer);
       expect(settledCard?.connectorOffer).toEqual(
         expect.objectContaining({
@@ -7748,9 +7882,9 @@ describe('monolith integration', () => {
     const history = (await (await request(`/v1/phone/rooms/${ROOM}/history`)).json()) as {
       messages: Array<{ text: string }>;
     };
-    expect(history.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text))).toEqual(
-      [],
-    );
+    expect(
+      history.messages.filter((message) => /\badded Trusty Squire\b/.test(message.text)),
+    ).toEqual([]);
     // The addressee now has the tool; a fresh offer of it is refused, and
     // workbench_status says so.
     const duplicate = await daemonOperation('offerConnector', {
@@ -7764,7 +7898,7 @@ describe('monolith integration', () => {
       await daemonOperation('readAgentWorkbench', { roomId: ROOM })
     ).json()) as { catalog: Array<{ connectorType: string; paired?: Record<string, unknown> }> };
     expect(after.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toEqual({
-      status: 'installing',
+      status: 'connected',
       helperName: 'otter-laptop',
       onThisMachine: true,
     });
@@ -7792,6 +7926,11 @@ describe('monolith integration', () => {
       mara.token,
     );
     expect(byManager.status).toBe(200);
+    const managerAcceptance = (await byManager.json()) as {
+      connectorId: string;
+      status: string;
+    };
+    expect(managerAcceptance.status).toBe('connecting');
     const google = await database.query<{ owner_identity_id: string; connector_type: string }>(
       `SELECT owner_identity_id,connector_type FROM workspace_connectors
        WHERE workspace_id=$1 AND connector_type LIKE 'google-%' ORDER BY connector_type`,
@@ -7804,6 +7943,7 @@ describe('monolith integration', () => {
       'google-gmail',
       'google-youtube',
     ]);
+    await daemonOperation('installConnector', { connectorId: managerAcceptance.connectorId });
     const managerSettled = await database.query<{ card: Record<string, any> }>(
       `SELECT card FROM messages WHERE card_type='connector-offer' AND card->>'offerId'=$1`,
       [gmail.offerId],
@@ -8537,9 +8677,9 @@ describe('monolith integration', () => {
     );
     expect(hidden.rows).toHaveLength(1);
     expect(await wokenBy(database, hidden.rows[0]!.id)).toEqual([AGENT]);
-    expect(settled.messages.some((message) => message.systemEvent?.kind === 'choice-answered')).toBe(
-      false,
-    );
+    expect(
+      settled.messages.some((message) => message.systemEvent?.kind === 'choice-answered'),
+    ).toBe(false);
 
     const again = await operation('answerChoice', { choiceId: body.choiceId, optionId: 'B' });
     expect(again.status).toBe(409);
@@ -8576,13 +8716,8 @@ describe('monolith integration', () => {
       (await operation('answerChoice', { choiceId: pollBody.choiceId, optionId: 'A' })).status,
     ).toBe(200);
     expect(
-      (
-        await operation(
-          'answerChoice',
-          { choiceId: pollBody.choiceId, optionId: 'A' },
-          memberToken,
-        )
-      ).status,
+      (await operation('answerChoice', { choiceId: pollBody.choiceId, optionId: 'A' }, memberToken))
+        .status,
     ).toBe(200);
     const closed = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(isRoomView(closed)).toBe(true);
@@ -8603,9 +8738,10 @@ describe('monolith integration', () => {
     });
     expect(posted.status).toBe(200);
     const body = (await posted.json()) as { choiceId: string };
-    await database.query(`UPDATE room_choices SET closes_at=now() - interval '1 second' WHERE id=$1`, [
-      body.choiceId,
-    ]);
+    await database.query(
+      `UPDATE room_choices SET closes_at=now() - interval '1 second' WHERE id=$1`,
+      [body.choiceId],
+    );
     expect(await closeExpiredChoices(database)).toBe(1);
     const room = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
     expect(isRoomView(room)).toBe(true);

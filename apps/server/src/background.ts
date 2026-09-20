@@ -12,6 +12,10 @@ import {
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
 export const PUSH_DELIVERY_MIN_INTERVAL_MS = 5_000;
+/** Bound concurrent device sends after serial claim/suppress. APNS can take
+ * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
+ * sole background leader otherwise stalls attention delivery. */
+export const PUSH_DELIVERY_CONCURRENCY = 8;
 
 export interface PushSender {
   send(
@@ -300,6 +304,28 @@ export class PushDeliveryLoop {
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
+    type ClaimedDelivery = {
+      candidate: (typeof candidates.rows)[number];
+      message:
+        | {
+            messageId: string;
+            workspaceId: string;
+            roomId?: string;
+            type: 'workspace-join';
+            text: string;
+          }
+        | {
+            messageId: string;
+            workspaceId: string;
+            roomId: string;
+            channelId: string;
+            cornerId?: string;
+            target: 'message' | 'corner';
+            type: 'message';
+            text: string;
+          };
+    };
+    const claimedDeliveries: ClaimedDelivery[] = [];
     for (const candidate of candidates.rows) {
       // The candidate query and delivery claims are separate statements. A
       // corner-open and its PR-open note can therefore be selected in one
@@ -361,8 +387,9 @@ export class PushDeliveryLoop {
             ).rowCount,
           );
       if (!claimed) continue;
-      try {
-        const message =
+      claimedDeliveries.push({
+        candidate,
+        message:
           candidate.notification_type === 'workspace-join'
             ? {
                 messageId: candidate.message_id,
@@ -380,32 +407,51 @@ export class PushDeliveryLoop {
                 target: candidate.target,
                 type: 'message' as const,
                 text: candidate.text,
-              };
-        const sender = candidate.platform === 'ios' ? this.iosSender! : this.sender;
-        await sender.send(candidate.token, message);
-        await this.database.query(
-          `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
-          [candidate.message_id, candidate.token],
-        );
-        if (candidate.is_release_catchup)
-          await this.database.query(
-            `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
-            [candidate.token, candidate.message_id],
-          );
-        delivered += 1;
-      } catch (error) {
-        await this.database.query(
-          `UPDATE push_delivery_claims SET status='failed',completed_at=now(),error=$3 WHERE message_id=$1 AND device_token=$2`,
-          [
-            candidate.message_id,
-            candidate.token,
-            error instanceof Error ? error.message : String(error),
-          ],
-        );
-        if (isUnregisteredPushToken(error))
-          await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [candidate.token]);
-      }
+              },
+      });
     }
+    let nextClaim = 0;
+    const workerResults = await Promise.all(
+      Array.from(
+        { length: Math.min(PUSH_DELIVERY_CONCURRENCY, claimedDeliveries.length) },
+        async () => {
+          let localDelivered = 0;
+          while (nextClaim < claimedDeliveries.length) {
+            const index = nextClaim++;
+            const { candidate, message } = claimedDeliveries[index]!;
+            try {
+              const sender = candidate.platform === 'ios' ? this.iosSender! : this.sender;
+              await sender.send(candidate.token, message);
+              await this.database.query(
+                `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
+                [candidate.message_id, candidate.token],
+              );
+              if (candidate.is_release_catchup)
+                await this.database.query(
+                  `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
+                  [candidate.token, candidate.message_id],
+                );
+              localDelivered += 1;
+            } catch (error) {
+              await this.database.query(
+                `UPDATE push_delivery_claims SET status='failed',completed_at=now(),error=$3 WHERE message_id=$1 AND device_token=$2`,
+                [
+                  candidate.message_id,
+                  candidate.token,
+                  error instanceof Error ? error.message : String(error),
+                ],
+              );
+              if (isUnregisteredPushToken(error))
+                await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [
+                  candidate.token,
+                ]);
+            }
+          }
+          return localDelivered;
+        },
+      ),
+    );
+    delivered = workerResults.reduce((sum, count) => sum + count, 0);
     return delivered;
   }
 
@@ -441,15 +487,15 @@ export class PushDeliveryLoop {
 }
 
 /**
- * The hourly media sweep. Attachment bytes are the one row class large enough
+ * The hourly object sweep. Attachment bytes are the one row class large enough
  * that keeping them forever is a storage decision rather than a bookkeeping
  * one, so they get a TTL (`media-ttl.ts`) and nothing else does: the messages
  * that reference them are untouched and keep their attachment metadata.
  *
  * It rides the one-second background cycle like every other job and throttles
- * itself, because a TTL measured in hours does not need a per-second DELETE
- * over a bytea table. The interval is in memory only: a restart re-sweeps at
- * most one extra time, and the sweep is idempotent.
+ * itself, because a TTL measured in hours does not need a per-second DELETE.
+ * The interval is in memory only: a restart re-sweeps at most one extra time,
+ * and the sweep is idempotent.
  */
 export class MediaExpiryLoop {
   #lastSweep = Number.NEGATIVE_INFINITY;
@@ -466,20 +512,11 @@ export class MediaExpiryLoop {
     },
   ) {}
 
-  /** Rows deleted by this call; 0 when the sweep was throttled or found nothing. */
+  /** Objects deleted by this call; 0 when the sweep was throttled or found nothing. */
   async runOnce(now = Date.now()): Promise<number> {
     if (now - this.#lastSweep < this.intervalMs) return 0;
     this.#lastSweep = now;
-    const expired = await this.database.query<{ id: string }>(
-      `WITH expired AS (
-         DELETE FROM media WHERE created_at < now() - ($1 || ' hours')::interval RETURNING id
-       )
-       INSERT INTO media_expirations(id) SELECT id FROM expired
-       ON CONFLICT(id) DO NOTHING RETURNING id`,
-      [String(this.ttlHours)],
-    );
-    await this.sweepObjects();
-    return expired.rows.length;
+    return this.sweepObjects();
   }
 
   /**
@@ -490,14 +527,15 @@ export class MediaExpiryLoop {
    * reaped the same way; a tombstone is only written for objects that were
    * once readable.
    */
-  private async sweepObjects(): Promise<void> {
-    if (!this.objects) return;
+  private async sweepObjects(): Promise<number> {
+    if (!this.objects) return 0;
     const candidates = await this.database.query<{ id: string; key: string; state: string }>(
       `SELECT id::text id,key,state FROM objects
        WHERE expires_at < now()
           OR (state='pending' AND created_at < now() - interval '1 hour')
        LIMIT 100`,
     );
+    let deleted = 0;
     for (const object of candidates.rows) {
       try {
         await this.objects.storage.deleteObject(object.key);
@@ -515,7 +553,9 @@ export class MediaExpiryLoop {
           [object.id],
         );
       await this.database.query(`DELETE FROM objects WHERE id=$1`, [object.id]);
+      deleted += 1;
     }
+    return deleted;
   }
 }
 

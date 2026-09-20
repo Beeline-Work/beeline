@@ -818,89 +818,40 @@ export class GitHubOperations {
 
   /**
    * Room-level repository activity. Issues and pull requests post on
-   * opened/closed; check runs/suites/commit statuses (CI) post their
-   * outcome. Raw pushes do NOT post: commit churn is not Room
-   * conversation. Corner branches stay corner-owned (the corner exclusion
-   * below), and CI is gated to the repository's DEFAULT branch: a Room
-   * reads the repository's mainline result, while feature-branch churn
-   * belongs to corners and pull-request heads.
+   * opened/closed. Raw pushes and CI do NOT post: commit churn and
+   * mainline check results are not Room conversation. Corner branches
+   * stay corner-owned (the corner exclusion below); corners still read
+   * CI through processCornerEvent.
    */
   private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
-    if (
-      event !== 'issues' &&
-      event !== 'pull_request' &&
-      event !== 'check_run' &&
-      event !== 'check_suite' &&
-      event !== 'status'
-    )
-      return;
+    if (event !== 'issues' && event !== 'pull_request') return;
     const repository = repositoryName(body);
     if (!repository) return;
 
-    let card:
-      | {
-          type: 'issue' | 'pull-request' | 'ci';
-          action: string;
-          actor: string;
-          title: string;
-          url: string;
-          branch?: string;
-          targetBranch?: string;
-        }
-      | undefined;
-    let dedupeKey: string | undefined;
-    let branch: string | undefined;
-    let targetBranch: string | undefined;
     const actor = text(record(body.sender)?.login) || 'github';
+    const action = text(body.action);
+    if (action !== 'opened' && action !== 'closed') return;
+    const subject = record(body[event === 'issues' ? 'issue' : 'pull_request']);
+    const title = text(subject?.title)?.trim();
+    const url = githubUrl(subject?.html_url);
+    if (!title || !url) return;
+    const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
+    const cardAction = merged ? 'merged' : action;
+    const branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
+    const targetBranch = event === 'pull_request' ? text(record(subject?.base)?.ref) : undefined;
+    const card = {
+      type: (event === 'issues' ? 'issue' : 'pull-request') as 'issue' | 'pull-request',
+      action: cardAction,
+      actor,
+      title,
+      url,
+      ...(branch ? { branch } : {}),
+      ...(targetBranch ? { targetBranch } : {}),
+    };
+    const dedupeKey = url;
 
-    if (event === 'issues' || event === 'pull_request') {
-      const action = text(body.action);
-      if (action !== 'opened' && action !== 'closed') return;
-      const subject = record(body[event === 'issues' ? 'issue' : 'pull_request']);
-      const title = text(subject?.title)?.trim();
-      const url = githubUrl(subject?.html_url);
-      if (!title || !url) return;
-      const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
-      const cardAction = merged ? 'merged' : action;
-      branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
-      targetBranch = event === 'pull_request' ? text(record(subject?.base)?.ref) : undefined;
-      card = {
-        type: event === 'issues' ? 'issue' : 'pull-request',
-        action: cardAction,
-        actor,
-        title,
-        url,
-        ...(branch ? { branch } : {}),
-        ...(targetBranch ? { targetBranch } : {}),
-      };
-      dedupeKey = url;
-    } else if (event === 'check_run' || event === 'check_suite' || event === 'status') {
-      const result = checksResult(event, body);
-      if (!result) return;
-      branch = branchForEvent(event, body);
-      const fact = checkFact(event, body);
-      if (!fact || fact.status === 'pending') return;
-      const sha = 'headSha' in fact ? text(fact.headSha) : undefined;
-      const url =
-        githubUrl('url' in fact ? text(fact.url) : undefined) ??
-        (repository && sha ? `https://github.com/${repository}/commit/${sha}` : undefined);
-      if (!url) return;
-      card = {
-        type: 'ci',
-        action: result,
-        actor,
-        title: fact.name,
-        url,
-        ...(branch ? { branch } : {}),
-      };
-      dedupeKey = `${sha ?? ''}:${fact.name}`;
-    }
-    if (!card || !dedupeKey) return;
-
-    // CI is a mainline event: gate it to the repository's default branch.
-    // Pull-request cards still exclude a matching corner branch.
-    const defaultBranchGate =
-      event === 'check_run' || event === 'check_suite' || event === 'status';
+    // Pull-request cards exclude a matching corner branch. Pushes and CI
+    // never reach this query: they stay on the corner lifecycle path.
     const rooms = await this.database.query<{ room_id: string; author_id: string }>(
       `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id
        FROM rooms room
@@ -919,13 +870,8 @@ export class GitHubOperations {
            SELECT 1 FROM rooms corner
            JOIN corner_facts fact ON fact.corner_id=corner.id
            WHERE corner.parent_id=room.id AND fact.feature_branch=$3
-         ))
-         AND ($4::text IS NULL OR EXISTS(
-           SELECT 1 FROM github_repositories repo
-           WHERE repo.installation_id=$1 AND lower(repo.full_name)=lower($2)
-             AND repo.active AND lower(repo.default_branch)=lower($4)
          ))`,
-      [installationId, repository, branch ?? null, defaultBranchGate ? (branch ?? null) : null],
+      [installationId, repository, branch ?? null],
     );
     for (const room of rooms.rows) {
       const note = await systemLine(this.database, {

@@ -229,7 +229,19 @@ export function foldSystemLines<T extends SystemLineMessage>(messages: readonly 
       }
       if (!notificationRun) {
         notificationRun = { index: folded.length, anchor: message, events: [notification] };
-        folded.push(message);
+        // Issue and PR cards use this same run for a batch of one. A lone
+        // corner or check line keeps its dedicated card until a neighbor
+        // joins the run — that is why a single GitHubEventCard used to
+        // escape the fold.
+        if (notification.kind === 'pull-request' || notification.kind === 'issue') {
+          folded.push({
+            ...message,
+            foldedIds: [notification.id],
+            notificationLifecycleRun: summarizeNotificationRun(notificationRun.events),
+          });
+        } else {
+          folded.push(message);
+        }
       } else {
         notificationRun.events.push(notification);
         folded[notificationRun.index] = {
@@ -324,8 +336,9 @@ function notificationLifecycleEvent(
 
   if (message.githubEvent) {
     const event = message.githubEvent;
-    // Push/CI/review cards keep their own GitHubEventCard rows; only issue and
-    // PR cards join the folded lifecycle run.
+    // Issue and PR cards join the folded lifecycle run, including a run of
+    // one. Corner daemon facts and check system lines still use this path
+    // when a neighbor is adjacent; a lone one keeps its dedicated card.
     if (event.type !== 'pull-request' && event.type !== 'issue') return undefined;
     const prNumber = event.type === 'pull-request' ? pullRequestNumber(event.url) : undefined;
     return {

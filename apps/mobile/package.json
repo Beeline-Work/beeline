@@ -35,7 +35,9 @@
     "tauri:build:preview": "tauri build --config src-tauri/tauri.preview.conf.json",
     "tauri:build:production": "tauri build",
     "tauri:icons": "node scripts/generate-tauri-icons.mjs",
-    "tauri:icons:check": "node scripts/generate-tauri-icons.mjs --check"
+    "tauri:icons:check": "node scripts/generate-tauri-icons.mjs --check",
+    "pdfjs:vendor": "node scripts/vendor-pdfjs.mjs",
+    "pdfjs:vendor:check": "node scripts/vendor-pdfjs.mjs --check"
   },
   "jest": {
     "preset": "jest-expo"

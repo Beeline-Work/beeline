@@ -4,7 +4,7 @@
  * decision the server lane applies at post time. Pure so the per-format
  * branches are testable without a renderer.
  */
-export type ArtifactFormat = 'html' | 'svg' | 'image' | 'pdf' | 'markdown' | 'document';
+export type ArtifactFormat = 'html' | 'svg' | 'image' | 'pdf' | 'markdown' | 'text' | 'document';
 export type ArtifactSurface = 'ios' | 'android' | 'desktop';
 export type ArtifactTreatment = 'inline' | 'external';
 
@@ -21,6 +21,7 @@ export function artifactFormat(mimeType: string): ArtifactFormat {
   if (mime.startsWith('image/')) return 'image';
   if (mime === 'application/pdf') return 'pdf';
   if (mime === 'text/markdown' || mime === 'text/x-markdown') return 'markdown';
+  if (mime === 'text/plain' || mime === 'application/json' || mime === 'text/csv') return 'text';
   return 'document';
 }
 
@@ -28,31 +29,41 @@ export function artifactFormat(mimeType: string): ArtifactFormat {
  * The complete preview/viewer support table. A file can always be opened via
  * its signed browser link; `external` means there is no renderer on that
  * surface and the app deliberately hands it off.
+ *
+ * Every format the app can paint now paints on every surface: markup and
+ * Markdown through their renderers, rasters through the platform image view,
+ * plain text through the mono reader, and PDF through the vendored pdf.js
+ * document. `document` — ZIP, octet-stream, anything unrecognized — is what
+ * remains external, and the signed browser link stays on every card besides.
  */
 export function artifactCapabilities(
   mimeType: string,
-  surface: ArtifactSurface,
+  _surface: ArtifactSurface,
 ): ArtifactCapabilities {
   const format = artifactFormat(mimeType);
-  if (format === 'html' || format === 'svg' || format === 'markdown') {
-    return { format, preview: 'inline', viewer: 'inline' };
-  }
-  if (format === 'pdf') {
-    const inline = surface === 'ios';
-    return {
-      format,
-      preview: inline ? 'inline' : 'external',
-      viewer: inline ? 'inline' : 'external',
-    };
-  }
-  if (format === 'image') {
-    return {
-      format,
-      preview: 'external',
-      viewer: surface === 'desktop' ? 'external' : 'inline',
-    };
-  }
-  return { format, preview: 'external', viewer: 'external' };
+  if (format === 'document') return { format, preview: 'external', viewer: 'external' };
+  return { format, preview: 'inline', viewer: 'inline' };
+}
+
+/**
+ * The card's crop of a text artifact: enough lines to fill the preview box,
+ * each clipped so one very long line cannot push the rest off the card. The
+ * viewer shows the whole file; this is only what the transcript displays.
+ */
+export const ARTIFACT_TEXT_PREVIEW_LINES = 12;
+export const ARTIFACT_TEXT_PREVIEW_COLUMNS = 120;
+
+export function artifactTextPreview(
+  text: string,
+  lines: number = ARTIFACT_TEXT_PREVIEW_LINES,
+): string {
+  return text
+    .split('\n')
+    .slice(0, lines)
+    .map((line) => (line.length > ARTIFACT_TEXT_PREVIEW_COLUMNS
+      ? `${line.slice(0, ARTIFACT_TEXT_PREVIEW_COLUMNS)}…`
+      : line))
+    .join('\n');
 }
 
 /** Extract the server media id from the canonical stored URL `/v1/media/<id>`. */

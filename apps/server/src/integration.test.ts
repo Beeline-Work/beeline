@@ -5051,8 +5051,8 @@ describe('monolith integration', () => {
         targetBranch: 'main',
       }),
     ]);
-    // Room-level mainline activity: CI is gated to the default branch and a
-    // raw push never becomes a Room card at all.
+    // Room-level repository activity: issues and pull requests only. A
+    // raw push and mainline CI never become a Room card.
     await webhook('push', 'room-push-main', {
       ...base,
       ref: 'refs/heads/main',
@@ -5084,15 +5084,10 @@ describe('monolith integration', () => {
     expect(mainlineCards.rows.map((row) => row.card)).toEqual([
       expect.objectContaining({ type: 'issue', action: 'opened' }),
       expect.objectContaining({ type: 'pull-request', action: 'opened' }),
-      expect.objectContaining({
-        type: 'ci',
-        action: 'passed',
-        title: 'Beeline CI check suite',
-        branch: 'main',
-      }),
     ]);
-    // A push to the default branch posted no card of its own.
+    // A push or mainline CI result on the default branch posted no card.
     expect(mainlineCards.rows.some((row) => row.card.type === 'push')).toBe(false);
+    expect(mainlineCards.rows.some((row) => row.card.type === 'ci')).toBe(false);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',

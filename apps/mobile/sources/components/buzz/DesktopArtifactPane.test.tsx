@@ -56,6 +56,16 @@ vi.mock('@/buzz/chat-attachment', () => ({
 vi.mock('@/components/buzz/MonoMarkdown', () => ({
   MonoMarkdown: (props: Record<string, unknown>) => React.createElement('MonoMarkdown', props, null),
 }));
+// The media views have their own suites; here the pane is on trial for which
+// view it reaches for and what it hands it.
+vi.mock('@/components/buzz/ArtifactMedia', () => ({
+  ArtifactImage: (props: Record<string, unknown>) => React.createElement('ArtifactImage', props, null),
+  ArtifactText: (props: Record<string, unknown>) => React.createElement('ArtifactText', props, null),
+}));
+vi.mock('@/components/buzz/ArtifactPdfView', () => ({
+  ArtifactPdfView: (props: Record<string, unknown>) =>
+    React.createElement('ArtifactPdfView', props, null),
+}));
 
 import { DesktopArtifactFrame, DesktopArtifactPane } from './DesktopArtifactPane';
 
@@ -127,7 +137,9 @@ describe('the desktop work pane artifact view', () => {
     expect(renderer.root.findByType('MonoMarkdown')).toBeDefined();
   });
 
-  it('a PDF gets the browser handoff explanation, never an unsandboxed frame', async () => {
+  // The audit found the pane sent a PDF to the browser and had no way to paint
+  // one at all. It renders the fitted pdf.js document now.
+  it('renders a PDF in the pane rather than sending it to the browser', async () => {
     const renderer = render(
       <DesktopArtifactPane
         attachment={attachment({ mimeType: 'application/pdf', name: 'spec.pdf', title: 'Spec' })}
@@ -135,12 +147,77 @@ describe('the desktop work pane artifact view', () => {
       />,
     );
     await flush();
+    expect(renderer.root.findAll((node: any) => node.props.testID === 'desktop-artifact-handoff')).toHaveLength(0);
+    const pdf = renderer.root.findByType('ArtifactPdfView' as any);
+    // The whole file, not the card's page-one crop.
+    expect(pdf.props.mode).toBe('viewer');
+    expect(pdf.props.attachment.name).toBe('spec.pdf');
+  });
+
+  it('paints a raster in the pane, fitted rather than cropped', async () => {
+    const renderer = render(
+      <DesktopArtifactPane
+        attachment={attachment({ mimeType: 'image/png', name: 'chart.png', title: 'Chart' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    const image = renderer.root.findByType('ArtifactImage' as any);
+    expect(image.props.fit).toBe('contain');
+    expect(image.props.testID).toBe('desktop-artifact-image');
+  });
+
+  it.each([
+    ['plain text', 'text/plain', 'notes.txt'],
+    ['JSON', 'application/json', 'payload.json'],
+    ['CSV', 'text/csv', 'rows.csv'],
+  ])('reads %s in the pane, whole and uncropped', async (_name, mimeType, fileName) => {
+    const renderer = render(
+      <DesktopArtifactPane
+        attachment={attachment({ mimeType, name: fileName, title: fileName })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    const text = renderer.root.findByType('ArtifactText' as any);
+    expect(text.props.crop).toBe(false);
+    expect(text.props.testID).toBe('desktop-artifact-text');
+  });
+
+  it('a format the pane cannot paint is explained and keeps the browser path', async () => {
+    mocks.openArtifactInBrowserOrExplain.mockClear();
+    const renderer = render(
+      <DesktopArtifactPane
+        attachment={attachment({ mimeType: 'application/zip', name: 'bundle.zip', title: 'Bundle' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
     expect(renderer.root.findByProps({ testID: 'desktop-artifact-handoff' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'desktop-artifact-open-browser' })).toBeDefined();
     await act(async () => {
       renderer.root.findByProps({ testID: 'desktop-artifact-open-browser' }).props.onPress();
     });
     expect(mocks.openArtifactInBrowserOrExplain).toHaveBeenCalled();
+  });
+
+  // The fallback when a render fails, and the way out for a reader who wants
+  // the file in a tab of their own — so it stays on every format, not only the
+  // ones the pane cannot paint.
+  it.each([
+    ['markup', 'text/html'],
+    ['markdown', 'text/markdown'],
+    ['a raster', 'image/png'],
+    ['plain text', 'text/plain'],
+    ['a PDF', 'application/pdf'],
+    ['an unknown format', 'application/zip'],
+  ])('keeps Open in browser on %s', async (_name, mimeType) => {
+    mocks.fetchArtifactBytes.mockResolvedValue(new TextEncoder().encode('<html></html>'));
+    mocks.fetchArtifactText.mockResolvedValue('# Heading');
+    const renderer = render(
+      <DesktopArtifactPane attachment={attachment({ mimeType })} onClose={mocks.onClose} />,
+    );
+    await flush();
+    expect(renderer.root.findByProps({ testID: 'desktop-artifact-open-browser' })).toBeDefined();
   });
 
   it('the close affordance clears the pane', async () => {

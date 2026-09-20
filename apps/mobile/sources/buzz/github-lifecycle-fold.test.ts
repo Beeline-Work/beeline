@@ -213,11 +213,19 @@ describe('notification lifecycle folding', () => {
     ]);
   });
 
-  it('leaves a single notification exactly as it arrived', () => {
-    for (const only of [github('1', 'opened'), corner('2', 'corner-complete', 'c2', 2)]) {
-      expect(foldSystemLines([only])).toEqual([only]);
-      expect(foldSystemLines([only])[0]).toBe(only);
-    }
+  it('puts a single issue or pull request on the same lifecycle card as a batch', () => {
+    const pr = foldSystemLines([github('1', 'opened')]);
+    expect(pr).toHaveLength(1);
+    expect(pr[0]!.foldedIds).toEqual(['1']);
+    expect(pr[0]!.notificationLifecycleRun?.headline).toBe('PR 1 opened');
+    const issue = foldSystemLines([github('2', 'opened', '2', 'issue')]);
+    expect(issue[0]!.notificationLifecycleRun?.headline).toBe('Issue 1 opened');
+  });
+
+  it('leaves a single corner fact as it arrived so the dedicated card still paints', () => {
+    const only = corner('2', 'corner-complete', 'c2', 2);
+    expect(foldSystemLines([only])).toEqual([only]);
+    expect(foldSystemLines([only])[0]).toBe(only);
   });
 
   it.each([2, 3, 6])('folds a mixed run of %i notifications into one stable card', (count) => {

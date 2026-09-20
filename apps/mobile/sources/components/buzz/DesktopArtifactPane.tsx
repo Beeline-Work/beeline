@@ -3,18 +3,25 @@ import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
-import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/buzz/artifact';
+import { artifactFormat, wrapArtifactMarkup } from '@/buzz/artifact';
 import { fetchArtifactBytes, fetchArtifactText, openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
+import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
+import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 
 /**
- * The desktop work pane's artifact view (mock 1c, desktop): the page rendered
- * in a sandboxed iframe — `sandbox` carries neither `allow-scripts` nor
- * `allow-same-origin`, so the page cannot execute or reach storage. The bytes
- * ride `srcdoc`, never a URL; the guard vocabulary stays the same one-shot
- * gate the mobile viewer uses. A PDF cannot render inside a fully sandboxed
- * frame, so the pane offers the signed browser link instead.
+ * The desktop work pane's artifact view (mock 1c, desktop): markup rendered in
+ * a sandboxed iframe — `sandbox` carries neither `allow-scripts` nor
+ * `allow-same-origin`, so the page cannot execute or reach storage, and the
+ * bytes ride `srcdoc`, never a URL. Markdown, plain text and rasters render
+ * through the app's own views. A PDF renders through the vendored pdf.js
+ * document in its own frame, which is why that one is not the fully sandboxed
+ * frame — see `buzz/artifact-pdf.ts` for what that trades and what it keeps.
+ *
+ * `Open in browser` stays on every format, not only the ones the pane cannot
+ * paint: the signed link is the fallback when a render fails and the way out
+ * for a reader who wants the file in a tab of their own.
  */
 export function DesktopArtifactPane({
   attachment,
@@ -39,16 +46,14 @@ export function DesktopArtifactPane({
             {kindLine}
           </Text>
         </View>
-        {format === 'pdf' || format === 'document' ? (
-          <Pressable
-            accessibilityLabel="Open in browser"
-            accessibilityRole="link"
-            onPress={() => void openArtifactInBrowserOrExplain(attachment)}
-            testID="desktop-artifact-open-browser"
-          >
-            <Text style={styles.openLink}>Open in browser ↗</Text>
-          </Pressable>
-        ) : null}
+        <Pressable
+          accessibilityLabel="Open in browser"
+          accessibilityRole="link"
+          onPress={() => void openArtifactInBrowserOrExplain(attachment)}
+          testID="desktop-artifact-open-browser"
+        >
+          <Text style={styles.openLink}>Open in browser ↗</Text>
+        </Pressable>
         <Pressable
           accessibilityLabel="Close artifact pane"
           accessibilityRole="button"
@@ -62,10 +67,21 @@ export function DesktopArtifactPane({
         <DesktopArtifactMarkdown attachment={attachment} />
       ) : format === 'html' || format === 'svg' ? (
         <DesktopArtifactFrame attachment={attachment} format={format} />
+      ) : format === 'image' ? (
+        <ArtifactImage
+          attachment={attachment}
+          fit="contain"
+          style={styles.image}
+          testID="desktop-artifact-image"
+        />
+      ) : format === 'text' ? (
+        <ArtifactText attachment={attachment} crop={false} testID="desktop-artifact-text" />
+      ) : format === 'pdf' ? (
+        <ArtifactPdfView attachment={attachment} mode="viewer" testID="desktop-artifact-pdf" />
       ) : (
         <View style={styles.placeholder} testID="desktop-artifact-handoff">
           <Text style={styles.placeholderText}>
-            This format opens in your browser — the pane cannot sandbox it.
+            This format opens in your browser — the pane cannot render it.
           </Text>
         </View>
       )}
@@ -186,6 +202,7 @@ const styles = StyleSheet.create((theme) => ({
   kindLine: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   openLink: { ...theme.buzz.type.body, color: theme.buzz.accent },
   close: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  image: { flex: 1, width: '100%', height: '100%' },
   markdownBody: { padding: theme.buzz.space.md },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: theme.buzz.space.md },

@@ -455,6 +455,27 @@ export async function readAgentCommands(
   >(
     `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,m.author_id,m.attachments,m.system_event,m.presentation,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
+   AND NOT (
+     -- A review wake waits for the corner to go quiet. The checks-passed
+     -- transition queues the configured reviewer the moment CI turns green,
+     -- which is routinely while the corner's own worker is still mid-turn:
+     -- two agents then stream into one transcript and can act on the same
+     -- branch at once. Holding the wake here rather than at creation keeps
+     -- the command durable and needs no completion hook: the daemon polls,
+     -- and the row becomes deliverable as soon as no other agent in this
+     -- corner holds a live lease. A dead worker cannot block it forever,
+     -- because an expired lease no longer counts as busy.
+     EXISTS(
+       SELECT 1 FROM rooms corner
+       JOIN rooms parent ON parent.id=corner.parent_id
+       WHERE corner.id=c.room_id AND parent.reviewer_agent_id=c.agent_id
+     )
+     AND EXISTS(
+       SELECT 1 FROM agent_commands busy
+       WHERE busy.room_id=c.room_id AND busy.agent_id<>c.agent_id
+         AND busy.state='claimed' AND busy.lease_expires_at>now()
+     )
+   )
  ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'resume' THEN 1 ELSE 2 END,c.created_at,c.id LIMIT 100`,
     [roomId, agentId],
   );

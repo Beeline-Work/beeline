@@ -1090,23 +1090,14 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
   onOpenUrl,
 }: GitHubEventCardProps) {
   const event = message.githubEvent!;
-  const subject =
-    event.type === 'pull-request'
-      ? 'PR'
-      : event.type === 'issue'
-        ? 'Issue'
-        : event.type === 'push'
-          ? 'Push'
-          : event.type === 'ci'
-            ? 'CI'
-            : 'Review';
+  // Only the kinds this build knows how to draw. A card from a newer server
+  // renders nothing rather than taking the Room down with it.
+  const SUBJECTS: Record<string, string> = { 'pull-request': 'PR', issue: 'Issue', ci: 'CI' };
+  const subject = SUBJECTS[event.type];
   const state = event.action === 'merged' ? 'merged' : event.action;
   const tone: 'waiting' | 'settled' | 'failed' =
-    state === 'opened' || state === 'pushed'
-      ? 'waiting'
-      : state === 'failed' || state === 'changes_requested'
-        ? 'failed'
-        : 'settled';
+    state === 'opened' ? 'waiting' : state === 'failed' ? 'failed' : 'settled';
+  if (!subject) return null;
   return (
     <RepositoryFactCard
       title={`${subject} 1 ${state}`}

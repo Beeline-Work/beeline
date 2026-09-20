@@ -24,21 +24,13 @@ export type SystemLineMessage = {
   /** The ids of every row folded into this one, oldest first. */
   foldedIds?: string[];
   githubEvent?: {
-    type: 'pull-request' | 'issue' | 'push' | 'ci' | 'review';
-    action:
-      | 'opened'
-      | 'closed'
-      | 'merged'
-      | 'pushed'
-      | 'passed'
-      | 'failed'
-      | 'approved'
-      | 'changes_requested'
-      | 'commented';
-    actor?: string;
+    type: string;
+    action: string;
+    actor: string;
     title: string;
     url: string;
     branch?: string;
+    targetBranch?: string;
   };
   daemonFact?: {
     type: 'corner-complete' | 'checks-failing' | 'worktree-cleaned' | 'corner-open';

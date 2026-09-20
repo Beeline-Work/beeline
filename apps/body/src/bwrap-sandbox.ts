@@ -116,7 +116,9 @@
  * the known credential homes ({@link KNOWN_CREDENTIAL_MASK_PATHS}); an owner
  * whose machine keeps secrets elsewhere extends it via the runtime record's
  * `sandboxMaskPaths` or the `BUZZY_BODY_SANDBOX_MASK` environment variable
- * (comma-separated absolute paths).
+ * (comma-separated absolute paths). MCP server configuration and session
+ * directories are not on that list — a sandboxed agent can read the host
+ * Trusty Squire session.
  *
  * **Residual, stated honestly**: no mask list can enumerate every secret on a
  * shared operator machine — env files, dotfiles, and tool state live
@@ -230,7 +232,6 @@ export function harnessHomeStateDirs(
  */
 export const KNOWN_CREDENTIAL_MASK_PATHS = [
   '.config/gh',
-  '.config/trusty-squire',
   '.ssh',
   '.netrc',
   '.git-credentials',
@@ -614,6 +615,6 @@ export function detectBwrapSandbox(
   }
   return {
     path: bwrapPath,
-    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp and PID namespace, writable only in its own harness state; ambient credential stores (~/.config/gh, ~/.config/trusty-squire, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a repository corner adds its worktree and git dir, then receives its linked repository's GitHub App credential. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
+    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp and PID namespace, writable only in its own harness state; ambient credential stores (~/.config/gh, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a repository corner adds its worktree and git dir, then receives its linked repository's GitHub App credential. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
   };
 }

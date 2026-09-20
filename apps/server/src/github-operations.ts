@@ -818,18 +818,17 @@ export class GitHubOperations {
 
   /**
    * Room-level repository activity. Issues and pull requests post on
-   * opened/closed; pushes and check runs/suites/commit statuses (CI) post
-   * too — the Room toggle promises those. Corner branches stay corner-owned
-   * (the corner exclusion below), and pushes and CI are gated to the
-   * repository's DEFAULT branch: a Room reads the repository's mainline
-   * activity, while feature-branch churn belongs to corners and
-   * pull-request heads.
+   * opened/closed; check runs/suites/commit statuses (CI) post their
+   * outcome. Raw pushes do NOT post: commit churn is not Room
+   * conversation. Corner branches stay corner-owned (the corner exclusion
+   * below), and CI is gated to the repository's DEFAULT branch: a Room
+   * reads the repository's mainline result, while feature-branch churn
+   * belongs to corners and pull-request heads.
    */
   private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
     if (
       event !== 'issues' &&
       event !== 'pull_request' &&
-      event !== 'push' &&
       event !== 'check_run' &&
       event !== 'check_suite' &&
       event !== 'status'
@@ -840,7 +839,7 @@ export class GitHubOperations {
 
     let card:
       | {
-          type: 'issue' | 'pull-request' | 'push' | 'ci';
+          type: 'issue' | 'pull-request' | 'ci';
           action: string;
           actor: string;
           title: string;
@@ -875,21 +874,6 @@ export class GitHubOperations {
         ...(targetBranch ? { targetBranch } : {}),
       };
       dedupeKey = url;
-    } else if (event === 'push') {
-      branch = branchForEvent(event, body);
-      if (!branch) return;
-      const commits = integer(body.size) ?? (Array.isArray(body.commits) ? body.commits.length : 0);
-      const url = githubUrl(text(body.compare));
-      if (!commits || !url) return;
-      card = {
-        type: 'push',
-        action: 'pushed',
-        actor,
-        title: `${commits} ${commits === 1 ? 'commit' : 'commits'} to ${branch}`,
-        url,
-        branch,
-      };
-      dedupeKey = text(body.after) ?? url;
     } else if (event === 'check_run' || event === 'check_suite' || event === 'status') {
       const result = checksResult(event, body);
       if (!result) return;
@@ -913,10 +897,10 @@ export class GitHubOperations {
     }
     if (!card || !dedupeKey) return;
 
-    // Pushes and CI are mainline events: gate them to the repository's
-    // default branch. Pull-request cards still exclude a matching corner branch.
+    // CI is a mainline event: gate it to the repository's default branch.
+    // Pull-request cards still exclude a matching corner branch.
     const defaultBranchGate =
-      event === 'push' || event === 'check_run' || event === 'check_suite' || event === 'status';
+      event === 'check_run' || event === 'check_suite' || event === 'status';
     const rooms = await this.database.query<{ room_id: string; author_id: string }>(
       `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id
        FROM rooms room

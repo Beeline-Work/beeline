@@ -169,6 +169,56 @@ describe('first-silence notice', () => {
     }
   });
 
+  /**
+   * T4: a Trusty Squire answer the helper cannot act on — a busy Chrome
+   * profile, or no host broker holding the socket — is a standing condition,
+   * not a hiccup. It is inscribed once and the turn is never restarted.
+   */
+  it('inscribes a busy Squire profile or a missing host broker once, with no restart', async () => {
+    const daemon = new DaemonService(database, new LiveHub());
+    const squireFaults = [
+      ['c'.repeat(64), 'profile_busy: another session holds the Trusty Squire browser profile'],
+      ['d'.repeat(64), 'broker unavailable'],
+    ] as const;
+    for (const [requestId, reason] of squireFaults) {
+      const command = await ask(database, requestId, requestId.slice(0, 8));
+      const receipt = {
+        roomId: ROOM,
+        requestId,
+        generationId: requestId.slice(0, 8),
+        status: 'failed' as const,
+        // No reasonKind: the server classifies the helper's own words, which is
+        // what turns a Squire fault into a standing condition rather than a
+        // hiccup the daemon would silently retry.
+        reason,
+      };
+      const result = await daemon.execute('postAgentTurnReceipt', receipt, AGENT);
+
+      expect(result.hiccupRestart).toBeUndefined();
+      expect(await failureLine(database, requestId)).toEqual({
+        text: "@candy could not answer \u00b7 she couldn't get a working copy of the repository. Check the repository is reachable.",
+        silence: 'workspace-failure',
+        state: 'failed',
+      });
+      expect((await commandState(database, command.id))?.state).toBe('complete');
+
+      // A second delivery of the same standing fault adds no second line and
+      // still asks for no restart.
+      const repeat = await daemon
+        .execute('postAgentTurnReceipt', receipt, AGENT)
+        .catch(() => ({ hiccupRestart: undefined }));
+      expect(repeat.hiccupRestart).toBeUndefined();
+      expect(
+        (
+          await database.query(
+            `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2`,
+            [ROOM, requestId],
+          )
+        ).rows,
+      ).toHaveLength(1);
+    }
+  });
+
   it('gives up after three hiccups and says so once', async () => {
     const requestId = '7'.repeat(64);
     const command = await ask(database, requestId);

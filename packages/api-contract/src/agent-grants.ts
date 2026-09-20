@@ -5,7 +5,7 @@
  * a status, a decision line, or a command rule means exactly one thing.
  */
 
-export const AGENT_GRANT_KINDS = ['path', 'host', 'secret', 'device', 'budget', 'command'] as const;
+export const AGENT_GRANT_KINDS = ['path', 'host', 'secret', 'device', 'budget', 'command', 'mcp'] as const;
 export type AgentGrantKind = (typeof AGENT_GRANT_KINDS)[number];
 
 export const AGENT_GRANT_STATUSES = ['pending', 'approved', 'once', 'denied', 'revoked'] as const;
@@ -33,7 +33,12 @@ export const AGENT_GRANT_VERBS: Readonly<Record<AgentGrantKind, string>> = {
   device: 'use',
   budget: 'spend',
   command: 'run',
+  mcp: 'route',
 };
+
+/** Host MCP is a standing route, never a yolo auto-approval. */
+export const MCP_GRANT_CREATOR_ONLY_MESSAGE =
+  'host MCP is only for an agent that answers its owner';
 
 /**
  * A command grant is one exact line the agent may say. Shell metacharacters are

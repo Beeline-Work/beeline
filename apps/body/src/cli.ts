@@ -21,6 +21,12 @@ import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { loadBodyConfig } from './config.js';
 import { CURSOR_ACP_BRIDGE_FLAG, runCursorAcpStdioServer } from './cursor-acp-bridge.js';
+import {
+  runSquireBroker,
+  runSquireFacade,
+  SQUIRE_BROKER_FLAG,
+  SQUIRE_FACADE_FLAG,
+} from './squire-host.js';
 import { formatAgentCommand } from './agent-command.js';
 import {
   AGENT_ACCESS_POLICIES,
@@ -483,6 +489,14 @@ async function main(): Promise<void> {
   const command = args[0];
   if (command === CURSOR_ACP_BRIDGE_FLAG) {
     await runCursorAcpStdioServer();
+    return;
+  }
+  if (command === SQUIRE_FACADE_FLAG) {
+    runSquireFacade();
+    return;
+  }
+  if (command === SQUIRE_BROKER_FLAG) {
+    runSquireBroker();
     return;
   }
   if (command === '--help' || command === '-h') usage(0);

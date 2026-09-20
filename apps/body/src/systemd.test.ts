@@ -8,11 +8,13 @@ import {
   UNKNOWN_AGENT_EXIT_STATUS,
   agentServiceUnit,
   installAgentService,
+  installTrustySquireBrokerService,
   isCanonicalInstalledLauncher,
   disableAgentService,
   reconcileAgentServices,
+  systemdBrokerUnitPath,
 } from './systemd.js';
-
+import { TRUSTY_SQUIRE_BROKER_UNIT_NAME, trustySquireBrokerUnit } from './squire-host.js';
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -216,5 +218,35 @@ describe('systemd supervision contract', () => {
       `/state/beeline/agents/${reconciled}/runtime.json`,
       `/state/beeline/agents/${live}/runtime.json`,
     ]);
+  });
+});
+
+describe('trusty squire host broker unit', () => {
+  it('installs one host elector with no PrivateTmp and enables it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-squire-broker-'));
+    roots.push(root);
+    const home = await mkdtemp(join(tmpdir(), 'beeline-squire-home-'));
+    roots.push(home);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: '' };
+    });
+    await installTrustySquireBrokerService({
+      env: {
+        HOME: home,
+        BEELINE_LIB_DIR: `${home}/.local/lib/beeline`,
+        XDG_CONFIG_HOME: root,
+      },
+      invocationPath: `${home}/.local/lib/beeline/lib/beeline/beeline-cli.mjs`,
+      run,
+    });
+    expect(calls).toEqual([
+      ['daemon-reload'],
+      ['enable', '--now', TRUSTY_SQUIRE_BROKER_UNIT_NAME],
+    ]);
+    const written = await readFile(systemdBrokerUnitPath({ XDG_CONFIG_HOME: root }), 'utf8');
+    expect(written).toBe(trustySquireBrokerUnit());
+    expect(written).not.toContain('PrivateTmp');
   });
 });

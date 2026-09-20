@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { AGENT_GRANT_KINDS } from '@beeline/api-contract/agent-grants';
 import {
   agentToolsFor,
   requestGrant,
@@ -32,6 +33,37 @@ describe('beeline-agent request_grant', () => {
       expect(names).toContain('run_granted_command');
     }
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('request_grant');
+  });
+
+  it('offers every grant kind the contract defines, and names each one where the agent reads it', () => {
+    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'request_grant');
+    const kinds = (tool?.inputSchema as { properties: { kind: { enum: string[] } } }).properties.kind
+      .enum;
+    expect([...kinds].sort()).toEqual([...AGENT_GRANT_KINDS].sort());
+    // The description is the interface the model reads to pick a kind: a kind
+    // the schema offers but the prose never names is one nobody asks for.
+    for (const kind of kinds) expect(tool?.description).toContain(kind);
+  });
+
+  it('asks for a host MCP route by name and reports it pending, never a yolo approval', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const reply = await requestGrant(
+      { kind: 'mcp', target: ' squire ', reason: 'vault the provider key' },
+      deps({ grantId: 'g-9', status: 'pending', auto: false, messageId: 'm-9' }, ops),
+    );
+    expect(ops).toEqual([
+      {
+        name: 'requestAgentGrant',
+        input: {
+          roomId: 'room-1',
+          kind: 'mcp',
+          target: 'squire',
+          reason: 'vault the provider key',
+        },
+      },
+    ]);
+    expect(reply).toMatch(/^pending, card posted: route squire \[grant g-9\]/);
+    expect(reply).toContain('paused');
   });
 
   it('returns "pending, card posted" and tells the agent its turn is paused', async () => {

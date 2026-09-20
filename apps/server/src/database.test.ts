@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
-import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
+import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 import {
   assertSchemaCurrent,
   backfillAgentHandles,
@@ -637,4 +637,47 @@ describe('the workspace_connectors machine_id migration ordering', () => {
     );
     expect(indexes.rows.length).toBe(1);
   });
+});
+
+describe('the agent_grants kind vocabulary migration', () => {
+  let database: PgliteDatabase;
+
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+  });
+
+  afterEach(() => database.close());
+
+    it('widens the agent_grants kind check so an upgraded database accepts an mcp route', async () => {
+      // The pre-migration production shape: agent_grants already exists, so the
+      // CREATE TABLE IF NOT EXISTS is a no-op and the old CHECK survives.
+      await database.query(`ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check`);
+      await database.query(`ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
+        CHECK (kind IN ('path','host','secret','device','budget','command'))`);
+      const owner = 'a'.repeat(64);
+      const agent = 'b'.repeat(64);
+      await database.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [owner, agent],
+      );
+      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, owner]);
+      const storeRoute = (kind: string) =>
+        database.query(
+          `INSERT INTO agent_grants(id,agent_id,workspace_id,room_id,kind,target,reason,requested_by,status)
+           VALUES(gen_random_uuid(),$3,$1,$5,$2,'squire','route it',$4,'pending')`,
+          [DEFAULT_WORKSPACE_ID, kind, agent, owner, WELCOME_ROOM_ID],
+        );
+
+      await expect(storeRoute('mcp')).rejects.toThrow();
+
+      await migrate(database);
+
+      await expect(storeRoute('mcp')).resolves.toBeDefined();
+      // Widening the vocabulary is not removing it: an unknown kind is still refused.
+      await expect(storeRoute('nonsense')).rejects.toThrow();
+      expect(
+        (await database.query<{ kind: string }>(`SELECT kind FROM agent_grants`)).rows,
+      ).toEqual([{ kind: 'mcp' }]);
+    });
 });

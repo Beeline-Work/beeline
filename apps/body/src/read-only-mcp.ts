@@ -628,7 +628,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command with one target and the reason. Under yolo it is approved at once; otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.',
+      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command|mcp with one target and the reason. Under yolo a path, host, secret, device or command is approved at once, but budget and mcp never are — those always wait for a person. Otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on your NEXT session, so the tool is not there in the turn that asked for it. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.',
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -639,7 +639,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
           minLength: 1,
           maxLength: AGENT_GRANT_TARGET_MAX_LENGTH,
           description:
-            'What you need: a path, a host, a secret name, a device, a budget, or the exact command line (with optional `--with SECRET_NAME` suffixes).',
+            'What you need: a path, a host, a secret name, a device, a budget, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config.',
         },
         reason: {
           type: 'string',

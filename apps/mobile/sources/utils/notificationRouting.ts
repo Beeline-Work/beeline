@@ -51,7 +51,7 @@ export type BuzzNotificationTarget = BuzzNotificationTargetBase &
   );
 
 export type NotificationRoomTruth = {
-  room: { id: string; workspaceId: string; parentId?: string; archived: boolean };
+  room: { id: string; workspaceId?: string; parentId?: string; archived: boolean };
   parent?: { id: string };
   cornerLifecycle?: { lifecycle: string };
 };

@@ -67,7 +67,6 @@ export type SurfaceReader<T> = (value: unknown) => T | null;
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA1 = /^[0-9a-f]{40}$/i;
-const NIL_UUID = '00000000-0000-4000-8000-000000000000';
 const WATCH_FILTER_LIMIT = 32;
 const WATCH_FILTER_TAG_KEYS: readonly string[] = ['authors', '#h', '#d', '#p', '#t'];
 const CLOSED_VIEWER: RoomViewer = {
@@ -179,11 +178,11 @@ function readHeader(value: unknown): RoomViewHeader | null {
   const parentId = uuid(item.parentId) ? item.parentId : undefined;
   return {
     id: item.id,
-    workspaceId: uuid(item.workspaceId) ? item.workspaceId : NIL_UUID,
     name: typeof item.name === 'string' ? item.name : '',
     archived: typeof item.archived === 'boolean' ? item.archived : false,
     createdAt: integer(item.createdAt) ? item.createdAt : 0,
     updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
+    ...field('workspaceId', uuid(item.workspaceId) ? item.workspaceId : undefined),
     ...field('parentId', parentId),
     ...field('about', typeof item.about === 'string' ? item.about : undefined),
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),

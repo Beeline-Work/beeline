@@ -138,7 +138,8 @@ export type WorkspaceAgentView = RoomViewMember & {
 
 export type RoomViewHeader = {
   readonly id: string;
-  readonly workspaceId: string;
+  /** Absent when this bundle could not read it; callers fall back to their own workspace context. */
+  readonly workspaceId?: string;
   readonly parentId?: string;
   readonly name: string;
   readonly about?: string;

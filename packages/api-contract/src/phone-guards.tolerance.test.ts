@@ -393,14 +393,35 @@ describe('phone surface readers', () => {
       messages: [
         {
           ...message,
-          reference: { messageId: 'd'.repeat(64), channelId: foreign },
-          reply: { messageId: 'e'.repeat(64), channelId: foreign },
+          reference: { channelId: foreign, eventId: message.id, rootId: 'd'.repeat(64) },
+          reply: { channelId: foreign, eventId: 'e'.repeat(64), rootId: 'f'.repeat(64) },
         },
       ],
     });
     expect(view?.messages).toHaveLength(1);
     expect(view?.messages[0]?.reference).toBeUndefined();
     expect(view?.messages[0]?.reply).toBeUndefined();
+
+    const sameRoom = readRoomView({
+      ...currentRoom,
+      messages: [
+        {
+          ...message,
+          reference: { channelId: roomId, eventId: message.id, rootId: 'd'.repeat(64) },
+          reply: { channelId: roomId, eventId: 'e'.repeat(64), rootId: 'f'.repeat(64) },
+        },
+      ],
+    });
+    expect(sameRoom?.messages[0]?.reference).toEqual({
+      channelId: roomId,
+      eventId: message.id,
+      rootId: 'd'.repeat(64),
+    });
+    expect(sameRoom?.messages[0]?.reply).toEqual({
+      channelId: roomId,
+      eventId: 'e'.repeat(64),
+      rootId: 'f'.repeat(64),
+    });
   });
 
   it('reads an unnameable repositoryResolution as unverified, never as no repository', () => {

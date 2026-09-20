@@ -505,17 +505,6 @@ export {
   isCornerListView,
   isAgentDetailView,
   isInviteView,
-  readRoomViewMessage,
-  readRoomView,
-  readRoomHistoryView,
-  readWorkspaceListView,
-  readWorkspaceMemberListView,
-  readWorkspaceView,
-  readChatListView,
-  readCornerListView,
-  readAgentDetailView,
-  readInviteView,
-  type SurfaceReader,
 } from './surface-guards.js';
 
 export { BuzzClient, createBuzzClient } from './client.js';

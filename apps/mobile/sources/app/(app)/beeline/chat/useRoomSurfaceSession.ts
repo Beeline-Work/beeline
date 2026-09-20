@@ -411,10 +411,13 @@ export function useRoomSurfaceSession({
       fresh: boolean,
     ) => {
       if (cancelled) return;
-      void Promise.all([
-        saveActiveCommunityId(identityPubkey, stableView.room.workspaceId),
-        saveLastViewedChannel(identityPubkey, stableView.room.workspaceId, channelId),
-      ]).catch(() => undefined);
+      const viewWorkspaceId = stableView.room.workspaceId;
+      if (viewWorkspaceId) {
+        void Promise.all([
+          saveActiveCommunityId(identityPubkey, viewWorkspaceId),
+          saveLastViewedChannel(identityPubkey, viewWorkspaceId, channelId),
+        ]).catch(() => undefined);
+      }
 
       const presences = Object.fromEntries(
         stableView.members.flatMap((member) =>

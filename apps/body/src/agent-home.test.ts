@@ -854,6 +854,23 @@ describe('mounted imported MCP server names', () => {
     ]);
   });
 
+  it('reads only the selected harness inventory after preparation', async () => {
+    const operatorHome = await scratch('beeline-mounted-mcp-prepared-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-mounted-mcp-prepared-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.codex/config.toml'), '[mcp_servers.files]\ncommand = "files-mcp"\n');
+    await writeFile(resolve(operatorHome, '.claude.json'), JSON.stringify({
+      mcpServers: { typescript: { command: 'typescript-mcp' } },
+    }));
+    const preparedEnv = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome });
+    expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
+    expect(mountedImportedMcpServerNames({ agentKind: 'claude', preparedEnv })).toEqual(['typescript']);
+    await writeFile(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), '[mcp_servers.squire]\nurl = "http://localhost:1234/mcp"\n');
+    expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['squire']);
+    await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome });
+    expect(mountedImportedMcpServerNames({ agentKind: 'codex', preparedEnv })).toEqual(['files']);
+  });
+
   it('includes a granted host route in the agent home and drops it on revoke', async () => {
     const operatorHome = await scratch('beeline-mounted-mcp-grant-op-');
     const agentHomeRoot = resolve(await scratch('beeline-mounted-mcp-grant-home-'), 'agent-home');

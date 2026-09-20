@@ -508,11 +508,12 @@ export class MonolithRoomTurnLoop {
     });
   }
 
-  /** Every imported MCP server this Room would mount, including a granted host route. */
-  private mountedMcpServers(): string[] {
+  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
     return mountedImportedMcpServerNames({
       operatorHome: this.options.config.operatorHome,
       agentHomeRoot: this.options.config.agentHomeRoot,
+      agentKind: this.options.config.agentKind,
+      preparedEnv,
     });
   }
 
@@ -528,13 +529,6 @@ export class MonolithRoomTurnLoop {
       this.repositoryState(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      mcpServers: this.mountedMcpServers(),
-    });
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
       repositoryState.directParticipants.length === 2;
@@ -577,6 +571,13 @@ export class MonolithRoomTurnLoop {
       command,
     });
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      mcpServers: this.mountedMcpServers(agentEnv),
+    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {

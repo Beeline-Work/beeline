@@ -579,11 +579,12 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  /** Every imported MCP server this corner would mount, including a granted host route. */
-  private mountedMcpServers(): string[] {
+  private mountedMcpServers(preparedEnv?: Record<string, string>): string[] {
     return mountedImportedMcpServerNames({
       operatorHome: this.options.config.operatorHome,
       agentHomeRoot: this.options.config.agentHomeRoot,
+      agentKind: this.options.config.agentKind,
+      preparedEnv,
     });
   }
 
@@ -598,15 +599,6 @@ export class MonolithCornerTurnLoop {
       this.roster(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      yoloMode: configuration.yoloMode,
-      mcpServers: this.mountedMcpServers(),
-      reviewerHandle: configuration.reviewerHandle,
-    });
     this.yoloMode = configuration.yoloMode;
     this.reviewerHandle = configuration.reviewerHandle;
     const opener = this.options.openedBy
@@ -699,6 +691,15 @@ export class MonolithCornerTurnLoop {
       ...githubEnv,
       npm_config_cache: npmCacheDir,
     };
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(agentEnv),
+      reviewerHandle: configuration.reviewerHandle,
+    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {

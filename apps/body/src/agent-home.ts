@@ -603,68 +603,101 @@ function filteredHarnessMcpToml(source: string): string | undefined {
   return extractTomlSections(source, ['mcp_servers'], excluded);
 }
 
-/**
- * Names of imported MCP servers the next activation would mount.
- *
- * This is the set for every imported server the operator currently has — Codex,
- * Claude, Grok, Goose, a TypeScript MCP, Linear, filesystem, and whatever else
- * lives in those harness configs — not a Squire-only inventory. Ordinary
- * declarations come from the operator home the import step copies. A granted
- * host route is the declaration T2 writes into the agent home (today,
- * Squire-shaped; the classifier in T1 generalizes that); revocation deletes
- * it. Session fingerprinting reads this set so either change restarts a warm
- * session. Names only: never copy Squire cookies, `session.json`, or profile
- * bytes into a sandbox.
- */
 export function mountedImportedMcpServerNames(input: {
   operatorHome?: string;
   agentHomeRoot?: string;
+  agentKind?: AgentKind;
+  preparedEnv?: Record<string, string>;
 } = {}): string[] {
   const names = new Set<string>();
-  collectImportedMcpNames(input.operatorHome ?? homedir(), names);
-  if (input.agentHomeRoot) collectGrantedHostRouteNames(input.agentHomeRoot, names);
+  if (input.preparedEnv) {
+    const env = input.preparedEnv;
+    const home = env.HOME ?? input.operatorHome ?? homedir();
+    const kind = input.agentKind;
+    if (!kind || kind === 'codex') {
+      addTomlMcpNames(names, resolve(env.CODEX_HOME ?? resolve(home, '.codex'), 'config.toml'), 'all');
+    }
+    if (!kind || kind === 'grok') {
+      addTomlMcpNames(names, resolve(env.GROK_HOME ?? resolve(home, '.grok'), 'config.toml'), 'all');
+    }
+    if (!kind || kind === 'claude') {
+      addClaudeMcpNames(names, resolve(env.CLAUDE_CONFIG_DIR ?? home, '.claude.json'), 'all');
+    }
+    if (!kind || kind === 'goose') {
+      addGooseExtensionNames(
+        names,
+        env.GOOSE_PATH_ROOT
+          ? resolve(env.GOOSE_PATH_ROOT, 'config/config.yaml')
+          : resolve(home, '.config/goose/config.yaml'),
+        'all',
+      );
+    }
+  } else {
+    collectImportedMcpNames(input.operatorHome ?? homedir(), names, input.agentKind);
+    if (input.agentHomeRoot) collectGrantedHostRouteNames(input.agentHomeRoot, names, input.agentKind);
+  }
   return [...names].sort((left, right) => left.localeCompare(right));
 }
 
-function collectImportedMcpNames(operatorHome: string, names: Set<string>): void {
-  addTomlMcpNames(names, resolve(operatorHome, '.codex/config.toml'), 'imported');
-  addTomlMcpNames(names, resolve(operatorHome, '.grok/config.toml'), 'imported');
-  addClaudeMcpNames(names, resolve(operatorHome, '.claude.json'), 'imported');
-  addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'), 'imported');
+function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?: AgentKind): void {
+  if (!kind || kind === 'codex') {
+    addTomlMcpNames(names, resolve(operatorHome, '.codex/config.toml'), 'imported');
+  }
+  if (!kind || kind === 'grok') {
+    addTomlMcpNames(names, resolve(operatorHome, '.grok/config.toml'), 'imported');
+  }
+  if (!kind || kind === 'claude') {
+    addClaudeMcpNames(names, resolve(operatorHome, '.claude.json'), 'imported');
+  }
+  if (!kind || kind === 'goose') {
+    addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'), 'imported');
+  }
 }
 
-function collectGrantedHostRouteNames(agentHomeRoot: string, names: Set<string>): void {
-  addTomlMcpNames(names, resolve(agentHomeRoot, 'codex/config.toml'), 'host-route');
-  addTomlMcpNames(names, resolve(agentHomeRoot, 'grok/config.toml'), 'host-route');
-  addClaudeMcpNames(names, resolve(agentHomeRoot, 'claude/.claude.json'), 'host-route');
-  addGooseExtensionNames(names, resolve(agentHomeRoot, 'goose/config/config.yaml'), 'host-route');
+function collectGrantedHostRouteNames(
+  agentHomeRoot: string,
+  names: Set<string>,
+  kind?: AgentKind,
+): void {
+  if (!kind || kind === 'codex') {
+    addTomlMcpNames(names, resolve(agentHomeRoot, 'codex/config.toml'), 'host-route');
+  }
+  if (!kind || kind === 'grok') {
+    addTomlMcpNames(names, resolve(agentHomeRoot, 'grok/config.toml'), 'host-route');
+  }
+  if (!kind || kind === 'claude') {
+    addClaudeMcpNames(names, resolve(agentHomeRoot, 'claude/.claude.json'), 'host-route');
+  }
+  if (!kind || kind === 'goose') {
+    addGooseExtensionNames(names, resolve(agentHomeRoot, 'goose/config/config.yaml'), 'host-route');
+  }
 }
 
 function addTomlMcpNames(
   names: Set<string>,
   path: string,
-  mode: 'imported' | 'host-route',
+  mode: 'imported' | 'host-route' | 'all',
 ): void {
   const source = readExistingText(path);
   if (source === undefined) return;
   for (const name of tomlChildTableNames(source, ['mcp_servers'])) {
     const section = extractTomlSections(source, ['mcp_servers', name]);
     const hostRoute = name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
-    if (mode === 'host-route' ? hostRoute : !hostRoute) names.add(name);
+    if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(name);
   }
 }
 
 function addClaudeMcpNames(
   names: Set<string>,
   path: string,
-  mode: 'imported' | 'host-route',
+  mode: 'imported' | 'host-route' | 'all',
 ): void {
   const parsed = readJsonObject(path);
   const servers = parsed?.mcpServers;
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
   for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
     const hostRoute = isClaudeHostRoute(name, value);
-    if (mode === 'host-route' ? hostRoute : !hostRoute) names.add(name);
+    if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(name);
   }
 }
 
@@ -682,14 +715,14 @@ function isClaudeHostRoute(name: string, value: unknown): boolean {
 function addGooseExtensionNames(
   names: Set<string>,
   path: string,
-  mode: 'imported' | 'host-route',
+  mode: 'imported' | 'host-route' | 'all',
 ): void {
   const source = readExistingText(path);
   if (source === undefined) return;
   for (const extension of gooseExtensionBodies(source)) {
     const hostRoute =
       extension.name === 'squire' || isTrustySquireMcpLaunch(extension.body);
-    if (mode === 'host-route' ? hostRoute : !hostRoute) names.add(extension.name);
+    if (mode === 'all' || (mode === 'host-route' ? hostRoute : !hostRoute)) names.add(extension.name);
   }
 }
 

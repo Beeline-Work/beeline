@@ -9,6 +9,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { tomlChildTableNames } from './toml-section.js';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
 const roots: string[] = [];
@@ -38,9 +39,15 @@ async function twoTurns(
   configurations: readonly [AgentConfiguration, AgentConfiguration],
   systemPrompts: string[] = [],
   hooks?: {
+    thirdTurn?: boolean;
     betweenTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
   },
-): Promise<{ activations: number; traces: TurnTraceRecord[]; sessionPrompts: string[] }> {
+): Promise<{
+  activations: number;
+  traces: TurnTraceRecord[];
+  sessionPrompts: string[];
+  mountedInventories: string[][];
+}> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-retention-'));
   roots.push(root);
   const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -79,6 +86,7 @@ async function twoTurns(
   const asks = [
     { id: 'ask-1', body: 'first' },
     { id: 'ask-2', body: 'second' },
+    ...(hooks?.thirdTurn ? [{ id: 'ask-3', body: 'third' }] : []),
   ];
   const receipts: Array<Record<string, unknown>> = [];
   const settled = () => receipts.filter((receipt) => receipt.status !== 'working').length;
@@ -136,12 +144,19 @@ async function twoTurns(
     }),
   } as unknown as DaemonApiClient;
 
+  const mountedInventories: string[][] = [];
   let activations = 0;
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
   vi.spyOn(acp, 'start').mockImplementation(async () => {
     activations += 1;
   });
   vi.spyOn(acp, 'sessionNew').mockImplementation(async (input: { systemPrompt?: string }) => {
+    mountedInventories.push(
+      tomlChildTableNames(
+        await readFile(join(paths.agentHomeRoot, 'codex/config.toml'), 'utf8'),
+        ['mcp_servers'],
+      ),
+    );
     systemPrompts.push(input.systemPrompt ?? '');
     return { sessionId: `room-session-${activations}`, raw: {} };
   });
@@ -182,7 +197,7 @@ async function twoTurns(
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as TurnTraceRecord);
-  return { activations, traces, sessionPrompts: systemPrompts };
+  return { activations, traces, sessionPrompts: systemPrompts, mountedInventories };
 }
 
 const unchanged: AgentConfiguration = { commands: [], yoloMode: false };
@@ -213,7 +228,8 @@ describe('retained Room session', () => {
   });
 
   it('discards the retained session when any imported MCP server is added', async () => {
-    const { activations, traces } = await twoTurns([unchanged, unchanged], [], {
+    const { activations, traces, mountedInventories } = await twoTurns([unchanged, unchanged], [], {
+      thirdTurn: true,
       betweenTurns: async ({ operatorHome }) => {
         await mkdir(join(operatorHome, '.codex'), { recursive: true });
         await writeFile(
@@ -223,12 +239,14 @@ describe('retained Room session', () => {
       },
     });
 
+    expect(mountedInventories).toEqual([[], ['files']]);
     expect(activations).toBe(2);
-    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
   });
 
-  it('discards the retained session when a host route is granted into the agent home', async () => {
-    const { activations, traces } = await twoTurns([unchanged, unchanged], [], {
+  it('retains the replacement using the inventory preparation actually supplies', async () => {
+    const { activations, traces, mountedInventories } = await twoTurns([unchanged, unchanged], [], {
+      thirdTurn: true,
       betweenTurns: async ({ agentHomeRoot }) => {
         await mkdir(join(agentHomeRoot, 'codex'), { recursive: true });
         await writeFile(
@@ -241,7 +259,8 @@ describe('retained Room session', () => {
         );
       },
     });
+    expect(mountedInventories).toEqual([[], []]);
     expect(activations).toBe(2);
-    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold', 'warm']);
   });
 });

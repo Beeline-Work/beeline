@@ -96,6 +96,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
         { id: 'workspace-a', name: 'Alpha Workspace' },
         { id: 'workspace-empty', name: 'Empty Workspace' },
       ],
+      viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
     }));
     chats = chats;
     corners = vi.fn(async () => ({ corners: [] }));
@@ -288,14 +289,14 @@ describe('desktop Workspace navigation', () => {
   it('keeps profile settings reachable from the persistent desktop navigation as the viewer\'s own face', () => {
     const profileSettings = tree.root.findByProps({ testID: 'profile-settings-navigation' });
 
-    expect(profileSettings.props.accessibilityLabel).toBe('Settings');
+    expect(profileSettings.props.accessibilityLabel).toBe('Ada Lovelace — Settings');
     expect(profileSettings.findByType('IdentityMark').props).toMatchObject({
       seed: 'viewer',
       kind: 'human',
     });
     expect(
       profileSettings.findAllByType('Text').map((node: { props: { children?: unknown } }) => node.props.children),
-    ).toEqual([]);
+    ).toEqual(['Ada Lovelace']);
 
     act(() => profileSettings.props.onPress());
 

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   type ChatListView,
   type CornerListItem,
+  type RoomViewIdentity,
   type WorkspaceListView,
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -218,6 +219,11 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   headerGlyphColor: { color: theme.colors.textSecondary },
   settingsFaceSlot: { width: 22, height: 22, borderRadius: 11 },
+  settingsViewerName: {
+    ...theme.buzz.type.meta,
+    color: theme.colors.textSecondary,
+    flexShrink: 1,
+  },
 }));
 
 /** One server-backed desktop pane for Workspace and Room movement. */
@@ -241,6 +247,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
   const [identityPubkey, setIdentityPubkey] = React.useState<string | null>(null);
+  const [viewerIdentity, setViewerIdentity] = React.useState<RoomViewIdentity | null>(null);
   const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
@@ -273,6 +280,7 @@ export const SidebarView = React.memo(function SidebarView() {
       if (cancelled) return;
       setClient(http);
       setIdentityPubkey(identity.publicKey);
+      setViewerIdentity(list.viewer);
       setWorkspaces(list.workspaces);
       workspaceIdRef.current = selected;
       setWorkspaceId(selected);
@@ -837,7 +845,9 @@ export const SidebarView = React.memo(function SidebarView() {
           )}
         </ScrollView>
         <Pressable
-          accessibilityLabel="Settings"
+          accessibilityLabel={
+            viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings'
+          }
           accessibilityRole="button"
           accessibilityState={{ selected: profileSettingsSelected }}
           onPress={() => router.push('/beeline/settings' as Href)}
@@ -849,7 +859,25 @@ export const SidebarView = React.memo(function SidebarView() {
         >
           {isDesktop ? (
             identityPubkey ? (
-              <IdentityMark seed={identityPubkey} kind="human" size={22} />
+              <>
+                <IdentityMark
+                  seed={identityPubkey}
+                  kind="human"
+                  size={22}
+                  name={viewerIdentity?.name}
+                  avatarUrl={viewerIdentity?.avatar}
+                  face={viewerIdentity?.face}
+                />
+                {viewerIdentity?.name ? (
+                  <Text
+                    numberOfLines={1}
+                    style={styles.settingsViewerName}
+                    testID="profile-settings-name"
+                  >
+                    {viewerIdentity.name}
+                  </Text>
+                ) : null}
+              </>
             ) : (
               <View style={styles.settingsFaceSlot} />
             )

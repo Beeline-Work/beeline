@@ -82,7 +82,7 @@ function RailButton({
         testID={testID}
         onPress={onPress}
         onLongPress={onLongPress}
-        style={[styles.railButton, column && styles.columnButton, !active && styles.railButtonIdle]}
+        style={[styles.railButton, active && styles.railButtonCurrent, column && styles.columnButton]}
       >
         {children}
       </TouchableOpacity>
@@ -351,7 +351,7 @@ export function CommunitySwitcherTrigger({
       testID="workspace-avatar-trigger"
     >
       {!showingPickerTitle && (
-        <View style={styles.drawerTriggerMark}>
+        <View style={styles.drawerTriggerPlate}>
           <IdentityMark
             kind="workspace"
             seed={community?.communityId ?? 'workspace-loading'}
@@ -557,6 +557,9 @@ const styles = StyleSheet.create((theme) => {
       height: 48,
       alignItems: 'center',
       justifyContent: 'center',
+      borderRadius: 14,
+      borderWidth: 2,
+      borderColor: 'transparent',
     },
     columnButton: {
       width: DRAWER_WIDTH,
@@ -570,8 +573,9 @@ const styles = StyleSheet.create((theme) => {
       height: groknight.space.xxl,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: groknight.border,
+      borderRadius: 14,
+      borderWidth: 2,
+      borderColor: 'transparent',
       backgroundColor: groknight.bgTerminal,
     },
     columnLogoPlateSelected: {
@@ -584,10 +588,13 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textMuted,
       width: DRAWER_WIDTH,
     },
-    /* Tone, not a box: an unselected Workspace mark sits one step back from the
-     * one you are in. The rail is a quiet column you glance at, not a row of
-     * competing badges. */
-    railButtonIdle: { opacity: 0.5 },
+    /* The desktop tile treatment, scaled to the rail: a rounded tile whose
+     * brass bezel names the current Workspace. No idle fade — the bezel is the
+     * whole story, so every tile sits at full strength. */
+    railButtonCurrent: {
+      borderWidth: 2,
+      borderColor: groknight.selectedBorder,
+    },
     /* Exit affordance: one close glyph hung at the tile's own top-right corner,
      * on the same quiet chrome tier as every other rail glyph. It appears only
      * while a long-press has armed it. */
@@ -682,7 +689,16 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: 8,
     },
-    drawerTriggerMark: { position: 'relative' },
+    /* The room-list header plate: the desktop tile treatment scaled down —
+     * 26px mark, radius scaled with the tile (14 × 26/48 ≈ 8) and the same
+     * brass bezel. The trigger always shows the current Workspace. */
+    drawerTriggerPlate: {
+      position: 'relative',
+      borderRadius: 8,
+      borderWidth: 2,
+      borderColor: groknight.selectedBorder,
+      padding: 2,
+    },
     workspaceAttentionMark: {
       position: 'absolute',
       right: 0,

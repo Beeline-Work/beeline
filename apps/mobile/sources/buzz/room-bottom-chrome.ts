@@ -1,18 +1,16 @@
 /**
- * The Room's bottom chrome is a column with one thing hanging off its top
- * edge, and the reason it lives here rather than inline in the screen is that
- * the one rule it has to keep is a MEASUREMENT: the phone turn line's bottom
- * edge and the first row of the stack must meet at exactly the same y.
+ * The Room's bottom chrome is a column: the phone turn line in flow, then the
+ * composer. The reason it lives here rather than inline in the screen is that
+ * the one rule it has to keep is a MEASUREMENT: the line is a band above the
+ * composer, never an overlay on the transcript.
  *
- * The turn line is absolutely positioned at `bottom: '100%'`, so it paints
- * over the transcript instead of growing the stack — the transcript reserves
- * that height itself (`phoneTranscriptTailPadding`). Everything in the stack
- * after it is in flow, the composer last.
- *
- * A pinned corner line used to sit between the two, which is why the turn line
- * could be 30px off the composer and nobody noticed. With the line gone there
- * is nothing to absorb a stray margin or padding, so any gap introduced here
- * is dead space the reader sees. `room-bottom-chrome.test.tsx` measures it.
+ * An absolute line at `bottom: '100%'` with an opaque canvas fill paints over
+ * the newest row. The transcript tail is 12px and the line is ~30px, so that
+ * overlay covers roughly the bottom 18px of the last message. Putting the
+ * line in flow gives it its own band (hairline, then the line, then the
+ * composer hairline) without growing inverted-list padding — growing that
+ * padding only while thinking is a step. `room-bottom-chrome.test.tsx`
+ * measures both the overlay-cover counterfactual and the in-flow placement.
  */
 export function roomBottomChromeStyles(hull: { bgTerminal: string; border: string }) {
   return {
@@ -20,11 +18,9 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
       position: 'relative',
     },
     hangingTurnChrome: {
-      position: 'absolute',
-      right: 0,
-      bottom: '100%',
-      left: 0,
       backgroundColor: hull.bgTerminal,
+      borderTopWidth: 1,
+      borderTopColor: hull.border,
     },
     composerRow: {
       paddingHorizontal: 16,
@@ -35,4 +31,11 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
       backgroundColor: hull.bgTerminal,
     },
   } as const;
+}
+
+/** Pixels of the newest row an opaque overlay of `lineBox` would cover given
+ *  the inverted-list tail padding. In-flow placement keeps the actual cover
+ *  at 0 by not painting over the list. */
+export function turnLineOverlayCoverPx(lineBox: number, tailPadding: number): number {
+  return Math.max(0, lineBox - tailPadding);
 }

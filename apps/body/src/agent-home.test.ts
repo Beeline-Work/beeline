@@ -5,6 +5,8 @@ import { chmod, link, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'nod
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
+import { parse as parseToml } from 'smol-toml';
+import { parse as parseYaml } from 'yaml';
 import {
   AGENT_SKILL_DIRS,
   agentSkillDir,
@@ -12,6 +14,7 @@ import {
   hasAmbientTrustySquireConfiguration,
   hasLocalTrustySquireState,
   harnessStateDirsFromEnv,
+  hostImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
@@ -23,6 +26,7 @@ import {
 } from './beeline-skill.js';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
+import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
 import { filterModelOptionsByCredentials } from './model-config.js';
 import { tomlChildTableNames } from './toml-section.js';
@@ -498,7 +502,21 @@ describe('operator skills + MCP passthrough', () => {
     expect(claudeSettings.permissions.allow).toEqual(['WebSearch', 'WebFetch']);
     expect(claudeSettings.permissions.allow).not.toContain('Read');
     expect(claudeSettings.permissions.allow).not.toContain('Bash');
+    // Host-classified declarations (Squire by name and by launch) stay out of
+    // the isolated home entirely; local ones ride along byte-for-byte.
     expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
+    const isolatedServers = parseToml(isolatedText).mcp_servers as Record<
+      string,
+      { command?: string; args?: string[]; env?: Record<string, string> }
+    >;
+    expect(isolatedServers.project_tools).toEqual({ command: 'project-tools' });
+    expect(isolatedServers.squire).toBeUndefined();
+    expect(isolatedServers.vault_tools).toBeUndefined();
+    expect(isolatedServers.stable_vault).toBeUndefined();
+    expect(isolatedText).not.toContain('@trusty-squire/mcp');
+    expect(isolatedText).not.toBe(`${operatorToml}\n`);
+    expect(existsSync(resolve(roomRoot, '.trusty-squire'))).toBe(false);
+    expect(existsSync(resolve(roomRoot, 'user/.trusty-squire'))).toBe(false);
 
     // Writing through the session cannot reach the operator's real config.
     await writeFile(isolatedConfig, '[mcp_servers.scribe]\ncommand = "scribe"\n');
@@ -690,6 +708,7 @@ describe('operator skills + MCP passthrough', () => {
       mcpServers: Record<string, unknown>;
     };
     expect(Object.keys(claudeParsed.mcpServers)).toEqual(['files']);
+    expect(claudeParsed.mcpServers.files).toEqual({ command: 'files-mcp' });
     expect(claudeParsed).not.toHaveProperty('otherTopLevel');
 
     const grokConfig = readFileSync(resolve(roomRoot, 'grok', 'config.toml'), 'utf8');
@@ -850,9 +869,9 @@ describe('mounted imported MCP server names', () => {
       'files',
       'filesystem',
       'linear',
-      'squire',
       'typescript',
     ]);
+    expect(hostImportedMcpServerNames({ operatorHome })).toEqual(['squire', 'vault']);
   });
 
   it.each(['codex', 'grok'] as const)(
@@ -901,15 +920,142 @@ describe('mounted imported MCP server names', () => {
       operatorHome,
       agentKind: 'goose',
     });
-    expect(mountedImportedMcpServerNames(input)).toEqual(['files', 'squire']);
-    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
+    expect(mountedImportedMcpServerNames(input)).toEqual(['files']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
+    expect(hostImportedMcpServerNames(input)).toEqual(['squire']);
+    const isolatedGoose = readFileSync(
+      resolve(preparedEnv.GOOSE_PATH_ROOT!, 'config/config.yaml'),
+      'utf8',
+    );
+    expect(isolatedGoose).not.toBe(source);
+    const extensions = (
+      parseYaml(isolatedGoose) as {
+        extensions: Record<string, { cmd?: string; envs?: Record<string, string> }>;
+      }
+    ).extensions;
+    expect(extensions.files.cmd).toBe('files-mcp');
+    expect(extensions.squire).toBeUndefined();
     await writeFile(sourcePath, 'extensions: {}\n');
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
-    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files', 'squire']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['files']);
     await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'goose' });
     expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual([]);
     await rm(sourcePath);
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
+  });
+
+  it('keeps inline-declared local servers when the bare table also holds a host one', async () => {
+    const operatorHome = await scratch('beeline-inline-local-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-inline-local-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    const sourcePath = resolve(operatorHome, '.codex/config.toml');
+    const inlineDeclarations = [
+      '[mcp_servers]',
+      'squire = { command = "npx", args = ["-y", "@trusty-squire/mcp@latest", "server"] }',
+      'context7 = { command = "npx", args = ["-y", "@upstash/context7-mcp"] }',
+    ];
+    await writeFile(
+      sourcePath,
+      [...inlineDeclarations, '', '[mcp_servers.files]', 'command = "files-mcp"'].join('\n'),
+    );
+    const input = { operatorHome, agentKind: 'codex' as const };
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'codex',
+    });
+    const isolatedText = readFileSync(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), 'utf8');
+    const isolated = parseToml(isolatedText) as {
+      mcp_servers: Record<string, { command?: string; args?: string[] }>;
+    };
+    expect(Object.keys(isolated.mcp_servers).sort()).toEqual(['context7', 'files']);
+    expect(isolated.mcp_servers.context7.args).toEqual(['-y', '@upstash/context7-mcp']);
+    expect(isolated.mcp_servers.files.command).toBe('files-mcp');
+    expect(isolatedText).not.toContain('@trusty-squire/mcp');
+    expect(mountedImportedMcpServerNames(input)).toEqual(['context7', 'files']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['context7', 'files']);
+
+    await writeFile(sourcePath, inlineDeclarations.join('\n'));
+    const inlineOnlyEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'codex',
+    });
+    expect(mountedImportedMcpServerNames(input)).toEqual(['context7']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv: inlineOnlyEnv })).toEqual([
+      'context7',
+    ]);
+  });
+
+  it('keeps an inline-declared host server out of the isolated config', async () => {
+    const operatorHome = await scratch('beeline-inline-host-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-inline-host-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      [
+        '[mcp_servers]',
+        'squire = { command = "npx", args = ["-y", "@trusty-squire/mcp@latest", "server"] }',
+        `browser = { command = "browser-mcp", ${MCP_ROUTE_CLASS_KEY} = "${MCP_ROUTE_HOST}" }`,
+        '',
+        '[mcp_servers.files]',
+        'command = "files-mcp"',
+      ].join('\n'),
+    );
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'codex',
+    });
+    const isolatedText = readFileSync(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), 'utf8');
+    const isolated = parseToml(isolatedText) as {
+      mcp_servers: Record<string, { command?: string }>;
+    };
+    expect(Object.keys(isolated.mcp_servers)).toEqual(['files']);
+    expect(isolated.mcp_servers.files.command).toBe('files-mcp');
+    expect(isolatedText).not.toContain('@trusty-squire/mcp');
+    expect(isolatedText).not.toContain('browser-mcp');
+    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual([
+      'browser',
+      'squire',
+    ]);
+    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv })).toEqual(
+      ['files'],
+    );
+  });
+
+  it('keeps an operator-marked host server out of the isolated config', async () => {
+    const operatorHome = await scratch('beeline-marked-host-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-marked-host-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      [
+        `[mcp_servers.browser]`,
+        `command = "browser-mcp"`,
+        `${MCP_ROUTE_CLASS_KEY} = "${MCP_ROUTE_HOST}"`,
+        '',
+        '[mcp_servers.files]',
+        'command = "files-mcp"',
+      ].join('\n'),
+    );
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'codex',
+    });
+    const isolatedText = readFileSync(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), 'utf8');
+    const isolated = parseToml(isolatedText) as {
+      mcp_servers: Record<string, { command?: string; env?: Record<string, string> }>;
+    };
+    expect(isolated.mcp_servers.files).toEqual({ command: 'files-mcp' });
+    expect(isolated.mcp_servers.browser).toBeUndefined();
+    expect(isolatedText).not.toContain('browser-mcp');
+    expect(hostImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['browser']);
+    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex' })).toEqual(['files']);
+    expect(mountedImportedMcpServerNames({ operatorHome, agentKind: 'codex', preparedEnv })).toEqual(
+      ['files'],
+    );
   });
 
   it('reads only the selected harness inventory after preparation', async () => {

@@ -264,8 +264,6 @@ describe('retained Room session', () => {
   it.each([
     ['codex', 'files'],
     ['grok', 'files'],
-    ['codex', 'squire'],
-    ['grok', 'squire'],
   ] as const)(
     'restarts %s when copied inline server %s is removed',
     async (agentKind, serverName) => {
@@ -299,7 +297,7 @@ describe('retained Room session', () => {
 
   it.each([
     ['extensions: {}\n', 'extensions:\n    "files": {cmd: files-mcp}\n', [], ['files']],
-    ["extensions:\n    'squire': {cmd: squire-mcp}\n", 'extensions: {}\n', ['squire'], []],
+    ["extensions:\n    'files': {cmd: files-mcp}\n", 'extensions: {}\n', ['files'], []],
   ] as const)(
     'restarts Goose when its copied extension set changes',
     async (before, after, first, second) => {

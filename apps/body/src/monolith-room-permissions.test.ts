@@ -215,7 +215,7 @@ describe('top-level Room MCP permission policy', () => {
       ).toBe('reject');
     });
 
-    it('refuses Trusty Squire inside the envelope, before any allow rule', () => {
+    it('refuses a host-classified server, not only the literal name squire', () => {
       expect(
         roomMcpPermissionDecision({
           toolCall: {
@@ -227,6 +227,28 @@ describe('top-level Room MCP permission policy', () => {
       expect(roomMcpPermissionDecision({ toolCall: { title: 'squire__use_credential' } })).toBe(
         'reject',
       );
+      expect(
+        roomMcpPermissionDecision({
+          toolCall: {
+            kind: 'execute',
+            title: 'mcp.browser.read',
+            rawInput: { server: 'browser', tool: 'read', arguments: {} },
+          },
+        }),
+      ).toBe('allow');
+      expect(
+        roomMcpPermissionDecision(
+          {
+            toolCall: {
+              kind: 'execute',
+              title: 'mcp.browser.read',
+              rawInput: { server: 'browser', tool: 'read', arguments: {} },
+            },
+          },
+          undefined,
+          ['browser'],
+        ),
+      ).toBe('reject');
     });
 
     it("refuses grok's own native tools, captured from the same turn", () => {

@@ -5051,8 +5051,8 @@ describe('monolith integration', () => {
         targetBranch: 'main',
       }),
     ]);
-    // Room-level mainline activity: pushes and CI are gated to the default
-    // branch; corner branches never reach the Room.
+    // Room-level mainline activity: CI is gated to the default branch and a
+    // raw push never becomes a Room card at all.
     await webhook('push', 'room-push-main', {
       ...base,
       ref: 'refs/heads/main',
@@ -5060,15 +5060,6 @@ describe('monolith integration', () => {
       compare: 'https://github.com/owner/widgets/compare/2...3',
       size: 2,
       commits: [{ id: 'a' }, { id: 'b' }],
-      sender: { login: 'octocat' },
-    });
-    await webhook('push', 'room-push-feature-branch', {
-      ...base,
-      ref: 'refs/heads/docs/readme',
-      after: '4'.repeat(40),
-      compare: 'https://github.com/owner/widgets/compare/3...4',
-      size: 1,
-      commits: [{ id: 'c' }],
       sender: { login: 'octocat' },
     });
     await webhook('check_suite', 'room-checks-main', {
@@ -5094,19 +5085,14 @@ describe('monolith integration', () => {
       expect.objectContaining({ type: 'issue', action: 'opened' }),
       expect.objectContaining({ type: 'pull-request', action: 'opened' }),
       expect.objectContaining({
-        type: 'push',
-        action: 'pushed',
-        actor: 'octocat',
-        title: '2 commits to main',
-        branch: 'main',
-      }),
-      expect.objectContaining({
         type: 'ci',
         action: 'passed',
         title: 'Beeline CI check suite',
         branch: 'main',
       }),
     ]);
+    // A push to the default branch posted no card of its own.
+    expect(mainlineCards.rows.some((row) => row.card.type === 'push')).toBe(false);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',

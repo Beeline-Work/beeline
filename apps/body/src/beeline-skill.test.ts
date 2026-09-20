@@ -157,14 +157,18 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('Reproduction <id>: <user path> → <observable wrong result>');
     expect(markdown).toContain('### 1. Attempt to reproduce');
     expect(markdown).toContain('emulator, Playwright, browser, test runner');
-    expect(markdown).toContain('If reproduction fails, warn and continue exactly as triage already does');
+    expect(markdown).toContain(
+      'If reproduction fails, warn and continue exactly as triage already does',
+    );
     expect(markdown).toContain('Never stop');
     expect(markdown).toContain('Never condition the fix on reproduction');
     expect(markdown).not.toContain('Do not fix a bug you have not seen');
     expect(markdown).toContain('### 2. Narrow fix');
     expect(markdown).toContain('Narrow the fix to the reported behavior');
     expect(markdown).toContain('### 3. Proof matching triage');
-    expect(markdown).toContain('When none was obtained, state that plainly and show the regression instead');
+    expect(markdown).toContain(
+      'When none was obtained, state that plainly and show the regression instead',
+    );
     expect(markdown).toContain(
       'the reviewer can check that proof, not merely that some test exists',
     );

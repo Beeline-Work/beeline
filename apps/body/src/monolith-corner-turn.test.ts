@@ -2044,7 +2044,9 @@ describe('thin monolith corner turn', () => {
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
     expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
     expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
-    expect(repositorySystemPrompt).toContain('never stop and never condition the fix on reproduction');
+    expect(repositorySystemPrompt).toContain(
+      'never stop and never condition the fix on reproduction',
+    );
     expect(repositorySystemPrompt).toContain('when none was obtained, state that plainly');
     expect(repositorySystemPrompt).not.toContain('do not write a fix for a bug you have not seen');
     expect(repositorySystemPrompt).not.toContain('report_to_room');

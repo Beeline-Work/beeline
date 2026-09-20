@@ -315,7 +315,6 @@ interface TopLevelRoomReadRow {
   turns: AgentTurnRow[];
   transcript: MessageRow[];
   activity: MessageRow[];
-  corners: CornerRow[];
 }
 interface RoomScheduleRow {
   id: string;
@@ -1283,11 +1282,9 @@ export class PhoneService {
       );
       room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
     }
-    const familyRoomId = room.parent_id ?? roomId;
     let allMembers: RoomViewMember[];
     let latestAgentTurns: RoomView['latestAgentTurns'];
     let messageResult: { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] };
-    let cornerRows: CornerRow[];
     if (topLevelRows) {
       const rows = topLevelRows;
       allMembers = this.projectMembers(rows.members, roomId);
@@ -1300,22 +1297,19 @@ export class PhoneService {
         false,
         viewerId,
       );
-      cornerRows = rows.corners;
     } else {
       // A corner also reads its parent briefing and lifecycle. Keep its
       // independent queries concurrent; the top-level live path above is the
       // high-frequency path whose remote round trips must stay bounded.
       const latestAgentTurnsPromise = this.latestAgentTurns(roomId);
-      [allMembers, latestAgentTurns, messageResult, cornerRows] = await Promise.all([
+      [allMembers, latestAgentTurns, messageResult] = await Promise.all([
         measured('members', this.members(room.workspace_id, roomId)),
         measured('turns', latestAgentTurnsPromise),
         measured('messages', this.roomMessages(roomId, latestAgentTurnsPromise, true, viewerId)),
-        measured('corners', this.cornerRows(familyRoomId, viewerId, true)),
       ]);
     }
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
     const { messages, toolRows } = messageResult;
-    const corners = this.projectCorners(cornerRows);
     const parent = room.parent_id
       ? (
           await measured(
@@ -1423,11 +1417,10 @@ export class PhoneService {
         : {}),
       repositoryResolution: (parent ?? room).repository_resolution,
       ...(cornerLifecycle ? { cornerLifecycle } : {}),
-      corners: corners.map(({ latestMessage: _latestMessage, ...corner }) => corner),
       watchFilters: roomFilters(
         roomId,
         room.workspace_id,
-        [...(room.parent_id ? [room.parent_id] : []), ...corners.map((item) => item.corner.id)],
+        room.parent_id ? [room.parent_id] : [],
         allMembers,
       ),
     };
@@ -1623,42 +1616,6 @@ export class PhoneService {
                SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
              ) OR ${eligible})
            ORDER BY m.created_at DESC,m.id DESC
-         ), corner_rows AS (
-           SELECT corner.*,fact.lifecycle,fact.objective,
-             initiator.id initiator_id,initiator.name initiator_name,
-             initiator.handle initiator_handle,initiator.avatar initiator_avatar,
-             initiator.face_id initiator_face,
-             latest.id latest_id,latest.text latest_text,latest.created_at latest_created_at,
-             latest.author_id latest_author_id,latest_identity.kind latest_author_kind,
-             latest_identity.name latest_author_name,agent.identity_id agent_id,
-             agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
-             turn.status latest_turn_status,turn.created_at latest_turn_created_at
-           FROM authorized_room room
-           JOIN rooms corner ON corner.parent_id=room.id
-           LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
-           LEFT JOIN identities initiator
-             ON initiator.id=fact.commissioned_by AND initiator.kind='human'
-           LEFT JOIN LATERAL(
-             SELECT * FROM messages WHERE room_id=corner.id
-               AND presentation IN ('message','system')
-             ORDER BY created_at DESC,id DESC LIMIT 1
-           ) latest ON true
-           LEFT JOIN identities latest_identity ON latest_identity.id=latest.author_id
-           LEFT JOIN LATERAL(
-             SELECT identity.id identity_id,identity.name,identity.handle,identity.avatar
-             FROM identities identity
-             LEFT JOIN memberships member ON member.room_id=corner.id
-               AND member.identity_id=identity.id AND member.removed_at IS NULL
-             WHERE identity.id=fact.owner_agent_id AND identity.kind='agent' LIMIT 1
-           ) agent ON true
-           LEFT JOIN LATERAL(
-             SELECT status,created_at FROM agent_turns WHERE room_id=corner.id
-             ORDER BY created_at DESC LIMIT 1
-           ) turn ON true
-           WHERE EXISTS(
-             SELECT 1 FROM memberships viewer WHERE viewer.room_id=corner.id
-               AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
-           )
          )
          SELECT
            (to_jsonb(authorized_room) - 'github_installation_id')
@@ -1672,16 +1629,7 @@ export class PhoneService {
              FROM transcript_rows),'[]'::jsonb) transcript,
            COALESCE((SELECT jsonb_agg(to_jsonb(activity_rows)
              ORDER BY activity_rows.created_at DESC,activity_rows.id DESC)
-             FROM activity_rows),'[]'::jsonb) activity,
-           COALESCE((SELECT jsonb_agg(
-             (
-               (to_jsonb(corner_rows) - 'github_installation_id')
-               || jsonb_build_object(
-                 'github_installation_id',corner_rows.github_installation_id::text
-               )
-             )
-             ORDER BY corner_rows.archived_at NULLS FIRST, corner_rows.updated_at DESC, corner_rows.id
-           ) FROM corner_rows),'[]'::jsonb) corners
+             FROM activity_rows),'[]'::jsonb) activity
          FROM authorized_room`,
         [roomId, viewerId],
       )
@@ -1739,18 +1687,6 @@ export class PhoneService {
     for (const turn of row.turns) reviveDates(turn, ['started_at', 'created_at']);
     for (const message of [...row.transcript, ...row.activity])
       reviveDates(message, ['created_at']);
-    for (const corner of row.corners) {
-      reviveDates(corner, [
-        'archived_at',
-        'repository_updated_at',
-        'created_at',
-        'updated_at',
-        'latest_created_at',
-        'latest_turn_created_at',
-      ]);
-      if (corner.github_installation_id !== null)
-        corner.github_installation_id = String(corner.github_installation_id);
-    }
     return row;
   }
 

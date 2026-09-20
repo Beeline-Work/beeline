@@ -109,20 +109,18 @@ const parentRoom = {
   members: [],
   messages: [],
   latestAgentTurns: [],
-  corners: [
-    {
-      corner: { id: 'corner-1', workspaceId: 'ws', name: 'Fix fixture', about: 'Repair it.', archived: false, createdAt: 1, updatedAt: 2 },
-      state: 'working',
-      stateAt: 2,
-    },
-  ],
   viewer: { identity: person, role: 'owner', permissions: { send: true, manage: true } },
   repositoryResolution: 'none',
   watchFilters: [],
 };
+const parentCorner = {
+  corner: { id: 'corner-1', workspaceId: 'ws', name: 'Fix fixture', about: 'Repair it.', archived: false, createdAt: 1, updatedAt: 2 },
+  state: 'working',
+  stateAt: 2,
+};
 const cornerRoom = {
   ...parentRoom,
-  room: parentRoom.corners[0]!.corner,
+  room: parentCorner.corner,
   parent: parentRoom.room,
   messages: [
     { id: 'msg-1', text: 'The bookmarked line.', createdAt: 5, author: person, presentation: 'message' },

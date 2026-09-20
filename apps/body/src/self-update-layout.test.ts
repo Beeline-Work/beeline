@@ -42,6 +42,7 @@ import {
   repairInstallForwarders,
   resolveBundleEntrypoint,
   rollbackToPreviousRelease,
+  runningReleaseId,
   type BeelineInstallLayout,
 } from './self-update.js';
 import { hostPlatformKey } from './self-update.js';
@@ -349,6 +350,27 @@ describe('<prefix>/lib/beeline anchor contract', () => {
     const layout = beelineInstallLayout({ BEELINE_LIB_DIR: '/home/op/.local/lib/beeline' })!;
     expect(layout.libDir).toBe('/home/op/.local/lib/beeline');
     expect(layout.releasesRoot).toBe('/home/op/.local/lib/beeline-releases');
+  });
+
+  it('reads the executing release from a resolved BEELINE_LIB_DIR and ignores a foreign install', () => {
+    const layout = beelineInstallLayout({
+      BEELINE_LIB_DIR: '/home/op/.local/lib/beeline-releases/abc123/lib/beeline',
+    })!;
+    expect(
+      runningReleaseId(layout, {
+        BEELINE_LIB_DIR: '/home/op/.local/lib/beeline-releases/abc123/lib/beeline',
+      }),
+    ).toBe('abc123');
+    expect(
+      runningReleaseId(layout, {
+        BEELINE_LIB_DIR: '/home/op/.local/lib/beeline',
+      }),
+    ).toBeUndefined();
+    expect(
+      runningReleaseId(layout, {
+        BEELINE_LIB_DIR: '/other/.local/lib/beeline-releases/abc123/lib/beeline',
+      }),
+    ).toBeUndefined();
   });
 
   it('reads the installed identity through a release-shaped anchor (real identity, not legacy)', async () => {

@@ -231,7 +231,7 @@ async function main(): Promise<void> {
       payloadBytes: room.bytes.byteLength,
       messages: room.body.messages.length,
       members: room.body.members.length,
-      corners: room.body.corners.length,
+      corners: 0,
       authenticatedRequests: 1,
       physicalHttpConnections: roomHttpConnections,
       physicalSqlStatements: roomQueries,

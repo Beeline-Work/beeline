@@ -181,7 +181,7 @@ describe('PhoneService.readRoom latency', () => {
 
     expect(view?.messages.length).toBe(30);
     expect(view?.members.length).toBe(31);
-    expect(view?.corners.length).toBe(30);
+    expect(view && 'corners' in view).toBe(false);
     expect(view?.messages.map((message) => message.id)).toEqual([
       ...Array.from(
         { length: 28 },
@@ -195,14 +195,6 @@ describe('PhoneService.readRoom latency', () => {
         VIEWER,
         ...Array.from({ length: 30 }, (_, index) => index.toString(16).padStart(64, '0')),
       ]),
-    );
-    expect(new Set(view?.corners.map((corner) => corner.corner.id))).toEqual(
-      new Set(
-        Array.from(
-          { length: 30 },
-          (_, index) => `33333333-3333-4333-8333-${index.toString().padStart(12, '0')}`,
-        ),
-      ),
     );
     expect(representative.spans).toHaveLength(1);
     expect(durationMs).toBeLessThan(1_000);

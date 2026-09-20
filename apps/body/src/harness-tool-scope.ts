@@ -46,9 +46,10 @@
  *     on the operator's account) survives even an isolated home; no config key
  *     or env var was found that turns it off.
  *   - `pi-acp`: accepts `mcpServers` on `session/new` and never reads the field
- *     again, so it does not consume Beeline's MCP inventory. Its own skill and
- *     extension discovery is still scoped by the isolated HOME and
- *     PI_CODING_AGENT_DIR from `agent-home.ts`.
+ *     again (still true on 0.0.33). Isolated homes write granted routes into
+ *     `$PI_CODING_AGENT_DIR/mcp.json`; pi 0.85.1 itself does not read that
+ *     file. Its own skill and extension discovery is still scoped by the
+ *     isolated HOME and PI_CODING_AGENT_DIR from `agent-home.ts`.
  *   - `buzz-agent`: Beeline's own agent. It has no operator-global MCP config
  *     of its own, so the mounted servers are the whole set by construction.
  */
@@ -135,7 +136,7 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
     match: /(^|[/\\])pi-acp(\.[a-z]+)?$/i,
     profile: {
       enforcement: 'config-isolated',
-      note: 'pi-acp ignores session MCP servers, while its own skills/extensions are confined by the Beeline-owned HOME and PI_CODING_AGENT_DIR',
+      note: 'pi-acp 0.0.33 still stores session/new mcpServers and never reads them; pi 0.85.1 itself has no MCP client, while optional pi-mcp-adapter reads $PI_CODING_AGENT_DIR/mcp.json and isolated homes exclude the settings.json that would load it',
     },
   },
   {

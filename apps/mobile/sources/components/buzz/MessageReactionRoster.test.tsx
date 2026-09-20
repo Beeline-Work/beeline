@@ -87,6 +87,27 @@ describe('MessageReactionRoster', () => {
     expect(renderer.root.findAllByType('IdentityMark' as any)).toHaveLength(1);
   });
 
+  it('keeps the count chip when the server omits reaction members', () => {
+    const onReact = vi.fn();
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <MessageReactionRoster
+          desktop={false}
+          messageId="message"
+          onReact={onReact}
+          reaction={{ emoji: '👍', count: 3, reacted: false }}
+        />,
+      );
+    });
+    const chip = renderer.root.findByProps({ testID: 'reaction-chip-message-👍' });
+    expect(chip.props.accessibilityLabel).toBe('👍, 3 reactions');
+    expect(renderer.root.findByProps({ testID: 'reaction-roster-anchor-message-👍' })).toBeDefined();
+    act(() => chip.props.onLongPress?.());
+    expect(renderer.root.findAllByProps({ testID: 'reaction-sheet-message-👍' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('IdentityMark' as any)).toHaveLength(0);
+  });
+
   it('shows every member in a desktop hover popover and still toggles on press', () => {
     const onReact = vi.fn();
     let renderer!: ReturnType<typeof create>;

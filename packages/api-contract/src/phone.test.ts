@@ -32,7 +32,6 @@ describe('phone contract', () => {
       messages: [],
       members: [],
       latestAgentTurns: [],
-      corners: [],
       repositoryResolution: 'none',
       viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
       watchFilters: [],
@@ -61,6 +60,12 @@ describe('phone contract', () => {
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })).toBe(false);
     const reaction = { emoji: '👍', count: 1, reacted: true, members: [identity] };
     expect(isRoomView({ ...room, messages: [{ ...message, reactions: [reaction] }] })).toBe(true);
+    expect(
+      isRoomView({
+        ...room,
+        messages: [{ ...message, reactions: [{ emoji: '👍', count: 1, reacted: true }] }],
+      }),
+    ).toBe(true);
     expect(
       isRoomView({
         ...room,
@@ -148,13 +153,26 @@ describe('phone contract', () => {
       watchFilters: [],
     };
     expect(isWorkspaceView(workspace)).toBe(true);
-    expect(isWorkspaceView({ ...workspace, peopleTotal: undefined })).toBe(false);
+    expect(isWorkspaceView({ ...workspace, peopleTotal: undefined })).toBe(true);
+    expect(isWorkspaceView({ ...workspace, agentTotal: undefined })).toBe(true);
+    expect(
+      isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined }),
+    ).toBe(true);
+    expect(isWorkspaceView({ ...workspace, peopleTotal: '21' })).toBe(false);
     expect(
       isWorkspaceMemberListView({
         members: [],
         agents: [],
         peopleTotal: 21,
         agentTotal: 0,
+        membersTruncated: true,
+        agentsTruncated: false,
+      }),
+    ).toBe(true);
+    expect(
+      isWorkspaceMemberListView({
+        members: [],
+        agents: [],
         membersTruncated: true,
         agentsTruncated: false,
       }),

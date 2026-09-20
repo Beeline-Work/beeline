@@ -218,17 +218,34 @@ function room() {
   } as any;
 }
 
-function props(overrides: Record<string, unknown> = {}) {
+function cornersClient(
+  list: typeof corners,
+  extra: Record<string, unknown> = {},
+) {
   return {
-    room: room(),
-    client: null,
+    corners: vi.fn(async () => ({
+      room: room().room,
+      corners: list,
+      viewer: room().viewer,
+      watchFilters: [],
+    })),
+    ...extra,
+  };
+}
+
+function props(overrides: Record<string, unknown> = {}) {
+  const nextRoom = (overrides.room as ReturnType<typeof room> | undefined) ?? room();
+  const extraClient = (overrides.client as Record<string, unknown> | null | undefined) ?? {};
+  return {
+    room: nextRoom,
     selectedCornerId: null,
     onSelectCorner: vi.fn(),
     onOpenInMain: vi.fn(),
     onClose: vi.fn(),
     onNewCorner: vi.fn(),
     ...overrides,
-  } as React.ComponentProps<typeof DesktopRoomInspector>;
+    client: cornersClient(nextRoom.corners ?? corners, extraClient ?? {}),
+  } as unknown as React.ComponentProps<typeof DesktopRoomInspector>;
 }
 
 beforeAll(() => {
@@ -246,10 +263,11 @@ beforeEach(() => {
   modalConfirm.mockReset();
 });
 
-function render(options = props()): ReactTestRenderer {
+async function render(options = props()): Promise<ReactTestRenderer> {
   let tree!: ReactTestRenderer;
-  act(() => {
+  await act(async () => {
     tree = create(<DesktopRoomInspector {...options} />);
+    await Promise.resolve();
   });
   return tree;
 }
@@ -267,8 +285,8 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
-  it('renders the corner list with full objectives and one concluded row', () => {
-    const tree = render();
+  it('renders the corner list with full objectives and one concluded row', async () => {
+    const tree = await render();
     const copy = text(tree);
     expect(copy).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
@@ -290,7 +308,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toThrow();
   });
 
-  it('never repeats the corner title as its subtitle, even when about is missing or identical', () => {
+  it('never repeats the corner title as its subtitle, even when about is missing or identical', async () => {
     const duplicateRoom = room();
     duplicateRoom.corners = [
       {
@@ -312,7 +330,7 @@ describe('DesktopRoomInspector work pane', () => {
       },
     ];
     delete duplicateRoom.corners[1].corner.about;
-    const tree = render(props({ room: duplicateRoom }));
+    const tree = await render(props({ room: duplicateRoom }));
     expect(tree.root.findAllByProps({ testID: 'desktop-work-corner-objective-same-text' })).toHaveLength(
       0,
     );
@@ -323,7 +341,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(nodeText(sameRow).match(/Desktop Update Diagnosis/g)).toHaveLength(1);
   });
 
-  it('caps the live list at five and expands the rest, including archived corners', () => {
+  it('caps the live list at five and expands the rest, including archived corners', async () => {
     const crowded = room();
     crowded.corners = [
       ...Array.from({ length: 6 }, (_, index) => ({
@@ -332,7 +350,7 @@ describe('DesktopRoomInspector work pane', () => {
       })),
       corners[2],
     ];
-    const tree = render(props({ room: crowded }));
+    const tree = await render(props({ room: crowded }));
     for (const id of ['live-0', 'live-1', 'live-2', 'live-3', 'live-4']) {
       expect(tree.root.findByProps({ testID: `desktop-work-corner-${id}` })).toBeTruthy();
     }
@@ -349,10 +367,10 @@ describe('DesktopRoomInspector work pane', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-work-corners-more' })).toHaveLength(0);
   });
 
-  it('shows archived corners when the Room has no live work, instead of an empty section', () => {
+  it('shows archived corners when the Room has no live work, instead of an empty section', async () => {
     const archivedOnly = room();
     archivedOnly.corners = [corners[2], { ...corners[2], corner: { ...corners[2].corner, id: 'older', name: 'Older work' } }];
-    const tree = render(props({ room: archivedOnly }));
+    const tree = await render(props({ room: archivedOnly }));
     expect(tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'desktop-work-corner-older' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'desktop-work-corner-state-done' }).props.children).toBe(
@@ -362,10 +380,10 @@ describe('DesktopRoomInspector work pane', () => {
     expect(text(tree)).not.toContain('archived · 2');
   });
 
-  it('marks the corner the viewer opened with gold ME text beside the row chevron', () => {
+  it('marks the corner the viewer opened with gold ME text beside the row chevron', async () => {
     const ownRoom = room();
     ownRoom.corners = [{ ...corners[0], initiator: person }, corners[1]];
-    const tree = render(props({ room: ownRoom }));
+    const tree = await render(props({ room: ownRoom }));
     const meMark = tree.root.findByProps({ testID: 'desktop-work-corner-me-working' });
     expect(meMark.props.children).toBe('ME');
     expect(meMark.props.style.color).toBe(theme.buzz.accent);
@@ -385,7 +403,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(otherSeeds).toContain(agent.pubkey);
   });
 
-  it('shows only corner titles beneath the parent Room in the list', () => {
+  it('shows only corner titles beneath the parent Room in the list', async () => {
     const prefixedRoom = room();
     prefixedRoom.corners = [
       {
@@ -393,7 +411,7 @@ describe('DesktopRoomInspector work pane', () => {
         corner: { ...corners[0].corner, name: '#CloverGTO/Fix fixture' },
       },
     ];
-    const copy = text(render(props({ room: prefixedRoom })));
+    const copy = text(await render(props({ room: prefixedRoom })));
     expect(copy).toContain('Fix fixture');
     expect(copy).not.toContain('#CloverGTO/Fix fixture');
   });

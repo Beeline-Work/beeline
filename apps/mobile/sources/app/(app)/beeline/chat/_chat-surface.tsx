@@ -70,13 +70,13 @@ import {
   foldSettledActivityRuns,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
-  cornerSummaries,
   memberAgent,
   workspaceRailItem,
 } from '@/buzz/room-view-presentation';
 import {
   buildChannelReferenceIndex,
   isUnavailableChannelReferenceError,
+  resolveCornerFromList,
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
@@ -110,7 +110,6 @@ import {
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import {
   desktopComposerKeyAction,
-  desktopWorkPaneHasLiveCorners,
   desktopWorkPaneMode,
   desktopWorkPaneWindowClass,
   initialDesktopWorkPaneState,
@@ -142,8 +141,7 @@ import {
   shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
-import { roomListCorners, type CornerSummary } from '@/buzz/corners';
-import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
+import { cornerDisplayFromRoomView, cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -588,7 +586,7 @@ export function BuzzChatSurface({
   const [desktopWorkPane, setDesktopWorkPane] = useState(initialWorkPaneStateRef.current);
   const desktopWorkPaneRef = useRef(desktopWorkPane);
   const workPaneMode = desktopWorkPaneMode(desktopWorkPane);
-  const observedCornerCardsRef = useRef<{ roomId: string; ids: Set<string> } | null>(null);
+  const observedCornerCountRef = useRef<{ roomId: string; count: number } | null>(null);
   const [workPaneArrived, setWorkPaneArrived] = useState(false);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
@@ -771,32 +769,6 @@ export function BuzzChatSurface({
     commitDesktopWorkPane({ type: 'resize', width: windowWidth });
   }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
 
-  useEffect(() => {
-    if (!desktopExperience || !roomSurface || isDirectMessage) return;
-    // The server-owned corner list is the lifecycle authority. Current corner
-    // cards are daemon facts, so watching the retired `message.corner` shape
-    // misses a real newly opened corner even though it is already paintable.
-    // Live corners only: archived rows ride the same parent list so the
-    // inspector can show them, but a finished corner is not newly opened work.
-    // A new corner never auto-opens the pane: the handle marks arrival, and
-    // an already-open corner list just grows.
-    const ids = new Set(
-      roomSurface.corners
-        .filter((corner) => corner.state !== 'archived')
-        .map((corner) => corner.corner.id),
-    );
-    const observed = observedCornerCardsRef.current;
-    if (!observed || observed.roomId !== roomSurface.room.id) {
-      observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
-      setWorkPaneArrived(false);
-      return;
-    }
-    const opened = [...ids].find((cornerId) => !observed.ids.has(cornerId));
-    observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };
-    if (!opened) return;
-    if (workPaneMode !== 'present') setWorkPaneArrived(true);
-  }, [desktopExperience, isDirectMessage, roomSurface, workPaneMode]);
-
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
   const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
@@ -821,7 +793,34 @@ export function BuzzChatSurface({
     };
   }, [desktopExperience, parentChannelId, roomClient]);
   const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
-  const hasLiveDesktopCorners = desktopWorkPaneHasLiveCorners(desktopWorkRoom?.corners);
+  const liveDesktopCornerCount =
+    workspaceChats.find((item) => item.room.id === desktopWorkRoomId)?.cornerCount ?? 0;
+  const hasLiveDesktopCorners = liveDesktopCornerCount > 0;
+
+  useEffect(() => {
+    if (!desktopExperience || isDirectMessage || !desktopWorkRoomId) return;
+    // The chat-list count is the live-corner authority for this handle. Wait
+    // until that list has painted so the first 0→N transition is not treated
+    // as a newly opened corner.
+    if (workspaceChats.length === 0) return;
+    const observed = observedCornerCountRef.current;
+    if (!observed || observed.roomId !== desktopWorkRoomId) {
+      observedCornerCountRef.current = { roomId: desktopWorkRoomId, count: liveDesktopCornerCount };
+      setWorkPaneArrived(false);
+      return;
+    }
+    if (liveDesktopCornerCount > observed.count && workPaneMode !== 'present') {
+      setWorkPaneArrived(true);
+    }
+    observedCornerCountRef.current = { roomId: desktopWorkRoomId, count: liveDesktopCornerCount };
+  }, [
+    desktopExperience,
+    desktopWorkRoomId,
+    isDirectMessage,
+    liveDesktopCornerCount,
+    workPaneMode,
+    workspaceChats.length,
+  ]);
   // A direct message renders no second pane at all (see the pane-event gate in
   // `commitDesktopWorkPane`): the transcript takes the space it occupied, and
   // neither the inspector nor its reopen handle ever mounts over a DM.
@@ -867,10 +866,9 @@ export function BuzzChatSurface({
         : [],
     [roomSurface?.parent, roomSurface?.room, roomSurface?.viewer.role],
   );
-  const cornerLifecycle = useMemo(
-    () => (roomSurface ? cornerSummaries(roomSurface) : []),
-    [roomSurface?.corners],
-  );
+  const openCornerCount =
+    workspaceChats.find((item) => item.room.id === (parentChannelId ?? decodedId))?.cornerCount ??
+    0;
   const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository) return null;
@@ -927,11 +925,6 @@ export function BuzzChatSurface({
           : [{ channelId: decodedId, name: resolvedChannelName || routeChannelTitle || '' }]),
       ].filter((room): room is { channelId: string; name: string } => room !== null),
       [
-        ...cornerLifecycle.map((corner) => ({
-          channelId: corner.id,
-          parentChannelId: parentChannelId ?? decodedId,
-          name: corner.name,
-        })),
         ...(parentChannelId
           ? [
               {
@@ -944,7 +937,6 @@ export function BuzzChatSurface({
       ],
     );
   }, [
-    cornerLifecycle,
     decodedId,
     parentChannelId,
     resolvedChannelName,
@@ -998,7 +990,8 @@ export function BuzzChatSurface({
   const openingChannelReferenceRef = useRef<string | null>(null);
   const handleOpenChannelReference = useCallback(
     async (target: ChannelReferenceTarget, text?: string) => {
-      if (!target.channelId || target.channelId === decodedId) return;
+      if (target.kind === 'room' && (!target.channelId || target.channelId === decodedId)) return;
+      if (target.kind === 'corner' && target.channelId === decodedId) return;
       if (openingChannelReferenceRef.current) return;
       const referenceLabel = text ?? 'this destination';
       if (!roomClient) {
@@ -1008,14 +1001,36 @@ export function BuzzChatSurface({
         );
         return;
       }
-      openingChannelReferenceRef.current = target.channelId;
+      const lock =
+        target.kind === 'corner'
+          ? (target.channelId ?? `pending:${target.parentChannelId}:${target.name ?? text ?? ''}`)
+          : target.channelId;
+      openingChannelReferenceRef.current = lock;
       try {
+        let resolved = target;
+        if (resolved.kind === 'corner' && !resolved.channelId) {
+          const list = await roomClient.corners(resolved.parentChannelId);
+          const found = resolveCornerFromList(
+            text ?? '',
+            { id: list.room.id, name: list.room.name },
+            list.corners.map((item) => ({ id: item.corner.id, name: item.corner.name })),
+          );
+          if (!found) {
+            Modal.alert(
+              'Access denied',
+              `${referenceLabel} is unavailable or you no longer have access.`,
+            );
+            return;
+          }
+          resolved = found;
+        }
+        if (!resolved.channelId || resolved.channelId === decodedId) return;
         // The list that made this token linkable can be stale after a leave,
         // removal, or deletion. The Room read is the current authorization
         // verdict; only a successful read earns navigation.
-        await roomClient.room(target.channelId);
-        if (target.kind === 'corner') openDesktopCorner(target.parentChannelId, target.channelId);
-        else router.push(roomHref(target.channelId));
+        await roomClient.room(resolved.channelId);
+        if (resolved.kind === 'corner') openDesktopCorner(resolved.parentChannelId, resolved.channelId);
+        else router.push(roomHref(resolved.channelId));
       } catch (error) {
         if (isUnavailableChannelReferenceError(error)) {
           Modal.alert(
@@ -1861,8 +1876,8 @@ export function BuzzChatSurface({
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  const canonicalCornerItem = isCorner
-    ? roomSurface?.corners.find((corner) => corner.corner.id === decodedId)
+  const canonicalCornerItem = isCorner && roomSurface
+    ? cornerDisplayFromRoomView(roomSurface)
     : undefined;
   const sessionState = !isCorner
     ? 'idle'
@@ -1898,7 +1913,7 @@ export function BuzzChatSurface({
   // in only before the server projection has landed. The gold ring on a
   // byline still names the actual worker (C77).
   const cornerHeaderAgentView = cornerHeaderAgent({
-    ownerPubkey: canonicalCornerItem?.agent?.pubkey ?? cornerAgentPubkey,
+    ownerPubkey: cornerAgentPubkey,
     status: cornerHeaderDisplay.status,
     ...(cornerHeaderDisplay.headerSuffix ? { headerSuffix: cornerHeaderDisplay.headerSuffix } : {}),
     activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey),
@@ -3575,7 +3590,7 @@ export function BuzzChatSurface({
   // actions (delete/leave) above, and skipped when there is nothing to strand.
   const handleSelectRoomRepoCandidate = useCallback(
     (candidate: RepoCandidate) => {
-      const hasOpenCorners = roomListCorners(cornerLifecycle).length > 0;
+      const hasOpenCorners = openCornerCount > 0;
       if (roomRepository && hasOpenCorners) {
         void Modal.confirm(
           `Change ${ROOM_LABEL} repo?`,
@@ -3588,7 +3603,7 @@ export function BuzzChatSurface({
       }
       void applyRoomRepository(candidate);
     },
-    [applyRoomRepository, cornerLifecycle, roomRepository],
+    [applyRoomRepository, openCornerCount, roomRepository],
   );
 
   /** Toggle ambient GitHub repository notifications (stars/issues/PRs) for this Room. */
@@ -3613,7 +3628,7 @@ export function BuzzChatSurface({
   // open corners keep their own repo copies, nothing else moves.
   const handleUnlinkRoomRepository = useCallback(async () => {
     if (!transport || !roomRepository || roomRepoBusy) return;
-    const hasOpenCorners = roomListCorners(cornerLifecycle).length > 0;
+    const hasOpenCorners = openCornerCount > 0;
     const confirmed = await Modal.confirm(
       `Unlink ${roomRepository.binding.name}?`,
       hasOpenCorners
@@ -3633,7 +3648,7 @@ export function BuzzChatSurface({
     } finally {
       setRoomRepoBusy(false);
     }
-  }, [cornerLifecycle, decodedId, roomRepoBusy, roomRepository, transport]);
+  }, [decodedId, openCornerCount, roomRepoBusy, roomRepository, transport]);
 
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
@@ -5433,7 +5448,7 @@ export function BuzzChatSurface({
                     ? 'Turn repository notifications on'
                     : 'Turn repository notifications off'
                 }
-                description="Pull requests, issues, and CI posted here."
+                description="Issues and pull requests posted here."
                 disabled={roomRepoBusy}
                 label="Repo notifications"
                 onPress={() => void handleToggleGitHubEvents()}

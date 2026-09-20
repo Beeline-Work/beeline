@@ -114,6 +114,7 @@ export function DesktopRoomInspector({
   focusMessageId,
 }: Props) {
   const [detail, setDetail] = React.useState<RoomView | null>(null);
+  const [corners, setCorners] = React.useState<readonly CornerListItem[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
   const [cornersExpanded, setCornersExpanded] = React.useState(false);
@@ -127,8 +128,28 @@ export function DesktopRoomInspector({
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
   React.useEffect(() => {
     setDetail(null);
+    setCorners([]);
     setCornersExpanded(false);
   }, [room.room.id]);
+
+  React.useEffect(() => {
+    if (!client) {
+      setCorners([]);
+      return;
+    }
+    let cancelled = false;
+    void client
+      .corners(room.room.id)
+      .then((view) => {
+        if (!cancelled) setCorners(view.corners);
+      })
+      .catch(() => {
+        if (!cancelled) setCorners([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, room.room.id]);
 
   const refreshCorner = React.useCallback(async () => {
     if (client && selectedCornerId) setDetail(await client.room(selectedCornerId));
@@ -175,8 +196,8 @@ export function DesktopRoomInspector({
     [width],
   );
 
-  const cornerList = inspectorCornerWindow(room.corners, cornersExpanded);
-  const summary = room.corners.find((corner) => corner.corner.id === selectedCornerId);
+  const cornerList = inspectorCornerWindow(corners, cornersExpanded);
+  const summary = corners.find((corner) => corner.corner.id === selectedCornerId);
 
   return (
     <View style={[styles.inspector, { width }]} testID="desktop-inspector">

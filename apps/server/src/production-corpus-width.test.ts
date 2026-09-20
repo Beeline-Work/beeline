@@ -121,12 +121,12 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
     const view = await phone.readRoom(WIDE_ROOM, VIEWER);
     const elapsedMs = performance.now() - started;
     expect(view.room.id).toBe(WIDE_ROOM);
-    expect(view.corners.length).toBe(CORNER_COUNT);
+    expect('corners' in view).toBe(false);
     expect(elapsedMs).toBeLessThanOrEqual(HOT_READ_BUDGETS_MS['room-view']);
     console.log(
       JSON.stringify({
         path: 'width-many-corners',
-        corners: CORNER_COUNT,
+        corners: 0,
         elapsedMs: Math.round(elapsedMs),
         budgetMs: HOT_READ_BUDGETS_MS['room-view'],
         explainP95Ms: Math.round(measurement.p95Ms),

@@ -437,11 +437,17 @@ describe('MonoMarkdown renders a recognized reference as one tappable internal l
     );
   });
 
-  it('attaches no press handler for unknown or unresolvable tokens', () => {
+  it('attaches no press handler for an unknown Room, and a tap-resolved corner for #knownRoom/name', () => {
     onPress.mockClear();
-    const renderer = render('#nowhere and #infra/unknown stay plain');
-    expect(textNodes(renderer).filter((node) => node.props.onPress)).toHaveLength(0);
-    expect(renderedText(renderer)).toContain('#nowhere and #infra/unknown stay plain');
+    const renderer = render('#nowhere and #infra/unknown.');
+    const tappable = textNodes(renderer).filter((node) => node.props.onPress);
+    expect(tappable).toHaveLength(1);
+    act(() => tappable[0]!.props.onPress!());
+    expect(onPress).toHaveBeenCalledWith(
+      { kind: 'corner', parentChannelId: 'room-infra', name: 'unknown' },
+      '#infra/unknown',
+    );
+    expect(renderedText(renderer)).toContain('#nowhere and #infra/unknown.');
   });
 
   it('preserves authored content byte-for-byte across the whole message', () => {

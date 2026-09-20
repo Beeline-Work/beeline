@@ -381,7 +381,7 @@ describe('Room message variant components', () => {
     ).toContain('workspace manager only');
   });
 
-  it('dispatches GitHub pull-request, issue, push, CI and review cards through the explicit URL callback', () => {
+  it('dispatches GitHub pull-request and issue cards through the explicit URL callback', () => {
     const onOpenUrl = vi.fn();
     for (const githubEvent of [
       {
@@ -397,13 +397,6 @@ describe('Room message variant components', () => {
         actor: 'Lin',
         title: 'Bug',
         url: 'https://github.test/issue',
-      },
-      {
-        type: 'ci' as const,
-        action: 'failed' as const,
-        actor: 'octocat',
-        title: 'Beeline CI check suite',
-        url: 'https://github.test/runs/9',
       },
     ]) {
       const renderer = render(
@@ -421,21 +414,23 @@ describe('Room message variant components', () => {
   });
 
   it('renders nothing for a repository card kind this build does not know', () => {
-    const renderer = render(
-      <GitHubEventCard
-        message={message({
-          githubEvent: {
-            type: 'deployment',
-            action: 'succeeded',
-            actor: 'octocat',
-            title: 'Deployed to production',
-            url: 'https://github.test/deployments/1',
-          },
-        })}
-        onOpenUrl={vi.fn()}
-      />,
-    );
-    expect(renderer.toJSON()).toBeNull();
+    for (const type of ['deployment', 'ci'] as const) {
+      const renderer = render(
+        <GitHubEventCard
+          message={message({
+            githubEvent: {
+              type,
+              action: type === 'ci' ? 'failed' : 'succeeded',
+              actor: 'octocat',
+              title: type === 'ci' ? 'Beeline CI check suite' : 'Deployed to production',
+              url: 'https://github.test/runs/9',
+            },
+          })}
+          onOpenUrl={vi.fn()}
+        />,
+      );
+      expect(renderer.toJSON()).toBeNull();
+    }
   });
 
   it('renders one cell per PR with header summary, accordion, and per-cell navigation', () => {
@@ -517,6 +512,37 @@ describe('Room message variant components', () => {
       renderer.root.findByProps({ testID: 'notification-run-cell-url-pr-3' }).props.onPress(),
     );
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pr/1133');
+  });
+
+  it('renders a single issue on the lifecycle card, not a GitHubEventCard', () => {
+    const renderer = render(
+      <NotificationLifecycleCard
+        message={message({
+          notificationLifecycleRun: {
+            headline: 'Issue 1 opened',
+            subline: 'by @lin · 09:41 – 09:41',
+            items: [
+              {
+                id: 'issue-1',
+                title: 'Handle narrow screens',
+                state: 'Opened',
+                kindLine: 'issue',
+                kind: 'issue',
+                url: 'https://github.test/issues/17',
+                actor: 'lin',
+              },
+            ],
+          },
+        })}
+        onOpenCorner={() => undefined}
+        onOpenUrl={vi.fn()}
+      />,
+    );
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain('Issue · 1 opened');
+    expect(json).not.toContain('PR ·');
+    expect(renderer.root.findByProps({ testID: 'notification-run-cell-issue-1' })).toBeDefined();
+    expect(json).not.toContain(' more ▾');
   });
 
   it('renders an all-green check batch as one accordion card with header summary', () => {

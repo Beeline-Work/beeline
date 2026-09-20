@@ -144,9 +144,12 @@ describe('Room→repo settings change', () => {
       'const handleSelectRoomRepoCandidate = useCallback(',
       'handleSelectRoomRepoCandidate',
     );
-    expect(handler).toContain('roomListCorners(cornerLifecycle)');
+    expect(handler).toContain('openCornerCount');
+    expect(handler).toContain('hasOpenCorners');
     expect(handler).toContain('Modal.confirm');
     expect(handler).toContain('roomRepository && hasOpenCorners');
+    expect(handler).not.toContain('cornerLifecycle');
+    expect(handler).not.toContain('roomListCorners');
   });
 
   it('unassigns the repo only through the confirmed destructive path', () => {

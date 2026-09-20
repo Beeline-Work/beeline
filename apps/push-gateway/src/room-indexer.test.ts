@@ -285,7 +285,6 @@ describe('RoomIndexer', () => {
           generationId: 'generation-1',
         },
       ],
-      corners: [{ corner: { id: CORNER, updatedAt: 5 } }],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
       ['Hello', 'Ada'],
@@ -577,7 +576,7 @@ describe('RoomIndexer', () => {
     const room = await indexer.readRoom(ROOM, VIEWER);
     expect(room?.latestAgentTurns).toEqual([]);
     expect(room?.members.some((member) => member.identity.pubkey === AGENT)).toBe(false);
-    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, state: 'waiting' }]);
+    expect(room && 'corners' in room).toBe(false);
 
     const chats = await indexer.readChats(WORKSPACE, VIEWER);
     expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
@@ -1613,6 +1612,7 @@ describe('RoomIndexer', () => {
     );
     const cardId = 'f'.repeat(64);
     const legacyId = 'e'.repeat(64);
+    const ciId = '9'.repeat(64);
     const insertGitHubEvent = async (
       id: string,
       createdAt: number,
@@ -1647,6 +1647,17 @@ describe('RoomIndexer', () => {
       ],
       'lena pushed 0 commits to acme/widget:main',
     );
+    await insertGitHubEvent(ciId, 15, [
+      ['h', ROOM],
+      ['t', 'github-event'],
+      ['service', 'beeline-events'],
+      ['github-event-type', 'ci'],
+      ['github-event-action', 'passed'],
+      ['github-event-actor', 'octocat'],
+      ['github-event-title', 'Beeline CI check suite'],
+      ['github-event-url', 'https://github.com/acme/widget/actions/runs/9'],
+      ['github-event-id', '9'],
+    ]);
 
     const view = await indexer.readRoom(ROOM, VIEWER);
     const history = await indexer.readHistory(ROOM, VIEWER);
@@ -1666,7 +1677,9 @@ describe('RoomIndexer', () => {
       }),
     );
     expect(view?.messages.map((message) => message.id)).not.toContain(legacyId);
+    expect(view?.messages.map((message) => message.id)).not.toContain(ciId);
     expect(history?.messages.map((message) => message.id)).not.toContain(legacyId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(ciId);
   });
 
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {
@@ -1960,14 +1973,6 @@ describe('RoomIndexer', () => {
           }),
         }),
       ]),
-      corners: [
-        expect.objectContaining({
-          agent: expect.objectContaining({
-            pubkey: AGENT,
-            name: 'Milo',
-          }),
-        }),
-      ],
     });
     expect(history?.messages).toEqual(
       expect.arrayContaining([
@@ -2084,14 +2089,11 @@ describe('RoomIndexer', () => {
       state: 'working',
       stateAt: 49,
     });
-    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]).toMatchObject({
-      state: 'working',
-      stateAt: 49,
-    });
+    const parentRoom = await indexer.readRoom(ROOM, VIEWER);
+    expect(parentRoom && 'corners' in parentRoom).toBe(false);
 
     await publishAgentTurn('5', 52, 'complete');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
-    expect((await indexer.readRoom(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
 
     await publishAgentTurn('6', 53, 'failed');
     expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');

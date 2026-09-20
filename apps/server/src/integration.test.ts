@@ -5051,8 +5051,8 @@ describe('monolith integration', () => {
         targetBranch: 'main',
       }),
     ]);
-    // Room-level mainline activity: CI is gated to the default branch and a
-    // raw push never becomes a Room card at all.
+    // Room-level repository activity: issues and pull requests only. A
+    // raw push and mainline CI never become a Room card.
     await webhook('push', 'room-push-main', {
       ...base,
       ref: 'refs/heads/main',
@@ -5084,15 +5084,10 @@ describe('monolith integration', () => {
     expect(mainlineCards.rows.map((row) => row.card)).toEqual([
       expect.objectContaining({ type: 'issue', action: 'opened' }),
       expect.objectContaining({ type: 'pull-request', action: 'opened' }),
-      expect.objectContaining({
-        type: 'ci',
-        action: 'passed',
-        title: 'Beeline CI check suite',
-        branch: 'main',
-      }),
     ]);
-    // A push to the default branch posted no card of its own.
+    // A push or mainline CI result on the default branch posted no card.
     expect(mainlineCards.rows.some((row) => row.card.type === 'push')).toBe(false);
+    expect(mainlineCards.rows.some((row) => row.card.type === 'ci')).toBe(false);
     await webhook('push', 'corner-push', {
       ...base,
       ref: 'refs/heads/fm/widget',
@@ -5432,7 +5427,6 @@ describe('monolith integration', () => {
           pullRequest?: { number?: number; title?: string; url: string; targetBranch?: string };
         };
       }>;
-      corners: Array<{ corner: { id: string; about?: string }; state: string }>;
     };
     expect(parent.messages).toContainEqual(
       expect.objectContaining({
@@ -5460,10 +5454,10 @@ describe('monolith integration', () => {
         },
       }),
     );
-    expect(parent.corners.find((item) => item.corner.id === cornerId)).toMatchObject({
-      state: 'archived',
-      corner: { id: cornerId, about: 'Ship widget' },
-    });
+    const listed = (await (await request(`/v1/phone/rooms/${ROOM}/corners`)).json()) as {
+      corners: Array<{ corner: { id: string; about?: string }; state: string }>;
+    };
+    expect(listed.corners.find((item) => item.corner.id === cornerId)).toBeUndefined();
     expect(
       (
         await database.query<{ archived: boolean }>(
@@ -6787,12 +6781,8 @@ describe('monolith integration', () => {
       commissioned_by: HUMAN,
     });
     const roomView = await new PhoneService(database, origin).readRoom(ROOM, HUMAN);
-    expect(roomView?.corners.find((item) => item.corner.id === cornerId)).toEqual(
-      expect.objectContaining({
-        initiator: expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
-        agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent' }),
-      }),
-    );
+    expect(roomView).toBeDefined();
+    expect('corners' in (roomView ?? {})).toBe(false);
     const cornerList = await new PhoneService(database, origin).readCorners(ROOM, HUMAN);
     expect(cornerList?.corners.find((item) => item.corner.id === cornerId)).toEqual(
       expect.objectContaining({
@@ -6961,9 +6951,11 @@ describe('monolith integration', () => {
       name: 'Rework the room',
       objective: 'Rework the room list so every corner row carries a state mark',
     });
-    expect(room.corners.find((item) => item.corner.id === cornerId)?.corner.about).toBe(
-      'Rework the room list so every corner row carries a state mark',
-    );
+    expect(
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      )?.corner.about,
+    ).toBe('Rework the room list so every corner row carries a state mark');
   });
 
   it('reads the selection with an empty catalog, defaults a connect-wizard soul avatarSeed to the pubkey, and passes the detail guard', async () => {

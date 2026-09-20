@@ -255,9 +255,9 @@ export type RoomViewMessage = {
     readonly requester?: RoomViewIdentity;
   };
   /** A validated, service-published repository activity card. Never a speaker.
-   *  CI is a mainline (default-branch) fact. `type` and `action` are plain
-   *  strings on purpose: a client must tolerate a card kind a newer server
-   *  posts and simply not draw it, rather than rejecting the whole Room. */
+   *  Issues and pull requests only. `type` and `action` are plain strings on
+   *  purpose: a client must tolerate a card kind a newer server posts and
+   *  simply not draw it, rather than rejecting the whole Room. */
   readonly githubEvent?: {
     readonly type: string;
     readonly action: string;
@@ -333,8 +333,8 @@ export type MessageReactionView = {
   readonly emoji: MessageReactionEmoji;
   readonly count: number;
   readonly reacted: boolean;
-  /** Canonical identities in reaction order; used by the reaction roster. */
-  readonly members: readonly RoomViewIdentity[];
+  /** Canonical identities in reaction order; omitted by older servers. */
+  readonly members?: readonly RoomViewIdentity[];
 };
 
 /** One line of a grant card and one row of the agent profile's grant list. */
@@ -464,7 +464,6 @@ export type RoomView = {
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */
   readonly cornerLifecycle?: CornerLifecycleView;
-  readonly corners: readonly CornerListItem[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 
@@ -591,10 +590,16 @@ export type WorkspaceView = {
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
-  /** True human membership count, independent of the page in `members`. */
-  readonly peopleTotal: number;
-  /** True agent membership count, independent of the page in `agents`. */
-  readonly agentTotal: number;
+  /**
+   * True human membership count, independent of the page in `members`.
+   * Absent on older servers means unknown — never treat as zero.
+   */
+  readonly peopleTotal?: number;
+  /**
+   * True agent membership count, independent of the page in `agents`.
+   * Absent on older servers means unknown — never treat as zero.
+   */
+  readonly agentTotal?: number;
   readonly membersTruncated: boolean;
   readonly agentsTruncated: boolean;
   readonly viewer: RoomViewer;
@@ -605,8 +610,10 @@ export type WorkspaceView = {
 export type WorkspaceMemberListView = {
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
-  readonly peopleTotal: number;
-  readonly agentTotal: number;
+  /** Absent on older servers means unknown — never treat as zero. */
+  readonly peopleTotal?: number;
+  /** Absent on older servers means unknown — never treat as zero. */
+  readonly agentTotal?: number;
   readonly membersTruncated: boolean;
   readonly agentsTruncated: boolean;
 };

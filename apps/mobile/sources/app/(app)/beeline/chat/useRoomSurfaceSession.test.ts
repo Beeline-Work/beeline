@@ -197,7 +197,7 @@ vi.mock('@beeline/buzz-client', async () => {
 });
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
-import { cornerSummaries } from '@/buzz/room-view-presentation';
+import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -226,7 +226,6 @@ function roomView(id: string, filters: RoomView['watchFilters'] = [{ '#h': [id] 
       permissions: { send: true, manage: true },
     },
     repositoryResolution: { status: 'absent' },
-    corners: [],
     watchFilters: filters,
   };
 }
@@ -269,14 +268,15 @@ function LiveCornerHarness({ channelId }: { channelId: string }) {
     observeRoomSurface: vi.fn(),
   });
   const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
-  const working = (roomSurface ? cornerSummaries(roomSurface) : []).filter(
-    (corner) => corner.state === 'working',
-  );
+  const working =
+    roomSurface?.parent && cornerDisplayFromRoomView(roomSurface).state === 'working'
+      ? [roomSurface.room.id]
+      : [];
   return React.createElement(
     'corner-states',
     { testID: 'corner-states' },
-    ...working.map((corner) =>
-      React.createElement('corner-state', { key: corner.id, testID: `corner-working-${corner.id}` }),
+    ...working.map((id) =>
+      React.createElement('corner-state', { key: id, testID: `corner-working-${id}` }),
     ),
   );
 }
@@ -833,39 +833,25 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('reports a fresh indexed child corner as working, over a stale review card', async () => {
+  it('reports a corner viewing itself as working from its own turn, over a stale review card', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
+      renderer = create(React.createElement(LiveCornerHarness, { channelId: 'corner-a' }));
     });
     await flushEffects();
 
-    const applied = roomView('room-a');
+    const applied = roomView('corner-a');
     const stateAt = Math.floor(Date.now() / 1_000);
     await act(async () => {
       controls.schedulers[0]!.apply({
         ...applied,
+        parent: { ...applied.room, id: 'room-a', name: 'Room room-a' },
         latestAgentTurns: [
           { requestId: 'request-a', agentPubkey: 'agent-a', status: 'working', createdAt: stateAt },
         ],
-        corners: [
-          {
-            corner: {
-              ...applied.room,
-              id: 'corner-a',
-              parentId: 'room-a',
-              name: 'smoke-corner',
-              createdAt: stateAt,
-              updatedAt: stateAt,
-            },
-            // The review card remains mounted during steering. The canonical
-            // daemon state still has to read through as working.
-            lifecycle: { lifecycle: 'REVIEW' },
-            state: 'working',
-            stateAt,
-            agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
-          },
-        ],
+        // The review card remains mounted during steering. The canonical
+        // daemon state still has to read through as working.
+        cornerLifecycle: { lifecycle: 'in-review', checks: 'unknown' },
       });
       await Promise.resolve();
     });
@@ -881,20 +867,6 @@ describe('useRoomSurfaceSession', () => {
     controls.cached = {
       ...parent,
       members: [{ identity: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' }, role: 'member' }],
-      corners: [
-        {
-          corner: {
-            ...parent.room,
-            id: 'corner-a',
-            parentId: 'room-a',
-            name: 'Write corner',
-          },
-          lifecycle: { lifecycle: 'working' },
-          state: 'working',
-          stateAt: 10,
-          agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
-        },
-      ],
     };
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -957,8 +929,9 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
 
     // The corner's own id has to reach the live subscription, or nothing the
-    // turn writes can ever be delivered to the reader sitting in it.
-    expect(controls.subscriptions[0]!.filters).toEqual(cornerFilters);
+    // turn writes can ever be delivered to the reader sitting in it. Family
+    // ids in watchFilters must not become extra subscriptions.
+    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['corner-a'] }]);
 
     const emit = (live: Record<string, unknown>) =>
       controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'corner-a', ...live } });
@@ -1175,8 +1148,22 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('paints cache first, then replaces the watch when verified filters change', async () => {
-    controls.cached = roomView('room-a', [{ '#h': ['room-a'] }]);
+  it('subscribes once to the opened Room even when watchFilters name a family', async () => {
+    const familyFilters: RoomView['watchFilters'] = [
+      {
+        kinds: [9],
+        '#h': [
+          'workspace',
+          'room-a',
+          ...Array.from({ length: 58 }, (_, index) => `corner-${index}`),
+        ],
+      },
+      {
+        kinds: [30078],
+        '#d': ['agent-draft:room-a', 'agent-thought:room-a', 'agent-presence:room-a'],
+      },
+    ];
+    controls.cached = roomView('room-a', familyFilters);
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1191,14 +1178,15 @@ describe('useRoomSurfaceSession', () => {
 
     expect(current.roomSurface).toBe(controls.cached);
     expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['room-a'] }]);
     const firstStop = controls.subscriptions[0]!.stop;
 
     await act(async () => {
       controls.schedulers[0]!.apply(roomView('room-a', [{ '#d': ['agent-a'] }]));
       await Promise.resolve();
     });
-    expect(controls.subscriptions).toHaveLength(2);
-    expect(firstStop).toHaveBeenCalledOnce();
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(firstStop).not.toHaveBeenCalled();
     expect(current.roomSurface?.watchFilters).toEqual([{ '#d': ['agent-a'] }]);
     await act(async () => renderer.unmount());
   });

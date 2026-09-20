@@ -122,7 +122,7 @@ const PUNCTUATION_PATTERNS: ScanPattern[] = [
 
 const JSON_PATTERNS: ScanPattern[] = [
   ...STRING_PATTERNS,
-  NUMBER_PATTERN,
+  { pattern: /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/g, token: 'number' },
   { pattern: /\b(?:true|false|null)\b/g, token: 'number' },
   ...PUNCTUATION_PATTERNS,
 ];
@@ -254,9 +254,8 @@ function mergeRoles(spans: TokenSpan[]): TokenSpan[] {
   return out;
 }
 
-function tokenizeLine(line: string, language: string | null): TokenSpan[] {
-  const isJson = language?.trim().toLowerCase() === 'json';
-  return mergeRoles(promoteKeyedStrings(scanLine(line, isJson ? JSON_PATTERNS : GENERIC_PATTERNS), isJson));
+function tokenizeLine(line: string): TokenSpan[] {
+  return mergeRoles(promoteKeyedStrings(scanLine(line, GENERIC_PATTERNS), false));
 }
 
 export type TokenizedLine = TokenSpan[];
@@ -269,8 +268,20 @@ export type TokenizedLine = TokenSpan[];
  *                  `json`).  `null` for unfenced blocks.
  */
 export function tokenizeCode(code: string, language: string | null): TokenizedLine[] {
+  if (language?.trim().toLowerCase() === 'json') {
+    // Classify before splitting lines: a JSON key's colon can follow a newline.
+    const spans = mergeRoles(promoteKeyedStrings(scanLine(code, JSON_PATTERNS), true));
+    const lines: TokenizedLine[] = [[]];
+    for (const span of spans) {
+      span.text.split('\n').forEach((text, index) => {
+        if (index > 0) lines.push([]);
+        if (text) lines[lines.length - 1]!.push({ token: span.token, text });
+      });
+    }
+    return lines;
+  }
   const lines = code.split('\n');
-  return lines.map((line) => tokenizeLine(line, language));
+  return lines.map((line) => tokenizeLine(line));
 }
 
 /**

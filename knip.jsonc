@@ -58,7 +58,13 @@
       ],
     },
     "apps/body": {
-      "entry": ["src/{index,cli}.ts", "scripts/measure-turn-phases.ts", "vitest.live.config.ts"],
+      // The Squire facade is spawned by path from squire-host.ts, outside the
+      // JavaScript module graph Knip can follow.
+      "entry": [
+        "src/{index,cli,squire-facade}.ts",
+        "scripts/measure-turn-phases.ts",
+        "vitest.live.config.ts",
+      ],
     },
     "apps/gate": {
       "entry": ["src/{index,provisioning}.ts", "vitest.live.config.ts"],

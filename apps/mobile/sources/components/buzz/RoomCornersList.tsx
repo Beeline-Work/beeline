@@ -7,7 +7,7 @@ import { inspectorCornerWindow } from '@/buzz/inspector-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { displayCornerTitle } from '@/buzz/room-list-row';
-import { CHANGES_LABEL } from '@/buzz/vocabulary';
+import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { StateCircle } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
@@ -16,8 +16,14 @@ import { Typography } from '@/constants/Typography';
  * The Room's dedicated corners index. Windowing is `inspectorCornerWindow` —
  * the same cap, archived fallback, and see-more the desktop work-pane corner
  * list already uses — so this is a second door onto that list, not a third set
- * of rules. The header `◇` and this screen are the door and the room; the
- * inspector remains the desktop work pane's corner list.
+ * of rules. The Room header's corners door and this screen are the door and
+ * the room; the inspector remains the desktop work pane's corner list.
+ *
+ * The row reads in the index vocabulary `DESIGN.md` gives the Room list: the
+ * tile, the name at the brightest tier, one quiet line under it, and a
+ * trailing column. What the row must NEVER do is leave its state to the
+ * circle alone — a coloured dot is the one encoding a colour-blind reader and
+ * a screen reader both lose, so the state word travels beside it.
  */
 export function RoomCornersList({
   corners,
@@ -25,29 +31,41 @@ export function RoomCornersList({
   parentRoomId,
   refreshing,
   onRefresh,
+  bottomInset = 0,
 }: {
   corners: readonly CornerListItem[];
   parentRoomName: string;
   parentRoomId: string;
   refreshing?: boolean;
   onRefresh?: () => void;
+  /** Safe-area gutter the last row must clear. */
+  bottomInset?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const window = useMemo(() => inspectorCornerWindow(corners, expanded), [corners, expanded]);
+  // FlatList compares `data` by identity, so a fresh copy per render repaints
+  // every row on any parent state change.
+  const data = useMemo(() => [...window.visible], [window]);
 
   return (
     <FlatList
-      data={[...window.visible]}
+      data={data}
       keyExtractor={(item) => item.corner.id}
       refreshing={refreshing}
       onRefresh={onRefresh}
-      contentContainerStyle={corners.length ? undefined : styles.emptyContainer}
+      contentContainerStyle={[
+        corners.length ? undefined : styles.emptyContainer,
+        { paddingBottom: bottomInset },
+      ]}
       testID="room-corners-list"
       renderItem={({ item }) => {
         const label = displayCornerTitle(parentRoomName, item.corner.name, item.corner.id);
         const display = cornerDisplayState(item);
+        const opener = item.agent ? `Opened by ${item.agent.name}` : item.latestMessage?.text;
+        const line = [opener, display.detail].filter(Boolean).join(' · ') || 'No activity yet';
         return (
           <Pressable
+            accessibilityLabel={`${label}. ${display.word}. ${line}`}
             accessibilityRole="button"
             onPress={() =>
               router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name))
@@ -61,26 +79,38 @@ export function RoomCornersList({
               avatarUrl={item.agent?.avatar}
               face={item.agent?.face}
               name={item.agent?.name ?? 'Corner'}
-              size={34}
+              size={40}
             />
             <View style={styles.rowCopy}>
               <Text numberOfLines={1} style={styles.rowTitle}>
                 {label}
               </Text>
               <Text numberOfLines={1} style={styles.agent}>
-                {item.agent
-                  ? `Opened by ${item.agent.name}`
-                  : (item.latestMessage?.text ?? 'No activity yet')}
+                {line}
               </Text>
             </View>
+            {/* The state, twice over: the word carries it for everyone, the
+              circle carries its motion for the glance. */}
+            <Text
+              style={[
+                styles.state,
+                display.tone === 'brass'
+                  ? styles.stateBrass
+                  : display.tone === 'ghost'
+                    ? styles.stateGhost
+                    : styles.stateQuiet,
+              ]}
+            >
+              {display.word}
+            </Text>
             <StateCircle state={display.visual} tone={display.tone} />
-            <Text style={styles.chevron}>›</Text>
           </Pressable>
         );
       }}
       ListFooterComponent={
         window.overflowLabel ? (
           <Pressable
+            accessibilityLabel={`Show the rest: ${window.overflowLabel}`}
             accessibilityRole="button"
             onPress={() => setExpanded(true)}
             style={styles.more}
@@ -95,7 +125,7 @@ export function RoomCornersList({
         <View style={styles.empty} testID="room-corners-empty">
           <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
           <Text style={styles.emptyText}>
-            Go back to {parentRoomName} and ask an Agent to start work.
+            Ask an agent in {parentRoomName} to start work and its {CORNER_LABEL} opens here.
           </Text>
         </View>
       }
@@ -107,29 +137,43 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     row: {
-      minHeight: 70,
+      minHeight: hull.layout.row,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 11,
-      paddingHorizontal: 16,
+      gap: hull.space.sm,
+      paddingHorizontal: hull.space.md,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
     rowCopy: { flex: 1, minWidth: 0 },
     rowTitle: { ...Typography.default('semiBold'), ...hull.type.body, color: hull.textPrimary },
-    agent: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, marginTop: 3 },
+    agent: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.ledgerQuiet,
+    },
+    state: { ...Typography.default(), ...hull.type.sectionHead },
+    stateBrass: { color: hull.accent },
+    stateQuiet: { color: hull.ledgerQuiet },
+    stateGhost: { color: hull.ledgerGhost },
     chevron: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
     more: {
       minHeight: 44,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 16,
+      paddingHorizontal: hull.space.md,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
     moreLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, flex: 1 },
     emptyContainer: { flexGrow: 1 },
-    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
+    empty: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: hull.space.sm,
+      padding: hull.space.lg,
+    },
     emptyTitle: { ...Typography.default('semiBold'), ...hull.type.body, color: hull.textPrimary },
     emptyText: {
       ...Typography.default(),

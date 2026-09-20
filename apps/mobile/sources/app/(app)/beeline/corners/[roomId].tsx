@@ -14,12 +14,23 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
+import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
+
+/** 44 of chrome already; the slop only clears Android's 48dp floor. */
+const BACK_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
+
+/**
+ * The screen's title: the same noun the product uses everywhere else, as a
+ * title rather than as prose. `CORNER_LABEL`/`CHANGES_LABEL` stay lowercase
+ * because they are written into sentences; `MEMBERS_LABEL` is the capitalized
+ * shape a page title takes, and this is its pair.
+ */
+const SCREEN_TITLE = `${CHANGES_LABEL.charAt(0).toUpperCase()}${CHANGES_LABEL.slice(1)}`;
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -49,12 +60,10 @@ export default function BuzzCorners() {
       const cached = await mobileSurfaceCache.read(address, isCornerListView);
       if (cancelled) return;
       if (cached) setSurface(cached);
-      let current = cached;
       const http = new RoomViewClient({ baseUrl: relayUrl, identity });
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => http.corners(decodedId),
         apply: (value) => {
-          current = value;
           setSurface(value);
           setError(null);
           setRefreshing(false);
@@ -94,7 +103,7 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <SurfaceGlyphLoader testID="changes-loader" />
-        <Text style={styles.loading}>LOADING CHANGES</Text>
+        <Text style={styles.loading}>Loading {CHANGES_LABEL}…</Text>
       </View>
     );
   }
@@ -126,30 +135,45 @@ export default function BuzzCorners() {
       viewerFace={surface.viewer.identity.face}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <HullSurface strength="quiet" style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
+        {/* Chrome sits on the slab: no plate, no texture, one hairline and
+          type weight — the same header the Members screen carries. */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            accessibilityLabel="Back"
+            accessibilityRole="button"
+            hitSlop={BACK_HIT_SLOP}
+            onPress={() => router.back()}
+            style={styles.back}
+          >
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>{title}</Text>
-            <Text style={styles.title}>All {CHANGES_LABEL}</Text>
+            <Text numberOfLines={1} style={styles.eyebrow}>
+              {title}
+            </Text>
+            <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
+              {SCREEN_TITLE}
+            </Text>
           </View>
-          <Text style={styles.count}>{surface.corners.length}</Text>
-        </HullSurface>
-        <HullSurface strength="raised" style={styles.modelPanel}>
-          <Text style={styles.modelTitle}>YOLO INSIDE · GITHUB IS THE LIFECYCLE</Text>
-          <Text style={styles.modelText}>
-            Agents iterate inside their own {CORNER_LABEL}, push a branch, and open a pull request.
-            A merged or deleted branch closes the work automatically.
+          {/* The index's one gutter fact, spoken as a sentence rather than a
+            bare numeral. */}
+          <Text
+            accessibilityLabel={`${surface.corners.length} ${
+              surface.corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
+            }`}
+            style={styles.count}
+          >
+            {surface.corners.length}
           </Text>
-        </HullSurface>
+        </View>
         {!!error && (
           <TouchableOpacity
+            accessibilityHint="Retries the read"
             accessibilityRole="alert"
             onPress={() => schedulerRef.current?.force()}
             style={styles.errorPanel}
           >
-            <Text style={styles.error}>! {error}</Text>
+            <Text style={styles.errorInline}>! {error}</Text>
           </TouchableOpacity>
         )}
         <RoomCornersList
@@ -157,6 +181,9 @@ export default function BuzzCorners() {
           parentRoomId={decodedId}
           parentRoomName={title}
           refreshing={refreshing}
+          // The list runs to the bottom edge, so it clears the gesture bar
+          // itself rather than tucking its last row under it.
+          bottomInset={insets.bottom}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();
@@ -171,31 +198,39 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 28 },
-    loading: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 10,
-      letterSpacing: 1,
+    center: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: hull.space.md,
+      paddingHorizontal: hull.space.lg,
     },
+    loading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     header: {
       minHeight: 66,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: hull.space.sm,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: hull.textPrimary, fontSize: 30 },
+    back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
-    eyebrow: { ...Typography.mono(), color: hull.textMuted, fontSize: 9 },
-    title: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
-    count: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 12 },
-    modelPanel: { margin: 12, padding: 12, gap: 5 },
-    modelTitle: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 9 },
-    modelText: { ...Typography.default(), color: hull.textMuted, fontSize: 11, lineHeight: 16 },
-    errorPanel: { paddingHorizontal: 16, paddingVertical: 8 },
-    error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
+    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    count: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      paddingHorizontal: hull.space.sm,
+      color: hull.textMuted,
+    },
+    errorPanel: { paddingHorizontal: hull.space.md, paddingVertical: hull.space.sm },
+    error: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.danger,
+      textAlign: 'center',
+    },
+    errorInline: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
   };
 });

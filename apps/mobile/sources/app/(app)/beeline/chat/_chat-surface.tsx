@@ -142,7 +142,6 @@ import {
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
-  resolveCornerCardAgentPubkey,
   resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
 import { roomListCorners, type CornerSummary } from '@/buzz/corners';
@@ -178,13 +177,8 @@ import {
   ownerGrantShareMessage,
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
-import {
-  isPinnedCornerLive,
-  pinnedCornerVerb,
-  selectPinnedCorner,
-  selectWorkingAgents,
-} from '@/buzz/room-indicators';
-import { displayCornerTitle } from '@/buzz/room-list-row';
+import { selectWorkingAgents } from '@/buzz/room-indicators';
+import { roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
@@ -298,7 +292,6 @@ import {
 } from '@/buzz/use-stable';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
-import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { AgentOfflineHint } from '@/components/buzz/AgentOfflineHint';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
@@ -629,9 +622,6 @@ export function BuzzChatSurface({
   );
   const [forwardBusyRoomId, setForwardBusyRoomId] = useState<string | null>(null);
   const [forwardError, setForwardError] = useState<string | null>(null);
-  // "No corner on record" and "the corner list has not answered yet" are
-  // different answers, and only the first one may let a freshly permitted
-  // corner onto the pinned line — see `selectPinnedCorner`.
   // What this corner inherited from the Room it was opened out of: the task
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
@@ -2194,88 +2184,6 @@ export function BuzzChatSurface({
     rawImmediatelyPrecedingVisibleMessageById,
     sameMessageRefMap,
   );
-  // The one corner the pinned line may name: open, not terminal in *any*
-  // source, and chosen by how much it is being worked on. `null` for a Room
-  // with no live corner, however busy its agent is right now.
-  const pinnedCorner = useMemo(() => {
-    return selectPinnedCorner({ lifecycle: cornerLifecycle });
-  }, [cornerLifecycle]);
-  const pinnedCornerCard = useMemo(
-    () =>
-      pinnedCorner
-        ? [...messages]
-            .reverse()
-            .find((message) => message.corner?.subchannelId === pinnedCorner.cornerId)
-        : undefined,
-    [messages, pinnedCorner],
-  );
-  /**
-   * The pinned corner line's whole state, resolved in one place so the words it
-   * shows and the corner a tap on it opens can never disagree.
-   *
-   * One line, and it names the two facts that matter: who owns the corner, and
-   * what state it's in — `beebee active: feat/ux-fix-now` while working,
-   * `beebee PR open: feat/ux-fix-now` once GitHub reports a pull request.
-   * Both surfaces get one, because both have the same question to
-   * answer: a Room asks "is there an open corner, and what does it need," a
-   * Corner asks "is this session still moving."
-   *
-   * Its input is corner state and nothing else. A Room turn in progress is a
-   * different fact about a different object and drives `turnProgressLabel`
-   * below — see `buzz/room-indicators.ts` for why the two are kept apart by
-   * construction rather than by care.
-   */
-  const cornerLiveBar = useMemo((): {
-    label: string;
-    live: boolean;
-    state: 'working' | 'waiting' | 'review' | 'archived';
-    cornerId?: string;
-  } | null => {
-    const named = (subject: string, verb: string, target?: string) =>
-      target ? `${subject} ${verb}: ${target}` : `${subject} ${verb}`;
-
-    if (isCorner) return null;
-
-    // selectPinnedCorner names any open corner — working, waiting on a
-    // human, or review-ready — and excludes only a terminal one. The line's
-    // mere presence means "open," not "live"; the bright-ink breathing pulse
-    // is reserved for a fresh canonical WORKING lease, while brass means
-    // waiting. Presence is displayed separately and cannot rewrite this lifecycle.
-    if (!pinnedCorner) return null;
-    const agentPubkey = resolveCornerCardAgentPubkey(
-      pinnedCornerCard?.corner?.agentPubkey,
-      pinnedCornerCard?.pubkey,
-      (pubkey) => agentByPubkey.has(pubkey),
-    );
-    const subject = agentPubkey
-      ? resolveAgentDisplayIdentity(agentPubkey, agentByPubkey.get(agentPubkey)).name
-      : 'agent';
-    // The channel-mark convention: a corner names itself `#<room>/<corner>`,
-    // composed from stored names at render time. Before this Room's own name
-    // has resolved the line still marks the corner alone rather than blocking.
-    const lifecycleCorner = cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId);
-    const target = displayCornerTitle(
-      resolvedChannelName?.trim() || undefined,
-      lifecycleCorner?.name,
-      pinnedCorner.cornerId,
-    );
-    const live = isPinnedCornerLive(pinnedCorner.status);
-    const verb = pinnedCornerVerb(pinnedCorner.status);
-    return {
-      label: named(subject, verb, target),
-      live,
-      state: pinnedCorner.status,
-      cornerId: pinnedCorner.cornerId,
-    };
-  }, [
-    agentByPubkey,
-    cornerLifecycle,
-    isCorner,
-    pinnedCorner,
-    pinnedCornerCard,
-    resolvedChannelName,
-  ]);
-
   // Once the matching server-indexed receipt lands there is nothing left for
   // the local ack to guess at. A terminal receipt is still confirmation: the
   // old active-only check missed the case where WORKING had already become
@@ -2372,7 +2280,7 @@ export function BuzzChatSurface({
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
-  // keyboard, and a corner lease mounts CornerLiveBar. The phone turn line
+  // keyboard, and an offline helper mounts its hint. The phone turn line
   // hangs above the whole bottom stack instead of growing this footprint.
   // Native layout can update the pinned ref before an effect runs, preserving
   // the old offset as an empty gap. Capture the verdict in render.
@@ -2386,7 +2294,6 @@ export function BuzzChatSurface({
   );
   const composerFootprint = composerHeight + keyboardHeight;
   const bottomChromeLayoutKey = [
-    cornerLiveBar ? 'corner' : 'no-corner',
     composerAck ? 'turn' : 'no-turn',
     agentsOffline ? 'offline' : 'online',
   ].join(':');
@@ -4471,20 +4378,24 @@ export function BuzzChatSurface({
             </View>
             {/* Membership still consumes no header width: the Members row lives
               in the Room and corner overflow sheets. The desktop work pane
-              does not carry it. The trailing slot is the corner glyph `◇` in
-              brass beside overflow — a door onto the Room's corners list, not
-              members. The pinned line below the transcript stays the one
-              active-corner affordance. */}
+              does not carry it. The trailing slot is the Room's corners door —
+              now the ONE active-corner affordance, since the pinned line above
+              the composer is gone. A lone brass `◇` a few pixels from the
+              overflow dots read as decoration on the menu rather than as a
+              destination of its own, so the door is NAMED, the way every rail
+              command is: the sigil states the kind, the word states where it
+              goes, and a full space step parts the pair from overflow. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
                 accessibilityRole="button"
-                hitSlop={HEADER_TRAILING_HIT_SLOP}
+                hitSlop={HEADER_EDGE_HIT_SLOP}
                 onPress={() => router.push(roomCornersHref(decodedId))}
                 style={styles.roomCornersButton}
                 testID="room-corners-menu"
               >
                 <Text style={styles.roomCornersGlyph}>◇</Text>
+                <Text style={styles.roomCornersLabel}>{CHANGES_LABEL}</Text>
               </TouchableOpacity>
             )}
             {isCorner && !viewerIsAgent && !isArchived && (
@@ -4563,16 +4474,16 @@ export function BuzzChatSurface({
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail. Corner/offline
-              // chrome already pushes that tail above the composer; reserve
-              // the hanging line only when neither is present. This keeps the
-              // WAITING + thinking gap identical to the Room's idle gap.
+              // Inverted list: paddingTop is the visual tail. The offline
+              // hint already pushes that tail above the composer; reserve
+              // the hanging line only when it is absent. This keeps the
+              // offline + thinking gap identical to the Room's idle gap.
               !desktopTranscript &&
                 !isArchived &&
                 (composerAck || settledTurn) && {
                   paddingTop: phoneTranscriptTailPadding({
                     turnChromeVisible: true,
-                    pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline),
+                    pushedChromeVisible: agentsOffline,
                   }),
                 },
             ]}
@@ -4907,24 +4818,12 @@ export function BuzzChatSurface({
                   <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
                 </View>
               )}
-              {/* The Room's only active-corner affordance: one pinned line naming
-                who is working and what on, bright ink breathing while the work is
-                live and still brass while waiting. Never a scroll element — see
-                CornerLiveBar. */}
-              {!isCorner && cornerLiveBar && (
-                <CornerLiveBar
-                  label={cornerLiveBar.label}
-                  live={cornerLiveBar.live}
-                  state={cornerLiveBar.state}
-                  // A Room bar always acts. Corrupt/missing lifecycle data is
-                  // explained by openCorner instead of disappearing in a guard.
-                  onPress={() => openCorner(cornerLiveBar.cornerId)}
-                />
-              )}
-              {/* The ordinary per-turn indicator, independent of the line above: a
-                Room can be thinking with no corner open, or hold an open corner
-                with nothing being asked of it. Both may show at once; neither
-                implies the other. */}
+              {/* No pinned corner line lives here. A Room holds many corners at
+                once, so one line above the composer could only ever name one of
+                them, and it sat between the reader and the field they were
+                typing in. The Room's corners door in the header is the one way
+                in; the corner's own state is read there, in the corners list,
+                and on the Room-list row. */}
               {agentsOffline && (
                 <AgentOfflineHint />
               )}
@@ -5676,6 +5575,7 @@ export function BuzzChatSurface({
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
+  const bottomChrome = roomBottomChromeStyles(groknight);
   return {
     container: {
       flex: 1,
@@ -5808,8 +5708,10 @@ const styles = StyleSheet.create((theme) => {
     cornerHeaderWaiting: { color: groknight.accent },
     cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
-    // Corner overflow stays a lone 44pt edge control; the Room diamond and
-    // menu cluster below, colour-separated, and restore 44pt via hit slop.
+    // Corner overflow stays a lone 44pt edge control. The Room's pair does not
+    // cluster: the named corners door owns a 44pt-tall target of its own and
+    // the overflow sits a full space step away, so neither reads as chrome
+    // hanging off the other.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
@@ -5818,12 +5720,16 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     roomCornersButton: {
+      minHeight: 44,
       marginLeft: 12,
+      paddingHorizontal: groknight.space.sm,
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      gap: groknight.space.xs,
     },
     roomClusteredActionsButton: {
-      marginLeft: groknight.space.xs,
+      minHeight: 44,
+      marginLeft: groknight.space.md,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -5832,6 +5738,14 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.accent,
       fontSize: groknight.type.meta.fontSize,
       lineHeight: groknight.type.meta.lineHeight,
+    },
+    // The word carries the destination, so it takes the calm metadata voice
+    // every other piece of header chrome speaks in; the brass stays on the
+    // sigil alone.
+    roomCornersLabel: {
+      ...Typography.default(),
+      ...groknight.type.meta,
+      color: groknight.textMuted,
     },
     roomActionsGlyph: {
       ...Typography.default('semiBold'),
@@ -6054,24 +5968,13 @@ const styles = StyleSheet.create((theme) => {
     emptyState: {
       flexGrow: 1,
     },
-    bottomChromeStack: {
-      position: 'relative',
-    },
-    inputBar: {
-      paddingHorizontal: 16,
-      position: 'relative',
-      paddingTop: 8,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-      backgroundColor: groknight.bgTerminal,
-    },
-    hangingTurnChrome: {
-      position: 'absolute',
-      right: 0,
-      bottom: '100%',
-      left: 0,
-      backgroundColor: groknight.bgTerminal,
-    },
+    // The stack, the line hanging off its top edge, and the composer row are
+    // one measured column — `buzz/room-bottom-chrome.ts` owns all three so the
+    // zero gap between the turn line and the composer is a number a test can
+    // read rather than a shape three separate rules happen to agree on.
+    bottomChromeStack: bottomChrome.stack,
+    inputBar: bottomChrome.composerRow,
+    hangingTurnChrome: bottomChrome.hangingTurnChrome,
     previewLinkRow: {
       marginTop: 6,
       flexDirection: 'row',

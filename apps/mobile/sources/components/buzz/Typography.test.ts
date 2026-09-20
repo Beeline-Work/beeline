@@ -46,7 +46,6 @@ const monoStyles = new Set([
   'mergeSummaryPubkey',
   'mergeSummaryTitle',
   'mergeSummaryText',
-  'modelTitle',
   'loadingText',
   'loading',
   'pathTag',

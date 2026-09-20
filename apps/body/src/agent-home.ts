@@ -198,9 +198,10 @@ const agentHomeProvisionQueues = new Map<string, Promise<void>>();
  *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
  *
  * Everything else in those files (models, sandbox modes, approval policy) and
- * the reserved `squire` server deliberately stay behind. The generated Codex
- * config also disables its internal multi-agent tools: Beeline must own all
- * parallel work through its visible Room/corner primitive.
+ * every host-classified server (`mcp-route-class.ts`) deliberately stay behind.
+ * The generated Codex config also disables its internal multi-agent tools:
+ * Beeline must own all parallel work through its visible Room/corner
+ * primitive.
  */
 const HARNESS_MCP_CONFIGS = [
   { dir: 'codex' as const, toml: '.codex/config.toml' },

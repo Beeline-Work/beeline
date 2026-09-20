@@ -25,7 +25,7 @@ does not trigger replacement. This applies to all imported servers, including Tr
 Import classifies each declaration `local` (copied into the isolated harness home as-is) or
 `host` (kept out of it — reaching that server is the host's job); Squire is code-owned as host.
 Goose uses the same classifier.
-It does not provision or revoke routes itself. The inventory contract lives in
+The helper does not provision or revoke routes itself. The inventory contract lives in
 [`session-config-fingerprint.ts`](src/session-config-fingerprint.ts); classification lives in
 [`mcp-route-class.ts`](src/mcp-route-class.ts).
 

@@ -89,11 +89,12 @@ export default function WorkspaceSettings() {
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryGeneration, setRetryGeneration] = useState(0);
   const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const chatsSchedulerRef = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
 
   const workspace = workspaceView?.workspace;
-  const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
+  const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
   const isWorkspaceOwner = isWorkspaceOwnerRole(workspaceView?.viewer.role);
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
@@ -206,7 +207,7 @@ export default function WorkspaceSettings() {
         workspaceSchedulerRef.current = null;
         chatsSchedulerRef.current = null;
       };
-    }, [communityId]),
+    }, [communityId, retryGeneration]),
   );
 
   const saveWorkspaceName = useCallback(async () => {
@@ -363,7 +364,18 @@ export default function WorkspaceSettings() {
         </View>
       </View>
 
-      {!canManageWorkspace ? (
+      {!workspaceView ? (
+        <View style={styles.denied} testID="workspace-settings-load-failed">
+          <Text style={styles.deniedTitle}>
+            {error ?? `Could not load ${WORKSPACE_LABEL} settings`}
+          </Text>
+          <MonoButton
+            label="RETRY"
+            onPress={() => setRetryGeneration((value) => value + 1)}
+            testID="workspace-settings-retry"
+          />
+        </View>
+      ) : !canManageWorkspace ? (
         <View style={styles.denied} testID="workspace-settings-denied">
           <Text style={styles.deniedGlyph}>⌁</Text>
           <Text style={styles.deniedTitle}>Admin access required</Text>

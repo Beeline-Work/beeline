@@ -271,6 +271,42 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findAllByProps({ testID: 'workspace-overview-settings' })).toHaveLength(0);
   });
 
+  it('still renders owner settings when the server omits peopleTotal and agentTotal', async () => {
+    const { peopleTotal: _people, agentTotal: _agents, ...legacy } = workspaceView();
+    roomViews.workspace.mockResolvedValue(legacy);
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('3');
+  });
+
+  it('does not treat a failed workspace read as a permission denial', async () => {
+    roomViews.workspace.mockRejectedValue({ status: 502, code: 'invalid_surface_response' });
+    const renderer = await render();
+
+    expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'workspace-settings-load-failed' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' })).toBeDefined();
+    expect(
+      renderer.root.findAllByType('Text').map((node) => node.children.join('')),
+    ).not.toContain('Admin access required');
+  });
+
+  it('retries the workspace read from the load-failed screen', async () => {
+    roomViews.workspace.mockRejectedValueOnce({ status: 502, code: 'request_failed' });
+    const renderer = await render();
+    roomViews.workspace.mockResolvedValue(workspaceView());
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workspace-settings-retry' }).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
+  });
+
   it('loads every scoped settings section for a Workspace owner', async () => {
     const renderer = await render();
 

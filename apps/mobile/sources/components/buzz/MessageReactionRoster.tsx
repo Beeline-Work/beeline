@@ -73,7 +73,8 @@ export function MessageReactionRoster({
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const suppressPressUntil = useRef(0);
-  const rosterAvailable = reaction.members.length > 0;
+  const reactors = reaction.members ?? [];
+  const rosterAvailable = reactors.length > 0;
   const reactionLabel = `${reaction.emoji}, ${reaction.count} reaction${reaction.count === 1 ? '' : 's'}`;
   const desktopRosterVisible = desktop && rosterAvailable && (hovered || focused);
 
@@ -123,12 +124,12 @@ export function MessageReactionRoster({
 
       {desktopRosterVisible ? (
         <HullFloatingSurface
-          accessibilityLabel={`${reactionLabel}. Reacted by ${reaction.members.map((member) => member.name).join(', ')}`}
+          accessibilityLabel={`${reactionLabel}. Reacted by ${reactors.map((member) => member.name).join(', ')}`}
           style={styles.popover}
           testID={`reaction-popover-${messageId}-${reaction.emoji}`}
         >
           <Text style={styles.popoverTitle}>Reacted with {reaction.emoji}</Text>
-          <ReactionMembers members={reaction.members} messageId={messageId} />
+          <ReactionMembers members={reactors} messageId={messageId} />
         </HullFloatingSurface>
       ) : null}
 
@@ -142,7 +143,7 @@ export function MessageReactionRoster({
           visible={sheetVisible}
         >
           <ScrollView style={styles.sheetList}>
-            <ReactionMembers members={reaction.members} messageId={messageId} sheet />
+            <ReactionMembers members={reactors} messageId={messageId} sheet />
           </ScrollView>
           <HullActionSheetCancel
             onPress={() => setSheetVisible(false)}

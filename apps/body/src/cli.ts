@@ -70,6 +70,7 @@ import {
   UNKNOWN_AGENT_EXIT_STATUS,
   disableAgentService,
   extendSystemdStartTimeout,
+  reconcileAgentServices,
 } from './systemd.js';
 import {
   ManagedUpdateDrain,
@@ -567,6 +568,11 @@ async function main(): Promise<void> {
     const agentFlag = args.indexOf('--agent');
     let configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
     const agentPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
+    if (agentPubkey && process.platform === 'linux') {
+      await reconcileAgentServices({ env: process.env }).catch((error) => {
+        console.error('[beeline] failed to enumerate orphan agent units:', error);
+      });
+    }
     if (!configPath && agentPubkey) {
       const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
       configPath = configs.find((candidate) => dirname(candidate).endsWith(agentPubkey));

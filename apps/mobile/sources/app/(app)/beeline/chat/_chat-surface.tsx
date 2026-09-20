@@ -414,9 +414,9 @@ const INITIAL_CORNER_MESSAGE_WINDOW = 200;
  */
 const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 /**
- * The Room diamond and overflow sit at glyph size so they read as one
- * trailing cluster; 14 all round restores a 44pt target on a ~16pt glyph
- * without the stacked 12+44 boxes that used to float the diamond away.
+ * The Room diamond and overflow sit at glyph size with one small spacing step
+ * between them; 14 all round restores a 44pt target on a ~16pt glyph without
+ * the stacked 12+44 boxes that used to float the diamond away.
  */
 const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
 
@@ -5809,7 +5809,8 @@ const styles = StyleSheet.create((theme) => {
     cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
     // Corner overflow stays a lone 44pt edge control; the Room diamond and
-    // menu cluster below, colour-separated, and restore 44pt via hit slop.
+    // menu cluster below, separated by one small spacing step, and restore
+    // 44pt via hit slop.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
@@ -5823,7 +5824,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     roomClusteredActionsButton: {
-      marginLeft: groknight.space.xs,
+      marginLeft: groknight.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },

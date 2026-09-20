@@ -22,12 +22,12 @@
  * Every step reports through `onProgress` with a bounded tail of its own
  * output so the phone can stream the setup logs live.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { ConnectorKind, ConnectorStep } from '@beeline/api-contract/daemon';
 import {
   googleWorkspaceClient,
-  credentialsTokenSource,
+  refreshableTokenSource,
   type GoogleCredentials,
 } from './google-workspace-client.js';
 import {
@@ -45,7 +45,10 @@ export const GOOGLE_TOOL_SCOPES: Record<string, readonly string[]> = {
   ],
   'google-calendar': ['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly'],
   'google-drive': ['https://www.googleapis.com/auth/drive.readonly'],
-  'google-youtube': ['https://www.googleapis.com/auth/youtube.readonly'],
+  'google-youtube': [
+    'https://www.googleapis.com/auth/youtube.readonly',
+    'https://www.googleapis.com/auth/yt-analytics.readonly',
+  ],
 };
 
 export function isGoogleToolConnectorType(type: string): type is
@@ -148,6 +151,7 @@ export function loadManualGoogleCredentials(
             accessToken: (parsed.accessToken ?? parsed.access_token) as string,
             refreshToken:
               typeof parsed.refreshToken === 'string' ? parsed.refreshToken : undefined,
+            expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : undefined,
             accountEmail:
               typeof parsed.accountEmail === 'string' ? parsed.accountEmail : undefined,
           },
@@ -164,6 +168,24 @@ export function loadManualGoogleCredentials(
       `(OAuth access token) at ${manualGoogleCredentialsSearchPaths(home)[0]} or connect ` +
       'your Google account in Trusty Squire first.',
   };
+}
+
+/** Persist the resolved grant so later sessions mount YouTube without
+ *  re-spawning Squire. Mode 0600 — the token stays on this helper. */
+export function persistManualGoogleCredentials(home: string, credentials: GoogleCredentials): string {
+  const path = manualGoogleCredentialsSearchPaths(home)[0]!;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path,
+    `${JSON.stringify({
+      accessToken: credentials.accessToken,
+      ...(credentials.refreshToken ? { refreshToken: credentials.refreshToken } : {}),
+      ...(credentials.expiresAt ? { expiresAt: credentials.expiresAt } : {}),
+      ...(credentials.accountEmail ? { accountEmail: credentials.accountEmail } : {}),
+    })}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  );
+  return path;
 }
 
 const step = (label: string, status: ConnectorStep['status'], extra?: Partial<ConnectorStep>): ConnectorStep => ({
@@ -268,7 +290,14 @@ export async function installGoogleTool(
 
   // Authorization: one verified call against the live grant.
   const client =
-    options.client ?? googleWorkspaceClient(credentialsTokenSource(resolved.credentials));
+    options.client ??
+    googleWorkspaceClient(
+      refreshableTokenSource(
+        resolved.credentials,
+        options.env?.BEELINE_GOOGLE_CLIENT_ID,
+        options.env?.BEELINE_GOOGLE_CLIENT_SECRET,
+      ),
+    );
   push(step('authorized with Google', 'running', { output: 'verifying the grant with Google…' }));
   const verify = await client.verify();
   if (!verify.ok) {
@@ -282,6 +311,7 @@ export async function installGoogleTool(
   push(step('tools enabled', 'done', {
     output: `${GOOGLE_TOOL_SCOPES[options.connectorType]!.length} Google scopes granted`,
   }));
+  persistManualGoogleCredentials(options.home, resolved.credentials);
   return {
     status: 'connected',
     steps,

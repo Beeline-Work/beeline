@@ -33,7 +33,7 @@ import {
 } from './attachment-delivery.js';
 import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
-import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import {
   isMountedMcpToolPermissionRequest,
@@ -284,6 +284,8 @@ export interface MonolithRoomTurnOptions {
   /** The daemon's command-grant runner; this Room registers its checkout and current turn. */
   grantRunner?: GrantCommandRunner;
   grantRunnerEndpoint?: GrantRunnerEndpoint;
+  /** Local YouTube MCP — only when this helper already holds the Google grant. */
+  youtubeAccessToken?: string;
 }
 
 /**
@@ -633,6 +635,8 @@ export class MonolithRoomTurnLoop {
           : {}),
       }),
     ];
+    const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
+    if (youtube) servers.push(youtube);
     // pi never mounts what `session/new` hands it, so its whole daemon tool
     // panel is written into its own extensions directory instead
     // (`pi-mcp-bridge.ts`). Every other harness ignores this.

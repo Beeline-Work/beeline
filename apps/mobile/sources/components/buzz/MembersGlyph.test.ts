@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -19,9 +18,20 @@ import { MEMBERS_GLYPH_STROKE_WIDTH, MembersGlyph } from './MembersGlyph';
 import { ROOM_GLYPH_STROKE_WIDTH } from './RoomGlyph';
 import brand from '@/buzz/brand.json';
 
-const source = readFileSync(new URL('./MembersGlyph.tsx', import.meta.url), 'utf8');
-
 const originalConsoleError = console.error;
+
+function polygonVertices(points: string): Array<{ x: number; y: number }> {
+  const nums = points
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number)
+    .filter((n) => !Number.isNaN(n));
+  const vertices: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    vertices.push({ x: nums[i]!, y: nums[i + 1]! });
+  }
+  return vertices;
+}
 
 beforeAll(() => {
   (
@@ -37,7 +47,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('MembersGlyph', () => {
-  it('matches RoomGlyph’s mark contract: 24 viewBox, brand default, stroke-only', () => {
+  it('matches RoomGlyph’s mark contract: 24 viewBox, brand default, stroke-only, heavier chrome stroke', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
       renderer = create(React.createElement(MembersGlyph, { testID: 'members-glyph' }));
@@ -49,7 +59,8 @@ describe('MembersGlyph', () => {
     expect(svg.props.height).toBe(24);
     expect(svg.props.accessibilityElementsHidden).toBe(true);
     expect(svg.props.focusable).toBe(false);
-    expect(MEMBERS_GLYPH_STROKE_WIDTH).toBe(ROOM_GLYPH_STROKE_WIDTH);
+    expect(MEMBERS_GLYPH_STROKE_WIDTH).toBeGreaterThan(ROOM_GLYPH_STROKE_WIDTH);
+    expect(MEMBERS_GLYPH_STROKE_WIDTH).toBe(1.75);
 
     const circle = renderer.root.findByType('Circle' as never);
     const body = renderer.root.findByType('Polygon' as never);
@@ -59,24 +70,45 @@ describe('MembersGlyph', () => {
     expect(body.props.fill).toBe('none');
     expect(body.props.stroke).toBe(brand.mark);
     expect(body.props.strokeWidth).toBe(MEMBERS_GLYPH_STROKE_WIDTH);
-    expect(source).not.toMatch(/fill=\{?['"](?!none)/);
   });
 
-  it('puts the triangle apex on the head, slightly left, so the right edge is the long side', () => {
-    const cx = Number(source.match(/cx="([^"]+)"/)?.[1]);
-    const cy = Number(source.match(/cy="([^"]+)"/)?.[1]);
-    const r = Number(source.match(/\br="([^"]+)"/)?.[1]);
-    const points = source.match(/points="([^"]+)"/)?.[1].split(/\s+/).map(Number) ?? [];
-    const [apexX, apexY, rightX, rightY, leftX, leftY] = points;
+  it('draws a right-isosceles body: equal legs from the apex, 90° at the apex', () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(React.createElement(MembersGlyph, { testID: 'members-glyph' }));
+    });
+    const circle = renderer.root.findByType('Circle' as never);
+    const body = renderer.root.findByType('Polygon' as never);
+    const cx = Number(circle.props.cx);
+    const cy = Number(circle.props.cy);
+    const r = Number(circle.props.r);
+    const vertices = polygonVertices(String(body.props.points));
+    expect(vertices).toHaveLength(3);
+
+    const maxY = Math.max(...vertices.map((vertex) => vertex.y));
+    const base = vertices.filter((vertex) => vertex.y === maxY);
+    const apexes = vertices.filter((vertex) => vertex.y !== maxY);
+    expect(base).toHaveLength(2);
+    expect(apexes).toHaveLength(1);
+    const apex = apexes[0]!;
+    const left = base[0]!.x < base[1]!.x ? base[0]! : base[1]!;
+    const right = base[0]!.x < base[1]!.x ? base[1]! : base[0]!;
+
+    const leftLeg = Math.hypot(apex.x - left.x, apex.y - left.y);
+    const rightLeg = Math.hypot(apex.x - right.x, apex.y - right.y);
+    expect(leftLeg).toBeCloseTo(rightLeg, 5);
+    expect(leftLeg).toBeGreaterThan(0);
+
+    const vLeftX = left.x - apex.x;
+    const vLeftY = left.y - apex.y;
+    const vRightX = right.x - apex.x;
+    const vRightY = right.y - apex.y;
+    expect(vLeftX * vRightX + vLeftY * vRightY).toBeCloseTo(0, 5);
+
     expect(cx).toBeCloseTo(12);
-    expect(apexX).toBeLessThan(cx);
-    const apexDistance = Math.hypot(apexX - cx, apexY - cy);
-    expect(apexDistance).toBeCloseTo(r, 1);
-    const leftLen = Math.hypot(apexX - leftX, apexY - leftY);
-    const rightLen = Math.hypot(apexX - rightX, apexY - rightY);
-    expect(rightLen).toBeGreaterThan(leftLen);
-    expect(rightY).toBe(leftY);
-    expect(rightX).toBeGreaterThan(leftX);
+    const apexDistance = Math.hypot(apex.x - cx, apex.y - cy);
+    expect(apexDistance).toBeCloseTo(r, 5);
+    expect(right.x).toBeGreaterThan(left.x);
   });
 
   it('accepts the 16px chrome size the Room-list and desktop heading actually use', () => {

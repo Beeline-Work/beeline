@@ -155,7 +155,10 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(diamondButton![0]).not.toContain('minWidth: 44');
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
     expect(clustered, 'missing clustered overflow style').toBeTruthy();
-    expect(clustered![0]).toContain('marginLeft: groknight.space.xs');
+    // Keep one visible small spacing step between the diamond and dots. The
+    // tight 4pt token makes the distinct actions read as one crowded glyph.
+    expect(clustered![0]).toContain('marginLeft: groknight.space.sm');
+    expect(clustered![0]).not.toContain('marginLeft: groknight.space.xs');
     expect(clustered![0]).not.toContain('minWidth: 44');
     expect(chatSource).toContain(
       'const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',

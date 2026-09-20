@@ -7,7 +7,8 @@
   "types": "./dist/index.d.ts",
   "bin": {
     "beeline": "./dist/cli.js",
-    "beeline-readonly-mcp": "./dist/read-only-mcp.js"
+    "beeline-readonly-mcp": "./dist/read-only-mcp.js",
+    "beeline-youtube-mcp": "./dist/youtube-mcp.js"
   },
   "exports": {
     ".": {

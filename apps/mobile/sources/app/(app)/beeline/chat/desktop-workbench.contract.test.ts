@@ -47,11 +47,11 @@ describe('desktop workbench wiring', () => {
   });
 
   it('marks a newly announced corner on the handle instead of auto-opening the pane', () => {
-    expect(room).toContain('observedCornerCardsRef');
+    expect(room).toContain('observedCornerCountRef');
     expect(room).toContain('setWorkPaneArrived(true)');
     expect(room).toContain('arrived={workPaneArrived}');
     expect(room).toContain('hasLiveDesktopCorners');
-    expect(room).toContain(".filter((corner) => corner.state !== 'archived')");
+    expect(room).toContain('liveDesktopCornerCount');
     expect(room).not.toContain("commitDesktopWorkPane({ type: 'open-corner', cornerId: opened })");
     expect(room).not.toContain(
       "observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };\n      commitDesktopWorkPane({ type: 'open-overview' });",

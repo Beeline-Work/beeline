@@ -6,6 +6,7 @@ import type {
   CornerStateReason,
 } from '@beeline/api-contract/phone';
 import {
+  cornerDisplayFromRoomView,
   cornerDisplayState,
   cornerHeaderStateLabel,
   cornerDisplayItems,
@@ -73,6 +74,23 @@ describe('server-owned corner display state', () => {
         (entry) => entry.display.status,
       ),
     ).toEqual(['working', 'waiting', 'review', 'archived']);
+  });
+
+  it('derives a corner viewing itself from this Room, not sibling corners', () => {
+    expect(
+      cornerDisplayFromRoomView({
+        room: { archived: false },
+        latestAgentTurns: [{ status: 'working' }],
+        cornerLifecycle: lifecycle({ lifecycle: 'in-review' }),
+      }),
+    ).toMatchObject({ state: 'working' });
+    expect(
+      cornerDisplayFromRoomView({
+        room: { archived: true },
+        latestAgentTurns: [{ status: 'working' }],
+        cornerLifecycle: lifecycle({ lifecycle: 'in-review' }),
+      }),
+    ).toMatchObject({ state: 'archived' });
   });
 
   it('contains no client-side daemon-state resolver', () => {

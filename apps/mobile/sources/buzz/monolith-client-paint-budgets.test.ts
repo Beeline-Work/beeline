@@ -124,7 +124,6 @@ function transcriptView(): RoomView {
       },
     ],
     latestAgentTurns: [],
-    corners: [],
     repositoryResolution: 'none',
     viewer: {
       identity: { pubkey: VIEWER, kind: 'human', name: 'Captain', handle: 'captain' },

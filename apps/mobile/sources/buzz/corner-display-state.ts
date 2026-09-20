@@ -3,6 +3,7 @@ import type {
   CornerState,
   CornerStateReason,
 } from '@beeline/api-contract/phone';
+import { deriveCornerState } from '@beeline/api-contract/phone';
 import { cornerStatusLine } from '@/buzz/corner-status-line';
 import type { CornerVisualState } from '@/buzz/corners';
 
@@ -26,6 +27,23 @@ export type CornerDisplayItem = {
   /** PR/check narration only; never an input to the displayed state. */
   readonly lifecycle: CornerLifecycleView;
 };
+
+/** A corner viewing itself: derive state from this Room, never sibling corners. */
+export function cornerDisplayFromRoomView(view: {
+  readonly room: { readonly archived: boolean };
+  readonly latestAgentTurns: readonly { readonly status: string }[];
+  readonly cornerLifecycle?: CornerLifecycleView;
+}): CornerDisplayItem {
+  const derived = deriveCornerState({
+    archived: view.room.archived,
+    turnRunning: view.latestAgentTurns.some((turn) => turn.status === 'working'),
+    lifecycle: view.cornerLifecycle,
+  });
+  return {
+    ...derived,
+    lifecycle: view.cornerLifecycle ?? { lifecycle: 'unknown', checks: 'unknown' },
+  };
+}
 
 export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState {
   const { state } = item;

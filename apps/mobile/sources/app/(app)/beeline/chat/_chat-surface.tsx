@@ -320,7 +320,6 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
@@ -5362,7 +5361,6 @@ export function BuzzChatSurface({
           chevron="right"
           disabled={!memberManagement.canOpenRoster}
           label="Members"
-          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
           metadata={
             participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
           }
@@ -5555,7 +5553,6 @@ export function BuzzChatSurface({
           chevron="right"
           disabled={!memberManagement.canOpenRoster}
           label="Members"
-          leading={<MembersGlyph testID="room-participant-roster-glyph" />}
           metadata={
             participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
           }

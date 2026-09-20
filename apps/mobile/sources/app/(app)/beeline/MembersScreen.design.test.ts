@@ -43,4 +43,17 @@ describe('Members page layout contract', () => {
     expect(styleBlock(memberRow, 'row')).toContain('paddingHorizontal: hull.space.sm');
     expect(styleBlock(source, 'sectionAdd')).toContain("alignItems: 'flex-end'");
   });
+
+  it('expands agent settings under the tapped row and rotates that row’s chevron', () => {
+    const agentsStart = source.indexOf('testID="members-agents-section"');
+    const agents = source.slice(agentsStart, source.indexOf('</KeyboardAwareScrollView>', agentsStart));
+    expect(agents).toContain('{open ? \'⌄\' : \'›\'}');
+    expect(agents).toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
+    expect(agents).toContain('open &&');
+    expect(source.indexOf('testID="members-agents-section"')).toBeLessThan(
+      source.indexOf('agent-${selectedAgent.agent.identity.pubkey}-model-config'),
+    );
+    const afterAgents = source.slice(source.indexOf('</KeyboardAwareScrollView>'));
+    expect(afterAgents).not.toContain('model-config');
+  });
 });

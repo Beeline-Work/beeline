@@ -79,7 +79,8 @@ describe('Room and corner actions sheets', () => {
     for (const source of [roomSheet, cornerSheet]) {
       const members = row(source, 'room-participant-roster-trigger');
       expect(members).toContain('label="Members"');
-      expect(members).toContain('leading={<MembersGlyph testID="room-participant-roster-glyph" />}');
+      expect(members).not.toContain('leading=');
+      expect(members).not.toContain('MembersGlyph');
       expect(members).toContain('metadata=');
       expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
       expect(members).toContain('disabled={!memberManagement.canOpenRoster}');

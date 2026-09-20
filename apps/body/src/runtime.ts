@@ -405,12 +405,3 @@ export async function launchRuntimeDaemon(
   if (!child.pid) throw new Error('daemon process did not start');
   return child.pid;
 }
-
-export async function removeAgentRuntime(runtime: AgentRuntimeRecord): Promise<string> {
-  const source = runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey);
-  const deletedRoot = resolve(runtime.supervisorRoot, 'beeline', 'deleted-runtimes');
-  await mkdir(deletedRoot, { recursive: true, mode: 0o700 });
-  const target = resolve(deletedRoot, `${runtime.agent.publicKey}-${Date.now()}`);
-  await rename(source, target);
-  return target;
-}

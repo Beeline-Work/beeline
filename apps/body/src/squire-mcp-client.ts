@@ -96,11 +96,11 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
-    const launch = this.options.command ? undefined : squireVaultLaunch(homedir());
+    const launch = squireVaultLaunch(homedir());
     const child = (this.options.spawn ?? spawn)(
-      this.options.command ?? launch!.command,
-      [...(this.options.args ?? launch!.args)],
-      { env: this.options.env ?? { ...squireConnectProcessEnv(), ...launch?.env } },
+      this.options.command ?? launch.command,
+      [...(this.options.args ?? launch.args)],
+      { env: this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env } },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

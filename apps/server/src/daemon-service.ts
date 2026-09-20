@@ -808,7 +808,7 @@ export class DaemonService {
          SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
              squire_version=COALESCE($2,squire_version),
              signed_in_as=COALESCE($3,signed_in_as),
-             sign_in=COALESCE($4::jsonb,sign_in),
+             sign_in=$4::jsonb,
              connected_at=COALESCE(connected_at, now()), updated_at=now()
          WHERE id=$1::uuid`,
         [

@@ -149,13 +149,52 @@ describe('parseConnectOutput', () => {
     ).toBeUndefined();
   });
 
-  it('recognizes Squire\u2019s already-provisioned short-circuit', () => {
+  it('recognizes both of Squire\u2019s config-refreshed short-circuits', () => {
     expect(
       parseConnectAlreadyConnected(
         'Already connected (google + github). Codex config refreshed.\n',
       ),
     ).toBe(true);
+    expect(
+      parseConnectAlreadyConnected(
+        "This machine is bound to your account, but I couldn't verify a live provider session " +
+          'in the bot\u2019s Chrome profile (profile busy), so I won\u2019t call this connected. ' +
+          'Your agent config was refreshed.\n',
+      ),
+    ).toBe(true);
     expect(parseConnectAlreadyConnected('Opening the Trusty Squire install page\n')).toBe(false);
+  });
+
+  // Squire's own printed sign-in frame, byte for byte from boxen at its fixed
+  // 78-column width: the URL is longer than the frame, so boxen hard-broke it.
+  const WRAPPED_BANNER = [
+    '\u250c Sign in to Trusty Squire \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510',
+    '\u2502 Open this on any device, any network:                                      \u2502',
+    '\u2502                                                                            \u2502',
+    '\u2502 https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hu \u2502',
+    '\u2502 nter22                                                                     \u2502',
+    '\u2502                                                                            \u2502',
+    '\u2502 If asked for a VNC password:  hunter22                                     \u2502',
+    '\u2502                                                                            \u2502',
+    '\u2502 Remote login for Trusty Squire                                             \u2502',
+    '\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518',
+    '',
+  ].join('\n');
+
+  it('rejoins a ceremony URL boxen hard-wrapped across two frame rows', () => {
+    expect(parseConnectOutput(WRAPPED_BANNER)).toEqual({
+      method: 'streamed-page',
+      url: 'https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hunter22',
+    });
+  });
+
+  it('leaves an unterminated URL alone until the rest of the chunk arrives', () => {
+    const partial = 'Open this on any device: https://tunnel.test/#p=hunt';
+    expect(parseConnectOutput(partial)).toBeUndefined();
+    expect(parseConnectOutput(`${partial}er22\n`)).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter22',
+    });
   });
 });
 
@@ -280,6 +319,25 @@ describe('installSquire', () => {
     expect(result.status).toBe('connected');
     expect(result.signIn).toBeUndefined();
     expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
+    expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
+  });
+
+  it('does not fail the install when the shared profile was busy to verify', async () => {
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        stderr:
+          "This machine is bound to your account, but I couldn't verify a live provider session " +
+          'in the bot\u2019s Chrome profile (profile busy), so I won\u2019t call this connected. ' +
+          'Your agent config was refreshed.\n' +
+          'Close any other Trusty Squire session and re-run ' +
+          'npx @trusty-squire/mcp connect --force-relogin to verify it.\n',
+      }),
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(result.status).toBe('connected');
+    expect(result.steps.every((step) => step.status === 'done')).toBe(true);
     expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
   });
 
@@ -739,6 +797,16 @@ describe('vault reads through the Squire MCP', () => {
     expect(result).toEqual({ revoked: 1, failed: 1 });
     const revokeCalls = calls.filter((call) => call.tool === 'revoke_app_access');
     expect(revokeCalls.map((call) => call.args?.grant_id).sort()).toEqual(['g1', 'g2']);
+  });
+
+  it('reads Squire\u2019s ISO-8601 vault created_at as epoch seconds', () => {
+    expect(
+      vaultConnectionMeta({ reference: 'cred_1', created_at: '2026-09-18T10:00:00.000Z' }).createdAt,
+    ).toBe(Math.floor(Date.parse('2026-09-18T10:00:00.000Z') / 1000));
+    expect(vaultConnectionMeta({ reference: 'cred_1', created_at: 1_700_000_000 }).createdAt).toBe(
+      1_700_000_000,
+    );
+    expect(vaultConnectionMeta({ reference: 'cred_1', created_at: 'whenever' }).createdAt).toBe(0);
   });
 
   it('builds grant and ledger shapes directly', () => {

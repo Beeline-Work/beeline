@@ -188,6 +188,9 @@ describe('workbench connectors', () => {
 
   it('lists keys in vault created-at order, not by service', async () => {
     const connectorId = await pairOwnerConnector();
+    // The helper reports what `vaultConnectionMeta` produced from Squire's
+    // ISO-8601 `created_at`: epoch seconds, newest first in the vault.
+    const vaultTime = (iso: string) => Math.floor(Date.parse(iso) / 1000);
     await applyVaultList(database, { id: connectorId, owner_identity_id: HUMAN }, [
       {
         reference: 'alpha',
@@ -195,7 +198,7 @@ describe('workbench connectors', () => {
         label: 'default',
         fieldNames: ['token'],
         allowedHosts: [],
-        createdAt: 10,
+        createdAt: vaultTime('2026-09-14T09:00:00.000Z'),
         stale: false,
         state: 'active',
       },
@@ -205,7 +208,7 @@ describe('workbench connectors', () => {
         label: 'default',
         fieldNames: ['token'],
         allowedHosts: [],
-        createdAt: 40,
+        createdAt: vaultTime('2026-09-17T09:00:00.000Z'),
         stale: false,
         state: 'active',
       },
@@ -215,7 +218,7 @@ describe('workbench connectors', () => {
         label: 'default',
         fieldNames: ['token'],
         allowedHosts: [],
-        createdAt: 20,
+        createdAt: vaultTime('2026-09-15T09:00:00.000Z'),
         stale: false,
         state: 'active',
       },
@@ -225,7 +228,7 @@ describe('workbench connectors', () => {
         label: 'default',
         fieldNames: ['token'],
         allowedHosts: [],
-        createdAt: 30,
+        createdAt: vaultTime('2026-09-16T09:00:00.000Z'),
         stale: false,
         state: 'active',
       },
@@ -657,6 +660,41 @@ describe('workbench connectors', () => {
     expect(again.connectorId).toBe(paired.connectorId);
     expect(again.status.status).toBe('installing');
     expect(again.status.steps.length).toBeGreaterThan(0);
+  });
+
+  it('drops the previous attempt\u2019s sign-in surface when connect needed no ceremony', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await daemonOperation('installConnector', {
+      connectorId: paired.connectorId,
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
+    });
+    const withCeremony = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connectors: { connectorId: string; status: { signIn?: { url: string } } }[];
+    };
+    expect(
+      withCeremony.connectors.find((row) => row.connectorId === paired.connectorId)?.status.signIn
+        ?.url,
+    ).toBe('https://tunnel.test/#p=hunter22');
+
+    // That tunnel died with the connect process. The shared profile already
+    // carries the session, so the next install prints no ceremony at all —
+    // the phone must not keep offering the dead page.
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    });
+    await daemonOperation('installConnector', { connectorId: paired.connectorId });
+    const after = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connectors: { connectorId: string; status: { status: string; signIn?: { url: string } } }[];
+    };
+    const row = after.connectors.find((entry) => entry.connectorId === paired.connectorId);
+    expect(row?.status.status).toBe('connected');
+    expect(row?.status.signIn).toBeUndefined();
   });
 
   it('pairing ONE Google tool provisions all four tool connectors on the machine', async () => {

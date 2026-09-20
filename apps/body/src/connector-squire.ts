@@ -466,13 +466,47 @@ function isConnectCeremonyUrl(url: string): boolean {
   }
 }
 
+const ANSI_SEQUENCE = /\u001B\[[0-9;]*[A-Za-z]|\u001B\]8;;[^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
+const BOXED_ROW = /^\s*\u2502(.*)\u2502\s*$/;
+
+/**
+ * Squire prints the ceremony URL inside a fixed-width boxen frame, and boxen
+ * HARD-WRAPS a token wider than the frame — a long quick-tunnel host splits
+ * the URL across two rows. Rejoin a frame's rows before reading a URL out of
+ * it, or the phone is handed the first 74 characters of a live link.
+ */
+export function unframeBoxedOutput(output: string): string {
+  const lines: string[] = [];
+  let carry: string | undefined;
+  const flush = () => {
+    if (carry !== undefined) lines.push(carry);
+    carry = undefined;
+  };
+  for (const row of output.replace(ANSI_SEQUENCE, '').split('\n')) {
+    const framed = BOXED_ROW.exec(row);
+    if (!framed) {
+      flush();
+      lines.push(row);
+      continue;
+    }
+    const cell = (framed[1] ?? '').replace(/^ /, '').replace(/ $/, '');
+    const text = cell.replace(/\s+$/, '');
+    carry = (carry ?? '') + text;
+    if (text.length < cell.length) flush();
+  }
+  flush();
+  return lines.join('\n');
+}
+
 /**
  * Read the sign-in surface out of Squire's own connect output. Squire may
  * print its bare marketing origin before the real ceremony URL; that origin
- * is not a sign-in page.
+ * is not a sign-in page. A URL is taken only once a terminator proves it is
+ * whole — the streamed runner reads partial chunks, and half a tunnel host
+ * parses as a perfectly valid URL.
  */
 export function parseConnectOutput(output: string): ConnectorSignIn | undefined {
-  const urls = output.match(/https:\/\/[^\s"'<>]+/g) ?? [];
+  const urls = unframeBoxedOutput(output).match(/https:\/\/[^\s"'<>]+(?=[\s"'<>])/g) ?? [];
   const url = urls.find(isConnectCeremonyUrl);
   if (!url) return undefined;
   if (/oauth|authorize/i.test(url) || /oauth/i.test(output)) {
@@ -485,13 +519,16 @@ export function parseConnectOutput(output: string): ConnectorSignIn | undefined 
 }
 
 /**
- * True when connect short-circuited on Squire's already-provisioned preflight:
- * the shared profile already carries the session, so it refreshed the agent
- * config and exited without a ceremony. That is a connected helper, not a
- * failed install.
+ * True when connect short-circuited on Squire's preflight: the shared profile
+ * already carries the session, so it refreshed the agent config and exited
+ * with no ceremony. Squire says so whether it could verify the live provider
+ * session (`Already connected … config refreshed`) or not (`… Your agent
+ * config was refreshed`) — a profile busy with another agent's browser is the
+ * steady state of one shared broker, not a failed install, and the owner must
+ * never be told to clear cookies over it.
  */
 export function parseConnectAlreadyConnected(output: string): boolean {
-  return /Already connected \(/i.test(output) && /config refreshed/i.test(output);
+  return /config (?:was )?refreshed/i.test(output);
 }
 
 export type InstallSquireOptions = {
@@ -767,6 +804,19 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Squire reports vault timestamps as ISO-8601 strings; older shapes sent epoch
+ * seconds. An unreadable one stays 0, which the Workbench KEYS ordering reads
+ * as "no vault time" and answers with the row's own insert time.
+ */
+function epochSeconds(value: unknown): number | null {
+  const numeric = numberOrNull(value);
+  if (numeric !== null) return numeric;
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+}
+
 /** Map one Squire vault entry to the contract metadata (never secret values). */
 export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
   const record = asRecord(raw);
@@ -777,7 +827,7 @@ export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
     label: String(record.label ?? record.service ?? reference),
     fieldNames: stringList(record.field_names ?? record.fieldNames),
     allowedHosts: stringList(record.allowed_hosts ?? record.allowedHosts ?? record.login_hosts),
-    createdAt: numberOrNull(record.created_at ?? record.createdAt) ?? 0,
+    createdAt: epochSeconds(record.created_at ?? record.createdAt) ?? 0,
     stale: record.stale === true,
     state: record.state === 'error' ? 'error' : 'active',
   };

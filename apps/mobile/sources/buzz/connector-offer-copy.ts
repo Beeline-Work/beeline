@@ -37,6 +37,17 @@ export function connectorOfferOutcomeLine(
   return `added by ${who}${stamp}`;
 }
 
+/** `connecting for @zeke` — the accepted offer whose sign-in is not complete yet. */
+export function connectorOfferConnectingLine(
+  offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy'>,
+): string | null {
+  if (offer.status !== 'connecting') return null;
+  const who = offer.acceptedBy?.handle
+    ? `@${offer.acceptedBy.handle.replace(/^@/, '')}`
+    : (offer.acceptedBy?.name ?? 'someone');
+  return `connecting for ${who}`;
+}
+
 /** `waiting for @zeke` — what a reader who cannot act sees under an open offer. */
 export function connectorOfferWaitingLine(
   offer: Pick<ConnectorOfferCardView, 'addressee'>,

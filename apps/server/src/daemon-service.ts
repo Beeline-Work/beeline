@@ -98,6 +98,7 @@ import {
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
 import { agentWalletTool } from './wallet.js';
 import { noteFirstSilence, TURN_FAILURE_REASON_MAX, turnSilenceLockKey } from './turn-silence-notice.js';
+import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -793,29 +794,44 @@ export class DaemonService {
     input: Input<'installConnector'>,
     agentId: string,
   ): Promise<Output<'installConnector'>> {
-    const row = (
-      await this.database.query<{ id: string }>(
-        `SELECT id FROM workspace_connectors WHERE id=$1::uuid AND helper_agent_id=$2`,
-        [input.connectorId, agentId],
-      )
-    ).rows[0];
-    if (!row) throw new Error('connector not found for this helper');
-    await this.database.query(
-      `UPDATE workspace_connectors
-       SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
-           squire_version=COALESCE($2,squire_version),
-           signed_in_as=COALESCE($3,signed_in_as),
-           sign_in=COALESCE($4::jsonb,sign_in),
-           connected_at=COALESCE(connected_at, now()), updated_at=now()
-       WHERE id=$1::uuid`,
-      [
-        row.id,
-        input.squireVersion ?? null,
-        input.signedInAs ?? null,
-        input.signIn ? JSON.stringify(input.signIn) : null,
-      ],
-    );
-    return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };
+    const result = await this.database.transaction(async (database) => {
+      const row = (
+        await database.query<{ id: string }>(
+          `SELECT id FROM workspace_connectors
+            WHERE id=$1::uuid AND helper_agent_id=$2 FOR UPDATE`,
+          [input.connectorId, agentId],
+        )
+      ).rows[0];
+      if (!row) throw new Error('connector not found for this helper');
+      await database.query(
+        `UPDATE workspace_connectors
+         SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
+             squire_version=COALESCE($2,squire_version),
+             signed_in_as=COALESCE($3,signed_in_as),
+             sign_in=COALESCE($4::jsonb,sign_in),
+             connected_at=COALESCE(connected_at, now()), updated_at=now()
+         WHERE id=$1::uuid`,
+        [
+          row.id,
+          input.squireVersion ?? null,
+          input.signedInAs ?? null,
+          input.signIn ? JSON.stringify(input.signIn) : null,
+        ],
+      );
+      return {
+        row,
+        completedOffers: await completeConnectorOffersForConnector(database, row.id),
+      };
+    });
+    for (const offer of result.completedOffers) {
+      this.live.publish({
+        type: 'invalidate',
+        roomId: offer.roomId,
+        reason: 'connector-offer',
+        agentId: offer.agentId,
+      });
+    }
+    return { id: result.row.id, createdAt: Math.floor(Date.now() / 1000) };
   }
 
   /**

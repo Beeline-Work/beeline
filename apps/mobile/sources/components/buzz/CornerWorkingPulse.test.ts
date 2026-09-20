@@ -86,22 +86,27 @@ describe('the corner working pulse', () => {
     // The Room's pinned corner line is retired; the Room-list row is what
     // still breathes, and only for a corner that is genuinely working.
     const label = React.createElement('Text', null, 'WORKING');
-    expect(pulses(render(
-      React.createElement(CornerWorkingPulse, { state: 'working' }, label),
-    ))).toHaveLength(1);
+    expect(
+      pulses(render(React.createElement(CornerWorkingPulse, { state: 'working' }, label))),
+    ).toHaveLength(1);
     for (const state of ['waiting', 'review', 'archived'] as const) {
-      expect(pulses(render(
-        React.createElement(CornerWorkingPulse, { state }, label),
-      ))).toHaveLength(0);
+      expect(
+        pulses(render(React.createElement(CornerWorkingPulse, { state }, label))),
+      ).toHaveLength(0);
     }
   });
 
   it('settles the working breath under reduced motion', () => {
     motion.reducedMotion = true;
-    const pulse = pulses(render(
-      React.createElement(CornerWorkingPulse, { state: 'working' },
-        React.createElement('Text', null, 'WORKING')),
-    ))[0];
+    const pulse = pulses(
+      render(
+        React.createElement(
+          CornerWorkingPulse,
+          { state: 'working' },
+          React.createElement('Text', null, 'WORKING'),
+        ),
+      ),
+    )[0];
     expect(pulse?.props.style.flat().at(-1)).toEqual({ opacity: 1 });
   });
 });

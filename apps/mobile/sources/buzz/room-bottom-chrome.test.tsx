@@ -79,8 +79,9 @@ import { roomBottomChromeStyles } from './room-bottom-chrome';
  * the hanging turn line and the composer, so their edges meet at one y and
  * the transcript reserves the line's height and not a pixel more.
  */
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const layout = roomBottomChromeStyles(beelineThemes.obsidian);
 

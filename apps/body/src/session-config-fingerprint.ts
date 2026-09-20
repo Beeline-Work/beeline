@@ -14,6 +14,14 @@
  * exactly the bug it exists to prevent, and one that included session-local
  * state (a C92 provider re-pin, say) would throw away a good session for a
  * fact the session itself chose.
+ *
+ * The mounted MCP set is part of that configuration. It is the pattern for
+ * every imported server the operator currently has (Codex, Claude, Grok,
+ * Goose, Cursor, a TypeScript MCP, Linear, filesystem, …), not a Squire-only
+ * or TypeScript-only special case. A granted or revoked host route, or an
+ * add/remove of any imported server, must change this set so a warm session
+ * restarts with the route the next turn actually mounts. Names only: never
+ * copy server state (cookies, `session.json`, profile bytes) into a sandbox.
  */
 export interface SessionConfigInput {
   /** The model this activation would select, after the Room's own override. */
@@ -26,19 +34,29 @@ export interface SessionConfigInput {
   agentName?: string | undefined;
   /** Merge authority baked into a corner session's Git workflow prompt. */
   yoloMode?: boolean | undefined;
+  /**
+   * Names of imported MCP servers this activation would mount. Order does not
+   * matter; the fingerprint stores the sorted unique set.
+   */
+  mcpServers?: readonly string[] | undefined;
   /** Reviewer identity baked into a corner session's Git workflow prompt. */
   reviewerHandle?: string | undefined;
 }
 
 export function sessionConfigFingerprint(input: SessionConfigInput): string {
-  const fingerprint = [
+  const fingerprint: unknown[] = [
     input.model ?? '',
     input.effort ?? '',
     input.soul?.name ?? '',
     input.soul?.instructions ?? '',
     input.agentName ?? '',
     input.yoloMode ?? false,
+    mountedMcpSet(input.mcpServers),
   ];
   if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);
   return JSON.stringify(fingerprint);
+}
+
+function mountedMcpSet(servers: readonly string[] | undefined): string[] {
+  return [...new Set(servers ?? [])].sort((left, right) => left.localeCompare(right));
 }

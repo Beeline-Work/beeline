@@ -604,6 +604,150 @@ function filteredHarnessMcpToml(source: string): string | undefined {
 }
 
 /**
+ * Names of imported MCP servers the next activation would mount.
+ *
+ * This is the set for every imported server the operator currently has — Codex,
+ * Claude, Grok, Goose, a TypeScript MCP, Linear, filesystem, and whatever else
+ * lives in those harness configs — not a Squire-only inventory. Ordinary
+ * declarations come from the operator home the import step copies. A granted
+ * host route is the declaration T2 writes into the agent home (today,
+ * Squire-shaped; the classifier in T1 generalizes that); revocation deletes
+ * it. Session fingerprinting reads this set so either change restarts a warm
+ * session. Names only: never copy Squire cookies, `session.json`, or profile
+ * bytes into a sandbox.
+ */
+export function mountedImportedMcpServerNames(input: {
+  operatorHome?: string;
+  agentHomeRoot?: string;
+} = {}): string[] {
+  const names = new Set<string>();
+  collectImportedMcpNames(input.operatorHome ?? homedir(), names);
+  if (input.agentHomeRoot) collectGrantedHostRouteNames(input.agentHomeRoot, names);
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function collectImportedMcpNames(operatorHome: string, names: Set<string>): void {
+  addTomlMcpNames(names, resolve(operatorHome, '.codex/config.toml'), 'imported');
+  addTomlMcpNames(names, resolve(operatorHome, '.grok/config.toml'), 'imported');
+  addClaudeMcpNames(names, resolve(operatorHome, '.claude.json'), 'imported');
+  addGooseExtensionNames(names, resolve(operatorHome, '.config/goose/config.yaml'), 'imported');
+}
+
+function collectGrantedHostRouteNames(agentHomeRoot: string, names: Set<string>): void {
+  addTomlMcpNames(names, resolve(agentHomeRoot, 'codex/config.toml'), 'host-route');
+  addTomlMcpNames(names, resolve(agentHomeRoot, 'grok/config.toml'), 'host-route');
+  addClaudeMcpNames(names, resolve(agentHomeRoot, 'claude/.claude.json'), 'host-route');
+  addGooseExtensionNames(names, resolve(agentHomeRoot, 'goose/config/config.yaml'), 'host-route');
+}
+
+function addTomlMcpNames(
+  names: Set<string>,
+  path: string,
+  mode: 'imported' | 'host-route',
+): void {
+  const source = readExistingText(path);
+  if (source === undefined) return;
+  for (const name of tomlChildTableNames(source, ['mcp_servers'])) {
+    const section = extractTomlSections(source, ['mcp_servers', name]);
+    const hostRoute = name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
+    if (mode === 'host-route' ? hostRoute : !hostRoute) names.add(name);
+  }
+}
+
+function addClaudeMcpNames(
+  names: Set<string>,
+  path: string,
+  mode: 'imported' | 'host-route',
+): void {
+  const parsed = readJsonObject(path);
+  const servers = parsed?.mcpServers;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return;
+  for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
+    const hostRoute = isClaudeHostRoute(name, value);
+    if (mode === 'host-route' ? hostRoute : !hostRoute) names.add(name);
+  }
+}
+
+function isClaudeHostRoute(name: string, value: unknown): boolean {
+  if (name === 'squire') return true;
+  const server = value as Record<string, unknown> | null;
+  if (!server || typeof server.command !== 'string') return false;
+  const args =
+    Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
+      ? (server.args as string[])
+      : [];
+  return isTrustySquireMcpLaunch(server.command, args);
+}
+
+function addGooseExtensionNames(
+  names: Set<string>,
+  path: string,
+  mode: 'imported' | 'host-route',
+): void {
+  const source = readExistingText(path);
+  if (source === undefined) return;
+  for (const extension of gooseExtensionBodies(source)) {
+    const hostRoute =
+      extension.name === 'squire' || isTrustySquireMcpLaunch(extension.body);
+    if (mode === 'host-route' ? hostRoute : !hostRoute) names.add(extension.name);
+  }
+}
+
+function gooseExtensionBodies(source: string): Array<{ name: string; body: string }> {
+  const entries: Array<{ name: string; body: string }> = [];
+  let inExtensions = false;
+  let current: { name: string; body: string[] } | undefined;
+  const finish = () => {
+    if (!current) return;
+    entries.push({ name: current.name, body: current.body.join('\n') });
+    current = undefined;
+  };
+  for (const line of source.split(/\r?\n/)) {
+    if (/^extensions:\s*(#.*)?$/.test(line)) {
+      finish();
+      inExtensions = true;
+      continue;
+    }
+    if (inExtensions && /^[^\s#]/.test(line)) {
+      finish();
+      inExtensions = false;
+    }
+    if (!inExtensions) continue;
+    const header = /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line);
+    if (header) {
+      finish();
+      current = { name: header[1]!, body: [] };
+      continue;
+    }
+    current?.body.push(line);
+  }
+  finish();
+  return entries;
+}
+
+function readExistingText(path: string): string | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function readJsonObject(path: string): Record<string, unknown> | undefined {
+  const source = readExistingText(path);
+  if (source === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(source) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Atomically rebuild `target` with the exact release-owned defaults plus the
  * already-validated per-agent shares. No pre-existing destination entry is
  * followed or retained.

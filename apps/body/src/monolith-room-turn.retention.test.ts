@@ -1,5 +1,5 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -37,6 +37,9 @@ type AgentConfiguration = {
 async function twoTurns(
   configurations: readonly [AgentConfiguration, AgentConfiguration],
   systemPrompts: string[] = [],
+  hooks?: {
+    betweenTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
+  },
 ): Promise<{ activations: number; traces: TurnTraceRecord[]; sessionPrompts: string[] }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-retention-'));
   roots.push(root);
@@ -68,6 +71,10 @@ async function twoTurns(
     operatorHome: join(root, 'operator-home'),
     turnTraceDir: traceDir,
   } as BodyConfig;
+  const paths = {
+    operatorHome: join(root, 'operator-home'),
+    agentHomeRoot: join(root, 'agent-home'),
+  };
 
   const asks = [
     { id: 'ask-1', body: 'first' },
@@ -95,6 +102,9 @@ async function twoTurns(
         return { items: [], cursor: 'latest' };
       }
       if (delivered < asks.length && settled() === delivered) {
+        if (delivered === 1 && hooks?.betweenTurns) {
+          await hooks.betweenTurns(paths);
+        }
         const ask = asks[delivered]!;
         delivered += 1;
         return {
@@ -200,5 +210,38 @@ describe('retained Room session', () => {
       expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
       if (changed.soul) expect(prompts[1]).toContain('Answer as an otter.');
     }
+  });
+
+  it('discards the retained session when any imported MCP server is added', async () => {
+    const { activations, traces } = await twoTurns([unchanged, unchanged], [], {
+      betweenTurns: async ({ operatorHome }) => {
+        await mkdir(join(operatorHome, '.codex'), { recursive: true });
+        await writeFile(
+          join(operatorHome, '.codex/config.toml'),
+          '[mcp_servers.files]\ncommand = "files-mcp"\n',
+        );
+      },
+    });
+
+    expect(activations).toBe(2);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
+  });
+
+  it('discards the retained session when a host route is granted into the agent home', async () => {
+    const { activations, traces } = await twoTurns([unchanged, unchanged], [], {
+      betweenTurns: async ({ agentHomeRoot }) => {
+        await mkdir(join(agentHomeRoot, 'codex'), { recursive: true });
+        await writeFile(
+          join(agentHomeRoot, 'codex/config.toml'),
+          [
+            '[mcp_servers.squire]',
+            'command = "npx"',
+            'args = ["-y", "@trusty-squire/mcp"]',
+          ].join('\n'),
+        );
+      },
+    });
+    expect(activations).toBe(2);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
   });
 });

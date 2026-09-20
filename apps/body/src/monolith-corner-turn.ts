@@ -13,7 +13,11 @@ import {
   type PromptResult,
   type ToolCallEntry,
 } from './acp.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  mountedImportedMcpServerNames,
+  prepareRoomAgentHome,
+} from './agent-home.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import {
   attachmentImageBlocks,
@@ -549,7 +553,8 @@ export class MonolithCornerTurnLoop {
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
-   *  session whose persona or model pin the operator has since changed. */
+   *  session whose persona, model pin, or mounted MCP set the operator has
+   *  since changed. */
   private async sessionIsCurrent(): Promise<boolean> {
     return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
   }
@@ -569,7 +574,16 @@ export class MonolithCornerTurnLoop {
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(),
       reviewerHandle: configuration.reviewerHandle,
+    });
+  }
+
+  /** Every imported MCP server this corner would mount, including a granted host route. */
+  private mountedMcpServers(): string[] {
+    return mountedImportedMcpServerNames({
+      operatorHome: this.options.config.operatorHome,
+      agentHomeRoot: this.options.config.agentHomeRoot,
     });
   }
 
@@ -590,6 +604,7 @@ export class MonolithCornerTurnLoop {
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
+      mcpServers: this.mountedMcpServers(),
       reviewerHandle: configuration.reviewerHandle,
     });
     this.yoloMode = configuration.yoloMode;

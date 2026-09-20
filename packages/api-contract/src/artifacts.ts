@@ -31,6 +31,34 @@ export const ARTIFACT_MIME_TYPES = [
 
 export type ArtifactMimeType = (typeof ARTIFACT_MIME_TYPES)[number];
 
+/**
+ * Extensions for which `post_artifact({ path })` can infer a specific MIME.
+ * An extension not listed here is still accepted, but is uploaded as
+ * `application/octet-stream`. MIME remains authoritative when supplied.
+ */
+export const ARTIFACT_EXTENSIONS_BY_MIME = {
+  'text/html': ['.html', '.htm'],
+  'image/svg+xml': ['.svg'],
+  'application/pdf': ['.pdf'],
+  'text/markdown': ['.md'],
+  'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/gif': ['.gif'],
+  'image/webp': ['.webp'],
+  'text/plain': ['.txt', '.log'],
+  'application/json': ['.json'],
+  'text/csv': ['.csv'],
+  'application/zip': ['.zip'],
+  'application/octet-stream': [],
+} as const satisfies Record<ArtifactMimeType, readonly string[]>;
+
+export const ARTIFACT_MIME_BY_EXTENSION: Readonly<Record<string, ArtifactMimeType>> =
+  Object.fromEntries(
+    Object.entries(ARTIFACT_EXTENSIONS_BY_MIME).flatMap(([mime, extensions]) =>
+      extensions.map((extension) => [extension, mime as ArtifactMimeType]),
+    ),
+  );
+
 /** Artifacts upload through the server; this is also the `write_scratch_file`
  *  ceiling, so anything the helper can write it can post. */
 export const ARTIFACT_MAXIMUM_BYTES = 25 * 1024 * 1024;

@@ -992,7 +992,7 @@ CREATE TABLE IF NOT EXISTS agent_grants (
   id uuid PRIMARY KEY,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  kind text NOT NULL CHECK (kind IN ('path','host','secret','device','budget','command')),
+  kind text NOT NULL CHECK (kind IN ('path','host','secret','device','budget','command','mcp')),
   target text NOT NULL,
   reason text NOT NULL,
   requested_by text NOT NULL REFERENCES identities(id),
@@ -1006,6 +1006,9 @@ CREATE TABLE IF NOT EXISTS agent_grants (
 );
 -- C94: an interpreter command grant is bound to the script the card showed.
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS script jsonb;
+ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
+ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
+  CHECK (kind IN ('path','host','secret','device','budget','command','mcp'));
 CREATE INDEX IF NOT EXISTS agent_grants_agent_idx ON agent_grants(agent_id, workspace_id, status);
 CREATE INDEX IF NOT EXISTS agent_grants_room_idx ON agent_grants(room_id, created_at DESC);
 

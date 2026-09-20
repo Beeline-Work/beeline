@@ -4,6 +4,7 @@ import {
   ARTIFACT_CSP,
   ARTIFACT_DEFAULT_CANVAS,
   ARTIFACT_MAX_PREVIEW_HEIGHT,
+  artifactCapabilities,
   artifactFormat,
   createInitialLoadGuard,
   injectCspMeta,
@@ -11,7 +12,89 @@ import {
   wrapArtifactMarkup,
 } from './artifact';
 
+const acceptedMimeMatrix = [
+  ['text/html', 'html', 'inline', 'inline', 'inline', 'inline', 'inline', 'inline'],
+  ['image/svg+xml', 'svg', 'inline', 'inline', 'inline', 'inline', 'inline', 'inline'],
+  ['application/pdf', 'pdf', 'inline', 'inline', 'external', 'external', 'external', 'external'],
+  ['text/markdown', 'markdown', 'inline', 'inline', 'inline', 'inline', 'inline', 'inline'],
+  ['image/png', 'image', 'external', 'inline', 'external', 'inline', 'external', 'external'],
+  ['image/jpeg', 'image', 'external', 'inline', 'external', 'inline', 'external', 'external'],
+  ['image/gif', 'image', 'external', 'inline', 'external', 'inline', 'external', 'external'],
+  ['image/webp', 'image', 'external', 'inline', 'external', 'inline', 'external', 'external'],
+  [
+    'text/plain',
+    'document',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+  ],
+  [
+    'application/json',
+    'document',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+  ],
+  ['text/csv', 'document', 'external', 'external', 'external', 'external', 'external', 'external'],
+  [
+    'application/zip',
+    'document',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+  ],
+  [
+    'application/octet-stream',
+    'document',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+    'external',
+  ],
+] as const;
+
 describe('artifact format selection (one artifact kind keyed by mime)', () => {
+  it.each(acceptedMimeMatrix)(
+    'inventories preview and viewer support for %s',
+    (
+      mime,
+      format,
+      iosPreview,
+      iosViewer,
+      androidPreview,
+      androidViewer,
+      desktopPreview,
+      desktopViewer,
+    ) => {
+      expect(artifactCapabilities(mime, 'ios')).toEqual({
+        format,
+        preview: iosPreview,
+        viewer: iosViewer,
+      });
+      expect(artifactCapabilities(mime, 'android')).toEqual({
+        format,
+        preview: androidPreview,
+        viewer: androidViewer,
+      });
+      expect(artifactCapabilities(mime, 'desktop')).toEqual({
+        format,
+        preview: desktopPreview,
+        viewer: desktopViewer,
+      });
+    },
+  );
+
   it('selects the per-format branch from the mime type alone', () => {
     expect(artifactFormat('text/html')).toBe('html');
     expect(artifactFormat('image/svg+xml')).toBe('svg');
@@ -62,12 +145,15 @@ describe('CSP meta injection', () => {
 
   it('gives a headless document a head carrying the policy', () => {
     const wrapped = injectCspMeta('<p>no head</p>');
-    expect(wrapped).toContain(`<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`);
+    expect(wrapped).toContain(
+      `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`,
+    );
     expect(wrapped.endsWith('<p>no head</p>')).toBe(true);
   });
 
   it('injects into a document with an existing CSP meta ahead of it', () => {
-    const html = '<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head></html>';
+    const html =
+      '<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head></html>';
     const wrapped = injectCspMeta(html);
     expect(wrapped.indexOf(ARTIFACT_CSP)).toBeLessThan(wrapped.indexOf('default-src *'));
   });

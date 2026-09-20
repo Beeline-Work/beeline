@@ -43,6 +43,7 @@ import {
   CORNER_OBJECTIVE_MAX_WORDS,
   cornerTextRefusal,
   normalizeCornerText,
+  ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
@@ -627,7 +628,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command with one target and the reason. Under yolo it is approved at once; otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.',
+      'Raise your hand for reach outside the sandbox: kind path|host|secret|device|budget|command|mcp with one target and the reason. Under yolo a path, host, secret, device or command is approved at once, but budget and mcp never are — those always wait for a person. Otherwise a card goes to your owner and your turn pauses on it: tell the human what you are waiting for and end the turn, you are woken when they answer. A command target is the exact line you want to run, no shell metacharacters; name secrets with a `--with SECRET_NAME` suffix. An mcp target is one MCP server the operator already runs on this host, spelled exactly as it is named in their harness config — an approved route is written into your isolated home and mounts on your NEXT session, so the tool is not there in the turn that asked for it. Yolo is the scope gate: with it on, an approved command just runs. Exactly two shapes always wait for a person anyway, in a Room and in a corner alike: running a script nobody has read (the card carries the script in full and the approval is bound to those exact bytes — rewrite the file and the run is refused), and anything naming a credential or environment file.',
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -638,7 +639,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
           minLength: 1,
           maxLength: AGENT_GRANT_TARGET_MAX_LENGTH,
           description:
-            'What you need: a path, a host, a secret name, a device, a budget, or the exact command line (with optional `--with SECRET_NAME` suffixes).',
+            'What you need: a path, a host, a secret name, a device, a budget, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config.',
         },
         reason: {
           type: 'string',
@@ -829,27 +830,6 @@ const TOOLS = youtubeSurface
     );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
-/** The extension→mime map for posting files by path. Formats the artifact
- *  validator knows get their own entry; anything else posts as
- *  application/octet-stream, which is size-checked only. */
-const ATTACH_MIME_BY_EXTENSION: Record<string, string> = {
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
-  '.txt': 'text/plain',
-  '.md': 'text/markdown',
-  '.json': 'application/json',
-  '.csv': 'text/csv',
-  '.log': 'text/plain',
-  '.zip': 'application/zip',
-};
-
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
 // permission check's canonical list) — assert they match so the two can't
 // silently drift apart the way they did before this check existed.
@@ -1892,7 +1872,7 @@ export async function postArtifact(
     const extension = fileName.includes('.')
       ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
       : '';
-    mime = ATTACH_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+    mime = ARTIFACT_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
   }
   if (!isArtifactMime(mime)) {
     throw new Error(`mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);

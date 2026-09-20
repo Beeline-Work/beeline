@@ -13,6 +13,17 @@ export class MonolithPhoneOperationError extends Error {
   }
 }
 
+/**
+ * The sentence to show a person when an operation was refused. The server's
+ * own reason rides in `code` (`server.ts` answers `{error: <message>}`), and
+ * that reason is the whole point of a refusal: a control that refuses without
+ * saying why reads as a control that does nothing.
+ */
+export function phoneOperationFailureReason(error: unknown): string {
+  if (error instanceof MonolithPhoneOperationError) return error.code;
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name,
   input: PhoneOperationMap[Name]['input'],

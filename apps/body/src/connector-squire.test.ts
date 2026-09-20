@@ -590,7 +590,12 @@ describe('on-disk profile claim reclaim', () => {
     });
     expect(result.status).toBe('connected');
     expect(env?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
+    expect(env?.XDG_CONFIG_HOME).toMatch(/\.config$/);
+    expect(env?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);
     expect(squireConnectProcessEnv(dir.profileDir).TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
+    expect(squireConnectProcessEnv(dir.profileDir).TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(
+      /broker\.sock$/,
+    );
     dir.cleanup();
   });
 });

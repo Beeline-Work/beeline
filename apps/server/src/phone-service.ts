@@ -56,6 +56,7 @@ import {
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
+  MCP_GRANT_CREATOR_ONLY_MESSAGE,
   type AgentGrantDecision,
   type AgentGrantStatus,
 } from '@beeline/api-contract/agent-grants';
@@ -4590,6 +4591,9 @@ export class PhoneService {
     if (!decision) throw new Error('grant decision is invalid');
     const grant = await this.requireGrantAuthority(input.grantId, viewerId);
     if (grant.status !== 'pending') throw new Error('grant decision conflict: already decided');
+    if (grant.kind === 'mcp' && decision !== 'deny') {
+      await this.assertMcpGrantAcceptable(grant.agent_id, grant.workspace_id, viewerId);
+    }
     const status: AgentGrantStatus =
       decision === 'always' ? 'approved' : decision === 'once' ? 'once' : 'denied';
     const decider = await this.requireIdentity(viewerId);
@@ -4728,6 +4732,10 @@ export class PhoneService {
       )
     ).rows[0];
     if (!grant) throw new Error('grant not found');
+    if (grant.kind === 'mcp') {
+      if (grant.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
+      return grant;
+    }
     if (grant.owner_id !== viewerId) {
       const manager = await this.database.query(
         `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
@@ -4736,6 +4744,61 @@ export class PhoneService {
       if (!manager.rowCount) throw new Error(YOLO_AUTHORITY_MESSAGE);
     }
     return grant;
+  }
+  /**
+   * Host MCP routes are creator-scoped. Accepting on an everyone agent
+   * re-scopes it to the owner; any other policy is refused with the reason.
+   */
+  private async assertMcpGrantAcceptable(agentId: string, workspaceId: string, viewerId: string) {
+    const row = (
+      await this.database.query<{
+        access_policy: unknown;
+        owner_id: string;
+        agent_name: string;
+        owner_handle: string | null;
+        viewer_handle: string | null;
+      }>(
+        `SELECT a.access_policy,a.owner_id,agent.name agent_name,owner.handle owner_handle,
+                viewer.handle viewer_handle
+         FROM agents a
+         JOIN identities agent ON agent.id=a.agent_id
+         JOIN identities owner ON owner.id=a.owner_id
+         JOIN identities viewer ON viewer.id=$2
+         WHERE a.agent_id=$1`,
+        [agentId, viewerId],
+      )
+    ).rows[0];
+    if (!row) throw new Error('agent not found');
+    const policy = parseAgentAccessPolicy(row.access_policy).type;
+    if (policy === 'creator') return;
+    if (policy !== 'everyone') throw new Error(MCP_GRANT_CREATOR_ONLY_MESSAGE);
+    await this.database.transaction(async (database) => {
+      const changed = await database.query(
+        `UPDATE agents SET access_policy=$2::jsonb,updated_at=now()
+         WHERE agent_id=$1 AND access_policy<>$2::jsonb`,
+        [agentId, JSON.stringify(agentAccessPolicyRecord('creator'))],
+      );
+      if (!changed.rowCount) return;
+      const rooms = await database.query<{ room_id: string }>(
+        `SELECT m.room_id FROM memberships m
+         JOIN rooms r ON r.id=m.room_id
+         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
+           AND r.workspace_id=$2 AND r.archived_at IS NULL`,
+        [agentId, workspaceId],
+      );
+      for (const room of rooms.rows)
+        await systemLine(database, {
+          roomId: room.room_id,
+          subject: {
+            kind: 'person',
+            id: viewerId,
+            name: personMention(row.viewer_handle) ?? 'Someone',
+          },
+          verb: 'changed who may address',
+          object: { text: row.agent_name, id: agentId },
+          consequence: `only ${personMention(row.owner_handle) ?? 'the owner'} may ask now`,
+        });
+    });
   }
   /**
    * Start the connector offer's full sign-in ceremony. Authorization is

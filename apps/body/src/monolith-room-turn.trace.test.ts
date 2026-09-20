@@ -358,6 +358,7 @@ describe('Room turn phase trace', () => {
         'getWorkspaceRoster',
         'postAgentActivity',
         'getAgentConfiguration',
+        'listAgentGrants',
         'getRoomRepositoryState',
         'getRoomConversation',
         'listRoomCorners',

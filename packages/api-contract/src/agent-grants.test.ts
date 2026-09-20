@@ -81,6 +81,14 @@ describe('grant decision lines', () => {
         target: 'api.fly.io',
       }),
     ).toBe('Charles approved once host api.fly.io');
+    expect(
+      formatGrantDecisionLine({
+        deciderName: 'Charles',
+        decision: 'always',
+        kind: 'mcp',
+        target: 'squire',
+      }),
+    ).toBe('Charles approved mcp squire');
   });
 
   it('does not mistake ordinary system lines for decisions', () => {

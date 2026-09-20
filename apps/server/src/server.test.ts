@@ -131,7 +131,7 @@ describe('server readiness', () => {
     });
   });
 
-  it('publishes no Room invalidation for a chat-list dismissal write', async () => {
+  it('publishes no Room invalidation when opening a Room clears its dismissal', async () => {
     const publish = vi.fn();
     const execute = vi.fn().mockResolvedValue(undefined);
     const server = createBeelineServer({
@@ -146,17 +146,14 @@ describe('server readiness', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
 
-    for (const name of ['reopenChat', 'closeChat']) {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/${name}`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ roomId: 'room-open' }),
-      });
+    const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/reopenChat`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId: 'room-open' }),
+    });
 
-      expect(response.status).toBe(204);
-    }
-
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(204);
+    expect(execute).toHaveBeenCalledTimes(1);
     expect(publish).not.toHaveBeenCalled();
   });
 

@@ -27,12 +27,13 @@ export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
 /**
- * A chat-list dismissal is per-viewer state that no Room read projects, so it
- * invalidates no Room for anybody. Its writer is normally the Room that was
- * just opened, and a Room-wide invalidation there bounces that write straight
- * back to the opener's own socket as a second identical full Room read.
+ * Clearing a chat-list dismissal is per-viewer state that no Room read
+ * projects, so it invalidates no Room for anybody. Its writer is the Room that
+ * was just opened, and a Room-wide invalidation there bounces that write
+ * straight back to the opener's own socket as a second identical full Room
+ * read.
  */
-const VIEWER_LOCAL_PHONE_OPERATIONS = new Set<string>(['closeChat', 'reopenChat']);
+const VIEWER_LOCAL_PHONE_OPERATION = 'reopenChat';
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
@@ -1143,7 +1144,7 @@ async function route(
         : result && typeof (result as { roomId?: unknown }).roomId === 'string'
           ? (result as { roomId: string }).roomId
           : undefined;
-    if (invalidatedRoom && !VIEWER_LOCAL_PHONE_OPERATIONS.has(name)) {
+    if (invalidatedRoom && name !== VIEWER_LOCAL_PHONE_OPERATION) {
       const messageId =
         result && typeof (result as { messageId?: unknown }).messageId === 'string'
           ? (result as { messageId: string }).messageId

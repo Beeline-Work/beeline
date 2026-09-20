@@ -62,11 +62,15 @@ const styles = StyleSheet.create((theme) => {
     headerCopy: { flex: 1, minWidth: 0 },
     eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    // F6: reserved so the title column ends at the same x for 9 corners and
+    // for 10, the way an index gutter is supposed to read.
     count: {
       ...Typography.default(),
       ...hull.type.meta,
+      minWidth: hull.space.lg,
       paddingHorizontal: hull.space.sm,
       color: hull.textMuted,
+      textAlign: 'right',
     },
   };
 });

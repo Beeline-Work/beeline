@@ -100,7 +100,7 @@ export default function BuzzCorners() {
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.error}>{error}</Text>
+        <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
         <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
@@ -133,13 +133,15 @@ export default function BuzzCorners() {
           onBack={() => router.back()}
         />
         {!!error && (
+          // F5: it is tappable, so it announces as a button. `alert` promised
+          // no action, which left the retry invisible to a screen reader.
           <TouchableOpacity
-            accessibilityHint="Retries the read"
-            accessibilityRole="alert"
+            accessibilityLabel={`${error}. Retry`}
+            accessibilityRole="button"
             onPress={() => schedulerRef.current?.force()}
             style={styles.errorPanel}
           >
-            <Text style={styles.errorInline}>! {error}</Text>
+            <Text style={styles.error}>! {error}</Text>
           </TouchableOpacity>
         )}
         <RoomCornersList
@@ -172,12 +174,8 @@ const styles = StyleSheet.create((theme) => {
     },
     loading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     errorPanel: { paddingHorizontal: hull.space.md, paddingVertical: hull.space.sm },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.danger,
-      textAlign: 'center',
-    },
-    errorInline: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    // F9: one error voice; only the full-screen state centres it.
+    error: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    errorCentered: { textAlign: 'center' },
   };
 });

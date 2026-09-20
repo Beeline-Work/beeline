@@ -321,12 +321,15 @@ machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
 trailing slot carries the **corners door**, and it is NAMED — the brass corner
-sigil `◇` followed by the word, on the same calm metadata voice the rest of
-the header speaks in, with one full space step of slab before the overflow
-dots. A lone glyph sitting a few pixels off the menu read as decoration on the
-menu; naming the affordance is what the Workspace rail already does with every
-one of its commands, and the gap is what makes it a second control rather than
-a second mark on the first. It opens the Room's dedicated corners list
+sigil `◇` at the hero role followed by the word in the calm metadata voice the
+rest of the header speaks in, its own 44pt target, and `space.lg` of bare slab
+before the overflow dots. Three things were wrong with the lone mark that came
+before it: it was unnamed, it was set at the metadata size so it read as a
+speck beside the menu, and it sat close enough to the dots to look like part of
+them. So the sigil is now the largest glyph in the trailing slot — its type box
+is deliberately bigger than the overflow dots' own — the word states the
+destination the way every Workspace-rail command does, and the gap is what
+makes it a second control rather than a second mark on the first. It opens the Room's dedicated corners list
 (`corners/[roomId]`, windowed with the same cap and archived fallback as the
 desktop work-pane corner list) and is the Room's one active-corner affordance.
 The approval panel and diff review exist only in a Corner — that is a

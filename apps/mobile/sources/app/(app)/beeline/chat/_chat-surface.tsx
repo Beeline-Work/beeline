@@ -5722,17 +5722,22 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: groknight.space.xs,
     },
+    // A full space step of bare slab parts the named door from the dots, on
+    // top of the door's own padding. Two controls a thumb must hit separately
+    // cannot share an edge.
     roomClusteredActionsButton: {
       minHeight: 44,
-      marginLeft: groknight.space.md,
+      marginLeft: groknight.space.lg,
       alignItems: 'center',
       justifyContent: 'center',
     },
+    // The sigil leads the door and must not read as a speck beside the menu:
+    // it takes the hero role, so its box is larger than the overflow dots'
+    // own bounding box rather than a third of it.
     roomCornersGlyph: {
       ...Typography.default('semiBold'),
+      ...groknight.type.hero,
       color: groknight.accent,
-      fontSize: groknight.type.meta.fontSize,
-      lineHeight: groknight.type.meta.lineHeight,
     },
     // The word carries the destination, so it takes the calm metadata voice
     // every other piece of header chrome speaks in; the brass stays on the

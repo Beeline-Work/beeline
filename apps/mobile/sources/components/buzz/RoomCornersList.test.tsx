@@ -233,6 +233,30 @@ describe('RoomCornersList', () => {
     expect(resolvedStyle(list.props.contentContainerStyle).paddingBottom).toBe(bottomInset);
   });
 
+  it('reserves the trailing state column so every title truncates at one x', () => {
+    // F2 from the impeccable audit: `working`, `waiting`, `review` and
+    // `archived` are four different widths. Without a reserved cell the title
+    // ends at a different x on each row and the words do not read down one
+    // edge, which is what DESIGN.md's index rule forbids.
+    const tree = render([
+      corner('a', 'working', 'Alpha'),
+      corner('b', 'waiting', 'Beta'),
+      corner('c', 'review', 'Gamma'),
+    ]);
+    const flatten = (style: any): any[] => ([] as any[]).concat(style ?? []).filter(Boolean);
+    const cells = tree.root
+      .findAllByType('Text' as any)
+      .flatMap((node: any) => flatten(node.props.style))
+      .filter((style: any) => style.textTransform === 'uppercase');
+    expect(cells.length).toBeGreaterThanOrEqual(3);
+    for (const cell of cells) {
+      expect(cell.minWidth).toBeGreaterThan(0);
+      expect(cell.textAlign).toBe('right');
+    }
+    const widths = new Set(cells.map((cell: any) => cell.minWidth));
+    expect(widths.size).toBe(1);
+  });
+
   it('opens a row into that corner', () => {
     const tree = render([corner('live', 'working', 'Fix fixture')]);
     act(() => tree.root.findByProps({ testID: 'room-corner-live' }).props.onPress());

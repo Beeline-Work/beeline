@@ -150,7 +150,15 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       color: hull.ledgerQuiet,
     },
-    state: { ...Typography.default(), ...hull.type.sectionHead },
+    // F2: the four state words are four widths, so the cell is sized to the
+    // longest of them and right-aligned. Without this the title truncates at a
+    // different x on every row and the words do not read down one edge.
+    state: {
+      ...Typography.default(),
+      ...hull.type.sectionHead,
+      minWidth: 64,
+      textAlign: 'right',
+    },
     stateBrass: { color: hull.accent },
     stateQuiet: { color: hull.ledgerQuiet },
     stateGhost: { color: hull.ledgerGhost },

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { typeRoles, space } from '@/buzz/groknight';
 
 /**
  * Design invariants for the chat screen's top bar — the Room and its Corners
@@ -152,8 +153,15 @@ describe('Chat header — one language for Room and Corner', () => {
     const diamond = chatSource.match(/roomCornersGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
     expect(diamond![0]).toContain('color: groknight.accent');
-    expect(diamond![0]).toContain('fontSize: groknight.type.meta.fontSize');
+    expect(diamond![0]).toContain('...groknight.type.hero');
     expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    // Captain 2026-09-20: the sigil must not read as a speck beside the menu.
+    // Its type box is measured against the overflow dots' own, not eyeballed.
+    const dotsSize = Number(
+      chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?fontSize:\s*(\d+)/)![1],
+    );
+    expect(typeRoles.hero.fontSize).toBeGreaterThan(dotsSize);
+    expect(typeRoles.hero.lineHeight).toBeGreaterThanOrEqual(dotsSize);
     const word = chatSource.match(/roomCornersLabel:\s*\{[\s\S]*?\n    \},/);
     expect(word, 'missing roomCornersLabel style').toBeTruthy();
     expect(word![0]).toContain('...groknight.type.meta');
@@ -169,11 +177,12 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(doorButton![0]).toContain('marginLeft: 12');
     expect(doorButton![0]).toContain("flexDirection: 'row'");
     expect(doorButton![0]).toContain('gap: groknight.space.xs');
-    // One full space step of slab between the named door and the dots.
+    // Bare slab between the named door and the dots, on top of the door's own
+    // padding: two controls a thumb must hit separately cannot share an edge.
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
     expect(clustered, 'missing trailing overflow style').toBeTruthy();
-    expect(clustered![0]).toContain('marginLeft: groknight.space.md');
-    expect(clustered![0]).not.toContain('marginLeft: groknight.space.xs');
+    expect(clustered![0]).toContain('marginLeft: groknight.space.lg');
+    expect(space.lg).toBeGreaterThan(space.md);
     expect(chatSource).toContain(
       'const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',
     );

@@ -43,7 +43,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { parse as parseToml } from 'smol-toml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
@@ -625,10 +625,19 @@ function localHarnessMcpToml(source: string): string | undefined {
   if (hostNames.every((name) => childTables.includes(name))) {
     return extractTomlSections(source, ['mcp_servers'], hostNames);
   }
-  const sections = childTables
-    .filter((name) => !hostNames.includes(name))
-    .map((name) => extractTomlSections(source, ['mcp_servers', name]))
-    .filter((section): section is string => section !== undefined);
+  const bareLocal = Object.fromEntries(
+    Object.entries(servers).filter(
+      ([name]) => !childTables.includes(name) && !hostNames.includes(name),
+    ),
+  );
+  const sections = [
+    Object.keys(bareLocal).length > 0 ? stringifyToml({ mcp_servers: bareLocal }) : undefined,
+    ...childTables
+      .filter((name) => !hostNames.includes(name))
+      .map((name) => extractTomlSections(source, ['mcp_servers', name])),
+  ]
+    .filter((section): section is string => section !== undefined)
+    .map((section) => (section.endsWith('\n') ? section : `${section}\n`));
   return sections.length > 0 ? sections.join('\n') : undefined;
 }
 

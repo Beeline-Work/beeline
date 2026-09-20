@@ -944,6 +944,49 @@ describe('mounted imported MCP server names', () => {
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
   });
 
+  it('keeps inline-declared local servers when the bare table also holds a host one', async () => {
+    const operatorHome = await scratch('beeline-inline-local-op-');
+    const agentHomeRoot = resolve(await scratch('beeline-inline-local-home-'), 'agent-home');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    const sourcePath = resolve(operatorHome, '.codex/config.toml');
+    const inlineDeclarations = [
+      '[mcp_servers]',
+      'squire = { command = "npx", args = ["-y", "@trusty-squire/mcp@latest", "server"] }',
+      'context7 = { command = "npx", args = ["-y", "@upstash/context7-mcp"] }',
+    ];
+    await writeFile(
+      sourcePath,
+      [...inlineDeclarations, '', '[mcp_servers.files]', 'command = "files-mcp"'].join('\n'),
+    );
+    const input = { operatorHome, agentKind: 'codex' as const };
+    const preparedEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'codex',
+    });
+    const isolatedText = readFileSync(resolve(preparedEnv.CODEX_HOME!, 'config.toml'), 'utf8');
+    const isolated = parseToml(isolatedText) as {
+      mcp_servers: Record<string, { command?: string; args?: string[] }>;
+    };
+    expect(Object.keys(isolated.mcp_servers).sort()).toEqual(['context7', 'files']);
+    expect(isolated.mcp_servers.context7.args).toEqual(['-y', '@upstash/context7-mcp']);
+    expect(isolated.mcp_servers.files.command).toBe('files-mcp');
+    expect(isolatedText).not.toContain('@trusty-squire/mcp');
+    expect(mountedImportedMcpServerNames(input)).toEqual(['context7', 'files']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv })).toEqual(['context7', 'files']);
+
+    await writeFile(sourcePath, inlineDeclarations.join('\n'));
+    const inlineOnlyEnv = await prepareRoomAgentHome({
+      root: agentHomeRoot,
+      operatorHome,
+      agentKind: 'codex',
+    });
+    expect(mountedImportedMcpServerNames(input)).toEqual(['context7']);
+    expect(mountedImportedMcpServerNames({ ...input, preparedEnv: inlineOnlyEnv })).toEqual([
+      'context7',
+    ]);
+  });
+
   it('keeps an inline-declared host server out of the isolated config', async () => {
     const operatorHome = await scratch('beeline-inline-host-op-');
     const agentHomeRoot = resolve(await scratch('beeline-inline-host-home-'), 'agent-home');

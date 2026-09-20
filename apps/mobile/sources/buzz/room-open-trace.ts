@@ -26,11 +26,59 @@ function tracingOff(): boolean {
   return !isDev && !RELEASE_TRACE_ENABLED;
 }
 
+type TraceMark = { phase: string; t: number; detail?: string };
+
+/** The current open, oldest mark first. Reset when a Room open begins. */
+let currentRun: TraceMark[] = [];
+let listeners: Array<(run: readonly TraceMark[]) => void> = [];
+
+/** The first mark of an open. Everything after it belongs to the same run. */
+const RUN_START_PHASE = 'nav-dispatch';
+
+function publish(): void {
+  const snapshot = currentRun.slice();
+  for (const listener of listeners) listener(snapshot);
+}
+
+/** Subscribe to the running trace. Returns an unsubscribe. */
+export function observeRoomOpenTrace(
+  listener: (run: readonly TraceMark[]) => void,
+): () => void {
+  listeners.push(listener);
+  listener(currentRun.slice());
+  return () => {
+    listeners = listeners.filter((entry) => entry !== listener);
+  };
+}
+
+/** True when this build was asked to report timings on screen. */
+export function roomOpenTraceEnabled(): boolean {
+  return !tracingOff();
+}
+
 export function markRoomOpen(phase: string, detail?: string): void {
   if (tracingOff()) return;
-  console.warn(
-    `[ROOM_OPEN] ${JSON.stringify({ phase, t: performance.now(), ...(detail ? { detail } : {}) })}`,
-  );
+  const mark: TraceMark = { phase, t: performance.now(), ...(detail ? { detail } : {}) };
+  if (phase === RUN_START_PHASE || currentRun.length === 0) currentRun = [mark];
+  else currentRun.push(mark);
+  publish();
+  console.warn(`[ROOM_OPEN] ${JSON.stringify(mark)}`);
+}
+
+/**
+ * The run as elapsed milliseconds from the first mark, which is what a reader
+ * needs. Absolute timestamps say nothing without subtraction.
+ */
+export function roomOpenElapsed(
+  run: readonly TraceMark[],
+): Array<{ phase: string; ms: number; detail?: string }> {
+  const first = run[0];
+  if (!first) return [];
+  return run.map((mark) => ({
+    phase: mark.phase,
+    ms: Math.round(mark.t - first.t),
+    ...(mark.detail ? { detail: mark.detail } : {}),
+  }));
 }
 
 /**
@@ -55,8 +103,7 @@ export function markRoomOpenWeight(view: {
   } catch {
     bytes = undefined;
   }
-  console.warn(
-    `[ROOM_OPEN] ${JSON.stringify({
+  const mark = {
       phase: 'room-read-weight',
       t: performance.now(),
       messages: view.messages?.length ?? 0,
@@ -64,6 +111,13 @@ export function markRoomOpenWeight(view: {
       members: view.members?.length ?? 0,
       corners: view.corners?.length ?? 0,
       ...(bytes === undefined ? {} : { bytes }),
-    })}`,
-  );
+  };
+  currentRun.push({
+    phase: `read: ${mark.messages}m ${mark.toolRows}t ${mark.members}p ${mark.corners}c${
+      bytes === undefined ? '' : ` ${Math.round(bytes / 1024)}kB`
+    }`,
+    t: mark.t,
+  });
+  publish();
+  console.warn(`[ROOM_OPEN] ${JSON.stringify(mark)}`);
 }

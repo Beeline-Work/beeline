@@ -35,6 +35,43 @@ const withEnv = async (value: string | undefined, isDev: boolean) => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('room open trace', () => {
+  it('reports elapsed milliseconds from the first mark, not absolute clocks', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { mod, restore } = await withEnv('1', false);
+    const seen: Array<Array<{ phase: string; ms: number }>> = [];
+    const stop = mod.observeRoomOpenTrace((run) => seen.push(mod.roomOpenElapsed(run)));
+    mod.markRoomOpen('nav-dispatch', 'room-1');
+    mod.markRoomOpen('room-read-start');
+    stop();
+    restore();
+    const last = seen.at(-1) ?? [];
+    expect(last.map((row) => row.phase)).toEqual(['nav-dispatch', 'room-read-start']);
+    expect(last[0]?.ms).toBe(0);
+    expect(last[1]?.ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('starts a fresh run when a new Room open begins', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { mod, restore } = await withEnv('1', false);
+    mod.markRoomOpen('nav-dispatch', 'room-1');
+    mod.markRoomOpen('room-read-start');
+    let latest: Array<{ phase: string; ms: number }> = [];
+    const stop = mod.observeRoomOpenTrace((run) => {
+      latest = mod.roomOpenElapsed(run);
+    });
+    mod.markRoomOpen('nav-dispatch', 'room-2');
+    stop();
+    restore();
+    expect(latest.map((row) => row.phase)).toEqual(['nav-dispatch']);
+  });
+
+  it('is reported off when the build did not opt in', async () => {
+    const { mod, restore } = await withEnv(undefined, false);
+    const enabled = mod.roomOpenTraceEnabled();
+    restore();
+    expect(enabled).toBe(false);
+  });
+
   it('stays silent in a release bundle when the flag is unset', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { mod, restore } = await withEnv(undefined, false);

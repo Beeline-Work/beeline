@@ -634,9 +634,12 @@ and tracking. A screen spreads a role; it never sets a raw size.
 
 Space Grotesk is the one reading face: names, rows, buttons, labels, bylines,
 stamps. Mono is for strings a machine produced, never for a byline or a label.
-The transcript's `NEW MESSAGES` boundary is the one caption exception: the
+The transcript's day caption is the one caption exception: the
 `sectionHead` role in the `machine` face, with `ledgerQuiet` ink and `space.md`
-vertical spacing (`room-message-cell.tsx`).
+vertical spacing (`Ledger.tsx`, wrapped onto the day-opener cell in
+`room-message-cell.tsx`). Absolute weekday+date (`THU 17 SEP`) between days;
+the date also rides that day's first byline stamp when the day is not today
+(`17 SEP 16:58`). Today never carries a date on the stamp.
 Small tracked capitals exist only to divide a list into sections. The spacing
 scale beside the roles is `space` (4 · 8 · 16 · 24 · 32 · 48) and `layout`
 (rows 64 tall, sections 24 apart, screens start 24 below the header).

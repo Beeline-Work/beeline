@@ -89,6 +89,10 @@ vi.mock('@/components/buzz/Ledger', async () => {
   return {
     LedgerRoomUpdate: (props: any) => ReactModule.createElement('LedgerRoomUpdate', props),
     LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
+    withLedgerDayCaption: (node: any, label: string | null) =>
+      label
+        ? ReactModule.createElement('ledger-day-caption-wrap', { label }, node)
+        : node,
   };
 });
 vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', async () => {
@@ -509,6 +513,85 @@ describe('DesktopRoomInspector work pane', () => {
       act(() => tree.unmount());
     },
   );
+
+  it.each([
+    ['grant', { grantRequest: { agent, owner: person, requester: person, grants: [] } }],
+    [
+      'relay',
+      {
+        relay: {
+          direction: 'down',
+          fromRoomId: 'room',
+          toRoomId: 'working',
+          cornerId: 'working',
+          fromName: 'CloverGTO',
+          received: true,
+        },
+      },
+    ],
+  ] as const)('assigns the first displayed byline date to a %s row', async (_kind, fields) => {
+    const at = (day: number, hour: number) => new Date(2026, 8, day, hour).getTime() / 1000;
+    const detail = {
+      ...room(),
+      room: corners[0].corner,
+      parent: room().room,
+      messages: [
+        {
+          id: 'notice',
+          text: 'Notice',
+          createdAt: at(17, 7),
+          author: person,
+          presentation: 'system',
+        },
+        {
+          id: 'first',
+          text: 'First byline',
+          createdAt: at(17, 8),
+          author: agent,
+          presentation: 'message',
+          ...fields,
+        },
+        {
+          id: 'later',
+          text: 'Later prose',
+          createdAt: at(17, 9),
+          author: agent,
+          presentation: 'message',
+        },
+        {
+          id: 'activity',
+          text: 'Working',
+          createdAt: at(18, 7),
+          author: agent,
+          presentation: 'activity',
+        },
+        {
+          id: 'next-day',
+          text: 'Next day prose',
+          createdAt: at(18, 8),
+          author: agent,
+          presentation: 'message',
+        },
+      ],
+    };
+    const client = { room: vi.fn(async () => detail) };
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<DesktopRoomInspector {...props({ client, selectedCornerId: 'working' })} />);
+    });
+    expect(tree.root.findAllByType('LedgerSystemLine' as any)).toHaveLength(1);
+    expect(
+      tree.root.findAllByType('OrdinaryLedgerMessage' as any).map((node: any) => ({
+        id: node.props.message.id,
+        datedByline: node.props.firstBylineOfDay,
+      })),
+    ).toEqual([
+      { id: 'first', datedByline: true },
+      { id: 'later', datedByline: false },
+      { id: 'activity', datedByline: false },
+      { id: 'next-day', datedByline: true },
+    ]);
+  });
 
   it('opens a corner cockpit with exactly the open-in-main and close header controls', async () => {
     const onOpenInMain = vi.fn();

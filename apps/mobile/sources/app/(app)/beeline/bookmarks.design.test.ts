@@ -15,11 +15,15 @@ const ledger = readFileSync(
 );
 
 describe('private bookmark surfaces', () => {
-  it('routes phone bookmarks through the desktop sidebar glyph, not a deck cell', () => {
-    // The phone deck's bookmarks cell was retired (R4); the desktop sidebar's
-    // workspace-heading glyph is the one bookmarks door.
+  it('opens phone bookmarks from the Room-list header glyph, not a deck cell', () => {
+    // The phone deck's bookmarks cell was retired (R4). The header glyph next
+    // to Members is the phone door; the desktop sidebar glyph remains the
+    // desktop door.
     expect(channels).not.toContain('bookmarks-cell');
     expect(channels).not.toContain('bookmarkCount');
+    expect(channels).toContain('testID="workspace-bookmarks"');
+    expect(channels).toContain('<BookmarksGlyph');
+    expect(channels).toContain("pathname: '/beeline/bookmarks'");
     const sidebar = readFileSync(
       new URL('../../../components/SidebarView.tsx', import.meta.url),
       'utf8',

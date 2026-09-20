@@ -8,6 +8,7 @@ import React, {
   useMemo,
   type MutableRefObject,
 } from 'react';
+import { transcriptBylineOpeners } from '@/buzz/message-dates';
 import {
   View,
   Text,
@@ -2180,6 +2181,7 @@ export function BuzzChatSurface({
       ),
     [visibleMessages],
   );
+  const bylineOpeners = useMemo(() => transcriptBylineOpeners(visibleMessages), [visibleMessages]);
   const rawImmediatelyPrecedingVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
     for (let index = 1; index < visibleMessages.length; index += 1) {
@@ -4127,6 +4129,7 @@ export function BuzzChatSurface({
       return (
         <OrdinaryLedgerMessage
           message={renderedItem}
+          firstBylineOfDay={bylineOpeners.has(item.id)}
           // The byline carries the model stamped on the message at
           // generation time (server-side from the producing turn); an agent
           // row with no stamp keeps the plain `AGENT` word — never a live
@@ -4170,6 +4173,7 @@ export function BuzzChatSurface({
       );
     },
     [
+      bylineOpeners,
       agentByPubkey,
       answeredMessageIds,
       isDesktop,

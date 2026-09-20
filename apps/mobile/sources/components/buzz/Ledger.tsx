@@ -28,8 +28,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * message in a human run: the speaker's
  * 26px face tile, then the name in the identity's own hue at body size, the
  * quiet mono model metadata (`claude-opus-4-1`, or the `AGENT` fallback), and
- * the mono HH:MM
- * stamp pinned right. A human message is plain body text — regular weight, primary tone,
+ * the mono stamp pinned right (clock, or `17 SEP 16:58` on a past day's
+ * first byline). A human message is plain body text — regular weight, primary tone,
  * same size as everything — so nothing but the brass byline name marks it as
  * the viewer's own.
  *
@@ -96,6 +96,11 @@ type LedgerBodyProps = {
    * that visual-top edge.
    */
   chronological?: boolean;
+  /**
+   * The day caption already occupies the visual-top edge of this cell, so the
+   * extra speaker-change padding would double the air.
+   */
+  precededByDayCaption?: boolean;
   marginalia?: React.ReactNode;
   replyReference?: React.ReactNode;
   attachments?: React.ReactNode;
@@ -414,6 +419,7 @@ export function LedgerEntry({
   byline,
   continued = false,
   chronological = false,
+  precededByDayCaption = false,
   luminous = false,
   replyReference,
   attachments,
@@ -474,7 +480,9 @@ export function LedgerEntry({
     <View
       style={[
         styles.entry,
-        byline && (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
+        byline &&
+          !precededByDayCaption &&
+          (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
       ]}
       testID={`chat-message-${itemId}`}
     >
@@ -506,6 +514,7 @@ export function LedgerSteer({
   bodyTestID,
   byline,
   chronological = false,
+  precededByDayCaption = false,
   replyReference,
   attachments,
   mentionHandles,
@@ -520,7 +529,9 @@ export function LedgerSteer({
     <View
       style={[
         styles.entry,
-        byline && (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
+        byline &&
+          !precededByDayCaption &&
+          (chronological ? styles.entryWithBylineChronological : styles.entryWithByline),
       ]}
       testID={`chat-message-${itemId}`}
     >
@@ -728,6 +739,33 @@ export function LedgerSystemLine({
 }
 
 /**
+ * The transcript's day caption: sectionHead metrics in the machine face,
+ * ledgerQuiet ink, space.md vertical spacing. In-flow on the day-opener
+ * cell — never a separate list row, never sticky.
+ */
+export function LedgerDayCaption({ label }: { label: string }) {
+  return (
+    <Text testID="ledger-day-caption" style={styles.dayCaption}>
+      {label}
+    </Text>
+  );
+}
+
+export function withLedgerDayCaption(
+  node: React.ReactNode,
+  label: string | null,
+): React.ReactNode {
+  if (!label) return node;
+  const caption = <LedgerDayCaption label={label} />;
+  return (
+    <View>
+      {caption}
+      {node}
+    </View>
+  );
+}
+
+/**
  * A wall of tool output, folded into one ghost line.
  *
  * The dimmest tier, one line over a quiet left rule, with its own disclosure —
@@ -792,6 +830,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   entryWithBylineChronological: {
     paddingTop: theme.buzz.messagePaddingVertical * 3,
+  },
+  dayCaption: {
+    ...theme.buzz.type.sectionHead,
+    fontFamily: theme.buzz.type.machine.fontFamily,
+    color: theme.buzz.ledgerQuiet,
+    marginVertical: theme.buzz.space.md,
   },
   byline: {
     flexDirection: 'row',

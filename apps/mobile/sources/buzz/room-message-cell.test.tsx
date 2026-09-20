@@ -14,6 +14,13 @@ vi.mock('react-native', () => ({
   View: (props: Record<string, unknown>) => React.createElement('View', props),
 }));
 
+vi.mock('@/components/buzz/Ledger', () => ({
+  withLedgerDayCaption: (node: unknown, label: string | null) =>
+    label
+      ? React.createElement('day-caption-wrap', { label }, node as React.ReactNode)
+      : node,
+}));
+
 describe('RoomMessageCell', () => {
   it('does not rerender an identity-stable row when its parent list updates', () => {
     const message: ChatDisplayMessage = {
@@ -127,5 +134,43 @@ describe('RoomMessageCell', () => {
     });
     expect(render).toHaveBeenCalledTimes(2);
     expect(renderer.root.findByType('message-row' as any).props.precedingId).toBe(inserted.id);
+  });
+
+  it('hangs the day caption on the opener cell rather than inserting a list row', () => {
+    const opener: ChatDisplayMessage = {
+      id: 'opener',
+      text: 'First of the day',
+      isUser: true,
+      timestamp: Math.floor(new Date(2026, 8, 17, 16, 58).getTime() / 1000),
+    };
+    const later: ChatDisplayMessage = {
+      id: 'later',
+      text: 'Same day',
+      isUser: true,
+      timestamp: Math.floor(new Date(2026, 8, 17, 17, 2).getTime() / 1000),
+    };
+    const render: RoomMessageRenderer = (item) =>
+      React.createElement('message-row', { id: item.id });
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(RoomMessageCell, { item: opener, render, continued: false }),
+      );
+    });
+    expect(renderer.root.findByType('day-caption-wrap' as any).props.label).toBe('THU 17 SEP');
+    expect(renderer.root.findByType('message-row' as any).props.id).toBe('opener');
+
+    act(() => {
+      renderer.update(
+        React.createElement(RoomMessageCell, {
+          item: later,
+          render,
+          continued: false,
+          immediatelyPrecedingMessage: opener,
+        }),
+      );
+    });
+    expect(renderer.root.findAllByType('day-caption-wrap' as any)).toHaveLength(0);
+    expect(renderer.root.findByType('message-row' as any).props.id).toBe('later');
   });
 });

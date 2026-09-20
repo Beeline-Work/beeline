@@ -1,5 +1,7 @@
 import React from 'react';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import { ledgerDayCaption } from './message-dates';
+import { withLedgerDayCaption } from '@/components/buzz/Ledger';
 import {
   createTranscriptCardMotionStore,
   TranscriptCardMotionBoundary,
@@ -82,7 +84,10 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
       cardId={item.id}
       store={cardMotionStore ?? fallbackMotionStore}
     >
-      {render(item, { continued, immediatelyPrecedingMessage, referencedMessage })}
+      {withLedgerDayCaption(
+        render(item, { continued, immediatelyPrecedingMessage, referencedMessage }),
+        ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
+      )}
     </TranscriptCardMotionBoundary>
   );
 });

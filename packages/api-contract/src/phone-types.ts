@@ -245,10 +245,20 @@ export type RoomViewMessage = {
     readonly agent?: RoomViewIdentity;
     readonly requester?: RoomViewIdentity;
   };
-  /** A validated, service-published repository activity card. Never a speaker. */
+  /** A validated, service-published repository activity card. Never a speaker.
+   *  Pushes and CI are mainline (default-branch) facts; reviews ride PRs. */
   readonly githubEvent?: {
-    readonly type: 'pull-request' | 'issue';
-    readonly action: 'opened' | 'closed' | 'merged';
+    readonly type: 'pull-request' | 'issue' | 'push' | 'ci' | 'review';
+    readonly action:
+      | 'opened'
+      | 'closed'
+      | 'merged'
+      | 'pushed'
+      | 'passed'
+      | 'failed'
+      | 'approved'
+      | 'changes_requested'
+      | 'commented';
     readonly actor: string;
     readonly title: string;
     readonly url: string;

@@ -460,7 +460,11 @@ function githubEvent(value: unknown): boolean {
   const item = record(value);
   if (
     !item ||
-    (item.type !== 'pull-request' && item.type !== 'issue') ||
+    (item.type !== 'pull-request' &&
+      item.type !== 'issue' &&
+      item.type !== 'push' &&
+      item.type !== 'ci' &&
+      item.type !== 'review') ||
     typeof item.actor !== 'string' ||
     typeof item.title !== 'string' ||
     !githubUrl(item.url)
@@ -470,7 +474,13 @@ function githubEvent(value: unknown): boolean {
   return (
     (item.type === 'pull-request' &&
       (item.action === 'opened' || item.action === 'closed' || item.action === 'merged')) ||
-    (item.type === 'issue' && (item.action === 'opened' || item.action === 'closed'))
+    (item.type === 'issue' && (item.action === 'opened' || item.action === 'closed')) ||
+    (item.type === 'push' && item.action === 'pushed') ||
+    (item.type === 'ci' && (item.action === 'passed' || item.action === 'failed')) ||
+    (item.type === 'review' &&
+      (item.action === 'approved' ||
+        item.action === 'changes_requested' ||
+        item.action === 'commented'))
   );
 }
 

@@ -162,7 +162,11 @@ describe('RepoPicker', () => {
       );
     });
     const list = renderer.root.findByProps({ testID: 'room-repo-picker-list' });
-    const empty = list.props.ListEmptyComponent as React.ReactElement;
+    const empty = list.props.ListEmptyComponent as React.ReactElement<{
+      accessibilityLabel: string;
+      children: unknown[];
+      testID: string;
+    }>;
     expect(empty.props.testID).toBe('room-repo-picker-loading');
     expect(empty.props.accessibilityLabel).toBe('Loading repositories');
     expect(empty.props.children).toHaveLength(6);

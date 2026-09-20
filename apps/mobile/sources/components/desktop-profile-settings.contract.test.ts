@@ -28,16 +28,15 @@ describe('desktop profile settings path', () => {
 
   it('keeps the person Identity controls on that destination', () => {
     expect(identitySettings).toContain('testID="identity-settings"');
-    expect(identitySettings).toContain('testID="identity-person-name-input"');
     expect(identitySettings).toContain('testID="identity-managed-handle"');
     expect(identitySettings).toContain('testID="identity-face-setting"');
   });
 
-  it('keeps Appearance on that same Settings surface, above Identity', () => {
+  it('keeps Appearance on that same Settings surface, after the identity hero', () => {
     expect(identitySettings).toContain('<AppearanceSetting');
     expect(identitySettings).toContain('testID="appearance-section"');
-    expect(identitySettings.indexOf('testID="appearance-section"')).toBeLessThan(
-      identitySettings.indexOf('testID="identity-settings"'),
+    expect(identitySettings.indexOf('testID="identity-settings"')).toBeLessThan(
+      identitySettings.indexOf('testID="appearance-section"'),
     );
   });
 });

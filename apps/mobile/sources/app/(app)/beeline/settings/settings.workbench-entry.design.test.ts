@@ -17,11 +17,12 @@ describe('Settings Workbench entry', () => {
     expect(settings).toMatch(/sectionLabel}>Workbench</);
   });
 
-  // Captain ruling 2026-09-15 (mock 91aa0358328d716e): the row speaks the
-  // Workbench vocabulary — Tools & keys — and carries the viewer's key count.
-  it('names the row Tools & keys and shows the viewer’s key count', () => {
-    expect(settings).toMatch(/rowTitle}>Tools &amp; keys</);
-    expect(settings).toContain('testID="settings-workbench-key-count"');
-    expect(settings).not.toMatch(/rowTitle}>Connections</);
+  // Captain ruling 2026-09-15 (mock 91aa0358328d716e) and the 2026-09-20
+  // settings rebuild: the row speaks the Workbench vocabulary — Tools and
+  // keys — and carries the viewer's key count.
+  it('names the row Tools and keys and shows the viewer’s key count', () => {
+    expect(settings).toContain('title="Tools and keys"');
+    expect(settings).toMatch(/String\(keyCount\)/);
+    expect(settings).not.toMatch(/title="Connections"/);
   });
 });

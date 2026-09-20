@@ -19,26 +19,21 @@ describe('single Settings surface', () => {
   });
 
   it('keeps only the approved essential rows', () => {
-    for (const label of ['Name', 'Handle', 'Face', 'GitHub', 'Version']) {
-      expect(settings).toContain(`>${label}<`);
-    }
+    expect(settings).toContain('testID="identity-face-setting"');
+    expect(settings).toContain('testID="identity-managed-handle"');
     expect(appearanceSetting).toContain('title="Appearance"');
     expect(settings).toContain('<AppearanceSetting');
-    expect(pushLevelSetting).toContain('title="Push notifications"');
+    expect(pushLevelSetting).toContain('title="Notifications"');
     expect(settings).toContain('Sign out');
     expect(settings).toContain('Delete account');
     expect(settings).not.toMatch(/Backup key|Relay URL|Connected GitHub accounts|My Settings/);
+    expect(settings).not.toMatch(/Switch GitHub|Linked sign-in/);
   });
 
-  it('labels the GitHub section as linked sign-in', () => {
-    expect(settings).toContain('<Text style={styles.sectionLabel}>Linked sign-in</Text>');
+  it('omits the struck Display grouping and the GitHub switch-account row', () => {
+    expect(settings).not.toContain('<Text style={styles.sectionLabel}>Display</Text>');
+    expect(settings).not.toContain('<Text style={styles.sectionLabel}>Linked sign-in</Text>');
     expect(settings).not.toContain('<Text style={styles.sectionLabel}>Preferences</Text>');
-  });
-
-  it('saves the inline name on blur or enter without a standing save button', () => {
-    expect(settings).toContain('onBlur={() => {');
-    expect(settings).toContain('onSubmitEditing={commitName}');
-    expect(settings).not.toMatch(/Save profile|save-profile/);
   });
 
   it('omits notifications entirely when push is unsupported', () => {

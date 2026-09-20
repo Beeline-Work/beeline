@@ -17,6 +17,18 @@ export const HOT_READ_BUDGETS_MS = {
 
 export type HotReadName = keyof typeof HOT_READ_BUDGETS_MS;
 
+/**
+ * The two product targets the fanout audit left unproven. They are end-to-end
+ * numbers, not query budgets: `LIVE_INTERACTION_TARGET_MS` is a write leaving
+ * one member's phone until the row is in another member's hands, and
+ * `CLIENT_PAGE_LOAD_TARGET_MS` is a cold surface becoming paintable.
+ */
+export const LIVE_INTERACTION_TARGET_MS = 150;
+export const CLIENT_PAGE_LOAD_TARGET_MS = 450;
+
+/** The route budget every authenticated phone surface answers inside. */
+export const ROUTE_P95_BUDGET_MS = 500;
+
 export interface ExplainSample {
   readonly plan: unknown;
   readonly wallMs: number;

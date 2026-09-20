@@ -71,6 +71,7 @@ describe('Room composer status layout', () => {
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
     expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
+    expect(source).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
     // The pinned corner line is gone, so the offline hint is the only chrome
     // left that pushes the tail. The turn line lands directly on the
     // composer — measured in `buzz/room-bottom-chrome.test.tsx`.

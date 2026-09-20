@@ -4508,15 +4508,14 @@ export function BuzzChatSurface({
               styles.messageListContent,
               desktopTranscript && styles.messageListContentDesktop,
               transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail. The offline
-              // hint already pushes that tail above the composer; reserve
-              // the hanging line only when it is absent. This keeps the
-              // offline + thinking gap identical to the Room's idle gap.
+              // Inverted list: paddingTop is the visual tail. Always the
+              // ordinary 12px — the hanging turn line overlays it and must
+              // not add a reserve when it paints (that 30px step jumped the
+              // last message and left a too-large bottom margin).
               !desktopTranscript &&
-                !isArchived &&
-                (composerAck || settledTurn) && {
+                !isArchived && {
                   paddingTop: phoneTranscriptTailPadding({
-                    turnChromeVisible: true,
+                    turnChromeVisible: Boolean(composerAck || settledTurn),
                     pushedChromeVisible: agentsOffline,
                   }),
                 },
@@ -4830,9 +4829,9 @@ export function BuzzChatSurface({
           ) : (
             <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
               {/* Phone turn chrome hangs above the whole bottom stack
-                (corner, offline, composer) so it cannot cover any of them.
-                The inverted list reserves this height; the line fills it.
-                Desktop keeps the reserved slot inside inputBar. */}
+                (offline, composer) so it cannot grow the composer footprint.
+                The transcript tail stays the ordinary 12px; the line overlays
+                it. Desktop keeps the slot inside inputBar. */}
               {!desktopExperience && composerAck && (
                 <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
                   <TurnProgressLine

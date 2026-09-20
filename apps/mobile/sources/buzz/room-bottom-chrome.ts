@@ -5,9 +5,10 @@
  * edge and the first row of the stack must meet at exactly the same y.
  *
  * The turn line is absolutely positioned at `bottom: '100%'`, so it paints
- * over the transcript instead of growing the stack — the transcript reserves
- * that height itself (`phoneTranscriptTailPadding`). Everything in the stack
- * after it is in flow, the composer last.
+ * over the transcript instead of growing the stack. The transcript keeps its
+ * ordinary tail (`phoneTranscriptTailPadding`) in both idle and thinking —
+ * reserving the line's height only while it is visible is a step. Everything
+ * in the stack after it is in flow, the composer last.
  *
  * A pinned corner line used to sit between the two, which is why the turn line
  * could be 30px off the composer and nobody noticed. With the line gone there

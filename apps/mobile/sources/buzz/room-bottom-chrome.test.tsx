@@ -77,7 +77,7 @@ import { roomBottomChromeStyles } from './room-bottom-chrome';
  *
  * The rule: with the pinned corner line gone there is nothing left between
  * the hanging turn line and the composer, so their edges meet at one y and
- * the transcript reserves the line's height and not a pixel more.
+ * the transcript keeps its ordinary tail in both idle and thinking.
  */
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -147,19 +147,16 @@ describe('the Room turn line sits on the composer', () => {
   });
 
   it('adds no in-flow height of its own, so the stack starts at the composer', () => {
-    // An absolute line cannot push the composer down; the transcript reserves
-    // its height instead. A line that went in flow would move the field under
-    // the reader's thumb every time an agent started answering.
+    // An absolute line cannot push the composer down; a line that went in
+    // flow would move the field under the reader's thumb every time an agent
+    // started answering.
     expect(layout.hangingTurnChrome.left).toBe(0);
     expect(layout.hangingTurnChrome.right).toBe(0);
     expect(px(box(layout.stack).paddingBottom)).toBe(0);
     expect(px(box(layout.stack).gap)).toBe(0);
   });
 
-  it('reserves exactly the rendered line at the transcript tail, and nothing more', () => {
-    // The reserve keeps the hanging line off the newest row. It is spent on
-    // the line alone, so no dead band survives where the pinned corner line
-    // used to absorb it.
+  it('does not grow the transcript tail by the hanging line when it paints', () => {
     const line = measureTurnLine();
     const idle = phoneTranscriptTailPadding({
       turnChromeVisible: false,
@@ -171,6 +168,7 @@ describe('the Room turn line sits on the composer', () => {
     });
 
     expect(line.height).toBeGreaterThan(0);
-    expect(thinking - idle).toBe(line.height + line.bottomMargin);
+    expect(thinking).toBe(idle);
+    expect(thinking - idle).not.toBe(line.height + line.bottomMargin);
   });
 });

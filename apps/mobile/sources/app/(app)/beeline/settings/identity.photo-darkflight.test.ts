@@ -144,6 +144,13 @@ vi.mock('@/components/buzz/FacePickerSheet', async () => {
     FacePickerSheet: (props: unknown) => ReactModule.createElement('FacePickerSheet', props),
   };
 });
+vi.mock('@/components/buzz/BeelineMark', async () => {
+  const ReactModule = await import('react');
+  return { BeelineMark: (props: unknown) => ReactModule.createElement('BeelineMark', props) };
+});
+vi.mock('@/utils/open-external-url', () => ({
+  openExternalUrl: vi.fn(async () => undefined),
+}));
 vi.mock('@/components/buzz/PushLevelSetting', async () => {
   const ReactModule = await import('react');
   return {
@@ -159,6 +166,12 @@ vi.mock('@/components/buzz/AppearanceSetting', async () => {
 vi.mock('@/components/buzz/UiSizeSetting', async () => {
   const ReactModule = await import('react');
   return { UiSizeSetting: (props: unknown) => ReactModule.createElement('UiSizeSetting', props) };
+});
+vi.mock('@/components/buzz/SettingsRow', async () => {
+  const ReactModule = await import('react');
+  return {
+    SettingsRow: (props: unknown) => ReactModule.createElement('SettingsRow', props as never),
+  };
 });
 // Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
 // which this screen's own tests exercise or mock elsewhere.
@@ -206,6 +219,7 @@ vi.mock('react-native', async () => {
 
 import IdentitySettingsScreen from './identity';
 import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
+import { openExternalUrl } from '@/utils/open-external-url';
 
 const originalConsoleError = console.error;
 
@@ -297,17 +311,22 @@ describe('photo-override darkflight on the settings surfaces', () => {
     });
     const renderer = await renderScreen();
 
-    expect(renderer.root.findByProps({ testID: 'identity-person-name-input' }).props.value).toBe(
-      'The Octocat',
-    );
-    expect(renderedText(renderer)).toContain('@octocat');
+    expect(renderer.root.findByProps({ testID: 'identity-managed-handle' })).toBeDefined();
+    await vi.waitFor(() => {
+      expect(renderedText(renderer)).toContain('octocat');
+    });
+    expect(renderedText(renderer)).toContain('@');
     expect(
       renderer.root.findAllByProps({ testID: 'identity-managed-handle' }).length,
     ).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-name-input' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'identity-person-handle-input' })).toHaveLength(
       0,
     );
     expect(renderer.root.findAllByProps({ testID: 'identity-person-nip05-input' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'claim-handle-setting' })).toHaveLength(0);
+
+    act(() => renderer.root.findByProps({ testID: 'identity-managed-handle' }).props.onPress());
+    expect(openExternalUrl).toHaveBeenCalledWith('https://github.com/octocat');
   });
 });

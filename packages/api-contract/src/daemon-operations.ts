@@ -132,9 +132,12 @@ export type DaemonOperationMap = {
       checks: 'passed' | 'failed' | 'pending';
       pullRequest: string;
       headSha: string;
+      /** True when the configured reviewer's exact-head outcome has not passed. */
       approvalPending: boolean;
       /** The parent Room's currently-configured reviewer, as `@handle`, or null when none is configured. */
       reviewer: string | null;
+      /** True when the parent Room has a configured reviewer, even if that identity has no handle. */
+      reviewerExists: boolean;
       /** True when `reviewer` is also this corner's opener/author — self-review is not required. */
       reviewerIsAuthor: boolean;
       /**

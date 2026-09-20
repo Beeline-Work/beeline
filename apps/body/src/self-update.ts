@@ -149,6 +149,41 @@ export function beelineInstallLayout(
   return anchorLayout(raw);
 }
 
+/** Release id encoded in a `beeline-releases/<id>` path, if any. */
+export function releaseIdFromPath(path: string | undefined): string | undefined {
+  if (!path?.trim()) return undefined;
+  const segments = resolve(path.trim()).split(/[/\\]/);
+  const idx = segments.lastIndexOf(RELEASES_SEGMENT);
+  const id = idx >= 0 ? segments[idx + 1] : undefined;
+  return id ? sanitizeReleaseId(id) : undefined;
+}
+
+/**
+ * The release this process is actually executing, when `BEELINE_LIB_DIR` or
+ * the invocation path still names a `beeline-releases/<id>` tree that belongs
+ * to `layout`. The stable launcher exports the unresolved anchor, so this is
+ * undefined for a healthy start and the caller falls back to `activeReleaseId`.
+ * A pinned ExecStart (or any other launch that leaves a resolved release path
+ * in the environment) keeps the old id here even after the anchor has moved —
+ * that is what lets an idle helper notice it is stale and restart.
+ */
+export function runningReleaseId(
+  layout: BeelineInstallLayout,
+  env: NodeJS.ProcessEnv = process.env,
+  invocationPath = process.argv[1],
+): string | undefined {
+  const releasesRoot = resolve(layout.releasesRoot);
+  const anchor = resolve(layout.libDir);
+  for (const raw of [env.BEELINE_LIB_DIR, invocationPath]) {
+    if (!raw?.trim()) continue;
+    const resolved = resolve(raw.trim());
+    if (resolved !== anchor && !resolved.startsWith(`${releasesRoot}/`)) continue;
+    const id = releaseIdFromPath(resolved);
+    if (id) return id;
+  }
+  return undefined;
+}
+
 /** Canonical first-install layout used by `npx usebeeline connect`. */
 export function defaultBeelineInstallLayout(
   env: NodeJS.ProcessEnv = process.env,

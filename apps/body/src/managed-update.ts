@@ -6,6 +6,7 @@ import {
   readInstalledBundleIdentity,
   readUpdateState,
   rollbackToPreviousRelease,
+  runningReleaseId,
   SelfUpdateManager,
   activateRelease,
   readUpdateAttempt,
@@ -121,10 +122,11 @@ export class ManagedUpdateHandoff {
       requiredProbeIds?: string[];
     } = {},
   ): Promise<ManagedUpdateHandoff> {
+    const env = options.env ?? process.env;
     return new ManagedUpdateHandoff({
       layout,
       runtimeDir,
-      loadedRelease: await activeReleaseId(layout),
+      loadedRelease: runningReleaseId(layout, env) ?? (await activeReleaseId(layout)),
       now,
       ...options,
     });

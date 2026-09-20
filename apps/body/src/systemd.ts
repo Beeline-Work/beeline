@@ -23,7 +23,11 @@ export const SYSTEMD_COMMAND_TIMEOUT_MS = 15_000;
 /** Unit stop ceiling plus a small window for the successor to enter active. */
 export const SYSTEMD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
 
-/** The portable supervision contract, rendered as a systemd user template. */
+/**
+ * The portable supervision contract, rendered as a systemd user template.
+ * PATH includes `%h/.local/bin` so every Cursor helper can resolve
+ * `cursor-agent`; a host drop-in that replaces PATH must keep that entry.
+ */
 export function agentServiceUnit(): string {
   return `[Unit]
 Description=Beeline agent %i
@@ -36,6 +40,7 @@ StartLimitBurst=10
 Type=notify
 NotifyAccess=all
 Environment=BEELINE_MANAGED_BY_SYSTEMD=1
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/beeline daemon --agent %i
 Restart=always
 RestartSec=5s

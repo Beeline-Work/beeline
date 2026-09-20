@@ -291,12 +291,12 @@ describe('Beeline display branding', () => {
     // OTA updates (v0.0.42). apps/mobile/scripts/native-fingerprint.mjs is
     // where the native-compatibility check moved to instead.
     expect(appConfig).toContain(
-      'ios: {\n            runtimeVersion: runtimeVersionOverride || "27"',
+      'ios: {\n            runtimeVersion: runtimeVersionOverride || "28"',
     );
     expect(appConfig).toContain(
-      'android: {\n            runtimeVersion: runtimeVersionOverride || "26"',
+      'android: {\n            runtimeVersion: runtimeVersionOverride || "27"',
     );
-    expect(loadRuntimeVersions()).toEqual({ android: '26', ios: '27' });
+    expect(loadRuntimeVersions()).toEqual({ android: '27', ios: '28' });
     expect(loadRuntimeVersions('23')).toEqual({ android: '23', ios: '23' });
     expect(() => loadRuntimeVersions('not-a-runtime')).toThrow();
   });

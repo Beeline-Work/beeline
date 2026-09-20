@@ -36,10 +36,12 @@ export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '23' },
   { platform: 'android', runtimeVersion: '24' },
   { platform: 'android', runtimeVersion: '25' },
+  { platform: 'android', runtimeVersion: '26' },
   { platform: 'ios', runtimeVersion: '23' },
   { platform: 'ios', runtimeVersion: '24' },
   { platform: 'ios', runtimeVersion: '25' },
   { platform: 'ios', runtimeVersion: '26' },
+  { platform: 'ios', runtimeVersion: '27' },
 ];
 
 // Every (platform, runtimeVersion) a shipped or submitted native store binary
@@ -68,6 +70,12 @@ export const SHIPPED_NATIVE_RUNTIMES = [
       'store binaries built and submitted by unified release run 35250884374 (v0.0.109, head e30fdfdf on the #1353 android@25 pin 427c5f5c)',
   },
   {
+    platform: 'android',
+    runtimeVersion: '26',
+    evidence:
+      'store binaries shipped on the android@26 pin (v0.0.118, head 227b74c95dbc) whose splash still resolved to the adaptive icon in light mode',
+  },
+  {
     platform: 'ios',
     runtimeVersion: '23',
     evidence:
@@ -90,6 +98,12 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     runtimeVersion: '26',
     evidence:
       'store binaries built and submitted by unified release run 35250884374 (v0.0.109, head e30fdfdf on the #1353 ios@26 pin 427c5f5c)',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '27',
+    evidence:
+      'store binaries shipped on the ios@27 pin contemporaneous with android@26 (v0.0.118, head 227b74c95dbc)',
   },
 ];
 

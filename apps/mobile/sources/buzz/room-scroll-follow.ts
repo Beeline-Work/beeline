@@ -67,6 +67,19 @@ export function desktopOpenLandingOnContentSizeChange({
   return 'scroll';
 }
 
+/** Phone inverted lists already show the newest row; a chronological desktop
+ *  list must scroll to it. A message-id open (bookmark, notification) must
+ *  not take that landing — the transcript has to keep that id in view. */
+export function roomOpenLandsOnTail({
+  desktopTranscript,
+  messageAnchorId,
+}: {
+  desktopTranscript: boolean;
+  messageAnchorId?: string | null;
+}): boolean {
+  return !desktopTranscript && !messageAnchorId?.trim();
+}
+
 export function scrollFollowOnArrival({
   previousNewestId,
   nextNewestId,

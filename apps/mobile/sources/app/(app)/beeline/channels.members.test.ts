@@ -38,10 +38,11 @@ describe('Workspace Members entry point', () => {
     expect(bookmarks).toContain('size={16}');
     expect(bookmarks).toContain('style={styles.headerAction}');
     const members = source.slice(
-      source.indexOf('testID="workspace-members"'),
+      source.indexOf('testID="workspace-members"') - 200,
       source.indexOf('testID="workspace-members-glyph"') + 80,
     );
     expect(members).toContain('size={16}');
+    expect(members).toContain('style={styles.headerMembersAction}');
     expect(members).toContain('<MembersGlyph');
     expect(source.indexOf('workspace-bookmarks')).toBeLessThan(source.indexOf('workspace-members'));
   });

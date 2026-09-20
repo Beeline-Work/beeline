@@ -1187,29 +1187,6 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('ignores subscribed events for rooms other than the opened Room', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'corner-0' },
-      });
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'workspace' },
-      });
-    });
-
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
   it('confirms a live message against RoomView instead of trusting one possibly stale refresh', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;

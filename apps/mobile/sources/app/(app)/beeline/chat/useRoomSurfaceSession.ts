@@ -506,7 +506,6 @@ export function useRoomSurfaceSession({
               return;
             }
             if (live.type === 'subscribed') {
-              if (live.roomId !== channelId) return;
               markRoomOpen('subscribed', live.roomId);
               if (hasPainted) scheduler?.force();
               return;

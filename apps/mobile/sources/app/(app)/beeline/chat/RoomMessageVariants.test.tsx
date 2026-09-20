@@ -1577,7 +1577,7 @@ describe('Room message variant components', () => {
         onDismiss={vi.fn()}
       />,
     );
-    expect(later.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17:02');
+    expect(later.root.findByType('LedgerSteer' as never).props.byline.stamp).toBe('17 SEP 17:02');
     expect(later.root.findByType('LedgerSteer' as never).props.precededByDayCaption).toBe(false);
   });
 
@@ -1616,7 +1616,7 @@ describe('Room message variant components', () => {
       tree.root.findByType('LedgerSteer' as never).props.byline.stamp;
     expect(stamp(first)).toBe('20:46');
     expect(stamp(later)).toBe('20:46');
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBe(2);
     if (trigger === 'midnight') {
       act(() => vi.advanceTimersByTime(1000));
     } else {
@@ -1626,7 +1626,7 @@ describe('Room message variant components', () => {
       act(() => appStateListeners.forEach((listener) => listener('active')));
     }
     expect(stamp(first)).toBe('19 SEP 20:46');
-    expect(stamp(later)).toBe('20:46');
+    expect(stamp(later)).toBe('19 SEP 20:46');
     expect(vi.getTimerCount()).toBe(0);
     act(() => {
       first.unmount();

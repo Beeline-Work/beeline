@@ -696,6 +696,72 @@ printf '{"name":"production","id":"branch-id","currentPage":[{"group":"productio
     expect(missingLegacy.stderr).toContain(
       'eas update:list does not show the exact production targets',
     );
+    // The refusal names what was actually absent, so the next reader is not
+    // handed the whole expected set and left to diff it by eye.
+    expect(missingLegacy.stderr).toContain('Not listed: android@23, ios@23');
+  });
+
+  it('reads a page large enough for every release target, so a full promotion never fails its own read-back', () => {
+    // The regression: a fixed `--limit 10` against eleven release targets can
+    // never show the newest group for all eleven, so every promotion failed
+    // its own verification while having fully succeeded.
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-lookup-page-'));
+    const fakeEas = join(directory, 'fake-eas.sh');
+    const ledgerPath = join(directory, 'ledger.json');
+    const targets = [
+      ...['23', '24', '25', '26', '28'].map((runtimeVersion) => ({
+        platform: 'android',
+        runtimeVersion,
+      })),
+      ...['23', '24', '25', '26', '27', '29'].map((runtimeVersion) => ({
+        platform: 'ios',
+        runtimeVersion,
+      })),
+    ];
+    const key = (target: { platform: string; runtimeVersion: string }) =>
+      `${target.platform}@${target.runtimeVersion}`;
+    writeFileSync(
+      ledgerPath,
+      JSON.stringify({
+        sourceSha: 'deadbeef',
+        updateTargets: targets,
+        production: {
+          targets: targets.map((target) => ({ ...target, group: `group-${key(target)}` })),
+        },
+      }),
+    );
+    const page = JSON.stringify({
+      name: 'production',
+      id: 'branch-id',
+      currentPage: targets.map((target) => ({
+        group: `group-${key(target)}`,
+        platforms: target.platform,
+        runtimeVersion: target.runtimeVersion,
+      })),
+    });
+    // The fake refuses any page smaller than the target count, which is exactly
+    // what the real eas page did to the eleven-target release.
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+limit=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in --limit) limit="$2"; shift 2 ;; *) shift ;; esac
+done
+if [ "$limit" -lt ${targets.length} ]; then
+  echo "page too small: $limit" >&2
+  exit 9
+fi
+printf '%s\\n' '${page}'
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(['assert-production-list', '--ledger', ledgerPath], {
+      EAS_CLI_PATH: fakeEas,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`listed_production_targets=${targets.map(key).join(',')}`);
   });
 
   it('anchors a shipped compatibility runtime on its store binary and still refuses an unreadable production lookup', () => {

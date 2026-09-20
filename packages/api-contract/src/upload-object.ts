@@ -29,7 +29,7 @@ export function sha256Hex(bytes: Uint8Array): string {
  * to the declared size, so storage itself refuses a drifted body. Identical
  * bytes from the same owner dedupe onto the existing object and skip the
  * upload and finalize round trips entirely. Used by apps/body and
- * apps/mobile for media so the two never drift; artifacts (≤ 2 MB) go through
+ * apps/mobile for media so the two never drift; artifacts (≤ 25 MB) go through
  * the server pass-through instead.
  */
 export async function uploadObject(

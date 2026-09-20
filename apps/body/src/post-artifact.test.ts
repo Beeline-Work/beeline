@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { agentToolsFor } from './read-only-mcp.js';
 import { postArtifact, type PostArtifactDeps } from './read-only-mcp.js';
 
-const VALID_HTML = '<!doctype html><html><head><style>b{color:#111}</style></head><body>hi</body></html>';
+const VALID_HTML =
+  '<!doctype html><html><head><style>b{color:#111}</style></head><body>hi</body></html>';
 
 function deps(): { deps: PostArtifactDeps; uploads: unknown[]; queued: unknown[] } {
   const uploads: unknown[] = [];
@@ -39,14 +40,22 @@ describe('beeline-agent post_artifact', () => {
     expect(result).toContain('delivered with your final reply');
     expect(uploads).toHaveLength(1);
     expect(queued).toEqual([
-      { url: '/v1/media/obj-1', name: 'Room list mock', mimeType: 'text/html', size: VALID_HTML.length },
+      {
+        url: '/v1/media/obj-1',
+        name: 'Room list mock',
+        mimeType: 'text/html',
+        size: VALID_HTML.length,
+      },
     ]);
   });
 
   it('decodes base64 bytes for a PDF artifact', async () => {
     const { deps: d, uploads, queued } = deps();
     const pdf = Buffer.from('%PDF-1.7 minimal');
-    await postArtifact({ title: 'Spec', mime: 'application/pdf', bytes: pdf.toString('base64') }, d);
+    await postArtifact(
+      { title: 'Spec', mime: 'application/pdf', bytes: pdf.toString('base64') },
+      d,
+    );
     expect(uploads[0]).toMatchObject({ mime: 'application/pdf' });
     expect(queued[0]).toMatchObject({ mimeType: 'application/pdf', size: pdf.length });
   });
@@ -54,10 +63,7 @@ describe('beeline-agent post_artifact', () => {
   it('refuses content that fails the validation matrix before uploading', async () => {
     const { deps: d, uploads, queued } = deps();
     await expect(
-      postArtifact(
-        { title: 'bad', mime: 'text/html', html: '<script>alert(1)</script>' },
-        d,
-      ),
+      postArtifact({ title: 'bad', mime: 'text/html', html: '<script>alert(1)</script>' }, d),
     ).rejects.toThrow(/self-contained/);
     expect(uploads).toHaveLength(0);
     expect(queued).toHaveLength(0);
@@ -99,12 +105,42 @@ describe('beeline-agent post_artifact', () => {
     ]);
   });
 
+  it.each([
+    ['page.html', 'text/html', VALID_HTML],
+    ['page.HTM', 'text/html', VALID_HTML],
+    ['diagram.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"/>'],
+    ['spec.pdf', 'application/pdf', '%PDF-1.7 minimal'],
+    ['notes.md', 'text/markdown', '# Notes'],
+    ['photo.png', 'image/png', 'png'],
+    ['photo.jpg', 'image/jpeg', 'jpg'],
+    ['photo.jpeg', 'image/jpeg', 'jpeg'],
+    ['animation.gif', 'image/gif', 'gif'],
+    ['photo.webp', 'image/webp', 'webp'],
+    ['notes.txt', 'text/plain', 'notes'],
+    ['events.log', 'text/plain', 'events'],
+    ['data.json', 'application/json', '{}'],
+    ['rows.csv', 'text/csv', 'a,b'],
+    ['bundle.zip', 'application/zip', 'zip'],
+  ])('infers %s as %s', async (fileName, expectedMime, content) => {
+    const { deps: d, uploads } = deps();
+    await writeFile(join(d.roots[0], fileName), content, 'utf8');
+    await postArtifact({ path: fileName }, d);
+    expect(uploads[0]).toMatchObject({ mime: expectedMime, title: fileName });
+  });
+
+  it('uses the octet-stream fallback for unknown and extensionless paths', async () => {
+    for (const fileName of ['archive.tar.gz', 'README']) {
+      const { deps: d, uploads } = deps();
+      await writeFile(join(d.roots[0], fileName), 'bytes', 'utf8');
+      await postArtifact({ path: fileName }, d);
+      expect(uploads[0]).toMatchObject({ mime: 'application/octet-stream', title: fileName });
+    }
+  });
+
   it('refuses a path outside the roots and mixed path/content args', async () => {
     const { deps: d } = deps();
     await expect(postArtifact({ path: '/etc/passwd' }, d)).rejects.toThrow(/outside your checkout/);
-    await expect(
-      postArtifact({ path: 'x.html', html: '<p>x</p>' }, d),
-    ).rejects.toThrow(/not both/);
+    await expect(postArtifact({ path: 'x.html', html: '<p>x</p>' }, d)).rejects.toThrow(/not both/);
     await expect(postArtifact({}, d)).rejects.toThrow(/pass a file path/);
   });
 
@@ -140,7 +176,11 @@ describe('beeline-agent post_artifact', () => {
     await expect(
       postArtifact(
         { title: 't', mime: 'text/html', html: VALID_HTML },
-        { roomId: 'room-1', upload: async () => ({ url: '' }), queue: async (a) => void queued.push(a) },
+        {
+          roomId: 'room-1',
+          upload: async () => ({ url: '' }),
+          queue: async (a) => void queued.push(a),
+        },
       ),
     ).rejects.toThrow(/no url/);
     expect(queued).toHaveLength(0);

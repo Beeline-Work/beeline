@@ -74,22 +74,21 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
-        'parentRoomId', (
-          SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)
-        ),
-        'openedBy', (
-          SELECT COALESCE(
-            (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
-            room.created_by
-          )
-          FROM rooms room
-          WHERE room.id = COALESCE(NEW.room_id, OLD.room_id) AND room.parent_id IS NOT NULL
-        ),
         'removed', CASE
           WHEN TG_OP = 'DELETE' THEN true
           ELSE COALESCE(NEW.removed_at IS NOT NULL, false)
         END
-      );
+      ) || COALESCE((
+        SELECT jsonb_build_object(
+          'parentRoomId', room.parent_id,
+          'archived', room.archived_at IS NOT NULL,
+          'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
+            (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+            room.created_by
+          ) END
+        )
+        FROM rooms room WHERE room.id = COALESCE(NEW.room_id, OLD.room_id)
+      ), '{}'::jsonb);
     WHEN 'corner_facts' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
@@ -188,6 +187,7 @@ interface LiveNotificationPayload {
   databaseAt?: number;
   parentRoomId?: string;
   openedBy?: string;
+  archived?: boolean;
   removed?: boolean;
   closeRequested?: boolean;
 }
@@ -219,6 +219,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.databaseAt === 'number' ? { databaseAt: parsed.databaseAt } : {}),
       ...(typeof parsed.parentRoomId === 'string' ? { parentRoomId: parsed.parentRoomId } : {}),
       ...(typeof parsed.openedBy === 'string' ? { openedBy: parsed.openedBy } : {}),
+      ...(typeof parsed.archived === 'boolean' ? { archived: parsed.archived } : {}),
       ...(typeof parsed.removed === 'boolean' ? { removed: parsed.removed } : {}),
       ...(typeof parsed.closeRequested === 'boolean'
         ? { closeRequested: parsed.closeRequested }
@@ -407,6 +408,7 @@ export class PostgresLiveListener {
         : {}),
       ...(payload.parentRoomId ? { parentRoomId: payload.parentRoomId } : {}),
       ...(payload.openedBy ? { openedBy: payload.openedBy } : {}),
+      ...(payload.archived ? { archived: true } : {}),
       ...(payload.removed ? { removed: true } : {}),
       ...(payload.closeRequested ? { closeRequested: true } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),

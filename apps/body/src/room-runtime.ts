@@ -381,6 +381,14 @@ export class RoomRuntimeCoordinator {
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
   private readonly startingCorners = new Set<string>();
+  /**
+   * Rooms whose start is in flight. `running` is not set until the checkout
+   * clone finishes, and three callers race for it — the membership push, the
+   * reconcile sweep, and the watchdog restart — so without this two checkouts
+   * run in the same shared directory and the second start orphans the first
+   * loop's AbortController.
+   */
+  private readonly startingRooms = new Set<string>();
   /** Pushed membership changes awaiting a bounded apply, latest per Room. */
   private readonly pendingMembershipEvents = new Map<string, RoomMembershipChange>();
   private membershipDrain: Promise<void> | undefined;
@@ -672,13 +680,17 @@ export class RoomRuntimeCoordinator {
       this.discoveryWakes.wake();
       return;
     }
-    const left = event.removed === true || event.operation?.toUpperCase() === 'DELETE';
-    if (left) {
+    if (event.removed === true) {
       const running = this.running.get(roomId);
       if (running) await this.stopRunning(roomId, running);
       this.monolithCornerParents.delete(roomId);
       return;
     }
+    // Inheriting a Room membership writes one row per corner under it, archived
+    // ones included, and the reviewer projection rewrites every row again. An
+    // archived Room or corner is nothing to start, so the event is dropped here
+    // rather than after a restore read per row.
+    if (event.archived === true) return;
     this.roomRemovalConfirmations.delete(roomId);
     if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
     if (event.parentRoomId) {
@@ -780,6 +792,16 @@ export class RoomRuntimeCoordinator {
   }
 
   private async startRoom(roomId: string): Promise<void> {
+    if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
+    this.startingRooms.add(roomId);
+    try {
+      await this.startRoomOnce(roomId);
+    } finally {
+      this.startingRooms.delete(roomId);
+    }
+  }
+
+  private async startRoomOnce(roomId: string): Promise<void> {
     const controller = new AbortController();
     const cwd = await this.materializeRoomCheckout(roomId);
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();

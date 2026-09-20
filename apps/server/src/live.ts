@@ -79,6 +79,8 @@ export type LiveEvent =
       parentRoomId?: string;
       /** The agent that opened that corner, as the corner's own facts record it. */
       openedBy?: string;
+      /** True when the Room or corner this membership names is already archived. */
+      archived?: boolean;
       /** True when this membership row is no longer a current member. */
       removed?: boolean;
       /** True when the corner_facts row records a requested close. */

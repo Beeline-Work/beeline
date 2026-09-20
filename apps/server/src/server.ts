@@ -281,9 +281,9 @@ export function createBeelineServer(options: ServerOptions): Server {
                 JSON.stringify({
                   type: 'rooms-changed',
                   ...(event.roomId ? { roomId: event.roomId } : {}),
-                  ...(event.operation ? { operation: event.operation } : {}),
                   ...(event.parentRoomId ? { parentRoomId: event.parentRoomId } : {}),
                   ...(event.openedBy ? { openedBy: event.openedBy } : {}),
+                  ...(event.archived ? { archived: true } : {}),
                   ...(event.removed ? { removed: true } : {}),
                 }),
               );

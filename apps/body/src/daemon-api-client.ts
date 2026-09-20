@@ -23,7 +23,8 @@ export type RoomMembershipChange = {
   readonly parentRoomId?: string;
   /** The corner's opener, carried by the same row that announces the corner. */
   readonly openedBy?: string;
-  readonly operation?: string;
+  /** The named Room/corner is already archived, so nothing is started for it. */
+  readonly archived?: boolean;
   readonly removed?: boolean;
 };
 
@@ -96,7 +97,7 @@ function membershipChange(event: Record<string, unknown>): RoomMembershipChange 
     ...(typeof event.roomId === 'string' && event.roomId ? { roomId: event.roomId } : {}),
     ...(typeof event.parentRoomId === 'string' ? { parentRoomId: event.parentRoomId } : {}),
     ...(typeof event.openedBy === 'string' ? { openedBy: event.openedBy } : {}),
-    ...(typeof event.operation === 'string' ? { operation: event.operation } : {}),
+    ...(event.archived === true ? { archived: true } : {}),
     ...(event.removed === true ? { removed: true } : {}),
   };
 }
@@ -282,11 +283,12 @@ export class DaemonApiClient {
     socket.onopen = () => {
       this.liveReconnectDelayMs = 1_000;
       for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
-      // The membership wake is fire-and-forget: a Room created while this
-      // socket was connecting (or between reconnects) never replays its
-      // frame. Treat every open as a wake, so a membership written before the
-      // socket existed is still discovered by the next reconciliation.
+      // Every wake on this socket is fire-and-forget: a membership written, or
+      // a Connect tapped, while this socket was connecting (or between
+      // reconnects) never replays its frame. Treat every open as both wakes, so
+      // the reconciliation and the pending_ops drain still reach them.
       this.roomsChangedListener?.();
+      this.connectorAssignmentListener?.();
     };
     socket.onmessage = (message) => {
       let value: unknown;

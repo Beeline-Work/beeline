@@ -55,7 +55,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       },
     );
     try {
-      await coordinator.applyMembershipEvent({ roomId: 'room-1', operation: 'INSERT' });
+      await coordinator.applyMembershipEvent({ roomId: 'room-1' });
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('room-1'));
       expect(execute).not.toHaveBeenCalledWith('listRoomCorners', expect.anything());
       expect(execute).not.toHaveBeenCalledWith('getDaemonBootstrap', expect.anything());
@@ -103,7 +103,6 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         roomId: 'corner-1',
         parentRoomId: 'room-1',
         openedBy: identityFromKey('11'.repeat(32), 'Bee').publicKey,
-        operation: 'INSERT',
       });
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('corner-1'));
       expect(execute).not.toHaveBeenCalledWith('listRoomCorners', expect.anything());
@@ -114,21 +113,10 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
-  it('does not start an archived corner a membership push inherited', async () => {
+  it('reads nothing for an archived corner a membership push inherited', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-archived-'));
     roots.push(root);
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getCornerRestoreState')
-        return {
-          cornerId: 'corner-old',
-          objective: 'Landed already',
-          closeRequested: true,
-          lane: 'code',
-        };
-      if (name === 'getRoomRepositoryState')
-        return { resolution: 'repository', remote: 'https://github.example/x.git', key: 'x' };
-      return {};
-    });
+    const execute = vi.fn(async () => ({}));
     const coordinator = new RoomRuntimeCoordinator(
       runtimeAt(root),
       join(root, 'agent.json'),
@@ -147,10 +135,50 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         roomId: 'corner-old',
         parentRoomId: 'room-1',
         openedBy: identityFromKey('11'.repeat(32), 'Bee').publicKey,
-        operation: 'INSERT',
+        archived: true,
       });
       expect(coordinator.activeRoomIds()).not.toContain('corner-old');
-      expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('starts a Room once when two membership pushes race its checkout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-race-'));
+    roots.push(root);
+    let repositoryReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomRepositoryState') {
+        repositoryReads += 1;
+        return { resolution: 'none' };
+      }
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: vi.fn(),
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    try {
+      await Promise.all([
+        coordinator.applyMembershipEvent({ roomId: 'room-1' }),
+        coordinator.applyMembershipEvent({ roomId: 'room-1' }),
+      ]);
+      await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('room-1'));
+      expect(repositoryReads).toBe(1);
     } finally {
       await coordinator.shutdown();
     }
@@ -174,11 +202,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       },
     );
     try {
-      await coordinator.applyMembershipEvent({
-        roomId: 'corner-1',
-        parentRoomId: 'room-1',
-        operation: 'INSERT',
-      });
+      await coordinator.applyMembershipEvent({ roomId: 'corner-1', parentRoomId: 'room-1' });
       expect(coordinator.activeRoomIds()).not.toContain('corner-1');
       expect(execute).not.toHaveBeenCalled();
       expect(coordinator.needsFastReconcile()).toBe(true);

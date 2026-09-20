@@ -317,13 +317,15 @@ describe('DaemonApiClient', () => {
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
     socket.message({ type: 'subscribed', roomId: 'room-1' });
+    // A frame published while this socket was down is never replayed, so the
+    // open itself drains both queues.
+    expect(connectors).toHaveLength(1);
 
     socket.message({
       type: 'rooms-changed',
       roomId: 'corner-1',
       parentRoomId: 'room-1',
       openedBy: 'opener-agent',
-      operation: 'INSERT',
     });
     socket.message({ type: 'rooms-changed', roomId: 'corner-1', removed: true });
     socket.message({ type: 'rooms-changed' });
@@ -356,13 +358,13 @@ describe('DaemonApiClient', () => {
     expect(memberships).toEqual([
       // Socket open: the unscoped wake that still arms the recovery reconcile.
       undefined,
-      { roomId: 'corner-1', parentRoomId: 'room-1', openedBy: 'opener-agent', operation: 'INSERT' },
+      { roomId: 'corner-1', parentRoomId: 'room-1', openedBy: 'opener-agent' },
       { roomId: 'corner-1', removed: true },
       {},
     ]);
     expect(inbox).toEqual(['open']);
     expect(completes).toEqual(['corner-1']);
-    expect(connectors).toEqual([true]);
+    expect(connectors).toEqual([true, true]);
     release();
   });
 });

@@ -287,7 +287,31 @@ describe('Postgres live fanout', () => {
           event.type === 'invalidate' &&
           event.reason === 'postgres:memberships' &&
           event.targetAgentId === opener &&
-          event.openedBy === opener,
+          event.openedBy === opener &&
+          event.archived !== true,
+      ),
+    );
+
+    // Inheriting a Room membership writes one row per corner under it, archived
+    // ones included; the helper must be able to drop those without a read.
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
+    const latecomer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Cee')`, [
+      latecomer,
+    ]);
+    received.length = 0;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, corner, latecomer],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:memberships' &&
+          event.targetAgentId === latecomer &&
+          event.archived === true,
       ),
     );
   });

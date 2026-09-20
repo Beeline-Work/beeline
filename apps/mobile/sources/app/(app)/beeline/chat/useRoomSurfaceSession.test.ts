@@ -198,8 +198,6 @@ vi.mock('@beeline/buzz-client', async () => {
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { cornerSummaries } from '@/buzz/room-view-presentation';
-import { selectPinnedCorner, isPinnedCornerLive } from '@/buzz/room-indicators';
-import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -264,25 +262,23 @@ function Harness({
 }
 
 function LiveCornerHarness({ channelId }: { channelId: string }) {
-  // Match the OTA smoke: this Room has already been open longer than the
-  // canonical working-lease horizon before its new corner starts working.
-  const [cornerNow, setCornerNow] = React.useState(() => Date.now() - 180_000);
   const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
-    observeRoomSurface: () => setCornerNow(Date.now()),
+    observeRoomSurface: vi.fn(),
   });
   const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
-  const pinned = roomSurface
-    ? selectPinnedCorner({ lifecycle: cornerSummaries(roomSurface), now: cornerNow })
-    : null;
-  return pinned
-    ? React.createElement(CornerLiveBar, {
-        label: `agent active: ${pinned.cornerId}`,
-        live: isPinnedCornerLive(pinned.status),
-      })
-    : null;
+  const working = (roomSurface ? cornerSummaries(roomSurface) : []).filter(
+    (corner) => corner.state === 'working',
+  );
+  return React.createElement(
+    'corner-states',
+    { testID: 'corner-states' },
+    ...working.map((corner) =>
+      React.createElement('corner-state', { key: corner.id, testID: `corner-working-${corner.id}` }),
+    ),
+  );
 }
 
 async function flushMicrotasks() {
@@ -837,7 +833,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('lights the gold bar from a fresh indexed child-turn receipt', async () => {
+  it('reports a fresh indexed child corner as working, over a stale review card', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
@@ -862,8 +858,8 @@ describe('useRoomSurfaceSession', () => {
               createdAt: stateAt,
               updatedAt: stateAt,
             },
-            // The review card remains mounted during steering. The fresh
-            // receipt must temporarily light the Room bar anyway.
+            // The review card remains mounted during steering. The canonical
+            // daemon state still has to read through as working.
             lifecycle: { lifecycle: 'REVIEW' },
             state: 'working',
             stateAt,
@@ -875,7 +871,7 @@ describe('useRoomSurfaceSession', () => {
     });
 
     expect(
-      renderer.root.findAllByProps({ testID: 'corner-status-working' }).length,
+      renderer.root.findAllByProps({ testID: 'corner-working-corner-a' }).length,
     ).toBeGreaterThan(0);
     await act(async () => renderer.unmount());
   });

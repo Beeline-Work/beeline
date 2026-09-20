@@ -1,4 +1,3 @@
-import { type CornerSummary } from './corners';
 import { resolveAgentDisplayIdentity } from './agent-display';
 import { pickTurnVerb, type TurnVerb } from './turn-clock';
 import type { CornerState } from '@beeline/api-contract/phone';
@@ -15,24 +14,14 @@ import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-c
  *   it names no corner, and it is nothing to tap.
  *
  *   **A corner is open.** A non-terminal child edit channel exists. Its
- *   canonical parameterized-replaceable state decides whether the pin is
- *   working, waiting, or in review. Parent-Room
- *   kind:9 control history is never lifecycle authority.
+ *   canonical parameterized-replaceable state decides whether it is working,
+ *   waiting, or in review. Parent-Room kind:9 control history is never
+ *   lifecycle authority.
  *
- * `selectPinnedCorner` takes canonical corner state and nothing else; the turn
- * indicator and transcript control messages cannot promote a corner into it.
+ * The Room no longer pins one of them above its composer — a Room holds many
+ * corners, and one line could only ever name one. What is left of the corner
+ * half here is the working verdict the Room-list breath reads.
  */
-export type PinnedCorner = {
-  cornerId: string;
-  status: CornerState;
-};
-
-export type PinnedCornerInput = {
-  /** Canonical daemon lifecycle snapshots for relay-existing corners. */
-  lifecycle: readonly CornerSummary[];
-  now?: number;
-};
-
 export type TurnProgressInput = {
   /** Corners trust their own channel-local turn proof even if Room presence is stale. */
   isCorner: boolean;
@@ -146,9 +135,9 @@ export function viewerMayStopTurn(
 ): boolean {
   return Boolean(
     viewerPubkey &&
-    (viewerRole === 'owner' ||
-      viewerRole === 'admin' ||
-      (requestedBy && viewerPubkey === requestedBy)),
+      (viewerRole === 'owner' ||
+        viewerRole === 'admin' ||
+        (requestedBy && viewerPubkey === requestedBy)),
   );
 }
 
@@ -257,66 +246,16 @@ export function selectComposerAckPresentation(
 }
 
 /**
- * Which qualifying corner to pin when more than one is open at once. This is
- * a *selection* priority, deliberately not `cornerStatusPrecedence` (which
- * resolves conflicting reports of one corner's status and must stay
- * terminal-highest for that job): a corner ready for review is the most
- * actionable thing a captain can do about it, so it wins the single pin even
- * over one still being actively worked.
- */
-const PIN_RELEVANCE: Record<string, number> = {
-  review: 0,
-  working: 1,
-  waiting: 2,
-  archived: 3,
-};
-
-/**
- * The one corner the pinned line may name, or `null` for none.
- *
- * The line's presence means "this corner is open and worth returning to" —
- * working, waiting, and review all qualify. Archived means "no line". When
- * several corners qualify at once, review wins and waiting remains fallback.
- */
-export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | null {
-  const status = new Map<string, PinnedCorner['status']>();
-  const seenAt = new Map<string, number>();
-
-  for (const corner of input.lifecycle) {
-    status.set(corner.id, corner.state);
-    seenAt.set(
-      corner.id,
-      Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0),
-    );
-  }
-
-  const candidates = [...status.entries()]
-    .filter(([, value]) => value !== 'archived')
-    .sort(
-      ([leftId, left], [rightId, right]) =>
-        PIN_RELEVANCE[left] - PIN_RELEVANCE[right] ||
-        (seenAt.get(rightId) ?? 0) - (seenAt.get(leftId) ?? 0) ||
-        leftId.localeCompare(rightId),
-    );
-  const best = candidates[0];
-  return best ? { cornerId: best[0], status: best[1] } : null;
-}
-
-/**
  * Motion means one thing product-wide: an agent is working in that corner.
- * Waiting and review are pinned too, but do not pulse.
+ * Waiting and review show no breath.
  */
-export function isPinnedCornerLive(status: PinnedCorner['status']): boolean {
+export function isPinnedCornerLive(status: CornerState): boolean {
   return status === 'working';
 }
 
-/** A pinned corner has an approvable change waiting. */
-export function isPinnedCornerReadyForReview(status: PinnedCorner['status']): boolean {
+/** A corner has an approvable change waiting. */
+export function isPinnedCornerReadyForReview(status: CornerState): boolean {
   return status === 'review';
-}
-
-export function pinnedCornerVerb(status: PinnedCorner['status']): string {
-  return status;
 }
 
 /** Human-facing branch label for a full Git target ref. */

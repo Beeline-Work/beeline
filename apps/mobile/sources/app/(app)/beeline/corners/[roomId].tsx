@@ -13,9 +13,10 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
-import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
+import { CHANGES_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -49,12 +50,10 @@ export default function BuzzCorners() {
       const cached = await mobileSurfaceCache.read(address, isCornerListView);
       if (cancelled) return;
       if (cached) setSurface(cached);
-      let current = cached;
       const http = new RoomViewClient({ baseUrl: relayUrl, identity });
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => http.corners(decodedId),
         apply: (value) => {
-          current = value;
           setSurface(value);
           setError(null);
           setRefreshing(false);
@@ -94,14 +93,14 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <SurfaceGlyphLoader testID="changes-loader" />
-        <Text style={styles.loading}>LOADING CHANGES</Text>
+        <Text style={styles.loading}>Loading {CHANGES_LABEL}…</Text>
       </View>
     );
   }
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.error}>{error}</Text>
+        <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
         <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
@@ -126,26 +125,19 @@ export default function BuzzCorners() {
       viewerFace={surface.viewer.identity.face}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <HullSurface strength="quiet" style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
-            <Text style={styles.backText}>‹</Text>
-          </TouchableOpacity>
-          <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>{title}</Text>
-            <Text style={styles.title}>All {CHANGES_LABEL}</Text>
-          </View>
-          <Text style={styles.count}>{surface.corners.length}</Text>
-        </HullSurface>
-        <HullSurface strength="raised" style={styles.modelPanel}>
-          <Text style={styles.modelTitle}>YOLO INSIDE · GITHUB IS THE LIFECYCLE</Text>
-          <Text style={styles.modelText}>
-            Agents iterate inside their own {CORNER_LABEL}, push a branch, and open a pull request.
-            A merged or deleted branch closes the work automatically.
-          </Text>
-        </HullSurface>
+        {/* Chrome sits on the slab: no plate, no texture, one hairline and
+          type weight — the same header the Members screen carries. */}
+        <RoomCornersHeader
+          title={title}
+          count={surface.corners.length}
+          onBack={() => router.back()}
+        />
         {!!error && (
+          // F5: it is tappable, so it announces as a button. `alert` promised
+          // no action, which left the retry invisible to a screen reader.
           <TouchableOpacity
-            accessibilityRole="alert"
+            accessibilityLabel={`${error}. Retry`}
+            accessibilityRole="button"
             onPress={() => schedulerRef.current?.force()}
             style={styles.errorPanel}
           >
@@ -157,6 +149,9 @@ export default function BuzzCorners() {
           parentRoomId={decodedId}
           parentRoomName={title}
           refreshing={refreshing}
+          // The list runs to the bottom edge, so it clears the gesture bar
+          // itself rather than tucking its last row under it.
+          bottomInset={insets.bottom}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();
@@ -171,31 +166,16 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 28 },
-    loading: {
-      ...Typography.mono('semiBold'),
-      color: hull.textMuted,
-      fontSize: 10,
-      letterSpacing: 1,
-    },
-    header: {
-      minHeight: 66,
-      flexDirection: 'row',
+    center: {
       alignItems: 'center',
-      paddingHorizontal: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
+      justifyContent: 'center',
+      gap: hull.space.md,
+      paddingHorizontal: hull.space.lg,
     },
-    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: hull.textPrimary, fontSize: 30 },
-    headerCopy: { flex: 1, minWidth: 0 },
-    eyebrow: { ...Typography.mono(), color: hull.textMuted, fontSize: 9 },
-    title: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
-    count: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 12 },
-    modelPanel: { margin: 12, padding: 12, gap: 5 },
-    modelTitle: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 9 },
-    modelText: { ...Typography.default(), color: hull.textMuted, fontSize: 11, lineHeight: 16 },
-    errorPanel: { paddingHorizontal: 16, paddingVertical: 8 },
-    error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
+    loading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    errorPanel: { paddingHorizontal: hull.space.md, paddingVertical: hull.space.sm },
+    // F9: one error voice; only the full-screen state centres it.
+    error: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    errorCentered: { textAlign: 'center' },
   };
 });

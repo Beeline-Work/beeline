@@ -572,7 +572,7 @@ function projectEntries<T extends RoomRowInput>(
 /**
  * Captain's channel-mark convention (2026-08): Room index rows display
  * `#<name>`. Extended across flat surfaces that expose a room or corner name
- * (2026-08): chat headers, breadcrumbs, the pinned-corner line, cross-Room
+ * (2026-08): chat headers, breadcrumbs, cross-Room
  * lists, Workspace settings, and Members references render through this
  * derivation or `displayCornerTitle` below. Grouped corner rows use
  * `displayGroupedCornerTitle`. Strictly presentation — the
@@ -610,6 +610,28 @@ export function displayCornerTitle(
 }
 
 /**
+ * The same `#room/corner` composition, with the corner's name UNCAPPED.
+ *
+ * `cornerName` clips to three words because most surfaces show a corner
+ * inline, in a slot that has to stay one line beside other facts. The Room's
+ * dedicated corners list is the opposite case: it exists to tell you which
+ * corner is which, so a silently shortened name defeats the screen (captain,
+ * 2026-09-20 — "print the corner name in full without truncation"). The
+ * empty/`sub-` id-slug fallback is shared, so an unnamed corner still labels
+ * itself the same way everywhere.
+ */
+export function fullCornerTitle(
+  parentRoomName: string | undefined | null,
+  cornerStoredName: string | undefined,
+  cornerId: string,
+): string {
+  const room = parentRoomName?.trim().replace(/^#+/, '');
+  const stored = withoutParentPrefix(room, cornerStoredName)?.replace(/\s+/g, ' ').trim();
+  const corner = !stored || stored.startsWith('sub-') ? cornerName(stored, cornerId) : stored;
+  return room ? `#${room}/${corner}` : `#${corner}`;
+}
+
+/**
  * A corner grouped directly beneath its parent Room needs only its short name:
  * the surrounding Room row or work-pane header already supplies the namespace.
  * Accept legacy pre-decorated names so old cached/server rows cannot reintroduce
@@ -621,13 +643,25 @@ export function displayGroupedCornerTitle(
   cornerId: string,
 ): string {
   const room = parentRoomName?.trim().replace(/^#+/, '');
+  return cornerName(withoutParentPrefix(room, cornerStoredName), cornerId);
+}
+
+/**
+ * Drop a stored name's own `<room>/` prefix, case-insensitively, so a legacy
+ * row saved as `#alpha/Fix fixture` never composes to `#alpha/alpha/Fix
+ * fixture`. Shared by both composing titles: a stored name that merely starts
+ * with a similar word keeps it, because only an exact `<room>/` segment is
+ * stripped.
+ */
+function withoutParentPrefix(
+  room: string | undefined,
+  cornerStoredName: string | undefined,
+): string | undefined {
   const stored = cornerStoredName?.trim().replace(/^#+/, '');
   const prefix = room ? `${room}/` : undefined;
-  const shortStored =
-    prefix && stored?.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
-      ? stored.slice(prefix.length)
-      : stored;
-  return cornerName(shortStored, cornerId);
+  return prefix && stored?.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
+    ? stored.slice(prefix.length)
+    : stored;
 }
 
 /**

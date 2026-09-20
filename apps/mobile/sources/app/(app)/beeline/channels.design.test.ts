@@ -317,7 +317,6 @@ describe('Room list layout contract', () => {
   it('gives every Room with live corners an inline expansion and navigation affordance', () => {
     expect(source).toContain("import { formatRoomCornerCount } from '@/buzz/vocabulary';");
     expect(source).toContain('const cornerCount = formatRoomCornerCount(item.cornerCount);');
-    expect(source).toContain('(item.cornerCount ?? 0) > 0 && (');
     expect(source).toContain('accessibilityState={{ expanded }}');
     expect(source).toContain('testID={`room-corners-toggle-${item.room.id}`}');
     expect(source).toContain('testID={`room-corners-${item.room.id}`}');

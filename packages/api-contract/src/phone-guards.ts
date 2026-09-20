@@ -59,8 +59,8 @@ import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js'
  * a missing optional one. Unrecognised or unreadable list entries are dropped.
  * Only load-bearing identity fails the view — for a Room, that is `room.id`
  * and the presence of a `messages` array. `is*` remains `read*(value) !== null`
- * so existing type-predicate call sites still compile; HTTP clients and the
- * surface cache must apply `read*` so a dropped row cannot linger as typed junk.
+ * so existing type-predicate call sites still compile; HTTP clients apply
+ * `read*` so a dropped row cannot linger as typed junk.
  */
 export type SurfaceReader<T> = (value: unknown) => T | null;
 
@@ -69,6 +69,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SHA1 = /^[0-9a-f]{40}$/i;
 const NIL_UUID = '00000000-0000-4000-8000-000000000000';
 const WATCH_FILTER_LIMIT = 32;
+const WATCH_FILTER_TAG_KEYS: readonly string[] = ['authors', '#h', '#d', '#p', '#t'];
 const CLOSED_VIEWER: RoomViewer = {
   identity: { pubkey: '0'.repeat(64), kind: 'human', name: '' },
   role: 'member',
@@ -146,6 +147,14 @@ function readList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[
 
 function requireList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | null {
   return Array.isArray(value) ? (readList(value, read, limit) ?? []) : null;
+}
+
+/**
+ * The server emits message rows oldest-first and already trims its own tail, so
+ * a bundle whose cap is lower than the server's must keep the NEWEST rows.
+ */
+function readNewestList<T>(value: unknown, read: SurfaceReader<T>, limit: number): T[] | undefined {
+  return Array.isArray(value) ? (readList(value.slice(-limit), read) ?? []) : undefined;
 }
 
 export function readIdentity(value: unknown): RoomViewIdentity | null {
@@ -256,43 +265,18 @@ function readIdentityOnly(value: unknown): RoomViewIdentity | undefined {
 function readWatchFilter(value: unknown): SurfaceWatchFilter | null {
   const item = record(value);
   if (!item) return null;
-  const filter: SurfaceWatchFilter = {
-    ...field(
-      'kinds',
-      Array.isArray(item.kinds) && item.kinds.every(integer) ? item.kinds : undefined,
-    ),
-    ...field(
-      'authors',
-      Array.isArray(item.authors) && item.authors.every((entry) => typeof entry === 'string')
-        ? item.authors
-        : undefined,
-    ),
-    ...field(
-      '#h',
-      Array.isArray(item['#h']) && item['#h'].every((entry) => typeof entry === 'string')
-        ? item['#h']
-        : undefined,
-    ),
-    ...field(
-      '#d',
-      Array.isArray(item['#d']) && item['#d'].every((entry) => typeof entry === 'string')
-        ? item['#d']
-        : undefined,
-    ),
-    ...field(
-      '#p',
-      Array.isArray(item['#p']) && item['#p'].every((entry) => typeof entry === 'string')
-        ? item['#p']
-        : undefined,
-    ),
-    ...field(
-      '#t',
-      Array.isArray(item['#t']) && item['#t'].every((entry) => typeof entry === 'string')
-        ? item['#t']
-        : undefined,
-    ),
-  };
-  return Object.keys(filter).length > 0 ? filter : null;
+  const filter: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(item)) {
+    if (key === 'kinds') {
+      if (!Array.isArray(entry) || !entry.every(integer)) return null;
+    } else if (WATCH_FILTER_TAG_KEYS.includes(key)) {
+      if (!Array.isArray(entry) || !entry.every((tag) => typeof tag === 'string')) return null;
+    } else {
+      return null;
+    }
+    filter[key] = entry;
+  }
+  return Object.keys(filter).length > 0 ? (filter as SurfaceWatchFilter) : null;
 }
 
 function readWatchFilters(value: unknown): SurfaceWatchFilter[] {
@@ -940,7 +924,8 @@ function readScopedMessage(value: unknown, roomId: string): RoomViewMessage | nu
   const reference =
     message.reference && message.reference.channelId === roomId ? message.reference : undefined;
   const reply = message.reply && message.reply.channelId === roomId ? message.reply : undefined;
-  return { ...message, ...field('reference', reference), ...field('reply', reply) };
+  const { reference: _foreignReference, reply: _foreignReply, ...rest } = message;
+  return { ...rest, ...field('reference', reference), ...field('reply', reply) };
 }
 
 function readAgentTurn(value: unknown): RoomViewAgentTurn | null {
@@ -1256,7 +1241,7 @@ export function readRoomView(value: unknown): RoomView | null {
   const item = record(value);
   const room = readHeader(item?.room);
   if (!item || !room) return null;
-  const messages = requireList(
+  const messages = readNewestList(
     item.messages,
     (candidate) => readScopedMessage(candidate, room.id),
     ROOM_VIEW_MESSAGE_LIMIT,
@@ -1269,11 +1254,15 @@ export function readRoomView(value: unknown): RoomView | null {
     members: readList(item.members, readMember, ROOM_VIEW_MEMBER_LIMIT) ?? [],
     latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
     viewer,
-    repositoryResolution: readRepositoryResolution(item.repositoryResolution) ?? 'none',
+    repositoryResolution: readRepositoryResolution(item.repositoryResolution) ?? 'unverified',
     watchFilters: readWatchFilters(item.watchFilters),
     ...field(
       'toolRows',
-      readList(item.toolRows, (candidate) => readScopedMessage(candidate, room.id), ROOM_VIEW_TOOL_ROW_LIMIT),
+      readNewestList(
+        item.toolRows,
+        (candidate) => readScopedMessage(candidate, room.id),
+        ROOM_VIEW_TOOL_ROW_LIMIT,
+      ),
     ),
     ...field('directMessage', readDirectMessage(item.directMessage, viewer.identity.pubkey)),
     ...field('parent', readHeader(item.parent)),
@@ -1291,7 +1280,7 @@ export function isRoomView(value: unknown): value is RoomView {
 export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
   const item = record(value);
   if (!item || !uuid(item.roomId)) return null;
-  const messages = requireList(
+  const messages = readNewestList(
     item.messages,
     (candidate) => readScopedMessage(candidate, item.roomId as string),
     ROOM_VIEW_MESSAGE_LIMIT,

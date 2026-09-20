@@ -264,7 +264,9 @@ describe('RoomViewClient', () => {
     expect(readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns).toEqual(
       [],
     );
-    expect(readRoomView({ ...room, repositoryResolution: 'unknown' })?.repositoryResolution).toBe('none');
+    expect(readRoomView({ ...room, repositoryResolution: 'unknown' })?.repositoryResolution).toBe(
+      'unverified',
+    );
     const repository = {
       key: 'github:1',
       name: 'acme/repo',
@@ -298,14 +300,14 @@ describe('RoomViewClient', () => {
     expect(readRoomView({ ...room, watchFilters: [watchFilter] })?.watchFilters).toEqual([
       watchFilter,
     ]);
-    // A filter whose every recognised key is unreadable would subscribe to the
-    // whole relay as `{}`, so it is dropped rather than projected empty.
+    // A filter is a constraint set: losing one key would install a WIDER relay
+    // REQ, so a filter this bundle cannot read whole is dropped entirely.
     expect(
       readRoomView({
         ...room,
         watchFilters: [{ kinds: [30078], '#t': 'agent-presence' }, { '#h': 7 }],
       })?.watchFilters,
-    ).toEqual([{ kinds: [30078] }]);
+    ).toEqual([]);
     expect(
       readRoomView({ ...room, watchFilters: [{ '#t': 'agent-presence' }] })?.watchFilters,
     ).toEqual([]);

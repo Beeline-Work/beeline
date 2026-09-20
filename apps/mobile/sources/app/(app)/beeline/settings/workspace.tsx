@@ -482,7 +482,7 @@ export default function WorkspaceSettings() {
                 value={
                   workspace?.visibility
                     ? WORKSPACE_VISIBILITY_LABELS[workspace.visibility]
-                    : 'Invite-only'
+                    : undefined
                 }
               />
             </View>

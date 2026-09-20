@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ROOM_VIEW_MESSAGE_LIMIT } from './phone-types.js';
 import {
   readAgentDetailView,
   readAgentGrantView,
@@ -51,33 +52,6 @@ const message = {
   author: identity,
   presentation: 'message' as const,
 };
-
-/** Last night's all-or-nothing Room check: one missing or unexpected field blanks the Room. */
-function legacyStrictRoomView(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const item = value as Record<string, unknown>;
-  const room = item.room as { id?: unknown } | undefined;
-  return Boolean(
-    room &&
-    typeof room.id === 'string' &&
-    Array.isArray(item.messages) &&
-    item.messages.every(
-      (entry) =>
-        entry &&
-        typeof entry === 'object' &&
-        typeof (entry as { presentation?: unknown }).presentation === 'string' &&
-        ['message', 'system', 'activity', 'card'].includes(
-          String((entry as { presentation?: unknown }).presentation),
-        ),
-    ) &&
-    Array.isArray(item.corners) &&
-    Array.isArray(item.members) &&
-    Array.isArray(item.latestAgentTurns) &&
-    item.viewer &&
-    typeof item.repositoryResolution === 'string' &&
-    Array.isArray(item.watchFilters),
-  );
-}
 
 const grant = {
   grantId: 'grant-1',
@@ -369,16 +343,72 @@ describe('phone surface readers', () => {
     expect(view?.chats[0]?.unread).toBe(false);
   });
 
-  it('drops a watch filter that projects to an unconstrained empty subscription', () => {
+  it('drops a watch filter it cannot read whole rather than widening the subscription', () => {
     expect(
       readRoomView({ ...currentRoom, watchFilters: [{ '#h': 'not-an-array' }] })?.watchFilters,
     ).toEqual([]);
     expect(
       readRoomView({
         ...currentRoom,
+        watchFilters: [{ kinds: [9], '#h': 'not-an-array' }],
+      })?.watchFilters,
+    ).toEqual([]);
+    expect(
+      readRoomView({
+        ...currentRoom,
+        watchFilters: [{ kinds: [9], '#e': [roomId] }],
+      })?.watchFilters,
+    ).toEqual([]);
+    expect(
+      readRoomView({
+        ...currentRoom,
+        watchFilters: [{ kinds: [9], '#h': [roomId] }],
+      })?.watchFilters,
+    ).toEqual([{ kinds: [9], '#h': [roomId] }]);
+    expect(
+      readRoomView({
+        ...currentRoom,
         watchFilters: Array.from({ length: 40 }, () => ({ '#h': [roomId] })),
       })?.watchFilters,
     ).toHaveLength(32);
+  });
+
+  it('keeps the newest rows when the server sends more messages than this bundle caps', () => {
+    const sent = Array.from({ length: ROOM_VIEW_MESSAGE_LIMIT + 10 }, (_, index) => ({
+      ...message,
+      id: index.toString(16).padStart(64, '0'),
+      text: `message ${index}`,
+      createdAt: index + 1,
+    }));
+    const view = readRoomView({ ...currentRoom, messages: sent });
+    expect(view?.messages).toHaveLength(ROOM_VIEW_MESSAGE_LIMIT);
+    expect(view?.messages.at(-1)?.text).toBe(`message ${sent.length - 1}`);
+    expect(view?.messages[0]?.text).toBe(`message ${sent.length - ROOM_VIEW_MESSAGE_LIMIT}`);
+  });
+
+  it('drops a reply anchor that names another Room instead of carrying it through', () => {
+    const foreign = 'cccccccc-3333-4333-8333-cccccccccccc';
+    const view = readRoomView({
+      ...currentRoom,
+      messages: [
+        {
+          ...message,
+          reference: { messageId: 'd'.repeat(64), channelId: foreign },
+          reply: { messageId: 'e'.repeat(64), channelId: foreign },
+        },
+      ],
+    });
+    expect(view?.messages).toHaveLength(1);
+    expect(view?.messages[0]?.reference).toBeUndefined();
+    expect(view?.messages[0]?.reply).toBeUndefined();
+  });
+
+  it('reads an unnameable repositoryResolution as unverified, never as no repository', () => {
+    expect(
+      readRoomView({ ...currentRoom, repositoryResolution: 'scratch' })?.repositoryResolution,
+    ).toBe('unverified');
+    const { repositoryResolution: _omitted, ...withoutResolution } = currentRoom;
+    expect(readRoomView(withoutResolution)?.repositoryResolution).toBe('unverified');
   });
 
   it('keeps a message when an optional card field is a kind this bundle does not know', () => {
@@ -424,21 +454,16 @@ describe('Room payload compatibility in both directions', () => {
   it('renders a pre-1516 Room (corners present) and a post-1516 Room (corners absent)', () => {
     expect(readRoomView(legacyServerRoom)?.room.id).toBe(roomId);
     expect(readRoomView(currentRoom)?.room.id).toBe(roomId);
-    expect(legacyStrictRoomView(legacyServerRoom)).toBe(true);
-    expect(legacyStrictRoomView(currentRoom)).toBe(false);
   });
 
   it('renders a future Room that an older all-or-nothing check would blank', () => {
     const view = readRoomView(futureServerRoom);
     expect(view?.room.id).toBe(roomId);
     expect(view?.messages).toHaveLength(1);
-    expect(legacyStrictRoomView(futureServerRoom)).toBe(false);
   });
 
   it('renders the older server shape after this bundle and the newer shape before a later server change', () => {
     expect(readRoomView(legacyServerRoom)?.messages).toEqual([]);
     expect(readRoomView(futureServerRoom)?.messages[0]?.text).toBe('Change course');
-    expect(legacyStrictRoomView(legacyServerRoom)).toBe(true);
-    expect(legacyStrictRoomView(futureServerRoom)).toBe(false);
   });
 });

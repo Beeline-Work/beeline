@@ -62,5 +62,5 @@ const styles = StyleSheet.create((theme) => ({
   // Tracked type roles, not raw sizes: this panel is diagnostic, and a
   // diagnostic is not a licence to invent a fourteenth text size.
   total: { ...theme.buzz.type.meta, color: theme.buzz.accent },
-  row: { ...theme.buzz.type.mono, color: theme.buzz.textMuted },
+  row: { ...theme.buzz.type.machine, color: theme.buzz.textMuted },
 }));

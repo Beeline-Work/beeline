@@ -804,7 +804,11 @@ export class RoomRuntimeCoordinator {
       }
       const objective = (restore.objective ?? '').trim();
       if (!objective) throw new Error('corner has no authoritative objective fact');
-      const repositoryBacked = repository.resolution === 'repository';
+      // The lane is the corner's own durable fact, so a no-code corner in a
+      // repository Room takes the same scratch workspace a chat-only corner
+      // does: no worktree is cut, no feature branch is named, and no GitHub
+      // token is minted for it.
+      const repositoryBacked = repository.resolution === 'repository' && restore.lane !== 'no_code';
       const targetBranch = repositoryBacked ? repository.targetBranch || 'main' : undefined;
       const featureBranch = repositoryBacked
         ? (restore.featureBranch ??
@@ -849,6 +853,7 @@ export class RoomRuntimeCoordinator {
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
         worktreePath: workspacePath,
+        ...(restore.requesterHandle ? { requesterHandle: restore.requesterHandle } : {}),
         ...(worktree
           ? {
               repository: {
@@ -914,7 +919,7 @@ export class RoomRuntimeCoordinator {
       console.log(
         worktree
           ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
-          : `[thin-core] serving chat-only corner ${corner.cornerId} at ${workspacePath}`,
+          : `[thin-core] serving no-code corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);

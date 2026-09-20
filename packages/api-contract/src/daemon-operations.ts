@@ -394,6 +394,10 @@ export type CornerRestoreResult = {
   readonly featureBranch?: string;
   readonly requestId?: string;
   readonly closeRequested: boolean;
+  /** The lane this corner was opened in. A restarted helper must not cut a worktree for `no_code`. */
+  readonly lane: CornerLane;
+  /** The human who commissioned the corner, as a bare handle. The no-code lane's completion signal. */
+  readonly requesterHandle?: string;
   /** Server-indexed GitHub facts retained across a helper restart. */
   readonly lifecycle?: CornerLifecycleView;
   /** The latest manager merge request, bound to the exact PR revision it approved. */
@@ -582,8 +586,16 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly objective: string;
     readonly repository?: string;
     readonly targetBranch?: string;
+    /**
+     * Which lane the corner runs in, chosen once at open and durable after.
+     * `no_code` skips the worktree, the commit, the pull request and the merge:
+     * the work comes back as artifacts and a reply tagging the requester. A
+     * corner with no repository is `no_code` whatever this says.
+     */
+    readonly lane?: CornerLane;
   };
 export type CornerResult = { readonly cornerId: string };
+export type CornerLane = 'code' | 'no_code';
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

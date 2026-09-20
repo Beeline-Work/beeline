@@ -1565,14 +1565,18 @@ export class DaemonService {
         feature_branch: string | null;
         request_id: string | null;
         close_requested: boolean;
+        lane: string | null;
+        requester_handle: string | null;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         pull_request_number: number | null;
         approval_head_sha: string | null;
       }>(
         `SELECT fact.objective,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+           fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
          LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
+         LEFT JOIN identities requester ON requester.id=fact.commissioned_by
          WHERE fact.corner_id=$1`,
         [cornerId],
       )
@@ -1583,6 +1587,10 @@ export class DaemonService {
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
+      // A row written before the lane existed reads back as its backfilled
+      // default, never as an unknown third lane.
+      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
+      ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
         ? {
@@ -3674,10 +3682,14 @@ export class DaemonService {
          DO UPDATE SET role='owner',removed_at=NULL`,
         [parent.workspace_id, cornerId, agentId],
       );
+      // A corner with no repository has nothing to commit, so it is the no-code
+      // lane however the caller asked. Recording anything else would tell a
+      // later reader of `corner_facts` that a pull request was possible here.
+      const lane = input.repository ? (input.lane ?? 'code') : 'no_code';
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,lifecycle)
-         VALUES($1,$2,$3,$4,$5,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, agentId, commissionedBy ?? null, objective, input.requestId],
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,lane,lifecycle)
+         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
+        [cornerId, agentId, commissionedBy ?? null, objective, input.requestId, lane],
       );
       // The objective is the OPENER's work. Every other agent is copied in as a
       // member so it can read the corner and answer when tagged, but it gets no

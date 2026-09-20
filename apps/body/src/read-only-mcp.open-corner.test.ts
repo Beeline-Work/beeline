@@ -161,12 +161,14 @@ describe('open_corner over the grok wire', () => {
       name: 'corner name',
       objective:
         'Ship the corner name parameter. Make grok able to open a corner. Update every surface that draws the title.',
+      lane: 'code',
       status: 'starting',
     });
     const created = door.calls.find((call) => call.operation === 'createCorner');
     expect(created).toMatchObject({
       roomId: ROOM,
       name: 'corner name',
+      lane: 'code',
       repository: 'owner/widgets',
       targetBranch: 'main',
     });
@@ -196,6 +198,41 @@ describe('open_corner over the grok wire', () => {
     });
     expect(created).not.toHaveProperty('repository');
     expect(created).not.toHaveProperty('targetBranch');
+    // A Room with no repository has no code lane to take, so what comes back
+    // says so rather than echoing the default the caller never chose.
+    expect(JSON.parse(result!.content[0]!.text)).toMatchObject({ lane: 'no_code' });
+  }, 30_000);
+
+  it('carries the no-code lane of a repository Room through to createCorner', async () => {
+    const door = await daemonDoor();
+    const { result, error } = await callTool(door.origin, {
+      name: 'Market scan',
+      objective: 'Survey the five nearest competitors and write it up',
+      lane: 'no_code',
+    });
+
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(JSON.parse(result!.content[0]!.text)).toMatchObject({ lane: 'no_code' });
+    // The repository is still recorded: the corner belongs to that Room and can
+    // read it. The lane is what keeps it off the branch-and-merge path.
+    expect(door.calls.find((call) => call.operation === 'createCorner')).toMatchObject({
+      lane: 'no_code',
+      repository: 'owner/widgets',
+    });
+  }, 30_000);
+
+  it('refuses a lane it does not know instead of silently opening a code corner', async () => {
+    const door = await daemonDoor();
+    const { result } = await callTool(door.origin, {
+      name: 'Market scan',
+      objective: 'Survey the five nearest competitors and write it up',
+      lane: 'chat',
+    });
+
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toBe('lane must be "code" or "no_code"');
+    expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
   }, 30_000);
 
   it('closes a chat-only corner through the existing archive operation', async () => {

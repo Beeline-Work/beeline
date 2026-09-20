@@ -375,7 +375,9 @@ export interface MonolithCornerTurnOptions {
   openedBy?: string;
   objective: string;
   worktreePath: string;
-  /** Present only when the parent Room is bound to a repository. */
+  /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports back to. */
+  requesterHandle?: string;
+  /** Present only when the parent Room is bound to a repository AND the corner is on the code lane. */
   repository?: {
     featureBranch: string;
     targetBranch: string;
@@ -839,9 +841,15 @@ export class MonolithCornerTurnLoop {
               "Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer's approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.",
             ]
           : [
-              'This is a chat-only corner with no repository or GitHub workflow.',
+              'This is a no-code corner with no repository checkout and no GitHub workflow.',
               "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then post_artifact with the path to send them back to the corner.",
-              'Do not initialize a repository, create a branch, push, open a pull request, or wait for GitHub checks.',
+              'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
+              // This lane has no pull request URL and no merge card, so the
+              // artifacts and the tag ARE the completion signal. Without the
+              // tag the person who asked is never told the work finished.
+              this.options.requesterHandle
+                ? `Deliver the result as artifacts: post_artifact everything the objective asked for, then finish by replying with @${this.options.requesterHandle} and one line on what you posted. That reply is this corner's only completion signal.`
+                : `Deliver the result as artifacts: post_artifact everything the objective asked for, then finish by replying with one line on what you posted. That reply is this corner's only completion signal.`,
             ]),
       ]
         .filter(Boolean)

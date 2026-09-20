@@ -484,7 +484,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
+      'Open one write-enabled corner. Call this only after a person confirmed the proposed objective, or when their message itself commanded the corner with its scope. In a repository Room it gets an isolated git worktree; in a chat-only Room it gets a writable scratch workspace for non-repository work and artifact delivery. Pass lane="no_code" in a repository Room when the objective produces no code change - research, a write-up, a design - and the corner delivers artifacts and tags you instead of committing. Give it a name of AT MOST THREE WORDS - that name titles the corner in the Room list, the corner header and every card - and a fixed objective of no more than 24 words stating the work. Line breaks and extra spaces in either are flattened for you; only a text that is genuinely too long is refused.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -500,6 +500,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
           description: `One paragraph of at most ${CORNER_OBJECTIVE_MAX_WORDS} words stating the complete, fixed objective.`,
+        },
+        lane: {
+          type: 'string',
+          enum: ['code', 'no_code'],
+          description:
+            'Defaults to "code". Use "no_code" for an objective that produces no code change: the corner skips the worktree, the commit, the pull request and the merge, and delivers artifacts plus a reply tagging you.',
         },
       },
       additionalProperties: false,
@@ -1383,6 +1389,10 @@ async function openCorner(args: JsonObject): Promise<string> {
     throw new Error('open_corner is available only in a top-level Room');
   }
   const { name, objective } = cornerCallText(args);
+  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
+    throw new Error('lane must be "code" or "no_code"');
+  }
+  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (repository.resolution === 'unverified') {
@@ -1397,6 +1407,7 @@ async function openCorner(args: JsonObject): Promise<string> {
     requestId,
     name,
     objective,
+    lane,
     ...(repository.resolution === 'repository'
       ? {
           repository: repository.key,
@@ -1413,6 +1424,8 @@ async function openCorner(args: JsonObject): Promise<string> {
     cornerId: created.cornerId,
     name,
     objective,
+    // A chat-only Room has no code lane to take, so report what was recorded.
+    lane: repository.resolution === 'repository' ? lane : 'no_code',
     status: 'starting',
   });
 }

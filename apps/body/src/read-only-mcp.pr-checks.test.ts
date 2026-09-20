@@ -4,7 +4,8 @@ import { approveMerge, prChecksStatus } from './read-only-mcp.js';
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
 let checks: string, approvalPending: boolean;
-let reviewer: string | null, reviewerIsAuthor: boolean, gateRule: string;
+let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean, gateRule: string;
+let yoloMode: boolean;
 let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
 beforeEach(() => {
@@ -21,7 +22,9 @@ beforeEach(() => {
   checks = 'passed';
   approvalPending = false;
   reviewer = '@reviewer';
+  reviewerExists = true;
   reviewerIsAuthor = false;
+  yoloMode = true;
   gateRule = "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
   reviewerWake = {
     status: 'dispatched',
@@ -38,22 +41,25 @@ beforeEach(() => {
           ? { items }
           : name === 'getWorkspaceRoster'
             ? { members: [{ kind: 'human', identityId: 'human' }] }
-            : name === 'getRoomAuthority'
-              ? { archived: false }
-              : name === 'getPrChecksStatus'
-                ? {
-                  checks,
-                  pullRequest: url,
-                  headSha: 'a'.repeat(40),
-                  approvalPending,
-                  reviewer,
-                  reviewerIsAuthor,
-                  ...(reviewerWake ? { reviewerWake } : {}),
-                  rule: gateRule,
-                }
-                : name === 'approveCornerMerge'
-                  ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
-                : {};
+            : name === 'getAgentConfiguration'
+              ? { commands: [], yoloMode }
+              : name === 'getRoomAuthority'
+                ? { archived: false }
+                : name === 'getPrChecksStatus'
+                  ? {
+                      checks,
+                      pullRequest: url,
+                      headSha: 'a'.repeat(40),
+                      approvalPending,
+                      reviewer,
+                      reviewerExists,
+                      reviewerIsAuthor,
+                      ...(reviewerWake ? { reviewerWake } : {}),
+                      rule: gateRule,
+                    }
+                  : name === 'approveCornerMerge'
+                    ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
+                    : {};
     return Response.json(result);
   });
 });
@@ -117,6 +123,40 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       held: false,
       approvalPending: true,
+    });
+  });
+  it.each([
+    {
+      name: 'worker yolo off after reviewer PASS',
+      setup: () => {
+        yoloMode = false;
+      },
+      expected: true,
+    },
+    {
+      name: 'no configured reviewer with worker yolo on',
+      setup: () => {
+        reviewer = null;
+        reviewerExists = false;
+      },
+      expected: true,
+    },
+    {
+      name: 'reviewer PASS with worker yolo on and no human hold',
+      setup: () => undefined,
+      expected: false,
+    },
+    {
+      name: 'human hold despite reviewer PASS and worker yolo on',
+      setup: () => {
+        items = [{ authorId: 'human', body: 'do not merge' }];
+      },
+      expected: true,
+    },
+  ])('composes the real merge gate: $name', async ({ setup, expected }) => {
+    setup();
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
+      approvalPending: expected,
     });
   });
   it('passes through the named reviewer and folds the server rule into the merge-conditions rule', async () => {

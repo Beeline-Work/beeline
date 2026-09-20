@@ -60,7 +60,8 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 `pullRequest` is a positive PR number in the parent Room repository or its full GitHub URL;
 omitting it selects the corner's own PR. It returns `checks` (`passed`, `failed`, or `pending`),
 `pullRequest` (URL), `headSha`, `approvalPending`, `reviewer` (the parent Room's currently
-configured reviewer as `@handle`, or null), `reviewerIsAuthor` (true when that reviewer is also
+configured reviewer as `@handle`, or null), `reviewerExists` (the configuration fact independent
+of whether the identity has a handle), `reviewerIsAuthor` (true when that reviewer is also
 this corner's opener), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched`,
 plus a `detail` sentence the author can restate), and `rule` (states which actor's `approve_merge`
 clears the gate). The membership used to *deliver* a green wake is not the configuration itself:
@@ -69,7 +70,10 @@ a reviewer id on the parent Room that is not a current parent member stays confi
 head-bound check facts across corners, and reconciles
 missing/invalidated snapshots with GitHub check runs and combined commit status. A single webhook
 check is not a complete snapshot. When the configured reviewer opened the corner it is reviewing,
-`approvalPending` is false — self-review is not required, and no other agent's approval can ever
-satisfy that gate. Human holds remain in the helper's requesting-corner conversation scan.
+the operation's `approvalPending` reviewer outcome is false — self-review is not required, and no
+other agent's approval can add signal. The `pr_checks_status` helper then composes the complete
+merge gate: reviewer outcome must pass, worker yolo must be on, no existing human hold may apply,
+and `reviewerExists` must be true. Human holds remain in the helper's requesting-corner
+conversation scan; absent reviewer or request state is not consent.
 
 Deploy the server before helpers that call this operation.

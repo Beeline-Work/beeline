@@ -81,10 +81,10 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (reviewerHandle)
-    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then merge with gh pr merge --squash --match-head-commit <sha>.`;
+    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only if the complete gate passes.`;
   return yoloMode
     ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
-    : 'Yolo is off: never merge; wait for explicit human approval in the app.';
+    : 'Yolo is off: never merge; wait for a human owner to turn yolo on or merge the pull request themselves.';
 }
 
 export function cornerReviewerInstruction(input: {

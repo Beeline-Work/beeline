@@ -545,7 +545,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the reviewer approval gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result names the Room’s configured reviewer, states which actor’s approve_merge clears the gate, and reports reviewerWake so you can say whether that reviewer was woken — when you opened this corner and are also that reviewer, self-review is not required and approvalPending is false. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
+      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; approvalPending stays true unless all four authorize the merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1456,17 +1456,31 @@ async function cornerPatchId(cornerId: string): Promise<string | undefined> {
   }
 }
 
+function cornerMergeAllowed(input: {
+  reviewFailed: boolean;
+  isWorkerYolo: boolean;
+  didHumanSayDontMerge: boolean;
+  reviewerExists: boolean;
+}): boolean {
+  if (input.reviewFailed) return false;
+  if (!input.isWorkerYolo) return false;
+  if (input.didHumanSayDontMerge) return false;
+  if (!input.reviewerExists) return false;
+  return true;
+}
+
 export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
-  const [restore, conversation, roster, authority] = await Promise.all([
+  const [restore, conversation, roster, authority, configuration] = await Promise.all([
     daemonExecute('getCornerRestoreState', { cornerId }),
     // Newest page: a hold, an approval and a PR link are questions about where
     // the corner stands NOW, and this scan is last-write-wins over the page.
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
     daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
+    daemonExecute('getAgentConfiguration', { agentId, roomId: cornerId }),
   ]);
   const humans = new Set(
     Array.isArray(roster.members)
@@ -1526,20 +1540,35 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
           ? 'one or more recorded checks failed'
           : 'recorded checks are still pending';
   const reviewer = typeof verdict?.reviewer === 'string' ? verdict.reviewer : null;
+  const reviewerExists = verdict?.reviewerExists === true;
   const reviewerIsAuthor = verdict?.reviewerIsAuthor === true;
   const reviewerRule = typeof verdict?.rule === 'string' ? verdict.rule : undefined;
   const reviewerWake =
     verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'
       ? verdict.reviewerWake
       : undefined;
+  const reviewFailed = verdict ? verdict.approvalPending !== false : true;
+  const isWorkerYolo = configuration.yoloMode === true;
+  const didHumanSayDontMerge = held;
+  const mergeAllowed = cornerMergeAllowed({
+    reviewFailed,
+    isWorkerYolo,
+    didHumanSayDontMerge,
+    reviewerExists,
+  });
   const mergeConditionsRule =
-    "Merge only when checks is passed, held is false, and approvalPending is false — then YOU merge it yourself with gh; the server never merges a corner's pull request and never sends a closing request of any kind, so waiting for one will wait forever. A local or gh checks result is not authorization on its own. approvalPending reflects only whether the reviewer's recorded PASS covers this exact head sha; it is not a hold on you merging once it is false. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
+    "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
   return JSON.stringify({
     checks,
     reason,
     ...(headSha ? { headSha } : {}),
     held,
-    approvalPending: verdict?.approvalPending ?? false,
+    didHumanSayDontMerge,
+    reviewFailed,
+    isWorkerYolo,
+    reviewerExists,
+    mergeAllowed,
+    approvalPending: !mergeAllowed,
     reviewer,
     reviewerIsAuthor,
     ...(reviewerWake ? { reviewerWake } : {}),

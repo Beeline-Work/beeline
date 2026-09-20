@@ -3,6 +3,7 @@ import React, { useLayoutEffect, useRef } from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { useLocalSearchParams } from 'expo-router';
 import { markRoomOpen } from '@/buzz/room-open-trace';
+import { RoomOpenTraceOverlay } from '@/components/buzz/RoomOpenTraceOverlay';
 import { BuzzChatSurface } from './_chat-surface';
 import {
   useRoomSurfaceSession,
@@ -34,5 +35,10 @@ export default function BuzzChat() {
     bindingsRef,
   });
 
-  return <BuzzChatSurface session={session} bindingsRef={bindingsRef} />;
+  return (
+    <>
+      <BuzzChatSurface session={session} bindingsRef={bindingsRef} />
+      <RoomOpenTraceOverlay />
+    </>
+  );
 }

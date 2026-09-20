@@ -61,8 +61,15 @@ describe('Room open occupancy', () => {
     expect(surface).toContain('liveDraftStore.setActive(false)');
   });
 
-  it('keeps ROOM_OPEN console probes out of release product', () => {
-    expect(trace).toContain("typeof __DEV__ !== 'undefined' && !__DEV__");
+  it('keeps ROOM_OPEN console probes out of a release product that did not ask for them', () => {
+    // The guard used to be "development only", which meant the one build that
+    // could answer "why is this Room slow on my phone" was the one build that
+    // never ran on a phone. It is now "silent unless this bundle was compiled
+    // with the flag", which is every build we ship by default. What must stay
+    // true is that a release bundle says nothing on its own.
+    expect(trace).toContain('EXPO_PUBLIC_ROOM_OPEN_TRACE');
+    expect(trace).toContain('const isDev = typeof __DEV__ !== ');
+    expect(trace).toContain('return !isDev && !RELEASE_TRACE_ENABLED;');
     expect(trace).toContain('[ROOM_OPEN]');
   });
 });

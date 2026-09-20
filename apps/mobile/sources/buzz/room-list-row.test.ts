@@ -930,6 +930,30 @@ describe('fullCornerTitle', () => {
     expect(fullCornerTitle('alpha', long, 'abcdef0123')).toBe(`#alpha/${long}`);
   });
 
+  it('never doubles the parent when a legacy name already carries it', () => {
+    // The stored name of an older corner can already be `#room/corner`. Both
+    // composing titles strip that exact segment, case-insensitively, so the
+    // room is named once.
+    expect(fullCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
+      '#alpha/Fix fixture',
+    );
+    expect(fullCornerTitle('alpha', 'ALPHA/Fix fixture', 'abcdef0123')).toBe(
+      '#alpha/Fix fixture',
+    );
+    expect(displayGroupedCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
+      'Fix fixture',
+    );
+  });
+
+  it('keeps a name that merely resembles the room, since only an exact segment is stripped', () => {
+    expect(fullCornerTitle('alpha', 'alphabet soup and then some', 'abcdef0123')).toBe(
+      '#alpha/alphabet soup and then some',
+    );
+    expect(fullCornerTitle('alpha', 'alpha-two/Fix fixture', 'abcdef0123')).toBe(
+      '#alpha/alpha-two/Fix fixture',
+    );
+  });
+
   it('keeps the shared mark rules: one prefix, no double mark, room optional', () => {
     expect(fullCornerTitle('#alpha', '#Fix the fixture now', 'abcdef0123')).toBe(
       '#alpha/Fix the fixture now',

@@ -625,10 +625,9 @@ export function fullCornerTitle(
   cornerStoredName: string | undefined,
   cornerId: string,
 ): string {
-  const stored = cornerStoredName?.replace(/\s+/g, ' ').trim().replace(/^#+/, '').trim();
-  const corner =
-    !stored || stored.startsWith('sub-') ? cornerName(cornerStoredName, cornerId) : stored;
   const room = parentRoomName?.trim().replace(/^#+/, '');
+  const stored = withoutParentPrefix(room, cornerStoredName)?.replace(/\s+/g, ' ').trim();
+  const corner = !stored || stored.startsWith('sub-') ? cornerName(stored, cornerId) : stored;
   return room ? `#${room}/${corner}` : `#${corner}`;
 }
 
@@ -644,13 +643,25 @@ export function displayGroupedCornerTitle(
   cornerId: string,
 ): string {
   const room = parentRoomName?.trim().replace(/^#+/, '');
+  return cornerName(withoutParentPrefix(room, cornerStoredName), cornerId);
+}
+
+/**
+ * Drop a stored name's own `<room>/` prefix, case-insensitively, so a legacy
+ * row saved as `#alpha/Fix fixture` never composes to `#alpha/alpha/Fix
+ * fixture`. Shared by both composing titles: a stored name that merely starts
+ * with a similar word keeps it, because only an exact `<room>/` segment is
+ * stripped.
+ */
+function withoutParentPrefix(
+  room: string | undefined,
+  cornerStoredName: string | undefined,
+): string | undefined {
   const stored = cornerStoredName?.trim().replace(/^#+/, '');
   const prefix = room ? `${room}/` : undefined;
-  const shortStored =
-    prefix && stored?.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
-      ? stored.slice(prefix.length)
-      : stored;
-  return cornerName(shortStored, cornerId);
+  return prefix && stored?.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
+    ? stored.slice(prefix.length)
+    : stored;
 }
 
 /**

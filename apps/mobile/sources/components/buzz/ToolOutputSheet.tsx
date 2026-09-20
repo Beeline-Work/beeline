@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text } from 'react-native';
+import { ScrollView, Text, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HULL_SHEET_INSET, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { CodeHighlighter } from './CodeHighlighter';
@@ -34,6 +34,7 @@ export function ToolOutputSheet({
   copyMetadata,
   testID = 'tool-output-sheet',
 }: ToolOutputSheetProps) {
+  const { height } = useWindowDimensions();
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -62,7 +63,10 @@ export function ToolOutputSheet({
       title={title}
       visible={visible}
     >
-      <ScrollView contentContainerStyle={styles.sheetContent} style={styles.sheetScroll}>
+      <ScrollView
+        contentContainerStyle={styles.sheetContent}
+        style={[styles.sheetScroll, { maxHeight: height * 0.45 }]}
+      >
         {highlight ? (
           <CodeHighlighter code={detail ?? ''} language={language} />
         ) : (
@@ -84,8 +88,8 @@ export function ToolOutputSheet({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    sheetScroll: { maxHeight: '45%' },
-    sheetContent: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: groknight.space.sm },
+    sheetScroll: { flexGrow: 0, flexShrink: 1 },
+    sheetContent: { paddingHorizontal: HULL_SHEET_INSET },
     sheetOutput: {
       ...groknight.type.machine,
       width: '100%',

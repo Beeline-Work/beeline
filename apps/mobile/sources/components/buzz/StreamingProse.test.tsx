@@ -104,16 +104,26 @@ describe('StreamingProse', () => {
     const renderer = render(<StreamingProse markdown="The answer" textStyle={PROVISIONAL} />);
     // The opening chunk has just arrived, so all of it is the tail.
     expect(collectText(renderer.toJSON())).toBe('The answer');
-    expect(tailSpans(renderer).map((span) => span.text).join('')).toBe('The answer');
+    expect(
+      tailSpans(renderer)
+        .map((span) => span.text)
+        .join(''),
+    ).toBe('The answer');
 
     // Let it settle, then stream a delta.
     act(() => vi.advanceTimersByTime(200));
     expect(tailSpans(renderer)).toEqual([]);
-    act(() => renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />));
+    act(() =>
+      renderer.update(<StreamingProse markdown="The answer is 42" textStyle={PROVISIONAL} />),
+    );
 
     expect(collectText(renderer.toJSON())).toBe('The answer is 42');
     // Only the delta animates; the words already read hold still.
-    expect(tailSpans(renderer).map((span) => span.text).join('')).toBe(' is 42');
+    expect(
+      tailSpans(renderer)
+        .map((span) => span.text)
+        .join(''),
+    ).toBe(' is 42');
   });
 
   it('walks the arriving tail up from the ground to the body tone, once', () => {

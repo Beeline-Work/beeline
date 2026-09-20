@@ -372,7 +372,7 @@ describe('Room message variant components', () => {
     ).toContain('workspace manager only');
   });
 
-  it('dispatches GitHub pull-request and issue cards through the explicit URL callback', () => {
+  it('dispatches GitHub pull-request, issue, push, CI and review cards through the explicit URL callback', () => {
     const onOpenUrl = vi.fn();
     for (const githubEvent of [
       {
@@ -388,6 +388,27 @@ describe('Room message variant components', () => {
         actor: 'Lin',
         title: 'Bug',
         url: 'https://github.test/issue',
+      },
+      {
+        type: 'push' as const,
+        action: 'pushed' as const,
+        actor: 'Ada',
+        title: '2 commits to main',
+        url: 'https://github.test/compare',
+      },
+      {
+        type: 'ci' as const,
+        action: 'failed' as const,
+        actor: 'octocat',
+        title: 'Beeline CI check suite',
+        url: 'https://github.test/runs/9',
+      },
+      {
+        type: 'review' as const,
+        action: 'approved' as const,
+        actor: 'reviewer',
+        title: 'Improve documentation',
+        url: 'https://github.test/pr#review',
       },
     ]) {
       const renderer = render(

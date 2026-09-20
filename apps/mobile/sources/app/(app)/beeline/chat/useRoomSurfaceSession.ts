@@ -21,7 +21,7 @@ import {
   loadBuzzViewerPubkey,
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
-import { markRoomOpen } from '@/buzz/room-open-trace';
+import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
 import { takeRoomOpenPrefetch } from '@/buzz/room-open-prefetch';
 import {
   displayRoomMessages,
@@ -815,6 +815,7 @@ export function useRoomSurfaceSession({
                 : await nextRoomClient.room(channelId);
               logLiveTrace('room-read-end', traces);
               markRoomOpen('room-read-end', view.messages.at(-1)?.id);
+              markRoomOpenWeight(view);
               pendingPaintTracesRef.current = traces;
               return view;
             } catch (error) {

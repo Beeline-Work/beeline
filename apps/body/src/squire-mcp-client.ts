@@ -6,28 +6,22 @@
  * (`connector-squire.ts`) so the assignment loop stays Squire-shaped and
  * tests keep driving a mock.
  *
- * The server is spawned on demand through the non-electing host façade
- * (`squireFacadeLaunch`), initialized once, and left running for the helper's
- * lifetime; a failed call or a dead child tears the session down so the next
- * call starts a fresh one. The façade refuses when no host broker holds the
- * socket. Tests may inject a command; omitting `server` on a raw npx spawn
- * runs Squire's connect CLI instead of the vault MCP.
+ * The server is spawned on demand through `squireVaultLaunch`: the
+ * non-electing host façade while a broker holds the socket, otherwise Squire's
+ * own server on the same host paths — the credential plane must not depend on
+ * a broker unit the daemon never installs. It is initialized once and left
+ * running for the helper's lifetime; a failed call or a dead child tears the
+ * session down so the next call starts a fresh one. Tests may inject a
+ * command; omitting `server` on a raw npx spawn runs Squire's connect CLI
+ * instead of the vault MCP.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
-import { squireFacadeLaunch } from './squire-host.js';
+import { squireVaultLaunch } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
-
-/**
- * The vault MCP server argv: `@latest` plus the `server` subcommand.
- * Omitting `server` runs Squire's connect CLI, which takes the one
- * browser claim and paints every other tool (Google Workspace included)
- * with "another Trusty Squire session is already using the browser".
- */
-export const SQUIRE_MCP_SERVER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'server'] as const;
 
 export type SquireMcpClientOptions = {
   /** Spawn command; defaults to the published package through npx. */
@@ -102,7 +96,7 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
-    const launch = this.options.command ? undefined : squireFacadeLaunch(homedir());
+    const launch = this.options.command ? undefined : squireVaultLaunch(homedir());
     const child = (this.options.spawn ?? spawn)(
       this.options.command ?? launch!.command,
       [...(this.options.args ?? launch!.args)],

@@ -10,7 +10,7 @@ import {
   installSquire,
   isProcessAlive,
   isSquireBrowserSessionFailure,
-  parseConnectHelperChrome,
+  parseConnectAlreadyConnected,
   parseConnectOutput,
   readConnectionDetail,
   readConnectionLedger,
@@ -129,18 +129,54 @@ describe('parseConnectOutput', () => {
     });
   });
 
-  it('does not treat a bare trustysquire.ai page as the ceremony', () => {
+  it('does not treat a bare trustysquire.ai origin as the ceremony', () => {
     expect(parseConnectOutput('Visit https://trustysquire.ai for help\n')).toBeUndefined();
-    expect(parseConnectOutput('Open https://trustysquire.ai/install\n')).toBeUndefined();
+    expect(parseConnectOutput('Visit https://trustysquire.ai/ for help\n')).toBeUndefined();
   });
 
-  it('recognizes connect opening the shared host Chrome without a URL', () => {
+  it('keeps any other printed URL, path alone and all', () => {
+    expect(parseConnectOutput('Open https://trustysquire.ai/install\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install',
+    });
+  });
+
+  it('does not read the install-page banner as a sign-in surface', () => {
     expect(
-      parseConnectHelperChrome(
+      parseConnectOutput(
         'Opening the Trusty Squire install page in a browser. The page walks you through signing in with Google.\n',
       ),
+    ).toBeUndefined();
+  });
+
+  it('recognizes Squire\u2019s already-provisioned short-circuit', () => {
+    expect(
+      parseConnectAlreadyConnected(
+        'Already connected (google + github). Codex config refreshed.\n',
+      ),
     ).toBe(true);
-    expect(parseConnectHelperChrome('still waiting\n')).toBe(false);
+    expect(parseConnectAlreadyConnected('Opening the Trusty Squire install page\n')).toBe(false);
+  });
+});
+
+describe('defaultStreamedRunner', () => {
+  it('waits for the ceremony URL Squire prints after its install-page banner', async () => {
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        'console.log("Opening the Trusty Squire install page in a browser.");',
+        'setTimeout(() => {',
+        '  console.log("Open this on any device: https://tunnel.test/#p=hunter2");',
+        '}, 120);',
+        'setInterval(() => {}, 30_000);',
+      ].join(''),
+    ]);
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter2',
+    });
+    result.abort();
+    releaseSquireConnectSession();
   });
 });
 
@@ -230,21 +266,21 @@ describe('installSquire', () => {
     ).toContain('no sign-in URL');
   });
 
-  it('continues the ceremony when connect opened the shared host Chrome', async () => {
+  it('reports Squire\u2019s already-connected short-circuit as connected, not failed', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
-      streamRun: async () => ({
-        stdout: 'Opening the Trusty Squire install page in a browser.\n',
-        stderr: '',
-        helperChrome: true,
-        abort: () => {},
+      streamRun: fakeStreamRunner({
+        stdout:
+          'Already connected (google + github). Codex config refreshed.\n' +
+          'Pass --force-relogin to switch accounts or to refresh a stale/expired session.\n',
       }),
       mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
     });
     expect(result.status).toBe('connected');
     expect(result.signIn).toBeUndefined();
     expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
+    expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
   });
 
   it('surfaces the signIn URL on the installing result before the pairing probe', async () => {

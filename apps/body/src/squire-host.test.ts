@@ -26,6 +26,7 @@ import {
   squireHostPaths,
   squireHostRewriteEnv,
   squireServerCommand,
+  squireVaultLaunch,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
 } from './squire-host.js';
@@ -275,6 +276,20 @@ describe('façade launch and host binds', () => {
     expect(launch.command).toBe(process.execPath);
     expect(launch.args.at(-1)).toMatch(/squire-facade\.(js|ts)$/);
     expect(launch.env).toEqual(squireHostRewriteEnv('/home/op'));
+  });
+
+  it('serves the vault through the façade only while a broker holds the socket', async () => {
+    const home = await scratch('beeline-squire-vault-');
+    const paths = ensureSquireHostDir(home);
+    const offline = squireVaultLaunch(home);
+    expect([offline.command, ...offline.args]).toEqual(['npx', ...SQUIRE_SERVER_ARGS]);
+    expect(offline.env).toEqual(squireHostRewriteEnv(home));
+    const broker = await listenUnix(paths.brokerSocket);
+    try {
+      expect(squireVaultLaunch(home)).toEqual(squireFacadeLaunch(home));
+    } finally {
+      await closeServer(broker);
+    }
   });
 
   it('binds the host broker directory only for a Squire route', async () => {

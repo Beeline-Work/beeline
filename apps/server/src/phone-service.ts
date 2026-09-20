@@ -5783,7 +5783,7 @@ export class PhoneService {
         `SELECT id,connector_id,reference,service,label,hosts,state,last_synced_at,created_at
          FROM workspace_connections
          WHERE owner_identity_id=$1
-         ORDER BY COALESCE((connection_metadata->>'vaultCreatedAt')::double precision, extract(epoch from created_at)) DESC, reference`,
+         ORDER BY COALESCE(NULLIF((connection_metadata->>'vaultCreatedAt')::double precision, 0), extract(epoch from created_at)) DESC, reference`,
         [viewerId],
       )
     ).rows;

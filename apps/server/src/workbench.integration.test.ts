@@ -229,14 +229,26 @@ describe('workbench connectors', () => {
         stale: false,
         state: 'active',
       },
+      // The helper could not read this entry's vault created_at (0), so the
+      // row falls back to its own created_at instead of sinking to the bottom.
+      {
+        reference: 'gamma',
+        service: 'gamma',
+        label: 'default',
+        fieldNames: ['token'],
+        allowedHosts: [],
+        createdAt: 0,
+        stale: false,
+        state: 'active',
+      },
     ]);
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
       connections: { reference: string; service: string; label: string }[];
     };
     const ours = view.connections.filter((row) =>
-      ['alpha', 'zeta', 'mu', 'beta'].includes(row.reference),
+      ['alpha', 'zeta', 'mu', 'beta', 'gamma'].includes(row.reference),
     );
-    expect(ours.map((row) => row.reference)).toEqual(['zeta', 'beta', 'mu', 'alpha']);
+    expect(ours.map((row) => row.reference)).toEqual(['gamma', 'zeta', 'beta', 'mu', 'alpha']);
     expect(ours.every((row) => row.label === 'default')).toBe(true);
   });
 

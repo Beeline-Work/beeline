@@ -157,6 +157,38 @@ async function untilSignin(renderer: ReactTestRenderer): Promise<void> {
 }
 
 describe('Connect Trusty Squire flow — ONE connect path', () => {
+  it('an in-chat offer resumes the already paired install instead of asking for a helper again', async () => {
+    searchParams.params = {
+      workspaceId: 'workspace-1',
+      viewerId: 'human-dani',
+      connectorId: 'trusty-squire',
+      pairedConnectorId: 'connector-row-1',
+      offerId: 'offer-1',
+      roomId: 'room-1',
+    };
+    const listHelpers = vi.fn(async () => {
+      throw new Error('the offer already chose its helper');
+    });
+    const readInstallState = vi.fn(async () => ({
+      connectorId: 'connector-row-1',
+      helperName: 'squire-box',
+      steps: [{ label: 'waiting for sign-in', status: 'active' as const }],
+      signIn: { method: 'streamed' as const, url: 'https://signin.example.test' },
+      connected: false,
+    }));
+    setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { listHelpers, readInstallState }));
+
+    const renderer = await render();
+    expect(listHelpers).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-picker' })).toHaveLength(0);
+    await advancePolls();
+    expect(readInstallState).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      connectorId: 'connector-row-1',
+    });
+    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+  });
+
   it('with no connected machine, honestly says what to run and offers no picker', async () => {
     setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { listHelpers: async () => [] }));
     const renderer = await render();
@@ -165,7 +197,9 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     const texts = empty.findAll((node: any) => typeof node.props?.children === 'string');
     expect(texts.some((node: any) => node.props.children === 'npx usebeeline connect')).toBe(true);
     expect(renderer.root.findAllByProps({ testID: 'connect-machine-picker' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'connect-machine-helper-squire-box' })).toHaveLength(0);
+    expect(
+      renderer.root.findAllByProps({ testID: 'connect-machine-helper-squire-box' }),
+    ).toHaveLength(0);
   });
 
   it('with exactly one machine, still shows the explicit machine selector first', async () => {
@@ -245,16 +279,22 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     await pair(renderer);
     await advancePolls(2);
     const text = (n: any) => [n.props.children].flat().join('');
-    expect(text(renderer.root.findByProps({ testID: 'connect-step-0-command' }))).toContain('squire status');
+    expect(text(renderer.root.findByProps({ testID: 'connect-step-0-command' }))).toContain(
+      'squire status',
+    );
     expect(text(renderer.root.findByProps({ testID: 'connect-step-0-output' }))).toContain('ok');
-    expect(text(renderer.root.findByProps({ testID: 'connect-step-1-command' }))).toContain('npm install');
+    expect(text(renderer.root.findByProps({ testID: 'connect-step-1-command' }))).toContain(
+      'npm install',
+    );
   });
 
   it('the running step renders as a pulsing gold marker', async () => {
     const renderer = await render();
     await pair(renderer);
     await advancePolls(2);
-    const pulsing = renderer.root.findAll((node: any) => node.props?.testID === undefined && node.type === 'PulsingText');
+    const pulsing = renderer.root.findAll(
+      (node: any) => node.props?.testID === undefined && node.type === 'PulsingText',
+    );
     expect(pulsing.length).toBeGreaterThan(0);
   });
 
@@ -269,13 +309,15 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findByProps({ testID: 'connect-retry' })).toBeDefined();
     const failed = renderer.root.findByProps({ testID: 'connect-step-2-failed' });
     expect(failed).toBeDefined();
-    expect(
-      renderer.root.findByProps({ testID: 'connect-step-2-reason' }).props.children,
-    ).toContain('helper');
+    expect(renderer.root.findByProps({ testID: 'connect-step-2-reason' }).props.children).toContain(
+      'helper',
+    );
     expect(renderer.root.findAllByProps({ testID: 'connect-sign-in' })).toHaveLength(0);
     // The failed step carries its own captured output, so a failure never
     // hangs silently without something to debug.
-    expect(renderer.root.findByProps({ testID: 'connect-step-2-output' }).props.children).toContain('npm ERR!');
+    expect(renderer.root.findByProps({ testID: 'connect-step-2-output' }).props.children).toContain(
+      'npm ERR!',
+    );
     await act(async () => {
       renderer.root.findByProps({ testID: 'connect-retry' }).props.onPress();
       await Promise.resolve();
@@ -295,6 +337,30 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       await advancePolls();
     }
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
+  });
+
+  it('returns an in-chat offer ceremony to its Room once the helper reports connected', async () => {
+    searchParams.params = {
+      workspaceId: 'workspace-1',
+      viewerId: 'human-dani',
+      connectorId: 'trusty-squire',
+      pairedConnectorId: 'connector-row-1',
+      offerId: 'offer-1',
+      roomId: 'room-1',
+    };
+    const readInstallState = vi.fn(async () => ({
+      connectorId: 'connector-row-1',
+      helperName: 'squire-box',
+      steps: [{ label: 'connected', status: 'done' as const }],
+      connected: true,
+    }));
+    setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { readInstallState }));
+    await render();
+    await advancePolls();
+    expect(navigation.replace).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: { channelId: 'room-1' },
+    });
   });
 
   describe('failure surfaces — never a silent stall', () => {

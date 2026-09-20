@@ -1,9 +1,8 @@
 import {
   ROOM_VIEW_BRIEFING_LIMIT,
-  ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_CHAT_LIMIT,
-  ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_WORKSPACE_LIMIT,
+  WORKSPACE_MEMBER_PAGE_SIZE,
   directMessageChannelId,
   isAllowedAgentModelConfigCategory,
   type AgentPairingClaimView,
@@ -249,8 +248,8 @@ export class RoomIndexer {
       await this.database.query<IndexRow>(WORKSPACE_SQL, [
         workspaceId,
         viewerPubkey,
-        ROOM_VIEW_MEMBER_LIMIT,
-        ROOM_VIEW_AGENT_LIMIT,
+        WORKSPACE_MEMBER_PAGE_SIZE,
+        WORKSPACE_MEMBER_PAGE_SIZE,
         ROOM_VIEW_CHAT_LIMIT + 1,
       ])
     ).rows;
@@ -288,8 +287,8 @@ export class RoomIndexer {
       });
     const allMembers = roster.filter((member) => member.identity.kind === 'human');
     const allAgents = roster.filter((member) => member.identity.kind === 'agent');
-    const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
-    const agents = allAgents.slice(0, ROOM_VIEW_AGENT_LIMIT);
+    const members = allMembers.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
+    const agents = allAgents.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
     const item = workspaceItem(workspaceData);
     const currentViewer = roster.find((member) => member.identity.pubkey === viewerPubkey);
     const role = item.role;
@@ -318,8 +317,10 @@ export class RoomIndexer {
         : {}),
       members,
       agents,
-      membersTruncated: (allMembers[0]?.kindTotal ?? allMembers.length) > ROOM_VIEW_MEMBER_LIMIT,
-      agentsTruncated: (allAgents[0]?.kindTotal ?? allAgents.length) > ROOM_VIEW_AGENT_LIMIT,
+      peopleTotal: allMembers[0]?.kindTotal ?? allMembers.length,
+      agentTotal: allAgents[0]?.kindTotal ?? allAgents.length,
+      membersTruncated: (allMembers[0]?.kindTotal ?? allMembers.length) > WORKSPACE_MEMBER_PAGE_SIZE,
+      agentsTruncated: (allAgents[0]?.kindTotal ?? allAgents.length) > WORKSPACE_MEMBER_PAGE_SIZE,
       viewer: {
         identity: currentViewer?.identity ?? identity({ pubkey: viewerPubkey }),
         role,

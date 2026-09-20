@@ -9,7 +9,10 @@ import {
   isInviteView,
   isRoomView,
   isWorkspaceListView,
+  isWorkspaceMemberListView,
+  isWorkspaceView,
   isPushLevel,
+  WORKSPACE_MEMBER_PAGE_SIZE,
   type PhoneOperationMap,
 } from './phone.js';
 
@@ -126,6 +129,49 @@ describe('phone contract', () => {
     expect(
       isWorkspaceListView({ workspaces: [], viewer: identity, truncated: false, watchFilters: [] }),
     ).toBe(true);
+    const workspace = {
+      workspace: {
+        id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
+        name: 'Hive',
+        visibility: 'invite-only' as const,
+        role: 'owner' as const,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      members: [] as Array<{ identity: typeof identity; role: 'member' }>,
+      agents: [],
+      peopleTotal: 21,
+      agentTotal: 0,
+      membersTruncated: true,
+      agentsTruncated: false,
+      viewer: { identity, role: 'owner' as const, permissions: { send: true, manage: true } },
+      watchFilters: [],
+    };
+    expect(isWorkspaceView(workspace)).toBe(true);
+    expect(isWorkspaceView({ ...workspace, peopleTotal: undefined })).toBe(false);
+    expect(
+      isWorkspaceMemberListView({
+        members: [],
+        agents: [],
+        peopleTotal: 21,
+        agentTotal: 0,
+        membersTruncated: true,
+        agentsTruncated: false,
+      }),
+    ).toBe(true);
+    expect(
+      isWorkspaceMemberListView({
+        members: Array.from({ length: WORKSPACE_MEMBER_PAGE_SIZE + 1 }, () => ({
+          identity,
+          role: 'member' as const,
+        })),
+        agents: [],
+        peopleTotal: WORKSPACE_MEMBER_PAGE_SIZE + 1,
+        agentTotal: 0,
+        membersTruncated: true,
+        agentsTruncated: false,
+      }),
+    ).toBe(false);
     expectTypeOf<PhoneOperationMap['uploadMedia']['output']>().toHaveProperty('url');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['output']>().toHaveProperty(

@@ -1020,6 +1020,19 @@ async function route(
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
+  match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/members$/);
+  if (method === 'GET' && match) {
+    const rawKind = url.searchParams.get('kind');
+    const rawOffset = url.searchParams.get('offset');
+    const offset = rawOffset === null || rawOffset === '' ? undefined : Number(rawOffset);
+    const result = await options.phone.readWorkspaceMembers(match[1]!, identityId!, {
+      ...(url.searchParams.get('q') ? { q: url.searchParams.get('q')! } : {}),
+      ...(rawKind === 'human' || rawKind === 'agent' ? { kind: rawKind } : {}),
+      ...(Number.isSafeInteger(offset) && (offset as number) >= 0 ? { offset } : {}),
+    });
+    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    return;
+  }
   match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/chats$/);
   if (method === 'GET' && match) {
     const result = await options.phone.readChats(match[1]!, identityId!);

@@ -12,6 +12,7 @@ const route = vi.hoisted(() => ({ action: 'add-agent' as string | undefined }));
 const roomView = vi.hoisted(() => ({
   workspace: vi.fn(),
   agent: vi.fn(),
+  workspaceMembers: vi.fn(),
 }));
 const share = vi.hoisted(() => vi.fn(async () => undefined));
 const clipboard = vi.hoisted(() => vi.fn(async () => undefined));
@@ -46,6 +47,7 @@ vi.mock('react-native', async () => {
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
+    TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };
@@ -139,6 +141,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    workspaceMembers = roomView.workspaceMembers;
   },
 }));
 vi.mock('@beeline/buzz-client', async (importOriginal) => {
@@ -146,6 +149,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   class RoomViewClient {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    workspaceMembers = roomView.workspaceMembers;
   }
   class SurfaceRefreshScheduler<T> {
     constructor(
@@ -206,6 +210,8 @@ const workspace = {
       presence: { status: 'online', observedAt: 1 },
     },
   ],
+  peopleTotal: 1,
+  agentTotal: 1,
   membersTruncated: false,
   agentsTruncated: false,
   viewer: {
@@ -234,6 +240,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   route.action = 'add-agent';
   roomView.workspace.mockResolvedValue(workspace);
+  roomView.workspaceMembers.mockResolvedValue({
+    members: workspace.members,
+    agents: workspace.agents,
+    peopleTotal: workspace.peopleTotal,
+    agentTotal: workspace.agentTotal,
+    membersTruncated: workspace.membersTruncated,
+    agentsTruncated: workspace.agentsTruncated,
+  });
 });
 
 describe('Members agent invitation flow', () => {

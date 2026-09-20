@@ -17,6 +17,7 @@ import {
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
+  WORKSPACE_MEMBER_PAGE_SIZE,
 } from '@beeline/api-contract/phone';
 import type {
   AgentGrantView,
@@ -34,6 +35,8 @@ import type {
   SystemEvent,
   WorkspaceListView,
   WorkspaceAgentView,
+  WorkspaceMemberListQuery,
+  WorkspaceMemberListView,
   WorkspaceView,
 } from '@beeline/api-contract/phone';
 import {
@@ -924,46 +927,7 @@ export class PhoneService {
       visibility: room.visibility,
       createdAt: unix(room.created_at),
     }));
-    const members = await this.members(workspaceId, null);
-    const humans = members.filter((member) => member.identity.kind === 'human');
-    const agentMembers = members.filter((member) => member.identity.kind === 'agent');
-    const configs = agentMembers.length
-      ? await this.database.query<{
-          agent_id: string;
-          selected_model: string | null;
-          model_catalog: AgentDetailView['catalog'];
-          owner_id: string;
-          owner_name: string;
-          owner_handle: string | null;
-        }>(
-          `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
-                  owner.id owner_id,owner.name owner_name,owner.handle owner_handle
-           FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
-           WHERE agent.agent_id=ANY($1::text[])`,
-          [agentMembers.map((member) => member.identity.pubkey)],
-        )
-      : { rows: [] };
-    const configByAgent = new Map(configs.rows.map((config) => [config.agent_id, config]));
-    const agents: WorkspaceAgentView[] = agentMembers.map((member) => {
-      const config = configByAgent.get(member.identity.pubkey);
-      const model = config
-        ? selectedModelLabel(config.selected_model, config.model_catalog ?? [])
-        : undefined;
-      return {
-        ...member,
-        ...(model ? { model } : {}),
-        ...(config
-          ? {
-              owner: {
-                pubkey: config.owner_id,
-                kind: 'human' as const,
-                name: config.owner_name,
-                ...(config.owner_handle ? { handle: config.owner_handle } : {}),
-              },
-            }
-          : {}),
-      };
-    });
+    const roster = await this.workspaceRoster(workspaceId);
     const viewerIdentity = await this.requireIdentity(viewerId);
     return {
       workspace: {
@@ -985,10 +949,12 @@ export class PhoneService {
             },
           }
         : {}),
-      members: humans.slice(0, ROOM_VIEW_MEMBER_LIMIT),
-      agents: agents.slice(0, ROOM_VIEW_AGENT_LIMIT),
-      membersTruncated: humans.length > ROOM_VIEW_MEMBER_LIMIT,
-      agentsTruncated: agents.length > ROOM_VIEW_AGENT_LIMIT,
+      members: roster.members,
+      agents: roster.agents,
+      peopleTotal: roster.peopleTotal,
+      agentTotal: roster.agentTotal,
+      membersTruncated: roster.membersTruncated,
+      agentsTruncated: roster.agentsTruncated,
       viewer: {
         identity: viewerIdentity,
         role: row.role,
@@ -996,6 +962,20 @@ export class PhoneService {
       },
       watchFilters: [],
     };
+  }
+
+  async readWorkspaceMembers(
+    workspaceId: string,
+    viewerId: string,
+    query: WorkspaceMemberListQuery = {},
+  ): Promise<WorkspaceMemberListView | null> {
+    const access = await this.database.query(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [workspaceId, viewerId],
+    );
+    if (!access.rowCount) return null;
+    return this.workspaceRoster(workspaceId, query);
   }
 
   async readChats(workspaceId: string, viewerId: string): Promise<ChatListView | null> {
@@ -6336,6 +6316,175 @@ export class PhoneService {
     );
     if (!row.rowCount) throw new Error('workspace owner access denied');
   }
+
+  private rosterSearchNeedle(query: string | undefined): string | null {
+    const needle = query?.trim().toLowerCase() ?? '';
+    return needle ? needle.slice(0, 80) : null;
+  }
+
+  private async workspaceRosterPage(
+    workspaceId: string,
+    kind: 'human' | 'agent',
+    needle: string | null,
+    offset: number,
+  ): Promise<{ rows: MemberRow[]; total: number; truncated: boolean }> {
+    const rows = await this.database.query<MemberRow & { kind_total: string }>(
+      `SELECT i.id,
+         i.kind,i.name,i.handle,i.avatar,
+         i.face_id,
+         m.role,NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
+         count(*) OVER ()::text AS kind_total
+       FROM memberships m JOIN identities i ON i.id=m.identity_id
+       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+         AND i.hidden_from_roster=false AND i.kind=$2
+         AND (
+           $3::text IS NULL
+           OR position($3 in lower(i.name)) > 0
+           OR position($3 in lower(COALESCE(i.handle, ''))) > 0
+         )
+       ORDER BY CASE WHEN $2='human' AND m.role='owner' THEN 0 ELSE 1 END,
+         lower(i.name), i.id
+       LIMIT $4 OFFSET $5`,
+      [workspaceId, kind, needle, WORKSPACE_MEMBER_PAGE_SIZE + 1, offset],
+    );
+    const truncated = rows.rows.length > WORKSPACE_MEMBER_PAGE_SIZE;
+    const page = rows.rows.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
+    return {
+      rows: page,
+      total: Number(page[0]?.kind_total ?? rows.rows[0]?.kind_total ?? 0),
+      truncated,
+    };
+  }
+
+  private async enrichWorkspaceAgents(
+    members: readonly RoomViewMember[],
+  ): Promise<WorkspaceAgentView[]> {
+    const agentMembers = members.filter((member) => member.identity.kind === 'agent');
+    if (!agentMembers.length) return [];
+    const configs = await this.database.query<{
+      agent_id: string;
+      selected_model: string | null;
+      model_catalog: AgentDetailView['catalog'];
+      owner_id: string;
+      owner_name: string;
+      owner_handle: string | null;
+    }>(
+      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
+              owner.id owner_id,owner.name owner_name,owner.handle owner_handle
+       FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
+       WHERE agent.agent_id=ANY($1::text[])`,
+      [agentMembers.map((member) => member.identity.pubkey)],
+    );
+    const configByAgent = new Map(configs.rows.map((config) => [config.agent_id, config]));
+    return agentMembers.map((member) => {
+      const config = configByAgent.get(member.identity.pubkey);
+      const model = config
+        ? selectedModelLabel(config.selected_model, config.model_catalog ?? [])
+        : undefined;
+      return {
+        ...member,
+        ...(model ? { model } : {}),
+        ...(config
+          ? {
+              owner: {
+                pubkey: config.owner_id,
+                kind: 'human' as const,
+                name: config.owner_name,
+                ...(config.owner_handle ? { handle: config.owner_handle } : {}),
+              },
+            }
+          : {}),
+      };
+    });
+  }
+
+  private async workspaceRosterCount(
+    workspaceId: string,
+    kind: 'human' | 'agent',
+    needle: string | null,
+  ): Promise<number> {
+    const rows = await this.database.query<{ total: string }>(
+      `SELECT count(*)::text AS total
+       FROM memberships m JOIN identities i ON i.id=m.identity_id
+       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+         AND i.hidden_from_roster=false AND i.kind=$2
+         AND (
+           $3::text IS NULL
+           OR position($3 in lower(i.name)) > 0
+           OR position($3 in lower(COALESCE(i.handle, ''))) > 0
+         )`,
+      [workspaceId, kind, needle],
+    );
+    return Number(rows.rows[0]?.total ?? 0);
+  }
+
+  private async workspaceRoster(
+    workspaceId: string,
+    query: WorkspaceMemberListQuery = {},
+  ): Promise<WorkspaceMemberListView> {
+    const needle = this.rosterSearchNeedle(query.q);
+    const offset = Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0 ? query.offset! : 0;
+    const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
+    const loadPeople = kind !== 'agent';
+    const loadAgents = kind !== 'human';
+    const [peoplePage, agentPage] = await Promise.all([
+      loadPeople
+        ? this.workspaceRosterPage(workspaceId, 'human', needle, kind === 'human' ? offset : 0)
+        : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
+      loadAgents
+        ? this.workspaceRosterPage(workspaceId, 'agent', needle, kind === 'agent' ? offset : 0)
+        : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
+    ]);
+    const pageRows = [...peoplePage.rows, ...agentPage.rows];
+    const presenceIds = pageRows.map((row) => row.id);
+    if (presenceIds.length) {
+      const presence = await this.optionalEnrichment(
+        'member-presence',
+        this.enrichmentDatabase.query<{
+          id: string;
+          presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date;
+        }>(
+          `SELECT member.identity_id id,presence.body presence_body,
+             presence.updated_at presence_updated_at
+           FROM memberships member
+           JOIN LATERAL(
+             SELECT body,updated_at FROM live_outputs
+             WHERE agent_id=member.identity_id AND kind='presence'
+             ORDER BY updated_at DESC LIMIT 1
+           ) presence ON true
+           WHERE member.workspace_id=$1 AND member.room_id IS NULL
+             AND member.removed_at IS NULL AND member.identity_id=ANY($2::text[])`,
+          [workspaceId, presenceIds],
+        ),
+      );
+      const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
+      for (const member of pageRows) {
+        const item = presenceByMember.get(member.id);
+        member.presence_body = item?.presence_body ?? null;
+        member.presence_updated_at = item?.presence_updated_at ?? null;
+      }
+    }
+    const people = this.projectMembers(peoplePage.rows, null);
+    const agents = await this.enrichWorkspaceAgents(this.projectMembers(agentPage.rows, null));
+    const [peopleTotal, agentTotal] = await Promise.all([
+      kind === 'agent'
+        ? this.workspaceRosterCount(workspaceId, 'human', needle)
+        : Promise.resolve(peoplePage.total),
+      kind === 'human'
+        ? this.workspaceRosterCount(workspaceId, 'agent', needle)
+        : Promise.resolve(agentPage.total),
+    ]);
+    return {
+      members: people,
+      agents,
+      peopleTotal,
+      agentTotal,
+      membersTruncated: peoplePage.truncated,
+      agentsTruncated: agentPage.truncated,
+    };
+  }
+
   private async members(workspaceId: string, roomId: string | null): Promise<RoomViewMember[]> {
     const rows = await this.database.query<MemberRow>(
       `SELECT i.id,

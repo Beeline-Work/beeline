@@ -1808,8 +1808,9 @@ describe('thin monolith corner turn', () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
     const worktree = join(root, 'worktree');
-    const gitCommonDir = join(root, 'repo.git');
-    await Promise.all([mkdir(worktree), mkdir(gitCommonDir)]);
+    const gitCommonDir = join(worktree, '.git');
+    await mkdir(worktree);
+    await execFileAsync('git', ['init', worktree]);
     const runtime: AgentRuntimeRecord = {
       version: 2,
       communityId: 'workspace',

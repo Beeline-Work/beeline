@@ -17,6 +17,7 @@ vi.mock('react-native', async () => {
     View: host('View'),
     ScrollView: host('ScrollView'),
     Pressable: host('Pressable'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 vi.mock('./HullActionSheet', () => ({

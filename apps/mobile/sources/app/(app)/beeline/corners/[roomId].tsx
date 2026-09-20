@@ -13,24 +13,14 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
-import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { CHANGES_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-
-/** 44 of chrome already; the slop only clears Android's 48dp floor. */
-const BACK_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
-
-/**
- * The screen's title: the same noun the product uses everywhere else, as a
- * title rather than as prose. `CORNER_LABEL`/`CHANGES_LABEL` stay lowercase
- * because they are written into sentences; `MEMBERS_LABEL` is the capitalized
- * shape a page title takes, and this is its pair.
- */
-const SCREEN_TITLE = `${CHANGES_LABEL.charAt(0).toUpperCase()}${CHANGES_LABEL.slice(1)}`;
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
@@ -137,35 +127,11 @@ export default function BuzzCorners() {
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {/* Chrome sits on the slab: no plate, no texture, one hairline and
           type weight — the same header the Members screen carries. */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            accessibilityLabel="Back"
-            accessibilityRole="button"
-            hitSlop={BACK_HIT_SLOP}
-            onPress={() => router.back()}
-            style={styles.back}
-          >
-            <Text style={styles.backText}>‹</Text>
-          </TouchableOpacity>
-          <View style={styles.headerCopy}>
-            <Text numberOfLines={1} style={styles.eyebrow}>
-              {title}
-            </Text>
-            <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
-              {SCREEN_TITLE}
-            </Text>
-          </View>
-          {/* The index's one gutter fact, spoken as a sentence rather than a
-            bare numeral. */}
-          <Text
-            accessibilityLabel={`${surface.corners.length} ${
-              surface.corners.length === 1 ? CORNER_LABEL : CHANGES_LABEL
-            }`}
-            style={styles.count}
-          >
-            {surface.corners.length}
-          </Text>
-        </View>
+        <RoomCornersHeader
+          title={title}
+          count={surface.corners.length}
+          onBack={() => router.back()}
+        />
         {!!error && (
           <TouchableOpacity
             accessibilityHint="Retries the read"
@@ -205,25 +171,6 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: hull.space.lg,
     },
     loading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    header: {
-      minHeight: 66,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: hull.space.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    headerCopy: { flex: 1, minWidth: 0 },
-    eyebrow: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    count: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      paddingHorizontal: hull.space.sm,
-      color: hull.textMuted,
-    },
     errorPanel: { paddingHorizontal: hull.space.md, paddingVertical: hull.space.sm },
     error: {
       ...Typography.default(),

@@ -83,8 +83,6 @@ import { roomBottomChromeStyles, turnLineOverlayCoverPx } from './room-bottom-ch
 const layout = roomBottomChromeStyles(beelineThemes.obsidian);
 
 const px = (value: unknown): number => Number(value ?? 0);
-/** Read a style's box-model fields by name: a regression ADDS one of these. */
-const box = (style: unknown): Record<string, unknown> => (style ?? {}) as Record<string, unknown>;
 
 /** The turn line's own layout box, measured off a rendered line. */
 function measureTurnLine(): { height: number; bottomMargin: number; box: number } {
@@ -116,18 +114,25 @@ function measureTurnLine(): { height: number; bottomMargin: number; box: number 
 }
 
 describe('the Room turn line is a band above the composer', () => {
-  it('sits in flow with a hairline, not as an overlay on the transcript', () => {
+  it('sits in flow with a hairline, flush on the composer, not over the transcript', () => {
     const hanging = layout.hangingTurnChrome;
-    expect(hanging.position, 'an absolute line paints over the last message').not.toBe(
-      'absolute',
-    );
-    expect(box(hanging).bottom).not.toBe('100%');
+    // Overlay used position/bottom to paint over the list. The in-flow band
+    // is only a hairline fill — no overlay fields, no extra air that would
+    // shove the composer row.
+    expect(Object.keys(hanging).sort()).toEqual([
+      'backgroundColor',
+      'borderTopColor',
+      'borderTopWidth',
+    ]);
     expect(hanging.borderTopWidth).toBe(1);
     expect(hanging.borderTopColor).toBe(beelineThemes.obsidian.border);
-    expect(px(box(layout.stack).paddingTop)).toBe(0);
-    expect(px(box(layout.stack).gap)).toBe(0);
-    expect(px(box(hanging).marginBottom)).toBe(0);
-    expect(px(box(layout.composerRow).marginTop)).toBe(0);
+    expect(hanging.backgroundColor).toBe(beelineThemes.obsidian.bgTerminal);
+    expect(Object.keys(layout.stack)).toEqual(['position']);
+    expect(Object.keys(layout.stack)).not.toContain('gap');
+    expect(Object.keys(layout.stack)).not.toContain('paddingTop');
+    expect(Object.keys(hanging)).not.toContain('marginBottom');
+    expect(Object.keys(layout.composerRow)).not.toContain('marginTop');
+    expect(layout.composerRow.paddingTop).toBe(8);
   });
 
   it('would cover the last row if it overlaid the ordinary tail, so it must not overlay', () => {
@@ -150,9 +155,10 @@ describe('the Room turn line is a band above the composer', () => {
     expect(overlayCover).toBe(line.box - thinking);
     expect(overlayCover).toBeGreaterThan(0);
 
-    // In-flow placement: the line is not painted over the list, so the last
-    // row keeps the whole ordinary tail and none of the line box.
-    expect(layout.hangingTurnChrome.position).not.toBe('absolute');
+    // In-flow band: no overlay fields, so none of the 30px line box is taken
+    // from the 12px tail. The last row keeps the ordinary margin.
+    expect(Object.keys(layout.hangingTurnChrome)).not.toContain('position');
+    expect(Object.keys(layout.hangingTurnChrome)).not.toContain('bottom');
     expect(turnLineOverlayCoverPx(0, thinking)).toBe(0);
   });
 });

@@ -109,9 +109,13 @@ describe('desktop workbench wiring', () => {
   });
 
   it('keeps repository lifecycle vocabulary out of overview corner rows', () => {
+    // Only CornerRow's own body is under this contract. Slicing to the next
+    // top-level declaration keeps unrelated helpers that happen to sit between
+    // it and CornerCockpit out of the assertion.
+    const cornerRowStart = inspector.indexOf('function CornerRow');
     const cornerRow = inspector.slice(
-      inspector.indexOf('function CornerRow'),
-      inspector.indexOf('function CornerCockpit'),
+      cornerRowStart,
+      inspector.indexOf('\nfunction ', cornerRowStart + 1),
     );
     expect(cornerRow).toContain('inspectorCornerObjective(');
     expect(cornerRow).not.toContain('corner.corner.about ?? corner.corner.name');

@@ -163,20 +163,15 @@ describe('tokenizeCode', () => {
     );
   });
 
-  it('does not paint a CSS hex as a comment', () => {
-    const code = 'color: #f3eee4;';
-    expect(flattenTokens(tokenizeCode(code, 'css'))).toBe(code);
-    const tokens = tokenizeCode(code, 'css').flat();
-    expect(tokens.some((t) => t.token === 'structure' && t.text.includes('f3eee4'))).toBe(false);
-    expect(tokens.some((t) => t.text.includes('#f3eee4'))).toBe(true);
-  });
-
-  it('treats a YAML key as a name', () => {
-    const tokens = tokenizeCode('name: build', 'yaml').flat();
-    expect(flattenTokens(tokenizeCode('name: build', 'yaml'))).toBe('name: build');
-    expect(tokens.some((t) => t.token === 'name' && t.text.includes('name'))).toBe(true);
-    expect(tokens.some((t) => t.token === 'structure' && t.text.includes(':'))).toBe(true);
-  });
+  it.each(['jsonc', 'json5', 'yaml', 'yml', 'css', 'html', 'python', 'bash', 'sql'])(
+    'uses the generic scanner for %s',
+    (language) => {
+      const code = '{ "name": "Milo", "reasoning": true }\nconst x = 42; # note';
+      expect(tokenizeCode(code, language)).toEqual(tokenizeCode(code, null));
+      expect(flattenTokens(tokenizeCode(code, language))).toBe(code);
+      expect(tokenizeCode(code, language)[0]).not.toEqual(tokenizeCode(code, 'json')[0]);
+    },
+  );
 
   it('handles empty string', () => {
     expect(flattenTokens(tokenizeCode('', 'typescript'))).toBe('');

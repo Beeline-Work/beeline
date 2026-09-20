@@ -123,14 +123,20 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain(
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
-    // Back and lone corner overflow keep the 44-chrome + 4 slop edge.
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(2);
+    // Back, lone corner overflow, and the named corners door all carry 44 of
+    // chrome themselves, so they take the small edge slop.
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(3);
   });
 
-  it('puts a brass corner glyph beside Room overflow that opens the dedicated corners list', () => {
+  it('names the Room corners door and parts it from overflow', () => {
+    // A lone brass `◇` a few pixels from the overflow dots read as decoration
+    // on the menu. The door is NAMED instead, the way every rail command is:
+    // the sigil states the kind, the word states the destination, and one
+    // full space step parts the pair from the dots.
     expect(chatSource).toContain('testID="room-corners-menu"');
     expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
     expect(chatSource).toContain('<Text style={styles.roomCornersGlyph}>◇</Text>');
+    expect(chatSource).toContain('<Text style={styles.roomCornersLabel}>{CHANGES_LABEL}</Text>');
     expect(chatSource).toContain('router.push(roomCornersHref(decodedId))');
     expect(chatSource).toContain("from '@/buzz/corner-navigation'");
     expect(chatSource).toContain('roomCornersHref');
@@ -140,30 +146,40 @@ describe('Chat header — one language for Room and Corner', () => {
       chatSource.indexOf('testID="room-corners-menu"'),
     );
     expect(glyph).toContain('!parentChannelId && !isDirectMessage');
-    // Option E: brass of the corner lifecycle family, slightly larger than
-    // the steel dots, clustered by hit slop rather than two 44pt boxes.
+    // Brass stays on the sigil alone — the corner lifecycle family's own mark.
+    // The word takes the calm metadata voice the rest of the header speaks in,
+    // so the pair is never two accents shouting at each other.
     const diamond = chatSource.match(/roomCornersGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
     expect(diamond![0]).toContain('color: groknight.accent');
     expect(diamond![0]).toContain('fontSize: groknight.type.meta.fontSize');
     expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    const word = chatSource.match(/roomCornersLabel:\s*\{[\s\S]*?\n    \},/);
+    expect(word, 'missing roomCornersLabel style').toBeTruthy();
+    expect(word![0]).toContain('...groknight.type.meta');
+    expect(word![0]).toContain('color: groknight.textMuted');
+    expect(word![0]).not.toMatch(/fontSize:|letterSpacing:|textTransform:/);
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\n    \},/);
     expect(dots![0]).toContain('color: groknight.steel');
     expect(dots![0]).toContain('fontSize: 12');
-    const diamondButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
-    expect(diamondButton![0]).toContain('marginLeft: 12');
-    expect(diamondButton![0]).not.toContain('minWidth: 44');
+    // Its own 44pt-tall target, so it is a destination rather than chrome
+    // hanging off the menu.
+    const doorButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
+    expect(doorButton![0]).toContain('minHeight: 44');
+    expect(doorButton![0]).toContain('marginLeft: 12');
+    expect(doorButton![0]).toContain("flexDirection: 'row'");
+    expect(doorButton![0]).toContain('gap: groknight.space.xs');
+    // One full space step of slab between the named door and the dots.
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
-    expect(clustered, 'missing clustered overflow style').toBeTruthy();
-    // Keep one visible small spacing step between the diamond and dots. The
-    // tight 4pt token makes the distinct actions read as one crowded glyph.
-    expect(clustered![0]).toContain('marginLeft: groknight.space.sm');
+    expect(clustered, 'missing trailing overflow style').toBeTruthy();
+    expect(clustered![0]).toContain('marginLeft: groknight.space.md');
     expect(clustered![0]).not.toContain('marginLeft: groknight.space.xs');
-    expect(clustered![0]).not.toContain('minWidth: 44');
     expect(chatSource).toContain(
       'const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;',
     );
-    expect(chatSource.match(/hitSlop=\{HEADER_TRAILING_HIT_SLOP\}/g)).toHaveLength(2);
+    expect(chatSource.match(/hitSlop=\{HEADER_TRAILING_HIT_SLOP\}/g)).toHaveLength(1);
+    // No badge, plate or count grows on it: a door says where it goes, and
+    // the list behind it does the counting.
     expect(chatSource).not.toMatch(/roomCorners(?:Badge|Count|Plate)/);
     expect(chatSource).not.toContain('backgroundColor: groknight.brassWash');
   });

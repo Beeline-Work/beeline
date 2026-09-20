@@ -4,16 +4,19 @@ import { describe, expect, it } from 'vitest';
 const chatSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 
 /**
- * Two indicators, two unrelated facts, and the rule is enforced here as
- * structure rather than as intent.
- *
  * A Room turn in progress ("beebee thinking…") and an open corner
  * ("beebee active: feat/x · view →") were once one derivation: the pinned
  * gold corner line's `live` flag was the agent-busy flag, and its destination
  * was whatever corner was last on record — so a plain question lit the corner
- * line and offered a tap into an archived channel. The fix is that neither
- * memo can see the other's input, which is exactly what a dependency list can
- * be read for.
+ * line and offered a tap into an archived channel.
+ *
+ * The pinned line is retired outright (a Room holds many corners, so one line
+ * above the composer could only ever name one of them), which settles that
+ * conflation by subtraction: the Room's bottom chrome now carries the turn
+ * indicator and nothing else, and the corners door in the header is the one
+ * way into corner state. What this file still holds is that the turn
+ * indicator derives from turn facts alone and that the retired line does not
+ * grow back.
  */
 /** One `useMemo(...)` call, from its name to its own closing paren — the
  * factory and the dependency list together, and nothing of its neighbours. */
@@ -29,27 +32,17 @@ function memoBody(name: string): string {
   throw new Error(`Unclosed useMemo for ${name}`);
 }
 
-const TURN_STATE = ['activeAgentTurn', 'sessionState', 'composerAck'];
 const CORNER_STATE = ['pinnedCorner', 'pinnedCornerCard', 'cornerLifecycle'];
 
-describe('the corner line and the turn indicator are independent', () => {
-  it('never derives the pinned corner from any turn signal', () => {
-    // `sessionState` is allowed inside the memo's *Corner* branch — there it
-    // is this corner's own edit session, which is the corner's state. What may
-    // never appear is the Room's turn signal.
-    expect(memoBody('cornerLiveBar')).not.toContain('activeAgentTurn');
-    expect(memoBody('cornerLiveBar')).not.toContain('agentsOffline');
-  });
-
-  it('resolves which corner may be pinned outside the screen, from corner state alone', () => {
-    const selection = memoBody('pinnedCorner');
-    for (const turnState of TURN_STATE) expect(selection).not.toContain(turnState);
-    expect(selection).toContain('selectPinnedCorner');
-    // Canonical lifecycle is the only input. Parent kind:9 corner-open/close
-    // history and permission records are explicitly absent.
-    expect(selection).toContain('lifecycle: cornerLifecycle');
-    expect(selection).not.toContain('cornerSignals');
-    expect(selection).not.toContain('permittedCorner');
+describe('the turn indicator is the Room’s only line above the composer', () => {
+  it('keeps the retired pinned corner line retired', () => {
+    // A Room holds many corners at once, so no single line above the composer
+    // can name "the" one. It is not dimmed or conditional — it is gone, and
+    // so is every derivation that fed it.
+    expect(chatSource).not.toContain('CornerLiveBar');
+    expect(chatSource).not.toContain('cornerLiveBar');
+    expect(chatSource).not.toContain('selectPinnedCorner');
+    expect(chatSource).not.toContain('pinnedCornerVerb');
   });
 
   it('never derives the turn indicator from any corner signal', () => {
@@ -148,23 +141,13 @@ describe('the corner line and the turn indicator are independent', () => {
     expect(chatSource).not.toContain('projectCornerTranscript');
   });
 
-  it('renders the two as separate, independently-gated lines', () => {
-    // Neither is nested in the other's condition, so a Room can show one, the
-    // other, both, or neither.
-    expect(chatSource).toContain('{!isCorner && cornerLiveBar && (');
+  it('renders the turn indicator on its own gate', () => {
     expect(chatSource).toContain('desktopExperience ? (');
     expect(chatSource).toMatch(
       /\{!desktopExperience && composerAck && \(\s*<View style=\{styles\.hangingTurnChrome\}/,
     );
     expect(chatSource).toContain('<TurnProgressLine');
     expect(chatSource).toContain('label={composerAck.label}');
-  });
-
-  it('keeps the corner navigation line in the parent Room and names the human corner', () => {
-    const cornerLine = memoBody('cornerLiveBar');
-    expect(cornerLine).toContain('if (isCorner) return null');
-    expect(cornerLine).toContain('displayCornerTitle(');
-    expect(cornerLine).not.toContain('humanBranchName(');
   });
 
   it('uses one optimistic-send overlay for both Rooms and corners', () => {
@@ -174,7 +157,7 @@ describe('the corner line and the turn indicator are independent', () => {
     );
   });
 
-  it('keeps the corner line the only tappable one', () => {
+  it('keeps the turn line untappable', () => {
     // `TurnProgressLine` takes no `onPress` at all — a turn has no
     // destination, which is why it cannot strand a reader in a dead channel.
     // `onStop` is not a destination: it is the one action a turn admits, and

@@ -34,20 +34,18 @@ vi.mock('react-native', async () => {
   };
 });
 
-const theme = vi.hoisted(() => ({
-  buzz: {
-    border: '#333',
-    textPrimary: '#fff',
-    textMuted: '#aaa',
-    type: { body: {}, meta: {} },
-  },
-}));
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
-  },
-}));
+// The real token set, so row geometry and tone assertions read the same
+// values the app ships rather than a stub that drifts from them.
+vi.mock('react-native-unistyles', async () => {
+  const { beelineThemes } = await import('@/buzz/groknight');
+  const theme = { buzz: beelineThemes.obsidian };
+  return {
+    StyleSheet: {
+      hairlineWidth: 1,
+      create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
+    },
+  };
+});
 vi.mock('expo-router', () => ({ router: { push: routerPush } }));
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
@@ -169,6 +167,51 @@ describe('RoomCornersList', () => {
     expect(tree.root.findByProps({ testID: 'room-corners-empty' })).toBeTruthy();
     expect(text(tree)).toContain('No corners yet');
     expect(tree.root.findAllByProps({ testID: 'room-corners-more' })).toHaveLength(0);
+  });
+
+  it('names the state in words beside the circle, never in the circle alone', () => {
+    // PRODUCT.md: encode state redundantly. A coloured dot is the one
+    // encoding a colour-blind reader and a screen reader both lose.
+    const tree = render([corner('live', 'working', 'Fix fixture')]);
+    expect(text(tree)).toContain('working');
+    expect(tree.root.findByType('StateCircle' as any).props.state).toBe('working');
+    const row = tree.root.findByProps({ testID: 'room-corner-live' });
+    expect(row.props.accessibilityLabel).toContain('working');
+    expect(row.props.accessibilityLabel).toContain('Opened by Opener live');
+  });
+
+  it('carries the corner PR/check narration on the row it belongs to', () => {
+    const item = corner('live', 'working', 'Fix fixture');
+    const tree = render([
+      {
+        ...item,
+        lifecycle: {
+          ...item.lifecycle,
+          pr: { number: 12, url: 'https://example.invalid/12' },
+          checks: 'passing',
+          checksSummary: { status: 'passing', total: 3, checks: [], failing: [] },
+        },
+      } as unknown as CornerListItem,
+    ]);
+    expect(text(tree)).toContain('Opened by Opener live · PR #12 · all 3 tests passed');
+  });
+
+  it('keeps the last row clear of the gesture bar', () => {
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = create(
+        <RoomCornersList
+          corners={[corner('live', 'working')]}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          bottomInset={48}
+        />,
+      );
+    });
+    const list = tree.root.findByType('FlatList' as any);
+    expect(
+      ([] as any[]).concat(list.props.contentContainerStyle).filter(Boolean),
+    ).toContainEqual({ paddingBottom: 48 });
   });
 
   it('opens a row into that corner', () => {

@@ -58,23 +58,24 @@ describe('Room composer status layout', () => {
   });
 
   it('hangs the phone turn line over the transcript so it does not open a composer gap', () => {
-    const hanging = source.slice(
-      source.indexOf('hangingTurnChrome: {'),
-      source.indexOf('agentOfflineHint: {'),
-    );
-    expect(hanging).toContain("position: 'absolute'");
-    expect(hanging).toContain("bottom: '100%'");
+    // The geometry itself is measured in `buzz/room-bottom-chrome.test.tsx`;
+    // what this file holds is that the screen mounts that shared column
+    // rather than a second hand-rolled copy of it.
+    expect(source).toContain('const bottomChrome = roomBottomChromeStyles(groknight);');
+    expect(source).toContain('hangingTurnChrome: bottomChrome.hangingTurnChrome,');
+    expect(source).toContain('inputBar: bottomChrome.composerRow,');
     expect(source).toContain('styles.bottomChromeStack');
     const stack = source.slice(source.indexOf('styles.bottomChromeStack'));
     expect(stack.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);
     expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<ConversationComposer'));
-    expect(stack.indexOf('hanging-turn-chrome')).toBeLessThan(stack.indexOf('<CornerLiveBar'));
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
     expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
-    expect(source).toContain(
-      'pushedChromeVisible: Boolean((!isCorner && cornerLiveBar) || agentsOffline)',
-    );
+    // The pinned corner line is gone, so the offline hint is the only chrome
+    // left that pushes the tail. The turn line lands directly on the
+    // composer — measured in `buzz/room-bottom-chrome.test.tsx`.
+    expect(source).toContain('pushedChromeVisible: agentsOffline');
+    expect(source).not.toContain('CornerLiveBar');
   });
 
   it('keeps the Room header outside the Android keyboard translation surface', () => {

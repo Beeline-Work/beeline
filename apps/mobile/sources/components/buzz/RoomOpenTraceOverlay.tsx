@@ -50,14 +50,17 @@ export function RoomOpenTraceOverlay({ testID }: { testID?: string }) {
 const styles = StyleSheet.create((theme) => ({
   panel: {
     position: 'absolute',
-    top: 4,
-    right: 4,
+    top: theme.buzz.space.xs,
+    right: theme.buzz.space.xs,
     maxWidth: '86%',
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderRadius: 4,
-    backgroundColor: 'rgba(0,0,0,0.78)',
+    paddingHorizontal: theme.buzz.space.xs,
+    paddingVertical: theme.buzz.space.xs,
+    borderRadius: theme.buzz.radius,
+    backgroundColor: theme.buzz.bgTerminal,
+    opacity: 0.94,
   },
-  total: { color: theme.buzz.accent, fontSize: 10, lineHeight: 13, fontVariant: ['tabular-nums'] },
-  row: { color: '#d8d8de', fontSize: 9, lineHeight: 12, fontVariant: ['tabular-nums'] },
+  // Tracked type roles, not raw sizes: this panel is diagnostic, and a
+  // diagnostic is not a licence to invent a fourteenth text size.
+  total: { ...theme.buzz.type.meta, color: theme.buzz.accent },
+  row: { ...theme.buzz.type.mono, color: theme.buzz.textMuted },
 }));

@@ -273,7 +273,9 @@ describe('DesktopRoomInspector work pane', () => {
     expect(copy).toContain(
       'Repair the complete boundary fixture without truncating this objective.',
     );
-    expect(copy).toContain('review ›');
+    // The state word is written; the chevron beside it is drawn, so it is no
+    // longer part of the row's copy.
+    expect(copy).toContain('review');
     expect(copy).toContain('archived · 1');
     expect(copy).toContain('@codex');
     expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
@@ -367,9 +369,12 @@ describe('DesktopRoomInspector work pane', () => {
     const meMark = tree.root.findByProps({ testID: 'desktop-work-corner-me-working' });
     expect(meMark.props.children).toBe('ME');
     expect(meMark.props.style.color).toBe(theme.buzz.accent);
+    // ME is the last WRITTEN part of the headline; the chevron after it is a
+    // drawn shape in its own box.
     expect(
-      meMark.parent?.findAllByType('Text' as any).map((node: any) => node.props.children).slice(-2),
-    ).toEqual(['ME', '›']);
+      meMark.parent?.findAllByType('Text' as any).map((node: any) => node.props.children).slice(-1),
+    ).toEqual(['ME']);
+    expect(meMark.parent?.findAllByType('Polyline' as any)).toHaveLength(1);
     const ownRow = tree.root.findByProps({ testID: 'desktop-work-corner-working' });
     expect(ownRow.findAllByType('IdentityMark' as any)).toHaveLength(1);
     expect(ownRow.findByType('IdentityMark' as any).props.seed).toBe(agent.pubkey);

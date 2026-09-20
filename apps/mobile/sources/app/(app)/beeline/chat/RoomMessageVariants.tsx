@@ -1799,7 +1799,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     continuedRun && !isAgent && !announcementFeed && !message.bookmarked
       ? undefined
       : {
-          name: isSelfSteer ? 'You' : voiceName,
+          // The viewer is named like every other speaker. Brass on the name
+          // (`isViewer`, drawn in Ledger.tsx) is the ONE thing that marks
+          // them; a "You" caption beside it says the same thing twice and
+          // breaks the run of names down the left edge.
+          name: voiceName,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp,
           isViewer: isSelfSteer,

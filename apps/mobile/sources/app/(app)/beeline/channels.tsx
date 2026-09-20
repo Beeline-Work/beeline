@@ -52,6 +52,7 @@ import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerS
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MembersGlyph } from '@/components/buzz/MembersGlyph';
 import { BookmarksGlyph } from '@/components/buzz/BookmarksGlyph';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -87,15 +88,22 @@ const ROW_COPY_GAP = 12;
 const ROW_TEXT_INSET = ROW_PADDING_LEFT + ATTENTION_SQUARE + ROW_COPY_GAP;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 /**
- * 16px chrome plus 14 all round is a 44pt target without a 44-wide box. The
- * 44-wide members box left 28px of air to the bookmark; shrinking the box to
- * the mark and restoring the target here keeps the trailing edge on the
- * compose FAB / row chevron while the pair can sit a spacing step apart.
+ * A 16px mark centred in its own 44pt box. Hit slop was carrying the target
+ * instead, so two marks a spacing step apart had targets that overlapped by
+ * 20pt while the ink looked cramped. Real boxes parted by `space.sm` give
+ * 44pt targets with 8pt of slab between their edges.
  */
-const HEADER_GLYPH_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
-/** Bookmark notch lifts the silhouette above its box; 1px down sits the ink
- *  on the workspace name's cap centre (Space Grotesk cap ≈ line-box centre). */
-const BOOKMARKS_GLYPH_OPTICAL_Y = 1;
+const HEADER_MARK_SIZE = 16;
+const HEADER_TARGET_SIZE = 44;
+/**
+ * The trailing edge the Members mark shares with the compose FAB (`right: 16`)
+ * and the expanded-corner tray. A 44pt box round a 16pt mark holds 14pt of its
+ * own air on each side, so the header's own padding takes that off rather than
+ * letting the box push the ink off the shared edge. Targets are spaced; ink is
+ * aligned; neither pays for the other.
+ */
+const HEADER_EDGE_INSET = 16;
+const HEADER_TARGET_AIR = (HEADER_TARGET_SIZE - HEADER_MARK_SIZE) / 2;
 
 type EmptyRoomActionsProps = {
   canAddRoom: boolean;
@@ -803,7 +811,6 @@ export default function BuzzChannels() {
               <TouchableOpacity
                 accessibilityLabel="Bookmarks"
                 accessibilityRole="button"
-                hitSlop={HEADER_GLYPH_HIT_SLOP}
                 onPress={() =>
                   router.push({
                     pathname: '/beeline/bookmarks',
@@ -813,30 +820,27 @@ export default function BuzzChannels() {
                 style={styles.headerAction}
                 testID="workspace-bookmarks"
               >
-                <View style={styles.headerBookmarksGlyph}>
-                  <BookmarksGlyph
-                    color={styles.headerActionGlyph.color}
-                    size={16}
-                    testID="workspace-bookmarks-glyph"
-                  />
-                </View>
+                <BookmarksGlyph
+                  color={styles.headerActionGlyph.color}
+                  size={HEADER_MARK_SIZE}
+                  testID="workspace-bookmarks-glyph"
+                />
               </TouchableOpacity>
               <TouchableOpacity
                 accessibilityLabel={`${WORKSPACE_LABEL} ${MEMBERS_LABEL.toLowerCase()}`}
                 accessibilityRole="button"
-                hitSlop={HEADER_GLYPH_HIT_SLOP}
                 onPress={() =>
                   router.push({
                     pathname: '/beeline/members',
                     params: { communityId: activeCommunityId },
                   } as never)
                 }
-                style={styles.headerMembersAction}
+                style={styles.headerAction}
                 testID="workspace-members"
               >
                 <MembersGlyph
                   color={styles.headerActionGlyph.color}
-                  size={16}
+                  size={HEADER_MARK_SIZE}
                   testID="workspace-members-glyph"
                 />
               </TouchableOpacity>
@@ -1005,7 +1009,12 @@ export default function BuzzChannels() {
                       style={styles.cornerToggle}
                       testID={`room-corners-toggle-${item.room.id}`}
                     >
-                      <Text style={styles.cornerToggleText}>{expanded ? '⌃' : '⌄'}</Text>
+                        <ChevronGlyph
+                          color={styles.cornerToggleText.color}
+                          direction={expanded ? 'up' : 'down'}
+                          size={HEADER_MARK_SIZE}
+                          testID={`room-corners-toggle-glyph-${item.room.id}`}
+                        />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -1148,7 +1157,11 @@ export default function BuzzChannels() {
                                   {display.word}
                                 </Text>
                               </CornerWorkingPulse>
-                              <Text style={styles.cornerChevron}>›</Text>
+                                <ChevronGlyph
+                                  color={styles.cornerChevron.color}
+                                  direction="right"
+                                  size={CHEVRON_ROW_SIZE}
+                                />
                             </View>
                           </TouchableOpacity>
                         );
@@ -1201,31 +1214,28 @@ const styles = StyleSheet.create((theme) => {
       // Match the compose FAB (`right: 16`) and the expanded-corner tray
       // (`paddingRight: 16`) so the Members mark sits on that shared trailing
       // edge rather than inset by the header's left gutter.
-      paddingRight: 16,
+      paddingRight: HEADER_EDGE_INSET - HEADER_TARGET_AIR,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    // One box for both header marks. They were two identically-defined names,
+    // which is how a pair meant to stay siblings drifts apart.
     headerAction: {
-      minHeight: 44,
-      minWidth: 16,
+      minHeight: HEADER_TARGET_SIZE,
+      minWidth: HEADER_TARGET_SIZE,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    headerMembersAction: {
-      minHeight: 44,
-      minWidth: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+    // Target edge to target edge, not ink to ink: the boxes ARE the targets,
+    // so one spacing step between them is one spacing step of real slab.
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.sm,
     },
-    headerBookmarksGlyph: { transform: [{ translateY: BOOKMARKS_GLYPH_OPTICAL_Y }] },
     headerActionGlyph: { color: hull.textMuted },
     errorBar: {
       paddingHorizontal: 16,
@@ -1363,12 +1373,7 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    cornerToggleText: {
-      ...Typography.mono('semiBold'),
-      color: hull.chrome,
-      fontSize: 16,
-      lineHeight: 18,
-    },
+    cornerToggleText: { color: hull.chrome },
     // Indented to the parent Room's text edge, not past it: the tray is the
     // Room's own continuation, so it starts where the Room's name starts.
     cornerDropdown: {
@@ -1439,14 +1444,7 @@ const styles = StyleSheet.create((theme) => {
     // The name lifts out of the secondary tone with it, so the pair reads as
     // one emphasized row rather than a loud chip beside a quiet title.
     cornerNameNeedsYou: { color: hull.textPrimary },
-    cornerChevron: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: theme.buzz.type.bodyStrong.fontFamily,
-      color: hull.steel,
-      includeFontPadding: false,
-      letterSpacing: 0,
-      textTransform: 'none',
-    },
+    cornerChevron: { color: hull.steel },
     chatActions: {
       flexDirection: 'row',
       minHeight: ROW_HEIGHT,

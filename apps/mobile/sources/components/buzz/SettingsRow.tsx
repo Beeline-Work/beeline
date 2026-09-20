@@ -3,6 +3,7 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { StateDot } from './StateDot';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 type SettingsRowTrailingPress = {
@@ -214,9 +215,13 @@ export function SettingsRow({
       </View>
       {trailing}
       {chevron ? (
-        <Text accessibilityElementsHidden style={styles.chevron}>
-          {chevron === 'down' ? '⌄' : chevron === 'up' ? '⌃' : '›'}
-        </Text>
+        <View style={styles.chevron}>
+          <ChevronGlyph
+            color={styles.chevronMark.color}
+            direction={chevron === 'down' ? 'down' : chevron === 'up' ? 'up' : 'right'}
+            size={CHEVRON_ROW_SIZE}
+          />
+        </View>
       ) : null}
     </>
   );
@@ -334,12 +339,8 @@ const styles = StyleSheet.create((theme) => {
     trailingControl: { minHeight: 44, justifyContent: 'center' },
     // Right-aligned in its own column so the glyph's trailing edge lands on the
     // row's padding edge — the one axis every trailing mark shares (C99, C102).
-    chevron: {
-      ...Typography.default(),
-      ...hull.type.hero,
-      width: 16,
-      textAlign: 'right',
-      color: hull.textMuted,
-    },
+    // The mark is drawn, so the cell only has to reserve its column.
+    chevron: { width: 16, alignItems: 'flex-end', justifyContent: 'center' },
+    chevronMark: { color: hull.textMuted },
   };
 });

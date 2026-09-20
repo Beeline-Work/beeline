@@ -11,6 +11,7 @@ import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { StateCircle } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 /**
  * The Room's dedicated corners index. Windowing is `inspectorCornerWindow` —
@@ -119,7 +120,7 @@ export function RoomCornersList({
             testID="room-corners-more"
           >
             <Text style={styles.moreLabel}>{window.overflowLabel}</Text>
-            <Text style={styles.chevron}>›</Text>
+            <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
           </Pressable>
         ) : null
       }
@@ -169,7 +170,7 @@ const styles = StyleSheet.create((theme) => {
     stateBrass: { color: hull.accent },
     stateQuiet: { color: hull.ledgerQuiet },
     stateGhost: { color: hull.ledgerGhost },
-    chevron: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
+    chevron: { color: hull.textMuted },
     more: {
       minHeight: 44,
       flexDirection: 'row',

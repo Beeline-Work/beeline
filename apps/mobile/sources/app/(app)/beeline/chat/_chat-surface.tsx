@@ -308,6 +308,9 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { CornerGlyph } from '@/components/buzz/CornerGlyph';
+import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
@@ -402,25 +405,21 @@ const INITIAL_MESSAGE_WINDOW = 30;
 // relation resolves instead of silently starting a reader 30 rows mid-story.
 const INITIAL_CORNER_MESSAGE_WINDOW = 200;
 /**
- * The header's edge controls draw at 44 so the back chevron and the overflow
- * glyph stay optically centred 34 in from their own margins; the extra 4 all
- * round carries the touch area over Material's 48dp floor without moving a
- * pixel of chrome.
+ * Every header control draws its mark in a 44 box; the extra 4 all round
+ * carries the touch area over Material's 48dp floor without moving a pixel of
+ * chrome. One slop for all of them: the trailing pair used to take a 14 slop
+ * that grew a 44 box into a 72 one, so two controls parted by a spacing step
+ * of bare slab overlapped each other in the hit layer. 4 never does — the
+ * closest pair sit 12 apart and the slop only reaches 4 toward each other.
  */
 const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 /**
- * The Room diamond and overflow sit at glyph size with one small spacing step
- * between them; 14 all round restores a 44pt target on a ~16pt glyph without
- * the stacked 12+44 boxes that used to float the diamond away.
+ * Every trailing header mark is DRAWN at this size inside its own 44pt box.
+ * One size for the pair is what makes the corners door and the overflow
+ * control read as siblings, and a shape centred on its own box needs no
+ * hand-tuned vertical correction to sit level with the mark beside it.
  */
-const HEADER_TRAILING_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 } as const;
-/**
- * `◇` is missing from Space Grotesk, so the mark paints from a fallback face
- * inside the body line box; a rotated square also reads high against the
- * overflow bullets, whose ink sits ~1px below their line-box centre. 2px down
- * is the optical correction — size, weight and the character stay put.
- */
-const CORNER_DIAMOND_OPTICAL_Y = 2;
+const HEADER_MARK_SIZE = 16;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -1299,7 +1298,9 @@ export function BuzzChatSurface({
       const selfProfile = personProfileByPubkey.get(userPubkey);
       options.set(userPubkey, {
         pubkey: userPubkey,
-        name: 'You',
+        // The viewer is named like every other speaker; brass on the name is
+        // the one thing that marks them (DESIGN.md).
+        name: selfProfile?.name ?? fallbackMemberName(userPubkey),
         handle: selfProfile?.handle ?? fallbackMemberHandle(userPubkey),
         kind: 'person',
       });
@@ -1309,7 +1310,7 @@ export function BuzzChatSurface({
       const profile = personProfileByPubkey.get(person.pubkey);
       options.set(person.pubkey, {
         pubkey: person.pubkey,
-        name: person.pubkey === userPubkey ? 'You' : (profile?.name ?? fallbackName),
+        name: profile?.name ?? fallbackName,
         handle: person.identity.handle ?? profile?.handle ?? fallbackMemberHandle(person.pubkey),
         kind: 'person',
         ...(person.identity.face ? { face: person.identity.face } : {}),
@@ -1335,7 +1336,7 @@ export function BuzzChatSurface({
       const profile = personProfileByPubkey.get(member.pubkey);
       options.set(member.pubkey, {
         pubkey: member.pubkey,
-        name: member.pubkey === userPubkey ? 'You' : (profile?.name ?? fallbackName),
+        name: profile?.name ?? fallbackName,
         handle: member.identity?.handle ?? profile?.handle ?? fallbackMemberHandle(member.pubkey),
         kind: 'person',
       });
@@ -1361,7 +1362,7 @@ export function BuzzChatSurface({
         const name = member.identity?.displayName ?? member.identity?.handle;
         return {
           pubkey: member.pubkey,
-          name: member.pubkey === userPubkey ? 'You' : (name ?? fallbackMemberName(member.pubkey)),
+          name: name ?? fallbackMemberName(member.pubkey),
           handle: member.identity?.handle ?? fallbackMemberHandle(member.pubkey),
           kind: member.kind === 'agent' ? 'agent' : 'person',
           ...(member.kind === 'agent' && agentByPubkey.get(member.pubkey)
@@ -2491,12 +2492,11 @@ export function BuzzChatSurface({
         // per-turn key. The composer separately obtains the opaque threading
         // proof from the snapshot using this real message id.
         messageId: message.relayId ?? message.id,
-        authorName: message.isUser
-          ? 'You'
-          : (message.authorIdentity?.name ??
-            agentDisplay?.name ??
-            personName ??
-            fallbackMemberName(message.pubkey ?? '')),
+        authorName:
+          message.authorIdentity?.name ??
+          agentDisplay?.name ??
+          personName ??
+          fallbackMemberName(message.pubkey ?? ''),
         ...(canonicalAuthorHandle ? { authorHandle: canonicalAuthorHandle } : {}),
         ...(message.pubkey ? { authorPubkey: message.pubkey } : {}),
         isAgent,
@@ -2766,7 +2766,7 @@ export function BuzzChatSurface({
         authorIdentity: roomSurface?.viewer.identity ?? {
           pubkey: userPubkey,
           kind: 'human',
-          name: 'You',
+            name: fallbackMemberName(userPubkey),
         },
         pubkey: userPubkey,
         reference: undefined,
@@ -2783,7 +2783,7 @@ export function BuzzChatSurface({
         author: roomSurface?.viewer.identity ?? {
           pubkey: userPubkey,
           kind: 'human',
-          name: 'You',
+            name: fallbackMemberName(userPubkey),
         },
         presentation: 'message',
         ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
@@ -4276,7 +4276,12 @@ export function BuzzChatSurface({
                 style={styles.backButton}
                 testID="chat-back"
               >
-                <Text style={styles.backText}>‹</Text>
+                <ChevronGlyph
+                  color={styles.backText.color}
+                  direction="left"
+                  size={CHEVRON_BACK_SIZE}
+                  testID="chat-back-glyph"
+                />
               </TouchableOpacity>
             )}
             <View style={styles.headerCenter}>
@@ -4350,7 +4355,12 @@ export function BuzzChatSurface({
                 style={styles.backButton}
                 testID="chat-back"
               >
-                <Text style={[styles.backText, isCorner && styles.cornerBackText]}>‹</Text>
+                <ChevronGlyph
+                  color={isCorner ? styles.cornerBackText.color : styles.backText.color}
+                  direction="left"
+                  size={CHEVRON_BACK_SIZE}
+                  testID="chat-back-glyph"
+                />
               </TouchableOpacity>
             )}
             {/*
@@ -4455,7 +4465,11 @@ export function BuzzChatSurface({
                 style={styles.roomCornersButton}
                 testID="room-corners-menu"
               >
-                <Text style={styles.roomCornersGlyph}>◇</Text>
+                <CornerGlyph
+                  color={styles.roomCornersGlyph.color}
+                  size={HEADER_MARK_SIZE}
+                  testID="room-corners-glyph"
+                />
               </TouchableOpacity>
             )}
             {isCorner && !viewerIsAgent && !isArchived && (
@@ -4467,7 +4481,11 @@ export function BuzzChatSurface({
                 style={styles.roomActionsButton}
                 testID="corner-actions-menu"
               >
-                <Text style={styles.roomActionsGlyph}>•••</Text>
+                <OverflowGlyph
+                  color={styles.roomActionsGlyph.color}
+                  size={HEADER_MARK_SIZE}
+                  testID="corner-actions-glyph"
+                />
               </TouchableOpacity>
             )}
             {!parentChannelId &&
@@ -4478,7 +4496,7 @@ export function BuzzChatSurface({
                 <TouchableOpacity
                   accessibilityLabel={`${ROOM_LABEL} actions`}
                   accessibilityRole="button"
-                  hitSlop={HEADER_TRAILING_HIT_SLOP}
+                  hitSlop={HEADER_EDGE_HIT_SLOP}
                   onPress={() => {
                     setMembershipError(null);
                     setRenameEditing(false);
@@ -4488,7 +4506,11 @@ export function BuzzChatSurface({
                   style={styles.roomClusteredActionsButton}
                   testID="room-actions-menu"
                 >
-                  <Text style={styles.roomActionsGlyph}>•••</Text>
+                  <OverflowGlyph
+                    color={styles.roomActionsGlyph.color}
+                    size={HEADER_MARK_SIZE}
+                    testID="room-actions-glyph"
+                  />
                 </TouchableOpacity>
               )}
             {isArchived && (
@@ -5735,12 +5757,8 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    backText: {
-      ...Typography.default(),
-      fontSize: 22,
-      color: groknight.muted,
-    },
-    cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
+    backText: { color: groknight.muted },
+    cornerBackText: { color: groknight.textMuted },
     // The single agent's faceted mark, stated once for the whole corner — the
     // slot itself is the shared HeaderIdentitySlot primitive.
     headerCenter: {
@@ -5807,24 +5825,10 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     // Optically the SAME mark-size as the overflow dots, not larger and not a
-    // speck (captain, 2026-09-20). `◇` draws ~0.6em, `•••` draws a wide short
-    // row, so matching the two by eye means the body role against the dots'
-    // 12: meta (13) left the diamond visibly smaller, hero (22) made it tower.
-    roomCornersGlyph: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.body,
-      color: groknight.accent,
-      includeFontPadding: false,
-      transform: [{ translateY: CORNER_DIAMOND_OPTICAL_Y }],
-    },
-    roomActionsGlyph: {
-      ...Typography.default('semiBold'),
-      color: groknight.steel,
-      fontSize: 12,
-      lineHeight: 16,
-      letterSpacing: 1.2,
-      includeFontPadding: false,
-    },
+    // speck (captain, 2026-09-20). Both are drawn shapes on one size in one
+    // box now, so they match by construction rather than by eye.
+    roomCornersGlyph: { color: groknight.accent },
+    roomActionsGlyph: { color: groknight.steel },
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,
       borderRadius: groknight.radius,

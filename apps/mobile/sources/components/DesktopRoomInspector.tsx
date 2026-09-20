@@ -51,6 +51,7 @@ import {
   NotificationLifecycleCard,
   OrdinaryLedgerMessage,
 } from '@/app/(app)/beeline/chat/RoomMessageVariants';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 type Props = {
   room: RoomView;
@@ -240,7 +241,11 @@ export function DesktopRoomInspector({
                   testID="desktop-work-corners-more"
                 >
                   <Text style={styles.simpleTitle}>{cornerList.overflowLabel}</Text>
-                  <Text style={styles.chevron}>›</Text>
+                  <ChevronGlyph
+                    color={styles.chevron.color}
+                    direction="right"
+                    size={CHEVRON_ROW_SIZE}
+                  />
                 </Pressable>
               ) : null
             }
@@ -320,7 +325,7 @@ function CornerRow({
             ME
           </Text>
         ) : null}
-        <Text style={styles.chevron}>›</Text>
+        <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
       </View>
       {objective ? (
         <Text
@@ -803,11 +808,9 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.divider,
   },
   simpleTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
-  chevron: {
-    ...theme.buzz.type.bodyStrong,
-    color: theme.colors.textSecondary,
-    includeFontPadding: false,
-  },
+  // Colour only. The mark is drawn in its own box now, so the type role and
+  // the font-padding correction it used to need are dead weight.
+  chevron: { color: theme.colors.textSecondary },
   cockpit: { flex: 1 },
   pinnedObjective: {
     ...theme.buzz.type.meta,

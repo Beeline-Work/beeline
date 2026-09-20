@@ -62,7 +62,15 @@ vi.mock('qrcode', () => ({ create: vi.fn(() => ({ modules: { size: 0, get: () =>
 vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
-  return { Svg: host('Svg'), Path: host('Path'), Rect: host('Rect') };
+  return {
+    default: host('Svg'),
+    Svg: host('Svg'),
+    Path: host('Path'),
+    Rect: host('Rect'),
+    Circle: host('Circle'),
+    Polygon: host('Polygon'),
+    Polyline: host('Polyline'),
+  };
 });
 vi.mock('@beeline/buzz-client', () => ({
   adoptGitHubHandle: vi.fn(),
@@ -193,7 +201,12 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
 vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: unknown) => styles },
+  StyleSheet: {
+    create: (styles: unknown) =>
+      typeof styles === 'function'
+        ? (styles as (theme: unknown) => unknown)({ buzz: beelineThemes.obsidian })
+        : styles,
+  },
   useUnistyles: () => ({
     theme: { buzz: { textPrimary: '#fff', bgRaised: '#111', chrome: '#d7af5f' } },
   }),
@@ -218,6 +231,9 @@ vi.mock('react-native', async () => {
   };
 });
 
+// The theme has to be live before the screen evaluates, because the mocked
+// StyleSheet.create calls the screen's theme-taking factory as it imports.
+import { beelineThemes } from '@/buzz/groknight';
 import IdentitySettingsScreen from './identity';
 import { openExternalUrl } from '@/utils/open-external-url';
 

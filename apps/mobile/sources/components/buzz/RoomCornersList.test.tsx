@@ -312,18 +312,15 @@ describe('RoomCornersHeader', () => {
     });
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
+    // Three written parts. The back mark is drawn, so it is not one of them.
     const texts = tree.root.findAllByType('Text' as any);
-    expect(texts.map((node: any) => node.props.children)).toEqual([
-      '‹',
-      '#alpha',
-      'Corners',
-      count,
-    ]);
-    expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.meta);
-    expect(resolvedStyle(texts[2].props.style)).toMatchObject(hull.type.hero);
-    expect(texts[2].props.accessibilityRole).toBe('header');
-    expect(resolvedStyle(texts[3].props.style)).toMatchObject(hull.type.meta);
-    expect(texts[3].props.accessibilityLabel).toBe(
+    expect(texts.map((node: any) => node.props.children)).toEqual(['#alpha', 'Corners', count]);
+    expect(tree.root.findAllByType('Polyline' as any)).toHaveLength(1);
+    expect(resolvedStyle(texts[0].props.style)).toMatchObject(hull.type.meta);
+    expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.hero);
+    expect(texts[1].props.accessibilityRole).toBe('header');
+    expect(resolvedStyle(texts[2].props.style)).toMatchObject(hull.type.meta);
+    expect(texts[2].props.accessibilityLabel).toBe(
       `${count} ${count === 1 ? 'corner' : 'corners'}`,
     );
     const back = tree.root.findByType('TouchableOpacity' as any);

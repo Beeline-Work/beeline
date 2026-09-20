@@ -12,6 +12,7 @@ import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { type ConnectorInstallState, type WorkbenchHelper } from '@/buzz/workbench';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -217,7 +218,11 @@ export default function ConnectTrustySquireScreen() {
           style={styles.backButton}
           testID="connect-back"
         >
-          <Text style={styles.backButtonText}>‹</Text>
+          <ChevronGlyph
+            color={styles.backButtonText.color}
+            direction="left"
+            size={CHEVRON_BACK_SIZE}
+          />
         </TouchableOpacity>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Connect {connectorName}</Text>
@@ -381,7 +386,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    backButtonText: { color: hull.textPrimary },
     headerCopy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: { flex: 1 },

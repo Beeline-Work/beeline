@@ -27,6 +27,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -199,7 +200,7 @@ export default function BuzzCommunityCreateOrJoin() {
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Text style={styles.backText}>‹</Text>
+            <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
           </TouchableOpacity>
           <View style={styles.headerCopy}>
             <Text style={styles.title}>{WORKSPACE_LABEL}s</Text>
@@ -314,7 +315,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.border,
     },
     backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+    backText: { color: groknight.chrome },
     headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
     title: {
       ...Typography.default('semiBold'),

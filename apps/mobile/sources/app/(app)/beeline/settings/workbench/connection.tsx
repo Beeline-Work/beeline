@@ -5,6 +5,7 @@ import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import {
   connectionCreatedByLine,
   connectionGrantsLine,
@@ -88,7 +89,11 @@ export default function ConnectionDetailScreen() {
           style={styles.backButton}
           testID="connection-back"
         >
-          <Text style={styles.backButtonText}>‹</Text>
+          <ChevronGlyph
+            color={styles.backButtonText.color}
+            direction="left"
+            size={CHEVRON_BACK_SIZE}
+          />
         </TouchableOpacity>
         <Text style={styles.title}>{detail?.connection.name ?? 'Key'}</Text>
         <Text style={styles.subtitle}>{detail?.connection.kind ?? ''}</Text>
@@ -181,7 +186,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backButtonText: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    backButtonText: { color: hull.textPrimary },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary, flex: 1 },
     subtitle: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
     content: { flex: 1 },

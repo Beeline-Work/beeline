@@ -15,6 +15,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 export default function CommunityInviteJoin() {
   const insets = useSafeAreaInsets();
@@ -124,7 +125,7 @@ export default function CommunityInviteJoin() {
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Text style={styles.backText}>‹</Text>
+            <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
           </TouchableOpacity>
           <Text style={styles.topbarTitle}>Invite</Text>
         </View>
@@ -200,7 +201,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.border,
     },
     backButton: { width: 34, height: 42, alignItems: 'center', justifyContent: 'center' },
-    backText: { color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+    backText: { color: groknight.chrome },
     topbarTitle: {
       ...Typography.default('semiBold'),
       color: groknight.textPrimary,

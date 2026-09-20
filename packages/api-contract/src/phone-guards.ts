@@ -745,6 +745,7 @@ function chat(value: unknown): value is ChatListItem {
   return Boolean(
     item &&
     header(item.room) &&
+    (item.agentsOffline === undefined || typeof item.agentsOffline === 'boolean') &&
     (item.closed === undefined || typeof item.closed === 'boolean') &&
     (item.latestMessage === undefined || latest(item.latestMessage)) &&
     integer(item.memberCount) &&

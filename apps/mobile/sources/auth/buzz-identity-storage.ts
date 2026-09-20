@@ -94,6 +94,15 @@ async function secretRemove(): Promise<void> {
   await secretRemoveAt(BUZZ_NSEC_KEY);
 }
 
+/** Viewer pubkey for cache/addressing. Does not wait on token refresh. */
+export async function loadBuzzViewerPubkey(): Promise<string | null> {
+  if (getBuzzRuntimeConfig().monolithEnabled) {
+    return monolithSession.identityId();
+  }
+  const identity = await loadBuzzIdentity();
+  return identity?.publicKey ?? null;
+}
+
 /** Load the stored Buzz identity (null if never set). */
 export async function loadBuzzIdentity(): Promise<Identity | null> {
   if (getBuzzRuntimeConfig().monolithEnabled) {

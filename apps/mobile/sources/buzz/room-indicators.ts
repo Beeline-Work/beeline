@@ -135,9 +135,9 @@ export function viewerMayStopTurn(
 ): boolean {
   return Boolean(
     viewerPubkey &&
-    (viewerRole === 'owner' ||
-      viewerRole === 'admin' ||
-      (requestedBy && viewerPubkey === requestedBy)),
+      (viewerRole === 'owner' ||
+        viewerRole === 'admin' ||
+        (requestedBy && viewerPubkey === requestedBy)),
   );
 }
 

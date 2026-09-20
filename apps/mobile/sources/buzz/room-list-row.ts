@@ -572,7 +572,7 @@ function projectEntries<T extends RoomRowInput>(
 /**
  * Captain's channel-mark convention (2026-08): Room index rows display
  * `#<name>`. Extended across flat surfaces that expose a room or corner name
- * (2026-08): chat headers, breadcrumbs, the pinned-corner line, cross-Room
+ * (2026-08): chat headers, breadcrumbs, cross-Room
  * lists, Workspace settings, and Members references render through this
  * derivation or `displayCornerTitle` below. Grouped corner rows use
  * `displayGroupedCornerTitle`. Strictly presentation — the

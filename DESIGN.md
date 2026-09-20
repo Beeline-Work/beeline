@@ -227,8 +227,8 @@ same left margin as the prose above it. Only its affordance lifts — `view →`
 hangs in the same right gutter the timestamps do, one tonal step brighter, with
 a faint tonal flash on press and no border at any point. `◇` means corner (the
 lifecycle glyph family) and `→` means enterable, and that pairing is the one
-"enter this corner" vocabulary the product has, shared by
-`WritePermissionOutcome` and the Room header's corners door.
+"enter this corner" vocabulary used by `WritePermissionOutcome`. The Room
+header uses `◇` with the corners label to open the list rather than one corner.
 
 **A system notification is one sentence in one voice.** The server phrases
 every one of them — a join, a leave, a yolo flip, a grant answer, a failed
@@ -261,11 +261,12 @@ typing in — chrome in the one place the product asks for attention. It is
 retired, not dimmed: the door in the header is the way in, the corners list
 answers "what is running", and the Room-list row's own state mark answers it
 from outside. The turn line is now the only thing that hangs above the
-composer, and it hangs directly on it with no gap.
+composer. With no offline hint present, it hangs directly on the composer
+with no gap.
 
-**A turn in progress and an open corner are two different facts, and they get
-two different lines.** A question being answered is transient and has nowhere
-to go, so it shows as one line with the primary activity verb and elapsed seconds,
+**A turn in progress and an open corner are two different facts.** A question
+being answered is transient and has nowhere to go, so it shows as one line with
+the primary activity verb and elapsed seconds,
 without a redundant `thinking` suffix, that disappears when the
 reply lands — it navigates nowhere and cannot strand a reader in a dead
 channel. When the server accepts a human steer into that exact running corner
@@ -286,9 +287,8 @@ words they had read and make stopping feel like undoing. The line's last word is
 `stopped`, never `done`. A corner is a place that exists, so the header's corners door names the
 place rather than the moment. Keeping the two apart is why the corner half
 never reaches the turn line: an agent busy on a plain Room reply must not
-report corner work, and nothing in the Room may offer a tap into a corner that
-has merged, failed, or closed — a tappable dead channel is worse than no
-affordance at all.
+report corner work. Finished corners remain accessible in the corners list
+for reading their history; they are never presented as current work.
 
 **There is no reply echo under an agent turn.** Body threads every Room/DM reply
 to the request that triggered it, so the quoted block was always the message

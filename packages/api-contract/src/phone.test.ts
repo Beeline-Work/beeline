@@ -11,6 +11,8 @@ import {
   isWorkspaceListView,
   isWorkspaceMemberListView,
   isWorkspaceView,
+  readRoomView,
+  readWorkspaceView,
   isPushLevel,
   WORKSPACE_MEMBER_PAGE_SIZE,
   type PhoneOperationMap,
@@ -55,9 +57,13 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
-    expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })).toBe(false);
+    expect(readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages).toEqual([
+      { ...message, presentation: 'card', relay },
+    ]);
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
-    expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })).toBe(false);
+    expect(
+      readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]?.bookmarked,
+    ).toBeUndefined();
     const reaction = { emoji: '👍', count: 1, reacted: true, members: [identity] };
     expect(isRoomView({ ...room, messages: [{ ...message, reactions: [reaction] }] })).toBe(true);
     expect(
@@ -67,29 +73,34 @@ describe('phone contract', () => {
       }),
     ).toBe(true);
     expect(
-      isRoomView({
+      readRoomView({
         ...room,
         messages: [{ ...message, reactions: [{ ...reaction, count: 2 }] }],
-      }),
-    ).toBe(false);
-    for (const invalid of [
-      { direction: 'sideways' },
-      { received: 'yes' },
-      { fromName: 1 },
-      { anchorMessageId: 42 },
-    ])
+      })?.messages[0]?.reactions?.[0]?.count,
+    ).toBe(2);
+    for (const invalid of [{ direction: 'sideways' }, { received: 'yes' }, { fromName: 1 }])
       expect(
-        isRoomView({ ...room, messages: [{ ...message, relay: { ...relay, ...invalid } }] }),
-      ).toBe(false);
+        readRoomView({ ...room, messages: [{ ...message, relay: { ...relay, ...invalid } }] })
+          ?.messages[0]?.relay,
+      ).toBeUndefined();
+    expect(
+      readRoomView({
+        ...room,
+        messages: [{ ...message, relay: { ...relay, anchorMessageId: 42 } }],
+      })?.messages[0]?.relay,
+    ).toEqual(relay);
 
     // The face ceremony: an optional face id on every identity, never a non-string.
     expect(
       isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 'owl' } } }),
     ).toBe(true);
     expect(
-      isRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } }),
-    ).toBe(false);
-    expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
+      readRoomView({ ...room, viewer: { ...room.viewer, identity: { ...identity, face: 7 } } })
+        ?.viewer.identity.face,
+    ).toBeUndefined();
+    expect(readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns).toEqual(
+      [],
+    );
 
     const agent = { pubkey: 'c'.repeat(64), kind: 'agent' as const, name: 'Bee' };
     const choice = {
@@ -126,8 +137,9 @@ describe('phone contract', () => {
     };
     expect(isRoomView({ ...room, messages: [{ ...message, choice }] })).toBe(true);
     expect(
-      isRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] }),
-    ).toBe(false);
+      readRoomView({ ...room, messages: [{ ...message, choice: { ...choice, mode: 'vote' } }] })
+        ?.messages[0]?.choice,
+    ).toBeUndefined();
   });
 
   it('keeps list guards and named operations type-visible', () => {
@@ -158,7 +170,7 @@ describe('phone contract', () => {
     expect(
       isWorkspaceView({ ...workspace, peopleTotal: undefined, agentTotal: undefined }),
     ).toBe(true);
-    expect(isWorkspaceView({ ...workspace, peopleTotal: '21' })).toBe(false);
+    expect(readWorkspaceView({ ...workspace, peopleTotal: '21' })?.peopleTotal).toBeUndefined();
     expect(
       isWorkspaceMemberListView({
         members: [],
@@ -189,7 +201,7 @@ describe('phone contract', () => {
         membersTruncated: true,
         agentsTruncated: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expectTypeOf<PhoneOperationMap['uploadMedia']['output']>().toHaveProperty('url');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['input']>().toHaveProperty('messageId');
     expectTypeOf<PhoneOperationMap['sendRoomMessage']['output']>().toHaveProperty(
@@ -261,7 +273,7 @@ describe('phone contract', () => {
           },
         ],
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isCornerListView({
         ...base,
@@ -274,7 +286,7 @@ describe('phone contract', () => {
           },
         ],
       }),
-    ).toBe(false);
+    ).toBe(true);
     for (const state of ['open', 'idle', 'concluded', 'closed']) {
       expect(
         isCornerListView({
@@ -283,7 +295,7 @@ describe('phone contract', () => {
             { corner: header, lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state },
           ],
         }),
-      ).toBe(false);
+      ).toBe(true);
     }
   });
 
@@ -305,7 +317,7 @@ describe('phone contract', () => {
         joinedWorkspaceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       }),
     ).toBe(true);
-    expect(isInviteView({ ...invite, joinedWorkspaceId: false })).toBe(false);
+    expect(isInviteView({ ...invite, joinedWorkspaceId: false })).toBe(true);
   });
 
   it('owns the prefix-free agent pairing-code format while accepting unexpired legacy codes', () => {

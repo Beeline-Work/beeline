@@ -1,17 +1,18 @@
 import { nip98AuthHeader } from '@beeline/nostr';
 import {
   ROOM_VIEW_REQUEST_TIMEOUT_MS,
-  isAgentDetailView,
-  isAgentPairingAbandonView,
-  isAgentPairingClaimWireView,
-  isChatListView,
-  isCornerListView,
-  isInviteView,
-  isRoomHistoryView,
-  isRoomView,
-  isWorkspaceListView,
-  isWorkspaceMemberListView,
-  isWorkspaceView,
+  readAgentDetailView,
+  readAgentPairingAbandonView,
+  readAgentPairingClaimWireView,
+  readChatListView,
+  readCornerListView,
+  readInviteView,
+  readRoomHistoryView,
+  readRoomView,
+  readWorkspaceListView,
+  readWorkspaceMemberListView,
+  readWorkspaceView,
+  type SurfaceReader,
   type AgentDetailView,
   type AgentPairingAbandonView,
   type AgentPairingClaimView,
@@ -64,11 +65,11 @@ export class RoomViewClient {
   }
 
   workspaces(): Promise<WorkspaceListView> {
-    return this.get('/workspaces', isWorkspaceListView);
+    return this.get('/workspaces', readWorkspaceListView);
   }
 
   workspace(workspaceId: string): Promise<WorkspaceView> {
-    return this.get(`/workspace/${encodeURIComponent(workspaceId)}`, isWorkspaceView);
+    return this.get(`/workspace/${encodeURIComponent(workspaceId)}`, readWorkspaceView);
   }
 
   workspaceMembers(
@@ -82,27 +83,27 @@ export class RoomViewClient {
     const suffix = params.toString() ? `?${params.toString()}` : '';
     return this.get(
       `/workspace/${encodeURIComponent(workspaceId)}/members${suffix}`,
-      isWorkspaceMemberListView,
+      readWorkspaceMemberListView,
     );
   }
 
   agent(workspaceId: string, agentPubkey: string): Promise<AgentDetailView> {
     return this.get(
       `/workspace/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentPubkey)}`,
-      isAgentDetailView,
+      readAgentDetailView,
     );
   }
 
   chats(workspaceId: string): Promise<ChatListView> {
-    return this.get(`/workspace/${encodeURIComponent(workspaceId)}/chats`, isChatListView);
+    return this.get(`/workspace/${encodeURIComponent(workspaceId)}/chats`, readChatListView);
   }
 
   room(roomId: string): Promise<RoomView> {
-    return this.get(`/room/${encodeURIComponent(roomId)}`, isRoomView);
+    return this.get(`/room/${encodeURIComponent(roomId)}`, readRoomView);
   }
 
   corners(roomId: string): Promise<CornerListView> {
-    return this.get(`/room/${encodeURIComponent(roomId)}/corners`, isCornerListView);
+    return this.get(`/room/${encodeURIComponent(roomId)}/corners`, readCornerListView);
   }
 
   history(
@@ -110,32 +111,32 @@ export class RoomViewClient {
     before?: { readonly createdAt: number; readonly id: string },
   ): Promise<RoomHistoryView> {
     const query = before ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}` : '';
-    return this.get(`/room/${encodeURIComponent(roomId)}/messages${query}`, isRoomHistoryView);
+    return this.get(`/room/${encodeURIComponent(roomId)}/messages${query}`, readRoomHistoryView);
   }
 
   invite(token: string): Promise<InviteView> {
-    return this.request('/invite/resolve', 'POST', isInviteView, { token });
+    return this.request('/invite/resolve', 'POST', readInviteView, { token });
   }
 
   claimAgentPairing(code: string): Promise<AgentPairingClaimView> {
-    return this.request('/agent-pairing/claim', 'POST', isAgentPairingClaimWireView, {
+    return this.request('/agent-pairing/claim', 'POST', readAgentPairingClaimWireView, {
       code,
       capabilities: [AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY],
     }).then((claim) => ({ ...claim, attachedRoomIds: claim.attachedRoomIds ?? [] }));
   }
 
   abandonAgentPairing(code: string): Promise<AgentPairingAbandonView> {
-    return this.request('/agent-pairing/abandon', 'POST', isAgentPairingAbandonView, { code });
+    return this.request('/agent-pairing/abandon', 'POST', readAgentPairingAbandonView, { code });
   }
 
-  private get<T>(path: string, guard: (value: unknown) => value is T): Promise<T> {
-    return this.request(path, 'GET', guard);
+  private get<T>(path: string, read: SurfaceReader<T>): Promise<T> {
+    return this.request(path, 'GET', read);
   }
 
   private async request<T>(
     path: string,
     method: 'GET' | 'POST',
-    guard: (value: unknown) => value is T,
+    read: SurfaceReader<T>,
     body?: unknown,
   ): Promise<T> {
     const abort = new AbortController();
@@ -179,8 +180,9 @@ export class RoomViewClient {
         }
         throw error;
       }
-      if (!guard(value)) throw new RoomViewHttpError(502, 'invalid_surface_response');
-      return value;
+      const projected = read(value);
+      if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
+      return projected;
     };
     try {
       return await Promise.race([perform(), deadline]);

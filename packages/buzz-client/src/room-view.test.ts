@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createIdentity } from './identity.js';
 import { RoomViewClient, RoomViewHttpError, type RoomView } from './room-view.js';
-import { isAgentDetailView, isRoomView, isRoomViewMessage } from './surface-guards.js';
+import {
+  isAgentDetailView,
+  isRoomView,
+  isRoomViewMessage,
+  readAgentDetailView,
+  readRoomView,
+  readRoomViewMessage,
+} from './surface-guards.js';
 
 const room: RoomView = {
   room: {
@@ -128,7 +135,9 @@ describe('RoomViewClient', () => {
     expect(reopened.messages).toEqual(value.messages);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect((value.viewer as { role: string }).role).toBe('master');
-    expect(isRoomView({ ...response, viewer: { ...response.viewer, role: 7 } })).toBe(false);
+    expect(readRoomView({ ...response, viewer: { ...response.viewer, role: 7 } })?.viewer.role).toBe(
+      'member',
+    );
   });
 
   it('signs the public origin when a local proxy canonicalizes the connection', async () => {
@@ -146,6 +155,43 @@ describe('RoomViewClient', () => {
       Buffer.from(init.headers.authorization.slice('Nostr '.length), 'base64').toString('utf8'),
     ) as { tags: string[][] };
     expect(proof.tags).toContainEqual(['u', `http://10.0.2.2:3010/room/${room.room.id}`]);
+  });
+
+  it('renders a Room when the server adds an unknown field and drops one unreadable message', async () => {
+    const identity = createIdentity('room-view-tolerance');
+    const value = await new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity,
+      fetch: async () =>
+        Response.json({
+          ...room,
+          corners: [],
+          futureTopLevel: 'server-only',
+          messages: [
+            {
+              id: 'b'.repeat(64),
+              text: 'kept',
+              createdAt: 3,
+              author: room.viewer.identity,
+              presentation: 'notice',
+            },
+            { id: 'not-enough' },
+          ],
+        }),
+    }).room(room.room.id);
+
+    expect(value.room.id).toBe(room.room.id);
+    expect(value.messages).toEqual([
+      {
+        id: 'b'.repeat(64),
+        text: 'kept',
+        createdAt: 3,
+        author: room.viewer.identity,
+        presentation: 'message',
+      },
+    ]);
+    expect('futureTopLevel' in value).toBe(false);
+    expect('corners' in value).toBe(false);
   });
 
   it('rejects an invalid successful response at the HTTP boundary', async () => {
@@ -201,7 +247,7 @@ describe('RoomViewClient', () => {
       presentation: 'message',
       attachments: [{}],
     };
-    expect(isRoomView({ ...room, messages: [badMessage] })).toBe(false);
+    expect(readRoomView({ ...room, messages: [badMessage] })?.messages[0]?.attachments).toEqual([]);
     expect(
       isRoomView({
         ...room,
@@ -215,8 +261,10 @@ describe('RoomViewClient', () => {
         ],
       }),
     ).toBe(true);
-    expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
-    expect(isRoomView({ ...room, repositoryResolution: 'unknown' })).toBe(false);
+    expect(readRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })?.latestAgentTurns).toEqual(
+      [],
+    );
+    expect(readRoomView({ ...room, repositoryResolution: 'unknown' })?.repositoryResolution).toBe('none');
     const repository = {
       key: 'github:1',
       name: 'acme/repo',
@@ -232,13 +280,20 @@ describe('RoomViewClient', () => {
         repositoryResolution: 'repository',
         repository: { ...repository, updatedAt: undefined },
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      readRoomView({
+        ...room,
+        repositoryResolution: 'repository',
+        repository: { ...repository, updatedAt: undefined },
+      })?.repository,
+    ).toBeUndefined();
     expect(
       isRoomView({
         ...room,
         cornerLifecycle: { lifecycle: 'APPROVED', checks: 'unknown' },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isRoomView({
         ...room,
@@ -250,7 +305,7 @@ describe('RoomViewClient', () => {
         ...room,
         watchFilters: [{ kinds: [30078], '#t': 'agent-presence' }],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('accepts only valid GitHub activity cards', () => {
@@ -275,19 +330,19 @@ describe('RoomViewClient', () => {
         ...message,
         githubEvent: { ...message.githubEvent, type: 'not-real' },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isRoomViewMessage({
         ...message,
         githubEvent: { ...message.githubEvent, type: 'issue', action: 'merged' },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
-      isRoomViewMessage({
+      readRoomViewMessage({
         ...message,
         githubEvent: { ...message.githubEvent, url: 'javascript:alert(1)' },
-      }),
-    ).toBe(false);
+      })?.githubEvent,
+    ).toBeUndefined();
   });
 
   it('accepts only complete typed daemon fact cards', () => {
@@ -308,17 +363,17 @@ describe('RoomViewClient', () => {
     };
     expect(isRoomViewMessage(message)).toBe(true);
     expect(
-      isRoomViewMessage({
+      readRoomViewMessage({
         ...message,
         daemonFact: { ...message.daemonFact, cornerId: 'not-a-corner' },
-      }),
-    ).toBe(false);
+      })?.daemonFact,
+    ).toBeUndefined();
     expect(
-      isRoomViewMessage({
+      readRoomViewMessage({
         ...message,
         daemonFact: { ...message.daemonFact, outcome: undefined },
-      }),
-    ).toBe(false);
+      })?.daemonFact,
+    ).toBeUndefined();
   });
 
   it('accepts a corner-open daemon fact with its objective as the sole summary', () => {
@@ -349,8 +404,9 @@ describe('RoomViewClient', () => {
       isRoomView({ ...room, briefing: Array.from({ length: 10 }, () => briefingMessage) }),
     ).toBe(true);
     expect(
-      isRoomView({ ...room, briefing: Array.from({ length: 11 }, () => briefingMessage) }),
-    ).toBe(false);
+      readRoomView({ ...room, briefing: Array.from({ length: 11 }, () => briefingMessage) })
+        ?.briefing,
+    ).toHaveLength(10);
   });
 
   it('accepts a retained finished-corner checklist but rejects malformed plan rows', () => {
@@ -364,7 +420,13 @@ describe('RoomViewClient', () => {
         ...room,
         cornerPlan: { ...cornerPlan, items: [{ step: 'Bad state', status: 'not-real' }] },
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      readRoomView({
+        ...room,
+        cornerPlan: { ...cornerPlan, items: [{ step: 'Bad state', status: 'not-real' }] },
+      })?.cornerPlan?.items,
+    ).toEqual([]);
   });
 
   it('validates indexed agent souls before a rename form can preserve them', () => {
@@ -384,14 +446,12 @@ describe('RoomViewClient', () => {
     };
 
     expect(isAgentDetailView(detail)).toBe(true);
-    expect(isAgentDetailView({ ...detail, soul: { ...detail.soul, instructions: '' } })).toBe(
-      false,
-    );
+    expect(readAgentDetailView({ ...detail, soul: { ...detail.soul, instructions: '' } })?.soul).toBeUndefined();
     expect(
-      isAgentDetailView({
+      readAgentDetailView({
         ...detail,
         soul: { ...detail.soul, avatar: 'javascript:alert(1)' },
-      }),
-    ).toBe(false);
+      })?.soul?.avatar,
+    ).toBeUndefined();
   });
 });

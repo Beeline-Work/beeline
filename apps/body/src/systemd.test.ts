@@ -35,7 +35,7 @@ describe('systemd supervision contract', () => {
     expect(unit).toContain('TimeoutStopSec=10min');
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('ExecStart=%h/.local/bin/beeline daemon --agent %i');
-    expect(unit).not.toContain('Environment="PATH=');
+    expect(unit).toContain('Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin');
   });
 
   it('installs, enables, starts, and returns the supervised main pid', async () => {

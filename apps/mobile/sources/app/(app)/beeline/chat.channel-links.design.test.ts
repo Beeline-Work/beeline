@@ -53,9 +53,12 @@ describe('channel reference links — workspace-scoped exact resolution', () => 
     expect(indexBlock).toContain('roomSurface?.parent');
     expect(indexBlock).toContain('resolvedChannelName');
     expect(chatSource).toContain('buildChannelReferenceIndex');
-    // The current transcript's own corner list is the canonical corner-name
-    // source for this Room.
-    expect(indexBlock).toContain('cornerLifecycle.map');
+    // A corner viewing itself is the only corner this transcript can name
+    // without the Room GET. Sibling history stays on the corners endpoint.
+    expect(indexBlock).toContain('parentChannelId');
+    expect(indexBlock).toContain('channelId: decodedId');
+    expect(indexBlock).not.toContain('cornerLifecycle');
+    expect(indexBlock).not.toMatch(/roomSurface\?\.corners|roomSurface\.corners/);
     // No second persisted store: nothing here writes a new cache entry.
     expect(chatSource.match(/channelReferenceIndex/g)?.length).toBeGreaterThan(1);
     expect(chatSource).not.toContain('persistChannelReferenceIndex');

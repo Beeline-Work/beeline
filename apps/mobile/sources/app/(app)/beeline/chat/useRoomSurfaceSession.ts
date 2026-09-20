@@ -334,6 +334,7 @@ export function useRoomSurfaceSession({
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
     let hasPainted = false;
+    let subscribeHandshakeDone = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
 
@@ -507,7 +508,11 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
-              if (hasPainted) scheduler?.force();
+              // Opening handshake is not a resubscribe. startAfter already
+              // issues the one Room GET after listen is ready. A later
+              // subscribed on this same watch is a reconnect and must reread.
+              if (hasPainted && subscribeHandshakeDone) scheduler?.force();
+              subscribeHandshakeDone = true;
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {

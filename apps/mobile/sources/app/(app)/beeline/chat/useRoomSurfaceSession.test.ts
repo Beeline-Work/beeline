@@ -762,7 +762,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('forces reconciliation when the live socket resubscribes after a painted Room', async () => {
+  it('does not reread on the opening subscribe handshake, then forces after a live resubscribe', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -777,8 +777,49 @@ describe('useRoomSurfaceSession', () => {
         monolithLive: { type: 'subscribed', roomId: 'room-a' },
       });
     });
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
 
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
     expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('treats a replacement watch handshake as the opening subscribe, not a reconnect', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+
+    await act(async () => {
+      controls.schedulers[0]!.apply(
+        roomView('room-a', [{ '#h': ['room-a'] }, { '#d': ['agent-presence:room-a'] }]),
+      );
+    });
+    await flushEffects();
+
+    const replacement = controls.subscriptions.at(-1);
+    expect(replacement).toBeDefined();
+    await act(async () => {
+      replacement!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
     await act(async () => renderer.unmount());
   });
 

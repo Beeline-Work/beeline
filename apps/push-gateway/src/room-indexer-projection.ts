@@ -73,20 +73,12 @@ function githubEventCard(
   if (
     tag(values, 'service') !== 'beeline-events' ||
     !text(tag(values, 'github-event-id')) ||
-    (type !== 'pull-request' &&
-      type !== 'issue' &&
-      type !== 'push' &&
-      type !== 'ci' &&
-      type !== 'review') ||
+    (type !== 'pull-request' && type !== 'issue' && type !== 'ci') ||
     (action !== 'opened' &&
       action !== 'closed' &&
       action !== 'merged' &&
-      action !== 'pushed' &&
       action !== 'passed' &&
-      action !== 'failed' &&
-      action !== 'approved' &&
-      action !== 'changes_requested' &&
-      action !== 'commented') ||
+      action !== 'failed') ||
     (type === 'issue' && action === 'merged') ||
     !actor ||
     !title ||

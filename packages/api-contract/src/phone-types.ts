@@ -255,19 +255,12 @@ export type RoomViewMessage = {
     readonly requester?: RoomViewIdentity;
   };
   /** A validated, service-published repository activity card. Never a speaker.
-   *  Pushes and CI are mainline (default-branch) facts; reviews ride PRs. */
+   *  CI is a mainline (default-branch) fact. `type` and `action` are plain
+   *  strings on purpose: a client must tolerate a card kind a newer server
+   *  posts and simply not draw it, rather than rejecting the whole Room. */
   readonly githubEvent?: {
-    readonly type: 'pull-request' | 'issue' | 'push' | 'ci' | 'review';
-    readonly action:
-      | 'opened'
-      | 'closed'
-      | 'merged'
-      | 'pushed'
-      | 'passed'
-      | 'failed'
-      | 'approved'
-      | 'changes_requested'
-      | 'commented';
+    readonly type: string;
+    readonly action: string;
     readonly actor: string;
     readonly title: string;
     readonly url: string;

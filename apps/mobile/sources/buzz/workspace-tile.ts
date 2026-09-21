@@ -14,10 +14,11 @@
  * radius and the corners either pinch shut or the bezel crops the picture.
  *
  * Every surface that wears the picture names its tile here and asks for the
- * same derivation, so the rail, the room-list header plate and the Workspace
- * settings tile cannot drift apart. Coverage:
- * `workspace-tile.test.ts` (the rule) and
- * `components/buzz/workspace-picture-seat.browser.test.ts` (what paints).
+ * same derivation, so the rail, the room-list header plate, the Workspace
+ * settings tile and the person's Settings identity tile cannot drift apart.
+ * The identity tile is its own named constant — a human mark must not read
+ * through a `WORKSPACE_` name. Coverage: `workspace-tile.test.ts` (the rule)
+ * and the browser proofs that measure what each surface paints.
  */
 
 export type WorkspaceTile = {
@@ -73,6 +74,16 @@ export const WORKSPACE_HEADER_PLATE: WorkspaceTile = {
 /** The Workspace settings tile: the same treatment at page scale, where the
  *  picture is also the control that changes it. */
 export const WORKSPACE_SETTINGS_TILE: WorkspaceTile = {
+  size: 76,
+  radius: 20,
+  borderWidth: 2,
+  pictureSize: 64,
+};
+
+/** The person's Settings identity tile: the same geometry as the Workspace
+ *  settings tile, named for a human mark so it does not read through a
+ *  `WORKSPACE_` constant. */
+export const IDENTITY_SETTINGS_TILE: WorkspaceTile = {
   size: 76,
   radius: 20,
   borderWidth: 2,

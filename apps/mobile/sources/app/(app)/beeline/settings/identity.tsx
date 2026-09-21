@@ -51,6 +51,7 @@ import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
 import { applyAppearanceChoice, setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
+import { IDENTITY_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
@@ -72,9 +73,11 @@ import {
 const PRIVACY_URL = 'https://usebeeline.app/privacy/';
 const TERMS_URL = 'https://usebeeline.app/terms/';
 const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
-const IDENTITY_TILE = 76;
-const IDENTITY_TILE_RADIUS = 20;
-const IDENTITY_MARK = 64;
+/* The person's Settings tile: same geometry as the Workspace settings tile,
+ * seated by the same rule (`buzz/workspace-tile`). Named for a human mark so
+ * it does not read through a `WORKSPACE_` constant. */
+const PICTURE_TILE = IDENTITY_SETTINGS_TILE;
+const PICTURE_SEAT = workspacePictureSeat(PICTURE_TILE);
 
 export default function BuzzIdentitySettings() {
   const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
@@ -378,14 +381,16 @@ export default function BuzzIdentitySettings() {
   }, [githubLogin]);
 
   const faceMark = profilePubkey ? (
-    <IdentityMark
-      kind="human"
-      seed={profilePubkey}
-      face={face ?? defaultFaceForSeed(profilePubkey)}
-      name={profileName || 'You'}
-      size={IDENTITY_MARK}
-      testID="identity-face-mark"
-    />
+    <View style={styles.pictureSeat}>
+      <IdentityMark
+        kind="human"
+        seed={profilePubkey}
+        face={face ?? defaultFaceForSeed(profilePubkey)}
+        name={profileName || 'You'}
+        size={PICTURE_SEAT.pictureSize}
+        testID="identity-face-mark"
+      />
+    </View>
   ) : null;
 
   return (
@@ -636,14 +641,23 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.lg,
     },
     tile: {
-      width: IDENTITY_TILE,
-      height: IDENTITY_TILE,
-      borderRadius: IDENTITY_TILE_RADIUS,
-      borderWidth: 2,
+      width: PICTURE_TILE.size,
+      height: PICTURE_TILE.size,
+      borderRadius: PICTURE_TILE.radius,
+      borderWidth: PICTURE_TILE.borderWidth,
       borderColor: hull.accent,
       backgroundColor: hull.bgRaised,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    /* The picture's seat: it rounds the picture's own corners, so the bezel
+     * never has to crop them. Concentric curves, one even slab of tile. */
+    pictureSeat: {
+      width: PICTURE_SEAT.pictureSize,
+      height: PICTURE_SEAT.pictureSize,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: PICTURE_SEAT.pictureRadius,
       overflow: 'hidden',
     },
     handle: {

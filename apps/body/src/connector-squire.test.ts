@@ -6,10 +6,12 @@ import { spawn } from 'node:child_process';
 import {
   connectionGrant,
   connectionLedgerEntry,
+  CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
   installSquire,
   isProcessAlive,
   isSquireBrowserSessionFailure,
+  parseConnectAlreadyConnected,
   parseConnectOutput,
   readConnectionDetail,
   readConnectionLedger,
@@ -22,6 +24,7 @@ import {
   squireConnectProcessEnv,
   squireConnectSession,
   squireProfileLockPath,
+  unframeBoxedOutput,
   vaultConnectionMeta,
   type ShellRunner,
   type StreamedShellRunner,
@@ -76,7 +79,7 @@ async function until(predicate: () => boolean): Promise<void> {
 function fakeStreamRunner(result: {
   stdout?: string;
   stderr?: string;
-  signIn?: { method: 'streamed-page' | 'oauth'; url: string };
+  signIn?: { method: 'streamed-page'; url: string };
 }): StreamedShellRunner {
   return async () => ({
     stdout: result.stdout ?? '',
@@ -97,18 +100,11 @@ describe('parseConnectOutput', () => {
     });
   });
 
-  it('reports an OAuth URL when Squire prints one', () => {
-    const signIn = parseConnectOutput(
-      'Sign in: https://squire.example/oauth/authorize?state=abc (oauth)',
-    );
-    expect(signIn).toEqual({ method: 'oauth', url: 'https://squire.example/oauth/authorize?state=abc' });
-  });
-
   it('is undefined when connect printed no URL', () => {
     expect(parseConnectOutput('nothing useful here')).toBeUndefined();
   });
 
-  it('reports the hosted --skip-browser install page as a streamed page', () => {
+  it('reports the hosted install page as a streamed page', () => {
     const signIn = parseConnectOutput(
       'Open this in your browser to finish: https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqmXeQUojqvHNwnpta3vv5p\n',
     );
@@ -117,10 +113,273 @@ describe('parseConnectOutput', () => {
       url: 'https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqmXeQUojqvHNwnpta3vv5p',
     });
   });
+
+  it('ignores a marketing trustysquire.ai origin printed before the ceremony URL', () => {
+    const signIn = parseConnectOutput(
+      'Docs: https://trustysquire.ai\nOpen this: https://trustysquire.ai/install?token=secret\n',
+    );
+    expect(signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install?token=secret',
+    });
+  });
+
+  it('prefers a known ceremony surface over an earlier unknown URL', () => {
+    const signIn = parseConnectOutput(
+      'Visit https://trustysquire.ai for help\nOpen this: https://tunnel.test/#p=hunter22\n',
+    );
+    expect(signIn).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' });
+  });
+
+  it('falls OPEN to the best remaining candidate when no known surface matched', () => {
+    // The day Squire serves its ceremony from a surface nobody anticipated,
+    // the picker still hands the person a page instead of returning nothing.
+    expect(parseConnectOutput('Visit https://trustysquire.ai for help\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai',
+    });
+    expect(parseConnectOutput('Sign in: https://squire.example/oauth/authorize?state=abc\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://squire.example/oauth/authorize?state=abc',
+    });
+  });
+
+  it('takes the bare install confirm page', () => {
+    expect(parseConnectOutput('Open https://trustysquire.ai/install\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install',
+    });
+  });
+
+  it('keeps the negative npm and Cloudflare exclusions, which fail open', () => {
+    // npm's update notifier writes this to the connect child's stderr, and a
+    // failed tunnel rig puts Cloudflare's docs link in the stderr tail Squire
+    // quotes back. These are NEGATIVE rules: with them as the only candidates
+    // there is nothing worth falling back to, but a known surface among them
+    // still wins outright (tested above).
+    expect(
+      parseConnectOutput(
+        'npm notice Changelog: https://github.com/npm/cli/releases/tag/v10.9.2\n',
+      ),
+    ).toBeUndefined();
+    expect(
+      parseConnectOutput(
+        'cloudflared: see https://developers.cloudflare.com/cloudflare-one/connections/connect-apps for details\n',
+      ),
+    ).toBeUndefined();
+    // A github.com URL that is NOT npm's changelog stays a fallback candidate.
+    expect(parseConnectOutput('See https://github.com/trusty-squire/mcp for docs\n')).toEqual({
+      method: 'streamed-page',
+      url: 'https://github.com/trusty-squire/mcp',
+    });
+  });
+
+  it('takes the real ceremony out of a stream that carries foreign URLs first', () => {
+    expect(
+      parseConnectOutput(
+        'npm notice Changelog: https://github.com/npm/cli/releases/tag/v10.9.2\n' +
+          'Open this on any device: https://tunnel.test/#p=hunter22\n',
+      ),
+    ).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' });
+  });
+
+  it('does not read the install-page banner as a sign-in surface', () => {
+    expect(
+      parseConnectOutput(
+        'Opening the Trusty Squire install page in a browser. The page walks you through signing in with Google.\n',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('takes only the VERIFIED short-circuit for connected', () => {
+    expect(
+      parseConnectAlreadyConnected(
+        'Already connected (google + github). Codex config refreshed.\n',
+      ),
+    ).toBe(true);
+    // Squire refreshed the config but says in its own words that it will not
+    // call this connected; reporting it green would strand an expired session
+    // with no way back to a ceremony.
+    expect(
+      parseConnectAlreadyConnected(
+        "This machine is bound to your account, but I couldn't verify a live provider session " +
+          'in the bot\u2019s Chrome profile (profile busy), so I won\u2019t call this connected. ' +
+          'Your agent config was refreshed.\n',
+      ),
+    ).toBe(false);
+    expect(parseConnectAlreadyConnected('Opening the Trusty Squire install page\n')).toBe(false);
+  });
+
+  // Squire's `printRemoteLoginBanner` output, captured verbatim from the real
+  // boxen render at its piped 78-column width. That rendered frame is the only
+  // place connect prints the tunnel, so it is the byte contract this parser
+  // reads. SQUIRE_PADDING is Squire's own explicit `{left:1,right:1}`;
+  // BOXEN_SHORTHAND_PADDING is boxen's `padding: 1`, which is THREE columns —
+  // the URL wraps at a different column, and a rejoin that assumed one space
+  // published `…/#p=hunter2`, a URL the phone accepts and cannot load.
+  const SQUIRE_PADDING = {
+    url: "https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hunter22",
+    banner: [
+      "┌ Sign in to Trusty Squire ──────────────────────────────────────────────────┐",
+      "│ Open this on any device, any network:                                      │",
+      "│                                                                            │",
+      "│ https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hu │",
+      "│ nter22                                                                     │",
+      "│                                                                            │",
+      "│ If asked for a VNC password:  hunter22                                     │",
+      "│                                                                            │",
+      "│ Remote login for Trusty Squire                                             │",
+      "└────────────────────────────────────────────────────────────────────────────┘",
+    ].join('\n'),
+  };
+  const BOXEN_SHORTHAND_PADDING = {
+    url: "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.trycloudflare.com/#p=hunter22",
+    banner: [
+      "┌ Sign in to Trusty Squire ──────────────────────────────────────────────────┐",
+      "│                                                                            │",
+      "│   Open this on any device, any network:                                    │",
+      "│                                                                            │",
+      "│   https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.trycloudflare.com/#p=hunter2   │",
+      "│   2                                                                        │",
+      "│                                                                            │",
+      "│   If asked for a VNC password:  hunter22                                   │",
+      "│                                                                            │",
+      "│   Remote login for Trusty Squire                                           │",
+      "│                                                                            │",
+      "└────────────────────────────────────────────────────────────────────────────┘",
+    ].join('\n'),
+  };
+
+  it('rejoins a ceremony URL boxen hard-wrapped across two frame rows', () => {
+    for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
+      expect(parseConnectOutput(`${render.banner}\n`)).toEqual({
+        method: 'streamed-page',
+        url: render.url,
+      });
+    }
+  });
+
+  it('publishes nothing from a frame whose closing border has not arrived', () => {
+    // The runner re-reads the whole buffer per chunk, so every prefix of the
+    // banner is a real delivery state. None of them may yield a URL: the row
+    // holding the wrapped head parses as a valid `#p=` tunnel on its own.
+    for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
+      const rows = render.banner.split('\n');
+      for (let count = 1; count < rows.length; count += 1) {
+        expect(parseConnectOutput(`${rows.slice(0, count).join('\n')}\n`)).toBeUndefined();
+      }
+      expect(parseConnectOutput(`${render.banner}\n`)).toEqual({
+        method: 'streamed-page',
+        url: render.url,
+      });
+    }
+  });
+
+  it('keeps a frame\u2019s other rows as their own lines', () => {
+    for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
+      const lines = unframeBoxedOutput(render.banner)
+        .split('\n')
+        .map((line) => line.trim());
+      expect(lines).toContain('If asked for a VNC password:  hunter22');
+      expect(lines).toContain('Remote login for Trusty Squire');
+      expect(lines).toContain(render.url);
+    }
+  });
+
+  it('leaves an unterminated URL alone until the rest of the chunk arrives', () => {
+    const partial = 'Open this on any device: https://tunnel.test/#p=hunt';
+    expect(parseConnectOutput(partial)).toBeUndefined();
+    expect(parseConnectOutput(`${partial}er22\n`)).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter22',
+    });
+  });
+});
+
+describe('defaultStreamedRunner', () => {
+  it('never publishes a URL a chunk boundary cut in half', async () => {
+    // The runner re-reads its buffers on every chunk. Writing the ceremony in
+    // two pieces with no newline between them is an ordinary pipe split, and
+    // the first piece is a perfectly valid `/install` URL with a short token.
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        'process.stdout.write("Open this: https://trustysquire.ai/install?token=q2Xt");',
+        'setTimeout(() => {',
+        '  process.stdout.write("G7fnTfe7wKqm\\n");',
+        '}, 120);',
+        'setInterval(() => {}, 30_000);',
+      ].join(''),
+    ]);
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqm',
+    });
+    result.abort();
+    releaseSquireConnectSession();
+  });
+
+  it('still reads a ceremony a child printed with no trailing newline', async () => {
+    // The buffers are complete once the child is gone, so its last line is a
+    // whole one; dropping it would lose the only URL connect ever printed.
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'process.stdout.write("Open this: https://tunnel.test/#p=hunter22");',
+    ]);
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter22',
+    });
+    releaseSquireConnectSession();
+  });
+
+  it('keeps reaping an abandoned ceremony after its URL is published', async () => {
+    // Nothing downstream reaps the connect once the connector row leaves
+    // `installing`, so the runner's own bound is what keeps the display rig
+    // from living for the daemon's lifetime.
+    const sleep = ((real) => (ms: number) => new Promise((done) => real(done, ms)))(setTimeout);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const result = await defaultStreamedRunner(process.execPath, [
+        '-e',
+        'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+          'setInterval(() => {}, 30_000);',
+      ]);
+      expect(result.signIn?.url).toBe('https://tunnel.test/#p=hunter22');
+      const pid = squireConnectSession()?.pid;
+      expect(isProcessAlive(pid)).toBe(true);
+
+      vi.advanceTimersByTime(CONNECT_TIMEOUT_MS);
+      for (let attempt = 0; attempt < 200 && isProcessAlive(pid); attempt += 1) await sleep(10);
+      expect(isProcessAlive(pid)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      releaseSquireConnectSession();
+    }
+  });
+
+  it('waits for the ceremony URL Squire prints after its install-page banner', async () => {
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        'console.log("Opening the Trusty Squire install page in a browser.");',
+        'setTimeout(() => {',
+        '  console.log("Open this on any device: https://tunnel.test/#p=hunter2");',
+        '}, 120);',
+        'setInterval(() => {}, 30_000);',
+      ].join(''),
+    ]);
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter2',
+    });
+    result.abort();
+    releaseSquireConnectSession();
+  });
 });
 
 describe('installSquire', () => {
-  it('reports every step and the sign-in method the connect command printed', async () => {
+  it('stays installing while the ceremony it printed is outstanding', async () => {
     const { client, calls } = mockSquire({
       list_credentials: () => ({ credentials: [] }),
     });
@@ -133,7 +392,10 @@ describe('installSquire', () => {
       }),
       mcp: client,
     });
-    expect(result.status).toBe('connected');
+    // The vault answered, but the human still has a page to sign in on: a
+    // `connected` verdict completes the row in one write and navigates the
+    // connect screen off the surface they have to press.
+    expect(result.status).toBe('installing');
     expect(result.signIn).toEqual({
       method: 'streamed-page',
       url: 'https://trustysquire.ai/install?token=secret',
@@ -144,7 +406,9 @@ describe('installSquire', () => {
       'waiting for sign-in',
       'paired to workspace',
     ]);
-    expect(result.steps.every((step) => step.status === 'done')).toBe(true);
+    expect(result.steps.find((step) => step.label === 'waiting for sign-in')?.status).toBe(
+      'pending',
+    );
     expect(calls[0]).toEqual({
       tool: 'list_credentials',
       args: { fields: 'summary' },
@@ -159,9 +423,9 @@ describe('installSquire', () => {
       streamRun: async (_cmd, args) => {
         streamInvocations.push(['npx', ...args]);
         return {
-          stdout: 'https://squire.example/oauth/authorize?x=1',
+          stdout: 'https://tunnel.test/#p=hunter22',
           stderr: '',
-          signIn: { method: 'oauth', url: 'https://squire.example/oauth/authorize?x=1' },
+          signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
           abort: () => {},
         };
       },
@@ -174,7 +438,7 @@ describe('installSquire', () => {
       ['npx', '-y', '@trusty-squire/mcp@latest', '--version'],
     ]);
     expect(streamInvocations).toEqual([
-      ['npx', '-y', '@trusty-squire/mcp@latest', 'connect', '--force-relogin=google', '--target=codex', '--skip-browser'],
+      ['npx', '-y', '@trusty-squire/mcp@latest', 'connect', '--target=codex'],
     ]);
   });
 
@@ -203,6 +467,60 @@ describe('installSquire', () => {
     expect(
       result.steps.find((step) => step.label === 'trusty-squire installed')?.reason,
     ).toContain('no sign-in URL');
+  });
+
+  it('reports Squire\u2019s already-connected short-circuit as connected, not failed', async () => {
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        stdout:
+          'Already connected (google + github). Codex config refreshed.\n' +
+          'Pass --force-relogin to switch accounts or to refresh a stale/expired session.\n',
+      }),
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(result.status).toBe('connected');
+    expect(result.signIn).toBeUndefined();
+    expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
+    expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
+  });
+
+  it('does not report an unverified profile as connected, and never quotes the cookie-clear hint', async () => {
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        stderr:
+          "This machine is bound to your account, but I couldn't verify a live provider session " +
+          'in the bot\u2019s Chrome profile (profile busy), so I won\u2019t call this connected. ' +
+          'Your agent config was refreshed.\n' +
+          'Close any other Trusty Squire session and re-run ' +
+          'npx @trusty-squire/mcp connect --force-relogin to verify it.\n',
+      }),
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(result.status).toBe('error');
+    const said = `${result.errorMessage ?? ''} ${result.steps.map((step) => step.reason ?? '').join(' ')}`;
+    expect(said).not.toContain('force-relogin');
+    expect(said).toContain("couldn't verify a live provider session");
+  });
+
+  it('marks the connector connected only once a run prints no ceremony at all', async () => {
+    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      // The human finished on the tunnel the previous run published, so this
+      // run reaches Squire's verified short-circuit and prints no URL.
+      streamRun: fakeStreamRunner({
+        stdout: 'Already connected (google + github). Codex config refreshed.\n',
+      }),
+      mcp: client,
+    });
+    expect(result.status).toBe('connected');
+    expect(result.signIn).toBeUndefined();
+    expect(result.steps.every((step) => step.status === 'done')).toBe(true);
   });
 
   it('surfaces the signIn URL on the installing result before the pairing probe', async () => {
@@ -247,7 +565,7 @@ describe('installSquire', () => {
       onProgress(steps) {
         progressSteps.push(steps.map((s) => s.label));
         const last = steps[steps.length - 1];
-        if (last?.label === 'waiting for sign-in' && last.status === 'done') {
+        if (last?.label === 'waiting for sign-in') {
           capturedSignIn = { method: 'streamed-page', url: 'https://vnc.trustysquire.ai/#p=secret' };
         }
       },
@@ -346,15 +664,13 @@ describe('version resolution', () => {
       log: (message) => logs.push(message),
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(result.status).toBe('connected');
+    expect(result.status).not.toBe('error');
     expect(streamInvocations[0]).toEqual([
       'npx',
       '-y',
       '@trusty-squire/mcp@1.1.14',
       'connect',
-      '--force-relogin=google',
       '--target=codex',
-      '--skip-browser',
     ]);
     expect(result.steps.find((s) => s.label.startsWith('trusty-squire'))?.status).toBe('done');
     expect(logs.join('\n')).toContain('stale copy');
@@ -563,7 +879,7 @@ describe('on-disk profile claim reclaim', () => {
       }),
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(result.status).toBe('connected');
+    expect(result.status).not.toBe('error');
     expect(existsSync(dir.lockPath)).toBe(false);
     dir.cleanup();
   });
@@ -588,7 +904,7 @@ describe('on-disk profile claim reclaim', () => {
       },
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
-    expect(result.status).toBe('connected');
+    expect(result.status).not.toBe('error');
     expect(env?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(dir.profileDir);
     expect(env?.XDG_CONFIG_HOME).toMatch(/\.config$/);
     expect(env?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);
@@ -663,6 +979,16 @@ describe('vault reads through the Squire MCP', () => {
     expect(result).toEqual({ revoked: 1, failed: 1 });
     const revokeCalls = calls.filter((call) => call.tool === 'revoke_app_access');
     expect(revokeCalls.map((call) => call.args?.grant_id).sort()).toEqual(['g1', 'g2']);
+  });
+
+  it('reads Squire\u2019s ISO-8601 vault created_at as epoch seconds', () => {
+    expect(
+      vaultConnectionMeta({ reference: 'cred_1', created_at: '2026-09-18T10:00:00.000Z' }).createdAt,
+    ).toBe(Math.floor(Date.parse('2026-09-18T10:00:00.000Z') / 1000));
+    expect(vaultConnectionMeta({ reference: 'cred_1', created_at: 1_700_000_000 }).createdAt).toBe(
+      1_700_000_000,
+    );
+    expect(vaultConnectionMeta({ reference: 'cred_1', created_at: 'whenever' }).createdAt).toBe(0);
   });
 
   it('builds grant and ledger shapes directly', () => {

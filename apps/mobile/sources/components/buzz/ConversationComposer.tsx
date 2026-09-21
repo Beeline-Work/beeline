@@ -258,7 +258,12 @@ export function ConversationComposer({
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
-              isListening && speech.partialText ? styles.inputTransparent : undefined,
+              isListening && speech.partialText
+                ? [
+                    styles.inputTransparent,
+                    Platform.OS === 'android' && styles.inputTransparentAndroid,
+                  ]
+                : undefined,
             ]}
             value={value}
             onChangeText={commitInputChange}
@@ -267,9 +272,7 @@ export function ConversationComposer({
             onBlur={onBlur}
             onKeyPress={onKeyPress}
             onSelectionChange={onSelectionChange}
-            placeholder={
-              isListening ? (hasLiveTranscript ? '' : 'Listening') : 'Message'
-            }
+            placeholder={isListening ? (hasLiveTranscript ? '' : 'Listening') : 'Message'}
             placeholderTextColor={theme.buzz.dim}
             multiline
             // Android keyboards otherwise take the whole screen in landscape and
@@ -439,7 +442,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.accent,
     borderRadius: 13,
     shadowColor: theme.buzz.accent,
-    shadowOffset: { width: 0, height: 0 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
     elevation: 4,
@@ -460,6 +463,12 @@ const styles = StyleSheet.create((theme) => ({
     top: 0,
     bottom: 0,
   } as any,
+  inputTransparentAndroid: {
+    // Android can keep painting native composing glyphs through a transparent
+    // text color. Hide that whole visual layer while the interim overlay owns
+    // the words; the TextInput stays mounted and focused for the keyboard.
+    opacity: 0,
+  },
   interimOverlay: {
     justifyContent: 'flex-start',
     minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,

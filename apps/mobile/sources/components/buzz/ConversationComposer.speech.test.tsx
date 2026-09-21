@@ -256,6 +256,28 @@ describe('listening flow', () => {
     );
   });
 
+  it('gives the Android interim overlay sole ownership of visible voice text', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    const props = renderer.root.findByType(ConversationComposer).props;
+    act(() => renderer.update(<ConversationComposer {...props} value="draft words" />));
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'recognized words' }], isFinal: false });
+    });
+
+    const input = renderer.root.findByProps({ testID: 'chat-input' });
+    expect(input.props.style.flat(Infinity)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ opacity: 0 })]),
+    );
+    const overlays = renderer.root
+      .findAllByProps({ testID: 'chat-speech-interim' })
+      .filter((node: any) => typeof node.type === 'string');
+    expect(overlays).toHaveLength(1);
+    const [draft, partial] = overlays[0].findAllByType('Text').slice(-2);
+    expect(draft.props.children).toEqual(['draft words', ' ']);
+    expect(partial.props.children).toBe('recognized words');
+  });
+
   it('does not truncate a long interim transcript to one line', async () => {
     const { renderer } = render();
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
@@ -317,6 +339,19 @@ describe('listening flow', () => {
         expect.objectContaining({ transform: [{ scale: 1.12 }], opacity: 1 }),
       ]),
     );
+  });
+
+  it('seats the listening shadow below the voice control without moving the control', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    const [control, listening] = renderer.root.findByProps({ testID: 'chat-mic' }).props.style;
+    expect(control).toMatchObject({ width: 26, height: 26 });
+    expect(listening).toMatchObject({
+      borderRadius: 13,
+      shadowOffset: { width: 0, height: 2 },
+    });
   });
 
   it('commits final result to onChangeText', async () => {

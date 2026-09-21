@@ -54,12 +54,13 @@ export function workspacePictureSeat(tile: WorkspaceTile): WorkspacePictureSeat 
 }
 
 /** The reference tile: the desktop rail's, worn identically by the mobile
- *  Workspace drawer. Every other Workspace tile is this one rescaled. */
+ *  Workspace drawer. Its picture keeps the same 4px boundary as the
+ *  page-scale Workspace frame while the tile retains its compact size. */
 export const WORKSPACE_RAIL_TILE: WorkspaceTile = {
   size: 48,
   radius: 14,
   borderWidth: 2,
-  pictureSize: 34,
+  pictureSize: 36,
 };
 
 /** The room-list header plate: the rail tile scaled to sit beside the

@@ -17,14 +17,40 @@ const TILES: Array<[string, WorkspaceTile]> = [
 ];
 
 describe('the Workspace picture seat', () => {
-  it('derives the rail tile the rails have always drawn', () => {
-    // 34px picture centred in the 44px box inside a 2px bezel leaves 5px of
-    // slab on every side, and 12 - 5 = 7 is the picture's own radius.
+  it('matches the rail boundary to the main-page Workspace frame', () => {
+    // A 36px picture centred in the 44px box inside a 2px bezel leaves the
+    // same 4px slab as the page-scale Workspace frame. The outer rail tile
+    // remains 48px, and 12 - 4 = 8 is the picture's own radius.
     expect(workspacePictureSeat(WORKSPACE_RAIL_TILE)).toEqual({
       innerRadius: 12,
-      margin: 5,
-      pictureSize: 34,
-      pictureRadius: 7,
+      margin: 4,
+      pictureSize: 36,
+      pictureRadius: 8,
+    });
+    expect(workspacePictureSeat(WORKSPACE_RAIL_TILE).margin).toBe(
+      workspacePictureSeat(WORKSPACE_SETTINGS_TILE).margin,
+    );
+    expect(WORKSPACE_RAIL_TILE.size).toBe(48);
+  });
+
+  it('does not resize the other Workspace picture frames', () => {
+    expect(WORKSPACE_HEADER_PLATE).toEqual({
+      size: 34,
+      radius: 8,
+      borderWidth: 2,
+      pictureSize: 26,
+    });
+    expect(WORKSPACE_SETTINGS_TILE).toEqual({
+      size: 76,
+      radius: 20,
+      borderWidth: 2,
+      pictureSize: 64,
+    });
+    expect(IDENTITY_SETTINGS_TILE).toEqual({
+      size: 76,
+      radius: 20,
+      borderWidth: 2,
+      pictureSize: 64,
     });
   });
 

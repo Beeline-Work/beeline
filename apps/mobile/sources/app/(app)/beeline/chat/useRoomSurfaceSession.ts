@@ -47,6 +47,7 @@ import {
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
+import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 /** A socket that never answers must not hold the open's one Room read. */
@@ -90,20 +91,6 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
 }
 
 export { markRoomOpen };
-
-/**
- * Call the host scheduler on `globalThis` so its receiver is always the
- * Window. A detached host method (`const f = host.method; f(...)`) is what
- * raises `TypeError: Illegal invocation` on web; Window operations happen
- * to survive it because Web IDL substitutes the global for an undefined
- * receiver, but nothing here depends on that exemption, and neither the
- * substitution nor the exemption survives a reassignment of the global.
- */
-function scheduleAnimationFrame(callback: FrameRequestCallback): boolean {
-  if (typeof globalThis.requestAnimationFrame !== 'function') return false;
-  globalThis.requestAnimationFrame(callback);
-  return true;
-}
 
 function queueNewestFrameMark(detail?: string): void {
   if (

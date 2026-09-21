@@ -11,6 +11,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
+import {
+  cancelScheduledAnimationFrame,
+  scheduleAnimationFrame,
+} from '@/buzz/host-scheduler';
 
 const RAIL_WIDTH = 76;
 const TILE_SIZE = 48;
@@ -62,8 +66,10 @@ export function DesktopWorkspaceRail({
       easing: Easing.bezier(0.22, 1, 0.36, 1),
       reduceMotion: ReduceMotion.System,
     });
-    const frame = requestAnimationFrame(() => tileRefs.current[activeIndex]?.focus?.());
-    return () => cancelAnimationFrame(frame);
+    const frame = scheduleAnimationFrame(() => tileRefs.current[activeIndex]?.focus?.());
+    return () => {
+      if (frame !== false) cancelScheduledAnimationFrame(frame);
+    };
   }, [activeIndex, open, railX, reducedMotion]);
 
   React.useEffect(() => {

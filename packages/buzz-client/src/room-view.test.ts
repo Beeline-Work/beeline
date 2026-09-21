@@ -71,6 +71,38 @@ describe('RoomViewClient', () => {
     expect(init.headers.authorization).toMatch(/^Nostr /);
   });
 
+  it('calls the host fetch on globalThis so a throwing browser cannot raise Illegal invocation', async () => {
+    const identity = createIdentity('room-view-fetch-receiver');
+    const receivers: unknown[] = [];
+    const detached = {
+      fetchImpl: function throwingFetch(this: unknown) {
+        if (this !== globalThis && this !== undefined) {
+          throw new TypeError('Illegal invocation');
+        }
+        return Promise.resolve(Response.json(room));
+      },
+    };
+    expect(() => detached.fetchImpl()).toThrow('Illegal invocation');
+
+    vi.stubGlobal('fetch', function throwingFetch(this: unknown) {
+      receivers.push(this);
+      if (this !== globalThis && this !== undefined) {
+        throw new TypeError('Illegal invocation');
+      }
+      return Promise.resolve(Response.json(room));
+    });
+    try {
+      const value = await new RoomViewClient({
+        baseUrl: 'https://relay.example',
+        identity,
+      }).room(room.room.id);
+      expect(value.room.id).toBe(room.room.id);
+      expect(receivers).toEqual([globalThis]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps a complete Room readable when a legacy named role is nested in the projection', async () => {
     const asker = { pubkey: 'c'.repeat(64), kind: 'human' as const, name: 'Play Review' };
     const agent = { pubkey: 'd'.repeat(64), kind: 'agent' as const, name: 'Echo' };

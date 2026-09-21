@@ -91,7 +91,7 @@ describe('credential and connect status', () => {
       facts({
         process: { kind: 'none' },
         visibility: { kind: 'none' },
-        credential: { kind: 'valid', accountId: 'acct_9' },
+        credential: { kind: 'valid' },
       }),
     );
     expect(status).toBe('connected');
@@ -99,7 +99,7 @@ describe('credential and connect status', () => {
     // decides whether the profile needs a ceremony, so Connect always runs.
     expect(
       shouldStartSquireConnect(
-        facts({ credential: { kind: 'valid', accountId: 'acct_9' } }),
+        facts({ credential: { kind: 'valid' } }),
       ),
     ).toBe(true);
   });
@@ -169,7 +169,12 @@ describe('credential and connect status', () => {
     expect(connectStatusFromFacts(facts({ credential: unproven }))).toBe('installing');
     expect(shouldStartSquireConnect(facts({ credential: unproven }))).toBe(false);
     noteSquireVaultAuth('ok');
-    expect(credentialFromSession(session)).toEqual({ kind: 'valid', accountId: 'acct_9' });
+    expect(credentialFromSession(session)).toEqual({ kind: 'valid' });
+    // Squire writes an empty account id for an unbound account; the vault's
+    // answer is what makes the token valid, so that is still connected.
+    expect(
+      credentialFromSession({ apiBaseUrl: 'https://vault.test', agentSessionToken: 'tok' }),
+    ).toEqual({ kind: 'valid' });
     expect(
       connectStatusFromFacts(facts({ credential: credentialFromSession(session) })),
     ).toBe('connected');

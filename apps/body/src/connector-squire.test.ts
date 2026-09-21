@@ -37,6 +37,7 @@ import {
 import {
   credentialFromSession,
   noteSquireVaultAuth,
+  publishedSquireVisibility,
   publishSquireVisibility,
   resetSquireConnectFacts,
 } from './squire-connect-state.js';
@@ -587,7 +588,7 @@ describe('installSquire', () => {
       mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
     });
     expect(result.status).toBe('connected');
-    expect(result.signIn).toBeUndefined();
+    expect(result.signIn).toBeNull();
     expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
     expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
     // `signedInAs` is an email or handle; an opaque account id is not one,
@@ -678,8 +679,62 @@ describe('installSquire', () => {
       mcp: client,
     });
     expect(result.status).toBe('connected');
-    expect(result.signIn).toBeUndefined();
+    expect(result.signIn).toBeNull();
     expect(result.steps.every((step) => step.status === 'done')).toBe(true);
+  });
+
+  it('calls a session valid when Squire wrote no account id', async () => {
+    // Squire stores `account_id: ""` for an unbound account, so a helper that
+    // is genuinely signed in must not read as expired and re-connect forever.
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: vaultAnswers(),
+      streamRun: async (...args: Parameters<StreamedShellRunner>) => {
+        writeHostSession('');
+        return fakeStreamRunner({
+          stdout: 'Already connected (google + github). Codex config refreshed.\n',
+        })(...args);
+      },
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(result.status).toBe('connected');
+  });
+
+  it('keeps its own live ceremony published while it waits on the account', async () => {
+    // A restart-free wait on an unreachable account must not retire the
+    // surface this helper's own connect is still serving, nor report that
+    // this run found no ceremony.
+    const ceremony = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=mine");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    expect(ceremony.signIn?.url).toBe('https://tunnel.test/#p=mine');
+    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=mine' });
+    writeHostSession();
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: (async () => {
+        throw new Error('getaddrinfo ENOTFOUND vault.test');
+      }) as unknown as typeof fetch,
+      streamRun: async () => {
+        started += 1;
+        return { stdout: '', stderr: '', abort: () => {} };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(started).toBe(0);
+    expect(result.signIn).toBeUndefined();
+    expect(publishedSquireVisibility()).toEqual({
+      kind: 'remote',
+      held: true,
+      url: 'https://tunnel.test/#p=mine',
+    });
+    ceremony.abort();
+    releaseSquireConnectSession();
   });
 
   it('waits on an account that never answered instead of raising another browser', async () => {
@@ -1332,7 +1387,7 @@ describe('vault reads from the session file', () => {
         accountId: 'acct_9',
         agentSessionToken: 'tok',
       }),
-    ).toEqual({ kind: 'valid', accountId: 'acct_9' });
+    ).toEqual({ kind: 'valid' });
     rmSync(home, { recursive: true, force: true });
   });
 

@@ -27,7 +27,7 @@ export type SquireVisibilityFact =
 
 export type SquireCredentialFact =
   | { readonly kind: 'none' }
-  | { readonly kind: 'valid'; readonly accountId: string }
+  | { readonly kind: 'valid' }
   | { readonly kind: 'expired' }
   | { readonly kind: 'unproven' }
   | { readonly kind: 'challenge' };
@@ -116,9 +116,7 @@ export function credentialFromSession(
 ): SquireCredentialFact {
   if (session?.agentSessionToken) {
     if (vaultAuth === 'unknown') return { kind: 'unproven' };
-    return vaultAuth === 'ok' && session.accountId
-      ? { kind: 'valid', accountId: session.accountId }
-      : { kind: 'expired' };
+    return vaultAuth === 'ok' ? { kind: 'valid' } : { kind: 'expired' };
   }
   if (visibility.kind !== 'none' && visibility.held) return { kind: 'challenge' };
   return { kind: 'none' };

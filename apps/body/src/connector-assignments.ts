@@ -370,12 +370,13 @@ export class ConnectorAssignmentLoop {
     }
     // Still installing: the human has not signed in yet; keep the steps. This
     // run's verdict on the ceremony is explicit — `null` when it printed none,
-    // so a tunnel a PREVIOUS run left on the row dies with that run.
+    // so a tunnel a PREVIOUS run left on the row dies with that run — while a
+    // run that started no connect says nothing and leaves the row's own.
     await this.api.execute('postConnectorStatus', {
       agentId: this.agentId,
       connectorId,
       steps: result.steps,
-      signIn: result.signIn ?? null,
+      ...(result.signIn !== undefined ? { signIn: result.signIn } : {}),
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
       ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
     });

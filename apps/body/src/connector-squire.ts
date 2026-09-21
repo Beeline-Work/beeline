@@ -813,7 +813,12 @@ export type InstallSquireOptions = {
 export type InstallSquireResult = {
   readonly status: 'connected' | 'error' | 'installing';
   readonly steps: readonly ConnectorStep[];
-  readonly signIn?: ConnectorSignIn;
+  /**
+   * The wire contract's own three answers: a surface this run printed,
+   * `null` for a run that printed none, and ABSENT for a run that never
+   * started a connect and so has no news about anybody's ceremony.
+   */
+  readonly signIn?: ConnectorSignIn | null;
   readonly squireVersion?: string;
   readonly signedInAs?: string;
   readonly errorMessage?: string;
@@ -941,10 +946,12 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
   emit();
 
-  // Somebody else holds the browser, so this helper owns no live ceremony:
-  // whatever surface it published belongs to a connect that is over.
-  const wait = (reason?: string): InstallSquireResult => {
-    publishSquireVisibility({ kind: 'none' });
+  // This run starts nothing, so it has no news about the ceremony: it leaves
+  // `signIn` absent rather than reporting one nobody printed. A surface it
+  // published belongs to a connect that is over UNLESS that connect is this
+  // helper's own and still running.
+  const wait = (reason: string | undefined, ownConnectLives: boolean): InstallSquireResult => {
+    if (!ownConnectLives) publishSquireVisibility({ kind: 'none' });
     push(step('waiting for sign-in', 'running', reason));
     return { status: 'installing', steps };
   };
@@ -960,7 +967,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
 
   const observed = await provenFacts();
-  if (!shouldStartSquireConnect(observed)) return wait(waitReason(observed));
+  if (!shouldStartSquireConnect(observed)) {
+    return wait(waitReason(observed), observed.process.kind === 'ours');
+  }
 
   const previousPid = squireConnectSession()?.pid;
   releaseSquireConnectSession(log);
@@ -975,7 +984,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     profileDir,
     ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
   });
-  if (shared.kind === 'blocked-foreign') return wait(shared.action);
+  if (shared.kind === 'blocked-foreign') return wait(shared.action, false);
 
   const resolution = await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
@@ -1036,7 +1045,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     return {
       status: 'installing',
       steps,
-      signIn,
+      signIn: signIn ?? null,
       ...(version ? { squireVersion: version } : {}),
       ...(signedInAs ? { signedInAs } : {}),
     };
@@ -1054,6 +1063,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   return {
     status: settled && connectStatusFromFacts(settled) === 'connected' ? 'connected' : 'installing',
     steps,
+    signIn: null,
     ...(version ? { squireVersion: version } : {}),
     ...(signedInAs ? { signedInAs } : {}),
   };

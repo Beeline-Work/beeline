@@ -141,6 +141,43 @@ describe('ConnectorAssignmentLoop', () => {
     });
   });
 
+  it('says nothing about a ceremony it never started, and retires one it did', async () => {
+    // `signIn: null` is this run REPORTING no ceremony, which clears the
+    // row's tunnel. A run that started no connect has no such news, so the
+    // live link a person is signing in on must survive its poll.
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => ({
+        status: 'installing',
+        steps: [{ id: 'signin', label: 'waiting for sign-in', status: 'running' }],
+      }),
+    });
+    await loop.runOnce();
+    await settle();
+    const waited = api.calls.find((call) => call.op === 'postConnectorStatus');
+    expect(waited?.input).not.toHaveProperty('signIn');
+
+    const reporting = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    const reporter = new ConnectorAssignmentLoop({
+      api: reporting as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => ({
+        status: 'installing',
+        steps: [{ id: 'signin', label: 'waiting for sign-in', status: 'done' }],
+        signIn: null,
+      }),
+    });
+    await reporter.runOnce();
+    await settle();
+    expect(
+      reporting.calls.find((call) => call.op === 'postConnectorStatus')?.input.signIn,
+    ).toBeNull();
+  });
+
   it('runs sync and revoke-grants assignments without touching the install routine', async () => {
     const api = apiMock([
       { kind: 'sync', connectorId: 'conn-1' },
@@ -356,7 +393,11 @@ describe('ConnectorAssignmentLoop', () => {
       mcp,
       install: async (options) => {
         await options.onProgress([{ label: 'helper reached', status: 'done' }]);
-        return { status: 'installing', steps: [{ label: 'helper reached', status: 'done' }] };
+        return {
+          status: 'installing',
+          steps: [{ label: 'helper reached', status: 'done' }],
+          signIn: null,
+        };
       },
     });
     await loop.runOnce();

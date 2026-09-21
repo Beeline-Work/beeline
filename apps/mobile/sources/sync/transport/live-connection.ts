@@ -13,9 +13,11 @@ type DraftEvent = Extract<LiveWireEvent, { type: 'draft' }>;
 type ThoughtEvent = Extract<LiveWireEvent, { type: 'thought' }>;
 type PresenceEvent = Extract<LiveWireEvent, { type: 'presence' }>;
 
+type CachedOverlay<Event> = { readonly event: Event; readonly receivedAt: number };
+
 type RoomOverlayCache = {
-  drafts: Map<string, DraftEvent>;
-  thoughts: Map<string, ThoughtEvent>;
+  drafts: Map<string, CachedOverlay<DraftEvent>>;
+  thoughts: Map<string, CachedOverlay<ThoughtEvent>>;
   presence: Map<string, PresenceEvent>;
 };
 
@@ -35,6 +37,7 @@ type LiveConnectionDeps = {
 };
 
 const FALLBACK_INTERVAL_MS = 30_000;
+const LIVE_OVERLAY_TTL_MS = 90_000;
 
 function roomIdsFromFilters(filters: SurfaceFilters): Set<string> {
   return new Set(
@@ -55,6 +58,13 @@ function isSocketOpen(socket: WebSocket): boolean {
   return socket.readyState === 1;
 }
 
+function dropExpiredOverlays(cache: RoomOverlayCache, now: number): void {
+  for (const [key, entry] of cache.drafts)
+    if (now - entry.receivedAt >= LIVE_OVERLAY_TTL_MS) cache.drafts.delete(key);
+  for (const [key, entry] of cache.thoughts)
+    if (now - entry.receivedAt >= LIVE_OVERLAY_TTL_MS) cache.thoughts.delete(key);
+}
+
 /**
  * One phone live socket for the app. `surfaceSubscribe` only registers;
  * rooms are refcounted over this connection and the socket outlives screens.
@@ -63,6 +73,7 @@ export class LiveConnection {
   private readonly registrations = new Map<number, Registration>();
   private readonly refcount = new Map<string, number>();
   private readonly seenSubscribed = new Set<string>();
+  private readonly pendingSubscribe = new Set<string>();
   private readonly overlays = new Map<string, RoomOverlayCache>();
   private readonly traceOwners = new Map<string, Registration>();
   private socket: WebSocket | undefined;
@@ -95,7 +106,7 @@ export class LiveConnection {
       const previous = this.refcount.get(roomId) ?? 0;
       this.refcount.set(roomId, previous + 1);
       if (this.seenSubscribed.has(roomId)) held.push(roomId);
-      else if (previous === 0) fresh.push(roomId);
+      else if (previous === 0 && !this.pendingSubscribe.has(roomId)) fresh.push(roomId);
     }
     this.ensureFallback();
     if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
@@ -122,6 +133,7 @@ export class LiveConnection {
     this.registrations.clear();
     this.refcount.clear();
     this.seenSubscribed.clear();
+    this.pendingSubscribe.clear();
     this.overlays.clear();
     this.traceOwners.clear();
     this.reconnectDelayMs = 1_000;
@@ -182,9 +194,7 @@ export class LiveConnection {
       next.onopen = () => {
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
-        const roomIds = [...this.refcount.keys()];
-        if (roomIds.length === 0) return;
-        next.send(JSON.stringify({ type: 'subscribe', roomIds }));
+        this.sendSubscribe([...this.refcount.keys()]);
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;
@@ -200,6 +210,7 @@ export class LiveConnection {
         if (this.socket !== next) return;
         this.socket = undefined;
         this.seenSubscribed.clear();
+        this.pendingSubscribe.clear();
         this.overlays.clear();
         this.traceOwners.clear();
         this.scheduleReconnect();
@@ -222,6 +233,7 @@ export class LiveConnection {
 
   private sendSubscribe(roomIds: readonly string[]): void {
     if (!this.socket || !isSocketOpen(this.socket) || roomIds.length === 0) return;
+    for (const roomId of roomIds) this.pendingSubscribe.add(roomId);
     this.socket.send(JSON.stringify({ type: 'subscribe', roomIds: [...roomIds] }));
   }
 
@@ -229,10 +241,11 @@ export class LiveConnection {
     registration.listener({ monolithLive: { type: 'subscribed', roomId } });
     const cache = this.overlays.get(roomId);
     if (!cache) return;
-    for (const event of cache.drafts.values())
-      registration.listener({ monolithLive: event });
-    for (const event of cache.thoughts.values())
-      registration.listener({ monolithLive: event });
+    dropExpiredOverlays(cache, Date.now());
+    for (const entry of cache.drafts.values())
+      registration.listener({ monolithLive: entry.event });
+    for (const entry of cache.thoughts.values())
+      registration.listener({ monolithLive: entry.event });
     for (const event of cache.presence.values())
       registration.listener({ monolithLive: event });
   }
@@ -246,11 +259,16 @@ export class LiveConnection {
     }
     if (!('roomId' in live)) return;
     if (!this.refcount.has(live.roomId)) {
-      if (live.type === 'subscribed' && this.socket === generation && isSocketOpen(generation))
+      if (live.type !== 'subscribed') return;
+      this.pendingSubscribe.delete(live.roomId);
+      if (this.socket === generation && isSocketOpen(generation))
         generation.send(JSON.stringify({ type: 'unsubscribe', roomId: live.roomId }));
       return;
     }
-    if (live.type === 'subscribed') this.seenSubscribed.add(live.roomId);
+    if (live.type === 'subscribed') {
+      this.pendingSubscribe.delete(live.roomId);
+      this.seenSubscribed.add(live.roomId);
+    }
     this.rememberOverlay(live);
     for (const registration of this.registrations.values()) {
       if (registration.closed || !registration.roomIds.has(live.roomId)) continue;
@@ -278,12 +296,18 @@ export class LiveConnection {
   private rememberOverlay(live: LiveWireEvent): void {
     if (live.type === 'draft') {
       const cache = this.overlayCache(live.roomId);
-      cache.drafts.set(overlayKey(live.agentId, live.turnId), live);
+      cache.drafts.set(overlayKey(live.agentId, live.turnId), {
+        event: live,
+        receivedAt: Date.now(),
+      });
       return;
     }
     if (live.type === 'thought') {
       const cache = this.overlayCache(live.roomId);
-      cache.thoughts.set(overlayKey(live.agentId, live.turnId), live);
+      cache.thoughts.set(overlayKey(live.agentId, live.turnId), {
+        event: live,
+        receivedAt: Date.now(),
+      });
       return;
     }
     if (live.type === 'presence') {
@@ -297,12 +321,24 @@ export class LiveConnection {
       const key = overlayKey(live.agentId, live.turnId);
       if (live.kind === 'draft') cache.drafts.delete(key);
       else cache.thoughts.delete(key);
+      return;
+    }
+    if (live.type === 'turn-delta') {
+      if (live.turn.status === 'working') return;
+      const cache = this.overlays.get(live.roomId);
+      if (!cache) return;
+      const key = overlayKey(live.turn.agentPubkey, live.turn.requestId);
+      cache.drafts.delete(key);
+      cache.thoughts.delete(key);
     }
   }
 
   private overlayCache(roomId: string): RoomOverlayCache {
     const existing = this.overlays.get(roomId);
-    if (existing) return existing;
+    if (existing) {
+      dropExpiredOverlays(existing, Date.now());
+      return existing;
+    }
     const created: RoomOverlayCache = {
       drafts: new Map(),
       thoughts: new Map(),

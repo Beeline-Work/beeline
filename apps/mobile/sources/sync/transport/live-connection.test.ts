@@ -227,6 +227,92 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('does not replay a draft whose turn already ended', async () => {
+    const { connection } = createConnection();
+    const room: unknown[] = [];
+
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    sockets[0]!.emit({
+      type: 'draft',
+      roomId: ROOM_A,
+      agentId: 'agent',
+      turnId: 'turn-1',
+      text: 'streaming',
+    });
+    sockets[0]!.emit({
+      type: 'turn-delta',
+      roomId: ROOM_A,
+      turn: { requestId: 'turn-1', agentPubkey: 'agent', status: 'failed', createdAt: 1 },
+    });
+
+    await connection.register([{ '#h': [ROOM_A] }], (event) => room.push(event));
+
+    expect(room).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+    connection.dispose();
+  });
+
+  it('does not replay a draft older than the live window', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const room: unknown[] = [];
+
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    sockets[0]!.emit({
+      type: 'draft',
+      roomId: ROOM_A,
+      agentId: 'agent',
+      turnId: 'turn-1',
+      text: 'streaming',
+    });
+    sockets[0]!.emit({
+      type: 'presence',
+      roomId: ROOM_A,
+      agentId: 'agent',
+      status: 'online',
+      observedAt: 42,
+    });
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    await connection.register([{ '#h': [ROOM_A] }], (event) => room.push(event));
+
+    expect(room).toEqual([
+      { monolithLive: { type: 'subscribed', roomId: ROOM_A } },
+      {
+        monolithLive: {
+          type: 'presence',
+          roomId: ROOM_A,
+          agentId: 'agent',
+          status: 'online',
+          observedAt: 42,
+        },
+      },
+    ]);
+    connection.dispose();
+  });
+
+  it('does not re-subscribe a room whose first subscribe is still unacknowledged', async () => {
+    const { connection } = createConnection();
+    const room: unknown[] = [];
+
+    const stop = await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    stop();
+    await connection.register([{ '#h': [ROOM_A] }], (event) => room.push(event));
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    expect(room).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+
+    connection.dispose();
+  });
+
   it('does not replay a retracted draft to a late listener', async () => {
     const { connection } = createConnection();
     const room: unknown[] = [];

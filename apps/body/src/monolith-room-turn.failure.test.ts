@@ -30,7 +30,7 @@ async function runTurn(options: {
     agentHomeRoot: string;
     attempt: number;
     /** The ACP delta hook, so a test can stream a draft before it fails. */
-    onChunk: (delta: string, full: string) => void;
+    onChunk: (delta: string, full: string, currentRun?: string) => void;
     /** The ACP tool-call hook: every stream update's tool-call snapshot. */
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
@@ -156,7 +156,7 @@ async function runTurn(options: {
       return options.prompt({
         agentHomeRoot,
         attempt: attempts,
-        onChunk: (delta, full) => onChunk?.(delta, full),
+        onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
       });
     },
@@ -248,13 +248,21 @@ describe('Room turn failure receipt', () => {
       agentCommand: '/fake-agent',
       agentKind: 'codex',
       prompt: async ({ onChunk, onToolCalls }) => {
+        // Run one is progress narration around the tool call; the answer is the
+        // run after it, exactly as a prompt that returned would report.
         onChunk(
-          'Here is what I found: the cards go stale.',
-          'Here is what I found: the cards go stale.',
+          'Let me take this into a corner.',
+          'Let me take this into a corner.',
+          'Let me take this into a corner.',
         );
         onToolCalls?.([
           { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
         ]);
+        onChunk(
+          'Here is what I found: the cards go stale.',
+          'Let me take this into a corner.\n\nHere is what I found: the cards go stale.',
+          'Here is what I found: the cards go stale.',
+        );
         await new Promise((resolve) => setImmediate(resolve));
         throw timeout;
       },

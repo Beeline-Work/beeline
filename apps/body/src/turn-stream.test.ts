@@ -102,6 +102,20 @@ describe('agent turn stream', () => {
     expect(stream.streamedText).toBe(PROSE_TOOL_PROSE.at(-1));
   });
 
+  it('separates the last run from the joined stream, and forgets it on a retry', async () => {
+    // An ending the prompt never reached has only this lane to answer from, and
+    // the answer is the LAST run — pre-tool narration is not it.
+    const { api } = recorder();
+    const stream = streamFor(api);
+    stream.onChunk('Let me look.', 'Let me look.', 'Let me look.');
+    stream.onChunk('The fix is ready.', 'Let me look.\n\nThe fix is ready.', 'The fix is ready.');
+    await settled();
+    expect(stream.streamedText).toBe('Let me look.\n\nThe fix is ready.');
+    expect(stream.lastRunText).toBe('The fix is ready.');
+    stream.beginRun();
+    expect(stream.lastRunText).toBe('');
+  });
+
   it('keeps ONE draft on the wire and only the newest snapshot waiting', async () => {
     // This replaces the old "publishes every chunk" rule. A draft is a picture
     // of the whole answer so far, so a snapshot overtaken before it reached the

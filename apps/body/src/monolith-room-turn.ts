@@ -11,6 +11,7 @@ import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   AcpRequestTimeoutError,
+  isPureRetryNarration,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -1057,9 +1058,9 @@ export class MonolithRoomTurnLoop {
                       this.sessionId!,
                       nextPrompt,
                       ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-                      (delta, full) => {
+                      (delta, full, currentRun) => {
                         trace.firstModelOutput();
-                        stream.onChunk(delta, full);
+                        stream.onChunk(delta, full, currentRun);
                       },
                       undefined,
                       (calls) => {
@@ -1246,11 +1247,14 @@ export class MonolithRoomTurnLoop {
         );
         this.options.onCornerOpened?.();
         // The prose the reader watched arrive is the same completion as the
-        // card: this ending has only the streamed text to write it from, and
-        // the `complete` receipt below ends the draft either way, so settling
-        // it here is what keeps it on the page. A wedged turn that streamed
-        // nothing still settles through the card alone.
-        const streamed = durableReplyText(liveStream?.streamedText ?? '');
+        // card, and the `complete` receipt below ends the draft either way, so
+        // settling it here is what keeps it on the page. It is the LAST run
+        // alone — what `result.agentText` would have carried had the prompt
+        // returned — never the joined stream, so a turn's durable answer does
+        // not depend on whether it wedged. A last run that is retry narration
+        // or sanitizes away settles through the card alone.
+        const lastRun = liveStream?.lastRunText ?? '';
+        const streamed = isPureRetryNarration(lastRun) ? '' : durableReplyText(lastRun);
         await liveStream
           ?.settle(streamed, streamed ? { triggerMessageId: item.id } : {})
           .catch((settleError: unknown) => {

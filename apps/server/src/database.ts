@@ -755,6 +755,7 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   feature_branch text,
   close_requested boolean NOT NULL DEFAULT false,
   lane text NOT NULL DEFAULT 'code' CHECK (lane IN ('code', 'no_code')),
+  kind text NOT NULL DEFAULT 'agent' CHECK (kind IN ('agent', 'human')),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
@@ -766,6 +767,10 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'co
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
   CHECK (lane IN ('code', 'no_code'));
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
+ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
+ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
+  CHECK (kind IN ('agent', 'human'));
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 

@@ -4570,6 +4570,69 @@ describe('monolith integration', () => {
     });
   });
 
+  it('creates title-only human corners that only their creator can close', async () => {
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: '  Release   notes  ',
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    const stored = (
+      await database.query<{
+        name: string;
+        created_by: string;
+        commissioned_by: string;
+        objective: string;
+        lane: string;
+        kind: string;
+        commands: number;
+      }>(
+        `SELECT room.name,room.created_by,fact.commissioned_by,fact.objective,fact.lane,fact.kind,
+          (SELECT count(*)::integer FROM agent_commands WHERE room_id=room.id) commands
+         FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+        [cornerId],
+      )
+    ).rows[0];
+    expect(stored).toEqual({
+      name: 'Release notes',
+      created_by: HUMAN,
+      commissioned_by: HUMAN,
+      objective: '',
+      lane: 'no_code',
+      kind: 'human',
+      commands: 0,
+    });
+    const listed = await phone.readCorners(ROOM, HUMAN);
+    expect(listed?.corners.find((corner) => corner.corner.id === cornerId)).toMatchObject({
+      corner: { name: 'Release notes' },
+      initiator: { pubkey: HUMAN, kind: 'human' },
+    });
+
+    const otherLogin = 'human-corner-member';
+    const otherId = createHash('sha256').update(`github:${otherLogin}`).digest('hex');
+    const otherToken = await phoneToken(otherLogin);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
+      [WORKSPACE, otherId, ROOM, cornerId],
+    );
+    const refused = await operation('requestCornerClose', { roomId: cornerId }, otherToken);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'corner close access denied: only the creator can close this corner',
+    });
+
+    expect((await operation('requestCornerClose', { roomId: cornerId })).status).toBe(204);
+    expect(
+      (
+        await database.query<{ archived: boolean }>(
+          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
+          [cornerId],
+        )
+      ).rows[0]?.archived,
+    ).toBe(true);
+  });
+
   it('deduplicates push delivery claims in Postgres', async () => {
     await database.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('device-token-12345678901234567890',$1,'android','physical')`,

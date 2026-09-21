@@ -219,6 +219,24 @@ describe('RoomCornersList', () => {
     expect(text(tree)).toContain('Opened by Opener live · PR #12 · all 3 tests passed');
   });
 
+  it('uses the human creator as the opener when a corner has no agent', () => {
+    const item = corner('notes', 'waiting', 'Release notes');
+    const tree = render([
+      {
+        ...item,
+        agent: undefined,
+        initiator: { pubkey: 'person-1', kind: 'human', name: 'Avery' },
+      },
+    ]);
+    const row = tree.root.findByProps({ testID: 'room-corner-notes' });
+    expect(row.props.accessibilityLabel).toContain('Opened by Avery');
+    expect(row.findByType('IdentityMark' as any).props).toMatchObject({
+      kind: 'human',
+      seed: 'person-1',
+      name: 'Avery',
+    });
+  });
+
   it.each([0, 24, 48])('keeps the last row clear of a %s-point gesture bar', (bottomInset) => {
     let tree!: ReactTestRenderer;
     act(() => {
@@ -299,9 +317,12 @@ function resolvedStyle(style: any): Record<string, any> {
 describe('RoomCornersHeader', () => {
   it.each([0, 1, 2])('renders the slab header and accessible count for %s corners', (count) => {
     const onBack = vi.fn();
+    const onAdd = vi.fn();
     let tree!: ReactTestRenderer;
     act(() => {
-      tree = create(<RoomCornersHeader title="#alpha" count={count} onBack={onBack} />);
+      tree = create(
+        <RoomCornersHeader title="#alpha" count={count} onBack={onBack} onAdd={onAdd} />,
+      );
     });
     const hull = beelineThemes.obsidian;
     const header = tree.root.findAllByType('View' as any)[0];
@@ -323,10 +344,18 @@ describe('RoomCornersHeader', () => {
     expect(texts[2].props.accessibilityLabel).toBe(
       `${count} ${count === 1 ? 'corner' : 'corners'}`,
     );
-    const back = tree.root.findByType('TouchableOpacity' as any);
+    const [back, add] = tree.root.findAllByType('TouchableOpacity' as any);
     expect(back.props).toMatchObject({ accessibilityRole: 'button', accessibilityLabel: 'Back' });
     expect(resolvedStyle(back.props.style)).toMatchObject({ width: 44, height: 44 });
+    expect(add.props).toMatchObject({
+      accessibilityRole: 'button',
+      accessibilityLabel: 'Create a corner',
+      testID: 'room-corners-add',
+    });
+    expect(resolvedStyle(add.props.style)).toMatchObject({ width: 44, height: 44 });
     act(() => back.props.onPress());
     expect(onBack).toHaveBeenCalledOnce();
+    act(() => add.props.onPress());
+    expect(onAdd).toHaveBeenCalledOnce();
   });
 });

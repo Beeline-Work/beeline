@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import Svg, { Line } from 'react-native-svg';
 
 const BACK_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 
@@ -13,10 +14,12 @@ export function RoomCornersHeader({
   title,
   count,
   onBack,
+  onAdd,
 }: {
   title: string;
   count: number;
   onBack: () => void;
+  onAdd: () => void;
 }) {
   return (
     <View style={styles.header}>
@@ -43,6 +46,35 @@ export function RoomCornersHeader({
       >
         {count}
       </Text>
+      <TouchableOpacity
+        accessibilityLabel="Create a corner"
+        accessibilityRole="button"
+        hitSlop={BACK_HIT_SLOP}
+        onPress={onAdd}
+        style={styles.add}
+        testID="room-corners-add"
+      >
+        <Svg height={20} viewBox="0 0 24 24" width={20}>
+          <Line
+            stroke={styles.addGlyph.color}
+            strokeLinecap="round"
+            strokeWidth={2}
+            x1="12"
+            x2="12"
+            y1="4"
+            y2="20"
+          />
+          <Line
+            stroke={styles.addGlyph.color}
+            strokeLinecap="round"
+            strokeWidth={2}
+            x1="4"
+            x2="20"
+            y1="12"
+            y2="12"
+          />
+        </Svg>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -73,5 +105,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       textAlign: 'right',
     },
+    add: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    addGlyph: { color: hull.accent },
   };
 });

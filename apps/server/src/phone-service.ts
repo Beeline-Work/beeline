@@ -10,6 +10,7 @@ import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import {
   createAgentPairingCode,
+  HUMAN_CORNER_TITLE_MAX_LENGTH,
   isServerEventKind,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
@@ -162,12 +163,19 @@ const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
 export const OPTIONAL_ENRICHMENT_DEADLINE_MS = 1_000;
 const ENRICHMENT_LOG_INTERVAL_MS = 60_000;
-
 function normalizeAgentName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name || name.length > 32 || !/^\p{L}[\p{L}\p{M}'’ -]*$/u.test(name))
     throw new Error('agent name must be a short spoken name');
   return name;
+}
+
+function normalizeHumanCornerTitle(value: unknown): string {
+  const title = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (!title) throw new Error('corner title is required');
+  if (title.length > HUMAN_CORNER_TITLE_MAX_LENGTH)
+    throw new Error(`corner title must be at most ${HUMAN_CORNER_TITLE_MAX_LENGTH} characters`);
+  return title;
 }
 
 /**
@@ -2495,6 +2503,11 @@ export class PhoneService {
       case 'cancelAgentTurn':
         await this.cancelAgentTurn(input as Input<'cancelAgentTurn'>, viewerId);
         return undefined as Output<Name>;
+      case 'createHumanCorner':
+        return (await this.createHumanCorner(
+          input as Input<'createHumanCorner'>,
+          viewerId,
+        )) as Output<Name>;
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
         return undefined as Output<Name>;
@@ -3586,13 +3599,16 @@ export class PhoneService {
       );
       if (!access.rowCount) throw new Error('room access denied');
       const room = (
-        await database.query<{ archived: boolean }>(
-          `SELECT archived_at IS NOT NULL archived FROM rooms
-           WHERE id=$1 AND parent_id IS NOT NULL FOR UPDATE`,
+        await database.query<{ archived: boolean; created_by: string | null; kind: string }>(
+          `SELECT room.archived_at IS NOT NULL archived,room.created_by,fact.kind
+           FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+           WHERE room.id=$1 AND room.parent_id IS NOT NULL FOR UPDATE OF room,fact`,
           [roomId],
         )
       ).rows[0];
       if (!room) throw new Error('corner not found');
+      if (room.kind === 'human' && room.created_by !== viewerId)
+        throw new Error('corner close access denied: only the creator can close this corner');
 
       if (!room.archived) {
         const active = await database.query<CommandRow>(
@@ -3923,6 +3939,52 @@ export class PhoneService {
       );
       await joinWorkspaceMembersToPublicRoom(db, input.workspaceId, id);
     });
+    return { id };
+  }
+  private async createHumanCorner(input: Input<'createHumanCorner'>, viewerId: string) {
+    const title = normalizeHumanCornerTitle(input.title);
+    const id = randomUUID();
+    await this.database.transaction(async (database) => {
+      const parent = (
+        await database.query<{ workspace_id: string }>(
+          `SELECT room.workspace_id FROM rooms room
+           JOIN memberships room_member ON room_member.room_id=room.id
+             AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+             AND workspace_member.removed_at IS NULL
+           JOIN identities viewer ON viewer.id=$2 AND viewer.kind='human'
+           WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
+           FOR SHARE OF room,room_member,workspace_member,viewer`,
+          [input.roomId, viewerId],
+        )
+      ).rows[0];
+      if (!parent) throw new Error('room access denied');
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+         VALUES($1,$2,$3,$4,$5)`,
+        [id, parent.workspace_id, input.roomId, viewerId, title],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
+         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
+        [input.roomId, id],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'owner')
+         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
+         DO UPDATE SET role='owner',removed_at=NULL`,
+        [parent.workspace_id, id, viewerId],
+      );
+      await database.query(
+        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind,lifecycle)
+         VALUES($1,$2,'','no_code','human','{"lifecycle":"working","checks":"unknown"}')`,
+        [id, viewerId],
+      );
+    });
+    this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
@@ -6445,7 +6507,8 @@ export class PhoneService {
     query: WorkspaceMemberListQuery = {},
   ): Promise<WorkspaceMemberListView> {
     const needle = this.rosterSearchNeedle(query.q);
-    const offset = Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0 ? query.offset! : 0;
+    const offset =
+      Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0 ? query.offset! : 0;
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
     const loadPeople = kind !== 'agent';
     const loadAgents = kind !== 'human';
@@ -6913,6 +6976,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'listRoomSchedules',
   'deleteRoomSchedule',
   'cancelAgentTurn',
+  'createHumanCorner',
   'requestCornerClose',
   'decideWritePermission',
   'decideAgentGrant',

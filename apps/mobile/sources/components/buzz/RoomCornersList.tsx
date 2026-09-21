@@ -64,7 +64,8 @@ export function RoomCornersList({
       renderItem={({ item }) => {
         const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
         const display = cornerDisplayState(item);
-        const opener = item.agent ? `Opened by ${item.agent.name}` : item.latestMessage?.text;
+        const owner = item.agent ?? item.initiator;
+        const opener = owner ? `Opened by ${owner.name}` : item.latestMessage?.text;
         const line = [opener, display.detail].filter(Boolean).join(' · ') || 'No activity yet';
         return (
           <Pressable
@@ -75,11 +76,11 @@ export function RoomCornersList({
             testID={`room-corner-${item.corner.id}`}
           >
             <IdentityMark
-              kind={item.agent?.kind === 'agent' ? 'agent' : 'human'}
-              seed={item.agent?.pubkey ?? item.corner.id}
-              avatarUrl={item.agent?.avatar}
-              face={item.agent?.face}
-              name={item.agent?.name ?? 'Corner'}
+              kind={owner?.kind === 'agent' ? 'agent' : 'human'}
+              seed={owner?.pubkey ?? item.corner.id}
+              avatarUrl={owner?.avatar}
+              face={owner?.face}
+              name={owner?.name ?? 'Corner'}
               size={26}
             />
             <View style={styles.rowCopy}>

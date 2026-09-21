@@ -207,7 +207,7 @@ export type DaemonOperationMap = {
   installConnector: Operation<InstallConnectorInput, WriteResult>;
   postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
   postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
-  getConnectorStatus: Operation<AgentInput, ConnectorStatus>;
+  getConnectorStatus: Operation<GetConnectorStatusInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
   revokeConnectionGrants: Operation<
@@ -850,7 +850,21 @@ export type InstallConnectorInput = AgentInput & {
   /** Final install report (the completion of a `postConnectorStatus` run). */
   readonly squireVersion?: string;
   readonly signedInAs?: string;
+  /**
+   * The sign-in surface, written authoritatively: a completing run normally
+   * omits it, and the row's stored surface is cleared with it, so no dead
+   * tunnel outlives the connect that printed it.
+   */
   readonly signIn?: ConnectorSignIn;
+};
+
+/**
+ * Read one connector row. `connectorId` names WHICH one: a helper carries the
+ * four Google tool rows beside its Squire row, and without it the answer is
+ * whichever row was created first.
+ */
+export type GetConnectorStatusInput = AgentInput & {
+  readonly connectorId?: string;
 };
 
 /**
@@ -864,7 +878,13 @@ export type PostConnectorStatusInput = AgentInput & {
   readonly steps: readonly ConnectorStep[];
   readonly squireVersion?: string;
   readonly signedInAs?: string;
-  readonly signIn?: ConnectorSignIn;
+  /**
+   * The sign-in surface this run printed. ABSENT means "no news" — the
+   * steps-only progress reports of one run must not wipe the surface that
+   * run already published. Explicit `null` is a run REPORTING that it has no
+   * ceremony, which clears whatever tunnel the previous run left behind.
+   */
+  readonly signIn?: ConnectorSignIn | null;
   readonly errorMessage?: string;
 };
 

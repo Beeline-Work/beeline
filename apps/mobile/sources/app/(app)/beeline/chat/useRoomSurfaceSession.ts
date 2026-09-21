@@ -47,6 +47,7 @@ import {
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
+import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 /** A socket that never answers must not hold the open's one Room read. */
@@ -92,14 +93,13 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
 export { markRoomOpen };
 
 function queueNewestFrameMark(detail?: string): void {
-  const raf = globalThis.requestAnimationFrame;
-  if (typeof raf !== 'function') {
+  if (
+    !scheduleAnimationFrame(() => {
+      scheduleAnimationFrame(() => markRoomOpen('newest-frame', detail));
+    })
+  ) {
     markRoomOpen('newest-js', detail);
-    return;
   }
-  raf(() => {
-    raf(() => markRoomOpen('newest-frame', detail));
-  });
 }
 
 /** Give React Native a turn to commit the cached (or fetched) transcript
@@ -107,9 +107,11 @@ function queueNewestFrameMark(detail?: string): void {
  * yield a macrotask instead of hanging on a stub rAF. */
 function yieldToPaint(): Promise<void> {
   return new Promise((resolve) => {
-    const raf = globalThis.requestAnimationFrame;
-    if (typeof raf === 'function') {
-      raf(() => raf(() => resolve()));
+    if (
+      scheduleAnimationFrame(() => {
+        scheduleAnimationFrame(() => resolve());
+      })
+    ) {
       return;
     }
     setTimeout(resolve, 0);

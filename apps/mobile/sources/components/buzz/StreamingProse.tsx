@@ -1,18 +1,7 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Text, TextInput, View, type TextStyle } from 'react-native';
-import { useReducedMotion } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
-import {
-  liveDraftDrainStore,
-  type LiveDraftDrainStore,
-} from '@/buzz/live-draft-drain';
+import React, { useEffect, useState } from 'react';
+import { type TextStyle } from 'react-native';
+import { liveDraftDrainStore, type LiveDraftDrainStore } from '@/buzz/live-draft-drain';
 import { MonoMarkdown } from './MonoMarkdown';
-
-type NativeTextTarget = {
-  setNativeProps?: (props: { text?: string }) => void;
-  textContent?: string | null;
-  value?: string;
-};
 
 type StreamingProseProps = {
   textStyle: TextStyle;
@@ -25,13 +14,14 @@ type StreamingProseProps = {
 };
 
 /**
- * The narrow live-text surface for one draft.
+ * The live text surface for one draft.
  *
- * Arrivals do not enter this component. The store's one fixed scheduler calls
- * `setNativeProps({ text })` on the live TextInput as it drains queued
- * characters. React runs only when complete leading lines become a new
- * immutable plain-text block. The durable row later replaces this component
- * and invokes MonoMarkdown once for the finished message.
+ * Arrivals do not enter React. The drain store coalesces them and commits the
+ * whole latest value on its frame gate, which is the only thing that changes
+ * this row's text state. The text renders through the SAME `MonoMarkdown` the
+ * durable reply settles into, so a half-written `**bold**` reads the same
+ * while streaming as it does afterwards; the caller's provisional tone is the
+ * only difference. No character-rate reveal, no native TextInput.
  */
 export function StreamingProse({
   markdown,
@@ -44,7 +34,7 @@ export function StreamingProse({
     return <MonoMarkdown markdown={markdown ?? ''} testID={testID} textStyle={textStyle} />;
   }
   return (
-    <NativeStreamingProse
+    <LiveMarkdownProse
       store={store}
       streamKey={streamKey}
       testID={testID}
@@ -53,28 +43,7 @@ export function StreamingProse({
   );
 }
 
-const LiveNativeText = React.forwardRef<
-  NativeTextTarget,
-  { textStyle: TextStyle; testID?: string }
->(function LiveNativeText({ textStyle, testID }, ref) {
-  return (
-    <TextInput
-      ref={ref as React.Ref<TextInput>}
-      caretHidden
-      defaultValue=""
-      editable={false}
-      multiline
-      pointerEvents="none"
-      scrollEnabled={false}
-      showSoftInputOnFocus={false}
-      style={[textStyle, styles.nativeText]}
-      testID={testID}
-      underlineColorAndroid="transparent"
-    />
-  );
-});
-
-function NativeStreamingProse({
+function LiveMarkdownProse({
   store,
   streamKey,
   textStyle,
@@ -82,70 +51,19 @@ function NativeStreamingProse({
 }: Required<Pick<StreamingProseProps, 'store' | 'streamKey' | 'textStyle'>> & {
   testID?: string;
 }) {
-  const nativeTextRef = useRef<NativeTextTarget | null>(null);
-  const liveTextRef = useRef('');
-  const [blocks, setBlocks] = useState<readonly string[]>(
-    () => store.getPresentation(streamKey).blocks,
-  );
-  const reducedMotion = useReducedMotion();
-
-  const setNativeText = useCallback((text: string) => {
-    liveTextRef.current = text;
-    const target = nativeTextRef.current;
-    if (!target) return;
-    target.setNativeProps?.({ text });
-    if ('value' in target) target.value = text;
-    else if ('textContent' in target) target.textContent = text;
-  }, []);
+  const [text, setText] = useState(() => store.getPresentation(streamKey).text);
 
   useEffect(() => {
-    store.setInstant(streamKey, reducedMotion);
-  }, [reducedMotion, store, streamKey]);
-
-  useEffect(() => {
-    const initial = store.getPresentation(streamKey);
-    liveTextRef.current = initial.liveText;
-    setBlocks(initial.blocks);
-    setNativeText(initial.liveText);
+    setText(store.getPresentation(streamKey).text);
     return store.attach(streamKey, {
       paint(update) {
-        setNativeText(update.liveText);
-        if (update.promoted.length > 0) setBlocks(update.blocks);
+        setText(update.text);
       },
-      replace(next) {
-        setNativeText(next.liveText);
-        setBlocks(next.blocks);
+      replace(presentation) {
+        setText(presentation.text);
       },
     });
-  }, [setNativeText, store, streamKey]);
+  }, [store, streamKey]);
 
-  useLayoutEffect(() => {
-    setNativeText(liveTextRef.current);
-  }, [blocks, setNativeText]);
-
-  return (
-    <View style={styles.stack} testID={testID}>
-      {blocks.map((block, index) => (
-        <Text key={index} style={textStyle}>
-          {block}
-        </Text>
-      ))}
-      <LiveNativeText
-        ref={nativeTextRef}
-        testID={testID ? `${testID}-live` : undefined}
-        textStyle={textStyle}
-      />
-    </View>
-  );
+  return <MonoMarkdown markdown={text} testID={testID} textStyle={textStyle} />;
 }
-
-const styles = StyleSheet.create({
-  stack: { width: '100%', minWidth: 0 },
-  nativeText: {
-    width: '100%',
-    minWidth: 0,
-    padding: 0,
-    margin: 0,
-    textAlignVertical: 'top',
-  },
-});

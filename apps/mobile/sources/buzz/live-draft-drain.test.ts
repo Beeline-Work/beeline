@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  LIVE_DRAFT_KEEP_CHARS,
   LIVE_DRAFT_TICK_MS,
   applyLiveOverlayStructure,
   createLiveDraftDrainStore,
@@ -85,8 +84,29 @@ describe('live draft drain', () => {
     expect(metrics.paints).toBeLessThan(800 / 3);
     expect(metrics.paintedCharacters).toBe(cumulative.length);
     expect(clock.maxScheduled).toBe(1);
-    const presentation = store.getPresentation('turn');
-    expect(presentation.blocks.join('') + presentation.liveText).toBe(cumulative);
+    expect(store.getPresentation('turn')).toEqual({ text: cumulative });
+  });
+
+  it('commits the whole latest snapshot on each eligible frame, never a paced slice', () => {
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    const row = sink();
+    store.attach('turn', row.value);
+
+    store.publish('turn', 'first');
+    clock.runNext();
+    expect(row.paints.at(-1)).toEqual({ text: 'first' });
+
+    // A burst of arrivals between frames is one full commit, not a drip.
+    store.publish('turn', 'first second third');
+    clock.runNext();
+    expect(row.paints.at(-1)).toEqual({ text: 'first second third' });
+
+    // Once the producer stops, the lane stops: no residual reveal timer.
+    expect(clock.timers.size).toBe(0);
+    const paintsAfterProducerStopped = row.value.paint.mock.calls.length;
+    clock.runAll();
+    expect(row.value.paint).toHaveBeenCalledTimes(paintsAfterProducerStopped);
   });
 
   it('shares that one timer across concurrent turns and advances only on its fixed tick', () => {
@@ -106,51 +126,29 @@ describe('live draft drain', () => {
     expect(clock.at).toBe(LIVE_DRAFT_TICK_MS);
     expect(first.value.paint).toHaveBeenCalledTimes(1);
     expect(second.value.paint).toHaveBeenCalledTimes(1);
-    expect(clock.timers.size).toBe(1);
+    // Both lanes are fully committed; nothing is pending, so the shared timer
+    // stops rather than ticking out a cosmetic drain.
+    expect(clock.timers.size).toBe(0);
   });
 
-  it('notifies scroll followers on row-height promotion, never on arrival or a native paint', () => {
+  it('notifies commit followers when a row grows, never on a queued arrival', () => {
     const clock = new ManualClock();
     const store = createLiveDraftDrainStore({ clock });
     const row = sink();
     const follow = vi.fn();
     store.attach('turn', row.value);
-    const unsubscribe = store.subscribePromotion(follow);
+    const unsubscribe = store.subscribeCommit(follow);
 
     store.publish('turn', 'queued words');
     expect(follow).not.toHaveBeenCalled();
     clock.runNext();
-    expect(follow).not.toHaveBeenCalled();
-
-    store.publish(
-      'turn',
-      `queued words${Array.from({ length: 12 }, (_, line) => `\nline ${line}`).join('')}`,
-    );
-    clock.runAll();
     expect(follow).toHaveBeenCalledWith('turn');
-    const callsAfterFirstDrain = follow.mock.calls.length;
-    expect(callsAfterFirstDrain).toBeGreaterThan(0);
+    const callsAfterFirstCommit = follow.mock.calls.length;
 
     unsubscribe();
-    store.publish('turn', `${store.getReceived('turn')}\nmore queued words`);
+    store.publish('turn', `${store.getReceived('turn')} more words`);
     clock.runAll();
-    expect(follow).toHaveBeenCalledTimes(callsAfterFirstDrain);
-  });
-
-  it('promotes immutable line batches and keeps only the short tail live', () => {
-    const clock = new ManualClock();
-    const store = createLiveDraftDrainStore({ clock });
-    const row = sink();
-    store.attach('turn', row.value);
-    const text = Array.from({ length: 40 }, (_, line) => `line ${line}\n`).join('');
-
-    store.publish('turn', text);
-    clock.runAll();
-
-    const presentation = store.getPresentation('turn');
-    expect(presentation.blocks.length).toBeGreaterThan(0);
-    expect(presentation.liveText.split('\n').length - 1).toBeLessThan(12);
-    expect(presentation.blocks.join('') + presentation.liveText).toBe(text);
+    expect(follow).toHaveBeenCalledTimes(callsAfterFirstCommit);
   });
 
   it('replaces a non-prefix rewrite immediately and flushes remaining queued text when stopped', () => {
@@ -162,34 +160,22 @@ describe('live draft drain', () => {
     store.publish('turn', 'the first draft');
     clock.runNext();
     store.publish('turn', 'a replacement');
-    expect(row.replacements.at(-1)).toEqual({ blocks: [], liveText: 'a replacement' });
+    expect(row.replacements.at(-1)).toEqual({ text: 'a replacement' });
     expect(store.getMetrics('turn')).toMatchObject({ rewrites: 1 });
 
     store.publish('turn', 'a replacement with queued bytes');
     store.stop('turn');
     clock.runAll();
-    expect(store.getPresentation('turn').liveText).toBe('a replacement with queued bytes');
-  });
-
-  it('promotes a wrapping paragraph so the live node never grows with the message', () => {
-    const clock = new ManualClock();
-    const store = createLiveDraftDrainStore({ clock });
-    const row = sink();
-    store.attach('turn', row.value);
-    const text = `${'word '.repeat(400).trim()}.`;
-    store.publish('turn', text);
-    clock.runAll();
-    const presentation = store.getPresentation('turn');
-    expect(presentation.blocks.join('').length).toBeGreaterThan(0);
-    expect(presentation.liveText.length).toBeLessThanOrEqual(LIVE_DRAFT_KEEP_CHARS);
-    expect(presentation.blocks.join('') + presentation.liveText).toBe(text);
+    expect(store.getPresentation('turn')).toEqual({
+      text: 'a replacement with queued bytes',
+    });
   });
 
   it('stops the scheduler on leave even with a sink and queued work still attached', () => {
-    // PR 1487's 32ms drain keeps ticking while StreamingProse stays mounted
-    // (native-stack does not unmount the Room on blur). That occupies the JS
-    // thread until the turn ends, so a back press and the next Room open wait
-    // on the message painting. Leave must cancel the timer without flushing.
+    // The drain keeps ticking while StreamingProse stays mounted (native-stack
+    // does not unmount the Room on blur). That occupies the JS thread until the
+    // turn ends, so a back press and the next Room open wait on the message
+    // painting. Leave must cancel the timer without flushing.
     const clock = new ManualClock();
     const store = createLiveDraftDrainStore({ clock });
     const row = sink();
@@ -232,9 +218,7 @@ describe('live draft drain', () => {
 
     expect(clock.timers.size).toBe(0);
     expect(row.replacements.at(-1)).toEqual(store.getPresentation('turn'));
-    expect(store.getPresentation('turn').blocks.join('') + store.getPresentation('turn').liveText).toBe(
-      text,
-    );
+    expect(store.getPresentation('turn')).toEqual({ text });
   });
 
   it('publishes text outside structural overlay state after the row opens', () => {

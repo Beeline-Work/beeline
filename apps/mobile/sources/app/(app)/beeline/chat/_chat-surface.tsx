@@ -2086,7 +2086,7 @@ export function BuzzChatSurface({
   }, [desktopTranscript]);
   useEffect(
     () =>
-      liveDraftStore.subscribePromotion(() => {
+      liveDraftStore.subscribeCommit(() => {
         if (!isPinnedToTailRef.current || userDraggingRef.current) return;
         scrollToNewestMessage();
       }),

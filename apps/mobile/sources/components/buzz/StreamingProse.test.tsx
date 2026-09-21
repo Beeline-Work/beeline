@@ -103,10 +103,27 @@ describe('StreamingProse', () => {
     expect(collectText(renderer.toJSON())).toContain('Finished');
   });
 
+  it('renders streamed markdown through the same renderer as the settled reply', () => {
+    const clock = new ManualClock();
+    const store = createLiveDraftDrainStore({ clock });
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <StreamingProse streamKey="agent:turn" store={store} textStyle={PROVISIONAL} />,
+      );
+    });
+    act(() => store.publish('agent:turn', '**The first scroll: the ancient beacons.**'));
+    act(() => clock.runNext());
+
+    const text = collectText(renderer.toJSON());
+    expect(text).toContain('The first scroll: the ancient beacons.');
+    expect(text).not.toContain('**');
+    act(() => renderer.unmount());
+  });
+
   it('renders far fewer times than the 800 cumulative deltas it receives', () => {
     const clock = new ManualClock();
     const store = createLiveDraftDrainStore({ clock });
-    const nativeUpdates: string[] = [];
     let commits = 0;
     let renderer!: ReactTestRenderer;
     act(() => {
@@ -114,19 +131,9 @@ describe('StreamingProse', () => {
         <React.Profiler id="live-row" onRender={() => (commits += 1)}>
           <StreamingProse streamKey="agent:turn" store={store} textStyle={PROVISIONAL} />
         </React.Profiler>,
-        {
-          createNodeMock: (element: { type: unknown }) =>
-            element.type === 'TextInput'
-              ? {
-                  setNativeProps: (props: { text?: string }) =>
-                    nativeUpdates.push(props.text ?? ''),
-                }
-              : {},
-        },
       );
     });
     const mountedCommits = commits;
-    const nativeUpdatesBeforeArrivals = nativeUpdates.length;
 
     let cumulative = '';
     act(() => {
@@ -138,7 +145,6 @@ describe('StreamingProse', () => {
 
     // Arrival is queueing, not paint and not React work.
     expect(commits).toBe(mountedCommits);
-    expect(nativeUpdates).toHaveLength(nativeUpdatesBeforeArrivals);
 
     let ticks = 0;
     while (clock.timers.size) {
@@ -152,10 +158,7 @@ describe('StreamingProse', () => {
     expect(metrics.paints).toBeLessThan(800 / 3);
     expect(commits - mountedCommits).toBeLessThanOrEqual(metrics.paints);
     expect(commits - mountedCommits).toBeLessThan(800 / 3);
-    expect(nativeUpdates.length).toBeGreaterThan(0);
-    expect(nativeUpdates.length).toBeGreaterThanOrEqual(metrics.paints);
-    const presentation = store.getPresentation('agent:turn');
-    expect(presentation.blocks.join('') + presentation.liveText).toBe(cumulative);
+    expect(store.getPresentation('agent:turn')).toEqual({ text: cumulative });
     act(() => renderer.unmount());
   });
 
@@ -166,7 +169,6 @@ describe('StreamingProse', () => {
     act(() => {
       renderer = create(
         <StreamingProse streamKey="agent:turn" store={store} textStyle={PROVISIONAL} />,
-        { createNodeMock: () => ({ setNativeProps: vi.fn() }) },
       );
     });
 
@@ -174,8 +176,9 @@ describe('StreamingProse', () => {
     act(() => clock.runNext());
     act(() => store.publish('agent:turn', 'replacement'));
 
-    expect(store.getPresentation('agent:turn')).toEqual({ blocks: [], liveText: 'replacement' });
+    expect(store.getPresentation('agent:turn')).toEqual({ text: 'replacement' });
     expect(store.getMetrics('agent:turn').rewrites).toBe(1);
+    expect(collectText(renderer.toJSON())).toContain('replacement');
     act(() => renderer.unmount());
   });
 });

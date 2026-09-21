@@ -62,8 +62,10 @@ describe('Room composer status layout', () => {
     // what this file holds is that the screen mounts that shared column
     // rather than a second hand-rolled copy of it.
     expect(source).toContain('const bottomChrome = roomBottomChromeStyles(groknight);');
-    expect(source).toContain('hangingTurnChrome: bottomChrome.hangingTurnChrome,');
     expect(source).toContain('inputBar: bottomChrome.composerRow,');
+    // The band's strip is `TurnBandSlot`, which styles itself from that same
+    // shared column and holds the band's measured height.
+    expect(source).toContain('<TurnBandSlot testID="hanging-turn-chrome">');
     expect(source).toContain('styles.bottomChromeStack');
     const stack = source.slice(source.indexOf('styles.bottomChromeStack'));
     expect(stack.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);

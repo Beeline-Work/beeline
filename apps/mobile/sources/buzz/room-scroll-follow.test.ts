@@ -377,7 +377,9 @@ describe('the chat screen wires the scroll rule', () => {
 
   it('keeps the phone turn line out of the composer footprint and the tail padding', () => {
     expect(chatSource).toContain('const composerFootprint = composerHeight + keyboardHeight;');
-    expect(chatSource).toContain('styles.hangingTurnChrome');
+    // The band's own strip is `TurnBandSlot`, a sibling of the composer row
+    // holding its own measured height — not part of the composer's footprint.
+    expect(chatSource).toContain('<TurnBandSlot');
     expect(chatSource).toContain('paddingTop: phoneTranscriptTailPadding({');
     expect(chatSource).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
     expect(chatSource).toContain('pushedChromeVisible: agentsOffline');

@@ -99,7 +99,7 @@ import {
   type ComposerAckPresentation,
 } from '@/buzz/room-indicators';
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
-import { TurnSettledLine } from '@/components/buzz/TurnProgressLine';
+import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
@@ -2337,6 +2337,19 @@ export function BuzzChatSurface({
   // turn/no-turn). Native layout can update the pinned ref before an effect
   // runs, preserving the old offset as an empty gap. Capture the verdict in
   // render.
+  //
+  // The turn band is the one piece of that chrome a scroll cannot rescue. It
+  // is in flow, so mounting it takes its own height out of the list's
+  // viewport and the newest row moves — and on an inverted list pinned at the
+  // tail that row is already at offset 0, so re-pinning only re-glues it to
+  // the bottom that just moved and compensating would need a negative offset.
+  // The band's slot is therefore held open at all times, by `TurnBandSlot`:
+  // it holds the band's measured height exactly, whether an agent is working
+  // or not, so the list's height stops depending on the band and the
+  // transcript does not move in either direction.
+  // `bottomChromeLayoutKey` still carries turn/no-turn: the follow it drives
+  // is now a no-op re-pin for that half of the key, and still the real thing
+  // for the offline hint, which holds no reserved slot.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -4896,28 +4909,32 @@ export function BuzzChatSurface({
             </View>
           ) : (
             <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-              {/* Phone turn chrome is an in-flow band above the composer —
-                hairline, then the line, then the composer's hairline — so it
-                cannot paint over the last message. The transcript tail stays
-                the ordinary 12px. Desktop keeps the slot inside inputBar. */}
-              {!desktopExperience && composerAck && (
-                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
-                  <TurnProgressLine
-                    label={composerAck.label}
-                    startedAt={composerAck.startedAt}
-                    received={composerAck.received}
-                    stopping={stoppingThisTurn}
-                    onStop={
-                      composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                    }
-                    testID="turn-progress-line"
-                  />
-                </View>
-              )}
-              {!desktopExperience && !composerAck && settledTurn && (
-                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
-                  <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                </View>
+              {/* Phone turn chrome is an in-flow band above the composer, so
+                it cannot paint over the last message, and the transcript tail
+                stays the ordinary 12px. The SLOT is mounted whether or not an
+                agent is working and holds the band's measured height (C97
+                above): an in-flow band that came and went would take its own
+                height out of the list's viewport and move the newest row each
+                way. An empty strip above the composer is the price, and it
+                carries no rule and no surface of its own. Desktop keeps the
+                slot inside inputBar. */}
+              {!desktopExperience && (
+                <TurnBandSlot testID="hanging-turn-chrome">
+                  {composerAck ? (
+                    <TurnProgressLine
+                      label={composerAck.label}
+                      startedAt={composerAck.startedAt}
+                      received={composerAck.received}
+                      stopping={stoppingThisTurn}
+                      onStop={
+                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
+                      }
+                      testID="turn-progress-line"
+                    />
+                  ) : settledTurn ? (
+                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                  ) : null}
+                </TurnBandSlot>
               )}
               {/* No pinned corner line lives here. A Room holds many corners at
                 once, so one line above the composer could only ever name one of
@@ -6051,10 +6068,10 @@ const styles = StyleSheet.create((theme) => {
       flexGrow: 1,
     },
     // The stack, the in-flow turn band, and the composer row are one measured
-    // column — `buzz/room-bottom-chrome.ts` owns all three.
+    // column — `buzz/room-bottom-chrome.ts` owns all three. The band's own
+    // strip is styled inside `TurnBandSlot`, which also holds its height.
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
-    hangingTurnChrome: bottomChrome.hangingTurnChrome,
     previewLinkRow: {
       marginTop: 6,
       flexDirection: 'row',

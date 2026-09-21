@@ -27,7 +27,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { canRemoveRoomParticipant } from '@/buzz/room-management';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
+import { MemberRosterRow, memberRosterTitle } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { HullSurface, MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -1108,7 +1108,15 @@ export default function BuzzMembers() {
                     {ownsSelectedAgent ? 'Agent settings' : 'Agent'}
                   </Text>
                   <View style={styles.agentTitleRow}>
-                    <Text style={styles.name}>{selectedAgent.agent.identity.name}</Text>
+                    <Text numberOfLines={1} style={styles.name}>
+                      {selectedAgent.agent.identity.name}
+                    </Text>
+                    {/* The handle is the string you type to summon this agent,
+                        so the panel names it the way the roster row above does
+                        rather than leaving it to the row alone. */}
+                    <Text numberOfLines={1} style={styles.detail} testID="agent-handle">
+                      {memberRosterTitle(selectedAgent.agent.identity)}
+                    </Text>
                     {ownsSelectedAgent && (
                       <TouchableOpacity
                         accessibilityLabel="Edit agent settings"
@@ -1491,7 +1499,8 @@ const styles = StyleSheet.create((theme) => {
     loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     rowCopy: { flex: 1, minWidth: 0 },
-    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    // A long display name truncates before it can crowd the handle beside it.
+    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flexShrink: 1 },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { color: hull.textMuted },
     personDetail: { gap: hull.space.sm, paddingVertical: hull.space.sm },
@@ -1587,14 +1596,19 @@ const styles = StyleSheet.create((theme) => {
     },
     switchLabelOn: { color: hull.accent },
     switchError: { ...Typography.default(), ...hull.type.meta, color: hull.danger },
+    // Compact next to the identity copy, but still a full 44pt target. The
+    // red is the border: `dialogDanger` clears the 3:1 non-text floor on both
+    // canvases, where the same value as small ink would sit at 4.36:1 on
+    // Obsidian and 3.81:1 on Bone — under the 4.5:1 text floor. The word
+    // carries the meaning either way, so the label takes the primary ink.
     removeAgentControl: {
-      minHeight: 32,
+      minHeight: 44,
       justifyContent: 'center',
       paddingHorizontal: hull.space.sm,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.dialogDanger,
       borderRadius: hull.radius,
     },
-    removeAgentText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
+    removeAgentText: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
   };
 });

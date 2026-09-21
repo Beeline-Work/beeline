@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { beelineThemes } from '@/buzz/groknight';
+
 const source = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
 const memberRow = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
@@ -65,7 +67,7 @@ describe('Members page layout contract', () => {
     // The old danger zone — a red rule, a paragraph of warning copy and a
     // full-width destructive button at the foot of the panel — is gone. The
     // confirm dialog already states the whole consequence of removal, so the
-    // page keeps only the control, sat next to the name and owner byline.
+    // page keeps only the control, sat next to the handle and owner byline.
     expect(source).not.toContain('dangerZone');
     expect(source).not.toContain('dangerCopy');
     expect(source).not.toContain('BAN AGENT');
@@ -74,10 +76,42 @@ describe('Members page layout contract', () => {
       source.indexOf('<View style={styles.detailHeading}>'),
       source.indexOf('testID="close-agent-settings"'),
     );
+    expect(heading).toContain('testID="agent-handle"');
     expect(heading).toContain('testID="agent-owner"');
     expect(heading).toContain('testID="remove-agent"');
     expect(heading).toContain('style={styles.removeAgentControl}');
+  });
+
+  it('keeps the compact control at the 44pt target and above the contrast floors', () => {
+    // Compact is the width and the single word, never a shrunken hit target.
+    expect(styleBlock(source, 'removeAgentControl')).toContain('minHeight: 44');
     expect(styleBlock(source, 'removeAgentControl')).toContain('borderColor: hull.dialogDanger');
-    expect(styleBlock(source, 'removeAgentText')).toContain('color: hull.dialogDanger');
+    expect(styleBlock(source, 'removeAgentText')).toContain('color: hull.textPrimary');
+
+    const channel = (hex: string) => {
+      const part = parseInt(hex, 16) / 255;
+      return part <= 0.03928 ? part / 12.92 : Math.pow((part + 0.055) / 1.055, 2.4);
+    };
+    const luminance = (hex: string) => {
+      const value = hex.replace('#', '');
+      const [r, g, b] = [0, 2, 4].map((at) => channel(value.slice(at, at + 2)));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (ink: string, ground: string) => {
+      const [brighter, darker] = [luminance(ink), luminance(ground)].sort((x, y) => y - x);
+      return (brighter + 0.05) / (darker + 0.05);
+    };
+
+    // The panel is a raised surface inside the page, so both grounds count.
+    // The label holds the 4.5:1 text floor; the red border holds the 3:1
+    // non-text floor. `dialogDanger` as small ink would hold neither — 4.36:1
+    // on Obsidian, 3.81:1 on Bone — which is why the word is not the red part.
+    for (const set of Object.values(beelineThemes)) {
+      for (const ground of [set.bgBase, set.bgRaised]) {
+        expect(contrast(set.textPrimary, ground)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(set.dialogDanger, ground)).toBeGreaterThanOrEqual(3);
+        expect(contrast(set.dialogDanger, ground)).toBeLessThan(4.5);
+      }
+    }
   });
 });

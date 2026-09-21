@@ -6,24 +6,18 @@
  * (`connector-squire.ts`) so the assignment loop stays Squire-shaped and
  * tests keep driving a mock.
  *
- * The server is spawned on demand (`npx -y @trusty-squire/mcp@latest server`),
- * initialized once, and left running for the helper's lifetime; a failed call
- * or a dead child tears the session down so the next call starts a fresh one.
- * Omitting `server` runs Squire's connect CLI instead of the vault MCP.
+ * The helper vault client is the host façade: one broker per profile, never
+ * an electing `npx … server`. KEYS do not use this spawn — they read the
+ * session the app owns (`readVaultFromSession`). A missing broker is
+ * `broker unavailable`, not a second election.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
+import { squireFacadeLaunch } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
-
-/**
- * The vault MCP server argv: `@latest` plus the `server` subcommand.
- * Omitting `server` runs Squire's connect CLI, which takes the one
- * browser claim and paints every other tool (Google Workspace included)
- * with "another Trusty Squire session is already using the browser".
- */
-export const SQUIRE_MCP_SERVER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'server'] as const;
 
 export type SquireMcpClientOptions = {
   /** Spawn command; defaults to the published package through npx. */
@@ -98,10 +92,11 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
+    const façade = squireFacadeLaunch(homedir());
     const child = (this.options.spawn ?? spawn)(
-      this.options.command ?? 'npx',
-      [...(this.options.args ?? [...SQUIRE_MCP_SERVER_ARGS])],
-      { env: this.options.env ?? squireConnectProcessEnv() },
+      this.options.command ?? façade.command,
+      [...(this.options.args ?? façade.args)],
+      { env: { ...squireConnectProcessEnv(), ...façade.env, ...this.options.env } },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

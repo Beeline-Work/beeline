@@ -1,16 +1,11 @@
 /**
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
- * One helper carries ONE Squire account (captain decision 2026-09-14). The
- * install runs Squire's own `connect --skip-browser` command through a
- * STREAMING runner that captures the hosted sign-in URL from live stdout as
- * soon as it appears (the machine token and sign-in surface print before
- * connect blocks waiting for the human). `--skip-browser` means connect never
- * launches its own Chrome — it prints a hosted sign-in page for the human's
- * own browser, so the install works on a headless helper with no local
- * display or tunnel binaries. The URL is surfaced as a `streamed-page` signIn
- * immediately; the connect process stays alive in the background while the
- * human completes sign-in on that page.
+ * Connect is three ordinary facts (`squire-connect-state.ts`): process,
+ * visibility, and credential. The install starts a browser only when all
+ * three are empty. A machine with a seat display uses that screen and its
+ * Chrome; the virtual display is for headless hosts only. Connected is the
+ * session file this helper owns, never a phrase Squire printed.
  *
  * The old exit-only `ShellRunner` (defaultShellRunner) remains for the
  * version probe and other quick commands. A new `StreamedShellRunner`
@@ -51,6 +46,19 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import {
+  connectStatusFromFacts,
+  credentialFromSession,
+  hostSeatDisplay,
+  isSeatDisplay,
+  publishedSquireVisibility,
+  publishSquireVisibility,
+  readSquireSession,
+  shouldStartSquireConnect,
+  visibilitySignIn,
+  type SquireConnectFacts,
+  type SquireProcessFact,
+} from './squire-connect-state.js';
 import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
   ConnectionDetail,
@@ -253,6 +261,56 @@ function removeProfileLock(lockPath: string): void {
  * another Squire server (or another agent system on this machine) is not
  * safe; the caller surfaces `action` instead.
  */
+/** PROCESS: whose browser, if any, holds the profile right now. */
+export function observeSquireProcess(options?: {
+  readonly profileDir?: string;
+  readonly lockRoot?: string;
+}): SquireProcessFact {
+  const claim = squireConnectSession();
+  if (claim?.pid !== undefined && isProcessAlive(claim.pid)) {
+    return { kind: 'ours', pid: claim.pid };
+  }
+  const profileDir = options?.profileDir ?? squireChromeProfileDir();
+  const lockRoot = options?.lockRoot ?? tmpdir();
+  const lockPath = squireProfileLockPath(profileDir, lockRoot);
+  const owner = readLockFileOwner(lockPath);
+  if (!owner) {
+    try {
+      lstatSync(lockPath);
+      return { kind: 'unidentified' };
+    } catch {
+      return { kind: 'none' };
+    }
+  }
+  if (claim?.pid !== undefined && owner.pid === claim.pid) {
+    return lockOwnerIsAlive(owner) ? { kind: 'ours', pid: owner.pid } : { kind: 'none' };
+  }
+  if (owner.host !== hostname() || lockOwnerIsAlive(owner)) {
+    return { kind: 'foreign', pid: owner.pid, action: squireForeignClaimAction(owner) };
+  }
+  return { kind: 'none' };
+}
+
+export function observeSquireConnectFacts(options?: {
+  readonly profileDir?: string;
+  readonly lockRoot?: string;
+  readonly configHome?: string;
+}): SquireConnectFacts {
+  const processFact = observeSquireProcess(options);
+  const published = publishedSquireVisibility();
+  const visibility =
+    published.kind === 'none'
+      ? published
+      : processFact.kind === 'ours'
+        ? { ...published, held: true }
+        : { ...published, held: false };
+  return {
+    process: processFact,
+    visibility,
+    credential: credentialFromSession(readSquireSession(options?.configHome), visibility),
+  };
+}
+
 export function reclaimSquireProfileClaim(options?: {
   readonly profileDir?: string;
   readonly lockRoot?: string;
@@ -324,6 +382,8 @@ export type StreamedCommandResult = {
   /** The sign-in surface, captured from live output. Undefined when the process
    * exited or errored before printing a URL. */
   readonly signIn?: ConnectorSignIn;
+  /** The host already has a seat display; the person looks at that screen. */
+  readonly localScreen?: boolean;
   /** Kill the background process and clean up. Safe to call even if the
    * process has already exited. */
   readonly abort: () => void;
@@ -413,6 +473,19 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
       }
     };
 
+    const display = env?.DISPLAY?.trim();
+    if (display && isSeatDisplay(display)) {
+      queueMicrotask(() => {
+        finish({
+          stdout,
+          stderr,
+          pid: child.pid ?? undefined,
+          localScreen: true,
+          abort,
+        });
+      });
+    }
+
     const checkOutput = () => {
       const combined = `${stdout}\n${stderr}`;
       const signIn = parseConnectOutput(combined);
@@ -492,6 +565,13 @@ export type InstallSquireOptions = {
    */
   readonly profileDir?: string;
   readonly lockRoot?: string;
+  /** Session file root (`<configHome>/trusty-squire/session.json`). */
+  readonly configHome?: string;
+  /**
+   * Seat display to use (`:0`). `null` is headless. Omitted detects the
+   * host screen; a real screen never starts a virtual display.
+   */
+  readonly seatDisplay?: string | null;
 };
 
 export type InstallSquireResult = {
@@ -585,27 +665,23 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
   };
 }
 
-/** The account line Squire prints once a human completes sign-in. */
-export function parseSignedInAs(output: string): string | undefined {
-  return output.match(/signed in as ([^\s,;]+)/i)?.[1];
-}
-
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
- * Order: helper reached → trusty-squire installed → waiting for sign-in →
- * paired to the workspace. The connect command runs through a STREAMING
- * runner that captures the hosted sign-in URL from live stdout as soon as it
- * is printed (before the process exits). The connect process stays alive in
- * the background for the human to complete sign-in. The post-install
- * `pairSquire` probe confirms the account is live.
- *
- * A failed step ends the report with a clear reason and everything after it
- * stays pending.
+ * Process, visibility, and credential are observed first. A valid session
+ * is connected. A live or published surface stays installing and does not
+ * start another browser. Connect runs only when all three facts are empty.
  */
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
   const profileDir = options.profileDir ?? squireChromeProfileDir();
   const lockRoot = options.lockRoot ?? tmpdir();
+  const configHome = options.configHome;
+  const seatDisplay =
+    options.seatDisplay === null
+      ? undefined
+      : options.seatDisplay === undefined
+        ? hostSeatDisplay()
+        : options.seatDisplay;
   const run = options.run ?? defaultShellRunner;
   const streamRun = options.streamRun ?? defaultStreamedRunner;
   const log = options.log ?? (() => {});
@@ -620,12 +696,43 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     emit();
     return { status: 'error', steps, errorMessage: reason };
   };
+  const signedInAs = (facts: SquireConnectFacts) =>
+    facts.credential.kind === 'valid' ? facts.credential.accountId : undefined;
   emit();
 
-  // A fresh connect attempt owns the browser session: release whatever a
-  // previous attempt still claims — aborting a live owner, clearing a dead
-  // one — so closing the noVNC page and retrying is never blocked by a
-  // phantom "another session is already using the browser".
+  const observed = observeSquireConnectFacts({ profileDir, lockRoot, configHome });
+  if (connectStatusFromFacts(observed) === 'connected') {
+    publishSquireVisibility({ kind: 'none' });
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'done'));
+    push(step('paired to workspace', 'done'));
+    return {
+      status: 'connected',
+      steps,
+      ...(signedInAs(observed) ? { signedInAs: signedInAs(observed) } : {}),
+    };
+  }
+  if (!shouldStartSquireConnect(observed)) {
+    const wait =
+      observed.process.kind === 'foreign'
+        ? observed.process.action
+        : observed.process.kind === 'unidentified'
+          ? "Trusty Squire's browser is locked by a process nobody can identify"
+          : observed.visibility.kind === 'local'
+            ? 'complete the sign-in on that screen'
+            : undefined;
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'running', wait));
+    return {
+      status: 'installing',
+      steps,
+      ...(visibilitySignIn(observed.visibility)
+        ? { signIn: visibilitySignIn(observed.visibility) }
+        : {}),
+      ...(signedInAs(observed) ? { signedInAs: signedInAs(observed) } : {}),
+    };
+  }
+
   const previousPid = squireConnectSession()?.pid;
   releaseSquireConnectSession(log);
   const claim = reclaimSquireProfileClaim({
@@ -635,12 +742,11 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
   });
   if (claim.kind === 'blocked-foreign') {
-    push(step('trusty-squire installed', 'failed', claim.action));
-    return fail(claim.action);
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'running', claim.action));
+    return { status: 'installing', steps };
   }
 
-  // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
-  // one against the current published release.
   const resolution = await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
     log(
@@ -648,69 +754,76 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     );
   }
 
-  // Squire's `connect --skip-browser` prints a hosted sign-in URL for the
-  // human's own browser and then blocks waiting for sign-in. It never launches
-  // its own Chrome, so no local display or tunnel binaries are needed on a
-  // headless helper. The streaming runner captures the URL from live stdout
-  // and resolves immediately — keeping the process alive.
-  const install = await streamRun(
-    'npx',
-    [
-      ...resolution.npxArgs,
-      'connect',
-      '--force-relogin=google',
-      '--target=codex',
-      '--skip-browser',
-    ],
-    squireConnectProcessEnv(profileDir),
-  );
-  if (!install.signIn) {
-    const stderr = install.stderr.trim();
-    let stepReason = stderr || 'connect printed no sign-in URL';
-    let failReason = stderr || 'the trusty-squire connect command printed no sign-in surface';
-    if (isSquireBrowserSessionFailure(stderr)) {
-      const again = reclaimSquireProfileClaim({ log, profileDir, lockRoot });
-      if (again.kind === 'blocked-foreign') {
-        stepReason = again.action;
-        failReason = again.action;
-      }
-    }
-    push(step('trusty-squire installed', 'failed', stepReason));
-    return fail(failReason);
+  const env: NodeJS.ProcessEnv = { ...squireConnectProcessEnv(profileDir) };
+  if (seatDisplay) env.DISPLAY = seatDisplay;
+  else {
+    delete env.DISPLAY;
+    delete env.WAYLAND_DISPLAY;
   }
-  // The connect process stays alive in the background for the human to sign in.
-  // `install.abort()` can kill it (safety timeout also fires after 5 min).
 
-  // The version was verified before connect ran; the step records what is
-  // actually installed, not what a stale cache would have served.
+  const install = await streamRun('npx', [...resolution.npxArgs, 'connect', '--target=codex'], env);
   const version = resolution.resolvedVersion;
-  push(step(`trusty-squire${version ? ` ${version}` : ''} installed`, 'done'));
+  const installedLabel = `trusty-squire${version ? ` ${version}` : ''} installed`;
 
-  const signIn = install.signIn;
-  const signedInAs = parseSignedInAs(`${install.stdout}\n${install.stderr}`);
-
-  // Surface the sign-in URL immediately so the phone paints the noVNC page.
-  push(step('waiting for sign-in', 'done'));
-
-  const pair = await pairSquire(options.mcp, options.workspaceId);
-  if (!pair.ok) {
-    push(step('paired to workspace', 'failed', pair.reason));
+  if (install.signIn) {
+    publishSquireVisibility({ kind: 'remote', held: true, url: install.signIn.url });
+    push(step(installedLabel, 'done'));
+    push(step('waiting for sign-in', 'running'));
+    const after = observeSquireConnectFacts({ profileDir, lockRoot, configHome });
+    if (after.credential.kind === 'valid') {
+      publishSquireVisibility({ kind: 'none' });
+      push(step('paired to workspace', 'done'));
+      return {
+        status: 'connected',
+        steps,
+        signIn: install.signIn,
+        ...(version ? { squireVersion: version } : {}),
+        signedInAs: after.credential.accountId,
+      };
+    }
     return {
       status: 'installing',
       steps,
-      signIn,
+      signIn: install.signIn,
       ...(version ? { squireVersion: version } : {}),
-      ...(signedInAs ? { signedInAs } : {}),
     };
   }
-  push(step('paired to workspace', 'done'));
-  return {
-    status: 'connected',
-    steps,
-    signIn,
-    ...(version ? { squireVersion: version } : {}),
-    ...(signedInAs ? { signedInAs } : {}),
-  };
+
+  if (seatDisplay || install.localScreen) {
+    publishSquireVisibility({ kind: 'local', held: true });
+    push(step(installedLabel, 'done'));
+    push(step('waiting for sign-in', 'running', 'complete the sign-in on that screen'));
+    const after = observeSquireConnectFacts({ profileDir, lockRoot, configHome });
+    if (after.credential.kind === 'valid') {
+      publishSquireVisibility({ kind: 'none' });
+      push(step('paired to workspace', 'done'));
+      return {
+        status: 'connected',
+        steps,
+        ...(version ? { squireVersion: version } : {}),
+        signedInAs: after.credential.accountId,
+      };
+    }
+    return {
+      status: 'installing',
+      steps,
+      ...(version ? { squireVersion: version } : {}),
+    };
+  }
+
+  const stderr = install.stderr.trim();
+  let stepReason = stderr || 'connect printed no sign-in URL';
+  let failReason = stderr || 'the trusty-squire connect command printed no sign-in surface';
+  if (isSquireBrowserSessionFailure(stderr)) {
+    const again = reclaimSquireProfileClaim({ log, profileDir, lockRoot });
+    if (again.kind === 'blocked-foreign') {
+      push(step(installedLabel, 'done'));
+      push(step('waiting for sign-in', 'running', again.action));
+      return { status: 'installing', steps };
+    }
+  }
+  push(step(installedLabel, 'failed', stepReason));
+  return fail(failReason);
 }
 
 /** Probe the mounted Squire MCP to confirm the account is live on this helper. */

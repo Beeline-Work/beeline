@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { homedir } from 'node:os';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
+import { squireFacadeLaunch } from './squire-host.js';
 
 /** A fake Squire MCP child: newline JSON-RPC in, scripted newline JSON-RPC out. */
 function fakeChild(handlers: Record<string, unknown>) {
@@ -126,7 +128,7 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
-  it('spawns the vault MCP server subcommand, not the connect CLI', async () => {
+  it('spawns the host façade, never an electing server', async () => {
     const spawned: string[][] = [];
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
     const { child } = fakeChild({
@@ -141,7 +143,8 @@ describe('StdioSquireMcpClient', () => {
       }) as typeof import('node:child_process').spawn,
     });
     await client.call('ping');
-    expect(spawned[0]).toEqual(['npx', '-y', '@trusty-squire/mcp@latest', 'server']);
+    const launch = squireFacadeLaunch(homedir());
+    expect(spawned[0]).toEqual([launch.command, ...launch.args]);
     expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toMatch(/chrome-profile$/);
     expect(spawnedEnv?.XDG_CONFIG_HOME).toMatch(/\.config$/);
     expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toMatch(/broker\.sock$/);

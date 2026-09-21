@@ -1929,6 +1929,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         >
           <ActivityTimeline
             active={message.isAgentLiveTurn === true}
+            chronological={desktopLayout}
             handle={!continuedRun && isAgent ? voiceName : undefined}
             role={agentBylineLabel(agentModel)}
             mark={
@@ -2134,7 +2135,7 @@ const styles = StyleSheet.create((theme) => ({
   relayText: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
   relayToggle: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   relayMeasure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
-  activityGroup: { width: '100%', minWidth: 0, marginBottom: 20 },
+  activityGroup: { width: '100%', minWidth: 0 },
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {
     ...Typography.mono(),

@@ -15,6 +15,7 @@ import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import { ToolOutputSheet } from './ToolOutputSheet';
 import {
   LedgerBylineView,
+  ledgerEntryRhythm,
   provisionalProseStyle,
   settledAgentProseStyle,
   type LedgerBylineMark,
@@ -30,6 +31,8 @@ type ActivityTimelineProps = {
   /** Model text shown in the agent byline; defaults to the legacy role label. */
   role?: string;
   stamp?: string;
+  /** Desktop transcripts flow chronologically; phone transcripts are inverted. */
+  chronological?: boolean;
   testID?: string;
   messageDraft?: string;
   messageDraftKey?: string;
@@ -201,6 +204,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   role = 'agent',
   items,
   stamp,
+  chronological = false,
   testID,
   messageDraft,
   messageDraftKey,
@@ -227,7 +231,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   if (!turn.narration.length && !runs.length && !messageDraft && !messageDraftKey) return null;
 
   return (
-    <View style={styles.timeline} testID={testID}>
+    <View style={ledgerEntryRhythm({ hasByline: Boolean(handle), chronological })} testID={testID}>
       {handle ? (
         <LedgerBylineView byline={{ name: handle, role, stamp: stamp ?? '', mark }} />
       ) : null}
@@ -263,7 +267,6 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    timeline: { width: '100%', minWidth: 0, paddingVertical: 4 },
     // Spacing only. The face and the tone are the ledger's one provisional
     // definition (`Ledger.provisionalProseStyle`), so a draft and the reply
     // that settles it are the same words in the same column (C98).

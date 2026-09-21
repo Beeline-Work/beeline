@@ -102,6 +102,33 @@ describe('agent turn stream', () => {
     expect(stream.streamedText).toBe(PROSE_TOOL_PROSE.at(-1));
   });
 
+  it('separates the last run from the joined stream, and forgets it on a retry', async () => {
+    // An ending the prompt never reached has only this lane to answer from, and
+    // the answer is the LAST run — pre-tool narration is not it.
+    const { api } = recorder();
+    const stream = streamFor(api);
+    stream.onChunk('Let me look.', 'Let me look.', 'Let me look.');
+    stream.onChunk('The fix is ready.', 'Let me look.\n\nThe fix is ready.', 'The fix is ready.');
+    await settled();
+    expect(stream.streamedText).toBe('Let me look.\n\nThe fix is ready.');
+    expect(stream.lastRunText).toBe('The fix is ready.');
+    stream.beginRun();
+    expect(stream.lastRunText).toBe('');
+  });
+
+  it('leaves the last run empty when the caller never named it', async () => {
+    // The joined stream is not a second spelling of "last run": a caller that
+    // omits the current run leaves an ending nothing to commit, rather than
+    // handing it every assistant run concatenated.
+    const { api } = recorder();
+    const stream = streamFor(api);
+    stream.onChunk('Let me look.', 'Let me look.');
+    stream.onChunk('The fix is ready.', 'Let me look.\n\nThe fix is ready.');
+    await settled();
+    expect(stream.streamedText).toBe('Let me look.\n\nThe fix is ready.');
+    expect(stream.lastRunText).toBe('');
+  });
+
   it('keeps ONE draft on the wire and only the newest snapshot waiting', async () => {
     // This replaces the old "publishes every chunk" rule. A draft is a picture
     // of the whole answer so far, so a snapshot overtaken before it reached the
@@ -261,8 +288,8 @@ describe('agent turn stream', () => {
     await expect(stream.settle('The fix is ready.')).resolves.toBeUndefined();
     expect(writes.map((write) => write.name)).toContain('postRoomMessage');
     expect(errors).toHaveBeenCalled();
-    // The same holds for a turn whose whole handoff is elsewhere: a corner
-    // open completes, card and all, even when the lane cannot be retracted.
+    // The same holds for a turn whose whole handoff IS the card: a textless
+    // corner open completes even when the lane cannot be retracted.
     await expect(streamFor(api).settle('')).resolves.toBeUndefined();
     // And on the failure path #1114 added, which calls the retract directly:
     // the caller already has a real error to report that this must not replace.

@@ -10,6 +10,8 @@ describe('desktop layout mode', () => {
     const sidebar = source('components/SidebarView.tsx');
     const channels = source('app/(app)/beeline/channels.tsx');
 
+    expect(sidebar).toContain('const isDesktop = useIsDesktop();');
+    expect(sidebar).not.toContain('isDesktopPlatform()');
     expect(sidebar).toContain('<CommunitySwitcherTrigger');
     expect(sidebar).toContain('<DesktopWorkspaceRail');
     expect(sidebar).toContain('roomCount: workspaceRoomCounts.get(workspace.id) ?? 0');
@@ -72,6 +74,10 @@ describe('desktop layout mode', () => {
     expect(navigator).toContain('const isDesktop = useIsDesktop();');
     expect(navigator).toContain('{!isDesktop && (');
     expect(navigator).not.toContain('COMMUNITY_RAIL_WIDTH');
+    expect(navigator).toContain('usesPersistentDesktopFrame(inDesktopShell, isTablet)');
+    expect(navigator).toContain('showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession)');
+    expect(navigator).not.toContain('inDesktopShell || desktopPlatform');
+    expect(navigator).not.toContain('desktopPlatform || isTablet');
   });
 
   it('routes web layout, header, and interaction choices through the live width class', () => {
@@ -105,8 +111,11 @@ describe('desktop layout mode', () => {
     expect(messages).toContain('style={isDesktop ? styles.replyDesktopMessage : undefined}');
     expect(messages).not.toContain("if (Platform.OS === 'web') {");
     expect(messages).not.toContain('<Text style={styles.replyDesktopLabel}>REPLY</Text>');
-    expect(room).toContain('const desktopExperience = isDesktopPlatform();');
+    expect(room).toContain('const desktopExperience = isDesktop || isDesktopShell();');
     expect(room).toContain('const desktopTranscript = desktopExperience;');
+    expect(room).toContain('const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);');
+    expect(room).not.toContain('screen?.availWidth');
+    expect(room).not.toContain('const desktopExperience = isDesktopPlatform();');
   });
 
   it('shares the Ledger turn rhythm between mobile and desktop transcripts', () => {

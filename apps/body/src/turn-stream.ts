@@ -55,6 +55,12 @@ export function durableReplyText(agentText: string): string {
 export class AgentTurnStream {
   private latest = '';
   /**
+   * The assistant run currently accumulating — what `finalAgentMessageText`
+   * would return if the prompt ended here. The join above is the draft lane's
+   * material; this is the only part of the stream an ending may commit.
+   */
+  private latestRun = '';
+  /**
    * The newest snapshot not yet handed to a write. A draft is a picture of the
    * whole answer so far, so an older snapshot that never reached the wire is
    * not a lost message — it is a frame nobody needed. Keeping only the newest
@@ -77,10 +83,14 @@ export class AgentTurnStream {
   /**
    * The ACP delta hook: hand it straight to `sessionPrompt`. `full` is every
    * assistant run so far joined — not the final answer — so it is only ever
-   * shown provisionally.
+   * shown provisionally. A caller that cannot name the current run leaves
+   * `lastRunText` empty rather than letting the join stand in for it: an
+   * unknown last run is not an answer, and an ending that reads one must
+   * settle through whatever else it has.
    */
-  readonly onChunk = (_delta: string, full: string): void => {
+  readonly onChunk = (_delta: string, full: string, currentRun?: string): void => {
     this.latest = full;
+    this.latestRun = currentRun ?? '';
     const text = sanitizeAgentReply(full);
     if (!text || this.closed) return;
     this.pending = text;
@@ -122,9 +132,20 @@ export class AgentTurnStream {
     return this.latest;
   }
 
+  /**
+   * The LAST assistant run alone — the same text `PromptResult.agentText`
+   * carries when the prompt returns, available to an ending the prompt never
+   * reached. An earlier run is progress narration around tool work and is not
+   * this turn's answer, however the turn ends.
+   */
+  get lastRunText(): string {
+    return this.latestRun;
+  }
+
   /** Forget the previous run's stream text; a re-pinned retry starts clean. */
   beginRun(): void {
     this.latest = '';
+    this.latestRun = '';
     // A snapshot of the abandoned run that never reached the wire is dead text:
     // the new run rewrites the answer from its first delta.
     this.pending = undefined;

@@ -162,23 +162,29 @@ describe('Room turn after open_corner', () => {
     );
   });
 
-  it('drops the "Opened corner …" echo: the server card already announces it', async () => {
+  it('keeps the streamed reply with the card when a corner opens', async () => {
+    // Live prefixes and this durable row are one text. The card is the other
+    // half of the same completion, not a reason to discard the prose.
     const { receipts, posted } = await runTurn(
       'Opened corner 3f2a9c1e-77d2-4b0e-9d1a-0c5b2e8f4a11 with the objective "Fix the widget".',
       [OPEN_CORNER],
     );
-    expect(posted).toEqual([]);
+    expect(posted.map((message) => message.text)).toEqual([
+      'Opened corner 3f2a9c1e-77d2-4b0e-9d1a-0c5b2e8f4a11 with the objective "Fix the widget".',
+    ]);
     expect(receipts).toContainEqual(
       expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
     );
   });
 
-  it('settles silently even when the model adds text beyond the announcement', async () => {
+  it('keeps leftover prose after the announcement when a corner opens', async () => {
     const { posted } = await runTurn(
       'Opened corner 3f2a9c1e for the widget fix.\n\n@Captain the repo has no CI; want one in the same PR?',
       [OPEN_CORNER],
     );
-    expect(posted).toEqual([]);
+    expect(posted.map((message) => message.text)).toEqual([
+      'Opened corner 3f2a9c1e for the widget fix.\n\n@Captain the repo has no CI; want one in the same PR?',
+    ]);
   });
 
   it('publishes the reply when the open_corner call failed: nothing else says why', async () => {
@@ -202,9 +208,8 @@ describe('Room turn after open_corner', () => {
     expect(cornerOpens).toBe(1);
   });
 
-  // The silence, and the corner card that justifies it, both rest on the call
-  // having FINISHED. Every status below is a call that had not, so the answer
-  // the model did write is the only thing the Room has to show for the turn.
+  // A completed open is the only call that opens a corner. Every status below
+  // had not finished, so the Room still has only the model's own answer.
   for (const status of ['in_progress', 'pending', undefined]) {
     it(`publishes the reply when the open_corner call is ${status ?? 'status-less'}`, async () => {
       const { posted, receipts, cornerOpens } = await runTurn(

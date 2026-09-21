@@ -971,6 +971,42 @@ describe('Room message variant components', () => {
     expect(onReact).toHaveBeenCalledWith(row, '👍');
   });
 
+  it.each([
+    ['mobile', false],
+    ['desktop', true],
+  ] as const)(
+    'centers reaction chips in the existing message gap on %s',
+    (_surface, desktopLayout) => {
+      const row = message({
+        id: `reaction-spacing-${_surface}`,
+        reactions: [{ emoji: '👍', count: 1, reacted: false }],
+      });
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={row}
+          desktopLayout={desktopLayout}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onCopy={vi.fn()}
+          onReact={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+
+      const reactionChips = renderer.root.findByProps({ testID: `reaction-chips-${row.id}` });
+      expect(reactionChips.props.style).toMatchObject({ marginTop: 3, marginBottom: 3 });
+      expect(reactionChips.props.style.marginTop + reactionChips.props.style.marginBottom).toBe(6);
+    },
+  );
+
   it('uses the phone swipe interaction on compact web', () => {
     const onReply = vi.fn();
     const row = message({ id: 'compact-web-reply' });

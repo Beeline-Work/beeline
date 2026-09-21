@@ -19,6 +19,25 @@ import {
 const RAIL_WIDTH = 76;
 const TILE_SIZE = 48;
 
+/**
+ * The Workspace tile bezel. A border eats into the curve, so the radius inside
+ * the bezel is the outer radius LESS the border width. Same numbers as the
+ * mobile drawer (`CommunityRail`), which wears this same tile.
+ */
+const TILE_RADIUS = 14;
+const TILE_BORDER_WIDTH = 2;
+const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH;
+/**
+ * The picture is seated in the bezel like a picture in a frame, not clipped
+ * against it: the whole picture stays visible with slab showing all the way
+ * round, and no corner of it touches the brass. Its own radius is the inner
+ * radius less that margin, which keeps its curve parallel to the bezel's the
+ * whole way round instead of tightening into the corners.
+ */
+const TILE_PICTURE_SIZE = 34;
+const TILE_PICTURE_MARGIN = (TILE_SIZE - TILE_BORDER_WIDTH * 2 - TILE_PICTURE_SIZE) / 2;
+const TILE_PICTURE_RADIUS = TILE_INNER_RADIUS - TILE_PICTURE_MARGIN;
+
 export type DesktopWorkspaceRailItem = {
   readonly id: string;
   readonly name: string;
@@ -34,6 +53,12 @@ type DesktopWorkspaceRailProps = {
   readonly onClose: () => void;
   readonly onSelect: (workspaceId: string) => void;
   readonly onAdd: () => void;
+  /** The account hub. The rail's scrim covers the pane that also names it. */
+  readonly onOpenAccount: () => void;
+  readonly viewerPubkey?: string;
+  readonly viewerName?: string;
+  readonly viewerAvatarUrl?: string;
+  readonly viewerFace?: string;
 };
 
 export function DesktopWorkspaceRail({
@@ -43,6 +68,11 @@ export function DesktopWorkspaceRail({
   onClose,
   onSelect,
   onAdd,
+  onOpenAccount,
+  viewerPubkey,
+  viewerName,
+  viewerAvatarUrl,
+  viewerFace,
 }: DesktopWorkspaceRailProps) {
   const styles = stylesheet;
   const reducedMotion = useReducedMotion();
@@ -51,6 +81,8 @@ export function DesktopWorkspaceRail({
   const [hoveredWorkspaceId, setHoveredWorkspaceId] = React.useState<string | null>(null);
   const [focusedWorkspaceId, setFocusedWorkspaceId] = React.useState<string | null>(null);
   const [addFocused, setAddFocused] = React.useState(false);
+  const [accountFocused, setAccountFocused] = React.useState(false);
+  const [accountHovered, setAccountHovered] = React.useState(false);
   const activeIndex = Math.max(
     0,
     workspaces.findIndex((workspace) => workspace.id === activeWorkspaceId),
@@ -86,6 +118,11 @@ export function DesktopWorkspaceRail({
           onAdd();
           return;
         }
+        if (focusedIndexRef.current === workspaces.length + 1) {
+          event.preventDefault();
+          onOpenAccount();
+          return;
+        }
         const workspace = workspaces[focusedIndexRef.current];
         if (!workspace) return;
         event.preventDefault();
@@ -97,14 +134,24 @@ export function DesktopWorkspaceRail({
       event.preventDefault();
       const startIndex = focusedIndexRef.current;
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      const itemCount = workspaces.length + 1;
+      // Workspaces, then the add tile, then the account hub.
+      const itemCount = workspaces.length + 2;
       const nextIndex = (startIndex + delta + itemCount) % itemCount;
       focusedIndexRef.current = nextIndex;
       tileRefs.current[nextIndex]?.focus?.();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeWorkspaceId, activeIndex, onAdd, onClose, onSelect, open, workspaces]);
+  }, [
+    activeWorkspaceId,
+    activeIndex,
+    onAdd,
+    onClose,
+    onOpenAccount,
+    onSelect,
+    open,
+    workspaces,
+  ]);
 
   const animatedRailStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: railX.value }],
@@ -176,14 +223,16 @@ export function DesktopWorkspaceRail({
                     ]}
                     testID={`desktop-workspace-tile-${workspace.id}`}
                   >
-                    <IdentityMark
-                      avatarUrl={workspace.avatar}
-                      kind="workspace"
-                      name={workspace.name}
-                      seed={workspace.id}
-                      size={32}
-                      testID={`desktop-workspace-mark-${workspace.id}`}
-                    />
+                    <View style={styles.tilePictureSeat}>
+                      <IdentityMark
+                        avatarUrl={workspace.avatar}
+                        kind="workspace"
+                        name={workspace.name}
+                        seed={workspace.id}
+                        size={TILE_PICTURE_SIZE}
+                        testID={`desktop-workspace-mark-${workspace.id}`}
+                      />
+                    </View>
                   </Pressable>
                   {labelled && (
                     <View
@@ -221,6 +270,58 @@ export function DesktopWorkspaceRail({
             >
               <Text style={styles.addGlyph}>+</Text>
             </Pressable>
+            <View style={styles.separator} />
+            {/* The account hub. The rail's scrim covers the navigation pane
+                that also names it, so without this the rail is a dead end for
+                everything that is not a Workspace. */}
+            <View style={styles.tileSlot}>
+              <Pressable
+                accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'}
+                accessibilityRole="menuitem"
+                onBlur={() => setAccountFocused(false)}
+                onFocus={() => {
+                  focusedIndexRef.current = workspaces.length + 1;
+                  setAccountFocused(true);
+                }}
+                onHoverIn={() => setAccountHovered(true)}
+                onHoverOut={() => setAccountHovered(false)}
+                onPress={onOpenAccount}
+                ref={(node) => {
+                  tileRefs.current[workspaces.length + 1] = node;
+                }}
+                style={[styles.tile, accountFocused && styles.focusedTile]}
+                testID="desktop-workspace-account"
+              >
+                {viewerPubkey ? (
+                  <IdentityMark
+                    avatarUrl={viewerAvatarUrl}
+                    face={viewerFace}
+                    kind="human"
+                    name={viewerName ?? 'You'}
+                    seed={viewerPubkey}
+                    size={32}
+                    testID="desktop-workspace-account-mark"
+                  />
+                ) : (
+                  // The identity has not loaded yet. Hold the mark's box open
+                  // rather than drawing a stand-in, exactly as the navigation
+                  // pane's own account row does.
+                  <View style={styles.accountMarkSlot} />
+                )}
+              </Pressable>
+              {(accountHovered || accountFocused) && (
+                <View
+                  pointerEvents="none"
+                  style={styles.label}
+                  testID="desktop-workspace-account-label"
+                >
+                  <Text numberOfLines={1} style={styles.labelName}>
+                    Settings
+                  </Text>
+                  {viewerName ? <Text style={styles.labelMeta}>{viewerName}</Text> : null}
+                </View>
+              )}
+            </View>
           </View>
         </Animated.View>
       </View>
@@ -273,10 +374,23 @@ const stylesheet = StyleSheet.create((theme) => {
       minHeight: 44,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 14,
+      borderRadius: TILE_RADIUS,
       backgroundColor: hull.bgHighlight,
       outlineStyle: 'none',
     } as any,
+    /* The picture's seat: square, centred, and rounded parallel to the bezel.
+     * It rounds the picture's own corners; the generated Workspace cypher draws
+     * well inside this box, so it keeps the square silhouette it is meant to
+     * have. Centred in the tile, so the seat does not move when a Workspace
+     * becomes current and the tile puts its bezel on. */
+    tilePictureSeat: {
+      width: TILE_PICTURE_SIZE,
+      height: TILE_PICTURE_SIZE,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: TILE_PICTURE_RADIUS,
+      overflow: 'hidden',
+    },
     currentTile: { borderWidth: 2, borderColor: hull.accent },
     focusedTile: { borderWidth: 2, borderColor: hull.accent },
     pill: {
@@ -331,5 +445,6 @@ const stylesheet = StyleSheet.create((theme) => {
       ...hull.type.hero,
       color: hull.accent,
     },
+    accountMarkSlot: { width: 32, height: 32 },
   };
 });

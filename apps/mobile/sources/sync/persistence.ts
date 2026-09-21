@@ -42,6 +42,21 @@ export function saveLocalSettings(settings: LocalSettings): void {
   mmkv.set('local-settings', JSON.stringify(settings));
 }
 
+/** Launch-theme pin for the next Android splash. Missing means the person
+ *  has never touched Appearance, so the system splash stays system-following
+ *  even though local appearance itself defaults to dark. */
+export type AppearanceLaunch = 'system' | 'light' | 'dark';
+const APPEARANCE_LAUNCH_KEY = 'appearance-launch';
+
+export function loadAppearanceLaunch(): AppearanceLaunch {
+  const raw = mmkv.getString(APPEARANCE_LAUNCH_KEY);
+  return raw === 'light' || raw === 'dark' ? raw : 'system';
+}
+
+export function saveAppearanceLaunch(mode: 'light' | 'dark'): void {
+  mmkv.set(APPEARANCE_LAUNCH_KEY, mode);
+}
+
 export function retrieveTempText(id: string): string | null {
   const key = `temp_text_${id}`;
   const content = mmkv.getString(key) ?? null;

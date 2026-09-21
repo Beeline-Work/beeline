@@ -196,7 +196,7 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
     SettingsRow: (props: unknown) => ReactModule.createElement('SettingsRow', props as never),
   };
 });
-vi.mock('@/unistyles', () => ({ setAppDisplay: vi.fn() }));
+vi.mock('@/unistyles', () => ({ applyAppearanceChoice: vi.fn(), setAppDisplay: vi.fn() }));
 vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
 }));

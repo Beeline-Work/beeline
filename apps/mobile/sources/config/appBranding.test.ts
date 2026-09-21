@@ -294,9 +294,9 @@ describe('Beeline display branding', () => {
       'ios: {\n            runtimeVersion: runtimeVersionOverride || "29"',
     );
     expect(appConfig).toContain(
-      'android: {\n            runtimeVersion: runtimeVersionOverride || "28"',
+      'android: {\n            runtimeVersion: runtimeVersionOverride || "29"',
     );
-    expect(loadRuntimeVersions()).toEqual({ android: '28', ios: '29' });
+    expect(loadRuntimeVersions()).toEqual({ android: '29', ios: '29' });
     expect(loadRuntimeVersions('23')).toEqual({ android: '23', ios: '23' });
     expect(() => loadRuntimeVersions('not-a-runtime')).toThrow();
   });

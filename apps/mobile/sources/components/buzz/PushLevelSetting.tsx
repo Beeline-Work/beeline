@@ -7,15 +7,13 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 
 export const PUSH_LEVEL_LABELS: Readonly<Record<PushLevel, string>> = {
   off: 'Off',
-  direct: 'Direct messages and mentions',
-  mine: 'Direct messages, mentions, and my corners',
-  all: 'Everything',
+  direct: 'Anything aimed at you: a DM, a tag naming you, a reply to you',
+  mine: 'Everything in Direct, plus member joins and leaves in your rooms',
 };
 const PUSH_LEVEL_VALUES: Readonly<Record<PushLevel, string>> = {
   off: 'Off',
   direct: 'Direct',
   mine: 'My corners',
-  all: 'Everything',
 };
 
 type Props = {

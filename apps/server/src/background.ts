@@ -189,13 +189,13 @@ export class PushDeliveryLoop {
             recipient.push_level<>'off'
             AND (
               -- The push ceiling is four categories: direct messages, tags,
-              -- replies to you, and member lifecycle (workspace joins, the
-              -- separate workspace-join branch below). Cards and corner
-              -- lifecycle never push on their own. Levels are strict subsets
-              -- of that ceiling: direct = DMs + replies, mine = + tags,
-              -- all = + member lifecycle.
+              -- replies to you, and member lifecycle (the separate
+              -- workspace-join branch below). Cards and corner lifecycle
+              -- never push on their own. Levels are strict subsets of that
+              -- ceiling: direct = DMs + tags + replies,
+              -- mine = direct + member lifecycle.
               (
-                recipient.push_level IN ('direct','mine','all')
+                recipient.push_level IN ('direct','mine')
                 AND (
                   room.direct_participants IS NOT NULL
                   OR EXISTS (
@@ -203,11 +203,8 @@ export class PushDeliveryLoop {
                     WHERE addressed.id = m.reply_to_message_id
                       AND addressed.author_id=m.push_identity_id
                   )
+                  OR ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
                 )
-              )
-              OR (
-                recipient.push_level IN ('mine','all')
-                AND ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
               )
             )
           )
@@ -222,7 +219,7 @@ export class PushDeliveryLoop {
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
         JOIN identities recipient ON recipient.id=push_device.identity_id
-          AND recipient.kind='human' AND recipient.push_level='all'
+          AND recipient.kind='human' AND recipient.push_level='mine'
         JOIN memberships workspace_member ON workspace_member.workspace_id=notification.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=push_device.identity_id
           AND workspace_member.removed_at IS NULL

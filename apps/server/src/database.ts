@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS identities (
   handle text,
   avatar text,
   hidden_from_roster boolean NOT NULL DEFAULT false,
-  push_level text NOT NULL DEFAULT 'mine' CHECK(push_level IN ('off','direct','mine','all')),
+  push_level text NOT NULL DEFAULT 'mine' CHECK(push_level IN ('off','direct','mine')),
   github_subject text UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -325,9 +325,14 @@ CREATE TABLE IF NOT EXISTS identities (
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'mine';
+-- The 'all' level is retired: its only remaining meaning (member lifecycle)
+-- moved onto 'mine', so every stored 'all' maps to the nearest surviving
+-- level before the CHECK tightens to three values.
+UPDATE identities SET push_level='mine' WHERE push_level='all';
+ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
 DO $$ BEGIN
   ALTER TABLE identities ADD CONSTRAINT identities_push_level_check
-    CHECK(push_level IN ('off','direct','mine','all'));
+    CHECK(push_level IN ('off','direct','mine'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 

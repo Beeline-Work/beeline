@@ -1700,8 +1700,8 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
-    // Member lifecycle rides only the all level.
-    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [HUMAN]);
+    // Member lifecycle rides the mine level.
+    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -3476,7 +3476,7 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
-    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [HUMAN]);
+    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -3591,7 +3591,7 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
-    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [HUMAN]);
+    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);

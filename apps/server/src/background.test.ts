@@ -558,7 +558,7 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
         [human, otherHuman, agent],
       );
-      await db.query(`UPDATE identities SET push_level='all' WHERE kind='human'`);
+      await db.query(`UPDATE identities SET push_level='mine' WHERE kind='human'`);
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
       await db.query(
         `INSERT INTO rooms(id,workspace_id,name,direct_participants)
@@ -667,7 +667,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
-  it('delivers member-join pushes only at the all level', async () => {
+  it('delivers member-join pushes at the mine level', async () => {
     const db = new PgliteDatabase();
     try {
       await migrate(db);
@@ -676,7 +676,7 @@ describe('background advisory-lock ownership', () => {
         workspace = '11111111-1111-4111-8111-111111111111';
       await db.query(
         `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
-         ($1,'human','Owner','owner','all'),($2,'human','Other','other','direct')`,
+         ($1,'human','Owner','owner','mine'),($2,'human','Other','other','direct')`,
         [human, other],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -704,7 +704,7 @@ describe('background advisory-lock ownership', () => {
          VALUES('join-1','owner-device-token-12345678901234567890'),
                 ('join-1','other-device-token-12345678901234567890')`,
       );
-      // Member lifecycle rides only the all level.
+      // Member lifecycle rides the mine level.
       expect(await loop.runOnce()).toBe(1);
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(

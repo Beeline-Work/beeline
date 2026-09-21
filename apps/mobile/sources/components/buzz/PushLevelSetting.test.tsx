@@ -41,14 +41,13 @@ describe('PushLevelSetting', () => {
       true,
     );
     expect(
-      ['off', 'direct', 'mine', 'all'].map(
+      ['off', 'direct', 'mine'].map(
         (level) => renderer.root.findByProps({ testID: `push-level-${level}` }).props.label,
       ),
     ).toEqual([
       'Off',
-      'Direct messages and mentions',
-      'Direct messages, mentions, and my corners',
-      'Everything',
+      'Anything aimed at you: a DM, a tag naming you, a reply to you',
+      'Everything in Direct, plus member joins and leaves in your rooms',
     ]);
 
     await act(async () =>

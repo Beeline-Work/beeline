@@ -45,6 +45,18 @@ import { defaultSupervisorRoot } from './runtime.js';
 export const CONNECT_HARNESSES = AUTO_DETECT_AGENT_KINDS;
 export const AGENT_NAME_MAX_LENGTH = 32;
 
+/**
+ * Connect needs a keyboard-backed input stream. Some mobile terminal shells
+ * proxy stdout through their UI, so it is writable but does not identify as a
+ * TTY. Requiring that output stream to be a TTY rejects a person who can still
+ * answer every prompt.
+ */
+export function isInteractiveConnectTerminal(
+  input: Pick<NodeJS.ReadStream, 'isTTY'> = stdin,
+): boolean {
+  return input.isTTY === true;
+}
+
 function isReasonableAgentName(value: string): boolean {
   const normalized = value.trim().replace(/\s+/g, ' ');
   return (
@@ -906,7 +918,7 @@ export async function runConnectCommand(
     accessPolicy?: AgentAccessPolicy;
   } = {},
 ): Promise<void> {
-  if (!stdin.isTTY || !stdout.isTTY) {
+  if (!isInteractiveConnectTerminal()) {
     throw new Error('`usebeeline connect` needs an interactive terminal');
   }
   const restoreRails = paintWizardBrass();

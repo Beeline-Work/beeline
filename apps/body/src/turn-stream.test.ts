@@ -275,8 +275,8 @@ describe('agent turn stream', () => {
     await expect(stream.settle('The fix is ready.')).resolves.toBeUndefined();
     expect(writes.map((write) => write.name)).toContain('postRoomMessage');
     expect(errors).toHaveBeenCalled();
-    // The same holds for a turn whose whole handoff is elsewhere: a corner
-    // open completes, card and all, even when the lane cannot be retracted.
+    // The same holds for a turn whose whole handoff IS the card: a textless
+    // corner open completes even when the lane cannot be retracted.
     await expect(streamFor(api).settle('')).resolves.toBeUndefined();
     // And on the failure path #1114 added, which calls the retract directly:
     // the caller already has a real error to report that this must not replace.

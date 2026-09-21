@@ -177,7 +177,7 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
 });
 // Real @/unistyles boots Unistyles and MMKV-backed local settings, neither of
 // which this screen's own tests exercise or mock elsewhere.
-vi.mock('@/unistyles', () => ({ setAppDisplay: vi.fn() }));
+vi.mock('@/unistyles', () => ({ applyAppearanceChoice: vi.fn(), setAppDisplay: vi.fn() }));
 vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
 }));

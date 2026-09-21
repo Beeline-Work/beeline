@@ -48,7 +48,7 @@ import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
 import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
 import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
-import { setAppDisplay } from '@/unistyles';
+import { applyAppearanceChoice, setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { defaultFaceForSeed } from '@/buzz/faces';
@@ -360,7 +360,7 @@ export default function BuzzIdentitySettings() {
   const changeAppearance = useCallback(
     (next: typeof appearance) => {
       setAppearance(next);
-      setAppDisplay(next, uiSize);
+      applyAppearanceChoice(next, uiSize);
     },
     [setAppearance, uiSize],
   );

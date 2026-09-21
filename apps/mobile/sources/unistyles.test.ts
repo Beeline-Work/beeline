@@ -28,6 +28,11 @@ vi.mock('react-native-unistyles', () => ({
 const setBackgroundColorAsync = vi.fn();
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync }));
 
+const setAndroidNightMode = vi.hoisted(() => vi.fn());
+vi.mock('./buzz/android-launch-appearance-native', () => ({
+  setAndroidNightMode,
+}));
+
 describe('the appearance toggle wired into Unistyles', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -36,6 +41,7 @@ describe('the appearance toggle wired into Unistyles', () => {
     setTheme.mockClear();
     setRootViewBackgroundColor.mockClear();
     setBackgroundColorAsync.mockClear();
+    setAndroidNightMode.mockClear();
   });
 
   it('registers both obsidian and bone, defaulting cold start to obsidian', async () => {
@@ -84,5 +90,17 @@ describe('the appearance toggle wired into Unistyles', () => {
     expect(setTheme).toHaveBeenCalledWith('boneLarge');
     expect(setRootViewBackgroundColor).toHaveBeenCalledWith(boneTheme.colors.groupped.background);
     expect(setBackgroundColorAsync).toHaveBeenCalledWith(boneTheme.colors.groupped.background);
+    expect(setAndroidNightMode).not.toHaveBeenCalled();
+  });
+
+  it('pins the next Android splash only when Appearance is chosen', async () => {
+    const { applyAppearanceChoice, setAppDisplay } = await import('./unistyles');
+
+    setAppDisplay('light', 'medium');
+    expect(setAndroidNightMode).not.toHaveBeenCalled();
+
+    applyAppearanceChoice('light', 'medium');
+    expect(setAndroidNightMode).toHaveBeenCalledWith('light');
+    expect(mmkvValues.get('appearance-launch')).toBe('light');
   });
 });

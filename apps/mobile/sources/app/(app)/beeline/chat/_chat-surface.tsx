@@ -23,6 +23,7 @@ import {
   AppState,
   useWindowDimensions,
   AccessibilityInfo,
+  type ViewToken,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -282,6 +283,7 @@ import {
   acknowledgeNewMessageQueue,
   boundaryRowIndex,
   compactNewMessageCount,
+  messageContainsBoundary,
   messageBoundaryIds,
   queueIncomingMessages,
   type NewMessageQueue,
@@ -2055,9 +2057,13 @@ export function BuzzChatSurface({
     boundaryId: string;
     acknowledgeQueue: boolean;
   } | null>(null);
+  const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
+  const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
   useEffect(() => {
+    dragEndSequenceRef.current += 1;
     pendingNewMessageLandingRef.current = null;
+    visibleTranscriptMessagesRef.current = [];
     completedUnreadLandingRef.current = null;
   }, [decodedId]);
   useEffect(() => {
@@ -2114,28 +2120,64 @@ export function BuzzChatSurface({
     }
   }, []);
   useEffect(() => cancelDesktopOpenLanding, [cancelDesktopOpenLanding]);
+  const completePendingNewMessageLanding = useCallback(() => {
+    const pending = pendingNewMessageLandingRef.current;
+    if (
+      !pending ||
+      userDraggingRef.current ||
+      !visibleTranscriptMessagesRef.current.some((message) =>
+        messageContainsBoundary(message, pending.boundaryId),
+      )
+    ) {
+      return false;
+    }
+
+    pendingNewMessageLandingRef.current = null;
+    if (pending.acknowledgeQueue) {
+      setNewMessageQueue((current) =>
+        current.boundaryId === pending.boundaryId
+          ? acknowledgeNewMessageQueue(current)
+          : current,
+      );
+    } else {
+      completedUnreadLandingRef.current = pending.boundaryId;
+    }
+    return true;
+  }, []);
+  const observeVisibleTranscriptMessages = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken<ChatDisplayMessage>[] }) => {
+      visibleTranscriptMessagesRef.current = viewableItems
+        .filter((token) => token.isViewable)
+        .map((token) => token.item);
+      completePendingNewMessageLanding();
+    },
+    [completePendingNewMessageLanding],
+  );
   const landAtNewMessageBoundary = useCallback(
     (boundaryId: string, acknowledgeQueue: boolean) => {
       pendingNewMessageLandingRef.current = { boundaryId, acknowledgeQueue };
       if (userDraggingRef.current) return;
+
+      // A visible boundary is already a completed landing. This also covers
+      // a tap whose target remained on screen while the compact count grew.
+      if (completePendingNewMessageLanding()) return;
 
       const visibleIndex = boundaryRowIndex(transcriptMessages, boundaryId);
       if (visibleIndex >= 0) {
         scheduleAnimationFrame(() => {
           const pending = pendingNewMessageLandingRef.current;
           if (userDraggingRef.current || pending?.boundaryId !== boundaryId) return;
+          const currentIndex = boundaryRowIndex(transcriptMessages, boundaryId);
+          if (currentIndex < 0) return;
           cancelDesktopOpenLanding();
           flatListRef.current?.scrollToIndex({
-            index: visibleIndex,
+            index: currentIndex,
             viewPosition: 0.5,
             animated: false,
           });
-          pendingNewMessageLandingRef.current = null;
-          if (acknowledgeQueue) {
-            setNewMessageQueue((current) => acknowledgeNewMessageQueue(current));
-          } else {
-            completedUnreadLandingRef.current = boundaryId;
-          }
+          // Keep the durable boundary armed. Viewability is the success
+          // signal; onScrollToIndexFailed may still need to measure and retry.
+          completePendingNewMessageLanding();
         });
         return;
       }
@@ -2149,6 +2191,7 @@ export function BuzzChatSurface({
     },
     [
       cancelDesktopOpenLanding,
+      completePendingNewMessageLanding,
       foldedMessages,
       loadOlderTranscriptMessages,
       revealTranscriptThrough,
@@ -4738,25 +4781,41 @@ export function BuzzChatSurface({
               }
             }}
             scrollEventThrottle={100}
+            onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
               cancelDesktopOpenLanding();
+              dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
             }}
             onScrollEndDrag={(event) => {
-              // Drag-end precedes momentum-begin. Keep the interaction guard
-              // armed across that gap when native reports velocity, otherwise
-              // a pending unread landing can jump under a coasting finger.
-              const hasMomentum = Math.abs(event.nativeEvent.velocity?.y ?? 0) > 0.01;
-              userDraggingRef.current = hasMomentum;
-              if (!hasMomentum) resumePendingNewMessageLanding();
+              // Drag-end precedes momentum-begin. Missing optional velocity is
+              // not proof that the gesture stopped: keep the guard armed for
+              // the event turn, so momentum-begin can claim it before a
+              // pending boundary landing resumes.
+              const sequence = ++dragEndSequenceRef.current;
+              const velocity = event.nativeEvent.velocity?.y;
+              if (velocity !== undefined) {
+                const hasMomentum = Math.abs(velocity) > 0.01;
+                userDraggingRef.current = hasMomentum;
+                if (!hasMomentum) resumePendingNewMessageLanding();
+                return;
+              }
+              userDraggingRef.current = true;
+              scheduleAnimationFrame(() => {
+                if (dragEndSequenceRef.current !== sequence) return;
+                userDraggingRef.current = false;
+                resumePendingNewMessageLanding();
+              });
             }}
             onMomentumScrollBegin={() => {
               cancelDesktopOpenLanding();
+              dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
             }}
             onMomentumScrollEnd={() => {
+              dragEndSequenceRef.current += 1;
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();
             }}
@@ -4955,19 +5014,28 @@ export function BuzzChatSurface({
               // can override a touch or momentum scroll.
             }}
             renderItem={renderItem}
-            onScrollToIndexFailed={({ averageItemLength, index }) => {
-              // Variable-height ledger rows cannot provide getItemLayout. Jump
-              // near the target, let the list measure that window, then retry.
+            onScrollToIndexFailed={({ averageItemLength }) => {
+              const pending = pendingNewMessageLandingRef.current;
+              if (!pending || userDraggingRef.current) return;
+              const currentIndex = boundaryRowIndex(
+                transcriptMessages,
+                pending.boundaryId,
+              );
+              if (currentIndex < 0) return;
+              // Variable-height ledger rows cannot provide getItemLayout.
+              // Estimate near the CURRENT boundary, let that window measure,
+              // then resolve the durable id again before retrying.
               flatListRef.current?.scrollToOffset({
-                offset: averageItemLength * index,
+                offset: averageItemLength * currentIndex,
                 animated: false,
               });
               setTimeout(() => {
-                flatListRef.current?.scrollToIndex({
-                  index,
-                  viewPosition: 0.5,
-                  animated: false,
-                });
+                const current = pendingNewMessageLandingRef.current;
+                if (!current || userDraggingRef.current) return;
+                landAtNewMessageBoundary(
+                  current.boundaryId,
+                  current.acknowledgeQueue,
+                );
               }, 50);
             }}
             onEndReached={desktopTranscript ? undefined : loadOlderTranscriptIfReaderAsked}

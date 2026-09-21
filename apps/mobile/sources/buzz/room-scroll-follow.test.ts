@@ -195,15 +195,35 @@ describe('native variable-height history anchoring', () => {
     );
   });
 
-  it('estimates only a failed boundary jump, then retries after measuring its window', () => {
+  it('re-resolves a failed boundary jump after measuring its window', () => {
     const failedLanding = chatSource.slice(
       chatSource.indexOf('onScrollToIndexFailed='),
       chatSource.indexOf('onEndReached='),
     );
 
-    expect(failedLanding).toContain('offset: averageItemLength * index');
-    expect(failedLanding).toContain('scrollToIndex({');
-    expect(failedLanding).toContain('viewPosition: 0.5');
+    expect(failedLanding).toContain('pendingNewMessageLandingRef.current');
+    expect(failedLanding).toContain('pending.boundaryId');
+    expect(failedLanding).toContain('offset: averageItemLength * currentIndex');
+    expect(failedLanding).toContain('landAtNewMessageBoundary(');
+    expect(failedLanding).not.toContain('averageItemLength * index');
+  });
+
+  it('acknowledges only after the durable boundary is visible', () => {
+    const completion = chatSource.slice(
+      chatSource.indexOf('const completePendingNewMessageLanding ='),
+      chatSource.indexOf('const landAtNewMessageBoundary ='),
+    );
+    const landing = chatSource.slice(
+      chatSource.indexOf('const landAtNewMessageBoundary ='),
+      chatSource.indexOf('const resumePendingNewMessageLanding ='),
+    );
+
+    expect(completion).toContain('visibleTranscriptMessagesRef.current.some');
+    expect(completion).toContain('messageContainsBoundary(message, pending.boundaryId)');
+    expect(completion).toContain('pendingNewMessageLandingRef.current = null');
+    expect(completion).toContain('acknowledgeNewMessageQueue(current)');
+    expect(landing).toContain('Keep the durable boundary armed');
+    expect(landing).not.toContain('pendingNewMessageLandingRef.current = null');
   });
 
   it('keeps pending landings armed through native momentum', () => {
@@ -212,8 +232,11 @@ describe('native variable-height history anchoring', () => {
       chatSource.indexOf('onContentSizeChange='),
     );
 
-    expect(gestureHandlers).toContain('event.nativeEvent.velocity?.y');
-    expect(gestureHandlers).toContain('userDraggingRef.current = hasMomentum');
+    expect(gestureHandlers).toContain('const velocity = event.nativeEvent.velocity?.y');
+    expect(gestureHandlers).toContain('if (velocity !== undefined)');
+    expect(gestureHandlers).toContain('scheduleAnimationFrame(() =>');
+    expect(gestureHandlers).toContain('dragEndSequenceRef.current !== sequence');
+    expect(gestureHandlers).toContain('dragEndSequenceRef.current += 1');
     expect(gestureHandlers).toContain('onMomentumScrollEnd');
     expect(gestureHandlers).toContain('resumePendingNewMessageLanding();');
   });

@@ -1,13 +1,26 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-const rail = readFileSync(new URL('./CommunityRail.tsx', import.meta.url), 'utf8');
-const desktopRail = readFileSync(new URL('./DesktopWorkspaceRail.tsx', import.meta.url), 'utf8');
-const workspaceSettings = readFileSync(
-  new URL('../../app/(app)/beeline/settings/workspace.tsx', import.meta.url),
-  'utf8',
-);
+/**
+ * The settings tile lives two directories away, so this contract names it by
+ * relative path. Moving the file should read as this contract needing its path
+ * updated, not as a stack trace out of `readFileSync`.
+ */
+function surfaceSource(relativePath: string): string {
+  const url = new URL(relativePath, import.meta.url);
+  if (!existsSync(url)) {
+    throw new Error(
+      `workspace nav parity cannot find ${relativePath}. If that surface moved, ` +
+        'point this contract at its new path — do not drop it from the contract.',
+    );
+  }
+  return readFileSync(url, 'utf8');
+}
+
+const rail = surfaceSource('./CommunityRail.tsx');
+const desktopRail = surfaceSource('./DesktopWorkspaceRail.tsx');
+const workspaceSettings = surfaceSource('../../app/(app)/beeline/settings/workspace.tsx');
 
 describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
   it('draws the mobile drawer tile with the desktop radius and brass bezel', () => {

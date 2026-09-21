@@ -33,6 +33,7 @@ import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { WORKSPACE_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { Modal } from '@/modal';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
@@ -54,9 +55,10 @@ const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 const WORKSPACE_VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
 const ROOM_VISIBILITY_LABELS = { public: 'Open', 'invite-only': 'Invite-only' } as const;
 
-const IDENTITY_TILE = 76;
-const IDENTITY_TILE_RADIUS = 20;
-const IDENTITY_MARK = 64;
+/* The Workspace settings tile: the rail's tile at page scale, with its picture
+ * seated by the same rule (`buzz/workspace-tile`). */
+const PICTURE_TILE = WORKSPACE_SETTINGS_TILE;
+const PICTURE_SEAT = workspacePictureSeat(PICTURE_TILE);
 
 function roomCreatedQualifier(createdAt: number | undefined): string | undefined {
   if (createdAt === undefined) return undefined;
@@ -402,23 +404,29 @@ export default function WorkspaceSettings() {
                   style={styles.tile}
                   testID="workspace-picture-change"
                 >
-                  <IdentityMark
-                    kind="workspace"
-                    seed={workspace?.id ?? 'workspace-loading'}
-                    avatarUrl={workspace?.avatar}
-                    name={workspace?.name}
-                    size={IDENTITY_MARK}
-                  />
+                  <View style={styles.pictureSeat}>
+                    <IdentityMark
+                      kind="workspace"
+                      seed={workspace?.id ?? 'workspace-loading'}
+                      avatarUrl={workspace?.avatar}
+                      name={workspace?.name}
+                      size={PICTURE_SEAT.pictureSize}
+                      testID="workspace-picture-mark"
+                    />
+                  </View>
                 </TouchableOpacity>
               ) : (
                 <View style={styles.tile}>
-                  <IdentityMark
-                    kind="workspace"
-                    seed={workspace?.id ?? 'workspace-loading'}
-                    avatarUrl={workspace?.avatar}
-                    name={workspace?.name}
-                    size={IDENTITY_MARK}
-                  />
+                  <View style={styles.pictureSeat}>
+                    <IdentityMark
+                      kind="workspace"
+                      seed={workspace?.id ?? 'workspace-loading'}
+                      avatarUrl={workspace?.avatar}
+                      name={workspace?.name}
+                      size={PICTURE_SEAT.pictureSize}
+                      testID="workspace-picture-mark"
+                    />
+                  </View>
                 </View>
               )}
               <Text style={styles.workspaceName}>{workspace?.name ?? WORKSPACE_LABEL}</Text>
@@ -683,14 +691,23 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.lg,
     },
     tile: {
-      width: IDENTITY_TILE,
-      height: IDENTITY_TILE,
-      borderRadius: IDENTITY_TILE_RADIUS,
-      borderWidth: 2,
+      width: PICTURE_TILE.size,
+      height: PICTURE_TILE.size,
+      borderRadius: PICTURE_TILE.radius,
+      borderWidth: PICTURE_TILE.borderWidth,
       borderColor: hull.accent,
       backgroundColor: hull.avatarGround,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    /* The picture's seat: it rounds the picture's own corners, so the bezel
+     * never has to crop them. Concentric curves, one even slab of tile. */
+    pictureSeat: {
+      width: PICTURE_SEAT.pictureSize,
+      height: PICTURE_SEAT.pictureSize,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: PICTURE_SEAT.pictureRadius,
       overflow: 'hidden',
     },
     workspaceName: {

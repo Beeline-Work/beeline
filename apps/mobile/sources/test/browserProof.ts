@@ -7,6 +7,7 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  statSync,
   writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -153,7 +154,9 @@ export async function runBrowserProof(options: {
                 return {
                   path: ['', '.web.ts', '.web.tsx', '.ts', '.tsx', '.json', '/index.ts', '/index.tsx']
                     .map((extension) => candidate + extension)
-                    .find(existsSync)!,
+                    // A bare `@/buzz/faces` names the directory's index, not the
+                    // directory: only a file can be the module.
+                    .find((entry) => existsSync(entry) && statSync(entry).isFile())!,
                 };
               }
             });

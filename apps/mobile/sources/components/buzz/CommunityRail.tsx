@@ -15,30 +15,29 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import {
+  WORKSPACE_HEADER_PLATE,
+  WORKSPACE_RAIL_TILE,
+  workspacePictureSeat,
+} from '@/buzz/workspace-tile';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
 
 /**
- * The Workspace tile bezel. A border eats into the curve, so the radius inside
- * the bezel is the outer radius LESS the border width. Same numbers as the
- * desktop rail (`DesktopWorkspaceRail`), which wears this same tile.
+ * The Workspace tile, and the picture seated in its bezel like a picture in a
+ * frame rather than clipped against it (`buzz/workspace-tile`). Same tile as
+ * the desktop rail (`DesktopWorkspaceRail`); the room-list header plate below
+ * is that tile rescaled, seated by the same rule.
  */
-const TILE_SIZE = 48;
-const TILE_RADIUS = 14;
-const TILE_BORDER_WIDTH = 2;
-const TILE_INNER_RADIUS = TILE_RADIUS - TILE_BORDER_WIDTH;
-/**
- * The picture is seated in the bezel like a picture in a frame, not clipped
- * against it: the whole picture stays visible with slab showing all the way
- * round, and no corner of it touches the brass. Its own radius is the inner
- * radius less that margin, which keeps its curve parallel to the bezel's the
- * whole way round instead of tightening into the corners.
- */
-const TILE_PICTURE_SIZE = 34;
-const TILE_PICTURE_MARGIN = (TILE_SIZE - TILE_BORDER_WIDTH * 2 - TILE_PICTURE_SIZE) / 2;
-const TILE_PICTURE_RADIUS = TILE_INNER_RADIUS - TILE_PICTURE_MARGIN;
+const TILE = WORKSPACE_RAIL_TILE;
+const TILE_SIZE = TILE.size;
+const TILE_RADIUS = TILE.radius;
+const TILE_BORDER_WIDTH = TILE.borderWidth;
+const TILE_SEAT = workspacePictureSeat(TILE);
+const HEADER_PLATE = WORKSPACE_HEADER_PLATE;
+const HEADER_PLATE_SEAT = workspacePictureSeat(HEADER_PLATE);
 
 export type CommunityRailItem = {
   communityId: string;
@@ -246,7 +245,7 @@ export function CommunityRail({
                       seed={community?.communityId ?? 'workspace-loading'}
                       avatarUrl={community?.avatar}
                       name={community?.name}
-                      size={TILE_PICTURE_SIZE}
+                      size={TILE_SEAT.pictureSize}
                       selected={active}
                       testID={`workspace-avatar-${community.communityId}`}
                     />
@@ -259,7 +258,7 @@ export function CommunityRail({
                     seed={community?.communityId ?? 'workspace-loading'}
                     avatarUrl={community?.avatar}
                     name={community?.name}
-                    size={TILE_PICTURE_SIZE}
+                    size={TILE_SEAT.pictureSize}
                     selected={active}
                     testID={`workspace-avatar-${community.communityId}`}
                   />
@@ -376,15 +375,17 @@ export function CommunitySwitcherTrigger({
       testID="workspace-avatar-trigger"
     >
       {!showingPickerTitle && (
-        <View style={styles.drawerTriggerPlate}>
-          <IdentityMark
-            kind="workspace"
-            seed={community?.communityId ?? 'workspace-loading'}
-            avatarUrl={community?.avatar}
-            name={community?.name}
-            size={26}
-            testID="workspace-avatar-header"
-          />
+        <View style={styles.drawerTriggerPlate} testID="workspace-header-plate">
+          <View style={styles.drawerTriggerPictureSeat}>
+            <IdentityMark
+              kind="workspace"
+              seed={community?.communityId ?? 'workspace-loading'}
+              avatarUrl={community?.avatar}
+              name={community?.name}
+              size={HEADER_PLATE_SEAT.pictureSize}
+              testID="workspace-avatar-header"
+            />
+          </View>
           {attention && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
         </View>
       )}
@@ -595,11 +596,11 @@ const styles = StyleSheet.create((theme) => {
      * well inside this box, so it keeps the square silhouette it is meant to
      * have. */
     tilePictureSeat: {
-      width: TILE_PICTURE_SIZE,
-      height: TILE_PICTURE_SIZE,
+      width: TILE_SEAT.pictureSize,
+      height: TILE_SEAT.pictureSize,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: TILE_PICTURE_RADIUS,
+      borderRadius: TILE_SEAT.pictureRadius,
       overflow: 'hidden',
     },
     columnButton: {
@@ -731,14 +732,28 @@ const styles = StyleSheet.create((theme) => {
       gap: 8,
     },
     /* The room-list header plate: the desktop tile treatment scaled down —
-     * 26px mark, radius scaled with the tile (14 × 26/48 ≈ 8) and the same
+     * 26px picture, radius scaled with the tile (14 × 26/48 ≈ 8) and the same
      * brass bezel. The trigger always shows the current Workspace. */
     drawerTriggerPlate: {
       position: 'relative',
-      borderRadius: 8,
-      borderWidth: 2,
+      width: HEADER_PLATE.size,
+      height: HEADER_PLATE.size,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: HEADER_PLATE.radius,
+      borderWidth: HEADER_PLATE.borderWidth,
       borderColor: groknight.selectedBorder,
-      padding: 2,
+    },
+    /* The picture's seat in that plate, rounded by the same rule the rail tile
+     * uses: the plate's inner radius less the slab around the picture, so the
+     * two curves stay concentric at this size too. */
+    drawerTriggerPictureSeat: {
+      width: HEADER_PLATE_SEAT.pictureSize,
+      height: HEADER_PLATE_SEAT.pictureSize,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: HEADER_PLATE_SEAT.pictureRadius,
+      overflow: 'hidden',
     },
     workspaceAttentionMark: {
       position: 'absolute',

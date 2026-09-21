@@ -91,15 +91,28 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
 
 export { markRoomOpen };
 
+/**
+ * Window.requestAnimationFrame is a host method. Extracting it
+ * (`const raf = globalThis.requestAnimationFrame; raf(cb)`) throws
+ * `TypeError: Illegal invocation` on WebKit and Firefox — the same
+ * detached-receiver class as Keyboard.addListener. Chrome is lenient,
+ * which is why a Chromium-only repro misses the desktop/Safari crash.
+ * Call it on `globalThis` so `this` stays the Window.
+ */
+function scheduleAnimationFrame(callback: FrameRequestCallback): boolean {
+  if (typeof globalThis.requestAnimationFrame !== 'function') return false;
+  globalThis.requestAnimationFrame(callback);
+  return true;
+}
+
 function queueNewestFrameMark(detail?: string): void {
-  const raf = globalThis.requestAnimationFrame;
-  if (typeof raf !== 'function') {
+  if (
+    !scheduleAnimationFrame(() => {
+      scheduleAnimationFrame(() => markRoomOpen('newest-frame', detail));
+    })
+  ) {
     markRoomOpen('newest-js', detail);
-    return;
   }
-  raf(() => {
-    raf(() => markRoomOpen('newest-frame', detail));
-  });
 }
 
 /** Give React Native a turn to commit the cached (or fetched) transcript
@@ -107,9 +120,11 @@ function queueNewestFrameMark(detail?: string): void {
  * yield a macrotask instead of hanging on a stub rAF. */
 function yieldToPaint(): Promise<void> {
   return new Promise((resolve) => {
-    const raf = globalThis.requestAnimationFrame;
-    if (typeof raf === 'function') {
-      raf(() => raf(() => resolve()));
+    if (
+      scheduleAnimationFrame(() => {
+        scheduleAnimationFrame(() => resolve());
+      })
+    ) {
       return;
     }
     setTimeout(resolve, 0);

@@ -495,10 +495,14 @@ describe('useRoomSurfaceSession', () => {
 
   it('yields a paint turn after cache apply before installing the live watch', async () => {
     const queued: FrameRequestCallback[] = [];
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      (callback: FrameRequestCallback) => queued.push(callback),
-    );
+    vi.stubGlobal('requestAnimationFrame', function requestAnimationFrame(
+      this: unknown,
+      callback: FrameRequestCallback,
+    ) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      queued.push(callback);
+      return 1;
+    });
     controls.cached = roomView('room-a');
     controls.roomResponse = null;
     let current!: UseRoomSurfaceSessionResult;
@@ -530,10 +534,14 @@ describe('useRoomSurfaceSession', () => {
 
   it('paints cached newest row before authorization occupies the session', async () => {
     const queued: FrameRequestCallback[] = [];
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      (callback: FrameRequestCallback) => queued.push(callback),
-    );
+    vi.stubGlobal('requestAnimationFrame', function requestAnimationFrame(
+      this: unknown,
+      callback: FrameRequestCallback,
+    ) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      queued.push(callback);
+      return 1;
+    });
     let resolveAuth!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
     controls.identityPromise = new Promise((resolve) => {
       resolveAuth = resolve;

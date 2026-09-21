@@ -339,6 +339,39 @@ describe('the membership inviter migration', () => {
   });
 });
 
+describe('the three-level push migration', () => {
+  const OWNER = 'a'.repeat(64);
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = new PgliteDatabase();
+    await migrate(database);
+  });
+  afterEach(() => database.close());
+
+  it('maps every stored all level to mine and refuses new all rows', async () => {
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
+      OWNER,
+    ]);
+    // Simulate a legacy database still carrying the retired level.
+    await database.query(`ALTER TABLE identities DROP CONSTRAINT identities_push_level_check`);
+    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]);
+    // The migration maps it to the nearest surviving level, and the CHECK
+    // constraint no longer accepts 'all'.
+    await migrate(database);
+    expect(
+      (
+        await database.query<{ push_level: string }>(
+          `SELECT push_level FROM identities WHERE id=$1`,
+          [OWNER],
+        )
+      ).rows[0]?.push_level,
+    ).toBe('mine');
+    await expect(
+      database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]),
+    ).rejects.toThrow();
+  });
+});
+
 describe('the yolo default migration', () => {
   const OWNER = 'a'.repeat(64);
   const ON_AGENT = '1'.repeat(64);

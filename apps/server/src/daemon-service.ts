@@ -1947,7 +1947,7 @@ export class DaemonService {
     // list is frozen here — `message-mentions.ts` reads the tags back out of
     // this text whenever someone asks who it addresses, and carries the one
     // rule that is not a cap: a corner agent's turn reply never tags a person,
-    // because the merge summary card and its push already say the work is done.
+    // because the merge summary card already says the work is done.
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;
@@ -3004,8 +3004,8 @@ export class DaemonService {
    * request_grant: the agent raises its hand. Under yolo the grant is approved
    * on the spot (auto=true) and one quiet system line records it; otherwise a
    * pending grant is stored and joins (or opens) this agent's one open card in
-   * the Room, addressed to the owner so the tagged-mention push fires. Budget
-   * always asks (the cap is out of scope), even under yolo.
+   * the Room, addressed to the owner. Budget always asks (the cap is out of
+   * scope), even under yolo.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
     if (!isAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
@@ -3201,8 +3201,8 @@ export class DaemonService {
         id: messageId,
         roomId: input.roomId,
         ...grantCardPhrase(agent, owner, [grantView]),
-        // The owner is reached by the card itself (`background.ts` pushes a
-        // grant request to the person named on it), not by a wake: this line
+        // The owner is reached by the card itself in the Room — a card is
+        // outside `background.ts`'s push ceiling — not by a wake: this line
         // has no kind, so it starts no turn and never did.
         presentation: 'card',
         cardType: 'grant-request',
@@ -3589,9 +3589,9 @@ export class DaemonService {
         status: 'pending',
         createdAt: seconds(created.created_at),
       };
-      // The addressee is reached by the card itself (`background.ts` pushes a
-      // connector offer to the person named on it), not by a wake: this line
-      // has no kind, so it starts no turn.
+      // The addressee is reached by the card itself in the Room — a card is
+      // outside `background.ts`'s push ceiling — not by a wake: this line has
+      // no kind, so it starts no turn.
       await systemLine(database, {
         id: messageId,
         roomId: input.roomId,
@@ -3725,7 +3725,8 @@ export class DaemonService {
         turnRequestId: input.requestId,
       });
       // One durable open marker in the parent Room; the phone renders this as
-      // a daemon-fact card and the push rule fires on it.
+      // a daemon-fact card. Corner lifecycle is outside the push ceiling
+      // (`background.ts`), so this marker never notifies a device.
       await systemLine(db, {
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: opener.name },

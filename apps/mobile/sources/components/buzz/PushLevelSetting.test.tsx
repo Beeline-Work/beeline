@@ -26,7 +26,7 @@ import { PushLevelSetting } from './PushLevelSetting';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('PushLevelSetting', () => {
-  it('opens the four-choice picker and saves the selected level', async () => {
+  it('opens the three-choice picker and saves the selected level', async () => {
     const onSave = vi.fn(async () => undefined);
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
@@ -41,14 +41,22 @@ describe('PushLevelSetting', () => {
       true,
     );
     expect(
-      ['off', 'direct', 'mine', 'all'].map(
-        (level) => renderer.root.findByProps({ testID: `push-level-${level}` }).props.label,
-      ),
+      renderer.root
+        .findAllByType('Choice')
+        .map((choice: { props: { testID: string } }) => choice.props.testID),
+    ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine']);
+    // The row's label is one line (HullActionSheetRow pins numberOfLines={1}),
+    // so the level's name rides the label and the sentence explaining what it
+    // delivers rides the wrapping description slot instead of ellipsizing.
+    expect(
+      ['off', 'direct', 'mine'].map((level) => {
+        const choice = renderer.root.findByProps({ testID: `push-level-${level}` });
+        return [choice.props.label, choice.props.description];
+      }),
     ).toEqual([
-      'Off',
-      'Direct messages and mentions',
-      'Direct messages, mentions, and my corners',
-      'Everything',
+      ['Off', undefined],
+      ['Direct', 'Anything aimed at you: a DM, a tag naming you, a reply to you'],
+      ['My corners', 'Everything in Direct, plus member joins and leaves in your rooms'],
     ]);
 
     await act(async () =>

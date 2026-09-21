@@ -1700,6 +1700,8 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
+    // Member lifecycle rides the mine level.
+    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -3474,6 +3476,7 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
+    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -3588,6 +3591,7 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
+    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -5363,13 +5367,10 @@ describe('monolith integration', () => {
     expect(
       (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
     ).toBe(202);
-    expect(await pushes.runOnce()).toBe(1);
+    // Corner lifecycle cards stay in the ledger; only the four push
+    // categories (DMs, tags, replies, member lifecycle) reach a device.
     expect(await pushes.runOnce()).toBe(0);
-    expect(send).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith(
-      deviceToken,
-      expect.objectContaining({ text: '@owner merged Ship the widget' }),
-    );
+    expect(send).not.toHaveBeenCalled();
     expect(
       (
         await database.query<{ count: number }>(
@@ -6736,7 +6737,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('posts one corner-open daemon-fact card and pushes it to human members', async () => {
+  it('posts one corner-open daemon-fact card and does not push it', async () => {
     const send = vi.fn(async () => undefined);
     const loop = new PushDeliveryLoop(database, { send });
     await loop.runOnce(); // establish the durable floor before the new events
@@ -6790,11 +6791,8 @@ describe('monolith integration', () => {
         agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent' }),
       }),
     );
-    expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledWith(
-      'owner-device-token-12345678901234567890',
-      expect.objectContaining({ text: '@bee opened a corner Ship the widget' }),
-    );
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {
@@ -7777,14 +7775,10 @@ describe('monolith integration', () => {
     );
     expect(linked.rows[0]!.addressee_id).toBe(zeke.id);
     expect(linked.rows[0]!.command_id).toEqual(expect.any(String));
-    // The card reaches the addressee's phone once, and nobody else's.
-    expect(await pushes.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledWith(
-      'offer-addressee-device-12345678901234567890',
-      expect.objectContaining({
-        text: '@bee offered @zeke Trusty Squire · provision the 1inch API key into its vault',
-      }),
-    );
+    // Cards stay on the indexed surfaces; only the four push categories
+    // (DMs, tags, replies, member lifecycle) reach a device.
+    expect(await pushes.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
     // The phone reads a validated connectorOffer message.
     const pending = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, zeke.token)

@@ -53,6 +53,7 @@ export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '24' },
   { platform: 'android', runtimeVersion: '25' },
   { platform: 'android', runtimeVersion: '26' },
+  { platform: 'android', runtimeVersion: '28' },
   { platform: 'ios', runtimeVersion: '23' },
   { platform: 'ios', runtimeVersion: '24' },
   { platform: 'ios', runtimeVersion: '25' },
@@ -90,6 +91,12 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     runtimeVersion: '26',
     evidence:
       'store binaries shipped on the android@26 pin (v0.0.118, head 227b74c95dbc) whose splash still resolved to the adaptive icon in light mode',
+  },
+  {
+    platform: 'android',
+    runtimeVersion: '28',
+    evidence:
+      'store binaries shipped on the android@28 pin and served as the android@28 production target by successful unified release run 35605942517 (v0.0.120, head d6db385f)',
   },
   {
     platform: 'ios',

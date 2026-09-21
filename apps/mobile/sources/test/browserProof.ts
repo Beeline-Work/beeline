@@ -1,5 +1,14 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import {
+  accessSync,
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,10 +17,31 @@ import { build } from 'esbuild';
 
 export const CHROME = process.env.CHROME_BIN ?? '/usr/bin/google-chrome';
 
+/**
+ * Chrome builds its process-singleton socket under TMPDIR, and a UNIX socket
+ * path caps at 108 bytes — far shorter than the directory a CI agent usually
+ * hands us. It needs somewhere short, and somewhere that still has inodes: a
+ * shared `/tmp` that another job has filled hangs the browser before it opens
+ * a page. Both candidates are short; the first writable one wins.
+ */
+function shortTempBase(): string {
+  for (const base of ['/var/tmp', '/tmp']) {
+    try {
+      accessSync(base, constants.W_OK);
+      return base;
+    } catch {
+      /* try the next one */
+    }
+  }
+  return tmpdir();
+}
+
+const CHROME_TMPDIR = shortTempBase();
+
 /** Vitest runs test files in parallel, and two headless Chromes starting at
  *  the same moment kill each other (SIGTRAP/SIGILL, no output, before either
  *  reaches a page). One browser at a time, across every worker. */
-const CHROME_LOCK = path.join('/tmp', 'beeline-browser-proof.lock');
+const CHROME_LOCK = path.join(CHROME_TMPDIR, 'beeline-browser-proof.lock');
 
 function holderIsGone(): boolean {
   try {
@@ -162,9 +192,7 @@ export async function runBrowserProof(options: {
           encoding: 'utf8',
           timeout: 60_000,
           maxBuffer: 8 * 1024 * 1024,
-          // Chrome builds its singleton socket under TMPDIR and dies when that
-          // path is long, which says nothing about the surface under proof.
-          env: { ...process.env, TMPDIR: '/tmp' },
+          env: { ...process.env, TMPDIR: CHROME_TMPDIR },
         },
       ),
     );

@@ -171,36 +171,44 @@ describe('ACP streaming lane classifier', () => {
   });
 
   it('resumes the same run when any non-text update lands inside a word', () => {
+    // A tool call used to end the run on sight, so it never reached the
+    // word-continuation guard that every other non-text update went
+    // through. All of them are decided by the guard now.
     const interruptions = [
       update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
       update('agent_thought_chunk', { content: { type: 'text', text: 'checking' } }),
       update('plan', { entries: [] }),
     ];
+    const whole = "I'll take a look at the README first.";
     for (const interruption of interruptions) {
       const updates = [
-        update('agent_message_chunk', { content: { type: 'text', text: 'The ans' } }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'I' } }),
         interruption,
-        update('agent_message_chunk', { content: { type: 'text', text: 'wer is 42.' } }),
+        update('agent_message_chunk', {
+          content: { type: 'text', text: "'ll take a look at the README first." },
+        }),
       ];
-      expect(agentMessageRuns(updates)).toEqual(['The answer is 42.']);
-      expect(finalAgentMessageText(updates)).toBe('The answer is 42.');
+      expect(agentMessageRuns(updates)).toEqual([whole]);
+      expect(finalAgentMessageText(updates)).toBe(whole);
     }
   });
 
-  it('leaves an uppercase resume ambiguous instead of guessing at it', () => {
+  it('leaves a word-character resume ambiguous instead of guessing at it', () => {
     // The unresolved protocol ambiguity recorded on `continuesPreviousWord`.
-    // `Using Git` + `Hub works.` and `Checking Docker` + `Found it.` are the
-    // same text and the same update stream, so neither is joined: the run
-    // ends, exactly as it did before this guard existed. That holds the
-    // final-message contract — interim narration stays out of the reply —
-    // and the price is asserted here rather than left to be discovered: a
-    // name split across an uppercase seam still loses its head.
+    // Each pair below is one split word or two whole messages, and the two
+    // readings are the same text and the same update stream — capitalization
+    // does not separate the first pair, and lowercase does not separate the
+    // second, since `npm` opens a message exactly as `Found` does. None is
+    // joined: the run ends, as it did before this guard existed. That holds
+    // the final-message contract, and the price is asserted here rather
+    // than left to be discovered: a word split across such a seam loses its
+    // head.
     for (const [head, tail] of [
       ['Using Git', 'Hub works.'],
       ['Checking Docker', 'Found it.'],
-      ['Using e', 'Bay works.'],
-      ['Checking GitHub', 'Found it.'],
       ['Open the READ', 'ME first.'],
+      ['The ans', 'wer is 42.'],
+      ['Checking package', 'npm test passes.'],
     ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: head } }),
@@ -1720,6 +1728,35 @@ describe('AcpClient live steering', () => {
       );
       expect(result.agentText).toBe('Found it.');
       expect(runs.at(-1)).toEqual(['Checking Docker', 'Found it.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration out of the reply when the reply opens with a lowercase command', async () => {
+    // `Checking package` + tool call + `npm test passes.` — reading any
+    // lowercase head as a word continuation fused these two real messages
+    // into "Checking packagenpm test passes.". A lowercase head opens a
+    // message as readily as a capital does.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Checking package', 'npm test passes.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('npm test passes.');
+      expect(result.agentText).not.toContain('packagenpm');
+      expect(runs.at(-1)).toEqual(['Checking package', 'npm test passes.']);
     } finally {
       await client.stop();
     }

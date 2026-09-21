@@ -279,60 +279,52 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
-/** A run left stopped on a letter or digit, i.e. part-way through a word. */
-const RUN_ENDS_MID_WORD = /[\p{L}\p{N}]$/u;
-
-/**
- * A delta head that can only be resuming a word: a digit, a lowercase letter,
- * or a letter from a caseless script such as Chinese. None of these opens a
- * sentence, so a run stopped mid-word is being continued, not replaced.
- */
-const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
-
 /**
  * Whether `delta` continues the word `current` stops on, so the non-text
  * update between them was interleaved metadata rather than a message
- * boundary. A run already closed by whitespace is a boundary on its own.
+ * boundary. Only `CHUNK_CONTINUES_PREVIOUS_WORD` qualifies — a head that
+ * binds backwards and cannot open a message. A letter or digit head does
+ * not; see UNRESOLVED PROTOCOL AMBIGUITY below before widening this.
  *
- * Only an unambiguous continuation joins. An uppercase head does not — see
- * UNRESOLVED PROTOCOL AMBIGUITY below before changing that.
+ * ── UNRESOLVED PROTOCOL AMBIGUITY: a word-character resume ────────────────
  *
- * ── UNRESOLVED PROTOCOL AMBIGUITY: the uppercase resume ───────────────────
+ * When a run stops part-way through a word and the next delta opens with a
+ * letter or a digit, the two readings are indistinguishable, in either case:
  *
- * A run that stops part-way through a word and is resumed by an uppercase
- * delta has two readings, and ACP carries nothing that tells them apart:
- *
- *     "Using Git"       + tool_call + "Hub works."   → one name, split
- *     "Checking Docker" + tool_call + "Found it."    → two messages
+ *     "Using Git"        + tool_call + "Hub works."        → one name, split
+ *     "Checking Docker"  + tool_call + "Found it."         → two messages
+ *     "The ans"          + tool_call + "wer is 42."        → one word, split
+ *     "Checking package" + tool_call + "npm test passes."  → two messages
  *
  * Same text; from a harness that emits a bare `tool_call`, the same update
- * stream. A single string-valued final message therefore has exactly three
+ * stream. Capitalization does not separate the first pair and lowercase does
+ * not separate the second — `npm`, `ls` and `git` open messages exactly as
+ * `Found` does. A single string-valued final message therefore has three
  * possible values at that seam, and all three were built and run end to end
  * on the branch that added this guard:
  *
  *   1. join with no separator — fuses two real messages ("DockerFound it.")
- *   2. end the run — the split name loses its head ("Hub works.")   ← chosen
+ *   2. end the run — the split word loses its head ("Hub works.")   ← chosen
  *   3. join across a paragraph break — keeps both, but promotes unpunctuated
  *      interim narration into the reply, changing the final-message contract
  *
  * Reading 2 is in force by decision, to hold that contract: interim
  * narration stays in the live draft and only the final post-tool message is
- * the reply. The cost is real and is asserted in `leaves an uppercase resume
- * ambiguous instead of guessing at it` — a name split across an uppercase
+ * the reply. The cost is real and is asserted in `leaves a word-character
+ * resume ambiguous instead of guessing at it` — a word split across such a
  * seam still loses its head, exactly as before this guard existed.
  *
  * Resolving it needs a signal that does not exist yet: a harness message id
  * or stop marker on `agent_message_chunk` would end the ambiguity outright,
- * since two deltas of one message would be identifiable as such. Until then,
- * do not reach for capitalization — the word's own case, a prefix allowlist,
- * the fragment's length and whether the word had already turned over were
- * each tried, and each resolved one of the pair above by corrupting the
- * other.
+ * since two deltas of one message would be identifiable as such. Until then
+ * do not reach for the text. Capitalization was tried four ways — the word's
+ * own case, a prefix allowlist, the fragment's length, whether the word had
+ * already turned over — and lowercase once; each reading resolved one pair
+ * above by corrupting the other.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
-  if (CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) return true;
-  return RUN_ENDS_MID_WORD.test(current) && CHUNK_RESUMES_WORD.test(delta);
+  return CHUNK_CONTINUES_PREVIOUS_WORD.test(delta);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;

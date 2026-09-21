@@ -15,6 +15,11 @@ import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sa
 import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import {
+  copyPicture,
+  sharePicture,
+  showPictureActions,
+} from '@/buzz/picture-actions';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
@@ -47,10 +52,33 @@ export function ArtifactViewerScreen({
         <Text numberOfLines={1} style={styles.headerTitle}>
           {title}
         </Text>
+        {format === 'image' ? (
+          <>
+            <Pressable
+              accessibilityLabel="Copy image"
+              accessibilityRole="button"
+              onPress={() => void copyPicture(attachment)}
+              style={styles.headerAction}
+              testID="artifact-viewer-copy"
+            >
+              <Text style={styles.headerActionText}>Copy</Text>
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Share image"
+              accessibilityRole="button"
+              onPress={() => void sharePicture(attachment)}
+              style={styles.headerAction}
+              testID="artifact-viewer-share"
+            >
+              <Text style={styles.headerActionText}>Share</Text>
+            </Pressable>
+          </>
+        ) : null}
         <Pressable
           accessibilityLabel="Close artifact viewer"
           accessibilityRole="button"
           onPress={onClose}
+          style={styles.headerAction}
           testID="artifact-viewer-close"
         >
           <Text style={styles.headerClose}>✕</Text>
@@ -60,12 +88,28 @@ export function ArtifactViewerScreen({
         {format === 'markdown' ? (
           <ArtifactViewerMarkdown attachment={attachment} />
         ) : format === 'image' ? (
-          <ArtifactImage
-            attachment={attachment}
-            fit="contain"
+          <Pressable
+            accessibilityLabel={`Image ${title}`}
+            delayLongPress={450}
+            onLongPress={() => showPictureActions(attachment)}
             style={styles.image}
-            testID="artifact-viewer-image"
-          />
+            testID="artifact-viewer-image-actions"
+            {...(Platform.OS === 'web'
+              ? {
+                  onContextMenu: (event: { preventDefault(): void }) => {
+                    event.preventDefault();
+                    showPictureActions(attachment);
+                  },
+                }
+              : {})}
+          >
+            <ArtifactImage
+              attachment={attachment}
+              fit="contain"
+              style={styles.image}
+              testID="artifact-viewer-image"
+            />
+          </Pressable>
         ) : format === 'text' ? (
           <ArtifactText attachment={attachment} crop={false} testID="artifact-viewer-text" />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
@@ -205,6 +249,13 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   headerClose: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  headerAction: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerActionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   body: { flex: 1 },
   image: { flex: 1, height: '100%', width: '100%' },
   webview: { flex: 1, backgroundColor: 'transparent' },

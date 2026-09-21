@@ -6,6 +6,7 @@ import type { AttachmentReference } from '@beeline/buzz-client';
 import { artifactFormat, wrapArtifactMarkup } from '@/buzz/artifact';
 import { fetchArtifactBytes, fetchArtifactText, openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
+import { copyPicture, sharePicture, showPictureActions } from '@/buzz/picture-actions';
 import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
@@ -46,10 +47,33 @@ export function DesktopArtifactPane({
             {kindLine}
           </Text>
         </View>
+        {format === 'image' ? (
+          <>
+            <Pressable
+              accessibilityLabel="Copy image"
+              accessibilityRole="button"
+              onPress={() => void copyPicture(attachment)}
+              style={styles.headerAction}
+              testID="desktop-artifact-copy"
+            >
+              <Text style={styles.actionText}>Copy</Text>
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Share image"
+              accessibilityRole="button"
+              onPress={() => void sharePicture(attachment)}
+              style={styles.headerAction}
+              testID="desktop-artifact-share"
+            >
+              <Text style={styles.actionText}>Share</Text>
+            </Pressable>
+          </>
+        ) : null}
         <Pressable
           accessibilityLabel="Open in browser"
           accessibilityRole="link"
           onPress={() => void openArtifactInBrowserOrExplain(attachment)}
+          style={styles.headerAction}
           testID="desktop-artifact-open-browser"
         >
           <Text style={styles.openLink}>Open in browser ↗</Text>
@@ -58,6 +82,7 @@ export function DesktopArtifactPane({
           accessibilityLabel="Close artifact pane"
           accessibilityRole="button"
           onPress={onClose}
+          style={styles.headerAction}
           testID="desktop-artifact-close"
         >
           <Text style={styles.close}>✕</Text>
@@ -68,12 +93,24 @@ export function DesktopArtifactPane({
       ) : format === 'html' || format === 'svg' ? (
         <DesktopArtifactFrame attachment={attachment} format={format} />
       ) : format === 'image' ? (
-        <ArtifactImage
-          attachment={attachment}
-          fit="contain"
+        <Pressable
+          accessibilityLabel={`Image ${title}`}
           style={styles.image}
-          testID="desktop-artifact-image"
-        />
+          testID="desktop-artifact-image-actions"
+          {...({
+            onContextMenu: (event: { preventDefault(): void }) => {
+              event.preventDefault();
+              showPictureActions(attachment);
+            },
+          } as any)}
+        >
+          <ArtifactImage
+            attachment={attachment}
+            fit="contain"
+            style={styles.image}
+            testID="desktop-artifact-image"
+          />
+        </Pressable>
       ) : format === 'text' ? (
         <ArtifactText attachment={attachment} crop={false} testID="desktop-artifact-text" />
       ) : format === 'pdf' ? (
@@ -201,6 +238,13 @@ const styles = StyleSheet.create((theme) => ({
   title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   kindLine: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   openLink: { ...theme.buzz.type.body, color: theme.buzz.accent },
+  headerAction: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   close: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   image: { flex: 1, width: '100%', height: '100%' },
   markdownBody: { padding: theme.buzz.space.md },

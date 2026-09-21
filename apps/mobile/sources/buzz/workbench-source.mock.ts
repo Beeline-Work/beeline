@@ -33,6 +33,7 @@ export const VERCEL_CONNECTION: ConnectionDetailView = {
     name: 'Vercel',
     service: 'vercel',
     hosts: ['api.vercel.com'],
+    faviconDomain: 'vercel.com',
     state: 'active',
     ownerId: MEMBER_A,
     grantCount: 2,

@@ -97,6 +97,7 @@ describe('MonolithWorkbenchSource connections', () => {
           label: 'Work key',
           service: 'github',
           allowedHosts: [],
+          faviconDomain: null,
           state: 'active',
         },
         {
@@ -104,6 +105,15 @@ describe('MonolithWorkbenchSource connections', () => {
           label: 'Box',
           service: null,
           allowedHosts: ['127.0.0.1'],
+          faviconDomain: null,
+          state: 'active',
+        },
+        {
+          reference: 'cred_resend',
+          label: 'default',
+          service: 'resend',
+          allowedHosts: ['api.resend.com'],
+          faviconDomain: 'resend.com',
           state: 'active',
         },
       ],
@@ -114,5 +124,8 @@ describe('MonolithWorkbenchSource connections', () => {
     });
     expect(view.connections[0].service).toBe('github');
     expect(view.connections[1].service).toBeUndefined();
+    // The server-derived brand domain rides through for the mark to fetch.
+    expect(view.connections[2].faviconDomain).toBe('resend.com');
+    expect(view.connections[0].faviconDomain).toBeUndefined();
   });
 });

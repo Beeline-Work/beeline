@@ -49,6 +49,8 @@
         "scripts/emoji-clip-proof.tsx",
         "scripts/workspace-picture-clip-proof.tsx",
         "scripts/workspace-picture-seat-proof.tsx",
+        "scripts/workbench-keys-proof.tsx",
+        "scripts/render-workbench-keys-proof.mjs",
         "scripts/identity-picture-seat-proof.tsx",
         "scripts/identity-picture-seat-frames.tsx",
         "scripts/render-identity-picture-seat-frames.mjs",

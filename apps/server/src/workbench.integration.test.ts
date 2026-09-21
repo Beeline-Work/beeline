@@ -173,7 +173,12 @@ describe('workbench connectors', () => {
     expect(view.connectors).toHaveLength(1);
     expect(view.connectors[0]!.connectorId).toBe(connectorId);
     expect(view.connectors[0]!.status.status).toBe('connected');
-    expect(view.connections[0]).toMatchObject({ reference: 'github.com/acme/tooling' });
+    expect(view.connections[0]).toMatchObject({
+      reference: 'github.com/acme/tooling',
+      // The brand domain the row's mark fetches, derived server-side from the
+      // credential's first allowed host.
+      faviconDomain: 'github.com',
+    });
     expect(view.connections[0]!.stale).toBeFalsy();
 
     // A different member sees none of this: connections are owner-scoped.

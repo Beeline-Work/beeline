@@ -75,6 +75,30 @@ export type WorkbenchConnectorView = {
   readonly createdAt: number;
 };
 
+/**
+ * The brand domain a connection's icon is fetched from, derived SERVER-SIDE
+ * from the credential's first allowed host, exactly the way Trusty Squire's
+ * vault does it (`faviconDomain()` in `apps/api/src/routes/vault.ts`): reduce
+ * to the registrable domain, so `api.resend.com` reads `resend.com` and
+ * `app.posthog.com` reads `posthog.com`. An API subdomain usually serves no
+ * icon of its own.
+ *
+ * `null` when the credential reports no host (a session credential has none);
+ * the mark then draws its lettermark. This is presentation metadata, not an
+ * allowlist — nothing reads it to decide what a key may reach.
+ */
+export function faviconDomain(allowedHosts: readonly string[]): string | null {
+  const host = allowedHosts[0];
+  if (!host) return null;
+  // A literal address names no brand, and the last-two-labels reduction would
+  // turn `127.0.0.1` into the nonsense `0.1`. Beeline's vault can hold a
+  // literal (a self-hosted service); Squire's reduction assumes a hostname.
+  if (host.includes(':') || /^[\d.]+$/.test(host)) return null;
+  const parts = host.split('.').filter((part) => part.length > 0);
+  if (parts.length === 0) return null;
+  return parts.length <= 2 ? parts.join('.') : parts.slice(-2).join('.');
+}
+
 export type WorkbenchConnectionView = {
   readonly connectionId: string;
   readonly connectorId: string;
@@ -82,6 +106,8 @@ export type WorkbenchConnectionView = {
   readonly service: string | null;
   readonly label: string;
   readonly allowedHosts: readonly string[];
+  /** The brand domain for the row's icon, or `null` to draw the lettermark. */
+  readonly faviconDomain: string | null;
   readonly state: 'active' | 'error';
   readonly lastSyncedAt?: number;
   /** True when the cached metadata is older than the 5-minute TTL. */

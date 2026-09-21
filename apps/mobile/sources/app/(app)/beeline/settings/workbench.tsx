@@ -17,6 +17,7 @@ import {
   connectionCompany,
   connectionDomainsLine,
   connectionInstrument,
+  connectionTitle,
   connectionsForViewer,
   connectorInstrument,
   isGoogleToolConnectorId,
@@ -241,6 +242,7 @@ export default function WorkbenchScreen() {
                   leading={
                     <ServiceMark
                       company={connectionCompany(connection)}
+                      domain={connection.faviconDomain}
                       testID={`workbench-connection-${connection.ref}-mark`}
                     />
                   }
@@ -252,7 +254,7 @@ export default function WorkbenchScreen() {
                   }
                   statusGlyph={instrument.glyph}
                   testID={`workbench-connection-${connection.ref}`}
-                  title={connection.name}
+                  title={connectionTitle(connection, connections)}
                   value={instrument.value}
                   valueTone={instrument.valueTone}
                 />

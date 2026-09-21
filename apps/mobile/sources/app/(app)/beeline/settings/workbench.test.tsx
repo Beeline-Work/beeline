@@ -30,6 +30,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
+    Image: host('Image'),
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -204,27 +205,33 @@ describe('Workbench settings screen', () => {
     );
   });
 
-  it('leads a key row with its company mark and puts the domains under the name', async () => {
+  it('titles a key row with its vault service and puts the domains under the name', async () => {
     const renderer = await render();
     const vercel = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
-    expect(vercel.props.title).toBe('Vercel');
+    expect(vercel.props.title).toBe('vercel');
     expect(vercel.props.description).toBe('api.vercel.com');
     expect(vercel.props.leading.props.company).toBe('vercel');
+    expect(vercel.props.leading.props.domain).toBe('vercel.com');
     expect(vercel.props.leading.props.testID).toBe('workbench-connection-cred_vercel-mark');
     // A key with no hosts draws no quiet line rather than a `—` placeholder.
+    // Its server-derived favicon domain is `null`, so the mark keeps its
+    // lettermark and fetches nothing.
     const google = renderer.root.findByProps({ testID: 'workbench-connection-cred_google' });
+    expect(google.props.title).toBe('google');
     expect(google.props.description).toBeUndefined();
     expect(google.props.leading.props.company).toBe('google');
+    expect(google.props.leading.props.domain).toBeUndefined();
   });
 
-  it('marks a key by its vault service, not by the label someone gave it', async () => {
+  it('titles a key by its vault service, never the vault label', async () => {
     const renderer = await render();
-    // `Work key`, no hosts, service `github`: neither the name nor an address
-    // can say who this key is for.
+    // `Work key`, no hosts, service `github`: the row names the SERVICE, not
+    // the label, and the mark reads `G` from that service.
     const github = renderer.root.findByProps({ testID: 'workbench-connection-cred_github' });
-    expect(github.props.title).toBe('Work key');
+    expect(github.props.title).toBe('github');
     expect(github.props.description).toBeUndefined();
     expect(github.props.leading.props.company).toBe('github');
+    expect(github.props.leading.props.domain).toBeUndefined();
   });
 
   it('gives a key row the same state instrument the tool rows carry', async () => {

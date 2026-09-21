@@ -6,7 +6,7 @@ const chatSource = readFileSync(
   'utf8',
 );
 const membersSource = readFileSync(
-  new URL('../../app/(app)/beeline/MembersScreen.tsx', import.meta.url),
+  new URL('../../app/(app)/beeline/members.tsx', import.meta.url),
   'utf8',
 );
 const hullDialogSource = readFileSync(new URL('./HullDialog.tsx', import.meta.url), 'utf8');

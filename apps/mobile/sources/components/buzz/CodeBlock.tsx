@@ -142,7 +142,6 @@ export function CodeBlock({ code, language }: { code: string; language: string |
         body
       )}
       <ToolOutputSheet
-        copyMetadata={formatFenceBytes(fenceByteLength(code))}
         detail={code}
         language={plainText ? undefined : language}
         onClose={() => setOpened(false)}

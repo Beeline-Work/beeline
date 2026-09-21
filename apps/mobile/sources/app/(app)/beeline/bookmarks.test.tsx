@@ -234,6 +234,27 @@ describe('Bookmarks desktop second pane', () => {
   });
 });
 
+describe('Bookmarks empty state', () => {
+  it('tells a desktop reader about the strip its pointer reaches, and nothing about long press', async () => {
+    phoneOperation.mockResolvedValue({ bookmarks: [] });
+    const empty = textOf(await renderBookmarks());
+    expect(empty).toContain('No bookmarks yet');
+    expect(empty).toContain('Hover a message and press its bookmark mark.');
+    expect(empty).not.toContain('Long press');
+  });
+
+  it('tells a touch reader to long press, and nothing about a desktop strip', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    phoneOperation.mockResolvedValue({ bookmarks: [] });
+    const empty = textOf(await renderBookmarks());
+    expect(empty).toContain('No bookmarks yet');
+    expect(empty).toContain('Long press a message and pick Bookmark.');
+    expect(empty).not.toContain('desktop');
+    expect(empty).not.toContain('Hover');
+  });
+});
+
 describe('Bookmarks mobile open', () => {
   it('opens the original message in its room from a compact tap', async () => {
     layout.os = 'ios';

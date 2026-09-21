@@ -1,5 +1,6 @@
 import React from 'react';
 import Svg, { Polygon } from 'react-native-svg';
+import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
 import { MEMBERS_GLYPH_STROKE_WIDTH } from './MembersGlyph';
 
@@ -51,8 +52,7 @@ export function BookmarksGlyph({
 }) {
   return (
     <Svg
-      accessibilityElementsHidden
-      focusable={false}
+      {...DECORATIVE_GLYPH_PROPS}
       height={size}
       testID={testID}
       viewBox={`0 0 ${BOX} ${BOX}`}

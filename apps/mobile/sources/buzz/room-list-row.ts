@@ -37,8 +37,8 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
     .filter((item) => Boolean(item.directMessage))
     .sort(
       (left, right) =>
-        (right.latestMessage?.createdAt ?? right.room.updatedAt) -
-        (left.latestMessage?.createdAt ?? left.room.updatedAt),
+        (right.latestMessage?.createdAt ?? right.room.updatedAt ?? 0) -
+        (left.latestMessage?.createdAt ?? left.room.updatedAt ?? 0),
     );
   return [
     ...(rooms.length ? [{ kind: 'rooms' as const, data: rooms }] : []),
@@ -50,7 +50,7 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
 
 export function expandedCornerRefreshAction(
   expandedRoomId: string | null,
-  chats: readonly { readonly room: { readonly id: string }; readonly cornerCount: number }[],
+  chats: readonly { readonly room: { readonly id: string }; readonly cornerCount?: number }[],
 ): ExpandedCornerRefreshAction {
   if (!expandedRoomId) return { kind: 'none' };
   const room = chats.find((chat) => chat.room.id === expandedRoomId);

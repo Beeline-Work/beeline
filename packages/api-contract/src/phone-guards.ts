@@ -1,6 +1,7 @@
 import { isSystemEvent } from './system-events.js';
 import { isAgentAccessPolicy } from './agent-access.js';
 import {
+  MESSAGE_REACTION_EMOJIS,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
   ROOM_VIEW_CHAT_LIMIT,
@@ -9,34 +10,70 @@ import {
   ROOM_VIEW_TOOL_ROW_LIMIT,
   ROOM_VIEW_WORKSPACE_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
+  type AgentAccessView,
   type AgentDetailView,
+  type AgentGrantView,
+  type AgentModelConfigOption,
+  type AgentModelSelection,
   type AgentPairingAbandonView,
   type AgentPairingClaimView,
   type AgentPairingClaimWireView,
+  type AgentYoloView,
   type ChatListItem,
   type ChatListView,
   type ChatListWorkspace,
+  type ChoiceCardView,
+  type CornerLifecycleView,
   type CornerListItem,
   type CornerListView,
+  type GrantRequestCardView,
   type InviteView,
+  type MessageReactionView,
   type RoomHistoryView,
+  type RoomRepositoryResolution,
+  type RoomRepositoryView,
   type RoomView,
+  type RoomViewActivity,
   type RoomViewAgentTurn,
   type RoomViewHeader,
   type RoomViewIdentity,
   type RoomViewMember,
   type RoomViewMessage,
+  type RoomViewer,
+  type SurfaceWatchFilter,
+  type WorkspaceAgentView,
   type WorkspaceListView,
+  type WorkspaceManagedRoomView,
   type WorkspaceMemberListView,
   type WorkspaceView,
 } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
-import { isConnectorOfferStatus } from './connector-offers.js';
+import { isConnectorOfferStatus, type ConnectorOfferCardView } from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
 import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
 
+/**
+ * Phone surface readers project a known-safe view from a wire payload.
+ *
+ * A Room (and every other view in this file) must survive an unknown field and
+ * a missing optional one. Unrecognised or unreadable list entries are dropped.
+ * Only load-bearing identity fails the view — for a Room, that is `room.id`
+ * and the presence of a `messages` array. `is*` remains `read*(value) !== null`
+ * so existing type-predicate call sites still compile; HTTP clients apply
+ * `read*` so a dropped row cannot linger as typed junk.
+ */
+export type SurfaceReader<T> = (value: unknown) => T | null;
+
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const SHA1 = /^[0-9a-f]{40}$/i;
+const WATCH_FILTER_LIMIT = 32;
+const WATCH_FILTER_TAG_KEYS: readonly string[] = ['authors', '#h', '#d', '#p', '#t'];
+const CLOSED_VIEWER: RoomViewer = {
+  identity: { pubkey: '0'.repeat(64), kind: 'human', name: '' },
+  role: 'member',
+  permissions: { send: false, manage: false },
+};
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -48,31 +85,19 @@ function integer(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
-function optionalInteger(value: unknown): boolean {
-  return value === undefined || integer(value);
+function hex64(value: unknown): value is string {
+  return typeof value === 'string' && HEX.test(value);
 }
 
-function optionalString(value: unknown): boolean {
-  return value === undefined || typeof value === 'string';
+function uuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID.test(value);
 }
 
-/**
- * A Room role is descriptive paint, not the authority boundary: every write
- * is re-authorized by the server. Older stores have emitted named role aliases
- * (notably `master`) while still returning an otherwise complete transcript.
- * Keep those Rooms readable and let role comparisons fail closed until the
- * producer returns to the canonical vocabulary. Non-string roles remain an
- * invalid transport shape.
- */
-function readableRoomRole(value: unknown): boolean {
+function nonempty(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function stringArray(value: unknown, itemGuard: (item: string) => boolean = () => true): boolean {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string' && itemGuard(item));
-}
-
-function httpUrl(value: unknown): boolean {
+function httpUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
     const protocol = new URL(value).protocol;
@@ -82,1077 +107,1426 @@ function httpUrl(value: unknown): boolean {
   }
 }
 
-function attachment(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    httpUrl(item.url) &&
-    typeof item.name === 'string' &&
-    item.name.length > 0 &&
-    typeof item.mimeType === 'string' &&
-    /^[^/\s]+\/[^/\s]+$/.test(item.mimeType) &&
-    integer(item.size) &&
-    (item.previewUrl === undefined || httpUrl(item.previewUrl)) &&
-    (item.thumbnailUrl === undefined || httpUrl(item.thumbnailUrl)) &&
-    (item.sha256 === undefined || (typeof item.sha256 === 'string' && HEX.test(item.sha256))) &&
-    (item.width === undefined || (integer(item.width) && item.width > 0)) &&
-    (item.height === undefined || (integer(item.height) && item.height > 0)),
-  );
-}
-
-function activityRequester(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item && typeof item.pubkey === 'string' && HEX.test(item.pubkey) && optionalString(item.name),
-  );
-}
-
-export function isAgentGrantView(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.grantId === 'string' &&
-    item.grantId.length > 0 &&
-    isAgentGrantKind(item.kind) &&
-    typeof item.target === 'string' &&
-    typeof item.reason === 'string' &&
-    isAgentGrantStatus(item.status) &&
-    identity(item.requestedBy) &&
-    (item.decidedBy === undefined || identity(item.decidedBy)) &&
-    typeof item.roomId === 'string' &&
-    UUID.test(item.roomId) &&
-    integer(item.createdAt) &&
-    (item.decidedAt === undefined || integer(item.decidedAt)) &&
-    (item.expiresAt === undefined || integer(item.expiresAt)) &&
-    typeof item.auto === 'boolean' &&
-    // C94: the card renders these bytes, so they are validated like anything
-    // else a screen draws verbatim.
-    (item.script === undefined || isCommandGrantScript(item.script)),
-  );
-}
-
-function grantRequest(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    identity(item.agent) &&
-    item.agent.kind === 'agent' &&
-    identity(item.owner) &&
-    item.owner.kind === 'human' &&
-    identity(item.requester) &&
-    Array.isArray(item.grants) &&
-    item.grants.length > 0 &&
-    item.grants.every(isAgentGrantView),
-  );
-}
-
-/** The connector-offer card the phone renders verbatim (R5). */
-export function isConnectorOfferCardView(value: unknown): boolean {
-  const item = record(value);
-  const helper = item ? record(item.helper) : null;
-  return Boolean(
-    item &&
-    typeof item.offerId === 'string' &&
-    UUID.test(item.offerId) &&
-    identity(item.agent) &&
-    item.agent.kind === 'agent' &&
-    identity(item.addressee) &&
-    item.addressee.kind === 'human' &&
-    isConnectorKind(item.connectorType) &&
-    typeof item.connectorName === 'string' &&
-    item.connectorName.length > 0 &&
-    typeof item.reason === 'string' &&
-    typeof item.consequence === 'string' &&
-    item.consequence.length > 0 &&
-    helper &&
-    typeof helper.machineId === 'string' &&
-    typeof helper.name === 'string' &&
-    isConnectorOfferStatus(item.status) &&
-    integer(item.createdAt) &&
-    (item.acceptedBy === undefined || identity(item.acceptedBy)) &&
-    (item.acceptedAt === undefined || integer(item.acceptedAt)) &&
-    optionalString(item.connectorId),
-  );
-}
-
-function choiceLetter(value: unknown): boolean {
-  return typeof value === 'string' && (CHOICE_LETTERS as readonly string[]).includes(value);
-}
-
-function choiceShare(value: unknown): boolean {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
-function choiceOption(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    choiceLetter(item.optionId) &&
-    item.letter === item.optionId &&
-    typeof item.label === 'string' &&
-    typeof item.consequence === 'string' &&
-    (item.costly === undefined || item.costly === true) &&
-    (item.votes === undefined || integer(item.votes)) &&
-    (item.share === undefined || choiceShare(item.share)) &&
-    (item.leader === undefined || item.leader === true),
-  );
-}
-
-function choiceResponse(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.identityId === 'string' &&
-    HEX.test(item.identityId) &&
-    choiceLetter(item.optionId),
-  );
-}
-
-function choiceCard(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.choiceId === 'string' &&
-    UUID.test(item.choiceId) &&
-    isChoiceMode(item.mode) &&
-    isChoiceStatus(item.status) &&
-    identity(item.agent) &&
-    item.agent.kind === 'agent' &&
-    (item.requester === undefined || identity(item.requester)) &&
-    typeof item.prompt === 'string' &&
-    optionalString(item.constraint) &&
-    Array.isArray(item.options) &&
-    item.options.length >= 2 &&
-    item.options.length <= 4 &&
-    item.options.every(choiceOption) &&
-    stringArray(item.electorate, (id) => HEX.test(id)) &&
-    (item.mentionIds === undefined || stringArray(item.mentionIds, (id) => HEX.test(id))) &&
-    (item.closesAt === undefined || integer(item.closesAt)) &&
-    integer(item.votedCount) &&
-    integer(item.electorateCount) &&
-    Array.isArray(item.responses) &&
-    item.responses.every(choiceResponse) &&
-    (item.answeredBy === undefined || identity(item.answeredBy)) &&
-    (item.selectedOptionId === undefined || choiceLetter(item.selectedOptionId)) &&
-    (item.outcome === undefined ||
-      item.outcome === 'winner' ||
-      item.outcome === 'tie' ||
-      item.outcome === 'no-votes') &&
-    optionalString(item.footer),
-  );
-}
-
-function walletTx(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    (item.direction === 'in' || item.direction === 'out') &&
-    typeof item.amountText === 'string' &&
-    typeof item.counterparty === 'string' &&
-    typeof item.chain === 'string' &&
-    typeof item.balanceAfterUsd === 'string' &&
-    (item.txUrl === undefined || typeof item.txUrl === 'string') &&
-    (item.agentName === undefined || typeof item.agentName === 'string' || item.agentName === null),
-  );
-}
-
-function walletInsufficient(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.needed === 'string' &&
-    typeof item.asset === 'string' &&
-    typeof item.chain === 'string' &&
-    (item.available === undefined ||
-      typeof item.available === 'string' ||
-      item.available === null) &&
-    (item.agentName === undefined ||
-      typeof item.agentName === 'string' ||
-      item.agentName === null) &&
-    (item.reason === undefined || typeof item.reason === 'string'),
-  );
-}
-
-function walletDelegation(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(item && integer(item.expiresAt) && integer(item.ttlHours));
-}
-
-function activity(value: unknown): boolean {
-  const item = record(value);
-  const rollup = item?.rollup === undefined ? undefined : record(item.rollup);
-  const plan = item?.plan === undefined ? undefined : record(item.plan);
-  return Boolean(
-    item &&
-    (item.kind === 'thinking' ||
-      item.kind === 'tool' ||
-      item.kind === 'output' ||
-      item.kind === 'summary') &&
-    typeof item.title === 'string' &&
-    optionalString(item.text) &&
-    optionalString(item.operation) &&
-    optionalString(item.status) &&
-    optionalString(item.command) &&
-    optionalString(item.input) &&
-    optionalString(item.output) &&
-    (item.requestedBy === undefined || activityRequester(item.requestedBy)) &&
-    (item.thoughtMs === undefined || integer(item.thoughtMs)) &&
-    (rollup === undefined || (rollup !== null && Object.values(rollup).every(integer))) &&
-    (item.observed === undefined ||
-      (Array.isArray(item.observed) &&
-        item.observed.every((candidate) => {
-          const observed = record(candidate);
-          return Boolean(
-            observed &&
-            typeof observed.verb === 'string' &&
-            optionalString(observed.target) &&
-            optionalString(observed.result),
-          );
-        }))) &&
-    (item.files === undefined ||
-      (Array.isArray(item.files) &&
-        item.files.every((candidate) => {
-          const file = record(candidate);
-          return Boolean(file && typeof file.path === 'string' && optionalString(file.status));
-        }))) &&
-    (plan === undefined ||
-      (plan !== null &&
-        optionalString(plan.objective) &&
-        Array.isArray(plan.items) &&
-        plan.items.every((candidate) => {
-          const planItem = record(candidate);
-          return Boolean(
-            planItem &&
-            typeof planItem.step === 'string' &&
-            (planItem.status === 'pending' ||
-              planItem.status === 'in_progress' ||
-              planItem.status === 'completed'),
-          );
-        }))),
-  );
-}
-
-function identity(value: unknown): value is RoomViewIdentity {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.pubkey === 'string' &&
-    HEX.test(item.pubkey) &&
-    (item.kind === 'human' || item.kind === 'agent') &&
-    typeof item.name === 'string' &&
-    optionalString(item.handle) &&
-    optionalString(item.avatar) &&
-    optionalString(item.face),
-  );
-}
-
-function header(value: unknown): value is RoomViewHeader {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    UUID.test(item.id) &&
-    typeof item.workspaceId === 'string' &&
-    UUID.test(item.workspaceId) &&
-    (item.parentId === undefined ||
-      (typeof item.parentId === 'string' && UUID.test(item.parentId))) &&
-    typeof item.name === 'string' &&
-    optionalString(item.about) &&
-    optionalString(item.avatar) &&
-    (item.visibility === undefined ||
-      item.visibility === 'public' ||
-      item.visibility === 'invite-only') &&
-    (item.reviewerAgentId === undefined ||
-      (typeof item.reviewerAgentId === 'string' && HEX.test(item.reviewerAgentId))) &&
-    typeof item.archived === 'boolean' &&
-    integer(item.createdAt) &&
-    integer(item.updatedAt),
-  );
-}
-
-function member(value: unknown): value is RoomViewMember {
-  const item = record(value);
-  const presence = item?.presence === undefined ? undefined : record(item.presence);
-  return Boolean(
-    item &&
-    identity(item.identity) &&
-    readableRoomRole(item.role) &&
-    (presence === undefined ||
-      (presence &&
-        (presence.status === 'online' || presence.status === 'offline') &&
-        integer(presence.observedAt) &&
-        (presence.roomId === undefined ||
-          (typeof presence.roomId === 'string' && UUID.test(presence.roomId))))),
-  );
-}
-
-function workspaceAgent(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    member(value) &&
-    record(item.identity)?.kind === 'agent' &&
-    optionalString(item.model) &&
-    (item.owner === undefined || (identity(item.owner) && item.owner.kind === 'human')),
-  );
-}
-
-function messageCorner(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    UUID.test(item.id) &&
-    (item.state === 'working' ||
-      item.state === 'waiting' ||
-      item.state === 'review' ||
-      item.state === 'archived'),
-  );
-}
-
-function messagePermission(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.permissionId === 'string' &&
-    item.permissionId.length > 0 &&
-    typeof item.requestId === 'string' &&
-    item.requestId.length > 0 &&
-    identity(item.agent) &&
-    item.agent.kind === 'agent' &&
-    identity(item.requester) &&
-    item.requester.kind === 'human' &&
-    (item.decider === undefined || (identity(item.decider) && item.decider.kind === 'human')) &&
-    typeof item.tool === 'string' &&
-    item.tool.length > 0 &&
-    optionalString(item.repository) &&
-    (item.purpose === undefined || item.purpose === 'squire-spending') &&
-    (item.status === 'pending' ||
-      item.status === 'allowed' ||
-      item.status === 'denied' ||
-      item.status === 'expired' ||
-      item.status === 'failed') &&
-    (item.cornerId === undefined ||
-      (typeof item.cornerId === 'string' && UUID.test(item.cornerId))),
-  );
-}
-
-function targetBranch(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.proposalId === 'string' &&
-    item.proposalId.length > 0 &&
-    typeof item.from === 'string' &&
-    typeof item.to === 'string' &&
-    item.to.length > 0 &&
-    optionalString(item.repository) &&
-    (item.agent === undefined || identity(item.agent)) &&
-    (item.requester === undefined || identity(item.requester)),
-  );
-}
-
-function githubUrl(value: unknown): boolean {
+function githubUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname === 'github.com';
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && parsed.hostname === 'github.com';
   } catch {
     return false;
   }
 }
 
-function githubEvent(value: unknown): boolean {
-  // Validate the ENVELOPE only. A card kind this client does not know about
-  // must not fail the whole Room view: a newer server may post one, and
-  // rejecting it here blanks every screen instead of one row. The renderer
-  // draws the kinds it knows and skips the rest.
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.type === 'string' &&
-    item.type.length > 0 &&
-    typeof item.action === 'string' &&
-    item.action.length > 0 &&
-    typeof item.actor === 'string' &&
-    typeof item.title === 'string' &&
-    githubUrl(item.url),
-  );
+function field<K extends string, V>(
+  key: K,
+  value: V | undefined | null,
+): { [P in K]?: Exclude<V, undefined> } {
+  return value === undefined || value === null
+    ? {}
+    : ({ [key]: value } as { [P in K]: Exclude<V, undefined> });
 }
 
-function daemonFact(value: unknown): boolean {
+function oneOf<const T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
+}
+
+function readList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: T[] = [];
+  for (const entry of value) {
+    const item = read(entry);
+    if (!item) continue;
+    items.push(item);
+    if (limit !== undefined && items.length >= limit) break;
+  }
+  return items;
+}
+
+function requireList<T>(value: unknown, read: SurfaceReader<T>, limit?: number): T[] | null {
+  return Array.isArray(value) ? (readList(value, read, limit) ?? []) : null;
+}
+
+/**
+ * The server emits message rows oldest-first and already trims its own tail, so
+ * a bundle whose cap is lower than the server's must keep the NEWEST rows.
+ */
+function readNewestList<T>(value: unknown, read: SurfaceReader<T>, limit: number): T[] | undefined {
+  return Array.isArray(value) ? (readList(value.slice(-limit), read) ?? []) : undefined;
+}
+
+export function readIdentity(value: unknown): RoomViewIdentity | null {
   const item = record(value);
-  const pullRequest = item?.pullRequest === undefined ? undefined : record(item.pullRequest);
+  if (!item || !hex64(item.pubkey)) return null;
+  if (item.kind !== 'human' && item.kind !== 'agent') return null;
+  if (typeof item.name !== 'string') return null;
+  return {
+    pubkey: item.pubkey,
+    kind: item.kind,
+    name: item.name,
+    ...field('handle', typeof item.handle === 'string' ? item.handle : undefined),
+    ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
+    ...field('face', typeof item.face === 'string' ? item.face : undefined),
+  };
+}
+
+function readHeader(value: unknown): RoomViewHeader | null {
+  const item = record(value);
+  if (!item || !uuid(item.id)) return null;
+  const reviewerAgentId = hex64(item.reviewerAgentId) ? item.reviewerAgentId : undefined;
+  const parentId = uuid(item.parentId) ? item.parentId : undefined;
+  return {
+    id: item.id,
+    name: typeof item.name === 'string' ? item.name : '',
+    ...field('archived', typeof item.archived === 'boolean' ? item.archived : undefined),
+    ...field('createdAt', integer(item.createdAt) ? item.createdAt : undefined),
+    ...field('updatedAt', integer(item.updatedAt) ? item.updatedAt : undefined),
+    ...field('workspaceId', uuid(item.workspaceId) ? item.workspaceId : undefined),
+    ...field('parentId', parentId),
+    ...field('about', typeof item.about === 'string' ? item.about : undefined),
+    ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
+    ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
+    ...field('reviewerAgentId', reviewerAgentId),
+  };
+}
+
+function readPresence(value: unknown): RoomViewMember['presence'] | undefined {
+  const item = record(value);
+  if (!item) return undefined;
+  if (item.status !== 'online' && item.status !== 'offline') return undefined;
+  if (!integer(item.observedAt)) return undefined;
+  return {
+    status: item.status,
+    observedAt: item.observedAt,
+    ...field('roomId', uuid(item.roomId) ? item.roomId : undefined),
+  };
+}
+
+function readMember(value: unknown): RoomViewMember | null {
+  const item = record(value);
+  const identity = readIdentity(item?.identity);
+  if (!item || !identity) return null;
+  const role = typeof item.role === 'string' && item.role.length > 0 ? item.role : 'member';
+  return {
+    identity,
+    role: role as RoomViewMember['role'],
+    ...field('presence', readPresence(item.presence)),
+  };
+}
+
+function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
+  const member = readMember(value);
+  const item = record(value);
+  if (!member || !item || member.identity.kind !== 'agent') return null;
+  const owner = readIdentity(item.owner);
+  return {
+    ...member,
+    ...field('model', typeof item.model === 'string' ? item.model : undefined),
+    ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
+  };
+}
+
+function readPermissions(value: unknown): RoomViewer['permissions'] | undefined {
+  const item = record(value);
+  if (!item || typeof item.send !== 'boolean' || typeof item.manage !== 'boolean') return undefined;
+  return { send: item.send, manage: item.manage };
+}
+
+function readViewer(value: unknown): RoomViewer {
+  const item = record(value);
+  const identity = readIdentity(item?.identity);
+  const permissions = readPermissions(item?.permissions);
+  if (!item || !identity || !permissions) return CLOSED_VIEWER;
+  const role = typeof item.role === 'string' && item.role.length > 0 ? item.role : 'member';
+  const cursor = record(item.readCursor);
+  const readCursor =
+    cursor &&
+    (cursor.messageId === null || typeof cursor.messageId === 'string') &&
+    (cursor.firstUnreadMessageId === null || typeof cursor.firstUnreadMessageId === 'string')
+      ? {
+          messageId: cursor.messageId as string | null,
+          firstUnreadMessageId: cursor.firstUnreadMessageId as string | null,
+        }
+      : undefined;
+  return {
+    identity,
+    role: role as RoomViewer['role'],
+    permissions,
+    ...field('readCursor', readCursor),
+  };
+}
+
+function readIdentityOnly(value: unknown): RoomViewIdentity | undefined {
+  return readIdentity(value) ?? undefined;
+}
+
+function readWatchFilter(value: unknown): SurfaceWatchFilter | null {
+  const item = record(value);
+  if (!item) return null;
+  const filter: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(item)) {
+    if (key === 'kinds') {
+      if (!Array.isArray(entry) || !entry.every(integer)) return null;
+    } else if (WATCH_FILTER_TAG_KEYS.includes(key)) {
+      if (!Array.isArray(entry) || !entry.every((tag) => typeof tag === 'string')) return null;
+    } else {
+      return null;
+    }
+    filter[key] = entry;
+  }
+  return Object.keys(filter).length > 0 ? (filter as SurfaceWatchFilter) : null;
+}
+
+function readWatchFilters(value: unknown): SurfaceWatchFilter[] {
+  return readList(value, readWatchFilter, WATCH_FILTER_LIMIT) ?? [];
+}
+
+function readAttachment(value: unknown): NonNullable<RoomViewMessage['attachments']>[number] | null {
+  const item = record(value);
+  if (
+    !item ||
+    !httpUrl(item.url) ||
+    !nonempty(item.name) ||
+    typeof item.mimeType !== 'string' ||
+    !/^[^/\s]+\/[^/\s]+$/.test(item.mimeType) ||
+    !integer(item.size)
+  ) {
+    return null;
+  }
+  return {
+    url: item.url,
+    name: item.name,
+    mimeType: item.mimeType,
+    size: item.size,
+    ...field('expired', typeof item.expired === 'boolean' ? item.expired : undefined),
+    ...field('previewUrl', httpUrl(item.previewUrl) ? item.previewUrl : undefined),
+    ...field('thumbnailUrl', httpUrl(item.thumbnailUrl) ? item.thumbnailUrl : undefined),
+    ...field('sha256', hex64(item.sha256) ? item.sha256 : undefined),
+    ...field('width', integer(item.width) && item.width > 0 ? item.width : undefined),
+    ...field('height', integer(item.height) && item.height > 0 ? item.height : undefined),
+    ...field('kind', oneOf(item.kind, ['artifact'])),
+    ...field('title', typeof item.title === 'string' ? item.title : undefined),
+    ...field('author', typeof item.author === 'string' ? item.author : undefined),
+  };
+}
+
+function readActivityRequester(
+  value: unknown,
+): NonNullable<RoomViewActivity['requestedBy']> | undefined {
+  const item = record(value);
+  if (!item || !hex64(item.pubkey)) return undefined;
+  return {
+    pubkey: item.pubkey,
+    ...field('name', typeof item.name === 'string' ? item.name : undefined),
+  };
+}
+
+function readActivity(value: unknown): RoomViewActivity | null {
+  const item = record(value);
+  if (
+    !item ||
+    (item.kind !== 'thinking' &&
+      item.kind !== 'tool' &&
+      item.kind !== 'output' &&
+      item.kind !== 'summary') ||
+    typeof item.title !== 'string'
+  ) {
+    return null;
+  }
+  const rollup = record(item.rollup);
+  const plan = readPlan(item.plan);
+  return {
+    kind: item.kind,
+    title: item.title,
+    ...field('text', typeof item.text === 'string' ? item.text : undefined),
+    ...field('operation', typeof item.operation === 'string' ? item.operation : undefined),
+    ...field('status', typeof item.status === 'string' ? item.status : undefined),
+    ...field('command', typeof item.command === 'string' ? item.command : undefined),
+    ...field('input', typeof item.input === 'string' ? item.input : undefined),
+    ...field('output', typeof item.output === 'string' ? item.output : undefined),
+    ...field('requestedBy', readActivityRequester(item.requestedBy)),
+    ...field('thoughtMs', integer(item.thoughtMs) ? item.thoughtMs : undefined),
+    ...field(
+      'rollup',
+      rollup && Object.values(rollup).every(integer) ? (rollup as Record<string, number>) : undefined,
+    ),
+    ...field(
+      'observed',
+      readList(item.observed, (candidate) => {
+        const observed = record(candidate);
+        if (!observed || typeof observed.verb !== 'string') return null;
+        return {
+          verb: observed.verb,
+          ...field('target', typeof observed.target === 'string' ? observed.target : undefined),
+          ...field('result', typeof observed.result === 'string' ? observed.result : undefined),
+        };
+      }),
+    ),
+    ...field(
+      'files',
+      readList(item.files, (candidate) => {
+        const file = record(candidate);
+        if (!file || typeof file.path !== 'string') return null;
+        return {
+          path: file.path,
+          ...field('status', typeof file.status === 'string' ? file.status : undefined),
+        };
+      }),
+    ),
+    ...field('plan', plan),
+  };
+}
+
+function readPlan(value: unknown): RoomViewActivity['plan'] | undefined {
+  const item = record(value);
+  if (!item) return undefined;
+  const items = readList(item.items, (candidate) => {
+    const planItem = record(candidate);
+    if (
+      !planItem ||
+      typeof planItem.step !== 'string' ||
+      (planItem.status !== 'pending' &&
+        planItem.status !== 'in_progress' &&
+        planItem.status !== 'completed')
+    ) {
+      return null;
+    }
+    return {
+      step: planItem.step,
+      status: planItem.status as 'pending' | 'in_progress' | 'completed',
+    };
+  });
+  if (!items) return undefined;
+  return {
+    items,
+    ...field('objective', typeof item.objective === 'string' ? item.objective : undefined),
+  };
+}
+
+export function readAgentGrantView(value: unknown): AgentGrantView | null {
+  const item = record(value);
+  const requestedBy = readIdentity(item?.requestedBy);
+  if (
+    !item ||
+    !nonempty(item.grantId) ||
+    !isAgentGrantKind(item.kind) ||
+    typeof item.target !== 'string' ||
+    typeof item.reason !== 'string' ||
+    !isAgentGrantStatus(item.status) ||
+    !requestedBy ||
+    !uuid(item.roomId) ||
+    !integer(item.createdAt) ||
+    typeof item.auto !== 'boolean'
+  ) {
+    return null;
+  }
+  const decidedBy = readIdentity(item.decidedBy);
+  return {
+    grantId: item.grantId,
+    kind: item.kind,
+    target: item.target,
+    reason: item.reason,
+    status: item.status,
+    requestedBy,
+    roomId: item.roomId,
+    createdAt: item.createdAt,
+    auto: item.auto,
+    ...field('decidedBy', decidedBy ?? undefined),
+    ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
+    ...field('expiresAt', integer(item.expiresAt) ? item.expiresAt : undefined),
+    ...field('script', isCommandGrantScript(item.script) ? item.script : undefined),
+  };
+}
+
+export function isAgentGrantView(value: unknown): value is AgentGrantView {
+  return readAgentGrantView(value) !== null;
+}
+
+function readGrantRequest(value: unknown): GrantRequestCardView | null {
+  const item = record(value);
+  const agent = readIdentity(item?.agent);
+  const owner = readIdentity(item?.owner);
+  const requester = readIdentity(item?.requester);
+  const grants = readList(item?.grants, readAgentGrantView);
+  if (
+    !item ||
+    !agent ||
+    agent.kind !== 'agent' ||
+    !owner ||
+    owner.kind !== 'human' ||
+    !requester ||
+    !grants ||
+    grants.length === 0
+  ) {
+    return null;
+  }
+  return { agent, owner, requester, grants };
+}
+
+export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardView | null {
+  const item = record(value);
+  const helper = record(item?.helper);
+  const agent = readIdentity(item?.agent);
+  const addressee = readIdentity(item?.addressee);
+  if (
+    !item ||
+    !uuid(item.offerId) ||
+    !agent ||
+    agent.kind !== 'agent' ||
+    !addressee ||
+    addressee.kind !== 'human' ||
+    !isConnectorKind(item.connectorType) ||
+    !nonempty(item.connectorName) ||
+    typeof item.reason !== 'string' ||
+    !nonempty(item.consequence) ||
+    !helper ||
+    typeof helper.machineId !== 'string' ||
+    typeof helper.name !== 'string' ||
+    !isConnectorOfferStatus(item.status) ||
+    !integer(item.createdAt)
+  ) {
+    return null;
+  }
+  return {
+    offerId: item.offerId,
+    agent,
+    addressee,
+    connectorType: item.connectorType,
+    connectorName: item.connectorName,
+    reason: item.reason,
+    consequence: item.consequence,
+    helper: { machineId: helper.machineId, name: helper.name },
+    status: item.status,
+    createdAt: item.createdAt,
+    ...field('acceptedBy', readIdentityOnly(item.acceptedBy)),
+    ...field('acceptedAt', integer(item.acceptedAt) ? item.acceptedAt : undefined),
+    ...field('connectorId', typeof item.connectorId === 'string' ? item.connectorId : undefined),
+  };
+}
+
+export function isConnectorOfferCardView(value: unknown): value is ConnectorOfferCardView {
+  return readConnectorOfferCardView(value) !== null;
+}
+
+function choiceLetter(value: unknown): value is (typeof CHOICE_LETTERS)[number] {
+  return typeof value === 'string' && (CHOICE_LETTERS as readonly string[]).includes(value);
+}
+
+function readChoiceOption(value: unknown): ChoiceCardView['options'][number] | null {
+  const item = record(value);
+  if (!item || !choiceLetter(item.optionId) || item.letter !== item.optionId) return null;
+  if (typeof item.label !== 'string' || typeof item.consequence !== 'string') return null;
+  return {
+    optionId: item.optionId,
+    letter: item.optionId,
+    label: item.label,
+    consequence: item.consequence,
+    ...field('costly', item.costly === true ? true : undefined),
+    ...field('votes', integer(item.votes) ? item.votes : undefined),
+    ...field(
+      'share',
+      typeof item.share === 'number' && Number.isFinite(item.share) && item.share >= 0 && item.share <= 1
+        ? item.share
+        : undefined,
+    ),
+    ...field('leader', item.leader === true ? true : undefined),
+  };
+}
+
+function readChoiceCard(value: unknown): ChoiceCardView | null {
+  const item = record(value);
+  const agent = readIdentity(item?.agent);
+  const options = readList(item?.options, readChoiceOption);
+  if (
+    !item ||
+    !uuid(item.choiceId) ||
+    !isChoiceMode(item.mode) ||
+    !isChoiceStatus(item.status) ||
+    !agent ||
+    agent.kind !== 'agent' ||
+    typeof item.prompt !== 'string' ||
+    !options ||
+    options.length < 2 ||
+    options.length > 4 ||
+    !Array.isArray(item.electorate) ||
+    !item.electorate.every(hex64) ||
+    !integer(item.votedCount) ||
+    !integer(item.electorateCount)
+  ) {
+    return null;
+  }
+  const responses = readList(item.responses, (candidate) => {
+    const response = record(candidate);
+    if (!response || !hex64(response.identityId) || !choiceLetter(response.optionId)) return null;
+    return { identityId: response.identityId, optionId: response.optionId };
+  });
+  return {
+    choiceId: item.choiceId,
+    mode: item.mode,
+    status: item.status,
+    agent,
+    prompt: item.prompt,
+    options,
+    electorate: item.electorate,
+    votedCount: item.votedCount,
+    electorateCount: item.electorateCount,
+    responses: responses ?? [],
+    ...field('requester', readIdentityOnly(item.requester)),
+    ...field('constraint', typeof item.constraint === 'string' ? item.constraint : undefined),
+    ...field(
+      'mentionIds',
+      Array.isArray(item.mentionIds) && item.mentionIds.every(hex64) ? item.mentionIds : undefined,
+    ),
+    ...field('closesAt', integer(item.closesAt) ? item.closesAt : undefined),
+    ...field('answeredBy', readIdentityOnly(item.answeredBy)),
+    ...field('selectedOptionId', choiceLetter(item.selectedOptionId) ? item.selectedOptionId : undefined),
+    ...field('outcome', oneOf(item.outcome, ['winner', 'tie', 'no-votes'])),
+    ...field('footer', typeof item.footer === 'string' ? item.footer : undefined),
+  };
+}
+
+function readWalletTx(value: unknown): NonNullable<RoomViewMessage['walletTx']> | null {
+  const item = record(value);
+  if (
+    !item ||
+    (item.direction !== 'in' && item.direction !== 'out') ||
+    typeof item.amountText !== 'string' ||
+    typeof item.counterparty !== 'string' ||
+    typeof item.chain !== 'string' ||
+    typeof item.balanceAfterUsd !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    direction: item.direction,
+    amountText: item.amountText,
+    counterparty: item.counterparty,
+    chain: item.chain,
+    balanceAfterUsd: item.balanceAfterUsd,
+    ...field('txUrl', typeof item.txUrl === 'string' ? item.txUrl : undefined),
+    ...field(
+      'agentName',
+      typeof item.agentName === 'string' || item.agentName === null ? item.agentName : undefined,
+    ),
+  };
+}
+
+function readWalletInsufficient(
+  value: unknown,
+): NonNullable<RoomViewMessage['walletInsufficient']> | null {
+  const item = record(value);
+  if (
+    !item ||
+    typeof item.needed !== 'string' ||
+    typeof item.asset !== 'string' ||
+    typeof item.chain !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    needed: item.needed,
+    asset: item.asset,
+    chain: item.chain,
+    ...field(
+      'available',
+      typeof item.available === 'string' || item.available === null ? item.available : undefined,
+    ),
+    ...field(
+      'agentName',
+      typeof item.agentName === 'string' || item.agentName === null ? item.agentName : undefined,
+    ),
+    ...field('reason', typeof item.reason === 'string' ? item.reason : undefined),
+  };
+}
+
+function readWalletDelegation(
+  value: unknown,
+): NonNullable<RoomViewMessage['walletDelegation']> | null {
+  const item = record(value);
+  if (!item || !integer(item.expiresAt) || !integer(item.ttlHours)) return null;
+  return { expiresAt: item.expiresAt, ttlHours: item.ttlHours };
+}
+
+function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner']> | null {
+  const item = record(value);
+  if (
+    !item ||
+    !uuid(item.id) ||
+    (item.state !== 'working' &&
+      item.state !== 'waiting' &&
+      item.state !== 'review' &&
+      item.state !== 'archived')
+  ) {
+    return null;
+  }
+  return { id: item.id, state: item.state };
+}
+
+function readPermission(value: unknown): NonNullable<RoomViewMessage['permission']> | null {
+  const item = record(value);
+  const agent = readIdentity(item?.agent);
+  const requester = readIdentity(item?.requester);
+  const decider = readIdentity(item?.decider);
+  if (
+    !item ||
+    !nonempty(item.permissionId) ||
+    !nonempty(item.requestId) ||
+    !agent ||
+    agent.kind !== 'agent' ||
+    !requester ||
+    requester.kind !== 'human' ||
+    !nonempty(item.tool) ||
+    (item.status !== 'pending' &&
+      item.status !== 'allowed' &&
+      item.status !== 'denied' &&
+      item.status !== 'expired' &&
+      item.status !== 'failed')
+  ) {
+    return null;
+  }
+  return {
+    permissionId: item.permissionId,
+    requestId: item.requestId,
+    agent,
+    requester,
+    tool: item.tool,
+    status: item.status,
+    ...field('decider', decider && decider.kind === 'human' ? decider : undefined),
+    ...field('repository', typeof item.repository === 'string' ? item.repository : undefined),
+    ...field('purpose', oneOf(item.purpose, ['squire-spending'])),
+    ...field('cornerId', uuid(item.cornerId) ? item.cornerId : undefined),
+  };
+}
+
+function readTargetBranch(value: unknown): NonNullable<RoomViewMessage['targetBranch']> | null {
+  const item = record(value);
+  if (!item || !nonempty(item.proposalId) || typeof item.from !== 'string' || !nonempty(item.to)) {
+    return null;
+  }
+  return {
+    proposalId: item.proposalId,
+    from: item.from,
+    to: item.to,
+    ...field('repository', typeof item.repository === 'string' ? item.repository : undefined),
+    ...field('agent', readIdentityOnly(item.agent)),
+    ...field('requester', readIdentityOnly(item.requester)),
+  };
+}
+
+function readGithubEvent(value: unknown): NonNullable<RoomViewMessage['githubEvent']> | null {
+  const item = record(value);
+  if (
+    !item ||
+    !nonempty(item.type) ||
+    !nonempty(item.action) ||
+    typeof item.actor !== 'string' ||
+    typeof item.title !== 'string' ||
+    !githubUrl(item.url)
+  ) {
+    return null;
+  }
+  return {
+    type: item.type,
+    action: item.action,
+    actor: item.actor,
+    title: item.title,
+    url: item.url,
+    ...field('branch', typeof item.branch === 'string' ? item.branch : undefined),
+    ...field('targetBranch', typeof item.targetBranch === 'string' ? item.targetBranch : undefined),
+  };
+}
+
+function readDaemonFact(value: unknown): NonNullable<RoomViewMessage['daemonFact']> | null {
+  const item = record(value);
   if (
     !item ||
     (item.type !== 'corner-complete' &&
       item.type !== 'checks-failing' &&
       item.type !== 'worktree-cleaned' &&
       item.type !== 'corner-open') ||
-    typeof item.cornerId !== 'string' ||
-    !UUID.test(item.cornerId) ||
+    !uuid(item.cornerId) ||
     typeof item.objective !== 'string' ||
-    !item.objective.trim() ||
-    !optionalString(item.name) ||
-    (item.outcome !== undefined && item.outcome !== 'landed' && item.outcome !== 'abandoned') ||
-    (pullRequest !== undefined &&
-      (!pullRequest ||
-        (pullRequest.number !== undefined &&
-          (!Number.isSafeInteger(pullRequest.number) || Number(pullRequest.number) <= 0)) ||
-        !optionalString(pullRequest.title) ||
-        !githubUrl(pullRequest.url) ||
-        !optionalString(pullRequest.targetBranch))) ||
-    (item.subgoals !== undefined &&
-      (!Array.isArray(item.subgoals) ||
-        !item.subgoals.every((subgoal) => {
-          const entry = record(subgoal);
-          return Boolean(
-            entry &&
-            typeof entry.step === 'string' &&
-            entry.step.trim() &&
-            (entry.status === 'pending' ||
-              entry.status === 'in_progress' ||
-              entry.status === 'completed'),
-          );
-        })))
+    !item.objective.trim()
   ) {
-    return false;
+    return null;
   }
-  return (
-    item.type !== 'corner-complete' || item.outcome === 'landed' || item.outcome === 'abandoned'
-  );
-}
-
-export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
-  const item = record(value);
-  const reference = item?.reference === undefined ? undefined : record(item.reference);
-  const reply = item?.reply === undefined ? undefined : record(item.reply);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    HEX.test(item.id) &&
-    typeof item.text === 'string' &&
-    integer(item.createdAt) &&
-    (item.createdAtMs === undefined || integer(item.createdAtMs)) &&
-    identity(item.author) &&
-    (item.presentation === 'message' ||
-      item.presentation === 'system' ||
-      item.presentation === 'activity' ||
-      item.presentation === 'card') &&
-    (item.bookmarked === undefined || typeof item.bookmarked === 'boolean') &&
-    (reference === undefined ||
-      (reference &&
-        typeof reference.channelId === 'string' &&
-        UUID.test(reference.channelId) &&
-        reference.eventId === item.id &&
-        typeof reference.rootId === 'string' &&
-        HEX.test(reference.rootId))) &&
-    (reply === undefined ||
-      (reply &&
-        typeof reply.channelId === 'string' &&
-        UUID.test(reply.channelId) &&
-        typeof reply.eventId === 'string' &&
-        HEX.test(reply.eventId) &&
-        typeof reply.rootId === 'string' &&
-        HEX.test(reply.rootId))) &&
-    optionalString(item.liveTurnId) &&
-    optionalString(item.requestId) &&
-    optionalString(item.agentModel) &&
-    (item.attachments === undefined ||
-      (Array.isArray(item.attachments) && item.attachments.every(attachment))) &&
-    (item.mentionPubkeys === undefined ||
-      (Array.isArray(item.mentionPubkeys) &&
-        item.mentionPubkeys.every((pubkey) => typeof pubkey === 'string' && HEX.test(pubkey)))) &&
-    (item.reactions === undefined ||
-      (Array.isArray(item.reactions) &&
-        item.reactions.every((candidate) => {
-          const reaction = record(candidate);
-          return Boolean(
-            reaction &&
-            (reaction.emoji === '👍' ||
-              reaction.emoji === '❤️' ||
-              reaction.emoji === '😂' ||
-              reaction.emoji === '🎉' ||
-              reaction.emoji === '👀' ||
-              reaction.emoji === '✅') &&
-            integer(reaction.count) &&
-            Number(reaction.count) > 0 &&
-            typeof reaction.reacted === 'boolean' &&
-            (reaction.members === undefined ||
-              (Array.isArray(reaction.members) &&
-                reaction.members.length === reaction.count &&
-                reaction.members.every(identity))),
-          );
-        }))) &&
-    (item.activity === undefined ||
-      (Array.isArray(item.activity) && item.activity.every(activity))) &&
-    (item.durableFact === undefined ||
-      item.durableFact === 'failure' ||
-      item.durableFact === 'merge' ||
-      item.durableFact === 'action') &&
-    (item.corner === undefined || messageCorner(item.corner)) &&
-    (item.permission === undefined || messagePermission(item.permission)) &&
-    (item.grantRequest === undefined || grantRequest(item.grantRequest)) &&
-    (item.connectorOffer === undefined || isConnectorOfferCardView(item.connectorOffer)) &&
-    (item.choice === undefined || choiceCard(item.choice)) &&
-    (item.walletTx === undefined || walletTx(item.walletTx)) &&
-    (item.walletInsufficient === undefined || walletInsufficient(item.walletInsufficient)) &&
-    (item.walletDelegation === undefined || walletDelegation(item.walletDelegation)) &&
-    (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
-    (item.githubEvent === undefined || githubEvent(item.githubEvent)) &&
-    (item.relay === undefined ||
-      (() => {
-        const relay = record(item.relay);
-        return Boolean(
-          relay &&
-          typeof relay.fromRoomId === 'string' &&
-          typeof relay.toRoomId === 'string' &&
-          (relay.direction === 'down' || relay.direction === 'up') &&
-          typeof relay.fromName === 'string' &&
-          typeof relay.cornerId === 'string' &&
-          optionalString(relay.anchorMessageId) &&
-          typeof relay.received === 'boolean',
-        );
-      })()) &&
-    (item.daemonFact === undefined || daemonFact(item.daemonFact)) &&
-    (item.systemEvent === undefined || isSystemEvent(item.systemEvent)),
-  );
-}
-
-function scopedMessage(value: unknown, roomId: unknown): value is RoomViewMessage {
-  return (
-    typeof roomId === 'string' &&
-    isRoomViewMessage(value) &&
-    (value.reference === undefined || value.reference.channelId === roomId) &&
-    (value.reply === undefined || value.reply.channelId === roomId)
-  );
-}
-
-function watchFilters(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.length <= 32 &&
-    value.every((candidate) => {
-      const filter = record(candidate);
-      if (!filter) return false;
-      return Object.entries(filter).every(([key, entry]) => {
-        if (key === 'kinds') return Array.isArray(entry) && entry.every(integer);
-        if (key === 'authors' || key === '#h' || key === '#d' || key === '#p' || key === '#t') {
-          return Array.isArray(entry) && entry.every((item) => typeof item === 'string');
+  if (item.type === 'corner-complete' && item.outcome !== 'landed' && item.outcome !== 'abandoned') {
+    return null;
+  }
+  const pullRequest = record(item.pullRequest);
+  const projectedPull =
+    pullRequest && githubUrl(pullRequest.url)
+      ? {
+          url: pullRequest.url,
+          ...field(
+            'number',
+            Number.isSafeInteger(pullRequest.number) && Number(pullRequest.number) > 0
+              ? (pullRequest.number as number)
+              : undefined,
+          ),
+          ...field('title', typeof pullRequest.title === 'string' ? pullRequest.title : undefined),
+          ...field(
+            'targetBranch',
+            typeof pullRequest.targetBranch === 'string' ? pullRequest.targetBranch : undefined,
+          ),
         }
-        return false;
-      });
-    })
-  );
+      : undefined;
+  return {
+    type: item.type,
+    cornerId: item.cornerId,
+    objective: item.objective,
+    ...field('name', typeof item.name === 'string' ? item.name : undefined),
+    ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
+    ...field('pullRequest', projectedPull),
+    ...field(
+      'subgoals',
+      readList(item.subgoals, (candidate) => {
+        const entry = record(candidate);
+        if (
+          !entry ||
+          typeof entry.step !== 'string' ||
+          !entry.step.trim() ||
+          (entry.status !== 'pending' &&
+            entry.status !== 'in_progress' &&
+            entry.status !== 'completed')
+        ) {
+          return null;
+        }
+        return { step: entry.step, status: entry.status };
+      }),
+    ),
+  };
 }
 
-function viewer(value: unknown): boolean {
-  const item = record(value);
-  const permissions = record(item?.permissions);
-  const readCursor = record(item?.readCursor);
-  return Boolean(
-    item &&
-    identity(item.identity) &&
-    (item.readCursor === undefined ||
-      (readCursor &&
-        (readCursor.messageId === null || typeof readCursor.messageId === 'string') &&
-        (readCursor.firstUnreadMessageId === null ||
-          typeof readCursor.firstUnreadMessageId === 'string'))) &&
-    readableRoomRole(item.role) &&
-    permissions &&
-    typeof permissions.send === 'boolean' &&
-    typeof permissions.manage === 'boolean',
-  );
-}
-
-function directMessage(
-  value: unknown,
-): value is { readonly participants: readonly [string, string] } {
-  const item = record(value);
-  return Boolean(
-    item &&
-    Array.isArray(item.participants) &&
-    item.participants.length === 2 &&
-    item.participants.every((pubkey) => typeof pubkey === 'string' && HEX.test(pubkey)) &&
-    item.participants[0] < item.participants[1],
-  );
-}
-
-function directMessageForViewer(value: unknown, viewerValue: unknown): boolean {
-  const viewerItem = record(viewerValue);
-  const viewerIdentity = record(viewerItem?.identity);
-  return (
-    directMessage(value) &&
-    typeof viewerIdentity?.pubkey === 'string' &&
-    value.participants.includes(viewerIdentity.pubkey)
-  );
-}
-
-function agentTurn(value: unknown): value is RoomViewAgentTurn {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.requestId === 'string' &&
-    item.requestId.length > 0 &&
-    typeof item.agentPubkey === 'string' &&
-    HEX.test(item.agentPubkey) &&
-    (item.status === 'working' ||
-      item.status === 'complete' ||
-      item.status === 'failed' ||
-      item.status === 'cancelled') &&
-    (item.startedAt === undefined || integer(item.startedAt)) &&
-    integer(item.createdAt) &&
-    optionalString(item.generationId) &&
-    optionalString(item.requestedBy),
-  );
-}
-
-function workspace(value: unknown): value is ChatListWorkspace {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    UUID.test(item.id) &&
-    typeof item.name === 'string' &&
-    optionalString(item.avatar) &&
-    (item.visibility === 'public' || item.visibility === 'invite-only') &&
-    (item.role === 'owner' || item.role === 'admin' || item.role === 'member') &&
-    integer(item.updatedAt),
-  );
-}
-
-function managedRoom(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    UUID.test(item.id) &&
-    typeof item.name === 'string' &&
-    (item.visibility === 'public' || item.visibility === 'invite-only') &&
-    integer(item.createdAt),
-  );
-}
-
-function latest(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    HEX.test(item.id) &&
-    typeof item.text === 'string' &&
-    integer(item.createdAt) &&
-    identity(item.author),
-  );
-}
-
-function chat(value: unknown): value is ChatListItem {
-  const item = record(value);
-  const direct = record(item?.directMessage);
-  const directPresence = record(direct?.presence);
-  return Boolean(
-    item &&
-    header(item.room) &&
-    (item.agentsOffline === undefined || typeof item.agentsOffline === 'boolean') &&
-    (item.closed === undefined || typeof item.closed === 'boolean') &&
-    (item.latestMessage === undefined || latest(item.latestMessage)) &&
-    integer(item.memberCount) &&
-    integer(item.cornerCount) &&
-    typeof item.unread === 'boolean' &&
-    optionalString(item.repositoryName) &&
-    (item.agentState === undefined ||
-      item.agentState === 'needs-you' ||
-      item.agentState === 'working') &&
-    (item.directMessage === undefined ||
-      (identity(direct?.peer) &&
-        (direct?.presence === undefined ||
-          ((directPresence?.status === 'online' || directPresence?.status === 'offline') &&
-            integer(directPresence?.observedAt))))),
-  );
-}
-
-function corner(value: unknown): value is CornerListItem {
-  const item = record(value);
-  return Boolean(
-    item &&
-    header(item.corner) &&
-    cornerLifecycle(item.lifecycle) &&
-    (item.state === 'working' ||
-      item.state === 'waiting' ||
-      item.state === 'review' ||
-      item.state === 'archived') &&
-    (item.stateAt === undefined || integer(item.stateAt)) &&
-    (item.reason === undefined ||
-      item.reason === 'failed' ||
-      item.reason === 'checks-failed' ||
-      item.reason === 'question') &&
-    (item.initiator === undefined ||
-      (identity(item.initiator) && item.initiator.kind === 'human')) &&
-    (item.agent === undefined || identity(item.agent)) &&
-    (item.latestMessage === undefined || latest(item.latestMessage)),
-  );
-}
-
-function cornerLifecycle(value: unknown): boolean {
-  const item = record(value);
-  const pr = item?.pr === undefined ? undefined : record(item.pr);
-  const checksSummary = item?.checksSummary === undefined ? undefined : record(item.checksSummary);
-  return Boolean(
-    item &&
-    (item.lifecycle === 'working' ||
-      item.lifecycle === 'in-review' ||
-      item.lifecycle === 'unknown' ||
-      item.lifecycle === 'done') &&
-    (item.checks === 'passing' ||
-      item.checks === 'failing' ||
-      item.checks === 'pending' ||
-      item.checks === 'unknown') &&
-    optionalString(item.branch) &&
-    (item.outcome === undefined || item.outcome === 'landed' || item.outcome === 'abandoned') &&
-    optionalString(item.reason) &&
-    (checksSummary === undefined ||
-      (checksSummary !== null &&
-        (checksSummary.status === 'passing' ||
-          checksSummary.status === 'failing' ||
-          checksSummary.status === 'pending' ||
-          checksSummary.status === 'unknown') &&
-        integer(checksSummary.total) &&
-        stringArray(checksSummary.failing) &&
-        integer(checksSummary.updatedAt) &&
-        Array.isArray(checksSummary.checks) &&
-        checksSummary.checks.length <= 200 &&
-        checksSummary.checks.every((candidate) => {
-          const check = record(candidate);
-          return Boolean(
-            check &&
-            typeof check.name === 'string' &&
-            check.name.length > 0 &&
-            (check.status === 'pending' ||
-              check.status === 'passed' ||
-              check.status === 'failed') &&
-            optionalString(check.conclusion) &&
-            (check.url === undefined || httpUrl(check.url)),
-          );
-        }))) &&
-    (pr === undefined ||
-      (pr &&
-        integer(pr.number) &&
-        pr.number > 0 &&
-        githubUrl(pr.url) &&
-        typeof pr.title === 'string' &&
-        pr.title.length > 0 &&
-        typeof pr.targetBranch === 'string' &&
-        pr.targetBranch.length > 0 &&
-        typeof pr.headSha === 'string' &&
-        /^[0-9a-f]{40}$/i.test(pr.headSha) &&
-        (pr.mergeability === undefined ||
-          pr.mergeability === 'clean' ||
-          pr.mergeability === 'dirty' ||
-          pr.mergeability === 'unknown') &&
-        optionalString(pr.mergedAt) &&
-        optionalString(pr.mergedBy))),
-  );
-}
-
-function repository(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.key === 'string' &&
-    item.key.length > 0 &&
-    typeof item.name === 'string' &&
-    item.name.length > 0 &&
-    typeof item.remote === 'string' &&
-    item.remote.length > 0 &&
-    typeof item.targetBranch === 'string' &&
-    item.targetBranch.length > 0 &&
-    integer(item.updatedAt) &&
-    (item.githubInstallationId === undefined || integer(item.githubInstallationId)) &&
-    typeof item.githubEventsEnabled === 'boolean',
-  );
-}
-
-function repositoryResolution(value: unknown): boolean {
-  return value === 'repository' || value === 'none' || value === 'unverified';
-}
-
-function modelSelection(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(item && optionalString(item.model) && optionalString(item.effort));
-}
-
-function modelOption(value: unknown): boolean {
-  const item = record(value);
-  return Boolean(
-    item &&
-    typeof item.id === 'string' &&
-    item.id.length > 0 &&
-    typeof item.category === 'string' &&
-    item.category.length > 0 &&
-    optionalString(item.currentValue) &&
-    Array.isArray(item.options) &&
-    item.options.every((candidate) => {
-      const option = record(candidate);
-      return Boolean(
-        option &&
-        typeof option.id === 'string' &&
-        option.id.length > 0 &&
-        optionalString(option.name),
-      );
-    }),
-  );
-}
-
-export function isRoomView(value: unknown): value is RoomView {
-  const item = record(value);
-  return Boolean(
-    item &&
-    header(item.room) &&
-    Array.isArray(item.messages) &&
-    item.messages.length <= ROOM_VIEW_MESSAGE_LIMIT &&
-    item.messages.every((candidate) => scopedMessage(candidate, record(item.room)?.id)) &&
-    (item.toolRows === undefined ||
-      (Array.isArray(item.toolRows) &&
-        item.toolRows.length <= ROOM_VIEW_TOOL_ROW_LIMIT &&
-        item.toolRows.every((candidate) => scopedMessage(candidate, record(item.room)?.id)))) &&
-    Array.isArray(item.latestAgentTurns) &&
-    item.latestAgentTurns.length <= ROOM_VIEW_AGENT_LIMIT &&
-    item.latestAgentTurns.every(agentTurn) &&
-    Array.isArray(item.members) &&
-    item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
-    item.members.every(member) &&
-    viewer(item.viewer) &&
-    (item.directMessage === undefined || directMessageForViewer(item.directMessage, item.viewer)) &&
-    (item.parent === undefined || header(item.parent)) &&
-    (item.briefing === undefined ||
-      (Array.isArray(item.briefing) &&
-        item.briefing.length <= ROOM_VIEW_BRIEFING_LIMIT &&
-        item.briefing.every(isRoomViewMessage))) &&
-    (item.cornerPlan === undefined ||
-      activity({ kind: 'output', title: 'Plan', plan: item.cornerPlan })) &&
-    (item.repository === undefined || repository(item.repository)) &&
-    repositoryResolution(item.repositoryResolution) &&
-    (item.cornerLifecycle === undefined || cornerLifecycle(item.cornerLifecycle)) &&
-    watchFilters(item.watchFilters),
-  );
-}
-
-export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
-  const item = record(value);
-  const before = item?.nextBefore === undefined ? undefined : record(item.nextBefore);
-  return Boolean(
-    item &&
-    typeof item.roomId === 'string' &&
-    UUID.test(item.roomId) &&
-    Array.isArray(item.messages) &&
-    item.messages.length <= ROOM_VIEW_MESSAGE_LIMIT &&
-    item.messages.every((candidate) => scopedMessage(candidate, item.roomId)) &&
-    (before === undefined ||
-      (before &&
-        integer(before.createdAt) &&
-        typeof before.id === 'string' &&
-        HEX.test(before.id))),
-  );
-}
-
-export function isWorkspaceListView(value: unknown): value is WorkspaceListView {
-  const item = record(value);
-  return Boolean(
-    item &&
-    Array.isArray(item.workspaces) &&
-    item.workspaces.length <= ROOM_VIEW_WORKSPACE_LIMIT &&
-    item.workspaces.every(workspace) &&
-    typeof item.truncated === 'boolean' &&
-    identity(item.viewer) &&
-    watchFilters(item.watchFilters),
-  );
-}
-
-export function isWorkspaceView(value: unknown): value is WorkspaceView {
-  const item = record(value);
-  const managerSettings =
-    item?.managerSettings === undefined ? undefined : record(item.managerSettings);
-  return Boolean(
-    item &&
-    workspace(item.workspace) &&
-    integer(record(item.workspace)?.createdAt) &&
-    optionalString(record(item.workspace)?.about) &&
-    (managerSettings === undefined ||
-      (managerSettings &&
-        (managerSettings.visibility === 'public' || managerSettings.visibility === 'invite-only') &&
-        (managerSettings.rooms === undefined ||
-          (Array.isArray(managerSettings.rooms) &&
-            managerSettings.rooms.length <= ROOM_VIEW_CHAT_LIMIT &&
-            managerSettings.rooms.every(managedRoom))) &&
-        (managerSettings.roomsTruncated === undefined ||
-          typeof managerSettings.roomsTruncated === 'boolean'))) &&
-    Array.isArray(item.members) &&
-    item.members.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
-    item.members.every(member) &&
-    Array.isArray(item.agents) &&
-    item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
-    item.agents.every(workspaceAgent) &&
-    optionalInteger(item.peopleTotal) &&
-    optionalInteger(item.agentTotal) &&
-    typeof item.membersTruncated === 'boolean' &&
-    typeof item.agentsTruncated === 'boolean' &&
-    viewer(item.viewer) &&
-    watchFilters(item.watchFilters),
-  );
-}
-
-export function isWorkspaceMemberListView(value: unknown): value is WorkspaceMemberListView {
-  const item = record(value);
-  return Boolean(
-    item &&
-    Array.isArray(item.members) &&
-    item.members.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
-    item.members.every(member) &&
-    Array.isArray(item.agents) &&
-    item.agents.length <= WORKSPACE_MEMBER_PAGE_SIZE &&
-    item.agents.every(workspaceAgent) &&
-    optionalInteger(item.peopleTotal) &&
-    optionalInteger(item.agentTotal) &&
-    typeof item.membersTruncated === 'boolean' &&
-    typeof item.agentsTruncated === 'boolean',
-  );
-}
-
-export function isChatListView(value: unknown): value is ChatListView {
-  const item = record(value);
-  return Boolean(
-    item &&
-    workspace(item.workspace) &&
-    Array.isArray(item.chats) &&
-    item.chats.length <= ROOM_VIEW_CHAT_LIMIT &&
-    item.chats.every(chat) &&
-    typeof item.truncated === 'boolean' &&
-    identity(item.viewer) &&
-    watchFilters(item.watchFilters),
-  );
-}
-
-export function isCornerListView(value: unknown): value is CornerListView {
-  const item = record(value);
-  return Boolean(
-    item &&
-    header(item.room) &&
-    Array.isArray(item.corners) &&
-    item.corners.every(corner) &&
-    viewer(item.viewer) &&
-    watchFilters(item.watchFilters),
-  );
-}
-
-function agentYolo(value: unknown): boolean {
-  const item = record(value);
-  const setBy = item?.setBy === undefined ? undefined : record(item.setBy);
-  return Boolean(
-    item &&
-    typeof item.enabled === 'boolean' &&
-    (item.forcedOff === undefined || typeof item.forcedOff === 'boolean') &&
-    typeof item.canChange === 'boolean' &&
-    (setBy === undefined || (setBy && typeof setBy.name === 'string')) &&
-    (item.setAt === undefined || integer(item.setAt)),
-  );
-}
-
-function agentAccess(value: unknown): boolean {
-  const item = record(value);
-  const owner = item?.owner === undefined ? undefined : record(item.owner);
-  return Boolean(
-    item &&
-    isAgentAccessPolicy(item.policy) &&
-    typeof item.canChange === 'boolean' &&
-    (owner === undefined ||
-      (owner &&
-        typeof owner.id === 'string' &&
-        typeof owner.name === 'string' &&
-        (owner.handle === undefined || typeof owner.handle === 'string'))),
-  );
-}
-
-export function isAgentDetailView(value: unknown): value is AgentDetailView {
-  const item = record(value);
-  const soul = item?.soul === undefined ? undefined : record(item.soul);
-  return Boolean(
-    item &&
-    typeof item.workspaceId === 'string' &&
-    UUID.test(item.workspaceId) &&
-    member(item.agent) &&
-    item.agent.identity.kind === 'agent' &&
-    (item.owner === undefined || (identity(item.owner) && item.owner.kind === 'human')) &&
-    Array.isArray(item.catalog) &&
-    item.catalog.length <= 100 &&
-    item.catalog.every(modelOption) &&
-    (soul === undefined ||
-      (soul !== null &&
-        typeof soul.name === 'string' &&
-        soul.name.length > 0 &&
-        typeof soul.instructions === 'string' &&
-        soul.instructions.length > 0 &&
-        typeof soul.avatarSeed === 'string' &&
-        soul.avatarSeed.length > 0 &&
-        (soul.avatar === undefined || httpUrl(soul.avatar)))) &&
-    (item.seededSoul === undefined ||
-      (typeof item.seededSoul === 'string' && item.seededSoul.length > 0)) &&
-    (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
-    (item.selected === undefined || modelSelection(item.selected)) &&
-    (item.modelUnavailable === undefined ||
-      ['model', 'effort', 'selection'].includes(String(item.modelUnavailable))) &&
-    (item.yolo === undefined || agentYolo(item.yolo)) &&
-    (item.access === undefined || agentAccess(item.access)) &&
-    (item.grants === undefined ||
-      (Array.isArray(item.grants) && item.grants.every(isAgentGrantView))) &&
-    (item.canManageGrants === undefined || typeof item.canManageGrants === 'boolean') &&
-    watchFilters(item.watchFilters),
-  );
-}
-
-export function isInviteView(value: unknown): value is InviteView {
+function readReaction(value: unknown): MessageReactionView | null {
   const item = record(value);
   if (
     !item ||
+    !(MESSAGE_REACTION_EMOJIS as readonly string[]).includes(item.emoji as string) ||
+    !integer(item.count) ||
+    item.count <= 0 ||
+    typeof item.reacted !== 'boolean'
+  ) {
+    return null;
+  }
+  const members = readList(item.members, readIdentity);
+  return {
+    emoji: item.emoji as MessageReactionView['emoji'],
+    count: item.count,
+    reacted: item.reacted,
+    ...field('members', members),
+  };
+}
+
+function readRelay(value: unknown): NonNullable<RoomViewMessage['relay']> | null {
+  const item = record(value);
+  if (
+    !item ||
+    typeof item.fromRoomId !== 'string' ||
+    typeof item.toRoomId !== 'string' ||
+    (item.direction !== 'down' && item.direction !== 'up') ||
+    typeof item.fromName !== 'string' ||
+    typeof item.cornerId !== 'string' ||
+    typeof item.received !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    fromRoomId: item.fromRoomId,
+    toRoomId: item.toRoomId,
+    direction: item.direction,
+    fromName: item.fromName,
+    cornerId: item.cornerId,
+    received: item.received,
+    ...field(
+      'anchorMessageId',
+      typeof item.anchorMessageId === 'string' ? item.anchorMessageId : undefined,
+    ),
+  };
+}
+
+export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
+  const item = record(value);
+  const author = readIdentity(item?.author);
+  if (!item || !hex64(item.id) || !author || !integer(item.createdAt)) return null;
+  const presentation =
+    item.presentation === 'message' ||
+    item.presentation === 'system' ||
+    item.presentation === 'activity' ||
+    item.presentation === 'card'
+      ? item.presentation
+      : 'message';
+  const reference = record(item.reference);
+  const reply = record(item.reply);
+  const projectedReference =
+    reference &&
+    uuid(reference.channelId) &&
+    reference.eventId === item.id &&
+    hex64(reference.rootId)
+      ? {
+          channelId: reference.channelId,
+          eventId: item.id,
+          rootId: reference.rootId,
+        }
+      : undefined;
+  const projectedReply =
+    reply && uuid(reply.channelId) && hex64(reply.eventId) && hex64(reply.rootId)
+      ? { channelId: reply.channelId, eventId: reply.eventId, rootId: reply.rootId }
+      : undefined;
+  return {
+    id: item.id,
+    text: typeof item.text === 'string' ? item.text : '',
+    createdAt: item.createdAt,
+    author,
+    presentation,
+    ...field('createdAtMs', integer(item.createdAtMs) ? item.createdAtMs : undefined),
+    ...field('bookmarked', typeof item.bookmarked === 'boolean' ? item.bookmarked : undefined),
+    ...field('reference', projectedReference),
+    ...field('reply', projectedReply),
+    ...field('liveTurnId', typeof item.liveTurnId === 'string' ? item.liveTurnId : undefined),
+    ...field('requestId', typeof item.requestId === 'string' ? item.requestId : undefined),
+    ...field('agentModel', typeof item.agentModel === 'string' ? item.agentModel : undefined),
+    ...field('attachments', readList(item.attachments, readAttachment)),
+    ...field(
+      'mentionPubkeys',
+      Array.isArray(item.mentionPubkeys) && item.mentionPubkeys.every(hex64)
+        ? item.mentionPubkeys
+        : undefined,
+    ),
+    ...field('reactions', readList(item.reactions, readReaction)),
+    ...field('activity', readList(item.activity, readActivity)),
+    ...field('durableFact', oneOf(item.durableFact, ['failure', 'merge', 'action'])),
+    ...field('corner', readMessageCorner(item.corner)),
+    ...field('permission', readPermission(item.permission)),
+    ...field('grantRequest', readGrantRequest(item.grantRequest)),
+    ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
+    ...field('choice', readChoiceCard(item.choice)),
+    ...field('walletTx', readWalletTx(item.walletTx)),
+    ...field('walletInsufficient', readWalletInsufficient(item.walletInsufficient)),
+    ...field('walletDelegation', readWalletDelegation(item.walletDelegation)),
+    ...field('targetBranch', readTargetBranch(item.targetBranch)),
+    ...field('githubEvent', readGithubEvent(item.githubEvent)),
+    ...field('relay', readRelay(item.relay)),
+    ...field('daemonFact', readDaemonFact(item.daemonFact)),
+    ...field('systemEvent', isSystemEvent(item.systemEvent) ? item.systemEvent : undefined),
+  };
+}
+
+export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
+  return readRoomViewMessage(value) !== null;
+}
+
+function readScopedMessage(value: unknown, roomId: string): RoomViewMessage | null {
+  const message = readRoomViewMessage(value);
+  if (!message) return null;
+  const reference =
+    message.reference && message.reference.channelId === roomId ? message.reference : undefined;
+  const reply = message.reply && message.reply.channelId === roomId ? message.reply : undefined;
+  const { reference: _foreignReference, reply: _foreignReply, ...rest } = message;
+  return { ...rest, ...field('reference', reference), ...field('reply', reply) };
+}
+
+function readAgentTurn(value: unknown): RoomViewAgentTurn | null {
+  const item = record(value);
+  if (
+    !item ||
+    !nonempty(item.requestId) ||
+    !hex64(item.agentPubkey) ||
+    (item.status !== 'working' &&
+      item.status !== 'complete' &&
+      item.status !== 'failed' &&
+      item.status !== 'cancelled') ||
+    !integer(item.createdAt)
+  ) {
+    return null;
+  }
+  return {
+    requestId: item.requestId,
+    agentPubkey: item.agentPubkey,
+    status: item.status,
+    createdAt: item.createdAt,
+    ...field('startedAt', integer(item.startedAt) ? item.startedAt : undefined),
+    ...field('generationId', typeof item.generationId === 'string' ? item.generationId : undefined),
+    ...field('requestedBy', typeof item.requestedBy === 'string' ? item.requestedBy : undefined),
+  };
+}
+
+function readWorkspace(value: unknown): ChatListWorkspace | null {
+  const item = record(value);
+  if (!item || !uuid(item.id)) return null;
+  return {
+    id: item.id,
+    name: typeof item.name === 'string' ? item.name : '',
+    role: oneOf(item.role, ['owner', 'admin', 'member']) ?? 'member',
+    updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
+    ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
+    ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
+  };
+}
+
+function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> | null {
+  const item = record(value);
+  const author = readIdentity(item?.author);
+  if (!item || !hex64(item.id) || typeof item.text !== 'string' || !integer(item.createdAt) || !author) {
+    return null;
+  }
+  return {
+    id: item.id,
+    text: item.text,
+    createdAt: item.createdAt,
+    author,
+    ...field('attachments', readList(item.attachments, readAttachment)),
+  };
+}
+
+function readChat(value: unknown): ChatListItem | null {
+  const item = record(value);
+  const room = readHeader(item?.room);
+  if (!item || !room) return null;
+  const direct = record(item.directMessage);
+  const peer = readIdentity(direct?.peer);
+  const presence = record(direct?.presence);
+  const presenceStatus = oneOf(presence?.status, ['online', 'offline']);
+  const projectedPresence =
+    presence && presenceStatus && integer(presence.observedAt)
+      ? { status: presenceStatus, observedAt: presence.observedAt }
+      : undefined;
+  return {
+    room,
+    unread: item.unread === true,
+    ...field('memberCount', integer(item.memberCount) ? item.memberCount : undefined),
+    ...field('cornerCount', integer(item.cornerCount) ? item.cornerCount : undefined),
+    ...field('agentsOffline', typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined),
+    ...field('closed', typeof item.closed === 'boolean' ? item.closed : undefined),
+    ...field('latestMessage', readLatest(item.latestMessage)),
+    ...field('repositoryName', typeof item.repositoryName === 'string' ? item.repositoryName : undefined),
+    ...field('agentState', oneOf(item.agentState, ['needs-you', 'working'])),
+    ...field(
+      'directMessage',
+      peer ? { peer, ...field('presence', projectedPresence) } : undefined,
+    ),
+  };
+}
+
+function readCheck(value: unknown): NonNullable<
+  NonNullable<CornerLifecycleView['checksSummary']>['checks']
+>[number] | null {
+  const item = record(value);
+  if (
+    !item ||
+    !nonempty(item.name) ||
+    (item.status !== 'pending' && item.status !== 'passed' && item.status !== 'failed')
+  ) {
+    return null;
+  }
+  return {
+    name: item.name,
+    status: item.status,
+    ...field('conclusion', typeof item.conclusion === 'string' ? item.conclusion : undefined),
+    ...field('url', httpUrl(item.url) ? item.url : undefined),
+  };
+}
+
+function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
+  const item = record(value);
+  if (!item) return null;
+  const checksSummary = record(item.checksSummary);
+  const summaryStatus = oneOf(checksSummary?.status, ['passing', 'failing', 'pending', 'unknown']);
+  const projectedSummary =
+    checksSummary &&
+    summaryStatus &&
+    integer(checksSummary.total) &&
+    integer(checksSummary.updatedAt)
+      ? {
+          status: summaryStatus,
+          total: checksSummary.total,
+          failing: Array.isArray(checksSummary.failing)
+            ? checksSummary.failing.filter((entry): entry is string => typeof entry === 'string')
+            : [],
+          updatedAt: checksSummary.updatedAt,
+          checks: readList(checksSummary.checks, readCheck, 200) ?? [],
+        }
+      : undefined;
+  const pr = record(item.pr);
+  const projectedPr =
+    pr &&
+    integer(pr.number) &&
+    pr.number > 0 &&
+    githubUrl(pr.url) &&
+    nonempty(pr.title) &&
+    nonempty(pr.targetBranch) &&
+    typeof pr.headSha === 'string' &&
+    SHA1.test(pr.headSha)
+      ? {
+          number: pr.number,
+          url: pr.url,
+          title: pr.title,
+          targetBranch: pr.targetBranch,
+          headSha: pr.headSha,
+          ...field('mergeability', oneOf(pr.mergeability, ['clean', 'dirty', 'unknown'])),
+          ...field('baseSha', typeof pr.baseSha === 'string' ? pr.baseSha : undefined),
+          ...field('mergedAt', typeof pr.mergedAt === 'string' ? pr.mergedAt : undefined),
+          ...field('mergedBy', typeof pr.mergedBy === 'string' ? pr.mergedBy : undefined),
+        }
+      : undefined;
+  return {
+    lifecycle: oneOf(item.lifecycle, ['working', 'in-review', 'unknown', 'done']) ?? 'unknown',
+    checks: oneOf(item.checks, ['passing', 'failing', 'pending', 'unknown']) ?? 'unknown',
+    ...field('branch', typeof item.branch === 'string' ? item.branch : undefined),
+    ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
+    ...field('reason', typeof item.reason === 'string' ? item.reason : undefined),
+    ...field('checksSummary', projectedSummary),
+    ...field('pr', projectedPr),
+  };
+}
+
+function readCorner(value: unknown): CornerListItem | null {
+  const item = record(value);
+  const corner = readHeader(item?.corner);
+  const lifecycle = readCornerLifecycle(item?.lifecycle) ?? {
+    lifecycle: 'unknown' as const,
+    checks: 'unknown' as const,
+  };
+  if (
+    !item ||
+    !corner ||
+    (item.state !== 'working' &&
+      item.state !== 'waiting' &&
+      item.state !== 'review' &&
+      item.state !== 'archived')
+  ) {
+    return null;
+  }
+  const initiator = readIdentity(item.initiator);
+  return {
+    corner,
+    lifecycle,
+    state: item.state,
+    ...field('stateAt', integer(item.stateAt) ? item.stateAt : undefined),
+    ...field('reason', oneOf(item.reason, ['failed', 'checks-failed', 'question'])),
+    ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
+    ...field('agent', readIdentityOnly(item.agent)),
+    ...field('latestMessage', readLatest(item.latestMessage)),
+  };
+}
+
+function readRepository(value: unknown): RoomRepositoryView | null {
+  const item = record(value);
+  if (
+    !item ||
+    !nonempty(item.key) ||
+    !nonempty(item.name) ||
+    !nonempty(item.remote) ||
+    !nonempty(item.targetBranch) ||
+    !integer(item.updatedAt) ||
+    typeof item.githubEventsEnabled !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    key: item.key,
+    name: item.name,
+    remote: item.remote,
+    targetBranch: item.targetBranch,
+    updatedAt: item.updatedAt,
+    githubEventsEnabled: item.githubEventsEnabled,
+    ...field(
+      'githubInstallationId',
+      integer(item.githubInstallationId) ? item.githubInstallationId : undefined,
+    ),
+  };
+}
+
+function readRepositoryResolution(value: unknown): RoomRepositoryResolution | undefined {
+  return value === 'repository' || value === 'none' || value === 'unverified' ? value : undefined;
+}
+
+function readDirectMessage(
+  value: unknown,
+  viewerPubkey: string,
+): { readonly participants: readonly [string, string] } | undefined {
+  const item = record(value);
+  if (!item || !Array.isArray(item.participants) || item.participants.length !== 2) return undefined;
+  const left = item.participants[0];
+  const right = item.participants[1];
+  if (!hex64(left) || !hex64(right)) return undefined;
+  if (left >= right || (left !== viewerPubkey && right !== viewerPubkey)) return undefined;
+  return { participants: [left, right] };
+}
+
+function readModelSelection(value: unknown): AgentModelSelection | undefined {
+  const item = record(value);
+  if (!item) return undefined;
+  return {
+    ...field('model', typeof item.model === 'string' ? item.model : undefined),
+    ...field('effort', typeof item.effort === 'string' ? item.effort : undefined),
+  };
+}
+
+function readModelOption(value: unknown): AgentModelConfigOption | null {
+  const item = record(value);
+  if (!item || !nonempty(item.id) || !nonempty(item.category)) return null;
+  const options = readList(item.options, (candidate) => {
+    const option = record(candidate);
+    if (!option || !nonempty(option.id)) return null;
+    return {
+      id: option.id,
+      ...field('name', typeof option.name === 'string' ? option.name : undefined),
+    };
+  });
+  if (!options) return null;
+  return {
+    id: item.id,
+    category: item.category,
+    options,
+    ...field('currentValue', typeof item.currentValue === 'string' ? item.currentValue : undefined),
+  };
+}
+
+function readAgentYolo(value: unknown): AgentYoloView | null {
+  const item = record(value);
+  const setBy = record(item?.setBy);
+  if (!item || typeof item.enabled !== 'boolean' || typeof item.canChange !== 'boolean') return null;
+  return {
+    enabled: item.enabled,
+    canChange: item.canChange,
+    ...field('forcedOff', typeof item.forcedOff === 'boolean' ? item.forcedOff : undefined),
+    ...field('setBy', setBy && typeof setBy.name === 'string' ? { name: setBy.name } : undefined),
+    ...field('setAt', integer(item.setAt) ? item.setAt : undefined),
+  };
+}
+
+function readAgentAccess(value: unknown): AgentAccessView | null {
+  const item = record(value);
+  const owner = record(item?.owner);
+  if (!item || !isAgentAccessPolicy(item.policy) || typeof item.canChange !== 'boolean') return null;
+  return {
+    policy: item.policy,
+    canChange: item.canChange,
+    ...field(
+      'owner',
+      owner && typeof owner.id === 'string' && typeof owner.name === 'string'
+        ? {
+            id: owner.id,
+            name: owner.name,
+            ...field('handle', typeof owner.handle === 'string' ? owner.handle : undefined),
+          }
+        : undefined,
+    ),
+  };
+}
+
+function readManagedRoom(value: unknown): WorkspaceManagedRoomView | null {
+  const item = record(value);
+  if (
+    !item ||
+    !uuid(item.id) ||
     typeof item.name !== 'string' ||
-    !integer(item.expiresAt) ||
-    !optionalString(item.avatar) ||
-    !optionalString(item.joinedWorkspaceId)
-  )
-    return false;
-  return Object.keys(item).every(
-    (key) =>
-      key === 'name' || key === 'avatar' || key === 'expiresAt' || key === 'joinedWorkspaceId',
+    (item.visibility !== 'public' && item.visibility !== 'invite-only') ||
+    !integer(item.createdAt)
+  ) {
+    return null;
+  }
+  return {
+    id: item.id,
+    name: item.name,
+    visibility: item.visibility,
+    createdAt: item.createdAt,
+  };
+}
+
+export function readRoomView(value: unknown): RoomView | null {
+  const item = record(value);
+  const room = readHeader(item?.room);
+  if (!item || !room) return null;
+  const messages = readNewestList(
+    item.messages,
+    (candidate) => readScopedMessage(candidate, room.id),
+    ROOM_VIEW_MESSAGE_LIMIT,
   );
+  if (!messages) return null;
+  const viewer = readViewer(item.viewer);
+  return {
+    room,
+    messages,
+    members: readList(item.members, readMember, ROOM_VIEW_MEMBER_LIMIT) ?? [],
+    latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
+    viewer,
+    repositoryResolution: readRepositoryResolution(item.repositoryResolution) ?? 'unverified',
+    watchFilters: readWatchFilters(item.watchFilters),
+    ...field(
+      'toolRows',
+      readNewestList(
+        item.toolRows,
+        (candidate) => readScopedMessage(candidate, room.id),
+        ROOM_VIEW_TOOL_ROW_LIMIT,
+      ),
+    ),
+    ...field('directMessage', readDirectMessage(item.directMessage, viewer.identity.pubkey)),
+    ...field('parent', readHeader(item.parent)),
+    ...field('briefing', readList(item.briefing, readRoomViewMessage, ROOM_VIEW_BRIEFING_LIMIT)),
+    ...field('cornerPlan', readPlan(item.cornerPlan)),
+    ...field('repository', readRepository(item.repository)),
+    ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
+  };
+}
+
+export function isRoomView(value: unknown): value is RoomView {
+  return readRoomView(value) !== null;
+}
+
+export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
+  const item = record(value);
+  if (!item || !uuid(item.roomId)) return null;
+  const messages = readNewestList(
+    item.messages,
+    (candidate) => readScopedMessage(candidate, item.roomId as string),
+    ROOM_VIEW_MESSAGE_LIMIT,
+  );
+  if (!messages) return null;
+  const before = record(item.nextBefore);
+  const nextBefore =
+    before && integer(before.createdAt) && hex64(before.id)
+      ? { createdAt: before.createdAt, id: before.id }
+      : undefined;
+  return { roomId: item.roomId, messages, ...field('nextBefore', nextBefore) };
+}
+
+export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
+  return readRoomHistoryView(value) !== null;
+}
+
+export function readWorkspaceListView(value: unknown): WorkspaceListView | null {
+  const item = record(value);
+  const viewer = readIdentity(item?.viewer);
+  const workspaces = requireList(item?.workspaces, readWorkspace, ROOM_VIEW_WORKSPACE_LIMIT);
+  if (!item || !viewer || !workspaces) return null;
+  return {
+    workspaces,
+    viewer,
+    truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
+    watchFilters: readWatchFilters(item.watchFilters),
+    ...field(
+      'deletedNotices',
+      readList(item.deletedNotices, (candidate) => {
+        const notice = record(candidate);
+        if (!notice || !uuid(notice.workspaceId) || typeof notice.workspaceName !== 'string') {
+          return null;
+        }
+        return { workspaceId: notice.workspaceId, workspaceName: notice.workspaceName };
+      }),
+    ),
+  };
+}
+
+export function isWorkspaceListView(value: unknown): value is WorkspaceListView {
+  return readWorkspaceListView(value) !== null;
+}
+
+export function readWorkspaceView(value: unknown): WorkspaceView | null {
+  const item = record(value);
+  const workspace = readWorkspace(item?.workspace);
+  const rawWorkspace = record(item?.workspace);
+  if (!item || !workspace) return null;
+  const managerSettings = record(item.managerSettings);
+  const projectedManager =
+    managerSettings &&
+    (managerSettings.visibility === 'public' || managerSettings.visibility === 'invite-only')
+      ? {
+          visibility: managerSettings.visibility as 'public' | 'invite-only',
+          ...field(
+            'rooms',
+            readList(managerSettings.rooms, readManagedRoom, ROOM_VIEW_CHAT_LIMIT),
+          ),
+          ...field(
+            'roomsTruncated',
+            typeof managerSettings.roomsTruncated === 'boolean'
+              ? managerSettings.roomsTruncated
+              : undefined,
+          ),
+        }
+      : undefined;
+  return {
+    workspace: {
+      ...workspace,
+      createdAt: integer(rawWorkspace?.createdAt) ? Number(rawWorkspace.createdAt) : 0,
+      ...field('about', typeof rawWorkspace?.about === 'string' ? rawWorkspace.about : undefined),
+    },
+    members: readList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],
+    agents: readList(item.agents, readWorkspaceAgent, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],
+    membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
+    agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
+    viewer: readViewer(item.viewer),
+    watchFilters: readWatchFilters(item.watchFilters),
+    ...field('managerSettings', projectedManager),
+    ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
+    ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),
+  };
+}
+
+export function isWorkspaceView(value: unknown): value is WorkspaceView {
+  return readWorkspaceView(value) !== null;
+}
+
+export function readWorkspaceMemberListView(value: unknown): WorkspaceMemberListView | null {
+  const item = record(value);
+  if (!item) return null;
+  const members = requireList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE);
+  const agents = requireList(item.agents, readWorkspaceAgent, WORKSPACE_MEMBER_PAGE_SIZE);
+  if (!members || !agents) return null;
+  return {
+    members,
+    agents,
+    membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
+    agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
+    ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
+    ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),
+  };
+}
+
+export function isWorkspaceMemberListView(value: unknown): value is WorkspaceMemberListView {
+  return readWorkspaceMemberListView(value) !== null;
+}
+
+export function readChatListView(value: unknown): ChatListView | null {
+  const item = record(value);
+  const workspace = readWorkspace(item?.workspace);
+  const viewer = readIdentity(item?.viewer);
+  if (!item || !workspace || !viewer) return null;
+  const chats = requireList(item.chats, readChat, ROOM_VIEW_CHAT_LIMIT);
+  if (!chats) return null;
+  return {
+    workspace,
+    chats,
+    viewer,
+    truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
+    watchFilters: readWatchFilters(item.watchFilters),
+  };
+}
+
+export function isChatListView(value: unknown): value is ChatListView {
+  return readChatListView(value) !== null;
+}
+
+export function readCornerListView(value: unknown): CornerListView | null {
+  const item = record(value);
+  const room = readHeader(item?.room);
+  if (!item || !room) return null;
+  const corners = requireList(item.corners, readCorner);
+  if (!corners) return null;
+  return {
+    room,
+    corners,
+    viewer: readViewer(item.viewer),
+    watchFilters: readWatchFilters(item.watchFilters),
+  };
+}
+
+export function isCornerListView(value: unknown): value is CornerListView {
+  return readCornerListView(value) !== null;
+}
+
+export function readAgentDetailView(value: unknown): AgentDetailView | null {
+  const item = record(value);
+  const agent = readMember(item?.agent);
+  if (!item || !uuid(item.workspaceId) || !agent || agent.identity.kind !== 'agent') return null;
+  const catalog = readList(item.catalog, readModelOption, 100) ?? [];
+  const soul = record(item.soul);
+  const projectedSoul =
+    soul &&
+    nonempty(soul.name) &&
+    nonempty(soul.instructions) &&
+    nonempty(soul.avatarSeed)
+      ? {
+          name: soul.name,
+          instructions: soul.instructions,
+          avatarSeed: soul.avatarSeed,
+          ...field('avatar', httpUrl(soul.avatar) ? soul.avatar : undefined),
+        }
+      : undefined;
+  const owner = readIdentity(item.owner);
+  return {
+    workspaceId: item.workspaceId,
+    agent,
+    catalog,
+    watchFilters: readWatchFilters(item.watchFilters),
+    ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
+    ...field('soul', projectedSoul),
+    ...field('seededSoul', nonempty(item.seededSoul) ? item.seededSoul : undefined),
+    ...field('runtimeSelection', readModelSelection(item.runtimeSelection)),
+    ...field('selected', readModelSelection(item.selected)),
+    ...field('modelUnavailable', oneOf(item.modelUnavailable, ['model', 'effort', 'selection'])),
+    ...field('yolo', readAgentYolo(item.yolo)),
+    ...field('access', readAgentAccess(item.access)),
+    ...field('grants', readList(item.grants, readAgentGrantView)),
+    ...field(
+      'canManageGrants',
+      typeof item.canManageGrants === 'boolean' ? item.canManageGrants : undefined,
+    ),
+  };
+}
+
+export function isAgentDetailView(value: unknown): value is AgentDetailView {
+  return readAgentDetailView(value) !== null;
+}
+
+export function readInviteView(value: unknown): InviteView | null {
+  const item = record(value);
+  if (!item || typeof item.name !== 'string' || !integer(item.expiresAt)) return null;
+  return {
+    name: item.name,
+    expiresAt: item.expiresAt,
+    ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
+    ...field(
+      'joinedWorkspaceId',
+      typeof item.joinedWorkspaceId === 'string' ? item.joinedWorkspaceId : undefined,
+    ),
+  };
+}
+
+export function isInviteView(value: unknown): value is InviteView {
+  return readInviteView(value) !== null;
+}
+
+export function readAgentPairingClaimWireView(value: unknown): AgentPairingClaimWireView | null {
+  const item = record(value);
+  if (!item || !uuid(item.workspaceId) || !hex64(item.pairedBy) || typeof item.joined !== 'boolean') {
+    return null;
+  }
+  return {
+    workspaceId: item.workspaceId,
+    pairedBy: item.pairedBy,
+    joined: item.joined,
+    ...field(
+      'attachedRoomIds',
+      Array.isArray(item.attachedRoomIds)
+        ? item.attachedRoomIds.filter((roomId): roomId is string => uuid(roomId))
+        : undefined,
+    ),
+  };
 }
 
 export function isAgentPairingClaimWireView(value: unknown): value is AgentPairingClaimWireView {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<AgentPairingClaimWireView>;
-  return (
-    typeof candidate.workspaceId === 'string' &&
-    UUID.test(candidate.workspaceId) &&
-    typeof candidate.pairedBy === 'string' &&
-    HEX.test(candidate.pairedBy) &&
-    typeof candidate.joined === 'boolean' &&
-    (candidate.attachedRoomIds === undefined ||
-      (Array.isArray(candidate.attachedRoomIds) &&
-        candidate.attachedRoomIds.every(
-          (roomId) => typeof roomId === 'string' && UUID.test(roomId),
-        )))
-  );
+  return readAgentPairingClaimWireView(value) !== null;
+}
+
+export function readAgentPairingClaimView(value: unknown): AgentPairingClaimView | null {
+  const wire = readAgentPairingClaimWireView(value);
+  if (!wire) return null;
+  return { ...wire, attachedRoomIds: wire.attachedRoomIds ?? [] };
 }
 
 export function isAgentPairingClaimView(value: unknown): value is AgentPairingClaimView {
-  return (
-    isAgentPairingClaimWireView(value) &&
-    Array.isArray(value.attachedRoomIds) &&
-    value.attachedRoomIds.every((roomId) => UUID.test(roomId))
-  );
+  return readAgentPairingClaimView(value) !== null;
+}
+
+export function readAgentPairingAbandonView(value: unknown): AgentPairingAbandonView | null {
+  const item = record(value);
+  if (!item || typeof item.abandoned !== 'boolean') return null;
+  return { abandoned: item.abandoned };
 }
 
 export function isAgentPairingAbandonView(value: unknown): value is AgentPairingAbandonView {
-  return (
-    Boolean(value) &&
-    typeof value === 'object' &&
-    typeof (value as Partial<AgentPairingAbandonView>).abandoned === 'boolean'
-  );
+  return readAgentPairingAbandonView(value) !== null;
 }

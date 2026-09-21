@@ -12,6 +12,12 @@ describe('local settings', () => {
     expect(localSettingsParse({ uiSize: 'huge' })).toEqual(localSettingsDefaults);
   });
 
+  it('defaults the room-open trace overlay off on every device', () => {
+    expect(localSettingsDefaults.roomOpenTraceOverlay).toBe(false);
+    expect(localSettingsParse({}).roomOpenTraceOverlay).toBe(false);
+    expect(localSettingsParse({ roomOpenTraceOverlay: true }).roomOpenTraceOverlay).toBe(true);
+  });
+
   it('applies a local UI size update without changing appearance', () => {
     expect(applyLocalSettings({ ...localSettingsDefaults }, { uiSize: 'small' })).toEqual({
       ...localSettingsDefaults,

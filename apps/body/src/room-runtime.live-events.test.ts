@@ -283,6 +283,64 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
+  it('shutdown waits for a pushed apply instead of leaving its Room running', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-shutdown-'));
+    roots.push(root);
+    let releaseCheckout!: () => void;
+    const checkoutGate = new Promise<void>((release) => {
+      releaseCheckout = release;
+    });
+    let checkoutStarted!: () => void;
+    const startInFlight = new Promise<void>((started) => {
+      checkoutStarted = started;
+    });
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomRepositoryState') {
+        checkoutStarted();
+        await checkoutGate;
+        return { resolution: 'none' };
+      }
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      return {};
+    });
+    let membership: ((event?: RoomMembershipChange) => void) | undefined;
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: (listener: (event?: RoomMembershipChange) => void) => {
+            membership = listener;
+          },
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    // A pushed apply runs outside the run loop's signal, so a Room whose start
+    // is in flight when shutdown begins must still be stopped by it.
+    membership?.({ roomId: 'room-1' });
+    await startInFlight;
+    let settled = false;
+    const stopping = coordinator.shutdown().then(() => {
+      settled = true;
+    });
+    await new Promise((resolveTick) => setTimeout(resolveTick, 50));
+    expect(settled).toBe(false);
+    releaseCheckout();
+    await stopping;
+    expect(coordinator.activeRoomIds()).toEqual([]);
+    // And a push arriving after shutdown starts nothing at all.
+    membership?.({ roomId: 'room-2' });
+    await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+    expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-2' });
+  });
+
   it('an unscoped rooms-changed still arms the recovery reconcile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-unscoped-'));
     roots.push(root);

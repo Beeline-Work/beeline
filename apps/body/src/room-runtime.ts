@@ -392,6 +392,8 @@ export class RoomRuntimeCoordinator {
   /** Pushed membership changes awaiting a bounded apply, latest per Room. */
   private readonly pendingMembershipEvents = new Map<string, RoomMembershipChange>();
   private membershipDrain: Promise<void> | undefined;
+  /** Set by `shutdown`: a pushed event may no longer start anything. */
+  private stopped = false;
   /** Corners whose start failure has already been said out loud, once each. */
   private readonly reportedCornerStartFailures = new Set<string>();
   /** Standing workspace-configuration faults, keyed by the config that failed. */
@@ -649,6 +651,7 @@ export class RoomRuntimeCoordinator {
    * worktree checkouts this change exists to stop.
    */
   private queueMembershipEvent(event: RoomMembershipChange): void {
+    if (this.stopped) return;
     if (!event.roomId) {
       this.discoveryWakes.wake();
       return;
@@ -1186,6 +1189,14 @@ export class RoomRuntimeCoordinator {
   }
 
   async shutdown(): Promise<void> {
+    // A pushed membership apply runs outside the run loop's signal, so a Room
+    // whose start is in flight here would land in `running` after the abort
+    // pass and never be stopped — its live subscription outlives the daemon.
+    // Refuse further pushes, then let the in-flight apply finish so whatever
+    // it started is in the snapshot below.
+    this.stopped = true;
+    this.pendingMembershipEvents.clear();
+    await this.membershipDrain;
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));

@@ -195,11 +195,13 @@ describe('ACP streaming lane classifier', () => {
       ['Using Git', 'Hub works.', 'Using GitHub works.'],
       ['Open the READ', 'ME first.', 'Open the README first.'],
       ['Written in Java', 'Script.', 'Written in JavaScript.'],
-      // Lowercase-initial stylized names: the visible half is not a word,
-      // so it is not anywhere a finished message could have stopped.
+      // Lowercase-initial stylized names: one lowercase letter is not a
+      // word, so it is not anywhere a finished message could have stopped.
       ['Using e', 'Bay works.', 'Using eBay works.'],
-      ['Tested on mac', 'OS too.', 'Tested on macOS too.'],
+      ['Using u', 'Block works.', 'Using uBlock works.'],
       ['Shipped the i', 'Phone build.', 'Shipped the iPhone build.'],
+      ['Selected with j', 'Query.', 'Selected with jQuery.'],
+      ['Asked x', 'AI about it.', 'Asked xAI about it.'],
     ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: head } }),
@@ -237,8 +239,19 @@ describe('ACP streaming lane classifier', () => {
     ).toEqual(['...existing test and typecheck patterns', 'Now I have the full picture.']);
 
     // A short word is still a word, so narration that ends on one ends its
-    // message: only a named stylized prefix resumes across the update.
-    for (const shortWord of ['I can do', 'Looking at the', 'Checking if', 'One to']) {
+    // message. `a` is included deliberately: it is the one lowercase letter
+    // English does spell a word with, so it is not a split word's initial.
+    for (const shortWord of [
+      'I can do',
+      'Looking at the',
+      'Checking if',
+      'One to',
+      'Reading it as a',
+      // A multi-letter lowercase prefix has a word's shape, so `macOS` lands
+      // on this side of the line — nothing in the stream tells `mac` apart
+      // from the `do` above.
+      'Tested on mac',
+    ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: shortWord } }),
         update('tool_call', { toolCallId: 'read-3', kind: 'read' }),
@@ -1735,6 +1748,33 @@ describe('AcpClient live steering', () => {
       );
       expect(result.agentText).toBe('Using eBay works.');
       expect(runs.at(-1)).toEqual(['Using eBay works.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps the first characters of a turn for a name no allowlist would carry', async () => {
+    // `u` + tool call + `Block works.` — the same defect for a name that no
+    // enumeration of spellings had in it. One lowercase letter is not a word
+    // whatever the letter is, which is what makes this general.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Using u', 'Block works.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Using uBlock works.');
+      expect(runs.at(-1)).toEqual(['Using uBlock works.']);
     } finally {
       await client.stop();
     }

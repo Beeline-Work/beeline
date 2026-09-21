@@ -293,17 +293,21 @@ const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
 const UPPERCASE_HEAD = /^\p{Lu}/u;
 
 /**
- * The lowercase halves of the stylized names that reach a reply: eBay and
- * eSIM, iPhone and iOS, xAI, macOS. None of them is a word in its own right,
- * so none of them is anywhere a finished message can stop — which is the
- * whole of what separates `Using e` + `Bay works.` from `I can do` + `Found
- * it.`. `do` is a word and ends its message; `e` is half of one.
+ * One lowercase letter is not a word — `a` is the only one English has — so
+ * a run that stops on one stopped inside a word, never at the end of a
+ * message. That is the whole of what separates `Using u` + `Block works.`
+ * from `I can do` + `Found it.`: `do` is a word and ends its message, `u` is
+ * half of `uBlock`. It reaches every single-letter stylized name (eBay, iOS,
+ * xAI, jQuery, uBlock) without naming one.
  *
- * A name outside this set still splits and still loses its head. Widening
- * the set by shape rather than by name is what glued ordinary narration onto
- * the reply, so it stays a list of names.
+ * A longer lowercase prefix — the `mac` of macOS — has a word's shape, and
+ * nothing in the stream tells it apart from the `do` that ends a sentence,
+ * so it stays a boundary and still loses its head. Widening this by shape is
+ * what glued narration onto the reply.
  */
-const STYLIZED_NAME_PREFIXES = new Set(['e', 'i', 'x', 'mac']);
+function resumesSplitWord(word: string): boolean {
+  return /^\p{Ll}$/u.test(word) && word !== 'a';
+}
 
 /**
  * Whether `delta` continues the word `current` stops on, so the non-text
@@ -314,10 +318,10 @@ const STYLIZED_NAME_PREFIXES = new Set(['e', 'i', 'x', 'mac']);
  * else separates a split name from a new sentence — `Bay works.` and `Found
  * the answer.` are the same shape. It resumes a word when that word is
  * itself capitalized (`Git` + `Hub`, `READ` + `ME`, `Java` + `Script`) or is
- * a named stylized prefix (`e` + `Bay`, `mac` + `OS`); an ordinary lowercase
- * word taking a capital (`typecheck patterns` + `Now I have the full
- * picture.`, `I can do` + `Found it.`) is the harness finishing one message
- * and opening the next.
+ * a single lowercase letter, which no message can have ended on (`e` + `Bay`,
+ * `u` + `Block`); a whole lowercase word taking a capital (`typecheck
+ * patterns` + `Now I have the full picture.`, `I can do` + `Found it.`) is
+ * the harness finishing one message and opening the next.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
@@ -326,7 +330,7 @@ function continuesPreviousWord(current: string, delta: string): boolean {
   if (!word) return false;
   if (CHUNK_RESUMES_WORD.test(delta)) return true;
   if (!UPPERCASE_HEAD.test(delta)) return false;
-  return UPPERCASE_HEAD.test(word) || STYLIZED_NAME_PREFIXES.has(word);
+  return UPPERCASE_HEAD.test(word) || resumesSplitWord(word);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;

@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { typeRoles, space } from '@/buzz/groknight';
 
 /**
  * Design invariants for the chat screen's top bar — the Room and its Corners
@@ -132,10 +131,10 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).not.toContain('HEADER_TRAILING_HIT_SLOP');
   });
 
-  it('gives the Room corners door a large lone sigil parted from overflow', () => {
-    // Captain 2026-09-20: the door is the diamond ALONE — no word beside it —
-    // visibly larger than the overflow dots and separated from them by bare
-    // slab, with a real 44pt target of its own.
+  it('gives the Room corners door a large lone sigil beside overflow', () => {
+    // Captain 2026-09-20: the door is the sigil ALONE — no word beside it —
+    // with a real 44pt target of its own. The overflow's box now touches it,
+    // matching the Room-list pair.
     expect(chatSource).toContain('testID="room-corners-menu"');
     expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
     expect(chatSource).toContain('<CornerGlyph');
@@ -186,12 +185,13 @@ describe('Chat header — one language for Room and Corner', () => {
       expect(doorButton![0], metric).toContain(metric);
       expect(overflowBox![0], metric).toContain(metric);
     }
-    // Bare slab between the named door and the dots, on top of the door's own
-    // padding: two controls a thumb must hit separately cannot share an edge.
+    // Boxes touch, same as the Room-list pair: 44-28=16 of ink between the
+    // marks. A space.lg gutter was the leftover that made this pair read as
+    // a different chrome from the Room list.
     const clustered = chatSource.match(/roomClusteredActionsButton:\s*\{[\s\S]*?\n    \},/);
     expect(clustered, 'missing trailing overflow style').toBeTruthy();
-    expect(clustered![0]).toContain('marginLeft: groknight.space.lg');
-    expect(space.lg).toBeGreaterThan(space.md);
+    expect(clustered![0]).toContain('marginLeft: 0');
+    expect(clustered![0]).not.toContain('groknight.space');
     // No badge, plate or count grows on it: a door says where it goes, and
     // the list behind it does the counting.
     expect(chatSource).not.toMatch(/roomCorners(?:Badge|Count|Plate)/);

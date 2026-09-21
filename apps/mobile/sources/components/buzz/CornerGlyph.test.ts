@@ -33,7 +33,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('CornerGlyph', () => {
-  it('draws two strokes meeting at the bottom left, 15 of 24, stroke scaled to size', () => {
+  it('draws two strokes meeting at the bottom left, holding the 16px painted arm at 28', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
       renderer = create(React.createElement(CornerGlyph, { size: 28, testID: 'corner-glyph' }));
@@ -45,23 +45,38 @@ describe('CornerGlyph', () => {
     expect(svg.props.height).toBe(28);
     expect(svg.props.accessibilityElementsHidden).toBe(true);
 
+    const extent = 15 * (16 / 28);
+    expect(extent * (28 / 24)).toBeCloseTo(10, 5);
+    const reach = extent / 2;
+    const left = 12 - reach;
+    const right = 12 + reach;
+    const top = 12 - reach;
+    const bottom = 12 + reach;
+
     const lines = renderer.root.findAllByType('Line' as never);
     expect(lines).toHaveLength(2);
     const [upright, across] = lines;
-    expect(upright.props.x1).toBe(4.5);
-    expect(upright.props.x2).toBe(4.5);
-    expect(upright.props.y1).toBe(4.5);
-    expect(upright.props.y2).toBe(19.5);
-    expect(across.props.x1).toBe(4.5);
-    expect(across.props.x2).toBe(19.5);
-    expect(across.props.y1).toBe(19.5);
-    expect(across.props.y2).toBe(19.5);
+    expect(upright.props.x1).toBeCloseTo(left, 5);
+    expect(upright.props.x2).toBeCloseTo(left, 5);
+    expect(upright.props.y1).toBeCloseTo(top, 5);
+    expect(upright.props.y2).toBeCloseTo(bottom, 5);
+    expect(across.props.x1).toBeCloseTo(left, 5);
+    expect(across.props.x2).toBeCloseTo(right, 5);
+    expect(across.props.y1).toBeCloseTo(bottom, 5);
+    expect(across.props.y2).toBeCloseTo(bottom, 5);
     expect(across.props.stroke).toBe(brand.mark);
     expect(across.props.strokeWidth).toBe(chromeStrokeWidth(28));
     expect(chromeStrokeWidth(28) * (28 / 24)).toBeCloseTo(
       MEMBERS_GLYPH_STROKE_WIDTH * (16 / 24),
       5,
     );
+
+    act(() => {
+      renderer = create(React.createElement(CornerGlyph, { size: 16 }));
+    });
+    const at16 = renderer.root.findAllByType('Line' as never)[0]!;
+    expect(at16.props.x1).toBe(4.5);
+    expect(at16.props.y2).toBe(19.5);
   });
 
   it('keeps the inline sizes on the meta and status lines', () => {

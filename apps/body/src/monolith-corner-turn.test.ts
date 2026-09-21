@@ -88,9 +88,7 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain('do not tag any agent for review');
     expect(instruction).toContain('merge yourself');
     // A non-reviewer opener (someone else is the configured reviewer): nothing.
-    expect(
-      cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' }),
-    ).toBeUndefined();
+    expect(cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' })).toBeUndefined();
     // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
     // that case instead, so this stays undefined.
     expect(
@@ -257,9 +255,7 @@ describe('corner merge instructions', () => {
 
     await (loop as unknown as { activate(): Promise<string> }).activate();
     const input = sessionNew.mock.calls[0]?.[0];
-    expect(input?.systemPrompt).toContain(
-      `Checks are green on PR #7 at ${'a'.repeat(40)}`,
-    );
+    expect(input?.systemPrompt).toContain(`Checks are green on PR #7 at ${'a'.repeat(40)}`);
     expect(input?.systemPrompt).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
     expect(input?.systemPrompt).not.toContain('reply only with its full URL');
     expect(input?.mcpServers).toContainEqual(
@@ -2079,7 +2075,9 @@ describe('thin monolith corner turn', () => {
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
     expect(firstPrompt).toContain('Corner transcript:');
+    expect(firstPrompt).toContain('[message id: corner-row-1]\nBeeline [message]: corner row 1');
     expect(firstPrompt).toContain('corner row 1');
+    expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest trigger:');
     // The second turn is the SAME warm session: it sends only what is new, and
     // the objective — which lives outside the transcript window — still rides
     // on every prompt.

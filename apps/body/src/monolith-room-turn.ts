@@ -989,6 +989,7 @@ export class MonolithRoomTurnLoop {
                     message.attachments,
                     this.deliveredAttachments.get(message.id),
                     this.acceptsImages(),
+                    message.id,
                   ),
                 }));
               const grantDecision = this.commandContext.current?.action === 'resume';
@@ -1025,6 +1026,7 @@ export class MonolithRoomTurnLoop {
                     item.attachments,
                     delivered,
                     this.acceptsImages(),
+                    item.type === 'message' ? item.id : undefined,
                   ),
                 ]
                   .filter(Boolean)
@@ -1090,6 +1092,7 @@ export class MonolithRoomTurnLoop {
                         steerItem.attachments,
                         this.deliveredAttachments.get(steerItem.id),
                         this.acceptsImages(),
+                        steerItem.type === 'message' ? steerItem.id : undefined,
                       ),
                     ),
                     'Continue now and answer the updated request without erasing the earlier context.',
@@ -1379,10 +1382,13 @@ function roomMessagePrompt(
   attachments: RoomMessage['attachments'],
   delivered?: readonly DeliveredAttachment[],
   harnessAcceptsImages = true,
+  messageId?: string,
 ): string {
   const message = body.trim() || '(shared attachments)';
   const rendered = author ? `${author}: ${message}` : message;
-  return [rendered, ...attachmentPromptLines(attachments, delivered, harnessAcceptsImages)].join(
-    '\n',
-  );
+  return [
+    ...(messageId ? [`[message id: ${messageId}]`] : []),
+    rendered,
+    ...attachmentPromptLines(attachments, delivered, harnessAcceptsImages),
+  ].join('\n');
 }

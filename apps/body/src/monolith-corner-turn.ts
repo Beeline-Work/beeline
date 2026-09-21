@@ -899,7 +899,7 @@ export class MonolithCornerTurnLoop {
                       cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              "Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait to be woken. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the end of that review wakes you, tag or no tag, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.",
+              'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait to be woken. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the end of that review wakes you, tag or no tag, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
             ]
           : [
               'This is a no-code corner with no repository checkout and no GitHub workflow.',
@@ -1012,6 +1012,7 @@ export class MonolithCornerTurnLoop {
     requestedById?: string,
     /** Server system lines this turn answers; a reply that only restates them is dropped. */
     restates?: readonly string[],
+    sourceMessageId?: string,
   ): Promise<void> {
     const { api, cornerId } = this.options;
     // Work the requester has already withdrawn is never started. A stop can
@@ -1076,7 +1077,10 @@ export class MonolithCornerTurnLoop {
               if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
               const transcriptRows = conversation.items.slice(-120).map((message) => ({
                 id: message.id,
-                line: `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
+                line: [
+                  ...(message.type === 'message' ? [`[message id: ${message.id}]`] : []),
+                  `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
+                ].join('\n'),
               }));
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
               // same turn against a NEW session id that holds none of this
@@ -1093,6 +1097,7 @@ export class MonolithCornerTurnLoop {
                   ),
                   roomMentionDirectory(roster, this.agent.publicKey),
                   [
+                    ...(sourceMessageId ? [`Reaction target message id: ${sourceMessageId}`] : []),
                     `Newest trigger:\n${trigger}`,
                     ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
                   ].join('\n'),
@@ -1544,6 +1549,7 @@ export class MonolithCornerTurnLoop {
             command.source.attachments,
             command.source.authorId,
             command.reason === 'corner_check' ? [command.source.body] : undefined,
+            command.source.type === 'message' ? command.sourceMessageId : undefined,
           ).finally(() => {
             // One recovery GET after the turn; idle ticks stay on the 10 min net.
             this.lastCloseCheck = 0;

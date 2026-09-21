@@ -56,14 +56,14 @@ export function WritePermissionOutcome(props: {
         onPress={props.onOpen}
         style={styles.outcome}
       >
-        <CornerGlyph color={styles.status.color} size={CORNER_STATUS_SIZE} />
+        <CornerGlyph size={CORNER_STATUS_SIZE} />
         <Text style={styles.status}>CORNER APPROVED · VIEW →</Text>
       </Pressable>
     );
   }
   return (
     <View style={styles.outcome} testID={props.testID}>
-      {cornerMark ? <CornerGlyph color={styles.status.color} size={CORNER_STATUS_SIZE} /> : null}
+      {cornerMark ? <CornerGlyph size={CORNER_STATUS_SIZE} /> : null}
       <Text style={styles.status}>
         {props.label ??
           writePermissionStatusLabel(props.status, props.subchannelId, props.awaitingPerson)}

@@ -261,7 +261,6 @@ export default function BookmarksScreen() {
             <View style={styles.originSource}>
               {bookmark.roomKind === 'corner' ? (
                 <CornerGlyph
-                  color={styles.originSigil.color}
                   size={CORNER_META_SIZE}
                   testID={`bookmark-corner-mark-${bookmark.messageId}`}
                 />

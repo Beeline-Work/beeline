@@ -1118,11 +1118,6 @@ export default function BuzzChannels() {
                           >
                             <View style={styles.cornerLead}>
                               <CornerGlyph
-                                color={
-                                  display.needsYou
-                                    ? styles.cornerNameNeedsYou.color
-                                    : styles.cornerName.color
-                                }
                                 size={CORNER_META_SIZE}
                                 testID={`room-corner-mark-${corner.corner.id}`}
                               />

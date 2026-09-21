@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
@@ -38,7 +40,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('CornerGlyph', () => {
-  it('fills the slashed-frame polygon at the named extent and placeholder thickness', () => {
+  it('fills the slashed-frame polygon at the named extent and board-pick thickness', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
       renderer = create(React.createElement(CornerGlyph, { size: 28, testID: 'corner-glyph' }));
@@ -57,6 +59,7 @@ describe('CornerGlyph', () => {
     const far = 24 - outer;
     const polygons = renderer.root.findAllByType('Polygon' as never);
     expect(polygons).toHaveLength(1);
+    expect(brand.mark).toBe('#E5A645');
     expect(polygons[0]!.props.fill).toBe(brand.mark);
     expect(polygons[0]!.props.stroke).toBeUndefined();
     expect(polygons[0]!.props.strokeWidth).toBeUndefined();
@@ -75,5 +78,23 @@ describe('CornerGlyph', () => {
   it('keeps the inline sizes on the meta and status lines', () => {
     expect(CORNER_META_SIZE).toBe(13);
     expect(CORNER_STATUS_SIZE).toBe(11);
+  });
+
+  it('is not restained with chrome at the four production mounts', () => {
+    const roots = path.resolve(__dirname, '../..');
+    const sites = [
+      'app/(app)/beeline/chat/_chat-surface.tsx',
+      'app/(app)/beeline/channels.tsx',
+      'app/(app)/beeline/bookmarks.tsx',
+      'components/buzz/WritePermissionOutcome.tsx',
+    ];
+    for (const site of sites) {
+      const source = readFileSync(path.join(roots, site), 'utf8');
+      const mounts = [...source.matchAll(/<CornerGlyph\b[^>]*\/?>/g)].map((match) => match[0]);
+      expect(mounts.length, `${site} mounts CornerGlyph`).toBeGreaterThan(0);
+      for (const mount of mounts) {
+        expect(mount, `${site} restains CornerGlyph`).not.toContain('color=');
+      }
+    }
   });
 });

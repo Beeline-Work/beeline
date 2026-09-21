@@ -4489,7 +4489,6 @@ export function BuzzChatSurface({
                 testID="room-corners-menu"
               >
                 <CornerGlyph
-                  color={styles.roomCornersGlyph.color}
                   size={HEADER_MARK_SIZE}
                   testID="room-corners-glyph"
                 />
@@ -5833,10 +5832,8 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // Optically the SAME mark-size as the overflow dots, not larger and not a
-    // speck (captain, 2026-09-20). Both are drawn shapes on one size in one
-    // box now, so they match by construction rather than by eye.
-    roomCornersGlyph: { color: groknight.accent },
+    // The corner mark paints brand gold from CornerGlyph itself. Overflow
+    // stays steel chrome.
     roomActionsGlyph: { color: groknight.steel },
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,

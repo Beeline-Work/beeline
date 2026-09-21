@@ -15,13 +15,14 @@ import brand from '@/buzz/brand.json';
  * polygon whose cut ends land on the diagonal, so each arm is full thickness
  * at the elbow and tapers to a point. Extent is 15 of the 24 viewBox — the
  * same relationship the retired diamond used so the header mark stays
- * optically the same size as the overflow mark beside it. Thickness is a
- * named placeholder until the board pick lands; do not invent another number.
+ * optically the same size as the overflow mark beside it. Thickness 4.5 is
+ * the board pick. Fill is brand.json mark gold, not the muted chrome the
+ * neighbouring marks keep.
  */
 const VIEWBOX = 24;
 /** Outer painted square, same 15-of-24 as the retired `DIAMOND_EXTENT`. */
 export const CORNER_EXTENT = 15;
-/** Band thickness. Placeholder until the board pick lands. */
+/** Band thickness. Board pick, LIVE card in gold. */
 export const CORNER_THICKNESS = 4.5;
 
 const OUTER = (VIEWBOX - CORNER_EXTENT) / 2;

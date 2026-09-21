@@ -148,13 +148,14 @@ describe('Chat header — one language for Room and Corner', () => {
       chatSource.indexOf('testID="room-corners-menu"'),
     );
     expect(glyph).toContain('!parentChannelId && !isDirectMessage');
-    // Brass stays on the sigil alone — the corner lifecycle family's own mark.
-    // The word takes the calm metadata voice the rest of the header speaks in,
-    // so the pair is never two accents shouting at each other.
-    const diamond = chatSource.match(/roomCornersGlyph:\s*\{[\s\S]*?\},/);
-    expect(diamond, 'missing roomCornersGlyph style').toBeTruthy();
-    expect(diamond![0]).toContain('color: groknight.accent');
-    expect(diamond![0]).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+    // Brand-mark gold is CornerGlyph's own fill. The header does not restain
+    // it with chrome; overflow stays steel.
+    const doorMount = chatSource.slice(
+      chatSource.indexOf('<CornerGlyph'),
+      chatSource.indexOf('testID="room-corners-glyph"'),
+    );
+    expect(doorMount).not.toContain('color=');
+    expect(chatSource).not.toContain('roomCornersGlyph');
     const dots = chatSource.match(/roomActionsGlyph:\s*\{[\s\S]*?\},/);
     expect(dots![0]).toContain('color: groknight.steel');
     // Both marks are DRAWN in a fixed box at one shared size, so the sigil
@@ -163,9 +164,7 @@ describe('Chat header — one language for Room and Corner', () => {
     // is what a shape in a centred box exists to make unnecessary.
     expect(chatSource).toContain('const HEADER_MARK_SIZE = 28');
     expect(chatSource.match(/size=\{HEADER_MARK_SIZE\}/g)!.length).toBeGreaterThanOrEqual(3);
-    for (const glyphStyle of [diamond![0], dots![0]]) {
-      expect(glyphStyle).not.toMatch(/fontSize|lineHeight|includeFontPadding|translateY/);
-    }
+    expect(dots![0]).not.toMatch(/fontSize|lineHeight|includeFontPadding|translateY/);
     expect(chatSource).not.toMatch(/OPTICAL_Y/);
     // The sigil and the dots are the only trailing marks, and nothing types
     // them as characters any more.

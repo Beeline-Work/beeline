@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import {
   connectionGrant,
   connectionLedgerEntry,
+  CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
   installSquire,
   isProcessAlive,
@@ -239,6 +240,22 @@ describe('parseConnectOutput', () => {
     }
   });
 
+  it('publishes nothing from a frame whose closing border has not arrived', () => {
+    // The runner re-reads the whole buffer per chunk, so every prefix of the
+    // banner is a real delivery state. None of them may yield a URL: the row
+    // holding the wrapped head parses as a valid `#p=` tunnel on its own.
+    for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
+      const rows = render.banner.split('\n');
+      for (let count = 1; count < rows.length; count += 1) {
+        expect(parseConnectOutput(`${rows.slice(0, count).join('\n')}\n`)).toBeUndefined();
+      }
+      expect(parseConnectOutput(`${render.banner}\n`)).toEqual({
+        method: 'streamed-page',
+        url: render.url,
+      });
+    }
+  });
+
   it('keeps a frame\u2019s other rows as their own lines', () => {
     for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
       const lines = unframeBoxedOutput(render.banner)
@@ -261,6 +278,31 @@ describe('parseConnectOutput', () => {
 });
 
 describe('defaultStreamedRunner', () => {
+  it('keeps reaping an abandoned ceremony after its URL is published', async () => {
+    // Nothing downstream reaps the connect once the connector row leaves
+    // `installing`, so the runner's own bound is what keeps the display rig
+    // from living for the daemon's lifetime.
+    const sleep = ((real) => (ms: number) => new Promise((done) => real(done, ms)))(setTimeout);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const result = await defaultStreamedRunner(process.execPath, [
+        '-e',
+        'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+          'setInterval(() => {}, 30_000);',
+      ]);
+      expect(result.signIn?.url).toBe('https://tunnel.test/#p=hunter22');
+      const pid = squireConnectSession()?.pid;
+      expect(isProcessAlive(pid)).toBe(true);
+
+      vi.advanceTimersByTime(CONNECT_TIMEOUT_MS);
+      for (let attempt = 0; attempt < 200 && isProcessAlive(pid); attempt += 1) await sleep(10);
+      expect(isProcessAlive(pid)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      releaseSquireConnectSession();
+    }
+  });
+
   it('waits for the ceremony URL Squire prints after its install-page banner', async () => {
     const result = await defaultStreamedRunner(process.execPath, [
       '-e',

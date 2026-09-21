@@ -277,7 +277,6 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         steps: result.steps,
-        signIn: null,
         errorMessage: result.errorMessage,
       });
       return;
@@ -324,6 +323,7 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         steps: result.steps,
+        signIn: null,
         errorMessage: result.errorMessage,
       });
       return;

@@ -387,6 +387,11 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     let stderr = '';
     let resolved = false;
 
+    // This timer bounds the ceremony itself, not just the wait for its URL: it
+    // stays armed after the surface is published, because nothing downstream
+    // reaps the connect once the connector row leaves `installing`. The human
+    // has until it fires to finish; after that the Xvfb/x11vnc/websockify/
+    // cloudflared rig under the connect goes with the process group.
     const safetyTimer = setTimeout(() => {
       if (!resolved) {
         resolved = true;
@@ -415,9 +420,13 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     const finish = (result: StreamedCommandResult) => {
       if (!resolved) {
         resolved = true;
-        clearTimeout(safetyTimer);
         resolve(result);
       }
+    };
+
+    const settle = (result: StreamedCommandResult) => {
+      clearTimeout(safetyTimer);
+      finish(result);
     };
 
     const checkOutput = () => {
@@ -439,11 +448,11 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     });
 
     child.on('close', () => {
-      finish({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
+      settle({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
     });
 
     child.on('error', () => {
-      finish({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
+      settle({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
     });
   });
 
@@ -472,6 +481,9 @@ function isConnectCeremonyUrl(url: string): boolean {
 }
 
 const BOXED_ROW = /^\s*\u2502(.*)\u2502\s*$/;
+/** A frame's closing border: box-drawing glyphs alone (the TOP border carries
+ *  the title, so only the bottom one can match). */
+const BOX_BORDER = /^\s*[\u2500-\u257F]+\s*$/;
 
 /**
  * Rejoin ONE box's rows. Every row of a box is rendered to the same inner
@@ -508,24 +520,26 @@ function rejoinBoxRows(cells: readonly string[]): string[] {
  * HARD-WRAPS a token wider than the frame — a long quick-tunnel host splits
  * the URL across two rows. Rejoin each frame's rows before reading a URL out
  * of it, or the phone is handed the first 74 characters of a live link.
+ *
+ * Only a frame whose CLOSING BORDER has arrived is rejoined. The streamed
+ * runner re-reads the whole buffer on every chunk, so a frame still being
+ * delivered yields nothing at all and is read whole on the next chunk —
+ * emitting its rows early would publish that same 74-character fragment,
+ * which parses as a perfectly good tunnel URL.
  */
 export function unframeBoxedOutput(output: string): string {
   const lines: string[] = [];
   let box: string[] = [];
-  const flush = () => {
-    if (box.length > 0) lines.push(...rejoinBoxRows(box));
-    box = [];
-  };
   for (const row of output.split('\n')) {
     const framed = BOXED_ROW.exec(row);
     if (framed) {
       box.push(framed[1] ?? '');
       continue;
     }
-    flush();
+    if (box.length > 0 && BOX_BORDER.test(row)) lines.push(...rejoinBoxRows(box));
+    box = [];
     lines.push(row);
   }
-  flush();
   return lines.join('\n');
 }
 

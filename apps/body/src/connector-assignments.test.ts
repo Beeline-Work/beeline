@@ -268,6 +268,28 @@ describe('ConnectorAssignmentLoop', () => {
     loop.stop();
   });
 
+  it('clears the ceremony when a later Squire run fails before printing one', async () => {
+    // Run 1 published a tunnel; run 2 dies before printing anything. The dead
+    // tunnel must not survive on the row under an `error` status.
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => ({
+        status: 'error',
+        steps: [{ label: 'trusty-squire installed', status: 'failed' }],
+        errorMessage: 'another Trusty Squire session is already using the browser',
+      }),
+    });
+    await loop.runOnce();
+    await settle();
+    const posts = api.calls.filter((call) => call.op === 'postConnectorStatus');
+    expect(posts.at(-1)?.input.errorMessage).toContain('already using the browser');
+    expect(posts.at(-1)?.input.signIn).toBeNull();
+    loop.stop();
+  });
+
   it('never starts the same connector twice while an install is in flight', async () => {
     const api = apiMock([
       { kind: 'install', connectorId: 'conn-1' },

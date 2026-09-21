@@ -563,12 +563,17 @@ export function parseConnectReport(line: string): SquireConnectReport | undefine
  * placement is written on a later line than the URL, and every ceremony
  * reports it before it starts waiting on the human, so this waits on Squire's
  * own next line and never on the human or on the process.
+ *
+ * `unreachable` is the one placement that is not a page anybody can be sent
+ * to: the ceremony reports it and then ends, so its terminal line — the one
+ * that says what blocked the connect — is what this waits for.
  */
 export function isPublishableConnectReport(report: SquireConnectReport): boolean {
   if (report.terminal) return true;
   if (report.state !== 'needs-sign-in' || !report.sign_in_url) return false;
   const location = report.browser_location;
-  return isRecord(location) && typeof location.kind === 'string' && location.kind !== 'none';
+  if (!isRecord(location) || typeof location.kind !== 'string') return false;
+  return location.kind !== 'none' && location.kind !== 'unreachable';
 }
 
 /** Squire's reason codes, in the words a person reads. The code is the

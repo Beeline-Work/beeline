@@ -309,6 +309,40 @@ describe('defaultStreamedRunner', () => {
     releaseSquireConnectSession();
   });
 
+  it('waits out an unreachable placement for the line that says what blocked it', async () => {
+    // A headless host with nothing that can show the ceremony reports the
+    // placement as `unreachable` and then ends the run; publishing that
+    // non-terminal line would hand a person a page for a connect that is
+    // already over.
+    const unreachable = reportLine({
+      state: 'needs-sign-in',
+      sign_in_url: 'https://trustysquire.ai/install?token=secret',
+      browser_location: { kind: 'unreachable', reason: 'no x11vnc' },
+    });
+    const blocked = reportLine({
+      state: 'no-browser',
+      terminal: true,
+      sign_in_url: 'https://trustysquire.ai/install?token=secret',
+      browser_location: { kind: 'unreachable', reason: 'no x11vnc' },
+    });
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        `process.stdout.write(${JSON.stringify(`${unreachable}\n`)});`,
+        'setTimeout(() => {',
+        `  process.stdout.write(${JSON.stringify(`${blocked}\n`)});`,
+        '}, 120);',
+        'setInterval(() => {}, 30_000);',
+      ].join(''),
+    ]);
+    expect(result.report?.state).toBe('no-browser');
+    expect(connectBlockedLine(result.report!)).toBe(
+      'the sign-in page could not be shown on this machine',
+    );
+    result.abort();
+    releaseSquireConnectSession();
+  });
+
   it('never reads a sign-in surface out of stderr prose', async () => {
     const result = await defaultStreamedRunner(process.execPath, [
       '-e',
@@ -321,6 +355,26 @@ describe('defaultStreamedRunner', () => {
 });
 
 describe('installSquire', () => {
+  it('reports an unshowable ceremony as blocked, never as an outstanding sign-in', async () => {
+    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        report: report({
+          state: 'no-browser',
+          terminal: true,
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'unreachable', reason: 'no x11vnc' },
+        }),
+      }),
+      mcp: client,
+    });
+    expect(result.status).toBe('error');
+    expect(result.signIn).toBeUndefined();
+    expect(result.errorMessage).toBe('the sign-in page could not be shown on this machine');
+  });
+
   it('stays installing while the ceremony it printed is outstanding', async () => {
     const { client, calls } = mockSquire({
       list_credentials: () => ({ credentials: [] }),

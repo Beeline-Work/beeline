@@ -166,6 +166,34 @@ describe('parseConnectReport', () => {
     expect(connectBlockedLine(blocked)).toContain('Finish or close that Trusty Squire session');
   });
 
+  it('names the typed block, not the broker Chrome holding the profile', () => {
+    // Squire snapshots a holder onto every line, and on this helper the
+    // shared broker's own Chrome holds the profile while the ceremony runs —
+    // reading it first told the person to close the browser every other
+    // agent is using.
+    const brokerHolder = { kind: 'other', code: 'singleton_lock', pid: 4242 };
+    expect(
+      connectBlockedLine(
+        report({
+          state: 'no-browser',
+          terminal: true,
+          holder: brokerHolder,
+          browser_location: { kind: 'unreachable', reason: 'no x11vnc' },
+        }),
+      ),
+    ).toBe('the sign-in page could not be shown on this machine');
+    expect(
+      connectBlockedLine(
+        report({
+          state: 'no-browser',
+          terminal: true,
+          reason: 'account_mismatch',
+          holder: brokerHolder,
+        }),
+      ),
+    ).toBe('this machine is bound to a different account');
+  });
+
   it('has nothing to say for a connected report or an outstanding sign-in', () => {
     expect(connectBlockedLine(report({ state: 'connected', terminal: true }))).toBeUndefined();
     expect(

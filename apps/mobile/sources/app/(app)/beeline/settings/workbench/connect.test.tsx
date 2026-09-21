@@ -287,8 +287,8 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       steps: [{ label: 'waiting for sign-in', status: 'active' as const }],
       signIn: {
         method: 'streamed' as const,
-        url: 'https://signin.example.test',
-        browserLocation: { kind: 'virtual' as const, url: 'https://signin.example.test' },
+        url: 'https://trustysquire.ai/install?token=secret',
+        browserLocation: { kind: 'virtual' as const, url: 'https://tunnel.example.test/#p=x' },
       },
       connected: false,
     }));
@@ -297,7 +297,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     await advancePolls();
     const line = renderer.root.findByProps({ testID: 'connect-sign-in-location' });
     expect([line.props.children].flat().join('')).toBe(
-      'Sign-in page opened on a virtual display',
+      'Sign-in page opened on a virtual display · https://tunnel.example.test/#p=x',
     );
   });
 

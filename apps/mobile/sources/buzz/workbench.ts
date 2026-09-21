@@ -286,11 +286,12 @@ export type ConnectorSignIn = {
 export function connectorSignInLocationLine(
   location: ConnectorBrowserLocation | undefined,
 ): string {
-  switch (location?.kind) {
+  if (!location) return '';
+  switch (location.kind) {
     case 'host_screen':
       return "Sign-in page opened on this machine's screen";
     case 'virtual':
-      return 'Sign-in page opened on a virtual display';
+      return `Sign-in page opened on a virtual display · ${location.url}`;
     default:
       return '';
   }

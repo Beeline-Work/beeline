@@ -608,13 +608,12 @@ function holderLine(raw: unknown): string | undefined {
 
 /**
  * What blocks a connect, in one line for the person, from the typed report
- * alone. `undefined` for a run that connected or still has a human's sign-in
- * outstanding.
+ * alone, in the contract's own order: the fields that name the block come
+ * first and the reason code answers only what they cannot. `undefined` for a
+ * run that connected or still has a human's sign-in outstanding.
  */
 export function connectBlockedLine(report: SquireConnectReport): string | undefined {
   if (report.state === 'connected' || isOutstandingSignIn(report)) return undefined;
-  const holder = holderLine(report.holder);
-  if (holder) return holder;
   if (report.reason && CONNECT_REASON_LINES[report.reason]) {
     return CONNECT_REASON_LINES[report.reason]!;
   }
@@ -625,6 +624,12 @@ export function connectBlockedLine(report: SquireConnectReport): string | undefi
   if (report.state === 'needs-sign-in') {
     return 'the connect run ended before the sign-in was completed';
   }
+  // Last, because a holder is snapshotted onto EVERY line: the shared
+  // broker's own Chrome holds the profile while a ceremony runs, so a holder
+  // read ahead of the typed reason would tell a person to close the browser
+  // that is serving every other agent.
+  const holder = holderLine(report.holder);
+  if (holder) return holder;
   // An unrecognised state is named verbatim, never coerced into one of
   // Squire's four.
   return `Trusty Squire reported the connect state "${report.state}"`;

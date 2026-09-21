@@ -139,6 +139,24 @@ describe('scrollFollowOnArrival', () => {
     ).toBe('hold');
   });
 
+  it('holds an in-place lifecycle update while the reader is in history', () => {
+    expect(
+      scrollFollowOnArrival({
+        previousNewestId: 'card-1',
+        nextNewestId: 'card-1',
+        isPinnedToTail: false,
+        isUserDragging: false,
+      }),
+    ).toBe('hold');
+
+    const arrivalKey = chatSource.slice(
+      chatSource.indexOf('const newestMessageId ='),
+      chatSource.indexOf('const arrivalFollow ='),
+    );
+    expect(arrivalKey).toContain("foldedMessages.at(-1)?.id ?? null");
+    expect(arrivalKey).not.toContain('notificationLifecycleRun');
+  });
+
   it('never interrupts a user drag in progress', () => {
     expect(
       scrollFollowOnArrival({

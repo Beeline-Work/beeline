@@ -2092,15 +2092,9 @@ export function BuzzChatSurface({
       }),
     [liveDraftStore, scrollToNewestMessage],
   );
-  const newestMessage = foldedMessages.at(-1);
-  const newestMessageId = newestMessage
-    ? [
-        newestMessage.id,
-        ...(newestMessage.notificationLifecycleRun?.items.map(
-          (item) => `${item.id}:${item.state}`,
-        ) ?? []),
-      ].join('|')
-    : null;
+  // Only a different tail row is an arrival. Lifecycle updates repaint the
+  // existing row and must not pull a reader out of history.
+  const newestMessageId = foldedMessages.at(-1)?.id ?? null;
   const arrivalFollow = useScrollFollowOnArrival({
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,

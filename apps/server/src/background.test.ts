@@ -771,6 +771,106 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  it.each([
+    ['off', []],
+    ['direct', ['dm', 'tag', 'reply']],
+    ['mine', ['dm', 'tag', 'reply', 'join']],
+  ] as const)('selects the push candidate matrix for %s', async (level, expected) => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        directRoom = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
+         ($1,'human','Owner','owner',$4),($2,'human','Other','other','mine'),
+         ($3,'agent','Bee','bee','mine')`,
+        [human, other, agent, level],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id,direct_participants) VALUES
+         ($1,$3,'Room',NULL,NULL),($2,$3,'Direct',NULL,$4::jsonb)`,
+        [room, directRoom, workspace, JSON.stringify([human, agent].sort())],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,NULL,$3,'owner'),($1,NULL,$4,'member'),
+         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),
+         ($1,$6,$3,'owner'),($1,$6,$5,'member')`,
+        [workspace, room, human, other, agent, directRoom],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [human],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+
+      const authored = '0'.repeat(64);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'My prior turn')`,
+        [authored, room, human],
+      );
+      const cases = {
+        tag: '1'.repeat(64),
+        reply: '2'.repeat(64),
+        request: '3'.repeat(64),
+        card: '4'.repeat(64),
+        plain: '5'.repeat(64),
+        dm: '6'.repeat(64),
+        join: 'join-1',
+      } as const;
+      await db.query(
+        `INSERT INTO messages
+           (id,room_id,author_id,text,presentation,reply_to_message_id,request_id,card_type,card)
+         VALUES
+           ($1,$7,$8,'@owner mention','message',NULL,NULL,NULL,NULL),
+           ($2,$7,$8,'Reply to your turn','message',$9,NULL,NULL,NULL),
+           ($3,$7,$8,'Answering your request','message',NULL,$9,NULL,NULL),
+           ($4,$7,$8,'Bee asks Owner','card',NULL,NULL,'permission',$10::jsonb),
+           ($5,$7,$8,'Plain agent message','message',NULL,NULL,NULL,NULL),
+           ($6,$11,$8,'Direct message','message',NULL,NULL,NULL,NULL)`,
+        [
+          cases.tag,
+          cases.reply,
+          cases.request,
+          cases.card,
+          cases.plain,
+          cases.dm,
+          room,
+          agent,
+          authored,
+          JSON.stringify({ status: 'pending', requester: { pubkey: human } }),
+          directRoom,
+        ],
+      );
+      await db.query(
+        `INSERT INTO workspace_join_notifications(id,workspace_id,joining_identity_id,text)
+         VALUES($1,$2,$3,'@other joined Hive')`,
+        [cases.join, workspace, other],
+      );
+      await db.query(
+        `INSERT INTO workspace_join_notification_devices(notification_id,device_token)
+         VALUES($1,'owner-device-token-12345678901234567890')`,
+        [cases.join],
+      );
+
+      await loop.runOnce();
+      const byId = new Map(Object.entries(cases).map(([name, id]) => [id, name]));
+      expect(send.mock.calls.map(([, message]) => byId.get(message.messageId)).sort()).toEqual(
+        [...expected].sort(),
+      );
+    } finally {
+      await db.close();
+    }
+  });
   it('retains imported historical presence while expiring ordinary live output', async () => {
     const db = new PgliteDatabase();
     try {

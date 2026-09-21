@@ -144,10 +144,7 @@ export class PushDeliveryLoop {
           AND m.card_type IS DISTINCT FROM 'agent-yolo'
           AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
-          AND (
-            btrim(m.text)<>''
-            OR (m.card_type='daemon-fact' AND m.card->>'type' IN ('corner-open','corner-complete'))
-          )
+          AND btrim(m.text)<>''
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=m.id AND claim.device_token=d.token
@@ -155,16 +152,9 @@ export class PushDeliveryLoop {
       ), candidates AS (
         SELECT m.id message_id,room.workspace_id::text workspace_id,
           COALESCE(room.parent_id,room.id)::text room_id,
-          CASE WHEN m.card_type='daemon-fact'
-            AND m.card->>'type' IN ('corner-open','corner-complete')
-            THEN m.card->>'cornerId' ELSE room.id::text END channel_id,
-          CASE WHEN m.card_type='daemon-fact'
-            AND m.card->>'type' IN ('corner-open','corner-complete')
-            THEN m.card->>'cornerId'
-            WHEN room.parent_id IS NOT NULL THEN room.id::text END corner_id,
-          CASE WHEN m.card_type='daemon-fact'
-            AND m.card->>'type' IN ('corner-open','corner-complete')
-            THEN 'corner' ELSE 'message' END target,
+          room.id::text channel_id,
+          CASE WHEN room.parent_id IS NOT NULL THEN room.id::text END corner_id,
+          'message' target,
           'message' notification_type,
           CASE
             -- System/card text already came from the one lifecycle grammar.
@@ -185,28 +175,21 @@ export class PushDeliveryLoop {
             OR NOT (room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text))
             OR workspace_member.identity_id IS NOT NULL
           )
+          -- The push ceiling is four categories: direct messages, tags,
+          -- replies to you, and member lifecycle (the separate
+          -- workspace-join branch below). Cards and corner lifecycle
+          -- never push on their own. Levels are strict subsets of that
+          -- ceiling: direct = DMs + tags + replies,
+          -- mine = direct + member lifecycle.
+          AND recipient.push_level IN ('direct','mine')
           AND (
-            recipient.push_level<>'off'
-            AND (
-              -- The push ceiling is four categories: direct messages, tags,
-              -- replies to you, and member lifecycle (the separate
-              -- workspace-join branch below). Cards and corner lifecycle
-              -- never push on their own. Levels are strict subsets of that
-              -- ceiling: direct = DMs + tags + replies,
-              -- mine = direct + member lifecycle.
-              (
-                recipient.push_level IN ('direct','mine')
-                AND (
-                  room.direct_participants IS NOT NULL
-                  OR EXISTS (
-                    SELECT 1 FROM messages addressed
-                    WHERE addressed.id = m.reply_to_message_id
-                      AND addressed.author_id=m.push_identity_id
-                  )
-                  OR ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
-                )
-              )
+            room.direct_participants IS NOT NULL
+            OR EXISTS (
+              SELECT 1 FROM messages addressed
+              WHERE addressed.id = m.reply_to_message_id
+                AND addressed.author_id=m.push_identity_id
             )
+            OR ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,

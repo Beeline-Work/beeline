@@ -157,7 +157,7 @@ describe('Room list layout contract', () => {
     // neighbour's. Hit slop used to carry the target, so two marks a step
     // apart had targets that overlapped by 20pt while the ink read cramped.
     expect(source).toContain('const HEADER_TARGET_SIZE = 44');
-    expect(source).toContain('const HEADER_MARK_SIZE = 16');
+    expect(source).toContain('const HEADER_MARK_SIZE = 28');
     expect(styleBlock(source, 'headerAction')).toContain('minHeight: HEADER_TARGET_SIZE');
     expect(source.match(/style=\{styles\.headerAction\}/g)).toHaveLength(2);
     expect(source).not.toContain('HEADER_GLYPH_HIT_SLOP');
@@ -331,10 +331,11 @@ describe('Room list layout contract', () => {
   });
 
   it('hangs the corner tray off the parent Room’s text edge', () => {
-    // The tray's `└` starts on the Room title's left margin, so one vertical
-    // line runs from the name down through its corners. That edge is derived
-    // from the row's own gutter rather than restated as a literal, so the two
-    // cannot drift apart when the row's padding, state column, or gap changes.
+    // The tray's corner mark starts on the Room title's left margin, so one
+    // vertical line runs from the name down through its corners. That edge is
+    // derived from the row's own gutter rather than restated as a literal, so
+    // the two cannot drift apart when the row's padding, state column, or gap
+    // changes.
     expect(source).toContain('const ROW_PADDING_LEFT = 16');
     expect(source).toContain('const ROW_COPY_GAP = 12');
     expect(source).toContain(
@@ -344,7 +345,9 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'rowMain')).toContain('gap: ROW_COPY_GAP');
     expect(styleBlock(source, 'cornerDropdown')).toContain('paddingLeft: ROW_TEXT_INSET');
     expect(source).toContain('const label = displayGroupedCornerTitle(');
-    expect(source).toContain('└ {label}');
+    expect(source).toContain('<CornerGlyph');
+    expect(source).toContain('size={CORNER_META_SIZE}');
+    expect(source).not.toContain('└ {label}');
     expect(source).not.toContain('const label = displayCornerTitle(');
   });
 

@@ -2,31 +2,46 @@ import React from 'react';
 import Svg, { Polygon } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
-import { MEMBERS_GLYPH_STROKE_WIDTH } from './MembersGlyph';
 
 /**
- * The corner sigil, drawn rather than typed. `◇` is not in Space Grotesk, so
- * the character painted from whatever fallback face the device happened to
- * carry, at whatever height that face put it — which is what the header's
- * eyeballed vertical correction was paying for. A shape in a fixed box is
- * centred on the box by construction, so it sits level with the overflow mark
- * beside it with nothing to tune.
+ * The corner sigil, drawn rather than typed. Neither `◇` nor `└` is in Space
+ * Grotesk, so a typed mark painted from whatever fallback face the device
+ * happened to carry, at whatever height that face put it — which is what the
+ * header's eyeballed vertical correction was paying for. A shape in a fixed
+ * box is centred on the box by construction, so it sits level with the
+ * overflow mark beside it with nothing to tune.
  *
- * The extent is 15 of the 24 viewBox, which at the 16px header size draws the
- * ~10px mark the character's ~0.6em drew: optically the same mark-size as the
- * overflow dots (captain, 2026-09-20).
+ * A square frame slashed corner to corner, bottom-left half kept: one filled
+ * polygon whose cut ends land on the diagonal, so each arm is full thickness
+ * at the elbow and tapers to a point. Extent is 15 of the 24 viewBox — the
+ * same relationship the retired diamond used so the header mark stays
+ * optically the same size as the overflow mark beside it. Thickness 4.5 is
+ * the board pick. Fill is brand.json mark gold, not the muted chrome the
+ * neighbouring marks keep.
  */
-const DIAMOND_EXTENT = 15;
-const CENTRE = 12;
-const REACH = DIAMOND_EXTENT / 2;
-const DIAMOND_POINTS = [
-  `${CENTRE} ${CENTRE - REACH}`,
-  `${CENTRE + REACH} ${CENTRE}`,
-  `${CENTRE} ${CENTRE + REACH}`,
-  `${CENTRE - REACH} ${CENTRE}`,
+const VIEWBOX = 24;
+/** Outer painted square, same 15-of-24 as the retired `DIAMOND_EXTENT`. */
+export const CORNER_EXTENT = 15;
+/** Band thickness. Board pick, LIVE card in gold. */
+export const CORNER_THICKNESS = 4.5;
+
+const OUTER = (VIEWBOX - CORNER_EXTENT) / 2;
+const FAR = VIEWBOX - OUTER;
+const CORNER_POINTS = [
+  `${OUTER} ${OUTER}`,
+  `${OUTER} ${FAR}`,
+  `${FAR} ${FAR}`,
+  `${FAR - CORNER_THICKNESS} ${FAR - CORNER_THICKNESS}`,
+  `${OUTER + CORNER_THICKNESS} ${FAR - CORNER_THICKNESS}`,
+  `${OUTER + CORNER_THICKNESS} ${OUTER + CORNER_THICKNESS}`,
 ].join(' ');
 
-/** The Room header's corners door: a hollow diamond, stroke only. */
+/** Inline next to `type.meta` (bookmarks origin, Room-list tray). */
+export const CORNER_META_SIZE = 13;
+/** Inline next to the write-permission status line. */
+export const CORNER_STATUS_SIZE = 11;
+
+/** The shared corner mark: a filled slashed-frame polygon. */
 export function CornerGlyph({
   color = brand.mark,
   size = 16,
@@ -44,13 +59,7 @@ export function CornerGlyph({
       viewBox="0 0 24 24"
       width={size}
     >
-      <Polygon
-        fill="none"
-        points={DIAMOND_POINTS}
-        stroke={color}
-        strokeLinejoin="round"
-        strokeWidth={MEMBERS_GLYPH_STROKE_WIDTH}
-      />
+      <Polygon fill={color} points={CORNER_POINTS} />
     </Svg>
   );
 }

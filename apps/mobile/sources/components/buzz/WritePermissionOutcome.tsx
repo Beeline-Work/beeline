@@ -3,14 +3,15 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
+import { CORNER_STATUS_SIZE, CornerGlyph } from './CornerGlyph';
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
 
 export type WritePermissionStatus = 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
 
 /**
- * `◇` is the corner glyph from the lifecycle family (`buzz/corners.ts`), so a
- * faceted diamond means corner work on this surface exactly as it does in the
- * Room list and the corner cards.
+ * The corner mark from `CornerGlyph` prefixes the opening/approved lines, so
+ * corner work on this surface uses the same drawn shape the Room list and
+ * the Room header already show.
  */
 export function writePermissionStatusLabel(
   status: WritePermissionStatus,
@@ -18,7 +19,7 @@ export function writePermissionStatusLabel(
   awaitingPerson = false,
 ): string {
   if (awaitingPerson && status === 'pending') return '⊘ A PERSON MUST RESPOND';
-  if (status === 'allowed') return '◇ ALLOWED · OPENING CORNER';
+  if (status === 'allowed') return 'ALLOWED · OPENING CORNER';
   if (status === 'expired') return '□ REQUEST EXPIRED · STILL READ-ONLY';
   if (status === 'failed') return '□ CORNER COULD NOT OPEN · STILL READ-ONLY';
   if (status === 'denied') return '□ EDITING DENIED · STILL READ-ONLY';
@@ -47,19 +48,22 @@ export function WritePermissionOutcome(props: {
   label?: string;
   testID?: string;
 }) {
-  if (props.status === 'allowed' && props.subchannelId && props.onOpen) {
+  const cornerMark = props.status === 'allowed';
+  if (cornerMark && props.subchannelId && props.onOpen) {
     return (
       <Pressable
         testID="write-permission-open-corner"
         onPress={props.onOpen}
         style={styles.outcome}
       >
-        <Text style={styles.status}>◇ CORNER APPROVED · VIEW →</Text>
+        <CornerGlyph size={CORNER_STATUS_SIZE} />
+        <Text style={styles.status}>CORNER APPROVED · VIEW →</Text>
       </Pressable>
     );
   }
   return (
     <View style={styles.outcome} testID={props.testID}>
+      {cornerMark ? <CornerGlyph size={CORNER_STATUS_SIZE} /> : null}
       <Text style={styles.status}>
         {props.label ??
           writePermissionStatusLabel(props.status, props.subchannelId, props.awaitingPerson)}
@@ -83,6 +87,9 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: 22,
       paddingVertical: 3,
       paddingRight: LEDGER_MARGINALIA_WIDTH,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
     },
     status: {
       ...Typography.mono(),

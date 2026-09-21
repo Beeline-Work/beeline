@@ -3,6 +3,17 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: Record<string, unknown>) =>
+    ReactModule.createElement(name, props, props.children as React.ReactNode);
+  return {
+    default: host('Svg'),
+    Line: host('Line'),
+    Polygon: host('Polygon'),
+  };
+});
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -28,6 +39,7 @@ vi.mock('react-native', async () => {
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
 
 import { WritePermissionOutcome, writePermissionStatusLabel } from './WritePermissionOutcome';
+import brand from '@/buzz/brand.json';
 
 const originalConsoleError = console.error;
 
@@ -91,6 +103,11 @@ describe('write permission corner outcome', () => {
     );
     const [link] = allowed.root.findAllByProps({ testID: 'write-permission-open-corner' });
     expect(link).toBeDefined();
+    expect(allowed.root.findAllByType('Svg' as never)).toHaveLength(1);
+    expect(allowed.root.findAllByType('Polygon' as never)[0]!.props.fill).toBe(brand.mark);
+    expect(String(allowed.root.findAllByType('Text').map((node) => node.props.children))).not.toContain(
+      '◇',
+    );
     act(() => link!.props.onPress());
     expect(onOpen).toHaveBeenCalledOnce();
 
@@ -108,7 +125,7 @@ describe('write permission corner outcome', () => {
   it('names every decision plainly, and never claims a corner is open', () => {
     const label = (props: Parameters<typeof writePermissionStatusLabel>) =>
       writePermissionStatusLabel(...props);
-    expect(label(['allowed', 'new-corner-id'])).toBe('◇ ALLOWED · OPENING CORNER');
+    expect(label(['allowed', 'new-corner-id'])).toBe('ALLOWED · OPENING CORNER');
     expect(label(['pending', undefined, true])).toBe('⊘ A PERSON MUST RESPOND');
     expect(label(['denied'])).toContain('STILL READ-ONLY');
     expect(label(['failed'])).toContain('STILL READ-ONLY');

@@ -25,7 +25,7 @@ describe('Workspace Members entry point', () => {
     expect(source).not.toContain('people-outline');
   });
 
-  it('keeps BookmarksGlyph beside MembersGlyph as a matching 16px header tap target', () => {
+  it('keeps BookmarksGlyph beside MembersGlyph as a matching 28px mark in a 44pt target', () => {
     expect(source).toContain('<BookmarksGlyph');
     expect(source).toContain('testID="workspace-bookmarks"');
     expect(source).toContain('testID="workspace-bookmarks-glyph"');
@@ -38,7 +38,7 @@ describe('Workspace Members entry point', () => {
     // Both marks draw at one named size in one named box, so the pair cannot
     // drift apart. The box IS the 44pt target — no slop grows it past the
     // spacing step of real slab that parts the two.
-    expect(source).toContain('const HEADER_MARK_SIZE = 16');
+    expect(source).toContain('const HEADER_MARK_SIZE = 28');
     expect(source).toContain('const HEADER_TARGET_SIZE = 44');
     expect(source).not.toContain('HEADER_GLYPH_HIT_SLOP');
     expect(source).not.toContain('headerMembersAction');

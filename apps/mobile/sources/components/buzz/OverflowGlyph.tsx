@@ -2,6 +2,7 @@ import React from 'react';
 import Svg, { Circle } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
+import { CHROME_STROKE_REF_SIZE } from './MembersGlyph';
 
 /**
  * The overflow mark, drawn rather than typed. `•••` sat its ink below its own
@@ -33,7 +34,13 @@ export function OverflowGlyph({
       width={size}
     >
       {[-DOT_PITCH, 0, DOT_PITCH].map((offset) => (
-        <Circle cx={CENTRE + offset} cy={CENTRE} fill={color} key={offset} r={DOT_RADIUS} />
+        <Circle
+          cx={CENTRE + offset}
+          cy={CENTRE}
+          fill={color}
+          key={offset}
+          r={DOT_RADIUS * (CHROME_STROKE_REF_SIZE / size)}
+        />
       ))}
     </Svg>
   );

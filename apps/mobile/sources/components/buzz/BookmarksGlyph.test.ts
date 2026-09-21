@@ -14,7 +14,7 @@ vi.mock('react-native-svg', async () => {
 });
 
 import { BookmarksGlyph } from './BookmarksGlyph';
-import { MEMBERS_GLYPH_STROKE_WIDTH } from './MembersGlyph';
+import { chromeStrokeWidth, MEMBERS_GLYPH_STROKE_WIDTH } from './MembersGlyph';
 import brand from '@/buzz/brand.json';
 
 const originalConsoleError = console.error;
@@ -54,7 +54,8 @@ describe('BookmarksGlyph', () => {
     const outline = renderer.root.findByType('Polygon' as never);
     expect(outline.props.fill).toBe('none');
     expect(outline.props.stroke).toBe('#83838d');
-    expect(outline.props.strokeWidth).toBe(MEMBERS_GLYPH_STROKE_WIDTH);
+    expect(outline.props.strokeWidth).toBe(chromeStrokeWidth(16));
+    expect(chromeStrokeWidth(16)).toBe(MEMBERS_GLYPH_STROKE_WIDTH);
     expect(outline.props.strokeLinejoin).toBe('round');
   });
 

@@ -21,7 +21,7 @@ const SOURCES = path.join(__dirname, '..');
 /** Chrome marks that must be drawn, with the glyph that draws each one. */
 const DRAWN: ReadonlyArray<{ chars: readonly string[]; glyph: string }> = [
   { chars: ['‹', '›', '⌃', '⌄'], glyph: 'ChevronGlyph' },
-  { chars: ['◇'], glyph: 'CornerGlyph' },
+  { chars: ['◇', '└'], glyph: 'CornerGlyph' },
 ];
 
 /**
@@ -33,9 +33,7 @@ const DRAWN: ReadonlyArray<{ chars: readonly string[]; glyph: string }> = [
 const PROSE = new Set([
   'components/buzz/FaceCeremonyStep.tsx',
   'components/buzz/MonoHull.tsx',
-  'components/buzz/WritePermissionOutcome.tsx',
   'components/DesktopRoomInspector.tsx',
-  'app/(app)/beeline/bookmarks.tsx',
   'app/(app)/beeline/onboarding.tsx',
   'app/(app)/beeline/chat/RoomMessageVariants.tsx',
 ]);

@@ -39,13 +39,17 @@ describe('the members word', () => {
     for (const relativePath of CHROME_ENTRY_POINTS) {
       const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
       expect(source, `${relativePath} should use MembersGlyph`).toContain('<MembersGlyph');
-      // 16 either written out or named on the surface; what must not drift is
-      // the drawn size, since every header mark beside it is the same 16.
+      // Phone Room-list chrome is 28; the desktop heading stays 16 until that
+      // surface is taken through the same resize. What must not drift is that
+      // each surface names the size it actually draws.
       const size = source.match(/<MembersGlyph[\s\S]*?size=\{([A-Za-z_0-9]+)\}/)?.[1];
       expect(size, `${relativePath} should pass MembersGlyph a size`).toBeTruthy();
       const resolved =
-        size === '16' ? 16 : Number(source.match(new RegExp(`const ${size} = (\\d+)`))?.[1]);
-      expect(resolved, `${relativePath} should keep the 16px chrome size`).toBe(16);
+        size === '16' || size === '28'
+          ? Number(size)
+          : Number(source.match(new RegExp(`const ${size} = (\\d+)`))?.[1]);
+      const expected = relativePath.endsWith('channels.tsx') ? 28 : 16;
+      expect(resolved, `${relativePath} should keep its chrome size`).toBe(expected);
       expect(source, `${relativePath} still paints the members word`).not.toContain(
         'MEMBERS_LABEL.toUpperCase()',
       );

@@ -82,3 +82,37 @@ describe('MonolithWorkbenchSource pairConnector — the ONE Google entry', () =>
     expect(state.calls.some((call) => call.op === 'readWorkbench')).toBe(false);
   });
 });
+
+describe('MonolithWorkbenchSource connections', () => {
+  afterEach(() => {
+    state.calls.length = 0;
+  });
+
+  it('carries the vault service through as itself, and leaves it absent when the vault has none', async () => {
+    state.readWorkbenchOutput = {
+      ...workbenchDto([]),
+      connections: [
+        {
+          reference: 'cred_github',
+          label: 'Work key',
+          service: 'github',
+          allowedHosts: [],
+          state: 'active',
+        },
+        {
+          reference: 'cred_unknown',
+          label: 'Box',
+          service: null,
+          allowedHosts: ['127.0.0.1'],
+          state: 'active',
+        },
+      ],
+    };
+    const view = await new MonolithWorkbenchSource().readWorkbench({
+      workspaceId: 'ws1',
+      viewerId: 'human-dani',
+    });
+    expect(view.connections[0].service).toBe('github');
+    expect(view.connections[1].service).toBeUndefined();
+  });
+});

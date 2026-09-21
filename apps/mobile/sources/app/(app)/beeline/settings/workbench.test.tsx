@@ -204,13 +204,35 @@ describe('Workbench settings screen', () => {
     );
   });
 
-  it('lists the viewer’s own connections with kind and host', async () => {
+  it('leads a key row with its company mark and puts the domains under the name', async () => {
     const renderer = await render();
     const vercel = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
     expect(vercel.props.title).toBe('Vercel');
-    expect(vercel.props.description).toBe('token · api.vercel.com');
+    expect(vercel.props.description).toBe('api.vercel.com');
+    expect(vercel.props.leading.props.company).toBe('vercel');
+    expect(vercel.props.leading.props.testID).toBe('workbench-connection-cred_vercel-mark');
+    // A key with no hosts draws no quiet line rather than a `—` placeholder.
+    const google = renderer.root.findByProps({ testID: 'workbench-connection-cred_google' });
+    expect(google.props.description).toBeUndefined();
+    expect(google.props.leading.props.company).toBe('google');
+  });
+
+  it('marks a key by its vault service, not by the label someone gave it', async () => {
+    const renderer = await render();
+    // `Work key`, no hosts, service `github`: neither the name nor an address
+    // can say who this key is for.
+    const github = renderer.root.findByProps({ testID: 'workbench-connection-cred_github' });
+    expect(github.props.title).toBe('Work key');
+    expect(github.props.description).toBeUndefined();
+    expect(github.props.leading.props.company).toBe('github');
+  });
+
+  it('gives a key row the same state instrument the tool rows carry', async () => {
+    const renderer = await render();
+    const vercel = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
     expect(vercel.props.value).toBe('active');
-    expect(renderer.root.findByProps({ testID: 'workbench-connection-cred_google' })).toBeDefined();
+    expect(vercel.props.statusGlyph).toBe('live');
+    expect(vercel.props.valueTone).toBeUndefined();
   });
 
   it('shows the none-yet state with a short sovereignty note for a member with no connections', async () => {

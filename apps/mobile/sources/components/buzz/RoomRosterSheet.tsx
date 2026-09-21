@@ -4,8 +4,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ChannelMember } from '@beeline/buzz-client';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { normalizedRoomRole } from '@/buzz/room-management';
+import { roomRosterWindow } from '@/buzz/room-participants';
 import type { AgentPresentation } from '@/buzz/room-view-presentation';
-import { MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { CORNER_LABEL, MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { HullFloatingSurface, HullModal } from './HullDialog';
 import { MemberRosterRow } from './MemberRosterRow';
@@ -26,42 +27,58 @@ export type RoomRosterParticipant = {
   face?: string;
 };
 
-type RoomRosterSections = {
-  people: readonly RoomRosterParticipant[];
-  agents: readonly RoomRosterParticipant[];
-};
+/**
+ * Why a row opens on nothing to do. Every row carries a chevron, so every row
+ * owes the viewer a reason when it holds no control — a chevron that opened an
+ * empty panel would be the silent no-op the house forbids.
+ */
+function rosterRowNote({
+  inCorner,
+  isDirectMessage,
+  isViewer,
+}: {
+  inCorner: boolean;
+  isDirectMessage: boolean;
+  isViewer: boolean;
+}): string {
+  if (isViewer) return 'This is you.';
+  if (isDirectMessage) return 'A direct message keeps both members.';
+  if (inCorner) return `A ${CORNER_LABEL} follows its ${ROOM_LABEL}'s members.`;
+  // Everything else reaching this line is a viewer who cannot manage members.
+  return `Only a manager can remove members from this ${ROOM_LABEL}.`;
+}
 
 /**
  * The Room's members, in the Members page's vocabulary so the two views read
- * as one: "Members" over two counted section heads, a 64pt row per identity
- * with its handle at body size and one quiet metadata line: a person's Room
- * role, or an agent's model and owner. The gold ring on the tile means WORKING
- * (`workingByPubkey`, C77), never delivery availability, and there is no status
- * square beside the name (C76). A row whose viewer may remove it carries a
- * chevron and opens its one control in place; the list itself shows no
- * remove text.
+ * as one: "Members" over ONE counted section head that includes the viewer, a
+ * 64pt row per identity with its handle at body size and one quiet metadata
+ * line: a person's Room role, or an agent's model and owner. People lead and
+ * agents follow inside that single list. The gold ring on the tile means
+ * WORKING (`workingByPubkey`, C77), never delivery availability, and there is
+ * no status square beside the name (C76). Every row carries a chevron and
+ * opens in place — its remove control when the viewer may remove it, otherwise
+ * the one line saying why it cannot — and the list itself shows no remove
+ * text. Ten rows show; the rest wait behind one overflow row.
  *
  * The shared HullModal boundary owns the no-flicker guarantee. This additional
- * memo remains a roster-specific CPU fast path: identity-stable sections and
- * collapsed online verdicts avoid rebuilding a potentially long member tree.
+ * memo remains a roster-specific CPU fast path: an identity-stable member list
+ * and collapsed online verdicts avoid rebuilding a potentially long tree.
  */
 export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   bottomInset,
   canManage,
   isDirectMessage,
   memberByPubkey,
+  members,
   membershipActionPubkey,
   membershipError,
-  onAddAgents,
-  onAddPeople,
+  onAddMembers,
   onClose,
   onRemove,
   onlineByPubkey,
   workingByPubkey,
   parentChannelId,
   personProfileByPubkey,
-  rosterSections,
-  total,
   userPubkey,
   visible,
 }: {
@@ -70,12 +87,12 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   canManage: boolean;
   isDirectMessage: boolean;
   memberByPubkey: ReadonlyMap<string, ChannelMember>;
+  /** Every member of this Room, viewer included: people first, agents after. */
+  members: readonly RoomRosterParticipant[];
   membershipActionPubkey: string | null;
   membershipError: string | null;
-  /** Opens the member picker pre-scoped to agents. */
-  onAddAgents: () => void;
-  /** Opens the member picker pre-scoped to people. */
-  onAddPeople: () => void;
+  /** Opens the one member picker, listing both kinds. */
+  onAddMembers: () => void;
   onClose: () => void;
   onRemove: (participant: RoomRosterParticipant) => void;
   /** Delivery-availability verdicts: the row's online/offline word only. */
@@ -84,15 +101,19 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   workingByPubkey: Readonly<Record<string, boolean>>;
   parentChannelId: string | null;
   personProfileByPubkey: ReadonlyMap<string, { avatar?: string }>;
-  rosterSections: RoomRosterSections;
-  total: number;
   userPubkey: string;
   visible: boolean;
 }) {
   const [openPubkey, setOpenPubkey] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
-    if (!visible) setOpenPubkey(null);
+    if (!visible) {
+      setOpenPubkey(null);
+      setExpanded(false);
+    }
   }, [visible]);
+  const canAddMembers = canManage && !parentChannelId && !isDirectMessage;
+  const roster = roomRosterWindow(members, expanded);
   return (
     <HullModal
       accessibilityLabel={`Close ${ROOM_LABEL} roster`}
@@ -124,133 +145,134 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           contentContainerStyle={styles.rosterContent}
           showsVerticalScrollIndicator={false}
         >
-          {[
-            { key: 'people', label: 'People', options: rosterSections.people },
-            { key: 'agents', label: 'Agents', options: rosterSections.agents },
-          ].map((section, sectionIndex) =>
-            // A manager keeps the section head of a top-level Room even when
-            // the section is empty, because the head is where the add control
-            // lives: with the Room header's `+` retired (C83), an agentless
-            // Room would otherwise have no way to reach an agent at all.
-            section.options.length > 0 || (canManage && !parentChannelId && !isDirectMessage) ? (
-              <View key={section.key}>
-                <View
-                  style={[
-                    styles.rosterSectionHeadRow,
-                    sectionIndex > 0 && styles.rosterSectionLabelSpaced,
-                  ]}
-                >
-                  <Text
-                    style={styles.rosterSectionLabel}
-                    testID={`room-roster-${section.key}-head`}
+          {/* One head over one list. A manager keeps it on an empty Room
+              because the head is where the add control lives: with the Room
+              header's `+` retired (C83), an agentless Room would otherwise
+              have no way to reach an agent at all. */}
+          <View style={styles.rosterSectionHeadRow}>
+            <Text style={styles.rosterSectionLabel} testID="room-roster-members-head">
+              {MEMBERS_LABEL} {members.length}
+            </Text>
+            {canAddMembers && (
+              <TouchableOpacity
+                accessibilityLabel="Add members"
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                onPress={onAddMembers}
+                style={styles.rosterSectionAdd}
+                testID="room-roster-add-members"
+              >
+                <Text style={styles.rosterSectionAddGlyph}>+</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {roster.visible.map((participant) => {
+            const display = participant.agent
+              ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+              : undefined;
+            const isViewer = participant.pubkey === userPubkey;
+            const displayName = display ? display.name : isViewer ? 'You' : participant.name;
+            const handle = display?.handle ?? participant.handle;
+            const targetRole = normalizedRoomRole(memberByPubkey.get(participant.pubkey));
+            const canRemove = canAddMembers && !isViewer;
+            const open = openPubkey === participant.pubkey;
+            const removing = membershipActionPubkey === participant.pubkey;
+            const agentOnline =
+              participant.kind === 'agent' && Boolean(onlineByPubkey[participant.pubkey]);
+            // The ring means working, never merely present (C77).
+            const agentWorking =
+              participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
+            // Every row discloses, so every row wears the mark.
+            const trailing = (
+              <ChevronGlyph
+                color={styles.chevron.color}
+                direction={open ? 'down' : 'right'}
+                size={CHEVRON_ROW_SIZE}
+              />
+            );
+            return (
+              <View key={participant.pubkey}>
+                {participant.kind === 'agent' ? (
+                  <MemberRosterRow
+                    alive={agentWorking}
+                    avatarUrl={display?.avatarUrl}
+                    divider="top"
+                    face={display?.face}
+                    handle={handle}
+                    kind="agent"
+                    model={participant.model}
+                    name={display?.name ?? participant.name}
+                    online={agentOnline}
+                    onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
+                    ownerHandle={participant.ownerHandle}
+                    pubkey={participant.pubkey}
+                    seed={display?.avatarSeed}
+                    testID={`room-roster-agent-${participant.pubkey}`}
+                    trailing={trailing}
+                  />
+                ) : (
+                  <MemberRosterRow
+                    avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                    divider="top"
+                    face={participant.face}
+                    handle={handle}
+                    kind="human"
+                    name={displayName}
+                    onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
+                    pubkey={participant.pubkey}
+                    role={targetRole ?? 'member'}
+                    testID={`room-roster-person-${participant.pubkey}`}
+                    trailing={trailing}
+                  />
+                )}
+                {open && (
+                  <View
+                    style={styles.rosterDetail}
+                    testID={`room-roster-${participant.pubkey}-detail`}
                   >
-                    {section.label} {section.options.length}
-                  </Text>
-                  {canManage && !parentChannelId && !isDirectMessage && (
-                    <TouchableOpacity
-                      accessibilityLabel={`Add ${section.key}`}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                      onPress={section.key === 'people' ? onAddPeople : onAddAgents}
-                      style={styles.rosterSectionAdd}
-                      testID={`room-roster-add-${section.key}`}
-                    >
-                      <Text style={styles.rosterSectionAddGlyph}>+</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                {section.options.map((participant) => {
-                  const display = participant.agent
-                    ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                    : undefined;
-                  const displayName = display
-                    ? display.name
-                    : participant.pubkey === userPubkey
-                      ? 'You'
-                      : participant.name;
-                  const handle = display?.handle ?? participant.handle;
-                  const targetRole = normalizedRoomRole(memberByPubkey.get(participant.pubkey));
-                  const canRemove =
-                    canManage &&
-                    !parentChannelId &&
-                    !isDirectMessage &&
-                    participant.pubkey !== userPubkey;
-                  const open = openPubkey === participant.pubkey;
-                  const removing = membershipActionPubkey === participant.pubkey;
-                  const agentOnline =
-                    participant.kind === 'agent' && Boolean(onlineByPubkey[participant.pubkey]);
-                  // The ring means working, never merely present (C77).
-                  const agentWorking =
-                    participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
-                  const trailing = canRemove ? (
-                    <ChevronGlyph
-                      color={styles.chevron.color}
-                      direction={open ? 'down' : 'right'}
-                      size={CHEVRON_ROW_SIZE}
-                    />
-                  ) : undefined;
-                  return (
-                    <View key={participant.pubkey}>
-                      {participant.kind === 'agent' ? (
-                        <MemberRosterRow
-                          alive={agentWorking}
-                          avatarUrl={display?.avatarUrl}
-                          disabled={!canRemove}
-                          divider="top"
-                          face={display?.face}
-                          handle={handle}
-                          kind="agent"
-                          model={participant.model}
-                          name={display?.name ?? participant.name}
-                          online={agentOnline}
-                          onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
-                          ownerHandle={participant.ownerHandle}
-                          pubkey={participant.pubkey}
-                          seed={display?.avatarSeed}
-                          testID={`room-roster-agent-${participant.pubkey}`}
-                          trailing={trailing}
-                        />
-                      ) : (
-                        <MemberRosterRow
-                          avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                          disabled={!canRemove}
-                          divider="top"
-                          face={participant.face}
-                          handle={handle}
-                          kind="human"
-                          name={displayName}
-                          onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
-                          pubkey={participant.pubkey}
-                          role={targetRole ?? 'member'}
-                          testID={`room-roster-person-${participant.pubkey}`}
-                          trailing={trailing}
-                        />
-                      )}
-                      {open && canRemove && (
-                        <View
-                          style={styles.rosterDetail}
-                          testID={`room-roster-${participant.pubkey}-detail`}
-                        >
-                          <TouchableOpacity
-                            accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
-                            accessibilityRole="button"
-                            disabled={Boolean(membershipActionPubkey)}
-                            onPress={() => onRemove(participant)}
-                            style={styles.rosterRemoveButton}
-                            testID={`remove-room-member-${participant.pubkey}`}
-                          >
-                            <Text style={styles.rosterRemoveText}>
-                              {removing ? 'Removing…' : `Remove from this ${ROOM_LABEL}`}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      )}
-                    </View>
-                  );
-                })}
+                    {canRemove ? (
+                      <TouchableOpacity
+                        accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
+                        accessibilityRole="button"
+                        disabled={Boolean(membershipActionPubkey)}
+                        onPress={() => onRemove(participant)}
+                        style={styles.rosterRemoveButton}
+                        testID={`remove-room-member-${participant.pubkey}`}
+                      >
+                        <Text style={styles.rosterRemoveText}>
+                          {removing ? 'Removing…' : `Remove from this ${ROOM_LABEL}`}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <Text style={styles.rosterNote}>
+                        {rosterRowNote({
+                          inCorner: Boolean(parentChannelId),
+                          isDirectMessage,
+                          isViewer,
+                        })}
+                      </Text>
+                    )}
+                  </View>
+                )}
               </View>
-            ) : null,
+            );
+          })}
+          {roster.overflowLabel && (
+            <TouchableOpacity
+              accessibilityLabel={`Show the rest: ${roster.overflowLabel}`}
+              accessibilityRole="button"
+              onPress={() => setExpanded(true)}
+              style={styles.rosterMore}
+              testID="room-roster-more"
+            >
+              <Text style={styles.rosterMoreLabel}>{roster.overflowLabel}</Text>
+              <ChevronGlyph
+                color={styles.chevron.color}
+                direction="right"
+                size={CHEVRON_ROW_SIZE}
+              />
+            </TouchableOpacity>
           )}
-          {total === 0 && <Text style={styles.rosterEmpty}>No visible members</Text>}
+          {members.length === 0 && <Text style={styles.rosterEmpty}>No visible members</Text>}
         </ScrollView>
         {membershipError && (
           <View accessibilityRole="alert" style={styles.membershipError}>
@@ -315,8 +337,17 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
-    rosterSectionLabelSpaced: { marginTop: hull.layout.sectionGap },
     chevron: { color: hull.textMuted },
+    rosterMore: {
+      minHeight: 44,
+      paddingHorizontal: hull.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    rosterMoreLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     rosterDetail: {
       paddingHorizontal: hull.space.sm,
       paddingBottom: hull.space.sm,
@@ -324,6 +355,13 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterRemoveButton: { minHeight: 44, justifyContent: 'center' },
     rosterRemoveText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
+    rosterNote: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      minHeight: 44,
+      paddingTop: hull.space.sm,
+      color: hull.textMuted,
+    },
     rosterEmpty: {
       ...Typography.default(),
       ...hull.type.meta,

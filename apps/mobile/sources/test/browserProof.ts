@@ -1,5 +1,5 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -7,6 +7,41 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
 export const CHROME = process.env.CHROME_BIN ?? '/usr/bin/google-chrome';
+
+/** Vitest runs test files in parallel, and two headless Chromes starting at
+ *  the same moment kill each other (SIGTRAP/SIGILL, no output, before either
+ *  reaches a page). One browser at a time, across every worker. */
+const CHROME_LOCK = path.join('/tmp', 'beeline-browser-proof.lock');
+
+function holderIsGone(): boolean {
+  try {
+    process.kill(Number(readFileSync(CHROME_LOCK, 'utf8')), 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function withOneBrowser<T>(run: () => T): Promise<T> {
+  const deadline = Date.now() + 180_000;
+  let held: number | undefined;
+  while (held === undefined) {
+    try {
+      held = openSync(CHROME_LOCK, 'wx');
+    } catch {
+      // A worker killed mid-run leaves its lock behind; take it over.
+      if (holderIsGone() || Date.now() > deadline) rmSync(CHROME_LOCK, { force: true });
+      await new Promise((resolve) => setTimeout(resolve, 100 + Math.floor(Math.random() * 200)));
+    }
+  }
+  try {
+    writeSync(held, String(process.pid));
+    return run();
+  } finally {
+    closeSync(held);
+    rmSync(CHROME_LOCK, { force: true });
+  }
+}
 
 /**
  * Shims every web proof needs: the pieces of the app that talk to a device
@@ -109,29 +144,34 @@ export async function runBrowserProof(options: {
 <script>window.__console=[];for(const level of ['error','warn']){const base=console[level].bind(console);console[level]=(...a)=>{window.__console.push(level+': '+a.map(String).join(' '));base(...a);};}</script>
 <script src="bundle.js"></script>`,
     );
-    const browser = spawnSync(
-      CHROME,
-      [
-        '--headless=new',
-        '--no-sandbox',
-        '--disable-gpu',
-        '--disable-dev-shm-usage',
-        `--window-size=${width},${height}`,
-        `--user-data-dir=${path.join(directory, 'profile')}`,
-        '--dump-dom',
-        '--virtual-time-budget=6000',
-        `${pathToFileURL(html).href}${query}`,
-      ],
-      {
-        encoding: 'utf8',
-        timeout: 60_000,
-        maxBuffer: 8 * 1024 * 1024,
-        // Chrome builds its singleton socket under TMPDIR and dies when that
-        // path is long, which says nothing about the surface under proof.
-        env: { ...process.env, TMPDIR: '/tmp' },
-      },
+    const browser = await withOneBrowser(() =>
+      spawnSync(
+        CHROME,
+        [
+          '--headless=new',
+          '--no-sandbox',
+          '--disable-gpu',
+          '--disable-dev-shm-usage',
+          `--window-size=${width},${height}`,
+          `--user-data-dir=${path.join(directory, 'profile')}`,
+          '--dump-dom',
+          '--virtual-time-budget=6000',
+          `${pathToFileURL(html).href}${query}`,
+        ],
+        {
+          encoding: 'utf8',
+          timeout: 60_000,
+          maxBuffer: 8 * 1024 * 1024,
+          // Chrome builds its singleton socket under TMPDIR and dies when that
+          // path is long, which says nothing about the surface under proof.
+          env: { ...process.env, TMPDIR: '/tmp' },
+        },
+      ),
     );
     if (browser.error) throw browser.error;
+    if (browser.status !== 0 && browser.signal) {
+      throw new Error(`chrome died on ${browser.signal}: ${browser.stderr.slice(0, 500)}`);
+    }
     const match = browser.stdout.match(/<pre id="result">([\s\S]*?)<\/pre>/);
     const result = (match?.[1] ?? browser.stdout)
       .replace(/&quot;/g, '"')

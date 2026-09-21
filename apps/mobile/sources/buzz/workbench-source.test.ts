@@ -194,7 +194,7 @@ describe('mock Workbench source', () => {
       await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_B }),
       MEMBER_B,
     );
-    expect(forA.map((connection) => connection.name)).toEqual(['Vercel', 'Google']);
+    expect(forA.map((connection) => connection.name)).toEqual(['Vercel', 'Google', 'Work key']);
     expect(forB).toEqual([]);
     expect(forB.some((connection) => connection.ownerId === MEMBER_A)).toBe(false);
   });

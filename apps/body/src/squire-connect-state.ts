@@ -139,14 +139,16 @@ export function connectStatusFromFacts(facts: SquireConnectFacts): 'connected' |
   return 'disconnected';
 }
 
-/** Start only when nothing else holds the browser and the account has
- *  actually answered. This helper's own live connect may be released and
- *  retried; a foreign process may not, and a session nothing could reach is
- *  waited on rather than replaced. A ceremony nobody is running is not a
+/** Start unless somebody else holds the browser or nothing answered for
+ *  this session. A LIVE token is not a reason to refuse: Squire itself
+ *  decides whether the profile still needs a ceremony, so a person pressing
+ *  Connect always reaches it. This helper's own live connect may be released
+ *  and retried; a foreign process may not, and a session nothing could reach
+ *  is waited on rather than replaced. A ceremony nobody is running is not a
  *  holder: it is retired by the release the start itself performs, never
  *  handed back. */
 export function shouldStartSquireConnect(facts: SquireConnectFacts): boolean {
-  if (facts.credential.kind === 'valid' || facts.credential.kind === 'unproven') return false;
+  if (facts.credential.kind === 'unproven') return false;
   if (facts.process.kind === 'foreign') return false;
   return true;
 }

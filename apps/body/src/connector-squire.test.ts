@@ -590,6 +590,55 @@ describe('installSquire', () => {
     expect(result.signIn).toBeUndefined();
     expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
     expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
+    // `signedInAs` is an email or handle; an opaque account id is not one,
+    // so the Workbench line stays absent rather than printing a ULID.
+    expect(result.signedInAs).toBeUndefined();
+  });
+
+  it('still calls Squire when the session token is alive', async () => {
+    // Connect/Retry is the only way to re-establish the bot profile's
+    // provider session, and Squire — not this helper — decides whether a
+    // ceremony is needed, so a live token must not short-circuit the run.
+    writeHostSession();
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: vaultAnswers(),
+      streamRun: async (...args: Parameters<StreamedShellRunner>) => {
+        started += 1;
+        return fakeStreamRunner({
+          stdout: 'Already connected (google + github). Codex config refreshed.\n',
+        })(...args);
+      },
+      mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
+    });
+    expect(started).toBe(1);
+    expect(result.status).toBe('connected');
+  });
+
+  it('does not call itself paired when this helper\u2019s Squire surface is unreachable', async () => {
+    // The session file is shared across every helper on the host, so a live
+    // token proves the ACCOUNT, never that THIS helper can reach Squire.
+    writeHostSession();
+    const unreachable: SquireMcpClient = {
+      async call() {
+        throw new Error('broker unavailable');
+      },
+    };
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      fetch: vaultAnswers(),
+      streamRun: fakeStreamRunner({
+        stdout: 'Already connected (google + github). Codex config refreshed.\n',
+      }),
+      mcp: unreachable,
+    });
+    expect(result.status).toBe('installing');
+    const paired = result.steps.find((step) => step.label === 'paired to workspace');
+    expect(paired?.status).toBe('failed');
+    expect(paired?.reason).toContain('broker unavailable');
   });
 
   it('does not report an unverified profile as connected, and never quotes the cookie-clear hint', async () => {

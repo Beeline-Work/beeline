@@ -909,12 +909,12 @@ export function parseSignedInAs(output: string): string | undefined {
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
- * Process, visibility, and credential are observed first, and the
- * credential is the session token the account vault answered for — a file
- * nobody has proved is expired, not connected. A browser another helper
- * holds is waited on, never failed. Connect runs otherwise, and the verdict
- * afterwards is that same proven session, never the sentence Squire
- * printed.
+ * Process, visibility, and credential are observed first: a browser another
+ * helper holds is waited on rather than failed, and a session nothing could
+ * reach is waited on rather than replaced. Otherwise connect RUNS — Squire
+ * alone decides whether this profile still needs a ceremony — and the
+ * verdict afterwards is the proven session plus this helper's own pairing
+ * probe, never the sentence Squire printed.
  *
  * Connect inherits this process's env as it stands, screen and all, and
  * Squire picks the host screen or its own virtual display from that.
@@ -939,15 +939,12 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     emit();
     return { status: 'error', steps, errorMessage: reason };
   };
-  const sessionName = (facts: SquireConnectFacts) =>
-    facts.credential.kind === 'valid' ? facts.credential.accountId : undefined;
   emit();
 
   // Somebody else holds the browser, so this helper owns no live ceremony:
   // whatever surface it published belongs to a connect that is over.
   const wait = (reason?: string): InstallSquireResult => {
     publishSquireVisibility({ kind: 'none' });
-    push(step('trusty-squire installed', 'done'));
     push(step('waiting for sign-in', 'running', reason));
     return { status: 'installing', steps };
   };
@@ -963,17 +960,6 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
 
   const observed = await provenFacts();
-  if (connectStatusFromFacts(observed) === 'connected') {
-    publishSquireVisibility({ kind: 'none' });
-    push(step('trusty-squire installed', 'done'));
-    push(step('waiting for sign-in', 'done'));
-    push(step('paired to workspace', 'done'));
-    return {
-      status: 'connected',
-      steps,
-      ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
-    };
-  }
   if (!shouldStartSquireConnect(observed)) return wait(waitReason(observed));
 
   const previousPid = squireConnectSession()?.pid;
@@ -1065,12 +1051,11 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(signedInAs ? { signedInAs } : {}),
     };
   }
-  const account = signedInAs ?? (settled ? sessionName(settled) : undefined);
   return {
     status: settled && connectStatusFromFacts(settled) === 'connected' ? 'connected' : 'installing',
     steps,
     ...(version ? { squireVersion: version } : {}),
-    ...(account ? { signedInAs: account } : {}),
+    ...(signedInAs ? { signedInAs } : {}),
   };
 }
 

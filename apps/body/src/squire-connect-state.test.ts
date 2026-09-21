@@ -95,11 +95,13 @@ describe('credential and connect status', () => {
       }),
     );
     expect(status).toBe('connected');
+    // A live token still reads connected, but it is not a refusal: Squire
+    // decides whether the profile needs a ceremony, so Connect always runs.
     expect(
       shouldStartSquireConnect(
         facts({ credential: { kind: 'valid', accountId: 'acct_9' } }),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('does not hand back a ceremony nobody is running', () => {

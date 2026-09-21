@@ -70,8 +70,8 @@ describe('phoneTranscriptTailPadding', () => {
 
 /**
  * The captain's scroll rule (2026-09): a new message or live draft in the
- * open Room/corner follows the newest end only while the reader is already
- * pinned there; a user reading history or dragging is never interrupted.
+ * open Room/corner follows the newest end from any resting position; an
+ * active drag is never interrupted.
  */
 describe('scrollFollowOnArrival', () => {
   it('scrolls once for a genuinely new arrival', () => {
@@ -150,7 +150,7 @@ describe('scrollFollowOnArrival', () => {
     ).toBe('hold');
   });
 
-  it('holds a new arrival while the reader is above the bottom', () => {
+  it('scrolls a new Room message to the newest end from history', () => {
     expect(
       scrollFollowOnArrival({
         previousNewestId: 'msg-1',
@@ -158,7 +158,7 @@ describe('scrollFollowOnArrival', () => {
         isPinnedToTail: false,
         isUserDragging: false,
       }),
-    ).toBe('hold');
+    ).toBe('scroll');
   });
 });
 

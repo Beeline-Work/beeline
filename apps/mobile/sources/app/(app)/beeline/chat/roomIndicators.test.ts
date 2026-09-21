@@ -141,11 +141,17 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     expect(chatSource).not.toContain('projectCornerTranscript');
   });
 
-  it('renders the turn indicator on its own gate', () => {
+  it('renders the turn indicator on its own gate, inside a slot that is always there', () => {
     expect(chatSource).toContain('desktopExperience ? (');
+    // The SLOT is unconditional on phone — it holds the band's measured
+    // height open so the transcript does not move when the band comes or
+    // goes. Only the LINE is gated on a turn. Re-gating the slot on
+    // `composerAck` puts the jump straight back.
     expect(chatSource).toMatch(
-      /\{!desktopExperience && composerAck && \(\s*<View style=\{styles\.hangingTurnChrome\}/,
+      /\{!desktopExperience && \(\s*<View\s+style=\{\[styles\.hangingTurnChrome, \{ minHeight: turnBandReserve \}\]\}/,
     );
+    expect(chatSource).toContain('onLayout={onTurnBandLayout}');
+    expect(chatSource).toContain('{composerAck ? (');
     expect(chatSource).toContain('<TurnProgressLine');
     expect(chatSource).toContain('label={composerAck.label}');
   });

@@ -5,6 +5,7 @@ import { Typography } from '@/constants/Typography';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
+import { TURN_LINE_BAR_MARGIN_BOTTOM, TURN_LINE_ROW_MIN_HEIGHT } from '@/buzz/room-bottom-chrome';
 
 /** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
 const STOP_HIT_SLOP = 9;
@@ -157,11 +158,11 @@ const styles = StyleSheet.create((theme) => {
     bar: {
       width: '100%',
       minWidth: 0,
-      marginBottom: 4,
+      marginBottom: TURN_LINE_BAR_MARGIN_BOTTOM,
       paddingHorizontal: 8,
     },
     row: {
-      minHeight: 26,
+      minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       minWidth: 0,
       flexDirection: 'row',
       alignItems: 'center',

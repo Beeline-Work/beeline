@@ -31,10 +31,22 @@ export type ScrollFollowDecision = 'scroll' | 'hold';
  */
 const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 12;
 
-/** The inverted phone transcript's visual-tail padding. Always the ordinary
- * 12px — the thinking line lives in the chrome stack, not in this padding.
- * Callers still pass the chrome flags so a regression that keys padding on
- * them fails the no-step tests. */
+/**
+ * The inverted phone transcript's visual-tail padding. Always the ordinary
+ * 12px, and this function's whole job is to be the one place that says so.
+ *
+ * The band's height is NOT taken out of here and never can be: the tail is
+ * 12px and the band is about 30, so subtracting it underflows and leaves the
+ * newest row flush against the line. The band holds its own reserved slot in
+ * the chrome stack instead (`reservedTurnBandHeight`), which is what keeps the
+ * transcript still — this padding has no part in that and must not acquire
+ * one.
+ *
+ * That is why the chrome flags are still taken and still ignored: keying the
+ * padding on either of them is precisely the regression this signature exists
+ * to fail, and `room-scroll-follow.test.ts` reads them back to prove no
+ * caller has started doing it.
+ */
 export function phoneTranscriptTailPadding(_chrome: {
   turnChromeVisible: boolean;
   pushedChromeVisible: boolean;

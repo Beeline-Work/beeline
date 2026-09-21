@@ -65,7 +65,11 @@ import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { beelineThemes } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
-import { roomBottomChromeStyles, turnLineOverlayCoverPx } from './room-bottom-chrome';
+import {
+  reservedTurnBandHeight,
+  roomBottomChromeStyles,
+  turnLineOverlayCoverPx,
+} from './room-bottom-chrome';
 
 /**
  * The Room's bottom edge, measured rather than read.
@@ -114,19 +118,19 @@ function measureTurnLine(): { height: number; bottomMargin: number; box: number 
 }
 
 describe('the Room turn line is a band above the composer', () => {
-  it('sits in flow with a hairline, flush on the composer, not over the transcript', () => {
+  it('sits in flow, unfenced, flush on the composer, not over the transcript', () => {
     const hanging = layout.hangingTurnChrome;
     // Overlay used position/bottom to paint over the list. The in-flow band
-    // is only a hairline fill — no overlay fields, no extra air that would
-    // shove the composer row.
-    expect(Object.keys(hanging).sort()).toEqual([
-      'backgroundColor',
-      'borderTopColor',
-      'borderTopWidth',
-    ]);
-    expect(hanging.borderTopWidth).toBe(1);
-    expect(hanging.borderTopColor).toBe(beelineThemes.obsidian.border);
+    // is only the canvas fill — no overlay fields, no extra air that would
+    // shove the composer row, and no rule: the slot is held open even when
+    // nobody is working, so a hairline here would draw a fence across an
+    // empty strip. The composer keeps its own top border.
+    expect(Object.keys(hanging).sort()).toEqual(['backgroundColor']);
+    expect(Object.keys(hanging)).not.toContain('borderTopWidth');
+    expect(Object.keys(hanging)).not.toContain('borderTopColor');
     expect(hanging.backgroundColor).toBe(beelineThemes.obsidian.bgTerminal);
+    expect(layout.composerRow.borderTopWidth).toBe(1);
+    expect(layout.composerRow.borderTopColor).toBe(beelineThemes.obsidian.border);
     expect(Object.keys(layout.stack)).toEqual(['position']);
     expect(Object.keys(layout.stack)).not.toContain('gap');
     expect(Object.keys(layout.stack)).not.toContain('paddingTop');
@@ -160,5 +164,57 @@ describe('the Room turn line is a band above the composer', () => {
     expect(Object.keys(layout.hangingTurnChrome)).not.toContain('position');
     expect(Object.keys(layout.hangingTurnChrome)).not.toContain('bottom');
     expect(turnLineOverlayCoverPx(0, thinking)).toBe(0);
+  });
+
+  /**
+   * The band's slot is reserved whether or not an agent is working, which is
+   * the whole reason the transcript holds still. These read the reserve
+   * against a RENDERED line, so a band that grows past the slot — a taller
+   * row, more air under the bar — fails here rather than on someone's phone.
+   */
+  it('reserves the rendered band box before any band has been laid out', () => {
+    const line = measureTurnLine();
+    const coldOpen = reservedTurnBandHeight({ reserved: null, measured: null });
+
+    // The reserve a Room opens with already fits a single-line band, so the
+    // first turn of the session does not grow the slot underneath the reader.
+    expect(coldOpen).toBe(line.box);
+    expect(coldOpen).toBeGreaterThan(0);
+    // Measuring the real band changes nothing when it matches.
+    expect(reservedTurnBandHeight({ reserved: coldOpen, measured: line.box })).toBe(coldOpen);
+  });
+
+  it('takes the measured band over the fallback and never gives the room back', () => {
+    const line = measureTurnLine();
+    // A wrapped label or a larger text scale measures taller than the
+    // fallback; the slot has to follow it or the shift comes back.
+    const wrapped = line.box + 18;
+    expect(reservedTurnBandHeight({ reserved: line.box, measured: wrapped })).toBe(wrapped);
+    // Then a short band comes back. The slot must NOT shrink to it — that
+    // would move the transcript in the other direction.
+    expect(reservedTurnBandHeight({ reserved: wrapped, measured: line.box })).toBe(wrapped);
+    // No band mounted reports nothing, and holds what it was holding.
+    expect(reservedTurnBandHeight({ reserved: wrapped, measured: 0 })).toBe(wrapped);
+    expect(reservedTurnBandHeight({ reserved: wrapped, measured: null })).toBe(wrapped);
+  });
+
+  /**
+   * The defect this reserve exists for, in the one arithmetic that shows it:
+   * the list viewport is what is left of the screen under the chrome, and it
+   * must be the same number in all three states.
+   */
+  it('leaves the list viewport the same height before, during and after a band', () => {
+    const line = measureTurnLine();
+    const screen = 780;
+    const composer = 52;
+    const reserve = reservedTurnBandHeight({ reserved: null, measured: line.box });
+    const viewport = (bandMounted: boolean) =>
+      screen - composer - Math.max(reserve, bandMounted ? line.box : 0);
+
+    expect(viewport(true)).toBe(viewport(false));
+    // Without the reserve the very same band costs the viewport its height —
+    // the jump the reader sees.
+    const unreserved = (bandMounted: boolean) => screen - composer - (bandMounted ? line.box : 0);
+    expect(unreserved(true)).toBe(unreserved(false) - line.box);
   });
 });

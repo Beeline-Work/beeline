@@ -23,6 +23,7 @@ import {
   AppState,
   useWindowDimensions,
   AccessibilityInfo,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -179,7 +180,7 @@ import {
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
-import { roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
+import { reservedTurnBandHeight, roomBottomChromeStyles } from '@/buzz/room-bottom-chrome';
 import {
   desktopOpenLandingOnContentSizeChange,
   phoneTranscriptTailPadding,
@@ -2337,6 +2338,27 @@ export function BuzzChatSurface({
   // turn/no-turn). Native layout can update the pinned ref before an effect
   // runs, preserving the old offset as an empty gap. Capture the verdict in
   // render.
+  //
+  // The turn band is the one piece of that chrome a scroll cannot rescue. It
+  // is in flow, so mounting it takes its own height out of the list's
+  // viewport and the newest row moves — and on an inverted list pinned at the
+  // tail that row is already at offset 0, so re-pinning only re-glues it to
+  // the bottom that just moved and compensating would need a negative offset.
+  // The band's slot is therefore held open at all times: `turnBandReserve` is
+  // the band's own measured height (`onTurnBandLayout` reads it off the
+  // mounted line, never a typed-in number), and the slot carries it as a
+  // minHeight whether an agent is working or not. The list's height stops
+  // depending on the band, so the transcript does not move in either
+  // direction. `bottomChromeLayoutKey` still carries turn/no-turn: the follow
+  // it drives is now a no-op re-pin for that half of the key, and still the
+  // real thing for the offline hint, which holds no reserved slot.
+  const [turnBandReserve, setTurnBandReserve] = useState(() =>
+    reservedTurnBandHeight({ reserved: null, measured: null }),
+  );
+  const onTurnBandLayout = useCallback((event: LayoutChangeEvent) => {
+    const measured = event.nativeEvent.layout.height;
+    setTurnBandReserve((reserved) => reservedTurnBandHeight({ reserved, measured }));
+  }, []);
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -4896,27 +4918,38 @@ export function BuzzChatSurface({
             </View>
           ) : (
             <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-              {/* Phone turn chrome is an in-flow band above the composer —
-                hairline, then the line, then the composer's hairline — so it
-                cannot paint over the last message. The transcript tail stays
-                the ordinary 12px. Desktop keeps the slot inside inputBar. */}
-              {!desktopExperience && composerAck && (
-                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
-                  <TurnProgressLine
-                    label={composerAck.label}
-                    startedAt={composerAck.startedAt}
-                    received={composerAck.received}
-                    stopping={stoppingThisTurn}
-                    onStop={
-                      composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                    }
-                    testID="turn-progress-line"
-                  />
-                </View>
-              )}
-              {!desktopExperience && !composerAck && settledTurn && (
-                <View style={styles.hangingTurnChrome} testID="hanging-turn-chrome">
-                  <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+              {/* Phone turn chrome is an in-flow band above the composer, so
+                it cannot paint over the last message, and the transcript tail
+                stays the ordinary 12px. The SLOT is mounted whether or not an
+                agent is working and holds the band's measured height open
+                (C97 above): an in-flow band that came and went would take its
+                own height out of the list's viewport and move the newest row
+                each way. An empty strip above the composer is the price, and
+                it carries no rule and no surface of its own. Desktop keeps the
+                slot inside inputBar. */}
+              {!desktopExperience && (
+                <View
+                  style={[styles.hangingTurnChrome, { minHeight: turnBandReserve }]}
+                  testID="hanging-turn-chrome"
+                >
+                  <View onLayout={onTurnBandLayout}>
+                    {composerAck ? (
+                      <TurnProgressLine
+                        label={composerAck.label}
+                        startedAt={composerAck.startedAt}
+                        received={composerAck.received}
+                        stopping={stoppingThisTurn}
+                        onStop={
+                          composerAck.stop
+                            ? () => void handleStopTurn(composerAck.stop!)
+                            : undefined
+                        }
+                        testID="turn-progress-line"
+                      />
+                    ) : settledTurn ? (
+                      <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                    ) : null}
+                  </View>
                 </View>
               )}
               {/* No pinned corner line lives here. A Room holds many corners at

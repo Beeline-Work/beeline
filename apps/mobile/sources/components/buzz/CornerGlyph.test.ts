@@ -9,11 +9,11 @@ vi.mock('react-native-svg', async () => {
     ReactModule.createElement(name, props, props.children as React.ReactNode);
   return {
     default: host('Svg'),
-    Polygon: host('Polygon'),
+    Line: host('Line'),
   };
 });
 
-import { BookmarksGlyph } from './BookmarksGlyph';
+import { CORNER_META_SIZE, CORNER_STATUS_SIZE, CornerGlyph } from './CornerGlyph';
 import { chromeStrokeWidth, MEMBERS_GLYPH_STROKE_WIDTH } from './MembersGlyph';
 import brand from '@/buzz/brand.json';
 
@@ -32,42 +32,40 @@ beforeAll(() => {
 
 afterAll(() => vi.restoreAllMocks());
 
-describe('BookmarksGlyph', () => {
-  it('draws the outline bookmark with the same even stroke as MembersGlyph', () => {
+describe('CornerGlyph', () => {
+  it('draws two strokes meeting at the bottom left, 15 of 24, stroke scaled to size', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
-      renderer = create(
-        React.createElement(BookmarksGlyph, {
-          size: 16,
-          color: '#83838d',
-          testID: 'workspace-bookmarks-glyph',
-        }),
-      );
+      renderer = create(React.createElement(CornerGlyph, { size: 28, testID: 'corner-glyph' }));
     });
     const svg = renderer.root.findByType('Svg' as never);
-    expect(svg.props.width).toBe(16);
-    expect(svg.props.height).toBe(16);
+    expect(svg.props.testID).toBe('corner-glyph');
     expect(svg.props.viewBox).toBe('0 0 24 24');
-    expect(svg.props.testID).toBe('workspace-bookmarks-glyph');
+    expect(svg.props.width).toBe(28);
+    expect(svg.props.height).toBe(28);
     expect(svg.props.accessibilityElementsHidden).toBe(true);
 
-    const outline = renderer.root.findByType('Polygon' as never);
-    expect(outline.props.fill).toBe('none');
-    expect(outline.props.stroke).toBe('#83838d');
-    expect(outline.props.strokeWidth).toBe(chromeStrokeWidth(16));
-    expect(chromeStrokeWidth(16)).toBe(MEMBERS_GLYPH_STROKE_WIDTH);
-    expect(outline.props.strokeLinejoin).toBe('round');
+    const lines = renderer.root.findAllByType('Line' as never);
+    expect(lines).toHaveLength(2);
+    const [upright, across] = lines;
+    expect(upright.props.x1).toBe(4.5);
+    expect(upright.props.x2).toBe(4.5);
+    expect(upright.props.y1).toBe(4.5);
+    expect(upright.props.y2).toBe(19.5);
+    expect(across.props.x1).toBe(4.5);
+    expect(across.props.x2).toBe(19.5);
+    expect(across.props.y1).toBe(19.5);
+    expect(across.props.y2).toBe(19.5);
+    expect(across.props.stroke).toBe(brand.mark);
+    expect(across.props.strokeWidth).toBe(chromeStrokeWidth(28));
+    expect(chromeStrokeWidth(28) * (28 / 24)).toBeCloseTo(
+      MEMBERS_GLYPH_STROKE_WIDTH * (16 / 24),
+      5,
+    );
   });
 
-  it('defaults to the brand mark at the shared 24 view size', () => {
-    let renderer!: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(React.createElement(BookmarksGlyph));
-    });
-    const svg = renderer.root.findByType('Svg' as never);
-    const outline = renderer.root.findByType('Polygon' as never);
-    expect(svg.props.width).toBe(24);
-    expect(svg.props.height).toBe(24);
-    expect(outline.props.stroke).toBe(brand.mark);
+  it('keeps the inline sizes on the meta and status lines', () => {
+    expect(CORNER_META_SIZE).toBe(13);
+    expect(CORNER_STATUS_SIZE).toBe(11);
   });
 });

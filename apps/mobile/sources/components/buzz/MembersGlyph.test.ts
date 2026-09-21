@@ -14,7 +14,7 @@ vi.mock('react-native-svg', async () => {
   };
 });
 
-import { MEMBERS_GLYPH_STROKE_WIDTH, MembersGlyph } from './MembersGlyph';
+import { chromeStrokeWidth, MEMBERS_GLYPH_STROKE_WIDTH, MembersGlyph } from './MembersGlyph';
 import { ROOM_GLYPH_STROKE_WIDTH } from './RoomGlyph';
 import brand from '@/buzz/brand.json';
 
@@ -66,10 +66,10 @@ describe('MembersGlyph', () => {
     const body = renderer.root.findByType('Polygon' as never);
     expect(circle.props.fill).toBe('none');
     expect(circle.props.stroke).toBe(brand.mark);
-    expect(circle.props.strokeWidth).toBe(MEMBERS_GLYPH_STROKE_WIDTH);
+    expect(circle.props.strokeWidth).toBe(chromeStrokeWidth(24));
     expect(body.props.fill).toBe('none');
     expect(body.props.stroke).toBe(brand.mark);
-    expect(body.props.strokeWidth).toBe(MEMBERS_GLYPH_STROKE_WIDTH);
+    expect(body.props.strokeWidth).toBe(chromeStrokeWidth(24));
   });
 
   it('draws a right-isosceles body: equal legs from the apex, 90° at the apex', () => {
@@ -111,14 +111,32 @@ describe('MembersGlyph', () => {
     expect(right.x).toBeGreaterThan(left.x);
   });
 
-  it('accepts the 16px chrome size the Room-list and desktop heading actually use', () => {
+  it('accepts the 28px Room-list size and keeps the 16px stroke weight', () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(React.createElement(MembersGlyph, { size: 28, color: '#83838d' }));
+    });
+    const svg = renderer.root.findByType('Svg' as never);
+    expect(svg.props.width).toBe(28);
+    expect(svg.props.height).toBe(28);
+    const circle = renderer.root.findByType('Circle' as never);
+    expect(circle.props.stroke).toBe('#83838d');
+    expect(circle.props.strokeWidth).toBe(chromeStrokeWidth(28));
+    expect(chromeStrokeWidth(28) * (28 / 24)).toBeCloseTo(
+      MEMBERS_GLYPH_STROKE_WIDTH * (16 / 24),
+      5,
+    );
+  });
+
+  it('keeps the 16px desktop heading at the original stroke', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
       renderer = create(React.createElement(MembersGlyph, { size: 16, color: '#83838d' }));
     });
     const svg = renderer.root.findByType('Svg' as never);
     expect(svg.props.width).toBe(16);
-    expect(svg.props.height).toBe(16);
-    expect(renderer.root.findByType('Circle' as never).props.stroke).toBe('#83838d');
+    expect(renderer.root.findByType('Circle' as never).props.strokeWidth).toBe(
+      MEMBERS_GLYPH_STROKE_WIDTH,
+    );
   });
 });

@@ -421,8 +421,9 @@ const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
  * One size for the pair is what makes the corners door and the overflow
  * control read as siblings, and a shape centred on its own box needs no
  * hand-tuned vertical correction to sit level with the mark beside it.
+ * 28 matches the Room-list pair so the two screens share one chrome.
  */
-const HEADER_MARK_SIZE = 16;
+const HEADER_MARK_SIZE = 28;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -4475,7 +4476,7 @@ export function BuzzChatSurface({
               the composer is gone. A lone brass `◇` a few pixels from the
               overflow dots read as decoration on the menu rather than as a
               destination of its own, so the door is NAMED, the way every rail
-              command is: the sigil states the kind, the word states where it
+              command is: the mark states the kind, the word states where it
               goes, and a full space step parts the pair from overflow. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity

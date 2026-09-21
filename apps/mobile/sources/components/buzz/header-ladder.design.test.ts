@@ -162,7 +162,7 @@ describe('Chat header — one language for Room and Corner', () => {
     // sits level with the dots by construction. Neither carries a type role,
     // a font metric, or a hand-tuned vertical nudge: a magic optical constant
     // is what a shape in a centred box exists to make unnecessary.
-    expect(chatSource).toContain('const HEADER_MARK_SIZE = 16');
+    expect(chatSource).toContain('const HEADER_MARK_SIZE = 28');
     expect(chatSource.match(/size=\{HEADER_MARK_SIZE\}/g)!.length).toBeGreaterThanOrEqual(3);
     for (const glyphStyle of [diamond![0], dots![0]]) {
       expect(glyphStyle).not.toMatch(/fontSize|lineHeight|includeFontPadding|translateY/);

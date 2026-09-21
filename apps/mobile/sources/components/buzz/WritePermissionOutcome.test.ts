@@ -3,6 +3,16 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: Record<string, unknown>) =>
+    ReactModule.createElement(name, props, props.children as React.ReactNode);
+  return {
+    default: host('Svg'),
+    Line: host('Line'),
+  };
+});
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -91,6 +101,10 @@ describe('write permission corner outcome', () => {
     );
     const [link] = allowed.root.findAllByProps({ testID: 'write-permission-open-corner' });
     expect(link).toBeDefined();
+    expect(allowed.root.findAllByType('Svg' as never)).toHaveLength(1);
+    expect(String(allowed.root.findAllByType('Text').map((node) => node.props.children))).not.toContain(
+      '◇',
+    );
     act(() => link!.props.onPress());
     expect(onOpen).toHaveBeenCalledOnce();
 
@@ -108,7 +122,7 @@ describe('write permission corner outcome', () => {
   it('names every decision plainly, and never claims a corner is open', () => {
     const label = (props: Parameters<typeof writePermissionStatusLabel>) =>
       writePermissionStatusLabel(...props);
-    expect(label(['allowed', 'new-corner-id'])).toBe('◇ ALLOWED · OPENING CORNER');
+    expect(label(['allowed', 'new-corner-id'])).toBe('ALLOWED · OPENING CORNER');
     expect(label(['pending', undefined, true])).toBe('⊘ A PERSON MUST RESPOND');
     expect(label(['denied'])).toContain('STILL READ-ONLY');
     expect(label(['failed'])).toContain('STILL READ-ONLY');

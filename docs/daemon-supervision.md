@@ -13,11 +13,14 @@ beeline daemon
 The daemon requires a promoted monolith transport in `runtime.json`. It never opens a relay
 socket, signs a relay event, manages a repository, or creates a corner.
 
-`ThinDaemonCore` owns READY/progress callbacks, periodic reconciliation, retry timing, update
-handoff, and shutdown. `RoomRuntimeCoordinator` reads `getDaemonBootstrap`, starts/stops Room
-loops, confirms membership removal twice before teardown, and owns the shared session scheduler.
-Each `MonolithRoomTurnLoop` polls the authenticated daemon API for Room messages and publishes
-presence, receipts, live drafts, and the final reply through that same API.
+`ThinDaemonCore` owns READY/progress callbacks, the recovery reconciliation sweep, retry timing,
+update handoff, and shutdown. `RoomRuntimeCoordinator` applies the scoped membership and corner
+events the daemon's one live socket pushes — starting, stopping, and closing single Rooms and
+corners without re-listing — confirms membership removal twice before teardown, and owns the
+shared session scheduler. Its `getDaemonBootstrap` reconciliation is the dropped-socket recovery
+net, not the ordinary discovery path. Each `MonolithRoomTurnLoop` takes its work from the commands
+pushed over that socket, with a slow durable read as the same kind of net, and publishes presence,
+receipts, live drafts, and the final reply through the authenticated daemon API.
 
 Shutdown aborts Room intake first, drains active loops to the managed-update deadline, and then
 force-suspends remaining ACP children. A confirmed Workspace removal moves the runtime into the

@@ -6130,8 +6130,9 @@ export class PhoneService {
       )
     ).rows[0];
     if (!connection) throw new Error('connection not found (access denied)');
-    // Live detail reads: cached provider metadata older than the TTL asks the
-    // helper for a fresh snapshot on its next poll.
+    // Live detail reads: cached provider metadata older than the TTL queues a
+    // `sync` op and wakes the helper for a fresh snapshot now; its recovery
+    // poll only catches a wake that reached no socket.
     if (isMetadataStale(connection.last_synced_at)) {
       await this.database.query(
         `UPDATE workspace_connectors

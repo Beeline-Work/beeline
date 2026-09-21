@@ -19,7 +19,7 @@
  * The four Google tool connectors ride ONE grant: their installs share a
  * single credential resolution per drain and run one at a time.
  * One assignment at a time per connector; failures are logged, never raised —
- * the next poll retries.
+ * the next drain retries, on the next push or the recovery poll.
  */
 import type {
   ConnectorAssignment,

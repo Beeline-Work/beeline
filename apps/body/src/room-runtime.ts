@@ -408,10 +408,11 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private confirmationPending = false;
-  /** Agent-directed discovery wakes (#1369), counted instead of flagged: a
-   *  wake that arrives while a reconcile is already running must survive its
-   *  start-pass clearing, or a corner opened mid-reconcile waits a heartbeat
-   *  for a wake the daemon already received. */
+  /** Unscoped agent-directed discovery wakes (#1369), counted instead of
+   *  flagged: a wake that arrives while a reconcile is already running must
+   *  survive its start-pass clearing, or a reconnect mid-reconcile waits a
+   *  heartbeat for a wake the daemon already received. A scoped membership
+   *  event applies incrementally and never touches this latch. */
   private readonly discoveryWakes = new DiscoveryWakes();
   /** One command-grant runner per daemon; Rooms and corners register their checkouts on it. */
   private readonly grantRunner: GrantCommandRunner;

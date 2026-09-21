@@ -509,7 +509,7 @@ export type ChatListItem = {
     /** Present so attachment-only latest messages remain visible in compact previews. */
     readonly attachments?: readonly AttachmentReference[];
   };
-  /** Absent when the server omitted it means unknown — never treat as zero. */
+  /** Absent when the server omitted it: the count is unknown, never zero. */
   readonly memberCount?: number;
   /**
    * Unarchived corners on this Room. Absent when the server omitted it: the

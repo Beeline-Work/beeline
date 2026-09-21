@@ -293,15 +293,27 @@ const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
 const UPPERCASE_HEAD = /^\p{Lu}/u;
 
 /**
+ * The visible half of a lowercase-initial stylized name — the `e` of `eBay`,
+ * the `i` of `iPhone`, the `mac` of `macOS`. One to three lowercase letters
+ * is not somewhere a finished message stops: a reply that really ended on
+ * `the` or `and` was already cut off mid-sentence, so resuming it costs at
+ * worst a paragraph break, where splitting it costs the reply's head.
+ */
+const STYLIZED_NAME_PREFIX = /^\p{Ll}{1,3}$/u;
+
+/**
  * Whether `delta` continues the word `current` stops on, so the non-text
  * update between them was interleaved metadata rather than a message
  * boundary. A run already closed by whitespace is a boundary on its own.
  *
- * An uppercase resume is read against the word it lands on, because that is
- * the only thing that separates a split name from a new sentence: `Git` +
- * `Hub`, `READ` + `ME` and `Java` + `Script` all resume a word that is itself
- * capitalized, whereas a genuine post-tool message (`the files` + `Found the
- * answer.`) lands a capital on the end of an ordinary lowercase word.
+ * An uppercase resume is read against the word it lands on, because nothing
+ * else separates a split name from a new sentence — `Bay works.` and `Found
+ * the answer.` are the same shape. It resumes a word when that word is
+ * itself capitalized (`Git` + `Hub`, `READ` + `ME`, `Java` + `Script`) or is
+ * a stylized name's short lowercase prefix (`e` + `Bay`, `mac` + `OS`); an
+ * ordinary lowercase word taking a capital (`typecheck patterns` + `Now I
+ * have the full picture.`) is the harness finishing one message and opening
+ * the next.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
@@ -309,7 +321,8 @@ function continuesPreviousWord(current: string, delta: string): boolean {
   const word = RUN_TRAILING_WORD.exec(current)?.[0];
   if (!word) return false;
   if (CHUNK_RESUMES_WORD.test(delta)) return true;
-  return UPPERCASE_HEAD.test(delta) && UPPERCASE_HEAD.test(word);
+  if (!UPPERCASE_HEAD.test(delta)) return false;
+  return UPPERCASE_HEAD.test(word) || STYLIZED_NAME_PREFIX.test(word);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;

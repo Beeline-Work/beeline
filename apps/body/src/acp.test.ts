@@ -195,6 +195,11 @@ describe('ACP streaming lane classifier', () => {
       ['Using Git', 'Hub works.', 'Using GitHub works.'],
       ['Open the READ', 'ME first.', 'Open the README first.'],
       ['Written in Java', 'Script.', 'Written in JavaScript.'],
+      // Lowercase-initial stylized names: the visible half is a short
+      // lowercase prefix, not a word a finished message would stop on.
+      ['Using e', 'Bay works.', 'Using eBay works.'],
+      ['Tested on mac', 'OS too.', 'Tested on macOS too.'],
+      ['Shipped the i', 'Phone build.', 'Shipped the iPhone build.'],
     ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: head } }),
@@ -208,8 +213,9 @@ describe('ACP streaming lane classifier', () => {
 
   it('still ends a run when the text that resumes opens a new sentence', () => {
     // The word-continuation guard must not swallow a genuine message
-    // boundary: a capitalized head after tool work is a fresh message, and a
-    // run already closed by whitespace is a boundary on its own.
+    // boundary: a capital landing on an ordinary lowercase word is the
+    // harness opening a fresh message, and a run already closed by
+    // whitespace is a boundary on its own.
     expect(
       agentMessageRuns([
         update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting the files' } }),
@@ -217,6 +223,18 @@ describe('ACP streaming lane classifier', () => {
         update('agent_message_chunk', { content: { type: 'text', text: 'Found the answer.' } }),
       ]),
     ).toEqual(['Inspecting the files', 'Found the answer.']);
+
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', {
+          content: { type: 'text', text: '...existing test and typecheck patterns' },
+        }),
+        update('tool_call', { toolCallId: 'read-2', kind: 'read' }),
+        update('agent_message_chunk', {
+          content: { type: 'text', text: 'Now I have the full picture.' },
+        }),
+      ]),
+    ).toEqual(['...existing test and typecheck patterns', 'Now I have the full picture.']);
 
     expect(
       agentMessageRuns([
@@ -1678,6 +1696,33 @@ describe('AcpClient live steering', () => {
       );
       expect(result.agentText).toBe('Using GitHub works.');
       expect(runs.at(-1)).toEqual(['Using GitHub works.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps the first characters of a turn when a tool call splits a lowercase-initial name', async () => {
+    // `e` + tool call + `Bay works.` — reading the capital against a word
+    // that starts lowercase sent this one down the new-sentence path, so the
+    // turn posted only "Bay works." and dropped "Using e" out of the reply.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Using e', 'Bay works.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Using eBay works.');
+      expect(runs.at(-1)).toEqual(['Using eBay works.']);
     } finally {
       await client.stop();
     }

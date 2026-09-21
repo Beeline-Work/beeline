@@ -1239,7 +1239,7 @@ export class MonolithCornerTurnLoop {
                         completedNarrationRuns.push(currentNarrationRun);
                       currentNarrationRun = currentRun;
                     }
-                    stream.onChunk(delta, full);
+                    stream.onChunk(delta, full, currentRun);
                   },
                   undefined,
                   (calls) => {

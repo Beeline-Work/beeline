@@ -240,11 +240,11 @@ describe('two agents streaming at once', () => {
   });
 
   /**
-   * The Room turn that opens a corner publishes NO durable reply: the server's
-   * corner card is the whole handoff (`monolith-room-turn.ts`). Its draft was
-   * held for a final that was never coming, so the last streamed sentence — "I
-   * will open a corner for that" — stayed on the transcript as the answer, and
-   * only reopening the Room cleared it.
+   * A textless Room turn that opened a corner publishes NO durable reply: it
+   * settles through the server's corner card alone (`monolith-room-turn.ts`).
+   * Its draft was held for a final that was never coming, so the last streamed
+   * sentence — "I will open a corner for that" — stayed on the transcript as
+   * the answer, and only reopening the Room cleared it.
    */
   describe('a turn that completes without a durable reply', () => {
     const retracted = () =>

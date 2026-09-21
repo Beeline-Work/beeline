@@ -50,6 +50,7 @@ import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
 import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
 import { setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
+import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { defaultFaceForSeed } from '@/buzz/faces';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
@@ -355,6 +356,7 @@ export default function BuzzIdentitySettings() {
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
   const [uiSize, setUiSize] = useLocalSettingMutable('uiSize');
+  const [roomOpenTrace, setRoomOpenTrace] = useLocalSettingMutable('roomOpenTraceOverlay');
   const changeAppearance = useCallback(
     (next: typeof appearance) => {
       setAppearance(next);
@@ -476,6 +478,22 @@ export default function BuzzIdentitySettings() {
           ) : null}
           <AppearanceSetting onChange={changeAppearance} value={appearance} />
           <UiSizeSetting onChange={changeUiSize} value={uiSize} />
+          {roomOpenTraceEnabled() && (
+            <View testID="debug-settings">
+              <SettingsRow
+                accessibilityLabel={
+                  roomOpenTrace
+                    ? 'Disable room open trace overlay'
+                    : 'Enable room open trace overlay'
+                }
+                description="Show Room-open timings on screen"
+                onPress={() => setRoomOpenTrace(!roomOpenTrace)}
+                testID="debug-room-open-trace"
+                title="Room open trace"
+                value={roomOpenTrace ? 'On' : 'Off'}
+              />
+            </View>
+          )}
         </View>
 
         <View style={styles.section} testID="account-settings">

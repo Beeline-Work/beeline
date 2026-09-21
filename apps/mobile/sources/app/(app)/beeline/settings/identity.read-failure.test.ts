@@ -292,9 +292,9 @@ describe('Reproduction settings-identity-read-failure', () => {
     const renderer = await renderScreen();
 
     await vi.waitFor(() =>
-      expect(
-        renderer.root.findAllByProps({ testID: 'identity-settings' }).length,
-      ).toBeGreaterThan(0),
+      expect(renderer.root.findAllByProps({ testID: 'identity-settings' }).length).toBeGreaterThan(
+        0,
+      ),
     );
     expect(renderer.root.findByProps({ testID: 'identity-face-setting' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props.seed).toBe(
@@ -308,9 +308,9 @@ describe('Reproduction settings-identity-read-failure', () => {
     const renderer = await renderScreen();
 
     await vi.waitFor(() =>
-      expect(
-        renderer.root.findAllByProps({ testID: 'identity-settings' }).length,
-      ).toBeGreaterThan(0),
+      expect(renderer.root.findAllByProps({ testID: 'identity-settings' }).length).toBeGreaterThan(
+        0,
+      ),
     );
     expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props.name).toBe(
       'Person aaaa',
@@ -348,7 +348,12 @@ describe('Settings groups', () => {
 
   it('heads the Workbench row Workbench when the Workbench is available', async () => {
     runtime.monolithEnabled = true;
-    phoneOperation.mockResolvedValue({ face: null, pushLevel: 'mine', handle: null, name: 'Captain' });
+    phoneOperation.mockResolvedValue({
+      face: null,
+      pushLevel: 'mine',
+      handle: null,
+      name: 'Captain',
+    });
     const renderer = await renderScreen();
     const texts = headings(renderer);
     expect(texts).toContain('Workbench');

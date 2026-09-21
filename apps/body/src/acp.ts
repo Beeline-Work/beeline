@@ -314,13 +314,36 @@ const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
  * resume ambiguous instead of guessing at it` — a word split across such a
  * seam still loses its head, exactly as before this guard existed.
  *
- * Resolving it needs a signal that does not exist yet: a harness message id
- * or stop marker on `agent_message_chunk` would end the ambiguity outright,
- * since two deltas of one message would be identifiable as such. Until then
- * do not reach for the text. Capitalization was tried four ways — the word's
- * own case, a prefix allowlist, the fragment's length, whether the word had
- * already turned over — and lowercase once; each reading resolved one pair
- * above by corrupting the other.
+ * Resolving it needs a structural signal, and the repository was searched
+ * for one before settling on reading 2. There is none to be had today:
+ *
+ *   - Nothing in ACP groups message deltas. `toolCallId` is exactly the key
+ *     message chunks lack, which is why `toolCallEntries` below is trivially
+ *     correct and this function cannot be.
+ *   - The only verbatim harness captures held here are
+ *     `fixtures/grok-use-tool-permissions.ts` and
+ *     `fixtures/claude-agent-acp-permissions.ts`, both `tool_call` and
+ *     `session/request_permission` frames. Neither records a message chunk.
+ *   - The `_meta` a real harness does send is tool identity (`x.ai/tool`) or
+ *     per-turn identity (`goose.activeRunId`, read at
+ *     `activeRunIdFromUpdate`). Neither is per-message. `messageId` exists in
+ *     ACP only as a steer RPC's result, never on a stream update.
+ *   - The `_meta.goose.created` stamp that appears in `acp.test.ts` is
+ *     invented by a hand-written fake; no production code reads it.
+ *   - PRODUCTION-CORPUS REPLAY does not cover this. Its fixture is sanitized
+ *     relay events whose ACP payloads were replaced before commit.
+ *
+ * A harness message id or stop marker on `agent_message_chunk` would end the
+ * ambiguity outright, since two deltas of one message would then be
+ * identifiable as such. Settling whether any installed harness already sends
+ * one means capturing raw `session/update` frames per harness — the old
+ * `scripts/capture-acp-permissions.mjs` (deleted; see git history) did
+ * exactly that and is the shape of the job.
+ *
+ * Until then do not reach for the text. Capitalization was tried four ways —
+ * the word's own case, a prefix allowlist, the fragment's length, whether
+ * the word had already turned over — and lowercase once; each reading
+ * resolved one pair above by corrupting the other.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;

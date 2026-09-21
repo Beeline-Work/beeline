@@ -5,7 +5,7 @@ import type {
   AgentGrantStatus,
   CommandGrantScript,
 } from './agent-grants.js';
-import type { CornerLifecycleView } from './phone-types.js';
+import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js';
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type {
@@ -173,6 +173,7 @@ export type DaemonOperationMap = {
   getAgentPresence: Operation<AgentRoomInput, AgentPresenceResult>;
   getRequestCompletion: Operation<RequestInput, RequestCompletionResult>;
   postRoomMessage: Operation<PostRoomMessageInput, PostRoomMessageResult>;
+  reactToRoomMessage: Operation<ReactToRoomMessageInput, WriteResult>;
   postAgentAttachment: Operation<PostAgentAttachmentInput, WriteResult>;
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
@@ -451,6 +452,10 @@ export type WriteResult = {
   readonly hiccupAttempt?: number;
 };
 export type PostRoomMessageResult = WriteResult;
+export type ReactToRoomMessageInput = RoomInput & {
+  readonly messageId: string;
+  readonly emoji: MessageReactionEmoji;
+};
 export type PostRoomMessageInput = TurnOutputAuthority &
   RoomInput & {
     readonly requestId?: string;

@@ -30,6 +30,7 @@ import {
   SERVER_EVENT_KINDS,
   isAgentKind,
   isServerEventKind,
+  MESSAGE_REACTION_EMOJIS,
   type ServerEventKind,
 } from '@beeline/api-contract/phone';
 import {
@@ -563,6 +564,11 @@ export class DaemonService {
       case 'postRoomMessage':
         return (await this.postRoomMessage(
           input as Input<'postRoomMessage'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'reactToRoomMessage':
+        return (await this.reactToRoomMessage(
+          input as Input<'reactToRoomMessage'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentAttachment':
@@ -3865,6 +3871,42 @@ export class DaemonService {
     if (!result.rowCount) throw new Error('daemon room access denied');
     return { cornerReviewer: result.rows[0]!.corner_reviewer };
   }
+
+  /** Adds one fixed-vocabulary reaction without turning a retried tool call into an unreact. */
+  private async reactToRoomMessage(
+    input: Input<'reactToRoomMessage'>,
+    agentId: string,
+  ): Promise<Output<'reactToRoomMessage'>> {
+    if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
+    await this.database.transaction(async (database) => {
+      const row = (
+        await database.query<{ reactions: Record<string, string[]> }>(
+          `SELECT reactions FROM messages
+           WHERE id=$1 AND room_id=$2 AND presentation='message'
+           FOR UPDATE`,
+          [input.messageId, input.roomId],
+        )
+      ).rows[0];
+      if (!row) throw new Error('message is not available for reaction');
+      const reactions = { ...(row.reactions ?? {}) };
+      const reactors = new Set(reactions[input.emoji] ?? []);
+      reactors.add(agentId);
+      reactions[input.emoji] = [...reactors];
+      await database.query(`UPDATE messages SET reactions=$3::jsonb WHERE id=$1 AND room_id=$2`, [
+        input.messageId,
+        input.roomId,
+        JSON.stringify(reactions),
+      ]);
+    });
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'message',
+      messageId: input.messageId,
+      agentId,
+    });
+    return this.writeResult();
+  }
   /**
    * The one operation a corner still reserves for the agent that opened it.
    *
@@ -4031,6 +4073,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   claimAgentCommand: true,
   acknowledgeAgentCommand: true,
   postRoomMessage: true,
+  reactToRoomMessage: true,
   postAgentAttachment: true,
   postAgentDraft: true,
   postAgentThought: true,

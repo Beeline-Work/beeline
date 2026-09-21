@@ -200,10 +200,12 @@ describe('monolith Room turn context', () => {
     // Turn one on a cold session carries the whole final-80 window the Room
     // turn renders, which now ends on the newest row instead of row 200.
     expect(prompts[0]).toContain('Room conversation so far:');
+    expect(prompts[0]).toContain('[message id: row-171]\nCaptain: row 171');
     expect(prompts[0]).toContain('Captain: row 171');
     expect(prompts[0]).toContain('Captain: @greeter answer only the next integer after 10103');
     expect(prompts[0]).not.toContain('Captain: row 170');
     expect(prompts[0]).toContain('first ask');
+    expect(prompts[0]).toContain('[message id: ask-1]\nfirst ask');
 
     // Turn two on the SAME warm session sends only what is new, plus a recency
     // overlap, and still carries the newest message in full.
@@ -220,7 +222,7 @@ describe('monolith Room turn context', () => {
       prompts[1]!.lastIndexOf('after 10103'),
     );
     expect(prompts[1]!.trimEnd()).toMatch(
-      /Current task selected by the server from Captain:\n\n@greeter answer only the next integer after 30303$/,
+      /Current task selected by the server from Captain:\n\n\[message id: ask-2\]\n@greeter answer only the next integer after 30303$/,
     );
     const rendered = (prompt: string) => prompt.match(/Captain: row \d+/g)?.length ?? 0;
     expect(rendered(prompts[0]!)).toBe(79);

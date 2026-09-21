@@ -81,7 +81,9 @@ import {
   CHOICE_TTL_SECONDS,
   isAgentKind,
   isServerEventKind,
+  MESSAGE_REACTION_EMOJIS,
   type CornerLifecycleView,
+  type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import {
@@ -356,6 +358,20 @@ const AGENT_TOOLS: ToolDefinition[] = [
       properties: {
         cornerId: { type: 'string' },
         text: { type: 'string', minLength: 1, maxLength: 16000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'react_to_message',
+    description:
+      'React to one message in this Room. The reaction stays present if this call is retried. Use only one of the supported emoji.',
+    inputSchema: {
+      type: 'object',
+      required: ['messageId', 'emoji'],
+      properties: {
+        messageId: { type: 'string', description: 'The message id from the Room transcript.' },
+        emoji: { type: 'string', enum: [...MESSAGE_REACTION_EMOJIS] },
       },
       additionalProperties: false,
     },
@@ -1957,6 +1973,24 @@ export function agentScheduleDepsFromEnv(): AgentScheduleDeps {
   return { roomId: agentScheduleRoomId(), execute: daemonExecute };
 }
 
+export async function reactToMessage(
+  args: JsonObject,
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  const messageId = stringArg(args, 'messageId')?.trim();
+  if (!messageId) throw new Error('messageId must be a non-empty string');
+  const emoji = stringArg(args, 'emoji');
+  if (!emoji || !(MESSAGE_REACTION_EMOJIS as readonly string[]).includes(emoji)) {
+    throw new Error(`emoji must be one of ${MESSAGE_REACTION_EMOJIS.join(' ')}`);
+  }
+  await deps.execute('reactToRoomMessage', {
+    roomId: deps.roomId,
+    messageId,
+    emoji: emoji as MessageReactionEmoji,
+  });
+  return `Reacted ${emoji} to message ${messageId}.`;
+}
+
 export async function createSchedule(
   args: JsonObject,
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
@@ -2552,6 +2586,8 @@ async function callAgentTool(name: string, args: JsonObject): Promise<string> {
       return openCorner(args);
     case 'steer_corner':
       return relayMessage('down', args);
+    case 'react_to_message':
+      return reactToMessage(args);
     case 'close_corner':
       return closeCorner();
     case 'pr_checks_status':

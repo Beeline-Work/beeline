@@ -179,13 +179,6 @@ export class PushDeliveryLoop {
           AND workspace_member.removed_at IS NULL
         JOIN identities author ON author.id=m.author_id
         JOIN identities recipient ON recipient.id=m.push_identity_id AND recipient.kind='human'
-        LEFT JOIN corner_facts event_corner ON event_corner.corner_id::text=CASE
-          WHEN m.card_type='daemon-fact'
-            AND m.card->>'type' IN ('corner-open','corner-complete')
-            THEN m.card->>'cornerId'
-          WHEN room.parent_id IS NOT NULL THEN room.id::text
-          ELSE NULL
-        END
         WHERE (
             room.direct_participants IS NULL
             OR m.card_type IS NULL
@@ -195,72 +188,26 @@ export class PushDeliveryLoop {
           AND (
             recipient.push_level<>'off'
             AND (
-              -- Direct attention is eligible at every level except off.
-              ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
-              OR room.direct_participants IS NOT NULL
-              OR EXISTS (
-                SELECT 1 FROM messages addressed
-                WHERE addressed.id IN (m.reply_to_message_id,m.request_id)
-                  AND addressed.author_id=m.push_identity_id
-              )
-              OR (
-                m.card_type='permission'
-                AND COALESCE(m.card->>'status','pending')='pending'
+              -- The push ceiling is four categories: direct messages, tags,
+              -- replies to you, and member lifecycle (workspace joins, the
+              -- separate workspace-join branch below). Cards and corner
+              -- lifecycle never push on their own. Levels are strict subsets
+              -- of that ceiling: direct = DMs + replies, mine = + tags,
+              -- all = + member lifecycle.
+              (
+                recipient.push_level IN ('direct','mine','all')
                 AND (
-                  m.card->'requester'->>'pubkey'=m.push_identity_id
-                  OR m.push_role IN ('owner','admin')
-                )
-              )
-              -- A grant request names its owner in the card, not in its sentence.
-              OR (m.card_type='grant-request' AND m.card->'owner'->>'pubkey'=m.push_identity_id)
-              -- A connector offer names the person it is addressed to (R5).
-              OR (m.card_type='connector-offer' AND m.card->'addressee'->>'pubkey'=m.push_identity_id)
-              OR (m.card_type='target-branch' AND m.push_role IN ('owner','admin'))
-              OR (
-                m.card_type='choice'
-                AND COALESCE(m.card->>'status','open')='open'
-                AND (
-                  (
-                    m.card->>'mode'='question'
-                    AND (
-                      m.card->'requester'->>'pubkey'=m.push_identity_id
-                      OR EXISTS (
-                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(m.card->'mentionIds','[]'::jsonb)) tagged
-                        WHERE tagged=m.push_identity_id
-                      )
-                    )
-                  )
-                  OR (
-                    m.card->>'mode'='poll'
-                    AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements_text(COALESCE(m.card->'electorate','[]'::jsonb)) elector
-                      WHERE elector=m.push_identity_id
-                    )
+                  room.direct_participants IS NOT NULL
+                  OR EXISTS (
+                    SELECT 1 FROM messages addressed
+                    WHERE addressed.id = m.reply_to_message_id
+                      AND addressed.author_id=m.push_identity_id
                   )
                 )
               )
               OR (
-                -- Corner lifecycle widens to all corners for all, and only the
-                -- recorded commissioner's corners for the default mine level.
-                (
-                  (m.card_type='daemon-fact'
-                    AND m.card->>'type' IN ('corner-open','corner-complete'))
-                  OR (
-                    room.parent_id IS NOT NULL
-                    AND m.card_type='github-corner-note'
-                    AND (
-                      m.system_event->>'verb'='opened a pull request'
-                      OR m.system_event->>'kind'='check-failed'
-                    )
-                  )
-                )
-                AND (
-                  recipient.push_level='all'
-                  OR (
-                    recipient.push_level='mine'
-                    AND event_corner.commissioned_by=m.push_identity_id
-                  )
-                )
+                recipient.push_level IN ('mine','all')
+                AND ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
               )
             )
           )
@@ -275,7 +222,7 @@ export class PushDeliveryLoop {
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
         JOIN identities recipient ON recipient.id=push_device.identity_id
-          AND recipient.kind='human' AND recipient.push_level<>'off'
+          AND recipient.kind='human' AND recipient.push_level='all'
         JOIN memberships workspace_member ON workspace_member.workspace_id=notification.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=push_device.identity_id
           AND workspace_member.removed_at IS NULL
@@ -327,20 +274,6 @@ export class PushDeliveryLoop {
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
     for (const candidate of candidates.rows) {
-      // The candidate query and delivery claims are separate statements. A
-      // corner-open and its PR-open note can therefore be selected in one
-      // batch before either is claimed. Recheck immediately before claiming so
-      // the earlier corner-open candidate suppresses the expected PR note in
-      // that same batch as well as on later scans.
-      if (
-        candidate.corner_id &&
-        (await this.suppressExpectedPrOpen(
-          candidate.message_id,
-          candidate.corner_id,
-          candidate.token,
-        ))
-      )
-        continue;
       const claimed = candidate.is_release_catchup
         ? await claimReleaseCatchup(
             this.database,
@@ -453,36 +386,6 @@ export class PushDeliveryLoop {
     );
     delivered = workerResults.reduce((sum, count) => sum + count, 0);
     return delivered;
-  }
-
-  /**
-   * Opening a corner is the notification for its expected transition into
-   * review. Atomically consume the later PR-open note for the same device once
-   * that opening was attempted. Other lifecycle events remain independent.
-   */
-  private async suppressExpectedPrOpen(
-    messageId: string,
-    cornerId: string,
-    deviceToken: string,
-  ): Promise<boolean> {
-    const result = await this.database.query(
-      `INSERT INTO push_delivery_claims(message_id,device_token,status)
-       SELECT $1,$3,'suppressed'
-       FROM messages note
-       JOIN rooms corner ON corner.id=note.room_id AND corner.id=$2
-       JOIN messages opened ON opened.room_id=corner.parent_id
-         AND opened.card_type='daemon-fact'
-         AND opened.card->>'type'='corner-open'
-         AND opened.card->>'cornerId'=corner.id::text
-       JOIN push_delivery_claims opened_claim
-         ON opened_claim.message_id=opened.id AND opened_claim.device_token=$3
-       WHERE note.id=$1 AND note.card_type='github-corner-note'
-         AND note.system_event->>'verb'='opened a pull request'
-       ON CONFLICT DO NOTHING
-       RETURNING 1`,
-      [messageId, cornerId, deviceToken],
-    );
-    return result.rowCount > 0;
   }
 }
 

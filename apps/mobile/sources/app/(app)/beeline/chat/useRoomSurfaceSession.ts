@@ -185,6 +185,8 @@ export interface UseRoomSurfaceSessionResult {
   adoptTransport(transport: BuzzRigTransport): void;
   roomClient: RoomViewClient | null;
   roomSurface: RoomView | null;
+  /** Exact server-owned unread boundary captured before this visit advances the read mark. */
+  firstUnreadMessageId: string | null;
   liveOverlays: readonly LiveOverlay[];
   liveDraftStore: LiveDraftDrainStore;
   userPubkey: string;
@@ -210,6 +212,7 @@ export function useRoomSurfaceSession({
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
   const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
+  const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
   const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
   const [userPubkey, setUserPubkey] = useState('');
   const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
@@ -327,6 +330,7 @@ export function useRoomSurfaceSession({
   useEffect(() => {
     if (!channelId) return;
     if (!isFocused) return;
+    setFirstUnreadMessageId(null);
     liveDraftDrainStore.setActive(true);
 
     let cancelled = false;
@@ -341,6 +345,7 @@ export function useRoomSurfaceSession({
     let hasPainted = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
+    let capturedUnreadBoundary = false;
 
     agentPresencesRef.current = {};
     reconnectGraceRef.current = {};
@@ -398,6 +403,13 @@ export function useRoomSurfaceSession({
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
+      if (fresh && !capturedUnreadBoundary) {
+        // This is the last server answer before markRead advances to the tail.
+        // Keep the exact id for the whole focused visit; later refreshes may
+        // clear the cursor but must not move the divider under the reader.
+        capturedUnreadBoundary = true;
+        setFirstUnreadMessageId(view.viewer.readCursor?.firstUnreadMessageId ?? null);
+      }
       setRoomSurface(stableView);
       if (fresh) {
         const newest = stableView.messages.at(-1)?.id;
@@ -977,6 +989,7 @@ export function useRoomSurfaceSession({
     adoptTransport: setTransport,
     roomClient,
     roomSurface,
+    firstUnreadMessageId,
     liveOverlays,
     liveDraftStore: liveDraftDrainStore,
     userPubkey,

@@ -70,8 +70,8 @@ describe('phoneTranscriptTailPadding', () => {
 
 /**
  * The captain's scroll rule (2026-09): a new message or live draft in the
- * open Room/corner follows the newest end from any resting position; an
- * active drag is never interrupted.
+ * open Room/corner follows only while the reader is at the newest end;
+ * history and an active drag are never interrupted.
  */
 describe('scrollFollowOnArrival', () => {
   it('scrolls once for a genuinely new arrival', () => {
@@ -168,7 +168,7 @@ describe('scrollFollowOnArrival', () => {
     ).toBe('hold');
   });
 
-  it('scrolls a new Room message to the newest end from history', () => {
+  it('preserves the reader position when a new Room message arrives in history', () => {
     expect(
       scrollFollowOnArrival({
         previousNewestId: 'msg-1',
@@ -176,7 +176,46 @@ describe('scrollFollowOnArrival', () => {
         isPinnedToTail: false,
         isUserDragging: false,
       }),
-    ).toBe('scroll');
+    ).toBe('hold');
+  });
+});
+
+describe('native variable-height history anchoring', () => {
+  it('uses measured visible-child frames without eager rendering or fixed row heights', () => {
+    const list = chatSource.slice(
+      chatSource.indexOf('<FlatList\n            {...(desktopTranscript'),
+      chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
+    );
+
+    expect(list).toContain('maintainVisibleContentPosition=');
+    expect(list).toContain('minIndexForVisible: 1');
+    expect(list).not.toMatch(/\n\s+getItemLayout=/);
+    expect(list).toContain(
+      'desktopTranscript ? Math.max(1, transcriptMessages.length) : undefined',
+    );
+  });
+
+  it('estimates only a failed boundary jump, then retries after measuring its window', () => {
+    const failedLanding = chatSource.slice(
+      chatSource.indexOf('onScrollToIndexFailed='),
+      chatSource.indexOf('onEndReached='),
+    );
+
+    expect(failedLanding).toContain('offset: averageItemLength * index');
+    expect(failedLanding).toContain('scrollToIndex({');
+    expect(failedLanding).toContain('viewPosition: 0.5');
+  });
+
+  it('keeps pending landings armed through native momentum', () => {
+    const gestureHandlers = chatSource.slice(
+      chatSource.indexOf('onScrollEndDrag='),
+      chatSource.indexOf('onContentSizeChange='),
+    );
+
+    expect(gestureHandlers).toContain('event.nativeEvent.velocity?.y');
+    expect(gestureHandlers).toContain('userDraggingRef.current = hasMomentum');
+    expect(gestureHandlers).toContain('onMomentumScrollEnd');
+    expect(gestureHandlers).toContain('resumePendingNewMessageLanding();');
   });
 });
 

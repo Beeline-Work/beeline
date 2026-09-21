@@ -277,6 +277,15 @@ import {
   EMPTY_TRANSCRIPT_ARRIVAL_STATE,
   observeTranscriptArrivals,
 } from '@/buzz/transcript-motion';
+import {
+  EMPTY_NEW_MESSAGE_QUEUE,
+  acknowledgeNewMessageQueue,
+  boundaryRowIndex,
+  compactNewMessageCount,
+  messageBoundaryIds,
+  queueIncomingMessages,
+  type NewMessageQueue,
+} from '@/buzz/room-new-message-boundary';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -426,6 +435,8 @@ const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
  * 28 matches the Room-list pair so the two screens share one chrome.
  */
 const HEADER_MARK_SIZE = 28;
+const NEW_MESSAGE_CONTROL_HIT_SIZE = 44;
+const NEW_MESSAGE_CONTROL_PLATE_HEIGHT = 30;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -504,6 +515,9 @@ export function BuzzChatSurface({
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
+  // Updated on every scroll; declared before transcript-arrival projection so
+  // arrivals can decide whether to follow or queue against the pre-append view.
+  const isPinnedToTailRef = useRef(true);
   const handledNotificationAnchorRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -563,6 +577,7 @@ export function BuzzChatSurface({
     adoptTransport: setSessionTransport,
     roomClient,
     roomSurface,
+    firstUnreadMessageId,
     liveOverlays,
     liveDraftStore,
     userPubkey,
@@ -577,6 +592,9 @@ export function BuzzChatSurface({
     refreshSignal,
     outbox,
   } = session;
+  useEffect(() => {
+    if (firstUnreadMessageId) allowOlderHistoryRef.current = true;
+  }, [firstUnreadMessageId]);
   useEffect(() => {
     return navigation.addListener('beforeRemove', () => {
       liveDraftStore.setActive(false);
@@ -1161,6 +1179,12 @@ export function BuzzChatSurface({
     () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
     [durableMessages, roomSendFrame.optimistic],
   );
+  const [newMessageQueue, setNewMessageQueue] = useState<NewMessageQueue>(
+    EMPTY_NEW_MESSAGE_QUEUE,
+  );
+  useEffect(() => {
+    setNewMessageQueue(EMPTY_NEW_MESSAGE_QUEUE);
+  }, [decodedId]);
   // Current server message authors refresh the same membership roster that
   // drives Room and corner bylines, mention suggestions, and mention glossing.
   const conversationIdentities = useMemo(
@@ -1172,17 +1196,28 @@ export function BuzzChatSurface({
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
-  const foldedMessages = useMemo(
-    () => foldSystemLines(foldSettledActivityRuns(anchorRelayReports(combinedMessages))),
-    [combinedMessages],
-  );
+  const foldedMessages = useMemo(() => {
+    const anchored = anchorRelayReports(combinedMessages);
+    const boundary = boundaryRowIndex(
+      anchored,
+      newMessageQueue.boundaryId ?? firstUnreadMessageId,
+    );
+    if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchored));
+    // Folding cannot swallow the one exact server-owned unread boundary.
+    return [
+      ...foldSystemLines(foldSettledActivityRuns(anchored.slice(0, boundary))),
+      ...foldSystemLines(foldSettledActivityRuns(anchored.slice(boundary))),
+    ];
+  }, [combinedMessages, firstUnreadMessageId, newMessageQueue.boundaryId]);
   const transcriptArrivalStateRef = useRef(EMPTY_TRANSCRIPT_ARRIVAL_STATE);
   const transcriptCardMotionStore = useMemo(createTranscriptCardMotionStore, [decodedId]);
   const transcriptArrivalObservation = useMemo(() => {
     return observeTranscriptArrivals(transcriptArrivalStateRef.current, {
       surfaceId: decodedId,
       hydrated: Boolean(roomSurface),
-      ids: foldedMessages.map((message) => message.id),
+      // A fold can gain a new durable fact without changing its host row id.
+      // Observe every represented id so that arrival still joins the queue.
+      ids: foldedMessages.flatMap(messageBoundaryIds),
     });
   }, [decodedId, foldedMessages, roomSurface]);
   useEffect(() => {
@@ -1191,6 +1226,16 @@ export function BuzzChatSurface({
     // live arrival before the card ever reaches the screen.
     transcriptArrivalStateRef.current = transcriptArrivalObservation.state;
   }, [transcriptArrivalObservation.state]);
+  useLayoutEffect(() => {
+    if (transcriptArrivalObservation.arrivingIds.size === 0) return;
+    setNewMessageQueue((current) =>
+      queueIncomingMessages(current, {
+        messages: foldedMessages,
+        arrivingIds: transcriptArrivalObservation.arrivingIds,
+        isPinnedToTail: isPinnedToTailRef.current,
+      }),
+    );
+  }, [foldedMessages, transcriptArrivalObservation.arrivingIds]);
   const unprojectedMessages = useMemo(
     () => visibleTranscriptWindow(foldedMessages, visibleMessageCount),
     [foldedMessages, visibleMessageCount],
@@ -1974,14 +2019,14 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
-  // A live message/card change follows to the newest end. The decision is one
-  // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
-  // most once per arrival, off the render path.
+  // A live queue supersedes the cold-open boundary only after it has its own
+  // earliest row. A visited queue keeps its divider until another batch starts.
+  const firstNewMessageId = newMessageQueue.boundaryId ?? firstUnreadMessageId;
+  const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId;
+  // Follow a new row only from the tail. A reader in history keeps the same
+  // position while the arrival joins the compact queue above the composer.
   const userDraggingRef = useRef(false);
   const currentScrollOffsetRef = useRef(0);
-  const readerHeldOffsetRef = useRef(0);
-  const preserveReaderOffsetUntilRef = useRef(0);
-  const preservedTailGrowthRef = useRef(0);
   const nativeContentHeightRef = useRef<number | null>(null);
   // Remaining backstop landings for the desktop arrival follow; the arrival
   // scroll's estimated metrics land short the moment the row appends, so
@@ -2006,6 +2051,15 @@ export function BuzzChatSurface({
   const userScrolledAtRef = useRef(0);
   // Viewport height from the last scroll event, for the tail-gap verdict.
   const viewportHeightRef = useRef(0);
+  const pendingNewMessageLandingRef = useRef<{
+    boundaryId: string;
+    acknowledgeQueue: boolean;
+  } | null>(null);
+  const completedUnreadLandingRef = useRef<string | null>(null);
+  useEffect(() => {
+    pendingNewMessageLandingRef.current = null;
+    completedUnreadLandingRef.current = null;
+  }, [decodedId]);
   useEffect(() => {
     if (!desktopTranscript) return;
     const scrollNode = flatListRef.current?.getScrollableNode() as
@@ -2060,9 +2114,64 @@ export function BuzzChatSurface({
     }
   }, []);
   useEffect(() => cancelDesktopOpenLanding, [cancelDesktopOpenLanding]);
-  // Updated on every onScroll; native's inverted list uses offset 0, while
-  // desktop compares the ordinary offset against the scrollable extent.
-  const isPinnedToTailRef = useRef(true);
+  const landAtNewMessageBoundary = useCallback(
+    (boundaryId: string, acknowledgeQueue: boolean) => {
+      pendingNewMessageLandingRef.current = { boundaryId, acknowledgeQueue };
+      if (userDraggingRef.current) return;
+
+      const visibleIndex = boundaryRowIndex(transcriptMessages, boundaryId);
+      if (visibleIndex >= 0) {
+        scheduleAnimationFrame(() => {
+          const pending = pendingNewMessageLandingRef.current;
+          if (userDraggingRef.current || pending?.boundaryId !== boundaryId) return;
+          cancelDesktopOpenLanding();
+          flatListRef.current?.scrollToIndex({
+            index: visibleIndex,
+            viewPosition: 0.5,
+            animated: false,
+          });
+          pendingNewMessageLandingRef.current = null;
+          if (acknowledgeQueue) {
+            setNewMessageQueue((current) => acknowledgeNewMessageQueue(current));
+          } else {
+            completedUnreadLandingRef.current = boundaryId;
+          }
+        });
+        return;
+      }
+
+      const residentIndex = boundaryRowIndex(foldedMessages, boundaryId);
+      if (residentIndex >= 0) {
+        revealTranscriptThrough(foldedMessages.length - residentIndex);
+      } else if (transcriptHistoryStatus === 'idle') {
+        loadOlderTranscriptMessages();
+      }
+    },
+    [
+      cancelDesktopOpenLanding,
+      foldedMessages,
+      loadOlderTranscriptMessages,
+      revealTranscriptThrough,
+      transcriptHistoryStatus,
+      transcriptMessages,
+    ],
+  );
+  const resumePendingNewMessageLanding = useCallback(() => {
+    const pending = pendingNewMessageLandingRef.current;
+    if (pending) {
+      landAtNewMessageBoundary(pending.boundaryId, pending.acknowledgeQueue);
+    }
+  }, [landAtNewMessageBoundary]);
+  useEffect(() => {
+    if (
+      !firstUnreadMessageId ||
+      messageAnchorId ||
+      completedUnreadLandingRef.current === firstUnreadMessageId
+    ) {
+      return;
+    }
+    landAtNewMessageBoundary(firstUnreadMessageId, false);
+  }, [firstUnreadMessageId, landAtNewMessageBoundary, messageAnchorId]);
   const scrollToNewestMessage = useCallback(() => {
     scheduleAnimationFrame(() => {
       if (desktopTranscript) {
@@ -2102,28 +2211,12 @@ export function BuzzChatSurface({
     isUserDragging: userDraggingRef.current,
     openLandsOnTail: roomOpenLandsOnTail({
       desktopTranscript,
-      messageAnchorId,
+      messageAnchorId: transcriptLandingAnchorId,
     }),
   });
   useLayoutEffect(() => {
-    if (messageAnchorId) return;
-    if (arrivalFollow === 'hold') {
-      if (!desktopTranscript && !isPinnedToTailRef.current) {
-        // An appended fold row grows inside the existing index-0 card, which
-        // Android's maintainVisibleContentPosition cannot anchor by itself.
-        // Hold the reader's last deliberate offset through the 260ms grow.
-        preserveReaderOffsetUntilRef.current = Date.now() + 450;
-        preservedTailGrowthRef.current = 0;
-        setTimeout(() => {
-          if (Date.now() > preserveReaderOffsetUntilRef.current) return;
-          flatListRef.current?.scrollToOffset({
-            offset: readerHeldOffsetRef.current + preservedTailGrowthRef.current,
-            animated: false,
-          });
-        }, 320);
-      }
-      return;
-    }
+    if (transcriptLandingAnchorId) return;
+    if (arrivalFollow === 'hold') return;
     if (desktopTranscript) {
       const isColdOpen = !desktopOpenLandingStartedRef.current;
       desktopOpenLandingStartedRef.current = true;
@@ -2149,7 +2242,7 @@ export function BuzzChatSurface({
       }
     }
     scrollToNewestMessage();
-  }, [messageAnchorId, newestMessageId, scrollToNewestMessage]);
+  }, [newestMessageId, scrollToNewestMessage, transcriptLandingAnchorId]);
   // Reveal the exact fact that caused the alert. Fresh messages usually land
   // in the cached tail; if the target is already resident outside the initial
   // window, widen the window first and scroll on the next render.
@@ -4297,6 +4390,7 @@ export function BuzzChatSurface({
     messageById: visibleMessageById,
     arrivingCardIds: transcriptArrivalObservation.arrivingIds,
     cardMotionStore: transcriptCardMotionStore,
+    firstNewMessageId,
   });
 
   if (!roomSurface) {
@@ -4578,6 +4672,7 @@ export function BuzzChatSurface({
             />
           )}
 
+          <View style={styles.transcriptViewport}>
           <FlatList
             {...(desktopTranscript ? { onWheel: cancelDesktopOpenLanding } : {})}
             testID="chat-messages"
@@ -4605,10 +4700,13 @@ export function BuzzChatSurface({
               desktopTranscript
                 ? undefined
                 : {
-                    // Native anchors the second-newest row: index 0 is replaced
-                    // during optimistic settlement and streams. Web's adapter
-                    // shifts scrollTop on tail appends when this prop is set,
-                    // moving a desktop reader who is browsing history.
+                    // Native records the first eligible visible child's real
+                    // frame and compensates by its measured movement. That
+                    // preserves variable-height history without getItemLayout,
+                    // eager rendering, or an estimated offset. Index 0 is
+                    // excluded because optimistic settlement and streams can
+                    // replace it in place. Web's adapter shifts scrollTop on
+                    // tail appends, so desktop uses its measured path instead.
                     minIndexForVisible: 1,
                     // Native offset 0 is the visual bottom.
                     autoscrollToTopThreshold: 50,
@@ -4630,9 +4728,6 @@ export function BuzzChatSurface({
                 ? contentOffset.y + layoutMeasurement.height >=
                   contentSize.height - TAIL_PIN_THRESHOLD
                 : contentOffset.y <= TAIL_PIN_THRESHOLD;
-              if (userDraggingRef.current && !isPinnedToTailRef.current) {
-                readerHeldOffsetRef.current = contentOffset.y;
-              }
               if (
                 desktopTranscript &&
                 (!isPinnedToTailRef.current ||
@@ -4648,11 +4743,13 @@ export function BuzzChatSurface({
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
             }}
-            onScrollEndDrag={() => {
-              userDraggingRef.current = false;
-              if (!isPinnedToTailRef.current) {
-                readerHeldOffsetRef.current = currentScrollOffsetRef.current;
-              }
+            onScrollEndDrag={(event) => {
+              // Drag-end precedes momentum-begin. Keep the interaction guard
+              // armed across that gap when native reports velocity, otherwise
+              // a pending unread landing can jump under a coasting finger.
+              const hasMomentum = Math.abs(event.nativeEvent.velocity?.y ?? 0) > 0.01;
+              userDraggingRef.current = hasMomentum;
+              if (!hasMomentum) resumePendingNewMessageLanding();
             }}
             onMomentumScrollBegin={() => {
               cancelDesktopOpenLanding();
@@ -4661,9 +4758,7 @@ export function BuzzChatSurface({
             }}
             onMomentumScrollEnd={() => {
               userDraggingRef.current = false;
-              if (!isPinnedToTailRef.current) {
-                readerHeldOffsetRef.current = currentScrollOffsetRef.current;
-              }
+              resumePendingNewMessageLanding();
             }}
             onContentSizeChange={(_width, height) => {
               const previousHeight = nativeContentHeightRef.current;
@@ -4854,16 +4949,10 @@ export function BuzzChatSurface({
                 }
                 return;
               }
-              if (Date.now() > preserveReaderOffsetUntilRef.current || previousHeight === null) {
-                return;
-              }
-              preservedTailGrowthRef.current += height - previousHeight;
-              scheduleAnimationFrame(() => {
-                flatListRef.current?.scrollToOffset({
-                  offset: readerHeldOffsetRef.current + preservedTailGrowthRef.current,
-                  animated: false,
-                });
-              });
+              // Native history anchoring is owned solely by
+              // maintainVisibleContentPosition above. Programmatic offset
+              // correction here would race its measured child-frame delta and
+              // can override a touch or momentum scroll.
             }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength, index }) => {
@@ -4899,6 +4988,27 @@ export function BuzzChatSurface({
               desktopTranscript ? null : transcriptHistoryLine
             }
           />
+          {newMessageQueue.count > 0 && newMessageQueue.boundaryId && (
+            <Pressable
+              accessibilityLabel={`${newMessageQueue.count} new ${newMessageQueue.count === 1 ? 'message' : 'messages'}. Jump to first new message`}
+              accessibilityRole="button"
+              onPress={() =>
+                landAtNewMessageBoundary(newMessageQueue.boundaryId!, true)
+              }
+              style={({ pressed }) => [
+                styles.newMessageControlHitTarget,
+                pressed && styles.newMessageControlPressed,
+              ]}
+              testID="new-message-control"
+            >
+              <View style={styles.newMessageControlPlate}>
+                <Text style={styles.newMessageControlText}>
+                  {compactNewMessageCount(newMessageQueue.count)} new
+                </Text>
+              </View>
+            </Pressable>
+          )}
+          </View>
 
           {/* P2: Archived channels are read-only */}
           {isArchived ? (
@@ -5932,6 +6042,10 @@ const styles = StyleSheet.create((theme) => {
     },
 
     // ── Message blocks ──────────────────────────────────────────────
+    transcriptViewport: {
+      flex: 1,
+      position: 'relative',
+    },
     messageList: {
       flex: 1,
     },
@@ -5945,6 +6059,33 @@ const styles = StyleSheet.create((theme) => {
     },
     messageListContentEmpty: {
       flexGrow: 1,
+    },
+    newMessageControlHitTarget: {
+      position: 'absolute',
+      right: 12,
+      bottom: 4,
+      minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
+      height: NEW_MESSAGE_CONTROL_HIT_SIZE,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    newMessageControlPressed: {
+      opacity: 0.72,
+    },
+    newMessageControlPlate: {
+      height: NEW_MESSAGE_CONTROL_PLATE_HEIGHT,
+      minWidth: NEW_MESSAGE_CONTROL_HIT_SIZE,
+      paddingHorizontal: groknight.space.sm,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.bgHighlight,
+    },
+    newMessageControlText: {
+      ...Typography.mono('semiBold'),
+      ...groknight.type.meta,
+      color: groknight.ledgerQuiet,
+      fontVariant: ['tabular-nums'],
     },
     outboxFailure: {
       marginTop: 4,

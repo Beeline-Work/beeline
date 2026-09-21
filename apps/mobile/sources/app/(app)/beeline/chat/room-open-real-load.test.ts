@@ -91,6 +91,8 @@ describe('Room open paints a Room, not the last message', () => {
     );
     expect(landing).toMatch(/notificationMessageId|messageAnchor/);
     expect(landing).not.toContain('openLandsOnTail: !desktopTranscript');
-    expect(landing).toMatch(/if \([^)]*(?:messageAnchor|notificationMessageId)[^)]*\) return/);
+    expect(landing).toMatch(
+      /if \([^)]*(?:transcriptLandingAnchor|messageAnchor|notificationMessageId)[^)]*\) return/,
+    );
   });
 });

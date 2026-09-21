@@ -187,6 +187,25 @@ describe('ACP streaming lane classifier', () => {
     }
   });
 
+  it('resumes a capitalized word an update split in two', () => {
+    // A capital can resume a word as easily as open a sentence: brand names,
+    // CamelCase and acronyms all stream as `Git` + update + `Hub`. The word
+    // being landed on decides which it is.
+    for (const [head, tail, whole] of [
+      ['Using Git', 'Hub works.', 'Using GitHub works.'],
+      ['Open the READ', 'ME first.', 'Open the README first.'],
+      ['Written in Java', 'Script.', 'Written in JavaScript.'],
+    ]) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: head } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: tail } }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual([whole]);
+      expect(finalAgentMessageText(updates)).toBe(whole);
+    }
+  });
+
   it('still ends a run when the text that resumes opens a new sentence', () => {
     // The word-continuation guard must not swallow a genuine message
     // boundary: a capitalized head after tool work is a fresh message, and a
@@ -820,10 +839,10 @@ lines.on('line', (line) => {
 }
 
 /** The same stream-head shape, but the update that lands mid-word is a tool
- *  call and the word resumes with an ordinary letter — the two permutations
- *  the word-continuation guard could not see, because a tool call closed the
- *  run before the guard ran and the guard only recognized punctuation heads. */
-async function fakeToolCallWordSplitAgent(): Promise<string> {
+ *  call — the permutation the word-continuation guard could never see,
+ *  because a tool call closed the run before the guard ran. `head` and `tail`
+ *  are the two halves of the word the tool call lands inside. */
+async function fakeToolCallWordSplitAgent(head: string, tail: string): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-tool-word-split-'));
   temporaryDirectories.push(directory);
   const binary = resolve(directory, 'fake-tool-call-word-split-agent.mjs');
@@ -846,9 +865,9 @@ lines.on('line', (line) => {
   } else if (message.method === 'session/new') {
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'tool-word-split-session' } });
   } else if (message.method === 'session/prompt') {
-    chunk('I');
+    chunk(${JSON.stringify(head)});
     update({ sessionUpdate: 'tool_call', toolCallId: 'read-1', kind: 'read', title: 'Read README' });
-    chunk("'ll take a look at the README first.");
+    chunk(${JSON.stringify(tail)});
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);
@@ -1615,7 +1634,7 @@ describe('AcpClient live steering', () => {
     // turn's final message began "'ll take a look at the README first." and
     // its head was published as a separate one-character output row.
     const client = new AcpClient({
-      agentBinary: await fakeToolCallWordSplitAgent(),
+      agentBinary: await fakeToolCallWordSplitAgent('I', "'ll take a look at the README first."),
       agentEnv: {},
     });
     await client.start();
@@ -1632,6 +1651,33 @@ describe('AcpClient live steering', () => {
       );
       expect(result.agentText).toBe("I'll take a look at the README first.");
       expect(runs.at(-1)).toEqual(["I'll take a look at the README first."]);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps the first characters of a turn when a tool call splits a capitalized word', async () => {
+    // `Git` + tool call + `Hub works.` — a capital resuming a word reads the
+    // same as a capital opening a sentence, so this turn still posted only
+    // "Hub works." and dropped "Using Git" out of the reply.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('Using Git', 'Hub works.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Using GitHub works.');
+      expect(runs.at(-1)).toEqual(['Using GitHub works.']);
     } finally {
       await client.stop();
     }

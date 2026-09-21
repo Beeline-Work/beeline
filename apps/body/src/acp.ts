@@ -279,25 +279,37 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
-/** A run left stopped on a letter or digit, i.e. part-way through a word. */
-const RUN_ENDS_MID_WORD = /[\p{L}\p{N}]$/u;
+/** The word a run stops part-way through, when it stops inside one at all. */
+const RUN_TRAILING_WORD = /[\p{L}\p{N}]+$/u;
 
 /**
- * A delta head that resumes a word rather than opening a sentence: a digit, a
- * lowercase letter, or a letter from a caseless script. An uppercase head is
- * excluded \u2014 that is how a fresh message after tool work begins.
+ * A delta head that can only be resuming a word: a digit, a lowercase letter,
+ * or a letter from a caseless script such as Chinese. An uppercase head is
+ * ambiguous and decided separately \u2014 it is equally how a fresh message after
+ * tool work opens.
  */
 const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
+
+const UPPERCASE_HEAD = /^\p{Lu}/u;
 
 /**
  * Whether `delta` continues the word `current` stops on, so the non-text
  * update between them was interleaved metadata rather than a message
  * boundary. A run already closed by whitespace is a boundary on its own.
+ *
+ * An uppercase resume is read against the word it lands on, because that is
+ * the only thing that separates a split name from a new sentence: `Git` +
+ * `Hub`, `READ` + `ME` and `Java` + `Script` all resume a word that is itself
+ * capitalized, whereas a genuine post-tool message (`the files` + `Found the
+ * answer.`) lands a capital on the end of an ordinary lowercase word.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
   if (CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) return true;
-  return RUN_ENDS_MID_WORD.test(current) && CHUNK_RESUMES_WORD.test(delta);
+  const word = RUN_TRAILING_WORD.exec(current)?.[0];
+  if (!word) return false;
+  if (CHUNK_RESUMES_WORD.test(delta)) return true;
+  return UPPERCASE_HEAD.test(delta) && UPPERCASE_HEAD.test(word);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;

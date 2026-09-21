@@ -21,8 +21,7 @@ import {
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { useHeaderHeight } from '@/utils/responsive';
-import { isDesktopPlatform } from '@/utils/platform';
+import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import {
   MEMBERS_LABEL,
   ROOM_LABEL,
@@ -232,7 +231,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
-  const isDesktop = isDesktopPlatform();
+  const isDesktop = useIsDesktop();
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams<{

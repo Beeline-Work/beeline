@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let windowWidth = 1280;
+const layout = vi.hoisted(() => ({ tablet: true, desktop: true }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -48,8 +49,8 @@ vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => false }));
 vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
 vi.mock('@/utils/responsive', () => ({
-  useIsDesktop: () => true,
-  useIsTablet: () => true,
+  useIsDesktop: () => layout.desktop,
+  useIsTablet: () => layout.tablet,
   useHeaderHeight: () => 0,
 }));
 vi.mock('@/navigation/browserNavigation', () => ({
@@ -101,6 +102,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   windowWidth = 1280;
+  layout.tablet = true;
+  layout.desktop = true;
   loadDesktopPaneWidthMock.mockClear();
   saveDesktopPaneWidthMock.mockClear();
 });
@@ -121,6 +124,27 @@ async function renderNavigator(width: number): Promise<ReactTestRenderer> {
   });
   return tree;
 }
+
+describe('SidebarNavigator web width class', () => {
+  it('hides the permanent drawer on compact web so the Room deck owns the viewport', async () => {
+    layout.tablet = false;
+    layout.desktop = false;
+    const tree = await renderNavigator(390);
+    const options = tree.root.findByType('Drawer' as any).props.screenOptions;
+    expect(options.drawerType).toBe('front');
+    expect(options.drawerStyle.width).toBe(0);
+    expect(options.drawerStyle.display).toBe('none');
+    expect(tree.root.findAllByProps({ testID: 'desktop-navigation-resizer' })).toHaveLength(0);
+  });
+
+  it('keeps the permanent two-pane frame once the window is regular', async () => {
+    const tree = await renderNavigator(1440);
+    const options = tree.root.findByType('Drawer' as any).props.screenOptions;
+    expect(options.drawerType).toBe('permanent');
+    expect(options.drawerStyle.width).toBe(280);
+    expect(resizer(tree).props.testID).toBe('desktop-navigation-resizer');
+  });
+});
 
 describe('SidebarNavigator resize handle', () => {
   it('drags the nav pane wider on an ordinary desktop window', async () => {

@@ -249,7 +249,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   return { ...actual, RoomViewClient, SurfaceRefreshScheduler };
 });
 
-import MembersScreen from './MembersScreen';
+import MembersScreen from './members';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 /**

@@ -83,6 +83,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
+import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
@@ -134,9 +135,9 @@ import {
   formatRoomParticipantTotal,
   isChannelMentionHandle,
   mentionedAgentPubkey,
+  orderRoomRoster,
   replaceActiveMention,
   resolveComposerMentions,
-  sectionRoomParticipants,
   selectedMentionAgentPubkey,
   shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
@@ -160,7 +161,6 @@ import {
 } from '@/buzz/community-invite';
 import {
   MemberPickerSheet,
-  shouldOpenPeoplePicker,
   type MemberPickerCandidate,
 } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
@@ -1475,11 +1475,11 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterSections = useMemo(() => {
+  const visibleRosterMembers = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
-    return sectionRoomParticipants(
+    return orderRoomRoster(
       roomParticipants.map((participant) => {
         if (participant.kind !== 'agent') return participant;
         const workspaceAgent = workspaceAgents.get(participant.pubkey);
@@ -1873,7 +1873,7 @@ export function BuzzChatSurface({
       ? 'dm'
       : 'room';
   const focusComposer = useCallback(() => {
-    requestAnimationFrame(() => composerRef.current?.focus());
+    scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
@@ -2061,7 +2061,7 @@ export function BuzzChatSurface({
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
   const scrollToNewestMessage = useCallback(() => {
-    requestAnimationFrame(() => {
+    scheduleAnimationFrame(() => {
       if (desktopTranscript) {
         flatListRef.current?.scrollToEnd({ animated: false });
         // Record the position after scrollToEnd clamps against the current
@@ -2168,7 +2168,7 @@ export function BuzzChatSurface({
     );
     if (visibleIndex >= 0) {
       cancelDesktopOpenLanding();
-      requestAnimationFrame(() =>
+      scheduleAnimationFrame(() =>
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
           viewPosition: 0.5,
@@ -2545,7 +2545,7 @@ export function BuzzChatSurface({
         // center the replied-to message. The reply reference in the composer
         // is enough context, so land back on the end of the log instead.
         scrollToNewestMessage();
-        requestAnimationFrame(() => composerRef.current?.focus());
+        scheduleAnimationFrame(() => composerRef.current?.focus());
       };
       if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
     },
@@ -3048,7 +3048,7 @@ export function BuzzChatSurface({
           : null,
       );
       setHighlightedMentionIndex(0);
-      requestAnimationFrame(() => {
+      scheduleAnimationFrame(() => {
         composerRef.current?.focus();
         // Normal Android typing owns its cursor. Set selection only for this
         // explicit replacement, after React has applied the new text.
@@ -3768,7 +3768,7 @@ export function BuzzChatSurface({
   const closeDesktopWorkPane = useCallback(() => {
     const transition = commitDesktopWorkPane({ type: 'dismiss' });
     void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-    requestAnimationFrame(() => workPaneHandleRef.current?.focus());
+    scheduleAnimationFrame(() => workPaneHandleRef.current?.focus());
   }, [commitDesktopWorkPane, workPaneWindowClass]);
 
   const openDesktopWorkOverview = useCallback(() => {
@@ -3802,7 +3802,7 @@ export function BuzzChatSurface({
     const transition = commitDesktopWorkPane({ type: 'toggle' });
     void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
     if (transition.state.preference === 'dismissed')
-      requestAnimationFrame(() => workPaneHandleRef.current?.focus());
+      scheduleAnimationFrame(() => workPaneHandleRef.current?.focus());
   }, [commitDesktopWorkPane, hasLiveDesktopCorners, workPaneWindowClass]);
 
   useEffect(() => {
@@ -3878,7 +3878,7 @@ export function BuzzChatSurface({
     setComposerHeight(COMPOSER_MIN_HEIGHT);
     setDismissedSlashText(null);
     setHighlightedSlashVerbIndex(0);
-    requestAnimationFrame(() => composerRef.current?.focus());
+    scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
   const dismissSlashMenu = useCallback(() => {
@@ -4845,7 +4845,7 @@ export function BuzzChatSurface({
                 return;
               }
               preservedTailGrowthRef.current += height - previousHeight;
-              requestAnimationFrame(() => {
+              scheduleAnimationFrame(() => {
                 flatListRef.current?.scrollToOffset({
                   offset: readerHeldOffsetRef.current + preservedTailGrowthRef.current,
                   animated: false,
@@ -5388,25 +5388,13 @@ export function BuzzChatSurface({
         memberByPubkey={roomMemberByPubkey}
         membershipActionPubkey={membershipActionPubkey}
         membershipError={membershipError}
-        onAddAgents={() => {
+        members={visibleRosterMembers}
+        onAddMembers={() => {
           setMembershipError(null);
-          setParticipantPickerKind('agent');
-          setParticipantPickerVisible(true);
-        }}
-        onAddPeople={() => {
-          setMembershipError(null);
-          // Nobody left to add: skip the "Add people or agents" sheet and
-          // reach for the exact same invite-link share its "Invite a
-          // person…" row already opens (captain report: the intermediate
-          // sheet only restated that fact and handed back the same next step).
-          const addablePersonCount = (participantPickerCandidates ?? []).filter(
-            (candidate) => candidate.kind === 'person',
-          ).length;
-          if (workspaceRoster && !shouldOpenPeoplePicker(addablePersonCount)) {
-            void handleInvitePerson();
-            return;
-          }
-          setParticipantPickerKind('person');
+          // One counted Members section owns one add control, so the picker it
+          // opens lists both kinds and carries its own invite-a-person and
+          // connect-an-agent rows.
+          setParticipantPickerKind(null);
           setParticipantPickerVisible(true);
         }}
         onClose={closeRoster}
@@ -5415,8 +5403,6 @@ export function BuzzChatSurface({
         workingByPubkey={speakerWorking}
         parentChannelId={parentChannelId ?? null}
         personProfileByPubkey={personProfileByPubkey}
-        rosterSections={visibleRosterSections}
-        total={roomParticipantTotal}
         userPubkey={userPubkey}
         visible={memberManagement.rosterVisible}
       />

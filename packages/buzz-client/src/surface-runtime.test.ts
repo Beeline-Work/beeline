@@ -161,6 +161,38 @@ describe('surface liveness scheduler', () => {
     await Promise.resolve();
     expect(onError).not.toHaveBeenCalled();
   });
+
+  it('clears a pending timer without binding host clearTimeout to the scheduler', async () => {
+    const realClear = globalThis.clearTimeout.bind(globalThis);
+    const receivers: unknown[] = [];
+    function throwingClear(this: unknown, id?: Parameters<typeof clearTimeout>[0]) {
+      receivers.push(this);
+      if (this !== globalThis && this !== undefined) {
+        throw new TypeError('Illegal invocation');
+      }
+      realClear(id);
+    }
+    const detached = { clearTimer: throwingClear };
+    expect(() => detached.clearTimer(undefined)).toThrow('Illegal invocation');
+    receivers.length = 0;
+
+    vi.stubGlobal('clearTimeout', throwingClear);
+    try {
+      const scheduler = new SurfaceRefreshScheduler({
+        fetch: async () => 1,
+        apply: () => undefined,
+        setTimer: (callback, delay) => setTimeout(callback, delay),
+      });
+      await scheduler.startAfter(Promise.resolve());
+      expect(() => scheduler.advanceGeneration()).not.toThrow();
+      expect(receivers.length).toBeGreaterThan(0);
+      expect(receivers.every((receiver) => receiver === globalThis || receiver === undefined)).toBe(
+        true,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('narrow live seam', () => {

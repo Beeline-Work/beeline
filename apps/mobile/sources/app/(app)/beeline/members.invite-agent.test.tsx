@@ -178,7 +178,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   return { ...actual, RoomViewClient, SurfaceRefreshScheduler };
 });
 
-import MembersScreen from './MembersScreen';
+import MembersScreen from './members';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -298,7 +298,7 @@ describe('Members agent invitation flow', () => {
 });
 
 describe('Members invite affordance design', () => {
-  const source = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
 
   it('offers a quiet + on each section head, in place of the boxed mono invite pair and the full-width brass row (C82)', async () => {
     route.action = undefined;

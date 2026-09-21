@@ -9,7 +9,7 @@ const rowSource = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
   'utf8',
 );
-const membersSource = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
+const membersSource = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
 const channelsSource = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
 
 describe('Room participant roster layout', () => {
@@ -39,9 +39,12 @@ describe('Room participant roster layout', () => {
     expect(rowSource).toContain("', online'");
   });
 
-  it('reads in the Members page vocabulary: one word over counted section heads, roles from the type scale', () => {
+  it('reads in the Members page vocabulary: one word over one counted head, roles from the type scale', () => {
     expect(source).toContain('{MEMBERS_LABEL}');
-    expect(source).toContain('{section.label} {section.options.length}');
+    expect(source).toContain('{MEMBERS_LABEL} {members.length}');
+    // One section, so no per-kind heads are left to drift apart.
+    expect(source).not.toContain('room-roster-people-head');
+    expect(source).not.toContain('room-roster-agents-head');
     expect(rowSource).toContain('title: { ...Typography.default(), ...hull.type.body');
     expect(rowSource).toContain('subtitle: { ...Typography.default(), ...hull.type.meta');
     expect(rowSource).not.toMatch(/fontSize:\s*\d/);

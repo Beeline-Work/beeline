@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  * larger glyph never stretches the section-head row's height.
  */
 const membersSource = readFileSync(
-  path.join(__dirname, '../../app/(app)/beeline/MembersScreen.tsx'),
+  path.join(__dirname, '../../app/(app)/beeline/members.tsx'),
   'utf8',
 );
 const rosterSource = readFileSync(path.join(__dirname, './RoomRosterSheet.tsx'), 'utf8');

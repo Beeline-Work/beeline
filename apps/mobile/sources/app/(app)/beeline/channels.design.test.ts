@@ -94,7 +94,9 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'header')).toContain(
       'paddingRight: HEADER_EDGE_INSET - HEADER_TARGET_AIR',
     );
-    expect(styleBlock(source, 'headerActions')).toContain('gap: hull.space.sm');
+    // Touching 44pt boxes: no gap, marks 28dp apart (44 - 16).
+    expect(styleBlock(source, 'headerActions')).toContain('gap: 0');
+    expect(styleBlock(source, 'headerActions')).not.toContain('gap: hull.space');
     expect(styleBlock(source, 'headerAction')).toContain('minWidth: HEADER_TARGET_SIZE');
     expect(styleBlock(source, 'headerAction')).not.toContain('paddingHorizontal: 8');
     expect(styleBlock(source, 'headerAction')).not.toContain("alignItems: 'flex-end'");

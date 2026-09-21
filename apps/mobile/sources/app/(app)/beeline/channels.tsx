@@ -89,8 +89,8 @@ const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 /**
  * A 16px mark centred in its own 44pt box. Hit slop was carrying the target
  * instead, so two marks a spacing step apart had targets that overlapped by
- * 20pt while the ink looked cramped. Real boxes parted by `space.sm` give
- * 44pt targets with 8pt of slab between their edges.
+ * 20pt while the ink looked cramped. Touching 44pt boxes put the ink 28pt
+ * apart (44 - 16), with no gap widening it further.
  */
 const HEADER_MARK_SIZE = 16;
 const HEADER_TARGET_SIZE = 44;
@@ -1210,11 +1210,11 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
-    // so one spacing step between them is one spacing step of real slab.
+    // and they touch, so the marks sit 28pt apart (44 - 16).
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: hull.space.sm,
+      gap: 0,
     },
     headerActionGlyph: { color: hull.textMuted },
     errorBar: {

@@ -23,83 +23,48 @@ vi.mock('./android-launch-appearance-native', () => ({
 }));
 
 describe('Android launch appearance pin', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.resetModules();
     mmkvValues.clear();
     setAndroidNightMode.mockReset();
   });
 
-  it('does not force a splash theme until Appearance is actually chosen', async () => {
-    const { applyPersistedAndroidLaunchAppearance, currentAppearanceLaunch } = await import(
-      './android-launch-appearance'
-    );
+  it('pins an explicit choice on a cold start', async () => {
+    mmkvValues.set('appearance-launch', 'light');
+    const { applyEffectiveAndroidLaunchAppearance } = await import('./android-launch-appearance');
 
-    expect(currentAppearanceLaunch()).toBe('system');
-    applyPersistedAndroidLaunchAppearance();
-    expect(setAndroidNightMode).not.toHaveBeenCalled();
+    applyEffectiveAndroidLaunchAppearance();
+
+    expect(setAndroidNightMode).toHaveBeenCalledTimes(1);
+    expect(setAndroidNightMode).toHaveBeenCalledWith('light');
   });
 
-  it('treats an unknown launch pin as system-following', async () => {
-    mmkvValues.set('appearance-launch', 'auto');
-    const { applyPersistedAndroidLaunchAppearance, currentAppearanceLaunch } = await import(
-      './android-launch-appearance'
-    );
-
-    expect(currentAppearanceLaunch()).toBe('system');
-    applyPersistedAndroidLaunchAppearance();
-    expect(setAndroidNightMode).not.toHaveBeenCalled();
-  });
-
-  it('does not treat the default stored appearance as a launch pin', async () => {
+  it('leaves a never-chosen splash following the system', async () => {
     mmkvValues.set('local-settings', JSON.stringify({ appearance: 'dark' }));
-    const { applyPersistedAndroidLaunchAppearance, currentAppearanceLaunch } = await import(
-      './android-launch-appearance'
-    );
+    const { applyEffectiveAndroidLaunchAppearance } = await import('./android-launch-appearance');
 
-    expect(currentAppearanceLaunch()).toBe('system');
-    applyPersistedAndroidLaunchAppearance();
+    applyEffectiveAndroidLaunchAppearance();
+
     expect(setAndroidNightMode).not.toHaveBeenCalled();
   });
 
-  it('pins light so the next splash uses the cream day resources', async () => {
-    const { pinAndroidLaunchAppearance, applyPersistedAndroidLaunchAppearance, currentAppearanceLaunch } =
-      await import('./android-launch-appearance');
+  it('records an explicit choice before pinning it', async () => {
+    const { pinAndroidLaunchAppearance } = await import('./android-launch-appearance');
 
     pinAndroidLaunchAppearance('light');
 
-    expect(currentAppearanceLaunch()).toBe('light');
-    expect(setAndroidNightMode).toHaveBeenCalledTimes(1);
-    expect(setAndroidNightMode).toHaveBeenCalledWith('light');
-
-    setAndroidNightMode.mockClear();
-    applyPersistedAndroidLaunchAppearance();
+    expect(mmkvValues.get('appearance-launch')).toBe('light');
     expect(setAndroidNightMode).toHaveBeenCalledWith('light');
   });
 
-  it('pins dark so the next splash uses the aubergine night resources', async () => {
-    const { pinAndroidLaunchAppearance, currentAppearanceLaunch } = await import(
-      './android-launch-appearance'
-    );
-
-    pinAndroidLaunchAppearance('dark');
-
-    expect(currentAppearanceLaunch()).toBe('dark');
-    expect(setAndroidNightMode).toHaveBeenCalledWith('dark');
-  });
-
-  it('writes the pin before the native call so a kill mid-switch still reapplies', async () => {
+  it('records a choice killed mid-switch for the next cold start', async () => {
     setAndroidNightMode.mockImplementation(() => {
       throw new Error('killed');
     });
     const { pinAndroidLaunchAppearance } = await import('./android-launch-appearance');
 
     expect(() => pinAndroidLaunchAppearance('light')).toThrow('killed');
+    // The choice marker is what protects the value from later system seeding.
     expect(mmkvValues.get('appearance-launch')).toBe('light');
-
-    setAndroidNightMode.mockReset();
-    vi.resetModules();
-    const { applyPersistedAndroidLaunchAppearance } = await import('./android-launch-appearance');
-    applyPersistedAndroidLaunchAppearance();
-    expect(setAndroidNightMode).toHaveBeenCalledWith('light');
   });
 });

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // theme.ts reads react-native's Platform.select at import time.
 vi.mock('react-native', () => ({
   Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+  Appearance: { getColorScheme: () => 'dark' },
 }));
 
 const mmkvValues = vi.hoisted(() => new Map<string, string>());
@@ -68,6 +69,7 @@ describe('the appearance toggle wired into Unistyles', () => {
   });
 
   it('cold-starts into bone when the persisted appearance is light', async () => {
+    mmkvValues.set('appearance-launch', 'light');
     mmkvValues.set('local-settings', JSON.stringify({ appearance: 'light' }));
     await import('./unistyles');
 
@@ -76,6 +78,7 @@ describe('the appearance toggle wired into Unistyles', () => {
   });
 
   it('cold-starts native text at the persisted small or large size', async () => {
+    mmkvValues.set('appearance-launch', 'dark');
     mmkvValues.set('local-settings', JSON.stringify({ appearance: 'dark', uiSize: 'small' }));
     await import('./unistyles');
     expect(configure.mock.calls[0][0].settings.initialTheme).toBe('obsidianSmall');
@@ -84,6 +87,7 @@ describe('the appearance toggle wired into Unistyles', () => {
   it('setAppAppearance flips the live Unistyles theme and the native root color', async () => {
     const { boneTheme } = await import('./theme');
     const { setAppAppearance } = await import('./unistyles');
+    setAndroidNightMode.mockClear();
 
     setAppAppearance('light', 'large');
 
@@ -93,14 +97,21 @@ describe('the appearance toggle wired into Unistyles', () => {
     expect(setAndroidNightMode).not.toHaveBeenCalled();
   });
 
-  it('pins the next Android splash only when Appearance is chosen', async () => {
+  it('pins the cold-start splash only for an explicit choice', async () => {
+    mmkvValues.set('appearance-launch', 'dark');
+    await import('./unistyles');
+
+    expect(setAndroidNightMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('re-pins the next Android splash when Appearance is chosen', async () => {
     const { applyAppearanceChoice, setAppDisplay } = await import('./unistyles');
+    setAndroidNightMode.mockClear();
 
     setAppDisplay('light', 'medium');
     expect(setAndroidNightMode).not.toHaveBeenCalled();
 
     applyAppearanceChoice('light', 'medium');
     expect(setAndroidNightMode).toHaveBeenCalledWith('light');
-    expect(mmkvValues.get('appearance-launch')).toBe('light');
   });
 });

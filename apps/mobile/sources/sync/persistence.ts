@@ -42,19 +42,19 @@ export function saveLocalSettings(settings: LocalSettings): void {
   mmkv.set('local-settings', JSON.stringify(settings));
 }
 
-/** Launch-theme pin for the next Android splash. Missing means the person
- *  has never touched Appearance, so the system splash stays system-following
- *  even though local appearance itself defaults to dark. */
-export type AppearanceLaunch = 'system' | 'light' | 'dark';
-const APPEARANCE_LAUNCH_KEY = 'appearance-launch';
+/** The person's explicit Settings → Appearance choice. Its presence — not the
+ *  in-app value — is what distinguishes a choice from a value seeded from the
+ *  system, so a later system change can never overwrite the choice. The key is
+ *  kept from the pre-seed implementation so an existing chooser migrates. */
+const APPEARANCE_CHOICE_KEY = 'appearance-launch';
 
-export function loadAppearanceLaunch(): AppearanceLaunch {
-  const raw = mmkv.getString(APPEARANCE_LAUNCH_KEY);
-  return raw === 'light' || raw === 'dark' ? raw : 'system';
+export function loadAppearanceChoice(): 'light' | 'dark' | null {
+  const raw = mmkv.getString(APPEARANCE_CHOICE_KEY);
+  return raw === 'light' || raw === 'dark' ? raw : null;
 }
 
-export function saveAppearanceLaunch(mode: 'light' | 'dark'): void {
-  mmkv.set(APPEARANCE_LAUNCH_KEY, mode);
+export function saveAppearanceChoice(mode: 'light' | 'dark'): void {
+  mmkv.set(APPEARANCE_CHOICE_KEY, mode);
 }
 
 export function retrieveTempText(id: string): string | null {

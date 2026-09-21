@@ -181,6 +181,14 @@ export default function BuzzIdentitySettings() {
       try {
         const identity = await loadBuzzIdentity();
         if (!identity) return;
+        // The device already holds the identity, so the tile is drawn from it
+        // before any read. A failing profile read then costs the name, not the
+        // face and handle.
+        if (!cancelled) {
+          setProfileIdentity(identity);
+          setProfilePubkey(identity.publicKey);
+          setProfileName((current) => current || fallbackPersonName(identity.publicKey));
+        }
         const relayUrl = await getEffectiveRelayUrl();
         const transport = new BuzzRigTransport(identity);
         const client = await transport.ensureClient();
@@ -203,8 +211,6 @@ export default function BuzzIdentitySettings() {
           await savePreferredPersonName(identity.publicKey, profile.name);
         }
         if (!cancelled) {
-          setProfileIdentity(identity);
-          setProfilePubkey(identity.publicKey);
           const nextName = profile?.name ?? preferredName ?? fallbackPersonName(identity.publicKey);
           setProfileName(nextName);
         if (profile?.handle) {
@@ -448,6 +454,7 @@ export default function BuzzIdentitySettings() {
         )}
 
         <View style={styles.section} testID="appearance-section">
+          <Text style={styles.sectionLabel}>Device</Text>
           {pushSupported ? (
             <View testID="notifications-section">
               <PushLevelSetting
@@ -471,34 +478,34 @@ export default function BuzzIdentitySettings() {
           <UiSizeSetting onChange={changeUiSize} value={uiSize} />
         </View>
 
-        <View style={styles.section} testID="legal-settings">
-          <SettingsRow
-            accessibilityLabel={t('settings.privacyPolicy')}
-            accessibilityRole="link"
-            chevron="right"
-            onPress={() => void openExternalUrl(PRIVACY_URL).catch(() => undefined)}
-            testID="settings-privacy-row"
-            title={t('settings.privacyPolicy')}
-          />
-          <SettingsRow
-            accessibilityLabel={t('settings.termsOfService')}
-            accessibilityRole="link"
-            chevron="right"
-            onPress={() => void openExternalUrl(TERMS_URL).catch(() => undefined)}
-            testID="settings-terms-row"
-            title={t('settings.termsOfService')}
-          />
-          <SettingsRow
-            accessibilityLabel="Send feedback"
-            accessibilityRole="link"
-            chevron="right"
-            onPress={() => void openExternalUrl(FEEDBACK_MAILTO).catch(() => undefined)}
-            testID="settings-feedback-row"
-            title="Send feedback"
-          />
-        </View>
-
         <View style={styles.section} testID="account-settings">
+          <Text style={styles.sectionLabel}>Account</Text>
+          <View testID="legal-settings">
+            <SettingsRow
+              accessibilityLabel={t('settings.privacyPolicy')}
+              accessibilityRole="link"
+              chevron="right"
+              onPress={() => void openExternalUrl(PRIVACY_URL).catch(() => undefined)}
+              testID="settings-privacy-row"
+              title={t('settings.privacyPolicy')}
+            />
+            <SettingsRow
+              accessibilityLabel={t('settings.termsOfService')}
+              accessibilityRole="link"
+              chevron="right"
+              onPress={() => void openExternalUrl(TERMS_URL).catch(() => undefined)}
+              testID="settings-terms-row"
+              title={t('settings.termsOfService')}
+            />
+            <SettingsRow
+              accessibilityLabel="Send feedback"
+              accessibilityRole="link"
+              chevron="right"
+              onPress={() => void openExternalUrl(FEEDBACK_MAILTO).catch(() => undefined)}
+              testID="settings-feedback-row"
+              title="Send feedback"
+            />
+          </View>
           <SettingsRow
             accessibilityLabel={confirmSignOut ? 'Confirm sign out' : 'Sign out on this device'}
             onPress={() => void signOut()}

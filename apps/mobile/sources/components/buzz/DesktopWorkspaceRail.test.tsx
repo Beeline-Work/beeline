@@ -102,7 +102,16 @@ const workspaces = [
   { id: 'charlie', name: 'Charlie', roomCount: 0, needsAttention: false },
 ];
 
-function renderRail(onSelect = vi.fn(), onClose = vi.fn(), onAdd = vi.fn()) {
+function renderRail(
+  onSelect = vi.fn(),
+  onClose = vi.fn(),
+  onAdd = vi.fn(),
+  onOpenAccount = vi.fn(),
+  viewer: { viewerPubkey?: string; viewerName?: string } = {
+    viewerPubkey: 'viewer-pubkey',
+    viewerName: 'Alan',
+  },
+) {
   let tree!: ReactTestRenderer;
   act(() => {
     tree = create(
@@ -110,9 +119,11 @@ function renderRail(onSelect = vi.fn(), onClose = vi.fn(), onAdd = vi.fn()) {
         activeWorkspaceId="alpha"
         onAdd={onAdd}
         onClose={onClose}
+        onOpenAccount={onOpenAccount}
         onSelect={onSelect}
         open
         workspaces={workspaces}
+        {...viewer}
       />,
     );
   });
@@ -211,9 +222,43 @@ describe('desktop Workspace rail', () => {
     renderRail(vi.fn(), vi.fn(), onAdd);
     const preventDefault = vi.fn();
 
+    // Up from the current Workspace wraps past the account hub onto the add
+    // tile: the foot commands sit after the Workspaces, add before account.
+    act(() => listeners.get('keydown')?.({ key: 'ArrowUp', preventDefault }));
     act(() => listeners.get('keydown')?.({ key: 'ArrowUp', preventDefault }));
     act(() => listeners.get('keydown')?.({ key: 'Enter', preventDefault }));
 
     expect(onAdd).toHaveBeenCalledOnce();
+  });
+
+  it('opens the account hub from its own tile, by pointer and by keyboard', () => {
+    const onOpenAccount = vi.fn();
+    const tree = renderRail(vi.fn(), vi.fn(), vi.fn(), onOpenAccount);
+    const account = tree.root.findByProps({ testID: 'desktop-workspace-account' });
+
+    expect(account.props.accessibilityLabel).toBe('Alan — Settings');
+    expect(account.props.accessibilityRole).toBe('menuitem');
+    expect(
+      tree.root.findByProps({ testID: 'desktop-workspace-account-mark' }).props,
+    ).toMatchObject({ kind: 'human', seed: 'viewer-pubkey' });
+
+    act(() => account.props.onPress());
+    expect(onOpenAccount).toHaveBeenCalledOnce();
+
+    const preventDefault = vi.fn();
+    act(() => listeners.get('keydown')?.({ key: 'ArrowUp', preventDefault }));
+    act(() => listeners.get('keydown')?.({ key: 'Enter', preventDefault }));
+    expect(onOpenAccount).toHaveBeenCalledTimes(2);
+  });
+
+  it('names the account tile Settings and its owner on hover', () => {
+    const tree = renderRail();
+    act(() => tree.root.findByProps({ testID: 'desktop-workspace-account' }).props.onHoverIn());
+
+    const label = tree.root.findByProps({ testID: 'desktop-workspace-account-label' });
+    expect(label.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
+      'Settings',
+      'Alan',
+    ]);
   });
 });

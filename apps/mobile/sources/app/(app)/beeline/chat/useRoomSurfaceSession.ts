@@ -22,7 +22,6 @@ import {
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
-import { takeRoomOpenPrefetch } from '@/buzz/room-open-prefetch';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -50,6 +49,8 @@ import {
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+/** A socket that never answers must not hold the open's one Room read. */
+const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 
 type ReceivedLiveTrace = LiveWireTrace & {
   reason: string;
@@ -333,6 +334,8 @@ export function useRoomSurfaceSession({
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
+    /** Ends the watch's handshake wait when the reader leaves before it. */
+    let abandonHandshakeWait: (() => void) | undefined;
     let hasPainted = false;
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
@@ -489,6 +492,12 @@ export function useRoomSurfaceSession({
 
     const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
+      let handshakeSeen = false;
+      let readRacedAhead = false;
+      let listenReady: (() => void) | undefined;
+      const handshake = new Promise<void>((resolve) => {
+        listenReady = resolve;
+      });
       const currentTransport = transportForEffect;
       if (!currentTransport) return;
       const client = await currentTransport.ensureClient();
@@ -510,7 +519,19 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
-              if (hasPainted) scheduler?.force();
+              // This watch's first frame is listen-ready, and the read
+              // startAfter then issues is the one covering read of the open.
+              // A later frame on this same watch is a reconnect and must
+              // reread. When the read gave up waiting and ran first, its
+              // snapshot predates this lane, so the frame that finally
+              // arrives is the only thing that can cover it.
+              if (handshakeSeen) {
+                if (hasPainted) scheduler?.force();
+                return;
+              }
+              handshakeSeen = true;
+              listenReady?.();
+              if (readRacedAhead) scheduler?.force();
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -714,6 +735,25 @@ export function useRoomSurfaceSession({
         stop();
         return;
       }
+      let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        handshake,
+        new Promise<void>((resolve) => {
+          abandonHandshakeWait = resolve;
+        }),
+        new Promise<void>((resolve) => {
+          handshakeTimer = setTimeout(() => {
+            readRacedAhead = true;
+            resolve();
+          }, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
+        }),
+      ]);
+      if (handshakeTimer) clearTimeout(handshakeTimer);
+      abandonHandshakeWait = undefined;
+      if (cancelled || generation !== watchGeneration) {
+        stop();
+        return;
+      }
       unsubscribe?.();
       unsubscribe = stop;
     };
@@ -810,11 +850,7 @@ export function useRoomSurfaceSession({
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
             try {
-              const prefetched = takeRoomOpenPrefetch(channelId);
-              if (prefetched) markRoomOpen('prefetch-await');
-              const view = prefetched
-                ? ((await prefetched) ?? (await nextRoomClient.room(channelId)))
-                : await nextRoomClient.room(channelId);
+              const view = await nextRoomClient.room(channelId);
               logLiveTrace('room-read-end', traces);
               markRoomOpen('room-read-end', view.messages.at(-1)?.id);
               markRoomOpenWeight(view);
@@ -897,6 +933,7 @@ export function useRoomSurfaceSession({
     return () => {
       cancelled = true;
       watchGeneration += 1;
+      abandonHandshakeWait?.();
       scheduler?.dispose();
       appStateSubscription?.remove();
       unsubscribe?.();

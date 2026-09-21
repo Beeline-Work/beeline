@@ -9,7 +9,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   SurfaceRefreshScheduler,
   isChatListView,
-  isRoomView,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -22,7 +21,7 @@ import {
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { beginRoomOpenPrefetch, dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
+import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
@@ -507,32 +506,16 @@ export default function BuzzChannels() {
     };
   }, [activeCommunityId, identity, memberPickerVisible, relayUrl]);
 
-  const prefetchRoom = useCallback(
-    (roomId: string) => {
-      if (!identity || !relayUrl) return;
-      const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${roomId}`);
-      void mobileSurfaceCache.read(address, isRoomView);
-      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
-      beginRoomOpenPrefetch(
-        roomId,
-        () => http.room(roomId),
-        (view) => mobileSurfaceCache.write(address, view, isRoomView),
-      );
-    },
-    [identity, relayUrl],
-  );
-
   const openRoom = useCallback(
     (roomId: string) => {
       dispatchRoomOpenTap(roomId, {
-        prefetch: prefetchRoom,
         navigate: (id) => {
           if (identity) void saveLastViewedChannel(identity.publicKey, activeCommunityId, id);
           navigateToRoom(router, id);
         },
       });
     },
-    [activeCommunityId, identity, prefetchRoom],
+    [activeCommunityId, identity],
   );
 
   const loadRoomCorners = useCallback(
@@ -962,9 +945,6 @@ export default function BuzzChannels() {
                 <TouchableOpacity
                   accessibilityLabel={`${title}${attention ? ', needs you' : ''}`}
                   testID={`room-${item.room.id}`}
-                  onPressIn={() => {
-                    prefetchRoom(item.room.id);
-                  }}
                   onPress={() => {
                     swipeableRefs.current.get(item.room.id)?.close();
                     openRoom(item.room.id);

@@ -18,6 +18,7 @@ const controls = vi.hoisted(() => ({
     expectations: Array<(view: RoomView) => boolean>;
     forceCalls: number;
     signalCalls: number;
+    started: boolean;
   }>,
   subscriptions: [] as Array<{
     filters: unknown;
@@ -174,11 +175,13 @@ vi.mock('@beeline/buzz-client', async () => {
           expectations: [],
           forceCalls: 0,
           signalCalls: 0,
+          started: false,
         };
         controls.schedulers.push(this.control);
       }
       async startAfter(watch: Promise<void>) {
         await watch;
+        this.control.started = true;
       }
       signal() {
         this.control.signalCalls += 1;
@@ -762,7 +765,31 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('forces reconciliation when the live socket resubscribes after a painted Room', async () => {
+  it('holds the opening Room read until the watch answers the subscribe', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.schedulers[0]!.started).toBe(false);
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    await flushEffects();
+    expect(controls.schedulers[0]!.started).toBe(true);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('rereads when the watch resubscribes, never on its opening handshake', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -777,9 +804,66 @@ describe('useRoomSurfaceSession', () => {
         monolithLive: { type: 'subscribed', roomId: 'room-a' },
       });
     });
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
 
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
     expect(controls.schedulers[0]!.forceCalls).toBe(1);
     await act(async () => renderer.unmount());
+  });
+
+  it('covers a read that gave up waiting once the subscribe finally lands', async () => {
+    vi.useFakeTimers();
+    // A Room never opened on this device has nothing to paint while its one
+    // read is still in flight, and that read is exactly what needs covering.
+    controls.cached = null;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+    expect(controls.schedulers[0]!.started).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    await flushEffects();
+    expect(controls.schedulers[0]!.started).toBe(true);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'subscribed', roomId: 'room-a' },
+      });
+    });
+    expect(controls.schedulers[0]!.forceCalls).toBe(1);
+    await act(async () => renderer.unmount());
+    vi.useRealTimers();
+  });
+
+  it('closes a watch still waiting on its subscribe when the reader leaves', async () => {
+    vi.useFakeTimers();
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+      );
+    });
+    await flushEffects();
+
+    expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.subscriptions[0]!.stop).not.toHaveBeenCalled();
+
+    await act(async () => renderer.unmount());
+    await flushEffects();
+    expect(controls.subscriptions[0]!.stop).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it('records a bounded correlation trace when the phone socket receives an invalidation', async () => {

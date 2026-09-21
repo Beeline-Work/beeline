@@ -55,10 +55,9 @@ describe('Room open paints a Room, not the last message', () => {
     expect(channels).not.toContain('setOpeningSeed');
     expect(channels).not.toContain('seedRoomOpenPixel');
     expect(channels).not.toContain('RoomOpenPixel');
-    const pressIn = sliceAround(channels, 'onPressIn={() => {', 0, 420);
-    expect(pressIn).not.toContain('seedRoomOpenPixel');
-    expect(pressIn).not.toContain('setOpeningSeed');
-    expect(pressIn).toContain('prefetchRoom');
+    const press = sliceAround(channels, 'onPress={() => {', 0, 420);
+    expect(press).not.toContain('seedRoomOpenPixel');
+    expect(press).not.toContain('setOpeningSeed');
   });
 
   it('opens a Room without stacking a second copy of the same channel', () => {

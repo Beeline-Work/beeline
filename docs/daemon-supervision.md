@@ -22,7 +22,9 @@ net, not the ordinary discovery path. Each `MonolithRoomTurnLoop` takes its work
 pushed over that socket, with a slow durable read as the same kind of net, and publishes presence,
 receipts, live drafts, and the final reply through the authenticated daemon API.
 
-Shutdown aborts Room intake first, drains active loops to the managed-update deadline, and then
+Shutdown refuses further pushed membership applies and waits out any in-flight one — on the same
+managed-update deadline, so a Room whose start is still running lands in the snapshot instead of
+joining after the abort pass — then aborts Room intake, drains active loops to that deadline, and
 force-suspends remaining ACP children. A confirmed Workspace removal moves the runtime into the
 recoverable `deleted-runtimes/` directory.
 

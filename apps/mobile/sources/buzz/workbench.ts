@@ -374,6 +374,54 @@ export function connectionHostsLine(connection: WorkbenchConnection): string {
   return connection.hosts.length ? connection.hosts.join(', ') : '—';
 }
 
+/**
+ * The domains under a key row's name. A key with no host list has nothing to
+ * say here, so the row draws no quiet line rather than a `—` placeholder —
+ * the detail screen's Hosts row is where an empty list still has to be
+ * stated, because a value slot cannot be blank.
+ */
+export function connectionDomainsLine(connection: WorkbenchConnection): string {
+  return connection.hosts.join(', ');
+}
+
+/**
+ * The company a key is FOR, read from what the key actually reaches: the
+ * name in its first host (`api.vercel.com` → `vercel`), because a vault
+ * label is whatever the tool wrote and a reference is machine text. Falls
+ * back to the key's own name when it carries no hosts.
+ */
+export function connectionCompany(connection: WorkbenchConnection): string {
+  const host = connection.hosts[0];
+  if (!host) return connection.name;
+  const labels = host.split('.').filter(Boolean);
+  // `api.vercel.com` → `vercel`; `slack.com` → `slack`; a bare host stands
+  // for itself.
+  const company = labels.length >= 2 ? labels[labels.length - 2] : labels[0];
+  return company ?? connection.name;
+}
+
+/**
+ * The company's letter for its mark: the first letter or digit of the name,
+ * upper case. A name with neither draws `?` rather than an empty plate.
+ */
+export function serviceMonogram(company: string): string {
+  const character = [...company].find((entry) => /[\p{L}\p{N}]/u.test(entry));
+  return character ? character.toUpperCase() : '?';
+}
+
+/** How a key row's trailing state reads: the state word beside its dot,
+ *  the same instrument vocabulary the tool rows above it carry. A broken
+ *  key reads broken — danger tone and the failed dot — instead of sitting in
+ *  the same quiet grey as a live one. */
+export function connectionInstrument(state: WorkbenchConnection['state']): {
+  value: string;
+  glyph: 'live' | 'failed';
+  valueTone?: 'danger';
+} {
+  if (state === 'error') return { value: 'error', glyph: 'failed', valueTone: 'danger' };
+  return { value: 'active', glyph: 'live' };
+}
+
 /** `@hoots · sign-up · 13 Sep`, or '' when the vault reports no such fact. */
 export function connectionCreatedByLine(detail: ConnectionDetailView): string {
   if (!detail.createdBy) return '';

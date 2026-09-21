@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  connectionCompany,
   connectionCreatedByLine,
+  connectionDomainsLine,
   connectionGrantsLine,
   connectionHostsLine,
+  connectionInstrument,
   connectionSpendCap,
   connectionsForViewer,
   connectorDescription,
@@ -20,6 +23,7 @@ import {
   ledgerBytes,
   ledgerStamp,
   resolveGoogleConnectTarget,
+  serviceMonogram,
   type ConnectionDetailView,
   type WorkbenchConnector,
   type WorkbenchConnectorId,
@@ -145,6 +149,36 @@ const detail: ConnectionDetailView = {
   spendCap: '$25 cap',
   ledger: [],
 };
+
+describe('key row copy', () => {
+  it('puts the domains under the name and leaves a hostless key no quiet line', () => {
+    expect(connectionDomainsLine(view.connections[0])).toBe('api.vercel.com');
+    expect(connectionDomainsLine(view.connections[1])).toBe('');
+  });
+
+  it('names the company from the host the key reaches, not the vault label', () => {
+    expect(connectionCompany(view.connections[0])).toBe('vercel');
+    expect(connectionCompany(view.connections[2])).toBe('slack');
+    // No hosts to read: the key's own name is the company.
+    expect(connectionCompany(view.connections[1])).toBe('Google');
+  });
+
+  it('carries the company letter on the mark, and never an empty plate', () => {
+    expect(serviceMonogram('vercel')).toBe('V');
+    expect(serviceMonogram('1password')).toBe('1');
+    expect(serviceMonogram('@slack')).toBe('S');
+    expect(serviceMonogram('')).toBe('?');
+  });
+
+  it('reads a live key and a broken one apart, each with its dot', () => {
+    expect(connectionInstrument('active')).toEqual({ value: 'active', glyph: 'live' });
+    expect(connectionInstrument('error')).toEqual({
+      value: 'error',
+      glyph: 'failed',
+      valueTone: 'danger',
+    });
+  });
+});
 
 describe('connection detail copy', () => {
   it('joins hosts and dashes an empty session list', () => {

@@ -233,6 +233,47 @@ describe('Room turn failure receipt', () => {
     expect(cornerOpens).toBe(1);
   });
 
+  it('commits the prose it streamed when the corner-opening turn then times out', async () => {
+    // The reported production loss: the reader watched an answer arrive, the
+    // session wedged after the corner opened, and the `complete` receipt ended
+    // the draft — leaving the card alone and an empty `live_outputs`. The words
+    // already read are the same completion as the card, so they settle durably.
+    const timeout = new AcpRequestTimeoutError(
+      'session/prompt',
+      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+      '',
+      true,
+    );
+    const { receipts, posted, cornerOpens } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onChunk, onToolCalls }) => {
+        onChunk(
+          'Here is what I found: the cards go stale.',
+          'Here is what I found: the cards go stale.',
+        );
+        onToolCalls?.([
+          { id: 'call-1', title: 'mcp__beeline-agent__open_corner', status: 'completed' },
+        ]);
+        await new Promise((resolve) => setImmediate(resolve));
+        throw timeout;
+      },
+    });
+
+    expect(posted).toEqual([
+      expect.objectContaining({
+        text: 'Here is what I found: the cards go stale.',
+        requestId: 'ask-1',
+        triggerMessageId: 'ask-1',
+      }),
+    ]);
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ requestId: 'ask-1', status: 'complete' }),
+    );
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
+    expect(cornerOpens).toBe(1);
+  });
+
   it('still reports failed when the inactivity timeout hits a turn that opened no corner', async () => {
     // The timeout is doing real work on turns that genuinely wedge. Without a
     // corner to excuse it, an inactivity timeout keeps its old ending.
@@ -249,9 +290,7 @@ describe('Room turn failure receipt', () => {
     });
 
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
-    expect(failed).toEqual(
-      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
-    );
+    expect(failed).toEqual(expect.objectContaining({ requestId: 'ask-1', status: 'failed' }));
     expect(failed.reason).toBe(
       `ACP session/prompt timed out after ${ROOM_PROMPT_INACTIVITY_TIMEOUT_MS}ms of inactivity`,
     );

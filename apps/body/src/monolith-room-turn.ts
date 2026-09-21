@@ -1229,11 +1229,11 @@ export class MonolithRoomTurnLoop {
       }
       // An inactivity timeout on a turn that already opened a corner is not a
       // failure: the work moved to the corner, and the Room going quiet is the
-      // correct successful ending — the same one the success path produces when
-      // a corner-opening turn returns normally without text. Only the
-      // inactivity timeout is excused; a provider error, a crash, or a stop
-      // keeps reporting exactly as before. The timeout does real work on turns
-      // that genuinely wedge and is not lengthened or removed.
+      // correct successful ending — the same one the success path produces for
+      // a corner-opening turn that returns normally. Only the inactivity
+      // timeout is excused; a provider error, a crash, or a stop keeps
+      // reporting exactly as before. The timeout does real work on turns that
+      // genuinely wedge and is not lengthened or removed.
       if (
         liveCornerOpened &&
         error instanceof AcpRequestTimeoutError &&
@@ -1245,12 +1245,20 @@ export class MonolithRoomTurnLoop {
             'inactivity timeout after opening a corner; the work continues in the corner',
         );
         this.options.onCornerOpened?.();
-        await liveStream?.retract().catch((retractError: unknown) => {
-          console.error(
-            `[thin-core] monolith Room ${this.options.roomId} draft retract failed:`,
-            retractError,
-          );
-        });
+        // The prose the reader watched arrive is the same completion as the
+        // card: this ending has only the streamed text to write it from, and
+        // the `complete` receipt below ends the draft either way, so settling
+        // it here is what keeps it on the page. A wedged turn that streamed
+        // nothing still settles through the card alone.
+        const streamed = durableReplyText(liveStream?.streamedText ?? '');
+        await liveStream
+          ?.settle(streamed, streamed ? { triggerMessageId: item.id } : {})
+          .catch((settleError: unknown) => {
+            console.error(
+              `[thin-core] monolith Room ${this.options.roomId} draft settle failed:`,
+              settleError,
+            );
+          });
         await api.execute('postAgentTurnReceipt', {
           agentId: this.agent.publicKey,
           roomId: this.options.roomId,
@@ -1344,12 +1352,12 @@ function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | un
 /**
  * True only for a corner this turn actually opened.
  *
- * Everything the Room does about a corner — the silent completion, the corner
- * card handoff — rests on this, so it asks the harness for an affirmative
- * `completed` and accepts nothing weaker. A call still `pending` when the turn
- * ended, or carrying no status at all, opened no corner: read as success it
- * would delete the model's answer in favour of a card that never comes, and
- * the Room would show a turn that finished having said nothing.
+ * A completed open is what lets a textless turn settle through the card alone,
+ * and what excuses the empty-turn retry and the inactivity timeout, so it asks
+ * the harness for an affirmative `completed` and accepts nothing weaker. A call
+ * still `pending` when the turn ended, or carrying no status at all, opened no
+ * corner: read as success it would let a turn that said nothing pass as
+ * answered by a card that never comes.
  */
 function openedACorner(call: ToolCallEntry | undefined): boolean {
   return !!call && isCompletedToolCall(call);

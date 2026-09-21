@@ -697,6 +697,65 @@ describe('workbench connectors', () => {
     expect(row?.status.signIn).toBeUndefined();
   });
 
+  it('a steps-only progress report keeps the live ceremony; the run\u2019s verdict clears it', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    const signInUrl = async () => {
+      const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+        connectors: { connectorId: string; status: { signIn?: { url: string } } }[];
+      };
+      return view.connectors.find((row) => row.connectorId === paired.connectorId)?.status.signIn
+        ?.url;
+    };
+    await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'done' }],
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
+    });
+    expect(await signInUrl()).toBe('https://tunnel.test/#p=hunter22');
+
+    // The same run posting later progress says nothing about its surface.
+    await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'paired to workspace', status: 'pending' }],
+    });
+    expect(await signInUrl()).toBe('https://tunnel.test/#p=hunter22');
+
+    // A LATER run that printed no ceremony says so, and the dead tunnel goes.
+    await daemonOperation('postConnectorStatus', {
+      connectorId: paired.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      signIn: null,
+    });
+    expect(await signInUrl()).toBeUndefined();
+  });
+
+  it('an explicit re-pair drops the previous ceremony instead of re-offering it', async () => {
+    const paired = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await daemonOperation('installConnector', {
+      connectorId: paired.connectorId,
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
+    });
+    await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    });
+    const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connectors: { connectorId: string; status: { status: string; signIn?: { url: string } } }[];
+    };
+    const row = view.connectors.find((entry) => entry.connectorId === paired.connectorId);
+    expect(row?.status.status).toBe('installing');
+    expect(row?.status.signIn).toBeUndefined();
+  });
+
   it('pairing ONE Google tool provisions all four tool connectors on the machine', async () => {
     // The single Google connect entry pairs the whole set: one grant, four
     // server-side tool rows, so the entry's repair state tops up every

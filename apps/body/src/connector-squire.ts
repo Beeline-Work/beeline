@@ -354,7 +354,8 @@ export type StreamedShellRunner = (
   env?: NodeJS.ProcessEnv,
 ) => Promise<StreamedCommandResult>;
 
-const CONNECT_TIMEOUT_MS = 300_000; // 5-minute safety bound for the connect process
+/** Safety bound for the connect process, and the life of the ceremony it prints. */
+export const CONNECT_TIMEOUT_MS = 300_000;
 
 /**
  * Default streamed runner: spawns the process, reads stdout line by line,
@@ -470,33 +471,59 @@ function isConnectCeremonyUrl(url: string): boolean {
   }
 }
 
-const ANSI_SEQUENCE = /\u001B\[[0-9;]*[A-Za-z]|\u001B\]8;;[^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
 const BOXED_ROW = /^\s*\u2502(.*)\u2502\s*$/;
+
+/**
+ * Rejoin ONE box's rows. Every row of a box is rendered to the same inner
+ * width over the same horizontal padding, so the padding is the narrowest
+ * leading and trailing run of spaces its non-blank rows carry — never a
+ * constant, because boxen's `padding: 1` shorthand is three columns and
+ * Squire's explicit `{left:1,right:1}` is one. A row whose content reaches
+ * that content area's right edge was hard-wrapped, so the next row continues
+ * it rather than starting a line of its own.
+ */
+function rejoinBoxRows(cells: readonly string[]): string[] {
+  const written = cells.filter((cell) => cell.trim() !== '');
+  const pad = (measure: (cell: string) => number): number =>
+    written.length === 0 ? 0 : Math.min(...written.map(measure));
+  const left = pad((cell) => cell.length - cell.trimStart().length);
+  const right = pad((cell) => cell.length - cell.trimEnd().length);
+  const lines: string[] = [];
+  let carry: string | undefined;
+  for (const cell of cells) {
+    const content = cell.slice(left, cell.length - right);
+    const text = content.replace(/\s+$/, '');
+    carry = (carry ?? '') + text;
+    if (text.length < content.length) {
+      lines.push(carry);
+      carry = undefined;
+    }
+  }
+  if (carry !== undefined) lines.push(carry);
+  return lines;
+}
 
 /**
  * Squire prints the ceremony URL inside a fixed-width boxen frame, and boxen
  * HARD-WRAPS a token wider than the frame — a long quick-tunnel host splits
- * the URL across two rows. Rejoin a frame's rows before reading a URL out of
- * it, or the phone is handed the first 74 characters of a live link.
+ * the URL across two rows. Rejoin each frame's rows before reading a URL out
+ * of it, or the phone is handed the first 74 characters of a live link.
  */
 export function unframeBoxedOutput(output: string): string {
   const lines: string[] = [];
-  let carry: string | undefined;
+  let box: string[] = [];
   const flush = () => {
-    if (carry !== undefined) lines.push(carry);
-    carry = undefined;
+    if (box.length > 0) lines.push(...rejoinBoxRows(box));
+    box = [];
   };
-  for (const row of output.replace(ANSI_SEQUENCE, '').split('\n')) {
+  for (const row of output.split('\n')) {
     const framed = BOXED_ROW.exec(row);
-    if (!framed) {
-      flush();
-      lines.push(row);
+    if (framed) {
+      box.push(framed[1] ?? '');
       continue;
     }
-    const cell = (framed[1] ?? '').replace(/^ /, '').replace(/ $/, '');
-    const text = cell.replace(/\s+$/, '');
-    carry = (carry ?? '') + text;
-    if (text.length < cell.length) flush();
+    flush();
+    lines.push(row);
   }
   flush();
   return lines.join('\n');
@@ -516,16 +543,28 @@ export function parseConnectOutput(output: string): ConnectorSignIn | undefined 
 }
 
 /**
- * True when connect short-circuited on Squire's preflight: the shared profile
- * already carries the session, so it refreshed the agent config and exited
- * with no ceremony. Squire says so whether it could verify the live provider
- * session (`Already connected … config refreshed`) or not (`… Your agent
- * config was refreshed`) — a profile busy with another agent's browser is the
- * steady state of one shared broker, not a failed install, and the owner must
- * never be told to clear cookies over it.
+ * True when connect short-circuited on Squire's preflight having VERIFIED the
+ * live provider session: the shared profile already carries it, so connect
+ * refreshed the agent config and exited with no ceremony. Squire's sibling
+ * outcome — config refreshed but the session unverifiable — says in its own
+ * words that it will not call that connected, and neither may we: reporting
+ * it green would leave an expired session with no way back to a ceremony.
  */
 export function parseConnectAlreadyConnected(output: string): boolean {
-  return /config (?:was )?refreshed/i.test(output);
+  return /Already connected \(/i.test(output) && /config refreshed/i.test(output);
+}
+
+/**
+ * Squire's preflight hint tells the owner to close other sessions and re-run
+ * with `--force-relogin`. The broker is multi-session, so that precondition
+ * is not true and the line must never reach the Workbench as a failed step.
+ */
+export function withoutForceReloginHint(output: string): string {
+  return output
+    .split('\n')
+    .filter((line) => !/--force-relogin/.test(line))
+    .join('\n')
+    .trim();
 }
 
 export type InstallSquireOptions = {
@@ -723,7 +762,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   const alreadyConnected =
     !install.signIn && parseConnectAlreadyConnected(`${install.stdout}\n${install.stderr}`);
   if (!install.signIn && !alreadyConnected) {
-    const stderr = install.stderr.trim();
+    const stderr = withoutForceReloginHint(install.stderr);
     let stepReason = stderr || 'connect printed no sign-in URL';
     let failReason = stderr || 'the trusty-squire connect command printed no sign-in surface';
     if (isSquireBrowserSessionFailure(stderr)) {

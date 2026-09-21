@@ -5972,6 +5972,7 @@ export class PhoneService {
            status_error=NULL,
            pending_ops='[]'::jsonb,
            connected_at=NULL,
+           sign_in=NULL,
            updated_at=now()`,
       [
         id,

@@ -858,7 +858,7 @@ export class DaemonService {
            status_steps=$2::jsonb,
            squire_version=COALESCE($4,squire_version),
            signed_in_as=COALESCE($5,signed_in_as),
-           sign_in=COALESCE($6::jsonb,sign_in),
+           sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE COALESCE($6::jsonb,sign_in) END,
            updated_at=now()
        WHERE id=$1::uuid`,
       [
@@ -868,6 +868,7 @@ export class DaemonService {
         input.squireVersion ?? null,
         input.signedInAs ?? null,
         input.signIn ? JSON.stringify(input.signIn) : null,
+        input.signIn !== undefined,
       ],
     );
     return { id: row.id, createdAt: Math.floor(Date.now() / 1000) };

@@ -23,6 +23,7 @@ import {
   squireConnectProcessEnv,
   squireConnectSession,
   squireProfileLockPath,
+  unframeBoxedOutput,
   vaultConnectionMeta,
   type ShellRunner,
   type StreamedShellRunner,
@@ -170,43 +171,83 @@ describe('parseConnectOutput', () => {
     ).toBeUndefined();
   });
 
-  it('recognizes both of Squire\u2019s config-refreshed short-circuits', () => {
+  it('takes only the VERIFIED short-circuit for connected', () => {
     expect(
       parseConnectAlreadyConnected(
         'Already connected (google + github). Codex config refreshed.\n',
       ),
     ).toBe(true);
+    // Squire refreshed the config but says in its own words that it will not
+    // call this connected; reporting it green would strand an expired session
+    // with no way back to a ceremony.
     expect(
       parseConnectAlreadyConnected(
         "This machine is bound to your account, but I couldn't verify a live provider session " +
           'in the bot\u2019s Chrome profile (profile busy), so I won\u2019t call this connected. ' +
           'Your agent config was refreshed.\n',
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(parseConnectAlreadyConnected('Opening the Trusty Squire install page\n')).toBe(false);
   });
 
-  // Squire's own printed sign-in frame, byte for byte from boxen at its fixed
-  // 78-column width: the URL is longer than the frame, so boxen hard-broke it.
-  const WRAPPED_BANNER = [
-    '\u250c Sign in to Trusty Squire \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510',
-    '\u2502 Open this on any device, any network:                                      \u2502',
-    '\u2502                                                                            \u2502',
-    '\u2502 https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hu \u2502',
-    '\u2502 nter22                                                                     \u2502',
-    '\u2502                                                                            \u2502',
-    '\u2502 If asked for a VNC password:  hunter22                                     \u2502',
-    '\u2502                                                                            \u2502',
-    '\u2502 Remote login for Trusty Squire                                             \u2502',
-    '\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518',
-    '',
-  ].join('\n');
+  // Squire's `printRemoteLoginBanner` output, captured verbatim from the real
+  // boxen render at its piped 78-column width. That rendered frame is the only
+  // place connect prints the tunnel, so it is the byte contract this parser
+  // reads. SQUIRE_PADDING is Squire's own explicit `{left:1,right:1}`;
+  // BOXEN_SHORTHAND_PADDING is boxen's `padding: 1`, which is THREE columns —
+  // the URL wraps at a different column, and a rejoin that assumed one space
+  // published `…/#p=hunter2`, a URL the phone accepts and cannot load.
+  const SQUIRE_PADDING = {
+    url: "https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hunter22",
+    banner: [
+      "┌ Sign in to Trusty Squire ──────────────────────────────────────────────────┐",
+      "│ Open this on any device, any network:                                      │",
+      "│                                                                            │",
+      "│ https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hu │",
+      "│ nter22                                                                     │",
+      "│                                                                            │",
+      "│ If asked for a VNC password:  hunter22                                     │",
+      "│                                                                            │",
+      "│ Remote login for Trusty Squire                                             │",
+      "└────────────────────────────────────────────────────────────────────────────┘",
+    ].join('\n'),
+  };
+  const BOXEN_SHORTHAND_PADDING = {
+    url: "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.trycloudflare.com/#p=hunter22",
+    banner: [
+      "┌ Sign in to Trusty Squire ──────────────────────────────────────────────────┐",
+      "│                                                                            │",
+      "│   Open this on any device, any network:                                    │",
+      "│                                                                            │",
+      "│   https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.trycloudflare.com/#p=hunter2   │",
+      "│   2                                                                        │",
+      "│                                                                            │",
+      "│   If asked for a VNC password:  hunter22                                   │",
+      "│                                                                            │",
+      "│   Remote login for Trusty Squire                                           │",
+      "│                                                                            │",
+      "└────────────────────────────────────────────────────────────────────────────┘",
+    ].join('\n'),
+  };
 
   it('rejoins a ceremony URL boxen hard-wrapped across two frame rows', () => {
-    expect(parseConnectOutput(WRAPPED_BANNER)).toEqual({
-      method: 'streamed-page',
-      url: 'https://terminology-alberta-dictionaries-kde-extra.trycloudflare.com/#p=hunter22',
-    });
+    for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
+      expect(parseConnectOutput(`${render.banner}\n`)).toEqual({
+        method: 'streamed-page',
+        url: render.url,
+      });
+    }
+  });
+
+  it('keeps a frame\u2019s other rows as their own lines', () => {
+    for (const render of [SQUIRE_PADDING, BOXEN_SHORTHAND_PADDING]) {
+      const lines = unframeBoxedOutput(render.banner)
+        .split('\n')
+        .map((line) => line.trim());
+      expect(lines).toContain('If asked for a VNC password:  hunter22');
+      expect(lines).toContain('Remote login for Trusty Squire');
+      expect(lines).toContain(render.url);
+    }
   });
 
   it('leaves an unterminated URL alone until the rest of the chunk arrives', () => {
@@ -343,7 +384,7 @@ describe('installSquire', () => {
     expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
   });
 
-  it('does not fail the install when the shared profile was busy to verify', async () => {
+  it('does not report an unverified profile as connected, and never quotes the cookie-clear hint', async () => {
     const result = await installSquire({
       workspaceId: 'ws-1',
       run: okRunner(),
@@ -357,9 +398,10 @@ describe('installSquire', () => {
       }),
       mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
     });
-    expect(result.status).toBe('connected');
-    expect(result.steps.every((step) => step.status === 'done')).toBe(true);
-    expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
+    expect(result.status).toBe('error');
+    const said = `${result.errorMessage ?? ''} ${result.steps.map((step) => step.reason ?? '').join(' ')}`;
+    expect(said).not.toContain('force-relogin');
+    expect(said).toContain("couldn't verify a live provider session");
   });
 
   it('surfaces the signIn URL on the installing result before the pairing probe', async () => {

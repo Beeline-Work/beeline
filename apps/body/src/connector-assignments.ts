@@ -34,6 +34,7 @@ import {
 } from './connector-google.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
+  CONNECT_TIMEOUT_MS,
   installSquire,
   isProcessAlive,
   isSquireBrowserSessionFailure,
@@ -276,6 +277,7 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         steps: result.steps,
+        signIn: null,
         errorMessage: result.errorMessage,
       });
       return;
@@ -294,9 +296,11 @@ export class ConnectorAssignmentLoop {
     // that state. A connect this helper spawned and still owns IS that
     // ceremony: starting another one releases the claim, which SIGTERMs the
     // process group and takes the noVNC tunnel the phone is displaying down
-    // with it. The surface already posted stays live and stays on the row.
+    // with it. That protection is bounded by the ceremony's own life — past
+    // it the tunnel is no use to anybody, and an abandoned connect would hold
+    // its Xvfb/x11vnc/websockify/cloudflared rig for the daemon's lifetime.
     const claim = squireConnectSession();
-    if (claim && isProcessAlive(claim.pid)) {
+    if (claim && isProcessAlive(claim.pid) && Date.now() - claim.claimedAt < CONNECT_TIMEOUT_MS) {
       this.log(
         `trusty-squire connect still waiting for sign-in (pid ${String(claim.pid)}); leaving it alone`,
       );
@@ -335,14 +339,16 @@ export class ConnectorAssignmentLoop {
       await this.reportVault(connectorId);
       return;
     }
-    // Still installing: the human has not signed in yet; keep the steps.
+    // Still installing: the human has not signed in yet; keep the steps. This
+    // run's verdict on the ceremony is explicit — `null` when it printed none,
+    // so a tunnel a PREVIOUS run left on the row dies with that run.
     await this.api.execute('postConnectorStatus', {
       agentId: this.agentId,
       connectorId,
       steps: result.steps,
+      signIn: result.signIn ?? null,
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
       ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
-      ...(result.signIn ? { signIn: result.signIn } : {}),
     });
   }
 

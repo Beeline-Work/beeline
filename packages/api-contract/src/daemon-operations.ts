@@ -864,7 +864,13 @@ export type PostConnectorStatusInput = AgentInput & {
   readonly steps: readonly ConnectorStep[];
   readonly squireVersion?: string;
   readonly signedInAs?: string;
-  readonly signIn?: ConnectorSignIn;
+  /**
+   * The sign-in surface this run printed. ABSENT means "no news" — the
+   * steps-only progress reports of one run must not wipe the surface that
+   * run already published. Explicit `null` is a run REPORTING that it has no
+   * ceremony, which clears whatever tunnel the previous run left behind.
+   */
+  readonly signIn?: ConnectorSignIn | null;
   readonly errorMessage?: string;
 };
 

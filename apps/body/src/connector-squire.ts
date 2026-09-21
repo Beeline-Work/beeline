@@ -888,10 +888,11 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
         }
       : undefined;
 
-  // Surface the sign-in URL immediately so the phone paints the noVNC page.
-  // The step settles only when there is nothing left to press: a run that
-  // printed a ceremony is still waiting on the human, while the already-
-  // connected report has nobody to wait for.
+  // Surface the reported sign-in URL immediately so the phone has a page to
+  // open, with the report's own placement riding beside it. The step settles
+  // only when there is nothing left to press: a run that printed a ceremony
+  // is still waiting on the human, while the already-connected report has
+  // nobody to wait for.
   push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
 
   const pair = await pairSquire(options.mcp, options.workspaceId);

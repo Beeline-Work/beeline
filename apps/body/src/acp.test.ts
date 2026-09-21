@@ -195,8 +195,8 @@ describe('ACP streaming lane classifier', () => {
       ['Using Git', 'Hub works.', 'Using GitHub works.'],
       ['Open the READ', 'ME first.', 'Open the README first.'],
       ['Written in Java', 'Script.', 'Written in JavaScript.'],
-      // Lowercase-initial stylized names: the visible half is a short
-      // lowercase prefix, not a word a finished message would stop on.
+      // Lowercase-initial stylized names: the visible half is not a word,
+      // so it is not anywhere a finished message could have stopped.
       ['Using e', 'Bay works.', 'Using eBay works.'],
       ['Tested on mac', 'OS too.', 'Tested on macOS too.'],
       ['Shipped the i', 'Phone build.', 'Shipped the iPhone build.'],
@@ -235,6 +235,18 @@ describe('ACP streaming lane classifier', () => {
         }),
       ]),
     ).toEqual(['...existing test and typecheck patterns', 'Now I have the full picture.']);
+
+    // A short word is still a word, so narration that ends on one ends its
+    // message: only a named stylized prefix resumes across the update.
+    for (const shortWord of ['I can do', 'Looking at the', 'Checking if', 'One to']) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: shortWord } }),
+        update('tool_call', { toolCallId: 'read-3', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Found it.' } }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual([shortWord, 'Found it.']);
+      expect(finalAgentMessageText(updates)).toBe('Found it.');
+    }
 
     expect(
       agentMessageRuns([
@@ -1723,6 +1735,34 @@ describe('AcpClient live steering', () => {
       );
       expect(result.agentText).toBe('Using eBay works.');
       expect(runs.at(-1)).toEqual(['Using eBay works.']);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps narration that ends on a short word out of the final message', async () => {
+    // The boundary the word-continuation guard must not cross: `I can do` is
+    // narration that ended on a word, not half of a name, so tool work after
+    // it opens a new message. Reading the fragment by length instead of by
+    // name glued the two into "I can doFound it.".
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent('I can do', 'Found it.'),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe('Found it.');
+      expect(runs.at(-1)).toEqual(['I can do', 'Found it.']);
     } finally {
       await client.stop();
     }

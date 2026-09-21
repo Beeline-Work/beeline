@@ -293,13 +293,17 @@ const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
 const UPPERCASE_HEAD = /^\p{Lu}/u;
 
 /**
- * The visible half of a lowercase-initial stylized name — the `e` of `eBay`,
- * the `i` of `iPhone`, the `mac` of `macOS`. One to three lowercase letters
- * is not somewhere a finished message stops: a reply that really ended on
- * `the` or `and` was already cut off mid-sentence, so resuming it costs at
- * worst a paragraph break, where splitting it costs the reply's head.
+ * The lowercase halves of the stylized names that reach a reply: eBay and
+ * eSIM, iPhone and iOS, xAI, macOS. None of them is a word in its own right,
+ * so none of them is anywhere a finished message can stop — which is the
+ * whole of what separates `Using e` + `Bay works.` from `I can do` + `Found
+ * it.`. `do` is a word and ends its message; `e` is half of one.
+ *
+ * A name outside this set still splits and still loses its head. Widening
+ * the set by shape rather than by name is what glued ordinary narration onto
+ * the reply, so it stays a list of names.
  */
-const STYLIZED_NAME_PREFIX = /^\p{Ll}{1,3}$/u;
+const STYLIZED_NAME_PREFIXES = new Set(['e', 'i', 'x', 'mac']);
 
 /**
  * Whether `delta` continues the word `current` stops on, so the non-text
@@ -310,10 +314,10 @@ const STYLIZED_NAME_PREFIX = /^\p{Ll}{1,3}$/u;
  * else separates a split name from a new sentence — `Bay works.` and `Found
  * the answer.` are the same shape. It resumes a word when that word is
  * itself capitalized (`Git` + `Hub`, `READ` + `ME`, `Java` + `Script`) or is
- * a stylized name's short lowercase prefix (`e` + `Bay`, `mac` + `OS`); an
- * ordinary lowercase word taking a capital (`typecheck patterns` + `Now I
- * have the full picture.`) is the harness finishing one message and opening
- * the next.
+ * a named stylized prefix (`e` + `Bay`, `mac` + `OS`); an ordinary lowercase
+ * word taking a capital (`typecheck patterns` + `Now I have the full
+ * picture.`, `I can do` + `Found it.`) is the harness finishing one message
+ * and opening the next.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
@@ -322,7 +326,7 @@ function continuesPreviousWord(current: string, delta: string): boolean {
   if (!word) return false;
   if (CHUNK_RESUMES_WORD.test(delta)) return true;
   if (!UPPERCASE_HEAD.test(delta)) return false;
-  return UPPERCASE_HEAD.test(word) || STYLIZED_NAME_PREFIX.test(word);
+  return UPPERCASE_HEAD.test(word) || STYLIZED_NAME_PREFIXES.has(word);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;

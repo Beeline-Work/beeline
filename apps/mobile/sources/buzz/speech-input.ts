@@ -14,7 +14,8 @@ import {
 } from './speech-recognition-adapter';
 import { getDeviceSpeechLocale } from './speech-locale';
 
-export type SpeechInputState = 'idle' | 'listening' | 'nothing-recognised' | 'permission-denied';
+export type SpeechInputState =
+  'idle' | 'listening' | 'finalizing' | 'nothing-recognised' | 'permission-denied';
 
 export type SpeechInputCapability = 'available' | 'unavailable';
 
@@ -24,13 +25,18 @@ export interface SpeechInputValue {
   partialText: string;
   volumeLevel: number;
   start(): Promise<void>;
-  stop(): void;
+  /** Stops native capture and resolves after its final result or bounded fallback. */
+  stop(): Promise<boolean | null>;
 }
 
 // Long enough for a short multi-word phrase when Android's first interim is
 // late, and for a sparse gap between hypotheses. Speech-level volume re-arms
 // this so a longer utterance is not cut while the user is still talking.
 export const SPEECH_SILENCE_TIMEOUT_MS = 4000;
+// A native stop normally finishes in a few hundred milliseconds. Bound the
+// wait so a recognizer that emits neither `result` nor `end` cannot strand the
+// composer; its latest interim remains the best available fallback.
+export const SPEECH_FINALIZATION_TIMEOUT_MS = 2000;
 const MAX_RESTARTS = 10;
 // Native volume spans roughly -2 (silent) through 10 (loud). Anything above
 // the documented silence floor counts as speech activity.
@@ -39,7 +45,7 @@ const SPEECH_VOLUME_FLOOR = 0;
 /**
  * Hook wrapping platform speech recognition.
  *
- * @param onResult  Called when a FINAL transcript is committed.
+ * @param onResult  Called when a final transcript, or the bounded interim fallback, is committed.
  */
 export function useSpeechInput(onResult: (transcript: string) => void): SpeechInputValue {
   const [state, setState] = React.useState<SpeechInputState>('idle');
@@ -54,6 +60,11 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
   const pendingPartialRef = React.useRef('');
   const restartCountRef = React.useRef(0);
   const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalizationTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopSettlementRef = React.useRef<{
+    promise: Promise<boolean | null>;
+    resolve(captured: boolean | null): void;
+  } | null>(null);
   const modRef = React.useRef<SpeechRecognitionInterface | null>(getRecognitionModule());
   const startAttemptRef = React.useRef(0);
   const capability: SpeechInputCapability =
@@ -115,6 +126,20 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     return false;
   }, []);
 
+  const settleExplicitStop = React.useCallback((captured: boolean) => {
+    if (finalizationTimerRef.current !== null) {
+      clearTimeout(finalizationTimerRef.current);
+      finalizationTimerRef.current = null;
+    }
+    stopRequestedRef.current = false;
+    setState('idle');
+    setPartialText('');
+    setVolumeLevel(0);
+    const settlement = stopSettlementRef.current;
+    stopSettlementRef.current = null;
+    settlement?.resolve(captured);
+  }, []);
+
   const restartIfStillListening = React.useCallback(() => {
     if (!listeningRef.current) return;
     if (restartCountRef.current >= MAX_RESTARTS) {
@@ -171,8 +196,14 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
         pendingPartialRef.current = '';
         setPartialText('');
         onResultRef.current(transcript);
-        // A late final after silence-stop is still a catch, not an error.
-        if (stopRequestedRef.current) setState('idle');
+        if (stopSettlementRef.current) {
+          // Explicit stop waits here: this final replaces the shorter interim
+          // instead of allowing the composer to send that interim first.
+          settleExplicitStop(Boolean(transcript.trim()));
+        } else if (stopRequestedRef.current) {
+          // A late final after silence-stop is still a catch, not an error.
+          setState('idle');
+        }
       } else {
         pendingPartialRef.current = transcript;
         setPartialText(transcript);
@@ -181,6 +212,10 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
 
     const onError = (event: any) => {
       if (event.error === 'not-allowed') {
+        if (stopSettlementRef.current) {
+          const captured = finishStopWithCapture(pendingPartialRef.current);
+          settleExplicitStop(captured);
+        }
         setState('permission-denied');
         listeningRef.current = false;
         stopRequestedRef.current = false;
@@ -198,11 +233,12 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
 
     const onEnd = () => {
       if (stopRequestedRef.current) {
-        stopRequestedRef.current = false;
         // Android continuous recognition can end a requested stop with a
         // client error instead of a final result. Preserve the last real
         // hypothesis rather than losing captured speech or showing an error.
-        finishStopWithCapture(pendingPartialRef.current);
+        const captured = finishStopWithCapture(pendingPartialRef.current);
+        if (stopSettlementRef.current) settleExplicitStop(captured);
+        else stopRequestedRef.current = false;
         return;
       }
       if (listeningRef.current) restartIfStillListening();
@@ -239,7 +275,14 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
         }
       }
     };
-  }, [armSilenceTimer, clearSilenceTimer, doStop, finishStopWithCapture, restartIfStillListening]);
+  }, [
+    armSilenceTimer,
+    clearSilenceTimer,
+    doStop,
+    finishStopWithCapture,
+    restartIfStillListening,
+    settleExplicitStop,
+  ]);
 
   const start = React.useCallback(async () => {
     if (capability !== 'available') return;
@@ -277,38 +320,50 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     }
   }, [armSilenceTimer, capability, clearSilenceTimer, startOptions]);
 
-  const stop = React.useCallback(() => {
+  const stop = React.useCallback((): Promise<boolean | null> => {
+    if (stopSettlementRef.current) return stopSettlementRef.current.promise;
     startAttemptRef.current += 1;
     clearSilenceTimer();
     listeningRef.current = false;
+    stopRequestedRef.current = true;
     restartCountRef.current = 0;
-
-    // An explicit stop is the user saying they are done. Commit whatever we
-    // already have so the composer can send in the same press, then close the
-    // session so a late native result cannot refill the field after send.
-    // Stopping is not a failed capture — only the silence timer uses
-    // "didn't catch that". A late result after silence-stop still lands
-    // through the requested-stop window in `onEnd`.
-    finishStopWithCapture(pendingPartialRef.current);
-    stopRequestedRef.current = false;
-    setState('idle');
-
-    setPartialText('');
+    setState('finalizing');
     setVolumeLevel(0);
+
+    let resolveStop!: (captured: boolean | null) => void;
+    const promise = new Promise<boolean | null>((resolve) => {
+      resolveStop = resolve;
+    });
+    stopSettlementRef.current = { promise, resolve: resolveStop };
+    finalizationTimerRef.current = setTimeout(() => {
+      const captured = finishStopWithCapture(pendingPartialRef.current);
+      settleExplicitStop(captured);
+    }, SPEECH_FINALIZATION_TIMEOUT_MS);
+
     try {
       modRef.current?.stop();
     } catch {
-      /* ignore */
+      const captured = finishStopWithCapture(pendingPartialRef.current);
+      settleExplicitStop(captured);
     }
-  }, [clearSilenceTimer, finishStopWithCapture]);
+    return promise;
+  }, [clearSilenceTimer, finishStopWithCapture, settleExplicitStop]);
 
   React.useEffect(() => {
     return () => {
       clearSilenceTimer();
+      if (finalizationTimerRef.current !== null) {
+        clearTimeout(finalizationTimerRef.current);
+        finalizationTimerRef.current = null;
+      }
       startAttemptRef.current += 1;
       listeningRef.current = false;
       stopRequestedRef.current = false;
       pendingPartialRef.current = '';
+      // `null` distinguishes teardown from a completed empty capture so the
+      // caller cannot send a draft after this composer has unmounted.
+      stopSettlementRef.current?.resolve(null);
+      stopSettlementRef.current = null;
       try {
         modRef.current?.abort();
       } catch {

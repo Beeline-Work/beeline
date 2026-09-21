@@ -551,7 +551,7 @@ describe('edge states', () => {
 
     // Stop without any final result
     await act(async () => micBtn.props.onPress());
-    await act(async () => {});
+    await act(async () => fireEvent('end'));
 
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
   });
@@ -589,7 +589,7 @@ describe('send and mic state', () => {
 
     // Stop listening
     await act(async () => micBtn.props.onPress());
-    await act(async () => {});
+    await act(async () => fireEvent('end'));
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
   });
 
@@ -627,11 +627,16 @@ describe('send and mic state', () => {
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('');
   });
 
-  it('one mic press after speech sends the captured words and clears the composer', async () => {
-    const onSend = vi.fn();
+  it('waits for a complete final transcript before sending after a mic press', async () => {
+    const sentText = vi.fn();
     let renderer: any;
     function ControlledComposer() {
       const [value, setValue] = React.useState('');
+      const valueRef = React.useRef('');
+      const commit = (next: string) => {
+        valueRef.current = next;
+        setValue(next);
+      };
       return (
         <ConversationComposer
           value={value}
@@ -641,13 +646,13 @@ describe('send and mic state', () => {
           disabled={false}
           onAttach={vi.fn()}
           onBlur={vi.fn()}
-          onChangeText={setValue}
+          onChangeText={commit}
           onContentSizeChange={vi.fn()}
           onFocus={vi.fn()}
           onKeyPress={vi.fn()}
           onSend={() => {
-            onSend();
-            setValue('');
+            sentText(valueRef.current);
+            commit('');
           }}
         />
       );
@@ -659,11 +664,23 @@ describe('send and mic state', () => {
 
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {
-      fireEvent('result', { results: [{ transcript: 'send these words' }], isFinal: false });
+      fireEvent('result', { results: [{ transcript: 'Sally sell' }], isFinal: false });
     });
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    expect(sentText).not.toHaveBeenCalled();
+    expect(
+      renderer.root.findByProps({ testID: 'chat-speech-status' }).findByType('Text').props.children,
+    ).toBe('finishing transcription');
 
-    expect(onSend).toHaveBeenCalledOnce();
+    await act(async () => {
+      fireEvent('result', {
+        results: [{ transcript: 'Sally sells seashells by the seashore' }],
+        isFinal: true,
+      });
+    });
+
+    expect(sentText).toHaveBeenCalledOnce();
+    expect(sentText).toHaveBeenCalledWith('Sally sells seashells by the seashore');
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
@@ -705,6 +722,7 @@ describe('send and mic state', () => {
     });
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('already final');
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => fireEvent('end'));
 
     expect(onSend).toHaveBeenCalledOnce();
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
@@ -715,6 +733,7 @@ describe('send and mic state', () => {
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => fireEvent('end'));
     expect(onSend).not.toHaveBeenCalled();
     expect(renderer.root.findByProps({ testID: 'chat-input' }).props.placeholder).toBe('Message');
   });

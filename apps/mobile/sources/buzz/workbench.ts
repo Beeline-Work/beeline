@@ -291,8 +291,6 @@ export function connectorSignInLocationLine(
       return "Sign-in page opened on this machine's screen";
     case 'virtual':
       return 'Sign-in page opened on a virtual display';
-    case 'unreachable':
-      return 'Sign-in page could not be shown here';
     default:
       return '';
   }

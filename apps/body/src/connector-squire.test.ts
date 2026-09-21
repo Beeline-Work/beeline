@@ -166,9 +166,42 @@ describe('parseConnectReport', () => {
     expect(connectBlockedLine(blocked)).toContain('Finish or close that Trusty Squire session');
   });
 
-  it('has nothing to say for a connected or sign-in report', () => {
+  it('has nothing to say for a connected report or an outstanding sign-in', () => {
     expect(connectBlockedLine(report({ state: 'connected', terminal: true }))).toBeUndefined();
-    expect(connectBlockedLine(report({ state: 'needs-sign-in' }))).toBeUndefined();
+    expect(
+      connectBlockedLine(
+        report({
+          state: 'needs-sign-in',
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'host_screen' },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('says a sign-in nobody is waiting on any more is blocked', () => {
+    // The run ENDED still needing a sign-in: nothing is listening for the
+    // human on the other side of that page.
+    expect(
+      connectBlockedLine(
+        report({
+          state: 'needs-sign-in',
+          terminal: true,
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'host_screen' },
+        }),
+      ),
+    ).toBe('the connect run ended before the sign-in was completed');
+    // Nowhere to send anyone: the placement says the page could not be shown.
+    expect(
+      connectBlockedLine(
+        report({
+          state: 'needs-sign-in',
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'unreachable', reason: 'no x11vnc' },
+        }),
+      ),
+    ).toBe('the sign-in page could not be shown on this machine');
   });
 
   it('carries the browser location by kind, never inventing one', () => {
@@ -355,6 +388,47 @@ describe('defaultStreamedRunner', () => {
 });
 
 describe('installSquire', () => {
+  it('refuses a sign-in button for a ceremony whose page could not be shown', async () => {
+    // The runner's safety timeout and a process that dies without its
+    // terminal line both hand this report straight to installSquire.
+    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        report: report({
+          state: 'needs-sign-in',
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'unreachable', reason: 'no x11vnc' },
+        }),
+      }),
+      mcp: client,
+    });
+    expect(result.status).toBe('error');
+    expect(result.signIn).toBeUndefined();
+    expect(result.errorMessage).toBe('the sign-in page could not be shown on this machine');
+  });
+
+  it('refuses a sign-in button for a run that already ended', async () => {
+    const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: fakeStreamRunner({
+        report: report({
+          state: 'needs-sign-in',
+          terminal: true,
+          sign_in_url: 'https://trustysquire.ai/install?token=secret',
+          browser_location: { kind: 'host_screen' },
+        }),
+      }),
+      mcp: client,
+    });
+    expect(result.status).toBe('error');
+    expect(result.signIn).toBeUndefined();
+    expect(result.errorMessage).toBe('the connect run ended before the sign-in was completed');
+  });
+
   it('reports an unshowable ceremony as blocked, never as an outstanding sign-in', async () => {
     const { client } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
     const result = await installSquire({
@@ -653,6 +727,7 @@ describe('version resolution', () => {
           report: report({
             state: 'needs-sign-in',
             sign_in_url: 'https://squire.example/install?token=x',
+            browser_location: { kind: 'host_screen' },
           }),
           abort: () => {},
         };
@@ -723,6 +798,7 @@ describe('connect session claim', () => {
         report: report({
           state: 'needs-sign-in',
           sign_in_url: 'https://squire.example/install?token=x',
+          browser_location: { kind: 'host_screen' },
         }),
       }),
       run,
@@ -825,6 +901,7 @@ describe('on-disk profile claim reclaim', () => {
         report: report({
           state: 'needs-sign-in',
           sign_in_url: 'https://squire.example/install?token=x',
+          browser_location: { kind: 'host_screen' },
         }),
       }),
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
@@ -854,6 +931,7 @@ describe('on-disk profile claim reclaim', () => {
           report: report({
             state: 'needs-sign-in',
             sign_in_url: 'https://squire.example/install?token=x',
+            browser_location: { kind: 'host_screen' },
           }),
           abort: () => {},
         };

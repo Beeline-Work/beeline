@@ -557,23 +557,28 @@ export function parseConnectReport(line: string): SquireConnectReport | undefine
 }
 
 /**
- * Whether this report is the one the run's caller can act on, or whether
- * another line is still coming. `terminal` says the run ended. A live
- * `needs-sign-in` is publishable once it names where the page opened: the
- * placement is written on a later line than the URL, and every ceremony
- * reports it before it starts waiting on the human, so this waits on Squire's
- * own next line and never on the human or on the process.
- *
- * `unreachable` is the one placement that is not a page anybody can be sent
- * to: the ceremony reports it and then ends, so its terminal line — the one
- * that says what blocked the connect — is what this waits for.
+ * Whether this report leaves a sign-in outstanding: a run that has not ended
+ * (`terminal` false), names a page, and names a placement somebody can be
+ * sent to. The placement is written on a later line than the URL and every
+ * ceremony reports it before it starts waiting on the human, so an unnamed
+ * placement (`none`) is a line to wait past. `unreachable` is a placement
+ * that is nowhere, and a run that has ENDED waits for nobody — both are
+ * blocked connects, and `connectBlockedLine` says so.
  */
-export function isPublishableConnectReport(report: SquireConnectReport): boolean {
-  if (report.terminal) return true;
-  if (report.state !== 'needs-sign-in' || !report.sign_in_url) return false;
+export function isOutstandingSignIn(report: SquireConnectReport): boolean {
+  if (report.terminal || report.state !== 'needs-sign-in' || !report.sign_in_url) return false;
   const location = report.browser_location;
   if (!isRecord(location) || typeof location.kind !== 'string') return false;
   return location.kind !== 'none' && location.kind !== 'unreachable';
+}
+
+/**
+ * Whether this report is the run's answer, or whether another line is still
+ * coming: the line that ended the run, or the one that hands a person a page
+ * to go to.
+ */
+export function isPublishableConnectReport(report: SquireConnectReport): boolean {
+  return report.terminal || isOutstandingSignIn(report);
 }
 
 /** Squire's reason codes, in the words a person reads. The code is the
@@ -603,10 +608,11 @@ function holderLine(raw: unknown): string | undefined {
 
 /**
  * What blocks a connect, in one line for the person, from the typed report
- * alone. `undefined` for a run that connected or is waiting on a human.
+ * alone. `undefined` for a run that connected or still has a human's sign-in
+ * outstanding.
  */
 export function connectBlockedLine(report: SquireConnectReport): string | undefined {
-  if (report.state === 'connected' || report.state === 'needs-sign-in') return undefined;
+  if (report.state === 'connected' || isOutstandingSignIn(report)) return undefined;
   const holder = holderLine(report.holder);
   if (holder) return holder;
   if (report.reason && CONNECT_REASON_LINES[report.reason]) {
@@ -615,6 +621,9 @@ export function connectBlockedLine(report: SquireConnectReport): string | undefi
   const location = isRecord(report.browser_location) ? report.browser_location : undefined;
   if (location?.kind === 'unreachable') {
     return 'the sign-in page could not be shown on this machine';
+  }
+  if (report.state === 'needs-sign-in') {
+    return 'the connect run ended before the sign-in was completed';
   }
   // An unrecognised state is named verbatim, never coerced into one of
   // Squire's four.
@@ -852,7 +861,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
   }
-  if (report.state !== 'connected' && report.state !== 'needs-sign-in') {
+  if (report.state !== 'connected' && !isOutstandingSignIn(report)) {
     const reason = connectBlockedLine(report) ?? 'Trusty Squire could not connect';
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
@@ -866,7 +875,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
 
   const location = connectBrowserLocation(report.browser_location);
   const signIn: ConnectorSignIn | undefined =
-    report.state === 'needs-sign-in' && report.sign_in_url
+    isOutstandingSignIn(report) && report.sign_in_url
       ? {
           method: 'streamed-page',
           url: report.sign_in_url,

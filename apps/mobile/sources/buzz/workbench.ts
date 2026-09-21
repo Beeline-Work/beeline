@@ -73,6 +73,14 @@ export type WorkbenchConnection = {
    */
   service?: string;
   hosts: readonly string[];
+  /**
+   * The brand domain for the row's icon, derived by the SERVER from the
+   * credential's first allowed host (`faviconDomain` in
+   * `@beeline/api-contract/workbench`) — `api.resend.com` reads
+   * `resend.com`. Absent when the credential reports no host; the mark then
+   * draws its lettermark.
+   */
+  faviconDomain?: string;
   state: 'active' | 'error';
   /** Which human provisioned the connection (sovereignty owner). */
   ownerId: string;
@@ -406,6 +414,31 @@ export function connectionDomainsLine(connection: WorkbenchConnection): string {
 export function connectionCompany(connection: WorkbenchConnection): string {
   if (connection.service) return connection.service;
   return hostCompany(connection.hosts[0]) ?? connection.name;
+}
+
+/**
+ * The name a key row carries. The vault's `service` is the authority — it is
+ * what the credential was issued by, so the row reads `resend`, `sentry`,
+ * `ipinfo` rather than the vault's LABEL, which is `default` for nearly every
+ * key and names nothing.
+ *
+ * The label is kept only where it distinguishes: when two of the viewer's
+ * keys are for the SAME service, the label is the only fact that tells them
+ * apart, so it joins the service name. A lone `default` is never a row name —
+ * a connection with no service falls back to the vault REFERENCE, which at
+ * least names the entry, rather than to a word that says nothing.
+ */
+export function connectionTitle(
+  connection: WorkbenchConnection,
+  connections: readonly WorkbenchConnection[],
+): string {
+  const company = connectionCompany(connection);
+  const unnamed = company.trim().length === 0 || company.trim().toLowerCase() === 'default';
+  const base = unnamed ? connection.ref : company;
+  const sameService = connections.filter((entry) => connectionCompany(entry) === company);
+  const label = connection.name.trim();
+  const labelIsName = label.length > 0 && label.toLowerCase() !== 'default' && label !== company;
+  return sameService.length > 1 && labelIsName ? `${base} · ${label}` : base;
 }
 
 /**

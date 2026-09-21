@@ -7,6 +7,7 @@ import {
   connectionHostsLine,
   connectionInstrument,
   connectionSpendCap,
+  connectionTitle,
   connectionsForViewer,
   connectorDescription,
   connectorIdentityHandle,
@@ -186,6 +187,42 @@ describe('key row copy', () => {
     // An address names no company — the key's own name says more.
     expect(connectionCompany(noService(['127.0.0.1'], 'Home box'))).toBe('Home box');
     expect(connectionCompany(noService([], 'Home box'))).toBe('Home box');
+  });
+
+  it('titles a lone key with its vault service, never the vault label', () => {
+    const defaulted = { ...view.connections[0], name: 'default' };
+    expect(connectionTitle(defaulted, [defaulted])).toBe('vercel');
+    // The row's service is authoritative even when the label disagrees.
+    const labelled = { ...view.connections[0], name: 'Prod box', service: 'resend' };
+    expect(connectionTitle(labelled, [labelled])).toBe('resend');
+  });
+
+  it('keeps the label only where two keys share one service', () => {
+    const first = {
+      ...view.connections[0],
+      ref: 'cred_resend_a',
+      name: 'default',
+      service: 'resend',
+      hosts: ['api.resend.com'],
+    };
+    const second = { ...first, ref: 'cred_resend_b', name: 'prod' };
+    // Two keys for one service: the named one carries its label, the
+    // `default` one has nothing to add and stays the service alone.
+    expect(connectionTitle(first, [first, second])).toBe('resend');
+    expect(connectionTitle(second, [first, second])).toBe('resend · prod');
+    // Alone, the same key is just its service.
+    expect(connectionTitle(second, [second])).toBe('resend');
+  });
+
+  it('never paints `default` as a row name, falling back to the vault reference', () => {
+    const unknown = {
+      ...view.connections[0],
+      ref: 'github.com/acme/tooling',
+      name: 'default',
+      service: undefined,
+      hosts: [],
+    };
+    expect(connectionTitle(unknown, [unknown])).toBe('github.com/acme/tooling');
   });
 
   it('carries the company letter on the mark, and never an empty plate', () => {

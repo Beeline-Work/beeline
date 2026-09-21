@@ -90,6 +90,7 @@ function toConnection(
     // placeholder, so the screens can tell "no service reported" from one.
     ...(dto.service ? { service: dto.service } : {}),
     hosts: dto.allowedHosts,
+    ...(dto.faviconDomain ? { faviconDomain: dto.faviconDomain } : {}),
     state: dto.state,
     ownerId: viewerId,
   };

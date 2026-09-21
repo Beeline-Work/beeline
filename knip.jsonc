@@ -49,6 +49,8 @@
         "scripts/emoji-clip-proof.tsx",
         "scripts/workspace-picture-clip-proof.tsx",
         "scripts/workspace-picture-seat-proof.tsx",
+        "scripts/workbench-keys-proof.tsx",
+        "scripts/render-workbench-keys-proof.mjs",
         "scripts/transcript-dates-proof.tsx",
         "scripts/tool-output-sheet-proof.tsx",
         "scripts/bookmarks-empty-proof.tsx",

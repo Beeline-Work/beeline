@@ -125,7 +125,11 @@ import type {
   ConnectorStatus,
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
-import { GOOGLE_CONNECTOR_KINDS, isGoogleToolConnectorKind } from '@beeline/api-contract/workbench';
+import {
+  GOOGLE_CONNECTOR_KINDS,
+  faviconDomain,
+  isGoogleToolConnectorKind,
+} from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
   ReadWalletHistoryInput,
@@ -5881,6 +5885,7 @@ export class PhoneService {
         service: row.service,
         label: row.label ?? row.reference,
         allowedHosts: row.hosts ?? [],
+        faviconDomain: faviconDomain(row.hosts ?? []),
         state: row.state,
         ...(row.last_synced_at
           ? {
@@ -6169,6 +6174,7 @@ export class PhoneService {
         service: connection.service,
         label: connection.label ?? connection.reference,
         allowedHosts: connection.hosts ?? [],
+        faviconDomain: faviconDomain(connection.hosts ?? []),
         state: connection.state,
         ...(connection.last_synced_at
           ? {

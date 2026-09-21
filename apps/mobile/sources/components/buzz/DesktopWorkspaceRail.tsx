@@ -11,6 +11,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
+import {
+  cancelScheduledAnimationFrame,
+  scheduleAnimationFrame,
+} from '@/buzz/host-scheduler';
 
 const RAIL_WIDTH = 76;
 const TILE_SIZE = 48;
@@ -49,6 +53,12 @@ type DesktopWorkspaceRailProps = {
   readonly onClose: () => void;
   readonly onSelect: (workspaceId: string) => void;
   readonly onAdd: () => void;
+  /** The account hub. The rail's scrim covers the pane that also names it. */
+  readonly onOpenAccount: () => void;
+  readonly viewerPubkey?: string;
+  readonly viewerName?: string;
+  readonly viewerAvatarUrl?: string;
+  readonly viewerFace?: string;
 };
 
 export function DesktopWorkspaceRail({
@@ -58,6 +68,11 @@ export function DesktopWorkspaceRail({
   onClose,
   onSelect,
   onAdd,
+  onOpenAccount,
+  viewerPubkey,
+  viewerName,
+  viewerAvatarUrl,
+  viewerFace,
 }: DesktopWorkspaceRailProps) {
   const styles = stylesheet;
   const reducedMotion = useReducedMotion();
@@ -66,6 +81,8 @@ export function DesktopWorkspaceRail({
   const [hoveredWorkspaceId, setHoveredWorkspaceId] = React.useState<string | null>(null);
   const [focusedWorkspaceId, setFocusedWorkspaceId] = React.useState<string | null>(null);
   const [addFocused, setAddFocused] = React.useState(false);
+  const [accountFocused, setAccountFocused] = React.useState(false);
+  const [accountHovered, setAccountHovered] = React.useState(false);
   const activeIndex = Math.max(
     0,
     workspaces.findIndex((workspace) => workspace.id === activeWorkspaceId),
@@ -81,8 +98,10 @@ export function DesktopWorkspaceRail({
       easing: Easing.bezier(0.22, 1, 0.36, 1),
       reduceMotion: ReduceMotion.System,
     });
-    const frame = requestAnimationFrame(() => tileRefs.current[activeIndex]?.focus?.());
-    return () => cancelAnimationFrame(frame);
+    const frame = scheduleAnimationFrame(() => tileRefs.current[activeIndex]?.focus?.());
+    return () => {
+      if (frame !== false) cancelScheduledAnimationFrame(frame);
+    };
   }, [activeIndex, open, railX, reducedMotion]);
 
   React.useEffect(() => {
@@ -99,6 +118,11 @@ export function DesktopWorkspaceRail({
           onAdd();
           return;
         }
+        if (focusedIndexRef.current === workspaces.length + 1) {
+          event.preventDefault();
+          onOpenAccount();
+          return;
+        }
         const workspace = workspaces[focusedIndexRef.current];
         if (!workspace) return;
         event.preventDefault();
@@ -110,14 +134,24 @@ export function DesktopWorkspaceRail({
       event.preventDefault();
       const startIndex = focusedIndexRef.current;
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      const itemCount = workspaces.length + 1;
+      // Workspaces, then the add tile, then the account hub.
+      const itemCount = workspaces.length + 2;
       const nextIndex = (startIndex + delta + itemCount) % itemCount;
       focusedIndexRef.current = nextIndex;
       tileRefs.current[nextIndex]?.focus?.();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeWorkspaceId, activeIndex, onAdd, onClose, onSelect, open, workspaces]);
+  }, [
+    activeWorkspaceId,
+    activeIndex,
+    onAdd,
+    onClose,
+    onOpenAccount,
+    onSelect,
+    open,
+    workspaces,
+  ]);
 
   const animatedRailStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: railX.value }],
@@ -236,6 +270,58 @@ export function DesktopWorkspaceRail({
             >
               <Text style={styles.addGlyph}>+</Text>
             </Pressable>
+            <View style={styles.separator} />
+            {/* The account hub. The rail's scrim covers the navigation pane
+                that also names it, so without this the rail is a dead end for
+                everything that is not a Workspace. */}
+            <View style={styles.tileSlot}>
+              <Pressable
+                accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'}
+                accessibilityRole="menuitem"
+                onBlur={() => setAccountFocused(false)}
+                onFocus={() => {
+                  focusedIndexRef.current = workspaces.length + 1;
+                  setAccountFocused(true);
+                }}
+                onHoverIn={() => setAccountHovered(true)}
+                onHoverOut={() => setAccountHovered(false)}
+                onPress={onOpenAccount}
+                ref={(node) => {
+                  tileRefs.current[workspaces.length + 1] = node;
+                }}
+                style={[styles.tile, accountFocused && styles.focusedTile]}
+                testID="desktop-workspace-account"
+              >
+                {viewerPubkey ? (
+                  <IdentityMark
+                    avatarUrl={viewerAvatarUrl}
+                    face={viewerFace}
+                    kind="human"
+                    name={viewerName ?? 'You'}
+                    seed={viewerPubkey}
+                    size={32}
+                    testID="desktop-workspace-account-mark"
+                  />
+                ) : (
+                  // The identity has not loaded yet. Hold the mark's box open
+                  // rather than drawing a stand-in, exactly as the navigation
+                  // pane's own account row does.
+                  <View style={styles.accountMarkSlot} />
+                )}
+              </Pressable>
+              {(accountHovered || accountFocused) && (
+                <View
+                  pointerEvents="none"
+                  style={styles.label}
+                  testID="desktop-workspace-account-label"
+                >
+                  <Text numberOfLines={1} style={styles.labelName}>
+                    Settings
+                  </Text>
+                  {viewerName ? <Text style={styles.labelMeta}>{viewerName}</Text> : null}
+                </View>
+              )}
+            </View>
           </View>
         </Animated.View>
       </View>
@@ -359,5 +445,6 @@ const stylesheet = StyleSheet.create((theme) => {
       ...hull.type.hero,
       color: hull.accent,
     },
+    accountMarkSlot: { width: 32, height: 32 },
   };
 });

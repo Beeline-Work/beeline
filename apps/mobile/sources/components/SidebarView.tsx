@@ -901,8 +901,16 @@ export const SidebarView = React.memo(function SidebarView() {
             router.push('/beeline/community' as Href);
           }}
           onClose={() => setWorkspaceSwitcherOpen(false)}
+          onOpenAccount={() => {
+            setWorkspaceSwitcherOpen(false);
+            router.push('/beeline/settings' as Href);
+          }}
           onSelect={selectWorkspace}
           open={workspaceSwitcherOpen}
+          viewerAvatarUrl={viewerIdentity?.avatar}
+          viewerFace={viewerIdentity?.face}
+          viewerName={viewerIdentity?.name}
+          viewerPubkey={identityPubkey ?? undefined}
           workspaces={workspaces.map((workspace) => ({
             id: workspace.id,
             name: workspace.name,

@@ -127,6 +127,12 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
     'process.exit(0);\n',
   );
   await writeFile(join(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), 'export {};\n');
+  await mkdir(join(staging, 'lib', 'beeline', 'codegraph', 'bin'), { recursive: true });
+  await writeFile(
+    join(staging, 'lib', 'beeline', 'codegraph', 'bin', 'codegraph'),
+    '#!/bin/sh\nexit 0\n',
+    { mode: 0o755 },
+  );
   await writeFile(
     join(staging, 'lib', 'beeline', 'bundle.json'),
     `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), commit, version }, null, 2)}\n`,
@@ -143,6 +149,7 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
     stubBeelineWrapper().replace('beeline-cli.mjs', 'beeline-readonly-mcp.mjs'),
     { mode: 0o755 },
   );
+  await writeFile(join(staging, 'bin', 'codegraph'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const tarballPath = join(staging, `beeline-${hostPlatformKey()}.tar.gz`);
   const tar = spawnSync('tar', ['-czf', tarballPath, '-C', staging, 'bin', 'lib'], {
     timeout: 30_000,
@@ -471,7 +478,13 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       await mkdir(join(releaseDir, 'lib', 'beeline'), { recursive: true });
       await mkdir(join(releaseDir, 'bin'), { recursive: true });
       await mkdir(join(prefix, 'bin'), { recursive: true });
-      for (const tool of ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp']) {
+      for (const tool of [
+        'beeline',
+        'buzz-agent',
+        'buzz-dev-mcp',
+        'beeline-readonly-mcp',
+        'codegraph',
+      ]) {
         await writeFile(join(releaseDir, 'bin', tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       }
       await symlink(join('beeline-releases', 'fix9'), join(prefix, 'lib', 'beeline'));
@@ -492,7 +505,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       expect(rewritten).toContain('export BEELINE_LIB_DIR="$prefix_dir/lib/beeline"');
       expect(rewritten).toContain('exec "$prefix_dir/lib/beeline/bin/beeline" "$@"');
       // And every shipped tool got the same treatment.
-      for (const tool of ['buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp']) {
+      for (const tool of ['buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp', 'codegraph']) {
         expect(await readFile(join(prefix, 'bin', tool), 'utf8')).toContain(
           `exec "$prefix_dir/lib/beeline/bin/${tool}" "$@"`,
         );
@@ -544,6 +557,9 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       expect(source).toContain('exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"');
       expect(source).toContain(
         'exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"',
+      );
+      expect(source).toContain(
+        'exec "$BEELINE_BUNDLE_ROOT/lib/beeline/codegraph/bin/codegraph" "$@"',
       );
       expect(source).not.toContain('exec node "$BEELINE_LIB_DIR/beeline-readonly-mcp.mjs"');
       // The old resolution shape must not come back for the CLI wrapper.

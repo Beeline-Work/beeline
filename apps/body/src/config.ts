@@ -54,9 +54,9 @@ export interface BodyConfig {
   readonlyMcpCommand?: string;
   readonlyMcpArgs?: string[];
   /**
-   * Optional codegraph CLI, mounted as an MCP for edit-mode corner sessions
-   * when resolvable. Unlike mcpBinary/readonlyMcpCommand this is best-effort:
-   * a missing codegraph install never blocks a corner from opening.
+   * Optional CodeGraph CLI, mounted in repository-backed Rooms and corners.
+   * Unlike mcpBinary/readonlyMcpCommand this is best-effort: a missing or
+   * broken index never blocks a session from opening.
    */
   codegraphCommand?: string;
   /** Env vars inherited by the selected ACP agent process. */
@@ -288,10 +288,14 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
 /**
  * Resolve the optional codegraph binary. Returns undefined (never throws)
  * when it isn't installed or configured — codegraph is a best-effort
- * capability for corner sessions, not a required one.
+ * capability for repository-backed Room and corner sessions, not a required
+ * one.
  */
 export function resolveCodegraphCommand(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const configured = env.BUZZ_CODEGRAPH_BIN;
+  const bundledBinary = commandInRunningBundle('codegraph');
+  if (bundledBinary) return bundledBinary;
+
+  const configured = env.BEELINE_CODEGRAPH_BIN ?? env.BUZZ_CODEGRAPH_BIN;
   if (configured) {
     try {
       accessSync(configured, constants.X_OK);

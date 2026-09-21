@@ -44,6 +44,12 @@ import {
 import { beelineCapabilityContextForHarness, isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { beelineAgentMcpServer, readOnlyMcpServer, youtubeMcpServer } from './room-session.js';
+import {
+  codegraphFingerprintServers,
+  codegraphIndexDirectory,
+  codegraphMcpServer,
+  prepareCodegraphIndex,
+} from './codegraph.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import {
@@ -509,12 +515,13 @@ export class MonolithRoomTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, repositoryState, grantedHostRoutes] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
+      this.repositoryState(),
       this.grantedHostRoutes(),
     ]);
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -523,11 +530,15 @@ export class MonolithRoomTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       soul: configuration.soul ?? self?.soul,
       agentName: self?.name ?? this.agent.name,
-      mcpServers: expectedMountedImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-        grantedHostRoutes,
-      }),
+      mcpServers: codegraphFingerprintServers(
+        this.options.config,
+        expectedMountedImportedMcpServerNames({
+          operatorHome: this.options.config.operatorHome,
+          agentKind: this.options.config.agentKind,
+          grantedHostRoutes,
+        }),
+        repositoryState.resolution === 'repository',
+      ),
     });
   }
 
@@ -608,17 +619,6 @@ export class MonolithRoomTurnLoop {
       command,
     });
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
-    const fingerprint = sessionConfigFingerprint({
-      model: configuration.model ?? this.options.config.modelSelection?.model,
-      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
-      soul: configuration.soul ?? self?.soul,
-      agentName: self?.name ?? this.agent.name,
-      mcpServers: expectedMountedImportedMcpServerNames({
-        operatorHome: this.options.config.operatorHome,
-        agentKind: this.options.config.agentKind,
-        grantedHostRoutes,
-      }),
-    });
     this.agentEnv = agentEnv;
     const agentArgs = agentArgsWithModelSelection(
       {
@@ -639,6 +639,25 @@ export class MonolithRoomTurnLoop {
     // so the sandbox must leave this writable too.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
+    // Index before constructing the sandbox: a Room keeps the checkout
+    // read-only, but CodeGraph's SQLite WAL and connect-time reconciliation
+    // need its generated .codegraph directory writable while the MCP lives.
+    const codegraphReady = await prepareCodegraphIndex(this.options.config, this.options.cwd);
+    const fingerprint = sessionConfigFingerprint({
+      model: configuration.model ?? this.options.config.modelSelection?.model,
+      effort: configuration.effort ?? this.options.config.modelSelection?.effort,
+      soul: configuration.soul ?? self?.soul,
+      agentName: self?.name ?? this.agent.name,
+      mcpServers: codegraphFingerprintServers(
+        this.options.config,
+        expectedMountedImportedMcpServerNames({
+          operatorHome: this.options.config.operatorHome,
+          agentKind: this.options.config.agentKind,
+          grantedHostRoutes,
+        }),
+        codegraphReady,
+      ),
+    });
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -649,6 +668,7 @@ export class MonolithRoomTurnLoop {
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
+          ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...grantedSquireHostBindPaths({
             operatorHome,
             agentKind: this.options.config.agentKind,
@@ -681,6 +701,12 @@ export class MonolithRoomTurnLoop {
           : {}),
       }),
     ];
+    if (codegraphReady) {
+      const codegraph = codegraphMcpServer(this.options.config, this.options.cwd, {
+        readonly: true,
+      });
+      if (codegraph) servers.push(codegraph);
+    }
     const youtube = youtubeMcpServer(this.options.config, this.options.youtubeAccessToken);
     if (youtube) servers.push(youtube);
     const grantedRouteServers = grantedHostRouteWires(

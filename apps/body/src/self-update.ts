@@ -210,7 +210,8 @@ export function discoveredBeelineInstallLayout(
   const explicitAnchor = env.BEELINE_INSTALL_LIB_DIR?.trim();
   if (explicitAnchor) return anchorLayout(explicitAnchor);
   const explicitBinDir = env.BEELINE_INSTALL_DIR?.trim();
-  if (explicitBinDir) return anchorLayout(resolve(dirname(resolve(explicitBinDir)), 'lib', 'beeline'));
+  if (explicitBinDir)
+    return anchorLayout(resolve(dirname(resolve(explicitBinDir)), 'lib', 'beeline'));
   return defaultBeelineInstallLayout(env);
 }
 
@@ -400,6 +401,7 @@ function run(
 
 const BUNDLE_ENTRYPOINT = 'lib/beeline/beeline-cli.mjs';
 const PI_MCP_ADAPTER_ENTRYPOINT = 'lib/beeline/pi-mcp-adapter.mjs';
+const CODEGRAPH_ENTRYPOINT = 'lib/beeline/codegraph/bin/codegraph';
 
 /** Entrypoint candidates: release-shaped first, then the legacy-flat fallback. */
 function entrypointCandidates(bundleDir: string): string[] {
@@ -426,10 +428,7 @@ export async function resolveBundleEntrypoint(bundleDir: string): Promise<string
 
 /** Files whose presence makes an extracted bundle installable. */
 function requiredBundlePaths(): string[] {
-  return [
-    BUNDLE_ENTRYPOINT,
-    PI_MCP_ADAPTER_ENTRYPOINT,
-  ];
+  return [BUNDLE_ENTRYPOINT, PI_MCP_ADAPTER_ENTRYPOINT, CODEGRAPH_ENTRYPOINT];
 }
 
 /**
@@ -556,7 +555,13 @@ export async function stageRelease(
 // Atomic activation
 // ---------------------------------------------------------------------------
 
-const FORWARDER_TOOLS = ['beeline', 'buzz-agent', 'buzz-dev-mcp', 'beeline-readonly-mcp'] as const;
+const FORWARDER_TOOLS = [
+  'beeline',
+  'buzz-agent',
+  'buzz-dev-mcp',
+  'beeline-readonly-mcp',
+  'codegraph',
+] as const;
 
 /**
  * Bin-name aliases: installed wrapper name -> the bundle tool it execs. The

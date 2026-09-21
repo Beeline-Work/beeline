@@ -20,7 +20,6 @@ const binaryEnv = {
   BEELINE_READONLY_MCP_BIN: process.execPath,
 };
 
-
 describe('buildAgentEnv passthrough boundary', () => {
   // AcpClient.start() used to spread the daemon's whole process.env underneath
   // this map, so the allowlist described nothing. It is the child's entire
@@ -117,13 +116,16 @@ describe('resolveReadonlyMcpCommand', () => {
     const bundleRoot = mkdtempSync(join(tmpdir(), 'beeline-staged-config-'));
     const cli = join(bundleRoot, 'lib', 'beeline', 'beeline-cli.mjs');
     const readonlyMcp = join(bundleRoot, 'bin', 'beeline-readonly-mcp');
+    const codegraph = join(bundleRoot, 'bin', 'codegraph');
     const originalEntrypoint = process.argv[1];
 
     mkdirSync(join(bundleRoot, 'lib', 'beeline'), { recursive: true });
     mkdirSync(join(bundleRoot, 'bin'), { recursive: true });
     writeFileSync(cli, '');
     writeFileSync(readonlyMcp, '#!/bin/sh\nexit 0\n');
+    writeFileSync(codegraph, '#!/bin/sh\nexit 0\n');
     chmodSync(readonlyMcp, 0o755);
+    chmodSync(codegraph, 0o755);
 
     try {
       process.argv[1] = cli;
@@ -135,6 +137,7 @@ describe('resolveReadonlyMcpCommand', () => {
 
       expect(config.readonlyMcpCommand).toBe(readonlyMcp);
       expect(config.readonlyMcpArgs).toEqual([]);
+      expect(config.codegraphCommand).toBe(codegraph);
     } finally {
       process.argv[1] = originalEntrypoint;
       rmSync(bundleRoot, { recursive: true, force: true });
@@ -153,9 +156,14 @@ describe('resolveReadonlyMcpCommand', () => {
 
 describe('resolveCodegraphCommand', () => {
   it('resolves an explicit, executable override', () => {
-    expect(resolveCodegraphCommand({ ...PATH_ONLY, PATH: '', BUZZ_CODEGRAPH_BIN: process.execPath })).toBe(
-      process.execPath,
-    );
+    expect(
+      resolveCodegraphCommand({
+        ...PATH_ONLY,
+        PATH: '',
+        BEELINE_CODEGRAPH_BIN: process.execPath,
+        BUZZ_CODEGRAPH_BIN: '/legacy/codegraph',
+      }),
+    ).toBe(process.execPath);
   });
 
   it('is best-effort: an unusable override returns undefined instead of throwing', () => {
@@ -166,7 +174,11 @@ describe('resolveCodegraphCommand', () => {
       }),
     ).not.toThrow();
     expect(
-      resolveCodegraphCommand({ ...PATH_ONLY, PATH: '', BUZZ_CODEGRAPH_BIN: '/definitely/missing/codegraph' }),
+      resolveCodegraphCommand({
+        ...PATH_ONLY,
+        PATH: '',
+        BUZZ_CODEGRAPH_BIN: '/definitely/missing/codegraph',
+      }),
     ).toBeUndefined();
   });
 

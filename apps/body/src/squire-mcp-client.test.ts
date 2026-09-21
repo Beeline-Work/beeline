@@ -134,7 +134,7 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
-  it('spawns the vault server itself, on the host broker paths', async () => {
+  it('spawns the non-electing façade, never a server of its own', async () => {
     const home = mkdtempSync(join(tmpdir(), 'beeline-squire-client-'));
     homes.push(home);
     const previousHome = process.env.HOME;
@@ -162,10 +162,12 @@ describe('StdioSquireMcpClient', () => {
       if (previousProfile === undefined) delete process.env.TRUSTY_SQUIRE_PROFILE_DIR;
       else process.env.TRUSTY_SQUIRE_PROFILE_DIR = previousProfile;
     }
-    // This client runs outside every sandbox, so it starts the vault server
-    // directly rather than through the façade, which would only add a process
-    // and refuse with `broker unavailable` on a host with no broker unit.
-    expect(spawned[0]).toEqual(['npx', '-y', '@trusty-squire/mcp@latest', 'server']);
+    // N helper daemons restarting together each reach this client; an
+    // electing `npx … server` per daemon is the eight-brokers incident. The
+    // façade reaches the one host broker or refuses.
+    expect(spawned[0]?.[0]).toBe(process.execPath);
+    expect(spawned[0]?.at(-1)).toMatch(/squire-facade\.(js|ts)$/);
+    expect(spawned[0]).not.toContain('@trusty-squire/mcp@latest');
     expect(spawnedEnv?.TRUSTY_SQUIRE_PROFILE_DIR).toBe(
       join(home, '.trusty-squire', 'chrome-profile'),
     );

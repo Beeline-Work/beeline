@@ -278,6 +278,42 @@ describe('parseConnectOutput', () => {
 });
 
 describe('defaultStreamedRunner', () => {
+  it('never publishes a URL a chunk boundary cut in half', async () => {
+    // The runner re-reads its buffers on every chunk. Writing the ceremony in
+    // two pieces with no newline between them is an ordinary pipe split, and
+    // the first piece is a perfectly valid `/install` URL with a short token.
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      [
+        'process.stdout.write("Open this: https://trustysquire.ai/install?token=q2Xt");',
+        'setTimeout(() => {',
+        '  process.stdout.write("G7fnTfe7wKqm\\n");',
+        '}, 120);',
+        'setInterval(() => {}, 30_000);',
+      ].join(''),
+    ]);
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://trustysquire.ai/install?token=q2XtG7fnTfe7wKqm',
+    });
+    result.abort();
+    releaseSquireConnectSession();
+  });
+
+  it('still reads a ceremony a child printed with no trailing newline', async () => {
+    // The buffers are complete once the child is gone, so its last line is a
+    // whole one; dropping it would lose the only URL connect ever printed.
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'process.stdout.write("Open this: https://tunnel.test/#p=hunter22");',
+    ]);
+    expect(result.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter22',
+    });
+    releaseSquireConnectSession();
+  });
+
   it('keeps reaping an abandoned ceremony after its URL is published', async () => {
     // Nothing downstream reaps the connect once the connector row leaves
     // `installing`, so the runner's own bound is what keeps the display rig

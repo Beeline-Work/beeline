@@ -207,7 +207,7 @@ export type DaemonOperationMap = {
   installConnector: Operation<InstallConnectorInput, WriteResult>;
   postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
   postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
-  getConnectorStatus: Operation<AgentInput, ConnectorStatus>;
+  getConnectorStatus: Operation<GetConnectorStatusInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
   revokeConnectionGrants: Operation<
@@ -859,6 +859,15 @@ export type InstallConnectorInput = AgentInput & {
  * A `errorMessage` marks the run failed; otherwise the row stays installing
  * until `installConnector` completes it.
  */
+/**
+ * Read one connector row. `connectorId` names WHICH one: a helper carries the
+ * four Google tool rows beside its Squire row, and without it the answer is
+ * whichever row was created first.
+ */
+export type GetConnectorStatusInput = AgentInput & {
+  readonly connectorId?: string;
+};
+
 export type PostConnectorStatusInput = AgentInput & {
   readonly connectorId: string;
   readonly steps: readonly ConnectorStep[];

@@ -635,7 +635,10 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getConnectorStatus':
-        return (await this.connectorStatusView(authenticatedAgentId)) as Output<Name>;
+        return (await this.connectorStatusView(
+          authenticatedAgentId,
+          (input as Input<'getConnectorStatus'>).connectorId,
+        )) as Output<Name>;
       case 'getConnectorVaultList':
         return (await this.connectorVaultList(authenticatedAgentId)) as Output<Name>;
       case 'getConnectionDetail':
@@ -858,7 +861,7 @@ export class DaemonService {
            status_steps=$2::jsonb,
            squire_version=COALESCE($4,squire_version),
            signed_in_as=COALESCE($5,signed_in_as),
-           sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE COALESCE($6::jsonb,sign_in) END,
+           sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
            updated_at=now()
        WHERE id=$1::uuid`,
       [
@@ -896,7 +899,10 @@ export class DaemonService {
   }
 
   /** The helper polls its connector's state; stale metadata stages a sync. */
-  private async connectorStatusView(agentId: string): Promise<Output<'getConnectorStatus'>> {
+  private async connectorStatusView(
+    agentId: string,
+    connectorId?: string,
+  ): Promise<Output<'getConnectorStatus'>> {
     const rows = (
       await this.database.query<{
         id: string;
@@ -927,11 +933,13 @@ export class DaemonService {
         status: string;
         status_steps: ConnectorStep[] | null;
         status_error: string | null;
+        sign_in: ConnectorStatus['signIn'] | null;
       }>(
-        `SELECT id,status,status_steps,status_error FROM workspace_connectors
+        `SELECT id,status,status_steps,status_error,sign_in FROM workspace_connectors
          WHERE helper_agent_id=$1 AND status IN ('installing','connected','error')
+           AND ($2::uuid IS NULL OR id=$2::uuid)
          ORDER BY created_at LIMIT 1`,
-        [agentId],
+        [agentId, connectorId ?? null],
       )
     ).rows[0];
     if (!live)
@@ -940,6 +948,7 @@ export class DaemonService {
       connectorId: live.id,
       status: live.status as ConnectorStatus['status'],
       steps: live.status_steps ?? [],
+      ...(live.sign_in ? { signIn: live.sign_in } : {}),
       ...(live.status_error ? { errorMessage: live.status_error } : {}),
     };
   }

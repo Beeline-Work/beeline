@@ -429,13 +429,20 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
       finish(result);
     };
 
+    // Each stream is parsed on its OWN bytes: joining them appends a newline
+    // to whatever partial stdout has arrived, and that synthetic terminator is
+    // exactly what lets a URL split across two chunks look whole.
     const checkOutput = () => {
-      const combined = `${stdout}\n${stderr}`;
-      const signIn = parseConnectOutput(combined);
+      const signIn = parseConnectOutput(stdout) ?? parseConnectOutput(stderr);
       if (signIn) {
         finish({ stdout, stderr, signIn, abort });
       }
     };
+
+    // The child is gone, so its buffers ARE complete: a last line with no
+    // trailing newline is now a whole one.
+    const finalSignIn = (): ConnectorSignIn | undefined =>
+      parseConnectOutput(`${stdout}\n`) ?? parseConnectOutput(`${stderr}\n`);
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       stdout += String(chunk);
@@ -448,7 +455,13 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
     });
 
     child.on('close', () => {
-      settle({ stdout, stderr, pid: child.pid ?? undefined, signIn: undefined, abort: () => {} });
+      settle({
+        stdout,
+        stderr,
+        pid: child.pid ?? undefined,
+        signIn: finalSignIn(),
+        abort: () => {},
+      });
     });
 
     child.on('error', () => {

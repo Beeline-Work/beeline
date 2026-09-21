@@ -756,6 +756,39 @@ describe('workbench connectors', () => {
     expect(row?.status.signIn).toBeUndefined();
   });
 
+  it('answers the connector status the helper named, not the oldest row', async () => {
+    // A helper carries the four Google tool rows beside its Squire row, and
+    // the Google ones are created first. An unscoped read would hand the
+    // helper another connector's state for its own assignment.
+    const google = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'google-gmail',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    const squire = (await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE,
+      connectorType: 'trusty-squire',
+      helperAgentId: HELPER,
+    })) as { connectorId: string };
+    await daemonOperation('postConnectorStatus', {
+      connectorId: squire.connectorId,
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
+    });
+
+    const unscoped = await daemonOperation('getConnectorStatus', {});
+    expect(unscoped.body.connectorId).toBe(google.connectorId);
+
+    const scoped = await daemonOperation('getConnectorStatus', {
+      connectorId: squire.connectorId,
+    });
+    expect(scoped.body.connectorId).toBe(squire.connectorId);
+    expect(scoped.body.signIn).toEqual({
+      method: 'streamed-page',
+      url: 'https://tunnel.test/#p=hunter22',
+    });
+  });
+
   it('pairing ONE Google tool provisions all four tool connectors on the machine', async () => {
     // The single Google connect entry pairs the whole set: one grant, four
     // server-side tool rows, so the entry's repair state tops up every

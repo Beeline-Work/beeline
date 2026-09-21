@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
-import { ConnectorAssignmentLoop } from './connector-assignments.js';
+import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
 import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
+  isProcessAlive,
   releaseSquireConnectSession,
   squireConnectSession,
   type InstallSquireOptions,
@@ -16,10 +17,11 @@ type ExecuteCall = { op: string; input: Record<string, unknown> };
 
 function apiMock(
   assignments: readonly ConnectorAssignment[],
-  status: { connectorId: string; steps: { label: string; status: string }[] } = {
-    connectorId: '',
-    steps: [],
-  },
+  status: {
+    connectorId: string;
+    steps: { label: string; status: string }[];
+    signIn?: { method: string; url: string };
+  } = { connectorId: '', steps: [] },
 ) {
   const calls: ExecuteCall[] = [];
   return {
@@ -212,6 +214,50 @@ describe('ConnectorAssignmentLoop', () => {
     await settle();
     expect(started).toBe(1);
     loop.stop();
+  });
+
+  it('stops the row instead of raising another display when the ceremony expired', async () => {
+    // The server re-issues `install` for the whole time the row is
+    // `installing`. A published ceremony nobody used must end the row, or the
+    // helper brings up a fresh Xvfb/x11vnc/websockify/cloudflared rig every
+    // five minutes for the daemon's lifetime.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    const claimed = squireConnectSession();
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
+      connectorId: 'conn-1',
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
+    });
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      clock.mockReturnValue(claimed!.claimedAt + CONNECT_TIMEOUT_MS);
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(0);
+      const post = api.calls.find((call) => call.op === 'postConnectorStatus');
+      expect(post?.input.errorMessage).toBe(CEREMONY_EXPIRED);
+      expect(post?.input.signIn).toBeNull();
+      expect(isProcessAlive(claimed?.pid)).toBe(false);
+    } finally {
+      clock.mockRestore();
+      connect.abort();
+      releaseSquireConnectSession();
+      loop.stop();
+    }
   });
 
   it('supersedes a live connect when the human asked for this connector again', async () => {

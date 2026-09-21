@@ -308,6 +308,67 @@ export async function routeAgentResult(
     });
 }
 
+/**
+ * Hand a corner back to its worker the moment the review ends.
+ *
+ * A verdict ends the reviewer's job and starts the worker's — merge on a PASS,
+ * fix on a FAIL — and the only thing that used to carry that handoff was the
+ * `@implementer` the reviewer chose to type. A review that stated its findings
+ * and named nobody left the corner stopped: an approval sat recorded with no
+ * one woken to act on it, and the person who asked for the work learned about
+ * it by noticing the silence. So the review's own final reply queues the
+ * worker, on either verdict. Both of `DaemonService`'s reply paths call this:
+ * a verdict with no tag in its text does not even reach `routeAgentResult`,
+ * because a reply naming nobody has no tag to route and takes the shorter
+ * write instead.
+ *
+ * The tag still routes first and wins the row when it was typed — the insert
+ * conflicts on the same (corner, message, agent, action) and keeps `agent_tag`
+ * — so this adds a turn only where there would otherwise be none.
+ *
+ * "The review" is read structurally, never from the verdict's wording: this
+ * agent is the configured reviewer on the corner's parent Room, and the turn
+ * it just ended was dispatched from a `check-passed` fact. Both dispatch paths
+ * — the green transition and reconciliation — cite that fact.
+ */
+export async function queueCornerWorkerAfterReview(
+  db: SqlDatabase,
+  input: {
+    roomId: string;
+    reviewerAgentId: string;
+    turnRequestId: string;
+    verdictMessageId: string;
+  },
+): Promise<void> {
+  const review = (
+    await db.query<CommandRow & { worker_agent_id: string }>(
+      `SELECT command.*,COALESCE(fact.owner_agent_id,corner.created_by) worker_agent_id
+       FROM agent_commands command
+       JOIN rooms corner ON corner.id=command.room_id
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN messages dispatch ON dispatch.id=command.source_message_id
+       JOIN identities worker ON worker.id=COALESCE(fact.owner_agent_id,corner.created_by)
+         AND worker.kind='agent'
+       WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+         AND command.action IN ('input','resume')
+         AND parent.reviewer_agent_id=command.agent_id
+         AND dispatch.system_event->>'kind'='check-passed'
+         AND COALESCE(fact.owner_agent_id,corner.created_by)<>command.agent_id
+       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+      [input.roomId, input.reviewerAgentId, input.turnRequestId],
+    )
+  ).rows[0];
+  if (!review) return;
+  await createAgentCommand(db, {
+    roomId: input.roomId,
+    agentId: review.worker_agent_id,
+    sourceMessageId: input.verdictMessageId,
+    parent: review,
+    reason: 'corner_review',
+  });
+}
+
 export async function claimAgentCommand(
   db: SqlDatabase,
   roomId: string,

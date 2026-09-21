@@ -85,7 +85,7 @@ const TOOL_PATH_LIMIT = 12;
 
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (reviewerHandle)
-    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} tags you with approval, then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only if the complete gate passes.`;
+    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} has reviewed — you are woken when that review ends, whether or not it tags you — then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only if the complete gate passes.`;
   return yoloMode
     ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
     : 'Yolo is off: never merge; wait for a human owner to turn yolo on or merge the pull request themselves.';
@@ -873,7 +873,7 @@ export class MonolithCornerTurnLoop {
                       cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle),
                   ]),
               'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-              "Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait for the reviewer to tag you. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the reviewer's approval tag wakes you, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.",
+              "Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait to be woken. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the end of that review wakes you, tag or no tag, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.",
             ]
           : [
               'This is a no-code corner with no repository checkout and no GitHub workflow.',

@@ -125,6 +125,98 @@ describe('corner message attribution', () => {
     expect(rows[0]!.author_id).toBe(B);
   });
 
+  // Reproduction REVIEW-HANDOFF-1: the reviewer's verdict named nobody, so the
+  // corner's worker was never woken and the corner stopped on a finished review.
+  for (const verdict of [
+    'Review complete: the reproduction is missing. Fix that and push.',
+    `Review complete: PASS at ${'1'.repeat(40)}. Approved, merge it.`,
+  ])
+    it(`wakes the corner's worker when a review ending "${verdict.slice(19, 32)}" tags nobody`, async () => {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      await db.query(
+        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+        [
+          C,
+          JSON.stringify({
+            checks: 'passing',
+            lifecycle: 'in-review',
+            pr: { number: 11, url: 'https://github.com/acme/repo/pull/11', headSha: '1'.repeat(40) },
+          }),
+        ],
+      );
+      await systemLine(db, {
+        roomId: C,
+        authorId: H,
+        subject: { kind: 'github', name: 'GitHub' },
+        verb: 'passed a check',
+        kind: 'check-passed',
+      });
+      const [review] = await commands(B, C);
+      await claim(review!);
+      await result(review!, verdict);
+      const handoff = await commands(A, C);
+      expect(handoff.map((command) => command.reason)).toEqual(['corner_review']);
+      expect(handoff[0]!.source.body).toBe(verdict);
+    });
+
+  it("wakes the worker when the verdict tags a person instead of it", async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      [
+        C,
+        JSON.stringify({
+          checks: 'passing',
+          lifecycle: 'in-review',
+          pr: { number: 13, url: 'https://github.com/acme/repo/pull/13', headSha: '1'.repeat(40) },
+        }),
+      ],
+    );
+    await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'passed a check',
+      kind: 'check-passed',
+    });
+    const [review] = await commands(B, C);
+    await claim(review!);
+    // A typed mention takes the routed write path, but it reaches a person by
+    // push and highlight — it hands the branch to nobody.
+    await result(review!, '@human the findings are confirmed, this one fails.');
+    const handoff = await commands(A, C);
+    expect(handoff.map((command) => command.reason)).toEqual(['corner_review']);
+  });
+
+  it('leaves the reviewer a single turn when its verdict tags the worker itself', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      [
+        C,
+        JSON.stringify({
+          checks: 'passing',
+          lifecycle: 'in-review',
+          pr: { number: 12, url: 'https://github.com/acme/repo/pull/12', headSha: '1'.repeat(40) },
+        }),
+      ],
+    );
+    await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'passed a check',
+      kind: 'check-passed',
+    });
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, '@hoots approved, merge it.');
+    // The typed tag routes first and keeps the row; the handoff must not add a
+    // second turn for the same reply.
+    const handoff = await commands(A, C);
+    expect(handoff.map((command) => command.reason)).toEqual(['agent_tag']);
+  });
+
   it('keeps a configured reviewer as the review target even when it is not a corner member', async () => {
     // Remove Goosy (B) from the CORNER (it stays a parent-Room member and the
     // configured reviewer). The check passes. Where does the review command go?

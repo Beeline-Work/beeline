@@ -4,6 +4,7 @@ import {
   claimAgentCommand,
   commandInbox,
   createAgentCommand,
+  queueCornerWorkerAfterReview,
   readAgentCommands,
   routeAgentResult,
   turnRootMessageSql,
@@ -177,8 +178,9 @@ export class DaemonService {
         : typeof candidate.cornerId === 'string'
           ? candidate.cornerId
           : undefined;
+    let cornerReviewer = false;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
-      await this.access(scopedRoom, authenticatedAgentId);
+      ({ cornerReviewer } = await this.access(scopedRoom, authenticatedAgentId));
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([
@@ -203,12 +205,26 @@ export class DaemonService {
       candidate.relay === undefined &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string'
-    )
-      return (await this.postRoomMessage(
+    ) {
+      const posted = (await this.postRoomMessage(
         input as Input<'postRoomMessage'>,
         authenticatedAgentId,
         true,
-      )) as Output<Name>;
+      )) as { id: string };
+      // This path exists because a reply that names nobody has no tag to
+      // route. A review verdict is exactly that reply, and the handoff back to
+      // the corner's worker must not skip along with the routing. The live
+      // event is already published by here, so the handoff costs the reply
+      // nothing that a reader waits on — and only a corner's reviewer asks.
+      if (cornerReviewer)
+        await queueCornerWorkerAfterReview(this.database, {
+          roomId: scopedRoom,
+          reviewerAgentId: authenticatedAgentId,
+          turnRequestId: String(candidate.requestId ?? ''),
+          verdictMessageId: posted.id,
+        });
+      return posted as Output<Name>;
+    }
     if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
       const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
@@ -316,6 +332,15 @@ export class DaemonService {
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
+          // A review that tags someone — a person, or an agent that is not the
+          // worker — still ends the review, so the handoff is owed here too.
+          if (cornerReviewer)
+            await queueCornerWorkerAfterReview(db, {
+              roomId: scopedRoom,
+              reviewerAgentId: authenticatedAgentId,
+              turnRequestId: command.turn_request_id,
+              verdictMessageId: message.id,
+            });
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(
@@ -3795,12 +3820,24 @@ export class DaemonService {
       });
     });
   }
-  private async access(roomId: string, agentId: string) {
-    const result = await this.database.query(
-      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+  /**
+   * Membership, plus the one thing the caller would otherwise need a second
+   * round trip to learn: whether this agent is the configured reviewer of the
+   * corner it is writing into. Only such an agent can be ending a review, so
+   * the review handoff asks its own question only for them, and an ordinary
+   * Room reply — the hottest write in the product — pays nothing for it.
+   */
+  private async access(roomId: string, agentId: string): Promise<{ cornerReviewer: boolean }> {
+    const result = await this.database.query<{ corner_reviewer: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+         WHERE corner.id=$1 AND parent.reviewer_agent_id=$2
+       ) corner_reviewer
+       FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId],
     );
     if (!result.rowCount) throw new Error('daemon room access denied');
+    return { cornerReviewer: result.rows[0]!.corner_reviewer };
   }
   /**
    * The one operation a corner still reserves for the agent that opened it.

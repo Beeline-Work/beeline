@@ -51,7 +51,8 @@ describe('corner merge instructions', () => {
     for (const yolo of [false, true]) {
       const instruction = cornerMergeInstruction(yolo, 'echo');
       expect(instruction).not.toContain('please review');
-      expect(instruction).toContain('do not merge until @echo tags you with approval');
+      expect(instruction).toContain('do not merge until @echo has reviewed');
+      expect(instruction).toContain('whether or not it tags you');
       expect(instruction).toContain('only if the complete gate passes');
       expect(instruction).toContain('gh pr merge --squash --match-head-commit <sha>');
     }

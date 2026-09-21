@@ -169,6 +169,44 @@ describe('ACP streaming lane classifier', () => {
       ),
     ).toEqual(['gojiberry.ai\n- **YC']);
   });
+
+  it('resumes the same run when any non-text update lands inside a word', () => {
+    const interruptions = [
+      update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+      update('agent_thought_chunk', { content: { type: 'text', text: 'checking' } }),
+      update('plan', { entries: [] }),
+    ];
+    for (const interruption of interruptions) {
+      const updates = [
+        update('agent_message_chunk', { content: { type: 'text', text: 'The ans' } }),
+        interruption,
+        update('agent_message_chunk', { content: { type: 'text', text: 'wer is 42.' } }),
+      ];
+      expect(agentMessageRuns(updates)).toEqual(['The answer is 42.']);
+      expect(finalAgentMessageText(updates)).toBe('The answer is 42.');
+    }
+  });
+
+  it('still ends a run when the text that resumes opens a new sentence', () => {
+    // The word-continuation guard must not swallow a genuine message
+    // boundary: a capitalized head after tool work is a fresh message, and a
+    // run already closed by whitespace is a boundary on its own.
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting the files' } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Found the answer.' } }),
+      ]),
+    ).toEqual(['Inspecting the files', 'Found the answer.']);
+
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting ' } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'done.' } }),
+      ]),
+    ).toEqual(['Inspecting ', 'done.']);
+  });
 });
 
 describe('harness retry narration is never the final answer', () => {
@@ -769,6 +807,47 @@ lines.on('line', (line) => {
   } else if (message.method === 'session/prompt') {
     chunk('I');
     update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'checking' } });
+    chunk("'ll take a look at the README first.");
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+/** The same stream-head shape, but the update that lands mid-word is a tool
+ *  call and the word resumes with an ordinary letter — the two permutations
+ *  the word-continuation guard could not see, because a tool call closed the
+ *  run before the guard ran and the guard only recognized punctuation heads. */
+async function fakeToolCallWordSplitAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-tool-word-split-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-tool-call-word-split-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const update = (update) =>
+  send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'tool-word-split-session', update } });
+const chunk = (text) =>
+  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'tool-word-split-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk('I');
+    update({ sessionUpdate: 'tool_call', toolCallId: 'read-1', kind: 'read', title: 'Read README' });
     chunk("'ll take a look at the README first.");
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
@@ -1525,6 +1604,34 @@ describe('AcpClient live steering', () => {
       // The live draft carries the same unbroken sentence, not a one-character
       // head followed by its own tail.
       expect(seenFullText.at(-1)).toBe(result.agentText);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('keeps the first characters of a turn when a tool call splits the opening word', async () => {
+    // A tool call used to close the run the instant it arrived, before the
+    // word-continuation guard could look at what resumed the word, so this
+    // turn's final message began "'ll take a look at the README first." and
+    // its head was published as a separate one-character output row.
+    const client = new AcpClient({
+      agentBinary: await fakeToolCallWordSplitAgent(),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const runs: string[][] = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, _fullText, _currentRun, currentRuns) => {
+          if (currentRuns) runs.push([...currentRuns]);
+        },
+      );
+      expect(result.agentText).toBe("I'll take a look at the README first.");
+      expect(runs.at(-1)).toEqual(["I'll take a look at the README first."]);
     } finally {
       await client.stop();
     }

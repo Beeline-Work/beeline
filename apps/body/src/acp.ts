@@ -279,6 +279,27 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
+/** A run left stopped on a letter or digit, i.e. part-way through a word. */
+const RUN_ENDS_MID_WORD = /[\p{L}\p{N}]$/u;
+
+/**
+ * A delta head that resumes a word rather than opening a sentence: a digit, a
+ * lowercase letter, or a letter from a caseless script. An uppercase head is
+ * excluded \u2014 that is how a fresh message after tool work begins.
+ */
+const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
+
+/**
+ * Whether `delta` continues the word `current` stops on, so the non-text
+ * update between them was interleaved metadata rather than a message
+ * boundary. A run already closed by whitespace is a boundary on its own.
+ */
+function continuesPreviousWord(current: string, delta: string): boolean {
+  if (/\s$/.test(current)) return false;
+  if (CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) return true;
+  return RUN_ENDS_MID_WORD.test(current) && CHUNK_RESUMES_WORD.test(delta);
+}
+
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;
 
 /** Whether the configured harness label is pi's ACP adapter (`pi-acp`). */
@@ -301,28 +322,24 @@ function normalizeStreamDelta(text: string, _agentLabel?: string): string {
 /** Group streaming text into assistant-message runs separated by tool,
  * reasoning, or plan updates. Consecutive deltas are one message. A resuming
  * delta that binds to the prior word remains in that message too, since some
- * harnesses interleave metadata in the middle of a token. */
+ * harnesses interleave metadata in the middle of a token.
+ *
+ * The split is decided when the next delta arrives, never when the non-text
+ * update lands: a tool call used to close the run on sight, so a tool call
+ * between a word's first and second token broke the word in two and the head
+ * stopped being part of the final message. Whether the run ended is only
+ * knowable from what resumes it. */
 export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
   const runs: string[] = [];
   let current = '';
   let lastWasText = false;
   for (const u of updates) {
-    const isToolCall = u.update.sessionUpdate === 'tool_call';
     const delta = normalizeStreamDelta(agentMessageChunkText(u.update), agentLabel);
     if (!delta) {
-      if (isToolCall && current) {
-        runs.push(current);
-        current = '';
-      }
       lastWasText = false;
       continue;
     }
-    if (
-      !lastWasText &&
-      current &&
-      !/\s$/.test(current) &&
-      !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
-    ) {
+    if (!lastWasText && current && !continuesPreviousWord(current, delta)) {
       runs.push(current);
       current = '';
     }

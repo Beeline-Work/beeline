@@ -279,68 +279,35 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
-/** The word a run stops part-way through, when it stops inside one at all. */
-const RUN_TRAILING_WORD = /[\p{L}\p{N}]+$/u;
+/** A run left stopped on a letter or digit, i.e. part-way through a word. */
+const RUN_ENDS_MID_WORD = /[\p{L}\p{N}]$/u;
 
 /**
  * A delta head that can only be resuming a word: a digit, a lowercase letter,
- * or a letter from a caseless script such as Chinese. An uppercase head is
- * ambiguous and decided separately \u2014 it is equally how a fresh message after
- * tool work opens.
+ * or a letter from a caseless script such as Chinese. None of these opens a
+ * sentence, so a run stopped mid-word is being continued, not replaced.
  */
 const CHUNK_RESUMES_WORD = /^[\p{N}\p{Ll}\p{Lo}]/u;
-
-const UPPERCASE_HEAD = /^\p{Lu}/u;
-
-/**
- * A word that has already turned over from lowercase to uppercase is whole:
- * `GitHub`, `JavaScript`, `eBay`. `Git`, `Java` and `READ` have not turned
- * over yet, so an uppercase delta is still their second half — which is what
- * keeps `Checking GitHub` + `Found it.` two messages while `Using Git` +
- * `Hub works.` stays one.
- */
-const WORD_ALREADY_TURNED_OVER = /\p{Ll}\p{Lu}/u;
-
-/**
- * One lowercase letter is not a word — `a` is the only one English has — so
- * a run that stops on one stopped inside a word, never at the end of a
- * message. That is the whole of what separates `Using u` + `Block works.`
- * from `I can do` + `Found it.`: `do` is a word and ends its message, `u` is
- * half of `uBlock`. It reaches every single-letter stylized name (eBay, iOS,
- * xAI, jQuery, uBlock) without naming one.
- *
- * A longer lowercase prefix — the `mac` of macOS — has a word's shape, and
- * nothing in the stream tells it apart from the `do` that ends a sentence,
- * so it stays a boundary and still loses its head. Widening this by shape is
- * what glued narration onto the reply.
- */
-function resumesSplitWord(word: string): boolean {
-  return /^\p{Ll}$/u.test(word) && word !== 'a';
-}
 
 /**
  * Whether `delta` continues the word `current` stops on, so the non-text
  * update between them was interleaved metadata rather than a message
  * boundary. A run already closed by whitespace is a boundary on its own.
  *
- * An uppercase resume is read against the word it lands on, because nothing
- * else separates a split name from a new sentence — `Bay works.` and `Found
- * the answer.` are the same shape. It resumes a word when that word is
- * itself capitalized and not yet turned over (`Git` + `Hub`, `READ` + `ME`,
- * `Java` + `Script`) or is a single lowercase letter, which no message can
- * have ended on (`e` + `Bay`, `u` + `Block`). A word that already turned
- * over (`GitHub` + `Found it.`) or a whole lowercase word taking a capital
- * (`typecheck patterns` + `Now I have the full picture.`, `I can do` +
- * `Found it.`) is the harness finishing one message and opening the next.
+ * An uppercase head is deliberately NOT read as a continuation. `Using Git` +
+ * `Hub works.` and `Checking Docker` + `Found it.` are the same text and the
+ * same update stream, so no rule can tell a split name from the harness
+ * opening a new message; every reading of capitalization tried here — the
+ * word's own case, a prefix allowlist, its length, whether it had already
+ * turned over — resolved one of that pair by corrupting the other. The
+ * ambiguity is therefore left standing: an uppercase resume ends the run, as
+ * it always did. That keeps a split name's head out of the final message,
+ * which is the cost of never gluing two real messages into one.
  */
 function continuesPreviousWord(current: string, delta: string): boolean {
   if (/\s$/.test(current)) return false;
   if (CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) return true;
-  const word = RUN_TRAILING_WORD.exec(current)?.[0];
-  if (!word) return false;
-  if (CHUNK_RESUMES_WORD.test(delta)) return true;
-  if (!UPPERCASE_HEAD.test(delta) || WORD_ALREADY_TURNED_OVER.test(word)) return false;
-  return UPPERCASE_HEAD.test(word) || resumesSplitWord(word);
+  return RUN_ENDS_MID_WORD.test(current) && CHUNK_RESUMES_WORD.test(delta);
 }
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;

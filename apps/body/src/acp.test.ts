@@ -187,29 +187,27 @@ describe('ACP streaming lane classifier', () => {
     }
   });
 
-  it('resumes a capitalized word an update split in two', () => {
-    // A capital can resume a word as easily as open a sentence: brand names,
-    // CamelCase and acronyms all stream as `Git` + update + `Hub`. The word
-    // being landed on decides which it is.
-    for (const [head, tail, whole] of [
-      ['Using Git', 'Hub works.', 'Using GitHub works.'],
-      ['Open the READ', 'ME first.', 'Open the README first.'],
-      ['Written in Java', 'Script.', 'Written in JavaScript.'],
-      // Lowercase-initial stylized names: one lowercase letter is not a
-      // word, so it is not anywhere a finished message could have stopped.
-      ['Using e', 'Bay works.', 'Using eBay works.'],
-      ['Using u', 'Block works.', 'Using uBlock works.'],
-      ['Shipped the i', 'Phone build.', 'Shipped the iPhone build.'],
-      ['Selected with j', 'Query.', 'Selected with jQuery.'],
-      ['Asked x', 'AI about it.', 'Asked xAI about it.'],
+  it('leaves an uppercase resume ambiguous instead of guessing at it', () => {
+    // `Using Git` + `Hub works.` and `Checking Docker` + `Found it.` are the
+    // same text and the same update stream. Nothing can tell a split name
+    // from the harness opening a new message, so neither is joined: the run
+    // ends, exactly as it did before this guard existed. A split name's head
+    // stays out of the final message; the alternative is gluing two real
+    // messages together, which is the worse of the two.
+    for (const [head, tail] of [
+      ['Using Git', 'Hub works.'],
+      ['Checking Docker', 'Found it.'],
+      ['Using e', 'Bay works.'],
+      ['Checking GitHub', 'Found it.'],
+      ['Open the READ', 'ME first.'],
     ]) {
       const updates = [
         update('agent_message_chunk', { content: { type: 'text', text: head } }),
         update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
         update('agent_message_chunk', { content: { type: 'text', text: tail } }),
       ];
-      expect(agentMessageRuns(updates)).toEqual([whole]);
-      expect(finalAgentMessageText(updates)).toBe(whole);
+      expect(agentMessageRuns(updates)).toEqual([head, tail]);
+      expect(finalAgentMessageText(updates)).toBe(tail);
     }
   });
 
@@ -238,21 +236,15 @@ describe('ACP streaming lane classifier', () => {
       ]),
     ).toEqual(['...existing test and typecheck patterns', 'Now I have the full picture.']);
 
-    // A short word is still a word, so narration that ends on one ends its
-    // message. `a` is included deliberately: it is the one lowercase letter
-    // English does spell a word with, so it is not a split word's initial.
+    // Narration that ends on any word, short or long, plain or stylized,
+    // ends its message once a capital follows it.
     for (const shortWord of [
       'I can do',
       'Looking at the',
       'Checking if',
       'One to',
       'Reading it as a',
-      // A multi-letter lowercase prefix has a word's shape, so `macOS` lands
-      // on this side of the line — nothing in the stream tells `mac` apart
-      // from the `do` above.
       'Tested on mac',
-      // A name that already turned over from lowercase to uppercase is a
-      // finished word, so narration ending on one ends its message.
       'Checking GitHub',
       'Written in JavaScript',
       'Using eBay',
@@ -1704,93 +1696,13 @@ describe('AcpClient live steering', () => {
     }
   });
 
-  it('keeps the first characters of a turn when a tool call splits a capitalized word', async () => {
-    // `Git` + tool call + `Hub works.` — a capital resuming a word reads the
-    // same as a capital opening a sentence, so this turn still posted only
-    // "Hub works." and dropped "Using Git" out of the reply.
+  it('keeps narration that ends on a capitalized name out of the final message', async () => {
+    // `Checking Docker` + tool call + `Found it.` — every reading of the
+    // capital that joined `Git` to `Hub` also glued this genuine boundary
+    // into the single message "Checking DockerFound it.". The capital is
+    // now left alone, so the two messages stay two.
     const client = new AcpClient({
-      agentBinary: await fakeToolCallWordSplitAgent('Using Git', 'Hub works.'),
-      agentEnv: {},
-    });
-    await client.start();
-    try {
-      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
-      const runs: string[][] = [];
-      const result = await client.sessionPrompt(
-        sessionId,
-        'go',
-        5_000,
-        (_delta, _fullText, _currentRun, currentRuns) => {
-          if (currentRuns) runs.push([...currentRuns]);
-        },
-      );
-      expect(result.agentText).toBe('Using GitHub works.');
-      expect(runs.at(-1)).toEqual(['Using GitHub works.']);
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it('keeps the first characters of a turn when a tool call splits a lowercase-initial name', async () => {
-    // `e` + tool call + `Bay works.` — reading the capital against a word
-    // that starts lowercase sent this one down the new-sentence path, so the
-    // turn posted only "Bay works." and dropped "Using e" out of the reply.
-    const client = new AcpClient({
-      agentBinary: await fakeToolCallWordSplitAgent('Using e', 'Bay works.'),
-      agentEnv: {},
-    });
-    await client.start();
-    try {
-      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
-      const runs: string[][] = [];
-      const result = await client.sessionPrompt(
-        sessionId,
-        'go',
-        5_000,
-        (_delta, _fullText, _currentRun, currentRuns) => {
-          if (currentRuns) runs.push([...currentRuns]);
-        },
-      );
-      expect(result.agentText).toBe('Using eBay works.');
-      expect(runs.at(-1)).toEqual(['Using eBay works.']);
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it('keeps the first characters of a turn for a name no allowlist would carry', async () => {
-    // `u` + tool call + `Block works.` — the same defect for a name that no
-    // enumeration of spellings had in it. One lowercase letter is not a word
-    // whatever the letter is, which is what makes this general.
-    const client = new AcpClient({
-      agentBinary: await fakeToolCallWordSplitAgent('Using u', 'Block works.'),
-      agentEnv: {},
-    });
-    await client.start();
-    try {
-      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
-      const runs: string[][] = [];
-      const result = await client.sessionPrompt(
-        sessionId,
-        'go',
-        5_000,
-        (_delta, _fullText, _currentRun, currentRuns) => {
-          if (currentRuns) runs.push([...currentRuns]);
-        },
-      );
-      expect(result.agentText).toBe('Using uBlock works.');
-      expect(runs.at(-1)).toEqual(['Using uBlock works.']);
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it('keeps narration that ends on a finished name out of the final message', async () => {
-    // `Checking GitHub` + tool call + `Found it.` — reading a capitalized
-    // trailing word as proof of continuation glued this genuine boundary
-    // into the single message "Checking GitHubFound it.".
-    const client = new AcpClient({
-      agentBinary: await fakeToolCallWordSplitAgent('Checking GitHub', 'Found it.'),
+      agentBinary: await fakeToolCallWordSplitAgent('Checking Docker', 'Found it.'),
       agentEnv: {},
     });
     await client.start();
@@ -1806,7 +1718,7 @@ describe('AcpClient live steering', () => {
         },
       );
       expect(result.agentText).toBe('Found it.');
-      expect(runs.at(-1)).toEqual(['Checking GitHub', 'Found it.']);
+      expect(runs.at(-1)).toEqual(['Checking Docker', 'Found it.']);
     } finally {
       await client.stop();
     }

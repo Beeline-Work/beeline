@@ -16,7 +16,7 @@ const CHROME_ENTRY_POINTS = [
 const ROOM_ENTRY_POINTS = ['../app/(app)/beeline/chat/_chat-surface.tsx'];
 
 const WORD_ENTRY_POINTS = [
-  '../app/(app)/beeline/MembersScreen.tsx',
+  '../app/(app)/beeline/members.tsx',
   '../app/(app)/beeline/settings/workspace.tsx',
   '../components/buzz/CommunityInviteEntry.tsx',
   '../components/buzz/RoomRosterSheet.tsx',

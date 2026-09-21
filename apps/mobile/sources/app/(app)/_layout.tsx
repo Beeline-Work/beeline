@@ -114,12 +114,6 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
-          name="beeline/MembersScreen"
-          options={{
-            headerShown: false,
-          }}
-        />
-        <Stack.Screen
           name="beeline/settings/index"
           options={{
             headerShown: false,

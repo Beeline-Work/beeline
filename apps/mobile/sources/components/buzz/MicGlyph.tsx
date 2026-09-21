@@ -1,5 +1,6 @@
 import React from 'react';
 import Svg, { Line } from 'react-native-svg';
+import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 
 export const MIC_GLYPH_STROKE_WIDTH = 1.6;
 
@@ -30,8 +31,7 @@ export function MicGlyph({
   const rightHalfHeight = 2.5 + activity * 4;
   return (
     <Svg
-      accessibilityElementsHidden
-      focusable={false}
+      {...DECORATIVE_GLYPH_PROPS}
       height={size}
       testID={testID}
       viewBox="0 0 20 20"

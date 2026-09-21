@@ -49,6 +49,7 @@ import {
   type InstallSquireResult,
   type SquireMcpClient,
 } from './connector-squire.js';
+import { readVaultFromSession } from './squire-connect-state.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 
 export const CONNECTOR_POLL_INTERVAL_MS = 10_000;
@@ -132,7 +133,9 @@ export class ConnectorAssignmentLoop {
           : this.resolveGoogleCredentials(),
       }));
     this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
-    this.readVaultFn = options.readVault ?? readVault;
+    this.readVaultFn =
+      options.readVault ??
+      (async (mcp) => (await readVaultFromSession()) ?? readVault(mcp));
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
     this.schedule =
       options.schedule ??

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,7 @@ import {
   releaseSquireConnectSession,
   resolveSquireConnectSpec,
   revokeGrants,
+  squireConnectEnv,
   squireConnectProcessEnv,
   squireConnectSession,
   squireProfileLockPath,
@@ -30,6 +31,7 @@ import {
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
+import { publishSquireVisibility, resetSquireConnectFacts } from './squire-connect-state.js';
 
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
 function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {
@@ -379,6 +381,38 @@ describe('defaultStreamedRunner', () => {
 });
 
 describe('installSquire', () => {
+  let previousConfigHome: string | undefined;
+  let isolatedConfig: string;
+  beforeEach(() => {
+    isolatedConfig = mkdtempSync(join(tmpdir(), 'squire-cfg-'));
+    previousConfigHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = isolatedConfig;
+    resetSquireConnectFacts();
+  });
+  afterEach(() => {
+    resetSquireConnectFacts();
+    if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousConfigHome;
+    rmSync(isolatedConfig, { recursive: true, force: true });
+  });
+
+  it('does not start another browser when a ceremony is already published', async () => {
+    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=x' });
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: async () => {
+        started += 1;
+        return { stdout: '', stderr: '', abort: () => {} };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(started).toBe(0);
+    expect(result.status).toBe('installing');
+    expect(result.signIn).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=x' });
+  });
+
   it('stays installing while the ceremony it printed is outstanding', async () => {
     const { client, calls } = mockSquire({
       list_credentials: () => ({ credentials: [] }),
@@ -913,6 +947,19 @@ describe('on-disk profile claim reclaim', () => {
       /broker\.sock$/,
     );
     dir.cleanup();
+  });
+});
+
+describe('squireConnectEnv', () => {
+  it('clears DISPLAY and WAYLAND on the headless branch', () => {
+    const env = squireConnectEnv('/tmp/squire-profile', null);
+    expect(env.DISPLAY).toBeUndefined();
+    expect(env.WAYLAND_DISPLAY).toBeUndefined();
+  });
+
+  it('passes an injected screen through for Squire to use', () => {
+    const env = squireConnectEnv('/tmp/squire-profile', ':0');
+    expect(env.DISPLAY).toBe(':0');
   });
 });
 

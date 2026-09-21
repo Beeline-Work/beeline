@@ -1,22 +1,18 @@
 /**
  * Trusty Squire connector lifecycle on the helper (Workbench PR 1).
  *
+ * Connect is three ordinary facts (`squire-connect-state.ts`): process,
+ * visibility, and credential. The install starts a browser only when all
+ * three are empty. Two branches only: if this process already has a screen
+ * (`DISPLAY` or `WAYLAND_DISPLAY`), Squire uses that screen; if it has
+ * none, Squire starts the virtual display. Connected is the session file
+ * this helper owns, never a phrase Squire printed.
+ *
  * One helper shares the host Squire broker and its one Chrome. The install
  * runs Squire's own `connect` through a STREAMING runner that captures the
- * sign-in URL from live stdout as soon as it appears (a noVNC URL on a
- * headless helper, or the confirm page in the shared Chrome). Squire
- * announces "Opening the Trusty Squire install page" seconds BEFORE it
- * prints that URL, so the runner waits for the URL itself — the phone has
- * no sign-in surface until one arrives. Connect is not given
- * `--skip-browser` or `--force-relogin`: skip-browser signs the human in
- * outside the bot profile so the shared Chrome never gains the session, and
- * force-relogin clears provider cookies and asserts a single-session
- * precondition the broker does not have. Dropping force-relogin also makes
- * Squire's already-provisioned short-circuit reachable: the shared profile
- * already holds the session, connect refreshes the config and exits with no
- * ceremony at all, which is a CONNECTED outcome, never a failed install.
- * The connect process stays alive in the background while the human
- * completes sign-in.
+ * sign-in URL from live stdout as soon as it appears. Connect is not given
+ * `--skip-browser` or `--force-relogin`. The connect process stays alive
+ * in the background while the human completes sign-in.
  *
  * The old exit-only `ShellRunner` (defaultShellRunner) remains for the
  * version probe and other quick commands. A new `StreamedShellRunner`
@@ -57,6 +53,17 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import {
+  connectStatusFromFacts,
+  credentialFromSession,
+  publishedSquireVisibility,
+  publishSquireVisibility,
+  readSquireSession,
+  shouldStartSquireConnect,
+  visibilitySignIn,
+  type SquireConnectFacts,
+  type SquireProcessFact,
+} from './squire-connect-state.js';
 import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
   ConnectionDetail,
@@ -259,6 +266,56 @@ function removeProfileLock(lockPath: string): void {
  * another Squire server (or another agent system on this machine) is not
  * safe; the caller surfaces `action` instead.
  */
+/** PROCESS: whose browser, if any, holds the profile right now. */
+export function observeSquireProcess(options?: {
+  readonly profileDir?: string;
+  readonly lockRoot?: string;
+}): SquireProcessFact {
+  const claim = squireConnectSession();
+  if (claim?.pid !== undefined && isProcessAlive(claim.pid)) {
+    return { kind: 'ours', pid: claim.pid };
+  }
+  const profileDir = options?.profileDir ?? squireChromeProfileDir();
+  const lockRoot = options?.lockRoot ?? tmpdir();
+  const lockPath = squireProfileLockPath(profileDir, lockRoot);
+  const owner = readLockFileOwner(lockPath);
+  if (!owner) {
+    try {
+      lstatSync(lockPath);
+      return { kind: 'unidentified' };
+    } catch {
+      return { kind: 'none' };
+    }
+  }
+  if (claim?.pid !== undefined && owner.pid === claim.pid) {
+    return lockOwnerIsAlive(owner) ? { kind: 'ours', pid: owner.pid } : { kind: 'none' };
+  }
+  if (owner.host !== hostname() || lockOwnerIsAlive(owner)) {
+    return { kind: 'foreign', pid: owner.pid, action: squireForeignClaimAction(owner) };
+  }
+  return { kind: 'none' };
+}
+
+export function observeSquireConnectFacts(options?: {
+  readonly profileDir?: string;
+  readonly lockRoot?: string;
+  readonly configHome?: string;
+}): SquireConnectFacts {
+  const processFact = observeSquireProcess(options);
+  const published = publishedSquireVisibility();
+  const visibility =
+    published.kind === 'none'
+      ? published
+      : processFact.kind === 'ours'
+        ? { ...published, held: true }
+        : { ...published, held: false };
+  return {
+    process: processFact,
+    visibility,
+    credential: credentialFromSession(readSquireSession(options?.configHome), visibility),
+  };
+}
+
 export function reclaimSquireProfileClaim(options?: {
   readonly profileDir?: string;
   readonly lockRoot?: string;
@@ -330,6 +387,8 @@ export type StreamedCommandResult = {
   /** The sign-in surface, captured from live output. Undefined when the process
    * exited or errored before printing a URL. */
   readonly signIn?: ConnectorSignIn;
+  /** The host already has a seat display; the person looks at that screen. */
+  readonly localScreen?: boolean;
   /** Kill the background process and clean up. Safe to call even if the
    * process has already exited. */
   readonly abort: () => void;
@@ -346,6 +405,33 @@ export function squireConnectProcessEnv(
     ...squireHostRewriteEnv(homedir()),
     TRUSTY_SQUIRE_PROFILE_DIR: profileDir,
   };
+}
+
+/**
+ * Two branches only. A screen already in this process (`DISPLAY` or
+ * `WAYLAND_DISPLAY`) is left for Squire. No screen means those vars are
+ * cleared so Squire starts the virtual display. Tests inject a seat string
+ * or `null` (headless); omitted reads the process env.
+ */
+export function squireConnectEnv(
+  profileDir: string = squireChromeProfileDir(),
+  seatDisplay?: string | null,
+): NodeJS.ProcessEnv {
+  const env = { ...squireConnectProcessEnv(profileDir) };
+  if (seatDisplay === null) {
+    delete env.DISPLAY;
+    delete env.WAYLAND_DISPLAY;
+    return env;
+  }
+  if (seatDisplay !== undefined && seatDisplay.trim()) {
+    env.DISPLAY = seatDisplay.trim();
+    return env;
+  }
+  if (!env.DISPLAY?.trim() && !env.WAYLAND_DISPLAY?.trim()) {
+    delete env.DISPLAY;
+    delete env.WAYLAND_DISPLAY;
+  }
+  return env;
 }
 
 export type StreamedShellRunner = (
@@ -652,6 +738,14 @@ export type InstallSquireOptions = {
    */
   readonly profileDir?: string;
   readonly lockRoot?: string;
+  /** Session file root (`<configHome>/trusty-squire/session.json`). */
+  readonly configHome?: string;
+  /**
+   * Screen branch override. A string is that DISPLAY. `null` is headless
+   * (virtual display). Omitted uses this process's existing DISPLAY /
+   * WAYLAND_DISPLAY, or none.
+   */
+  readonly seatDisplay?: string | null;
 };
 
 export type InstallSquireResult = {
@@ -745,28 +839,24 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
   };
 }
 
-/** The account line Squire prints once a human completes sign-in. */
-export function parseSignedInAs(output: string): string | undefined {
-  return output.match(/signed in as ([^\s,;]+)/i)?.[1];
-}
-
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
- * Order: helper reached → trusty-squire installed → waiting for sign-in →
- * paired to the workspace. The connect command runs through a STREAMING
- * runner that captures the ceremony URL from live stdout as soon as it is
- * printed (before the process exits), or continues with no ceremony at all
- * when Squire reports the shared profile is already connected. The connect
- * process stays alive in the background for the human to complete sign-in.
- * The post-install `pairSquire` probe confirms the account is live.
+ * Process, visibility, and credential are observed first. A valid session
+ * is connected. A live or published surface stays installing and does not
+ * start another browser. Connect runs only when all three facts are empty.
  *
- * A failed step ends the report with a clear reason and everything after it
- * stays pending.
+ * Two branches only: a screen already in this process's env is passed
+ * through; otherwise DISPLAY/WAYLAND are cleared so Squire starts virtual.
+ * Then Squire's own output is the answer — no local-screen shortcut.
+ *
+ * Order after a start: helper reached → trusty-squire installed → waiting
+ * for sign-in → paired. An outstanding ceremony stays installing.
  */
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
   const profileDir = options.profileDir ?? squireChromeProfileDir();
   const lockRoot = options.lockRoot ?? tmpdir();
+  const configHome = options.configHome;
   const run = options.run ?? defaultShellRunner;
   const streamRun = options.streamRun ?? defaultStreamedRunner;
   const log = options.log ?? (() => {});
@@ -781,12 +871,41 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     emit();
     return { status: 'error', steps, errorMessage: reason };
   };
+  const sessionName = (facts: SquireConnectFacts) =>
+    facts.credential.kind === 'valid' ? facts.credential.accountId : undefined;
   emit();
 
-  // A fresh connect attempt owns the browser session: release whatever a
-  // previous attempt still claims — aborting a live owner, clearing a dead
-  // one — so closing the noVNC page and retrying is never blocked by a
-  // phantom "another session is already using the browser".
+  const observed = observeSquireConnectFacts({ profileDir, lockRoot, configHome });
+  if (connectStatusFromFacts(observed) === 'connected') {
+    publishSquireVisibility({ kind: 'none' });
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'done'));
+    push(step('paired to workspace', 'done'));
+    return {
+      status: 'connected',
+      steps,
+      ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
+    };
+  }
+  if (!shouldStartSquireConnect(observed)) {
+    const wait =
+      observed.process.kind === 'foreign'
+        ? observed.process.action
+        : observed.visibility.kind === 'local'
+          ? 'complete the sign-in on that screen'
+          : undefined;
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'running', wait));
+    return {
+      status: 'installing',
+      steps,
+      ...(visibilitySignIn(observed.visibility)
+        ? { signIn: visibilitySignIn(observed.visibility) }
+        : {}),
+      ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
+    };
+  }
+
   const previousPid = squireConnectSession()?.pid;
   releaseSquireConnectSession(log);
   const claim = reclaimSquireProfileClaim({
@@ -796,12 +915,11 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
   });
   if (claim.kind === 'blocked-foreign') {
-    push(step('trusty-squire installed', 'failed', claim.action));
-    return fail(claim.action);
+    push(step('trusty-squire installed', 'done'));
+    push(step('waiting for sign-in', 'running', claim.action));
+    return { status: 'installing', steps };
   }
 
-  // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
-  // one against the current published release.
   const resolution = await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
     log(
@@ -809,14 +927,10 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     );
   }
 
-  // Connect uses the shared host Chrome (or its headless noVNC URL). Do not
-  // pass --skip-browser or --force-relogin: those sign the human in outside
-  // the bot profile and clear cookies the broker can already share.
-  const install = await streamRun(
-    'npx',
-    [...resolution.npxArgs, 'connect', '--target=codex'],
-    squireConnectProcessEnv(profileDir),
-  );
+  // Connect uses the shared host Chrome, or Squire's virtual display when
+  // this process has no screen. Do not pass --skip-browser or --force-relogin.
+  const env = squireConnectEnv(profileDir, options.seatDisplay);
+  const install = await streamRun('npx', [...resolution.npxArgs, 'connect', '--target=codex'], env);
   const alreadyConnected =
     !install.signIn && parseConnectAlreadyConnected(`${install.stdout}\n${install.stderr}`);
   if (!install.signIn && !alreadyConnected) {
@@ -833,21 +947,18 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     push(step('trusty-squire installed', 'failed', stepReason));
     return fail(failReason);
   }
-  // The connect process stays alive in the background for the human to sign in.
-  // `install.abort()` can kill it (safety timeout also fires after 5 min).
 
-  // The version was verified before connect ran; the step records what is
-  // actually installed, not what a stale cache would have served.
   const version = resolution.resolvedVersion;
   push(step(`trusty-squire${version ? ` ${version}` : ''} installed`, 'done'));
 
   const signIn = install.signIn;
+  if (signIn) {
+    publishSquireVisibility({ kind: 'remote', held: true, url: signIn.url });
+  } else if (alreadyConnected) {
+    publishSquireVisibility({ kind: 'none' });
+  }
   const signedInAs = parseSignedInAs(`${install.stdout}\n${install.stderr}`);
 
-  // Surface the sign-in URL immediately so the phone paints the noVNC page.
-  // The step settles only when there is nothing left to press: a run that
-  // printed a ceremony is still waiting on the human, while the already-
-  // connected short-circuit has nobody to wait for.
   push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
 
   const pair = await pairSquire(options.mcp, options.workspaceId);
@@ -862,13 +973,6 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     };
   }
   push(step('paired to workspace', 'done'));
-  // An OUTSTANDING ceremony is not a connected helper. The vault answering
-  // `list_credentials` proves the credential plane, never that the shared
-  // Chrome carries a provider session — and `installConnector` completes the
-  // row in one write, which navigates the connect screen off the surface the
-  // human still has to press. This run stays `installing` and hands the phone
-  // its ceremony; a LATER run reaches Squire's verified short-circuit, prints
-  // no URL, and only then is this connector connected.
   if (signIn) {
     return {
       status: 'installing',

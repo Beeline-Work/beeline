@@ -16,6 +16,7 @@ import {
   CONNECT_PROBE_TIMEOUT_MS,
   confirmSeededName,
   finishConnectedAgentPairing,
+  isInteractiveConnectTerminal,
   renameConnectedAgent,
   seededIdentityLine,
   connectEffortPickerFromAxes,
@@ -117,6 +118,18 @@ function catalogSeam(input: {
 }
 
 describe('connect wizard', () => {
+  it('accepts interactive input when a mobile terminal proxies stdout', () => {
+    const mobileInput = { isTTY: true } as Pick<NodeJS.ReadStream, 'isTTY'>;
+
+    expect(isInteractiveConnectTerminal(mobileInput)).toBe(true);
+  });
+
+  it('rejects piped input even when the command can write output', () => {
+    const pipedInput = { isTTY: undefined } as Pick<NodeJS.ReadStream, 'isTTY'>;
+
+    expect(isInteractiveConnectTerminal(pipedInput)).toBe(false);
+  });
+
   it('labels each completed spinner with what the step accomplished', async () => {
     spinner.start.mockClear();
     spinner.stop.mockClear();

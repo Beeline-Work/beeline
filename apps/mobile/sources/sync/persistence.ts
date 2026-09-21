@@ -42,6 +42,21 @@ export function saveLocalSettings(settings: LocalSettings): void {
   mmkv.set('local-settings', JSON.stringify(settings));
 }
 
+/** The person's explicit Settings → Appearance choice. Its presence — not the
+ *  in-app value — is what distinguishes a choice from a value seeded from the
+ *  system, so a later system change can never overwrite the choice. The key is
+ *  kept from the pre-seed implementation so an existing chooser migrates. */
+const APPEARANCE_CHOICE_KEY = 'appearance-launch';
+
+export function loadAppearanceChoice(): 'light' | 'dark' | null {
+  const raw = mmkv.getString(APPEARANCE_CHOICE_KEY);
+  return raw === 'light' || raw === 'dark' ? raw : null;
+}
+
+export function saveAppearanceChoice(mode: 'light' | 'dark'): void {
+  mmkv.set(APPEARANCE_CHOICE_KEY, mode);
+}
+
 export function retrieveTempText(id: string): string | null {
   const key = `temp_text_${id}`;
   const content = mmkv.getString(key) ?? null;

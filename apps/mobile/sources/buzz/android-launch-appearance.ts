@@ -1,24 +1,21 @@
-import { loadLocalSettings } from '@/sync/persistence';
+import { loadAppearanceChoice, saveAppearanceChoice } from '@/sync/persistence';
 import type { LocalSettings } from '@/sync/localSettings';
 import { setAndroidNightMode } from './android-launch-appearance-native';
 
-/** The one Android launch-theme authority: the app's EFFECTIVE appearance.
- *
- *  `LocalSettings['appearance']` is `'light' | 'dark'` and never `'system'`,
- *  so the app never genuinely follows the system and this is always a pin.
- *  Reading only an explicitly-toggled launch key left a person who never
- *  opened Settings → Appearance on a system-following splash (cream on a
- *  light system) over the dark app it actually renders. The splash and the
- *  app must agree, so the default is a pin too. */
+/** The Android launch theme follows the same authority the app renders from.
+ *  A never-chosen appearance is not pinned: the splash follows the system
+ *  exactly like the seeded app does. An explicit choice is pinned so the
+ *  splash matches it on every later cold start. */
 export function applyEffectiveAndroidLaunchAppearance(): void {
-  const { appearance } = loadLocalSettings();
-  setAndroidNightMode(appearance);
+  const choice = loadAppearanceChoice();
+  if (choice === null) return;
+  setAndroidNightMode(choice);
 }
 
-/** Settings → Appearance write path. The caller has already committed the
- *  choice to local settings (`useLocalSettingMutable`), so a kill before
- *  this native call still reapplies on the next cold start through
- *  `applyEffectiveAndroidLaunchAppearance`. */
+/** Settings → Appearance write path. Records the choice — the marker that
+ *  protects it from later system seeding — before the native call, so a kill
+ *  mid-call still reapplies on the next cold start. */
 export function pinAndroidLaunchAppearance(appearance: LocalSettings['appearance']): void {
+  saveAppearanceChoice(appearance);
   setAndroidNightMode(appearance);
 }

@@ -16,6 +16,7 @@ import {
     applyEffectiveAndroidLaunchAppearance,
     pinAndroidLaunchAppearance,
 } from './buzz/android-launch-appearance';
+import { seedAppAppearanceFromSystem } from './buzz/app-appearance-seed';
 
 const appThemes = {
     obsidian: obsidianTheme,
@@ -54,6 +55,10 @@ export function themeNameForDisplay(
     return `${base}${uiSize === 'small' ? 'Small' : 'Large'}` as AppThemeName;
 }
 
+// Seed before anything reads local settings: a first install (or first run
+// after an update) replicates the system dark-mode setting instead of the
+// hardcoded dark default, so the app and the splash agree from the start.
+seedAppAppearanceFromSystem();
 const initialSettings = loadLocalSettings();
 const initialThemeName = themeNameForDisplay(initialSettings.appearance, initialSettings.uiSize);
 

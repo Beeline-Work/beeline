@@ -10,6 +10,7 @@ vi.mock('react-native-svg', async () => {
   return {
     default: host('Svg'),
     Line: host('Line'),
+    Polygon: host('Polygon'),
   };
 });
 

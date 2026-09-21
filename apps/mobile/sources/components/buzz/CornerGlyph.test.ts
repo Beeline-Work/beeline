@@ -9,12 +9,17 @@ vi.mock('react-native-svg', async () => {
     ReactModule.createElement(name, props, props.children as React.ReactNode);
   return {
     default: host('Svg'),
-    Line: host('Line'),
+    Polygon: host('Polygon'),
   };
 });
 
-import { CORNER_META_SIZE, CORNER_STATUS_SIZE, CornerGlyph } from './CornerGlyph';
-import { chromeStrokeWidth, MEMBERS_GLYPH_STROKE_WIDTH } from './MembersGlyph';
+import {
+  CORNER_EXTENT,
+  CORNER_META_SIZE,
+  CORNER_STATUS_SIZE,
+  CORNER_THICKNESS,
+  CornerGlyph,
+} from './CornerGlyph';
 import brand from '@/buzz/brand.json';
 
 const originalConsoleError = console.error;
@@ -33,7 +38,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('CornerGlyph', () => {
-  it('draws two strokes meeting at the bottom left, holding the 16px painted arm at 28', () => {
+  it('fills the slashed-frame polygon at the named extent and placeholder thickness', () => {
     let renderer!: ReturnType<typeof create>;
     act(() => {
       renderer = create(React.createElement(CornerGlyph, { size: 28, testID: 'corner-glyph' }));
@@ -45,38 +50,26 @@ describe('CornerGlyph', () => {
     expect(svg.props.height).toBe(28);
     expect(svg.props.accessibilityElementsHidden).toBe(true);
 
-    const extent = 15 * (16 / 28);
-    expect(extent * (28 / 24)).toBeCloseTo(10, 5);
-    const reach = extent / 2;
-    const left = 12 - reach;
-    const right = 12 + reach;
-    const top = 12 - reach;
-    const bottom = 12 + reach;
+    expect(CORNER_EXTENT).toBe(15);
+    expect(CORNER_THICKNESS).toBe(4.5);
 
-    const lines = renderer.root.findAllByType('Line' as never);
-    expect(lines).toHaveLength(2);
-    const [upright, across] = lines;
-    expect(upright.props.x1).toBeCloseTo(left, 5);
-    expect(upright.props.x2).toBeCloseTo(left, 5);
-    expect(upright.props.y1).toBeCloseTo(top, 5);
-    expect(upright.props.y2).toBeCloseTo(bottom, 5);
-    expect(across.props.x1).toBeCloseTo(left, 5);
-    expect(across.props.x2).toBeCloseTo(right, 5);
-    expect(across.props.y1).toBeCloseTo(bottom, 5);
-    expect(across.props.y2).toBeCloseTo(bottom, 5);
-    expect(across.props.stroke).toBe(brand.mark);
-    expect(across.props.strokeWidth).toBe(chromeStrokeWidth(28));
-    expect(chromeStrokeWidth(28) * (28 / 24)).toBeCloseTo(
-      MEMBERS_GLYPH_STROKE_WIDTH * (16 / 24),
-      5,
+    const outer = (24 - CORNER_EXTENT) / 2;
+    const far = 24 - outer;
+    const polygons = renderer.root.findAllByType('Polygon' as never);
+    expect(polygons).toHaveLength(1);
+    expect(polygons[0]!.props.fill).toBe(brand.mark);
+    expect(polygons[0]!.props.stroke).toBeUndefined();
+    expect(polygons[0]!.props.strokeWidth).toBeUndefined();
+    expect(polygons[0]!.props.points).toBe(
+      [
+        `${outer} ${outer}`,
+        `${outer} ${far}`,
+        `${far} ${far}`,
+        `${far - CORNER_THICKNESS} ${far - CORNER_THICKNESS}`,
+        `${outer + CORNER_THICKNESS} ${far - CORNER_THICKNESS}`,
+        `${outer + CORNER_THICKNESS} ${outer + CORNER_THICKNESS}`,
+      ].join(' '),
     );
-
-    act(() => {
-      renderer = create(React.createElement(CornerGlyph, { size: 16 }));
-    });
-    const at16 = renderer.root.findAllByType('Line' as never)[0]!;
-    expect(at16.props.x1).toBe(4.5);
-    expect(at16.props.y2).toBe(19.5);
   });
 
   it('keeps the inline sizes on the meta and status lines', () => {

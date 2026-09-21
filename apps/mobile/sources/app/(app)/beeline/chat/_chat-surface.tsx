@@ -1973,9 +1973,9 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
-  // A live message/card change follows only when the reader is already at the
-  // tail. The decision is one pure call (`buzz/room-scroll-follow.ts`); the
-  // actual tail scroll runs at most once per arrival, off the render path.
+  // A live message/card change follows to the newest end. The decision is one
+  // pure call (`buzz/room-scroll-follow.ts`); the actual tail scroll runs at
+  // most once per arrival, off the render path.
   const userDraggingRef = useRef(false);
   const currentScrollOffsetRef = useRef(0);
   const readerHeldOffsetRef = useRef(0);
@@ -2092,15 +2092,9 @@ export function BuzzChatSurface({
       }),
     [liveDraftStore, scrollToNewestMessage],
   );
-  const newestMessage = foldedMessages.at(-1);
-  const newestMessageId = newestMessage
-    ? [
-        newestMessage.id,
-        ...(newestMessage.notificationLifecycleRun?.items.map(
-          (item) => `${item.id}:${item.state}`,
-        ) ?? []),
-      ].join('|')
-    : null;
+  // Only a different tail row is an arrival. Lifecycle updates repaint the
+  // existing row and must not pull a reader out of history.
+  const newestMessageId = foldedMessages.at(-1)?.id ?? null;
   const arrivalFollow = useScrollFollowOnArrival({
     newestId: newestMessageId,
     isPinnedToTail: isPinnedToTailRef.current,

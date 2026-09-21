@@ -2395,11 +2395,12 @@ export class DaemonService {
           input.reasonKind,
         );
       } else if (input.status === 'complete') {
-        // A successful turn does not always post a durable message. Opening a
-        // corner settles its parent Room turn with the corner card as the whole
-        // handoff, so the terminal receipt must own the same durable live-lane
-        // cleanup as postRoomMessage. The daemon's earlier retract is only a
-        // best-effort presentation signal and may never reach the server.
+        // A successful turn does not always post a durable message. A textless
+        // Room turn that opened a corner settles through the server's corner
+        // card alone, so the terminal receipt must own the same durable
+        // live-lane cleanup as postRoomMessage. The daemon's earlier retract
+        // is only a best-effort presentation signal and may never reach the
+        // server.
         await database.query(
           `DELETE FROM live_outputs
            WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,

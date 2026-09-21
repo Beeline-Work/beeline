@@ -123,8 +123,8 @@ export function applyLiveOverlay(
  * same request id: the settled draft holds its last text until the reply lands,
  * then yields to it.
  *
- * A turn can also complete with NO durable reply — a Room turn whose whole
- * handoff is the server's corner card publishes no message at all — and then
+ * A turn can also complete with NO durable reply — a textless Room turn that
+ * opened a corner settles through the server's corner card alone — and then
  * nothing was ever going to arrive for that draft to dissolve into. Its own
  * `complete` receipt is the ending, and the row goes with it; the server
  * deleted the `live_outputs` row in the same settle, so a reader who opens the

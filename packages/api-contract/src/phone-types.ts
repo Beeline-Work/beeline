@@ -147,9 +147,13 @@ export type RoomViewHeader = {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent configured to review repository corners opened from this Room. */
   readonly reviewerAgentId?: string;
-  readonly archived: boolean;
-  readonly createdAt: number;
-  readonly updatedAt: number;
+  /** Absent when this bundle could not read it: a Room whose live/closed state
+   *  is unknown is never painted as live. */
+  readonly archived?: boolean;
+  readonly createdAt?: number;
+  /** Absent when this bundle could not read it; a surface omits the age rather
+   *  than dating the Room from the epoch. */
+  readonly updatedAt?: number;
 };
 
 export type RoomViewActivity = {

@@ -775,7 +775,7 @@ export function BuzzChatSurface({
   }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
 
   const cacheViewerPubkey = userPubkey;
-  const isArchived = roomSurface?.room.archived ?? false;
+  const isArchived = roomSurface ? roomSurface.room.archived !== false : false;
   const surfaceParentId = roomSurface ? roomViewParentId(roomSurface) : undefined;
   const parentChannelId = surfaceParentId ?? routeParentChannelId;
   const desktopWorkRoomId = parentChannelId ?? decodedId;
@@ -866,7 +866,7 @@ export function BuzzChatSurface({
               name: roomSurface.parent?.name ?? roomSurface.room.name,
               visibility: 'invite-only',
               role: roomSurface.viewer.role,
-              updatedAt: roomSurface.room.updatedAt,
+              updatedAt: roomSurface.room.updatedAt ?? 0,
             }),
           ]
         : [],

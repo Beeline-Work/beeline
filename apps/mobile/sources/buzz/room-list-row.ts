@@ -37,8 +37,8 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
     .filter((item) => Boolean(item.directMessage))
     .sort(
       (left, right) =>
-        (right.latestMessage?.createdAt ?? right.room.updatedAt) -
-        (left.latestMessage?.createdAt ?? left.room.updatedAt),
+        (right.latestMessage?.createdAt ?? right.room.updatedAt ?? 0) -
+        (left.latestMessage?.createdAt ?? left.room.updatedAt ?? 0),
     );
   return [
     ...(rooms.length ? [{ kind: 'rooms' as const, data: rooms }] : []),

@@ -179,3 +179,20 @@ describe('roomViewParentId', () => {
     expect(roomViewParentId({ room: {} })).toBeUndefined();
   });
 });
+
+describe('cornerDisplayFromRoomView with an unreadable archived flag', () => {
+  it('does not paint a corner whose live/closed state is unknown as live', () => {
+    expect(
+      cornerDisplayFromRoomView({ room: {}, latestAgentTurns: [] }).state,
+    ).toBe('archived');
+  });
+
+  it('still paints a known-live corner from its own turns', () => {
+    expect(
+      cornerDisplayFromRoomView({
+        room: { archived: false },
+        latestAgentTurns: [{ status: 'working' }],
+      }).state,
+    ).toBe('working');
+  });
+});

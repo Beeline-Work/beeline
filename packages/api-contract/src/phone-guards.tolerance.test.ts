@@ -386,6 +386,24 @@ describe('phone surface readers', () => {
     expect(view?.messages[0]?.text).toBe(`message ${sent.length - ROOM_VIEW_MESSAGE_LIMIT}`);
   });
 
+  it('omits an unreadable createdAt, updatedAt or archived instead of inventing one', () => {
+    const { createdAt: _c, updatedAt: _u, archived: _a, ...bareHeader } = header;
+    const view = readRoomView({ ...currentRoom, room: bareHeader });
+    expect(view?.room.id).toBe(roomId);
+    expect('createdAt' in (view?.room ?? {})).toBe(false);
+    expect('updatedAt' in (view?.room ?? {})).toBe(false);
+    expect('archived' in (view?.room ?? {})).toBe(false);
+
+    const wrongTypes = readRoomView({
+      ...currentRoom,
+      room: { ...header, createdAt: 'yesterday', updatedAt: -1, archived: 'no' },
+    });
+    expect(wrongTypes?.room.createdAt).toBeUndefined();
+    expect(wrongTypes?.room.updatedAt).toBeUndefined();
+    expect(wrongTypes?.room.archived).toBeUndefined();
+    expect(readRoomView({ ...currentRoom, room: header })?.room.updatedAt).toBe(2);
+  });
+
   it('drops a reply anchor that names another Room instead of carrying it through', () => {
     const foreign = 'cccccccc-3333-4333-8333-cccccccccccc';
     const view = readRoomView({

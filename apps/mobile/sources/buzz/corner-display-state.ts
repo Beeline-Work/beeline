@@ -42,12 +42,12 @@ export function roomViewParentId(view: {
 
 /** A corner viewing itself: derive state from this Room, never sibling corners. */
 export function cornerDisplayFromRoomView(view: {
-  readonly room: { readonly archived: boolean };
+  readonly room: { readonly archived?: boolean };
   readonly latestAgentTurns: readonly { readonly status: string }[];
   readonly cornerLifecycle?: CornerLifecycleView;
 }): CornerDisplayItem {
   const derived = deriveCornerState({
-    archived: view.room.archived,
+    archived: view.room.archived !== false,
     turnRunning: view.latestAgentTurns.some((turn) => turn.status === 'working'),
     lifecycle: view.cornerLifecycle,
   });

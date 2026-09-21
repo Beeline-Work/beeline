@@ -179,9 +179,9 @@ function readHeader(value: unknown): RoomViewHeader | null {
   return {
     id: item.id,
     name: typeof item.name === 'string' ? item.name : '',
-    archived: typeof item.archived === 'boolean' ? item.archived : false,
-    createdAt: integer(item.createdAt) ? item.createdAt : 0,
-    updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
+    ...field('archived', typeof item.archived === 'boolean' ? item.archived : undefined),
+    ...field('createdAt', integer(item.createdAt) ? item.createdAt : undefined),
+    ...field('updatedAt', integer(item.updatedAt) ? item.updatedAt : undefined),
     ...field('workspaceId', uuid(item.workspaceId) ? item.workspaceId : undefined),
     ...field('parentId', parentId),
     ...field('about', typeof item.about === 'string' ? item.about : undefined),

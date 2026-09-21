@@ -206,7 +206,9 @@ export function header(data: Json): RoomViewHeader {
   };
 }
 
-export function workspaceItem(data: Json): ChatListWorkspace {
+export function workspaceItem(
+  data: Json,
+): ChatListWorkspace & { readonly visibility: 'public' | 'invite-only' } {
   return {
     id: String(data.id ?? ''),
     name: text(data.name) ?? 'WORKSPACE',

@@ -507,7 +507,11 @@ export type ChatListItem = {
   };
   /** Absent when the server omitted it means unknown — never treat as zero. */
   readonly memberCount?: number;
-  /** Absent when the server omitted it means unknown — never treat as zero. */
+  /**
+   * Unarchived corners on this Room. Absent when the server omitted it: the
+   * deck row then shows neither the count nor its expansion toggle, and the
+   * Room header's brass mark stays the way into the corners list.
+   */
   readonly cornerCount?: number;
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;

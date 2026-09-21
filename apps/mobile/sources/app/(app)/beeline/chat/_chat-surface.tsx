@@ -141,7 +141,12 @@ import {
   shouldReadWorkspaceRoster,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
-import { cornerDisplayFromRoomView, cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
+import {
+  cornerDisplayFromRoomView,
+  cornerDisplayState,
+  cornerHeaderAgent,
+  roomViewParentId,
+} from '@/buzz/corner-display-state';
 import {
   directMessageHeaderName,
   fallbackMemberHandle,
@@ -771,7 +776,8 @@ export function BuzzChatSurface({
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
-  const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
+  const surfaceParentId = roomSurface ? roomViewParentId(roomSurface) : undefined;
+  const parentChannelId = surfaceParentId ?? routeParentChannelId;
   const desktopWorkRoomId = parentChannelId ?? decodedId;
   const [desktopParentRoom, setDesktopParentRoom] = useState<typeof roomSurface>(null);
   useEffect(() => {
@@ -836,7 +842,7 @@ export function BuzzChatSurface({
     workPaneMode === 'dismissed' &&
     hasLiveDesktopCorners;
   const channelKind: ChannelKind = roomSurface
-    ? roomSurface.parent
+    ? surfaceParentId
       ? 'corner'
       : 'room'
     : routeParentChannelId
@@ -869,7 +875,7 @@ export function BuzzChatSurface({
   const openCornerCount =
     workspaceChats.find((item) => item.room.id === (parentChannelId ?? decodedId))?.cornerCount ??
     0;
-  const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
+  const cornerTask = surfaceParentId ? roomSurface?.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository || !activeCommunityId) return null;
     const repository = roomSurface.repository;

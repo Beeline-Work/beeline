@@ -28,6 +28,18 @@ export type CornerDisplayItem = {
   readonly lifecycle: CornerLifecycleView;
 };
 
+/**
+ * What names a corner is its parent, and the Room header carries that fact on
+ * its own: `parentId`. The richer `parent` block is how a reader gets the
+ * parent's NAME, so a payload that drops it must still read as a corner.
+ */
+export function roomViewParentId(view: {
+  readonly room: { readonly parentId?: string };
+  readonly parent?: { readonly id: string };
+}): string | undefined {
+  return view.parent?.id ?? view.room.parentId;
+}
+
 /** A corner viewing itself: derive state from this Room, never sibling corners. */
 export function cornerDisplayFromRoomView(view: {
   readonly room: { readonly archived: boolean };

@@ -7,6 +7,7 @@ import type {
 } from '@beeline/api-contract/phone';
 import {
   cornerDisplayFromRoomView,
+  roomViewParentId,
   cornerDisplayState,
   cornerHeaderStateLabel,
   cornerDisplayItems,
@@ -158,5 +159,23 @@ describe('server-owned corner display state', () => {
         }).reviewerTurnRunning,
       ).toBe(false);
     });
+  });
+});
+
+describe('roomViewParentId', () => {
+  const parentId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+
+  it('names the parent from the parent block when the server sends one', () => {
+    expect(
+      roomViewParentId({ room: { parentId }, parent: { id: parentId } }),
+    ).toBe(parentId);
+  });
+
+  it('still reads a corner when a payload drops the parent block', () => {
+    expect(roomViewParentId({ room: { parentId } })).toBe(parentId);
+  });
+
+  it('reads a top-level Room as having no parent', () => {
+    expect(roomViewParentId({ room: {} })).toBeUndefined();
   });
 });

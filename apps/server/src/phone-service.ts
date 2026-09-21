@@ -5780,6 +5780,11 @@ export class PhoneService {
         last_synced_at: Date | null;
         created_at: Date;
       }>(
+        // KEYS reads newest-first the way the Squire vault itself lists them,
+        // so the vault's own `createdAt` orders the rows; ordering by service
+        // instead floated four unrelated `default` labels to the top. A 0 is
+        // "no vault time" (an unparseable timestamp), which falls back to the
+        // row's own insert time rather than sinking the key to the bottom.
         `SELECT id,connector_id,reference,service,label,hosts,state,last_synced_at,created_at
          FROM workspace_connections
          WHERE owner_identity_id=$1

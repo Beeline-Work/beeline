@@ -1,5 +1,6 @@
 import React from 'react';
 import Svg, { Polyline } from 'react-native-svg';
+import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
 
 /**
@@ -60,8 +61,7 @@ export function ChevronGlyph({
 }) {
   return (
     <Svg
-      accessibilityElementsHidden
-      focusable={false}
+      {...DECORATIVE_GLYPH_PROPS}
       height={size}
       testID={testID}
       viewBox="0 0 24 24"

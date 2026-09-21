@@ -83,6 +83,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
+import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
@@ -1872,7 +1873,7 @@ export function BuzzChatSurface({
       ? 'dm'
       : 'room';
   const focusComposer = useCallback(() => {
-    requestAnimationFrame(() => composerRef.current?.focus());
+    scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
@@ -2060,7 +2061,7 @@ export function BuzzChatSurface({
   // desktop compares the ordinary offset against the scrollable extent.
   const isPinnedToTailRef = useRef(true);
   const scrollToNewestMessage = useCallback(() => {
-    requestAnimationFrame(() => {
+    scheduleAnimationFrame(() => {
       if (desktopTranscript) {
         flatListRef.current?.scrollToEnd({ animated: false });
         // Record the position after scrollToEnd clamps against the current
@@ -2167,7 +2168,7 @@ export function BuzzChatSurface({
     );
     if (visibleIndex >= 0) {
       cancelDesktopOpenLanding();
-      requestAnimationFrame(() =>
+      scheduleAnimationFrame(() =>
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
           viewPosition: 0.5,
@@ -2544,7 +2545,7 @@ export function BuzzChatSurface({
         // center the replied-to message. The reply reference in the composer
         // is enough context, so land back on the end of the log instead.
         scrollToNewestMessage();
-        requestAnimationFrame(() => composerRef.current?.focus());
+        scheduleAnimationFrame(() => composerRef.current?.focus());
       };
       if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
     },
@@ -3047,7 +3048,7 @@ export function BuzzChatSurface({
           : null,
       );
       setHighlightedMentionIndex(0);
-      requestAnimationFrame(() => {
+      scheduleAnimationFrame(() => {
         composerRef.current?.focus();
         // Normal Android typing owns its cursor. Set selection only for this
         // explicit replacement, after React has applied the new text.
@@ -3767,7 +3768,7 @@ export function BuzzChatSurface({
   const closeDesktopWorkPane = useCallback(() => {
     const transition = commitDesktopWorkPane({ type: 'dismiss' });
     void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-    requestAnimationFrame(() => workPaneHandleRef.current?.focus());
+    scheduleAnimationFrame(() => workPaneHandleRef.current?.focus());
   }, [commitDesktopWorkPane, workPaneWindowClass]);
 
   const openDesktopWorkOverview = useCallback(() => {
@@ -3801,7 +3802,7 @@ export function BuzzChatSurface({
     const transition = commitDesktopWorkPane({ type: 'toggle' });
     void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
     if (transition.state.preference === 'dismissed')
-      requestAnimationFrame(() => workPaneHandleRef.current?.focus());
+      scheduleAnimationFrame(() => workPaneHandleRef.current?.focus());
   }, [commitDesktopWorkPane, hasLiveDesktopCorners, workPaneWindowClass]);
 
   useEffect(() => {
@@ -3877,7 +3878,7 @@ export function BuzzChatSurface({
     setComposerHeight(COMPOSER_MIN_HEIGHT);
     setDismissedSlashText(null);
     setHighlightedSlashVerbIndex(0);
-    requestAnimationFrame(() => composerRef.current?.focus());
+    scheduleAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
   const dismissSlashMenu = useCallback(() => {
@@ -4844,7 +4845,7 @@ export function BuzzChatSurface({
                 return;
               }
               preservedTailGrowthRef.current += height - previousHeight;
-              requestAnimationFrame(() => {
+              scheduleAnimationFrame(() => {
                 flatListRef.current?.scrollToOffset({
                   offset: readerHeldOffsetRef.current + preservedTailGrowthRef.current,
                   animated: false,

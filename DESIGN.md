@@ -204,7 +204,11 @@ Fences of up to four source lines stay inline with a Copy control and no inscrip
 A longer fence is one inscribed line (language, line count, and byte size)
 plus a four-line peek labelled with what it hides,
 and opens full-width in `ToolOutputSheet` (`CodeBlock.tsx`) where long lines
-wrap. Copy copies the complete block, including lines hidden by the peek;
+wrap. Centred on a desktop window the sheet is measured in columns of the
+machine role it holds, never by the confirm dialog's narrower cap, so the
+widest screen is never the one that wraps soonest. The byte size reads on the
+inscribed line and in the sheet's subtitle, and nowhere a third time.
+Copy copies the complete block, including lines hidden by the peek;
 selectable text preserves source spaces and tabs. Unlabelled fences and the
 `text`, `txt`, `plaintext`, `markdown`, and `md` labels stay monochrome.
 Other labelled fences use Two Inks: `json` distinguishes keys from values;

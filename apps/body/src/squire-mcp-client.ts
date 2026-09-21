@@ -6,24 +6,24 @@
  * (`connector-squire.ts`) so the assignment loop stays Squire-shaped and
  * tests keep driving a mock.
  *
- * The server is spawned on demand (`npx -y @trusty-squire/mcp@latest server`),
- * initialized once, and left running for the helper's lifetime; a failed call
+ * The server is spawned on demand through the NON-ELECTING façade
+ * (`squireFacadeLaunch`), never as a bare `npx … server`: N helper daemons
+ * restarting together each spawn this client, and an electing server per
+ * daemon is the eight-brokers-at-100-percent-CPU incident. The façade reaches
+ * the one host broker or reports `broker unavailable` and exits — a bounded
+ * refusal while the host unit comes up, instead of another browser. It is
+ * initialized once and left running for the helper's lifetime; a failed call
  * or a dead child tears the session down so the next call starts a fresh one.
- * Omitting `server` runs Squire's connect CLI instead of the vault MCP.
+ * Tests may inject a command; omitting `server` on a raw npx spawn runs
+ * Squire's connect CLI instead of the vault MCP.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { homedir } from 'node:os';
 import { squireConnectProcessEnv } from './connector-squire.js';
+import { squireFacadeLaunch } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
-
-/**
- * The vault MCP server argv: `@latest` plus the `server` subcommand.
- * Omitting `server` runs Squire's connect CLI, which takes the one
- * browser claim and paints every other tool (Google Workspace included)
- * with "another Trusty Squire session is already using the browser".
- */
-export const SQUIRE_MCP_SERVER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'server'] as const;
 
 export type SquireMcpClientOptions = {
   /** Spawn command; defaults to the published package through npx. */
@@ -98,10 +98,11 @@ export class StdioSquireMcpClient {
   }
 
   private initialize(): Promise<void> {
+    const launch = squireFacadeLaunch(homedir());
     const child = (this.options.spawn ?? spawn)(
-      this.options.command ?? 'npx',
-      [...(this.options.args ?? [...SQUIRE_MCP_SERVER_ARGS])],
-      { env: this.options.env ?? squireConnectProcessEnv() },
+      this.options.command ?? launch.command,
+      [...(this.options.args ?? launch.args)],
+      { env: this.options.env ?? { ...squireConnectProcessEnv(), ...launch.env } },
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.buffer = '';

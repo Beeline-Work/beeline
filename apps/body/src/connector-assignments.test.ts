@@ -1,22 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
-import { ConnectorAssignmentLoop } from './connector-assignments.js';
-import type {
-  InstallSquireOptions,
-  InstallSquireResult,
-  SquireMcpClient,
-  VaultConnectionMeta,
+import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
+import {
+  CONNECT_TIMEOUT_MS,
+  defaultStreamedRunner,
+  isProcessAlive,
+  releaseSquireConnectSession,
+  squireConnectSession,
+  type InstallSquireOptions,
+  type InstallSquireResult,
+  type SquireMcpClient,
+  type VaultConnectionMeta,
 } from './connector-squire.js';
 
 type ExecuteCall = { op: string; input: Record<string, unknown> };
 
-function apiMock(assignments: readonly ConnectorAssignment[]) {
+function apiMock(
+  assignments: readonly ConnectorAssignment[],
+  status: {
+    connectorId: string;
+    steps: { label: string; status: string }[];
+    signIn?: { method: string; url: string };
+  } = { connectorId: '', steps: [] },
+) {
   const calls: ExecuteCall[] = [];
   return {
     calls,
+    status,
     async execute(op: string, input: Record<string, unknown>) {
       calls.push({ op, input });
       if (op === 'getConnectorAssignments') return { assignments };
+      if (op === 'getConnectorStatus') return status;
       return {};
     },
   };
@@ -45,7 +59,7 @@ const connectedInstall =
       steps,
       squireVersion: '1.4.2',
       signedInAs: 'dana@example.test',
-      signIn: { method: 'oauth', url: 'https://squire.example/oauth' },
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
     };
   };
 
@@ -163,6 +177,218 @@ describe('ConnectorAssignmentLoop', () => {
     await loop.runOnce();
     await settle();
     expect(api.calls.map((call) => call.op)).toEqual(['getConnectorAssignments']);
+  });
+
+  it('leaves a live connect alone instead of restarting the ceremony under the human', async () => {
+    // The server re-issues `install` on every poll for as long as the row is
+    // `installing`, which is the whole sign-in. Starting a second connect
+    // releases this helper's claim, and that SIGTERMs the process group the
+    // noVNC tunnel on the phone is running in.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    expect(connect.signIn?.url).toBe('https://tunnel.test/#p=hunter22');
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    await loop.runOnce();
+    await settle();
+    expect(started).toBe(0);
+    expect(api.calls.some((call) => call.op === 'postConnectorStatus')).toBe(false);
+
+    // The human finished (or closed the page) and connect exited: the next
+    // assignment is an ordinary fresh install again.
+    connect.abort();
+    releaseSquireConnectSession();
+    await loop.runOnce();
+    await settle();
+    expect(started).toBe(1);
+    loop.stop();
+  });
+
+  it('stops the row instead of raising another display when the ceremony expired', async () => {
+    // The server re-issues `install` for the whole time the row is
+    // `installing`. A published ceremony nobody used must end the row, or the
+    // helper brings up a fresh Xvfb/x11vnc/websockify/cloudflared rig every
+    // five minutes for the daemon's lifetime.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    const claimed = squireConnectSession();
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
+      connectorId: 'conn-1',
+      steps: [{ label: 'waiting for sign-in', status: 'pending' }],
+      signIn: { method: 'streamed-page', url: 'https://tunnel.test/#p=hunter22' },
+    });
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      clock.mockReturnValue(claimed!.claimedAt + CONNECT_TIMEOUT_MS);
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(0);
+      const post = api.calls.find((call) => call.op === 'postConnectorStatus');
+      expect(post?.input.errorMessage).toBe(CEREMONY_EXPIRED);
+      expect(post?.input.signIn).toBeNull();
+      expect(isProcessAlive(claimed?.pid)).toBe(false);
+    } finally {
+      clock.mockRestore();
+      connect.abort();
+      releaseSquireConnectSession();
+      loop.stop();
+    }
+  });
+
+  it('supersedes a live connect when the human asked for this connector again', async () => {
+    // `pairConnector` re-arms the row to its default all-pending steps, which
+    // is the only thing that tells a fresh human request from the poll the
+    // server re-issues every ten seconds while the row is `installing`.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
+      connectorId: 'conn-1',
+      steps: [
+        { label: 'helper reached', status: 'pending' },
+        { label: 'trusty-squire installed', status: 'pending' },
+      ],
+    });
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    try {
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(1);
+
+      // The row still carrying settled steps is the ceremony we published, so
+      // the next re-issued poll leaves it alone.
+      api.status.steps = [
+        { label: 'helper reached', status: 'done' },
+        { label: 'waiting for sign-in', status: 'pending' },
+      ];
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(1);
+    } finally {
+      connect.abort();
+      releaseSquireConnectSession();
+      loop.stop();
+    }
+  });
+
+  it('stops protecting a ceremony once it has outlived its own tunnel', async () => {
+    // A human who never finishes leaves connect — and the Xvfb/x11vnc/
+    // websockify/cloudflared rig under it — alive. Past the ceremony's life the
+    // tunnel is no use to anybody, so the next install reclaims the display.
+    const connect = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      'console.log("Open this on any device: https://tunnel.test/#p=hunter22");' +
+        'setInterval(() => {}, 30_000);',
+    ]);
+    const claimed = squireConnectSession();
+    expect(claimed?.pid).toBeDefined();
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    let started = 0;
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => {
+        started += 1;
+        return { status: 'installing', steps: [] };
+      },
+    });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      clock.mockReturnValue(claimed!.claimedAt + CONNECT_TIMEOUT_MS - 1);
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(0);
+
+      clock.mockReturnValue(claimed!.claimedAt + CONNECT_TIMEOUT_MS);
+      await loop.runOnce();
+      await settle();
+      expect(started).toBe(1);
+    } finally {
+      clock.mockRestore();
+      connect.abort();
+      releaseSquireConnectSession();
+      loop.stop();
+    }
+  });
+
+  it('reports the run\u2019s own verdict on the ceremony, so a dead tunnel does not outlive it', async () => {
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async (options) => {
+        await options.onProgress([{ label: 'helper reached', status: 'done' }]);
+        return { status: 'installing', steps: [{ label: 'helper reached', status: 'done' }] };
+      },
+    });
+    await loop.runOnce();
+    await settle();
+    const posts = api.calls.filter((call) => call.op === 'postConnectorStatus');
+    // Steps-only progress of THIS run says nothing about the surface it just
+    // published; the run's final report says it printed none.
+    expect(posts[0]?.input.signIn).toBeUndefined();
+    expect(posts.at(-1)?.input.signIn).toBeNull();
+    loop.stop();
+  });
+
+  it('clears the ceremony when a later Squire run fails before printing one', async () => {
+    // Run 1 published a tunnel; run 2 dies before printing anything. The dead
+    // tunnel must not survive on the row under an `error` status.
+    const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      install: async () => ({
+        status: 'error',
+        steps: [{ label: 'trusty-squire installed', status: 'failed' }],
+        errorMessage: 'another Trusty Squire session is already using the browser',
+      }),
+    });
+    await loop.runOnce();
+    await settle();
+    const posts = api.calls.filter((call) => call.op === 'postConnectorStatus');
+    expect(posts.at(-1)?.input.errorMessage).toContain('already using the browser');
+    expect(posts.at(-1)?.input.signIn).toBeNull();
+    loop.stop();
   });
 
   it('never starts the same connector twice while an install is in flight', async () => {

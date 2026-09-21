@@ -412,8 +412,9 @@ const INITIAL_CORNER_MESSAGE_WINDOW = 200;
  * carries the touch area over Material's 48dp floor without moving a pixel of
  * chrome. One slop for all of them: the trailing pair used to take a 14 slop
  * that grew a 44 box into a 72 one, so two controls parted by a spacing step
- * of bare slab overlapped each other in the hit layer. 4 never does — the
- * closest pair sit 12 apart and the slop only reaches 4 toward each other.
+ * of bare slab overlapped each other in the hit layer. The Room pair's boxes
+ * now touch (same as the Room-list pair); 4 of slop each way overlaps 8 in
+ * the hit layer, which a 14 slop would have doubled.
  */
 const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 /**
@@ -421,8 +422,9 @@ const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;
  * One size for the pair is what makes the corners door and the overflow
  * control read as siblings, and a shape centred on its own box needs no
  * hand-tuned vertical correction to sit level with the mark beside it.
+ * 28 matches the Room-list pair so the two screens share one chrome.
  */
-const HEADER_MARK_SIZE = 16;
+const HEADER_MARK_SIZE = 28;
 
 /**
  * The voice a transcript entry belongs to, or `null` for anything that is not
@@ -4488,8 +4490,8 @@ export function BuzzChatSurface({
               the composer is gone. A lone brass `◇` a few pixels from the
               overflow dots read as decoration on the menu rather than as a
               destination of its own, so the door is NAMED, the way every rail
-              command is: the sigil states the kind, the word states where it
-              goes, and a full space step parts the pair from overflow. */}
+              command is: the mark states the kind, the word states where it
+              goes, and the pair's boxes touch like the Room-list chrome. */}
             {!parentChannelId && !isDirectMessage && (
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
@@ -4500,7 +4502,6 @@ export function BuzzChatSurface({
                 testID="room-corners-menu"
               >
                 <CornerGlyph
-                  color={styles.roomCornersGlyph.color}
                   size={HEADER_MARK_SIZE}
                   testID="room-corners-glyph"
                 />
@@ -5819,9 +5820,8 @@ const styles = StyleSheet.create((theme) => {
     cornerHeaderArchived: { color: groknight.ledgerGhost },
     // The title and its metadata keep a clear gap before the trailing action.
     // Corner overflow stays a lone 44pt edge control. The Room's pair does not
-    // cluster: the named corners door owns a 44pt-tall target of its own and
-    // the overflow sits a full space step away, so neither reads as chrome
-    // hanging off the other.
+    // cluster: the corners door owns a 44pt-tall target of its own and the
+    // overflow's box touches it, matching the Room-list pair.
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
@@ -5839,19 +5839,18 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // Siblings, not a cluster: the same 44pt box as the corners door, parted
-    // from it by bare slab so neither reads as chrome hanging off the other.
+    // Siblings, not a cluster: the same 44pt box as the corners door. The
+    // boxes touch, so the 28 marks sit 16pt apart — the same ink gap the
+    // Room-list pair already has.
     roomClusteredActionsButton: {
       minWidth: 44,
       minHeight: 44,
-      marginLeft: groknight.space.lg,
+      marginLeft: 0,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // Optically the SAME mark-size as the overflow dots, not larger and not a
-    // speck (captain, 2026-09-20). Both are drawn shapes on one size in one
-    // box now, so they match by construction rather than by eye.
-    roomCornersGlyph: { color: groknight.accent },
+    // The corner mark paints brand gold from CornerGlyph itself. Overflow
+    // stays steel chrome.
     roomActionsGlyph: { color: groknight.steel },
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,

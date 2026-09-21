@@ -35,6 +35,24 @@ describe('Members page layout contract', () => {
     expect(source).not.toContain('Seeded souls');
   });
 
+  it('renders two sections only, People before Agents, with every person inside People (C79)', () => {
+    // The old layout lifted owners into a headerless pinned block above Agents
+    // and filtered them out of the People rows, so the People count and the rows
+    // beneath it disagreed by construction. One People section now holds every
+    // person (owner included, carrying its role like any other) and the owner is
+    // never special-cased in the layout.
+    expect(source).not.toMatch(/pinnedOwners|listedPeople/);
+    const peopleStart = source.indexOf('testID="members-people-section"');
+    const agentsStart = source.indexOf('testID="members-agents-section"');
+    expect(peopleStart).toBeGreaterThanOrEqual(0);
+    expect(agentsStart).toBeGreaterThanOrEqual(0);
+    expect(peopleStart).toBeLessThan(agentsStart);
+    const people = source.slice(peopleStart, agentsStart);
+    expect(people).toContain('{people.map((member) => personRow(member))}');
+    // No person row can render outside the People section.
+    expect(source.slice(agentsStart)).not.toContain('personRow(');
+  });
+
   it('aligns the section + on the same trailing axis as the row chevron (C99)', () => {
     // The row's trailing chevron sits flush against the row's own padding
     // edge; the section head's + control is a 44pt hit target, so its

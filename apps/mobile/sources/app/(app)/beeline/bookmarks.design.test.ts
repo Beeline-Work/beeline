@@ -64,11 +64,13 @@ describe('private bookmark surfaces', () => {
     expect(bookmarks).not.toContain('PRIVATE');
   });
 
-  it('parts the corner diamond from the title with a spacing step', () => {
-    expect(bookmarks).toContain('styles.originDiamond');
+  it('parts the drawn corner mark from the title with a spacing step', () => {
+    expect(bookmarks).toContain('<CornerGlyph');
+    expect(bookmarks).toContain('size={CORNER_META_SIZE}');
     expect(bookmarks).toContain('gap: 8');
-    expect(bookmarks).toContain("styles.originDiamond : styles.originSigil");
-    expect(bookmarks).toContain("{bookmark.roomKind === 'corner' ? '◇' : '#'}");
+    expect(bookmarks).toContain('styles.originSigil');
+    expect(bookmarks).not.toContain('originDiamond');
+    expect(bookmarks).not.toContain("'◇'");
   });
 
   it('does not expose cached content for unavailable sources', () => {

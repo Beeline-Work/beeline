@@ -240,10 +240,11 @@ both animations (`buzz/streaming-prose.ts`, `components/buzz/StreamingProse.tsx`
 must find and act on, so it earns no box: one dim line in `ledgerQuiet`, at the
 same left margin as the prose above it. Only its affordance lifts — `view →`
 hangs in the same right gutter the timestamps do, one tonal step brighter, with
-a faint tonal flash on press and no border at any point. `◇` means corner (the
-lifecycle glyph family) and `→` means enterable, and that pairing is the one
-"enter this corner" vocabulary used by `WritePermissionOutcome`. The Room
-header uses `◇` with the corners label to open the list rather than one corner.
+a faint tonal flash on press and no border at any point. The drawn corner mark
+(`CornerGlyph`: two strokes meeting at the bottom left) means corner, and `→`
+means enterable; that pairing is the one "enter this corner" vocabulary used
+by `WritePermissionOutcome`. The Room header uses the same mark as the corners
+door to open the list rather than one corner.
 
 **A system notification is one sentence in one voice.** The server phrases
 every one of them — a join, a leave, a yolo flip, a grant answer, a failed
@@ -335,13 +336,13 @@ check lifecycle remains narration and never becomes a second client state
 machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
-trailing slot carries the **corners door**: the brass corner sigil `◇` ALONE,
+trailing slot carries the **corners door**: the brass `CornerGlyph` ALONE,
 in its own 44pt box, with `space.lg` of bare slab before the overflow dots'
 identical 44pt box. No word rides beside it. The two are **siblings** — same
-box, same baseline, parted by slab — and the sigil is sized to read at
-optically the SAME mark-size as the dots: `◇` draws about 0.6em against a wide
-short row of bullets, so the body role matches them by eye where the metadata
-role left a speck and the hero role made it tower (captain, 2026-09-20). The
+box, same baseline, parted by slab — and the mark is sized to read at
+optically the SAME mark-size as the dots: 28 of ink in the 44 box, the same
+treatment as the Room-list pair, with the stroke held to the weight it painted
+at 16 so the larger box does not read heavier (captain, 2026-09-21). The
 accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
 (`corners/[roomId]`, windowed with the same cap and archived fallback as the
 desktop work-pane corner list) and is the Room's one active-corner affordance.
@@ -376,8 +377,8 @@ its peer's own `IdentityMark`; a Room is many voices, so no one picture stands
 for it, and a Room row's copy follows the state column directly. The first
 glyph of the name itself reports the row's kind, in brass: a DM row reads
 `@peer`, a Room row reads `#room`; the rest of the name follows in the primary
-tone at one size (18) and one weight. Corners keep `◇`; Workspaces on the rail
-carry no sigil at all.
+tone at one size (18) and one weight. Corner rows under a Room keep the drawn
+corner mark; Workspaces on the rail carry no sigil at all.
 
 Line two is one preview line, single, truncated, in the quiet tone, with its
 attribution in front: the viewer's own last message reads `you: ` in the muted
@@ -576,17 +577,18 @@ the picture renders through the same `IdentityMark` primitive in the rail,
 header, and switcher, falling back to the generated Workspace mark when absent
 or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
 
-**A Workspace picture is seated in its bezel, never cropped by it.** Every tile
+**A picture in a bezel is seated in it, never cropped by it.** Every tile
 that wears one — the rail tile, the room-list header plate, the Workspace
-settings tile — derives one seat from its own geometry
-(`buzz/workspace-tile.ts`): the picture is centred inside the bezel and its
-radius is the tile's inner radius (tile radius less the bezel) less the margin
-of slab around it. That makes the picture's curve concentric with the bezel's,
-so the gap to the brass is the same width at the corners as along the flats at
-every size. Coverage: `buzz/workspace-tile.test.ts`,
-`components/buzz/workspace-nav-parity.contract.test.ts`, and
-`components/buzz/workspace-picture-seat.browser.test.ts`, which measures what
-each surface actually paints in a browser.
+settings tile, and the person's Settings identity tile — derives one seat from
+its own geometry (`buzz/workspace-tile.ts`): the picture is centred inside the
+bezel and its radius is the tile's inner radius (tile radius less the bezel)
+less the margin of slab around it. That makes the picture's curve concentric
+with the bezel's, so the gap to the brass is the same width at the corners as
+along the flats at every size. The identity tile is `IDENTITY_SETTINGS_TILE`,
+not a Workspace constant. Coverage: `buzz/workspace-tile.test.ts`,
+`components/buzz/workspace-nav-parity.contract.test.ts`,
+`components/buzz/workspace-picture-seat.browser.test.ts`, and
+`app/(app)/beeline/settings/identity-picture-seat.browser.test.ts`.
 
 One concept gets one glyph, product-wide. Members chrome on the Room-list
 header, the desktop workspace heading, and the corner roster row is

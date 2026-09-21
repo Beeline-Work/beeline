@@ -18,6 +18,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { cornerHref } from '@/buzz/corner-navigation';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { publishBookmarkChange } from '@/buzz/bookmark-events';
+import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
@@ -33,7 +34,7 @@ function sourceTitle(bookmark: MessageBookmarkView): string {
 }
 
 function sourceLabel(bookmark: MessageBookmarkView): string {
-  return `${bookmark.roomKind === 'corner' ? '◇ ' : '#'}${sourceTitle(bookmark)}`;
+  return `${bookmark.roomKind === 'corner' ? 'corner ' : '#'}${sourceTitle(bookmark)}`;
 }
 
 export default function BookmarksScreen() {
@@ -258,9 +259,14 @@ export default function BookmarksScreen() {
         >
           <View style={styles.originLine}>
             <View style={styles.originSource}>
-              <Text style={bookmark.roomKind === 'corner' ? styles.originDiamond : styles.originSigil}>
-                {bookmark.roomKind === 'corner' ? '◇' : '#'}
-              </Text>
+              {bookmark.roomKind === 'corner' ? (
+                <CornerGlyph
+                  size={CORNER_META_SIZE}
+                  testID={`bookmark-corner-mark-${bookmark.messageId}`}
+                />
+              ) : (
+                <Text style={styles.originSigil}>#</Text>
+              )}
               <Text numberOfLines={1} style={styles.origin}>
                 {sourceTitle(bookmark)}
               </Text>
@@ -416,10 +422,9 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: 8,
   },
-  originDiamond: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
   originSigil: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
   origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
   time: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },

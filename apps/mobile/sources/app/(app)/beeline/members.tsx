@@ -908,8 +908,6 @@ export default function BuzzMembers() {
     (rosterPeople !== null ? peopleHasMore : surface.membersTruncated) && !rosterLoading;
   const canLoadMoreAgents =
     (rosterAgents !== null ? agentsHasMore : surface.agentsTruncated) && !rosterLoading;
-  const pinnedOwners = people.filter((member) => member.role === 'owner');
-  const listedPeople = people.filter((member) => member.role !== 'owner');
 
   const personRow = (member: (typeof people)[number]) => {
     const editable = canChangeRole(
@@ -1050,7 +1048,42 @@ export default function BuzzMembers() {
             testID="members-search"
             value={memberQuery}
           />
-          {pinnedOwners.map((member) => personRow(member))}
+          <View style={styles.section} testID="members-people-section">
+            <View style={styles.sectionHeadRow}>
+              <Text style={styles.sectionLabel} testID="members-people-head">
+                {countedKindLabel('People', peopleTotal)}
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  accessibilityLabel="Add people"
+                  disabled={busy}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  onPress={() => {
+                    setError(null);
+                    void invitePerson();
+                  }}
+                  style={styles.sectionAdd}
+                  testID="members-add-people"
+                >
+                  <Text style={styles.sectionAddGlyph}>+</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {people.map((member) => personRow(member))}
+            {canLoadMorePeople && (
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={busy || rosterLoading}
+                onPress={() => void loadMoreMembers('human')}
+                style={styles.loadMore}
+                testID="members-load-more-people"
+              >
+                <Text style={styles.loadMoreText}>
+                  {rosterLoading ? 'Loading…' : 'Show more'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <View style={styles.section} testID="members-agents-section">
             <View style={styles.sectionHeadRow}>
               <Text style={styles.sectionLabel} testID="members-agents-head">
@@ -1375,42 +1408,6 @@ export default function BuzzMembers() {
                 onPress={() => void loadMoreMembers('agent')}
                 style={styles.loadMore}
                 testID="members-load-more-agents"
-              >
-                <Text style={styles.loadMoreText}>
-                  {rosterLoading ? 'Loading…' : 'Show more'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <View style={styles.section} testID="members-people-section">
-            <View style={styles.sectionHeadRow}>
-              <Text style={styles.sectionLabel} testID="members-people-head">
-                {countedKindLabel('People', peopleTotal)}
-              </Text>
-              {canManage && (
-                <TouchableOpacity
-                  accessibilityLabel="Add people"
-                  disabled={busy}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  onPress={() => {
-                    setError(null);
-                    void invitePerson();
-                  }}
-                  style={styles.sectionAdd}
-                  testID="members-add-people"
-                >
-                  <Text style={styles.sectionAddGlyph}>+</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {listedPeople.map((member) => personRow(member))}
-            {canLoadMorePeople && (
-              <TouchableOpacity
-                accessibilityRole="button"
-                disabled={busy || rosterLoading}
-                onPress={() => void loadMoreMembers('human')}
-                style={styles.loadMore}
-                testID="members-load-more-people"
               >
                 <Text style={styles.loadMoreText}>
                   {rosterLoading ? 'Loading…' : 'Show more'}

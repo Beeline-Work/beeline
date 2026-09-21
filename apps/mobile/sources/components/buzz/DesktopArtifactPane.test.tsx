@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   fetchArtifactBytes: vi.fn(),
   fetchArtifactText: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
+  copyPicture: vi.fn(),
+  sharePicture: vi.fn(),
+  showPictureActions: vi.fn(),
   onClose: vi.fn(),
 }));
 
@@ -49,6 +52,11 @@ vi.mock('@/buzz/artifact-link', () => ({
   fetchArtifactBytes: mocks.fetchArtifactBytes,
   fetchArtifactText: mocks.fetchArtifactText,
   openArtifactInBrowserOrExplain: mocks.openArtifactInBrowserOrExplain,
+}));
+vi.mock('@/buzz/picture-actions', () => ({
+  copyPicture: mocks.copyPicture,
+  sharePicture: mocks.sharePicture,
+  showPictureActions: mocks.showPictureActions,
 }));
 vi.mock('@/buzz/chat-attachment', () => ({
   formatAttachmentSize: (size: number) => `${(size / 1024).toFixed(1)} KB`,
@@ -155,9 +163,10 @@ describe('the desktop work pane artifact view', () => {
   });
 
   it('paints a raster in the pane, fitted rather than cropped', async () => {
+    const photo = attachment({ mimeType: 'image/png', name: 'chart.png', title: 'Chart' });
     const renderer = render(
       <DesktopArtifactPane
-        attachment={attachment({ mimeType: 'image/png', name: 'chart.png', title: 'Chart' })}
+        attachment={photo}
         onClose={mocks.onClose}
       />,
     );
@@ -165,6 +174,17 @@ describe('the desktop work pane artifact view', () => {
     const image = renderer.root.findByType('ArtifactImage' as any);
     expect(image.props.fit).toBe('contain');
     expect(image.props.testID).toBe('desktop-artifact-image');
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'desktop-artifact-copy' }).props.onPress();
+      renderer.root.findByProps({ testID: 'desktop-artifact-share' }).props.onPress();
+      renderer.root.findByProps({ testID: 'desktop-artifact-image-actions' }).props.onContextMenu({
+        preventDefault: vi.fn(),
+      });
+    });
+    expect(mocks.copyPicture).toHaveBeenCalledWith(photo);
+    expect(mocks.sharePicture).toHaveBeenCalledWith(photo);
+    expect(mocks.showPictureActions).toHaveBeenCalledWith(photo);
   });
 
   it.each([

@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   fetchArtifactText: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
   artifactPdfLocalUri: vi.fn(),
+  copyPicture: vi.fn(),
+  sharePicture: vi.fn(),
+  showPictureActions: vi.fn(),
   onClose: vi.fn(),
 }));
 
@@ -64,6 +67,11 @@ vi.mock('@/buzz/artifact-link', () => ({
   fetchArtifactBytes: mocks.fetchArtifactBytes,
   fetchArtifactText: mocks.fetchArtifactText,
   openArtifactInBrowserOrExplain: mocks.openArtifactInBrowserOrExplain,
+}));
+vi.mock('@/buzz/picture-actions', () => ({
+  copyPicture: mocks.copyPicture,
+  sharePicture: mocks.sharePicture,
+  showPictureActions: mocks.showPictureActions,
 }));
 vi.mock('@/components/buzz/MonoMarkdown', () => ({
   MonoMarkdown: (props: Record<string, unknown>) => React.createElement('MonoMarkdown', props, null),
@@ -186,6 +194,35 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(image.props.testID).toBe('artifact-viewer-image');
     expect(image.props.attachment).toBe(photo);
     expect(mocks.openArtifactInBrowserOrExplain).not.toHaveBeenCalled();
+  });
+
+  it('gives a full-screen picture the same direct copy, share, and long-press actions', async () => {
+    const photo = attachment({ mimeType: 'image/jpeg', name: 'photo.jpg', title: 'Photo' });
+    const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
+    await flush();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'artifact-viewer-copy' }).props.onPress();
+      renderer.root.findByProps({ testID: 'artifact-viewer-share' }).props.onPress();
+      renderer.root.findByProps({ testID: 'artifact-viewer-image-actions' }).props.onLongPress();
+    });
+
+    expect(mocks.copyPicture).toHaveBeenCalledWith(photo);
+    expect(mocks.sharePicture).toHaveBeenCalledWith(photo);
+    expect(mocks.showPictureActions).toHaveBeenCalledWith(photo);
+  });
+
+  it('does not add picture controls to other full-screen artifacts', async () => {
+    mocks.fetchArtifactText.mockResolvedValue('notes');
+    const renderer = render(
+      <ArtifactViewerScreen
+        attachment={attachment({ mimeType: 'text/plain', name: 'notes.txt' })}
+        onClose={mocks.onClose}
+      />,
+    );
+    await flush();
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-copy' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-share' })).toHaveLength(0);
   });
 
   it.each([

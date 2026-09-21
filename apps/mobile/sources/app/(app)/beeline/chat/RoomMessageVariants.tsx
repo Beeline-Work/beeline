@@ -45,8 +45,10 @@ import {
   formatNotificationHeadlines,
 } from '@/buzz/system-lines';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
+import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
 import { ArtifactCard } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
+import { showPictureActions } from '@/buzz/picture-actions';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
 import {
@@ -1254,7 +1256,11 @@ function AttachmentCard({
     };
   }, [image]);
   const open = () => {
-    if (!isDesktop && attachment.mimeType.startsWith('image/')) {
+    if (attachment.mimeType.startsWith('image/')) {
+      if (isDesktop) {
+        openArtifactInDesktopWorkPane({ attachment });
+        return;
+      }
       Modal.show({
         component: ArtifactViewerScreen,
         props: { attachment },
@@ -1291,10 +1297,28 @@ function AttachmentCard({
   return (
     <Pressable
       accessibilityLabel={`Open attachment ${attachment.name}`}
-      accessibilityRole={!isDesktop && attachment.mimeType.startsWith('image/') ? 'button' : 'link'}
+      accessibilityRole={attachment.mimeType.startsWith('image/') ? 'button' : 'link'}
+      delayLongPress={450}
+      onLongPress={
+        attachment.mimeType.startsWith('image/')
+          ? (event) => {
+              event.stopPropagation();
+              showPictureActions(attachment);
+            }
+          : undefined
+      }
       onPress={open}
       style={styles.attachmentCard}
       testID={`chat-attachment-${attachment.name}`}
+      {...(isDesktop && attachment.mimeType.startsWith('image/')
+        ? ({
+            onContextMenu: (event: { preventDefault(): void; stopPropagation(): void }) => {
+              event.preventDefault();
+              event.stopPropagation();
+              showPictureActions(attachment);
+            },
+          } as any)
+        : {})}
     >
       {image ? (
         <Image

@@ -14,6 +14,8 @@ import { Platform } from 'react-native';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn() }));
+const pictureActions = vi.hoisted(() => ({ showPictureActions: vi.fn() }));
+const desktopArtifactPane = vi.hoisted(() => ({ openArtifactInDesktopWorkPane: vi.fn() }));
 const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
 const conversationSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const composerSource = readFileSync(
@@ -93,6 +95,8 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 vi.mock('@/modal', () => ({ Modal: modal }));
+vi.mock('@/buzz/picture-actions', () => pictureActions);
+vi.mock('@/buzz/desktop-artifact-pane', () => desktopArtifactPane);
 vi.mock('@/buzz/chat-attachment', () => ({
   attachmentOpenUrl: (attachment: { url: string }) => attachment.url,
   formatAttachmentSize: (size: number) => `${size} B`,
@@ -187,6 +191,8 @@ beforeEach(() => {
   ledgerEntryRender.mockClear();
   modal.alert.mockClear();
   modal.show.mockClear();
+  pictureActions.showPictureActions.mockClear();
+  desktopArtifactPane.openArtifactInDesktopWorkPane.mockClear();
   openExternal.openExternalUrl.mockClear();
   resetProvisionalDrafts();
 });
@@ -1220,6 +1226,12 @@ describe('Room message variant components', () => {
     );
     const open = card.root.findByProps({ testID: 'chat-attachment-receipt.png' });
     expect(open.props.accessibilityRole).toBe('button');
+    const longPressEvent = { stopPropagation: vi.fn() };
+    act(() => open.props.onLongPress(longPressEvent));
+    expect(longPressEvent.stopPropagation).toHaveBeenCalled();
+    expect(pictureActions.showPictureActions).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'receipt.png' }),
+    );
     act(() => open.props.onPress());
     expect(modal.show).toHaveBeenCalledWith({
       component: expect.any(Function),
@@ -1234,7 +1246,7 @@ describe('Room message variant components', () => {
     expect(openExternal.openExternalUrl).not.toHaveBeenCalled();
   });
 
-  it('keeps desktop image attachments on the shared external URL boundary', () => {
+  it('opens a desktop picture message in the work pane and exposes its context menu', () => {
     render(
       <OrdinaryLedgerMessage
         message={message({
@@ -1270,11 +1282,21 @@ describe('Room message variant components', () => {
       React.createElement(React.Fragment, null, ledgerEntryRender.mock.lastCall?.[0].attachments),
     );
     const open = card.root.findByProps({ testID: 'chat-attachment-receipt.png' });
-    expect(open.props.accessibilityRole).toBe('link');
-    act(() => open.props.onPress());
-    expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
-      'https://server.example/v1/media/11111111-1111-4111-8111-111111111111',
+    expect(open.props.accessibilityRole).toBe('button');
+    const contextEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    act(() => open.props.onContextMenu(contextEvent));
+    expect(contextEvent.preventDefault).toHaveBeenCalled();
+    expect(contextEvent.stopPropagation).toHaveBeenCalled();
+    expect(pictureActions.showPictureActions).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'receipt.png' }),
     );
+    act(() => open.props.onPress());
+    expect(desktopArtifactPane.openArtifactInDesktopWorkPane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachment: expect.objectContaining({ name: 'receipt.png' }),
+      }),
+    );
+    expect(openExternal.openExternalUrl).not.toHaveBeenCalled();
     expect(modal.show).not.toHaveBeenCalled();
   });
 

@@ -136,10 +136,11 @@ export function connectStatusFromFacts(facts: SquireConnectFacts): 'connected' |
   return 'disconnected';
 }
 
-/** Start a browser only when no process is running and no surface is up. */
+/** Start only when nothing else holds the browser. This helper's own
+ *  live connect may be released and retried; a foreign process may not. */
 export function shouldStartSquireConnect(facts: SquireConnectFacts): boolean {
   if (facts.credential.kind === 'valid') return false;
-  if (facts.process.kind !== 'none') return false;
+  if (facts.process.kind === 'foreign' || facts.process.kind === 'unidentified') return false;
   if (facts.visibility.kind !== 'none') return false;
   return true;
 }

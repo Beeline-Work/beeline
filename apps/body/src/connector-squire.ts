@@ -839,6 +839,11 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
   };
 }
 
+/** The account line Squire prints once a human completes sign-in. */
+export function parseSignedInAs(output: string): string | undefined {
+  return output.match(/signed in as ([^\s,;]+)/i)?.[1];
+}
+
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
@@ -887,13 +892,15 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(sessionName(observed) ? { signedInAs: sessionName(observed) } : {}),
     };
   }
+  if (observed.process.kind === 'foreign') {
+    push(step('trusty-squire installed', 'failed', observed.process.action));
+    return fail(observed.process.action);
+  }
   if (!shouldStartSquireConnect(observed)) {
     const wait =
-      observed.process.kind === 'foreign'
-        ? observed.process.action
-        : observed.visibility.kind === 'local'
-          ? 'complete the sign-in on that screen'
-          : undefined;
+      observed.visibility.kind === 'local'
+        ? 'complete the sign-in on that screen'
+        : undefined;
     push(step('trusty-squire installed', 'done'));
     push(step('waiting for sign-in', 'running', wait));
     return {
@@ -915,9 +922,8 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
   });
   if (claim.kind === 'blocked-foreign') {
-    push(step('trusty-squire installed', 'done'));
-    push(step('waiting for sign-in', 'running', claim.action));
-    return { status: 'installing', steps };
+    push(step('trusty-squire installed', 'failed', claim.action));
+    return fail(claim.action);
   }
 
   const resolution = await resolveSquireConnectSpec(run);

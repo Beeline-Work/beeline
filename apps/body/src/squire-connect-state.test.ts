@@ -110,6 +110,12 @@ describe('credential and connect status', () => {
     ).toBe(false);
   });
 
+  it('lets this helper retry its own live connect', () => {
+    expect(
+      shouldStartSquireConnect(facts({ process: { kind: 'ours', pid: 9 } })),
+    ).toBe(true);
+  });
+
   it('marks a held surface without a session as a challenge', () => {
     publishSquireVisibility({ kind: 'local', held: true });
     expect(credentialFromSession(undefined)).toEqual({ kind: 'challenge' });

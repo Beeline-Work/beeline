@@ -319,6 +319,19 @@ describe('listening flow', () => {
     );
   });
 
+  it('seats the listening shadow below the voice control without moving the control', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    const [control, listening] = renderer.root.findByProps({ testID: 'chat-mic' }).props.style;
+    expect(control).toMatchObject({ width: 26, height: 26 });
+    expect(listening).toMatchObject({
+      borderRadius: 13,
+      shadowOffset: { width: 0, height: 2 },
+    });
+  });
+
   it('commits final result to onChangeText', async () => {
     const onChangeText = vi.fn();
     const { renderer } = render({ value: '', onChangeText });

@@ -267,9 +267,7 @@ export function ConversationComposer({
             onBlur={onBlur}
             onKeyPress={onKeyPress}
             onSelectionChange={onSelectionChange}
-            placeholder={
-              isListening ? (hasLiveTranscript ? '' : 'Listening') : 'Message'
-            }
+            placeholder={isListening ? (hasLiveTranscript ? '' : 'Listening') : 'Message'}
             placeholderTextColor={theme.buzz.dim}
             multiline
             // Android keyboards otherwise take the whole screen in landscape and
@@ -439,7 +437,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.accent,
     borderRadius: 13,
     shadowColor: theme.buzz.accent,
-    shadowOffset: { width: 0, height: 0 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
     elevation: 4,

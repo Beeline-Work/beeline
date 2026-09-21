@@ -74,7 +74,10 @@ beforeAll(() => {
       listeners.set(name, listener),
     removeEventListener: (name: string) => listeners.delete(name),
   };
-  (globalThis as any).requestAnimationFrame = (callback: () => void) => {
+  (globalThis as any).requestAnimationFrame = function requestAnimationFrame(
+    this: unknown,
+    callback: () => void,
+  ) {
     callback();
     return 1;
   };

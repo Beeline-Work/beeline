@@ -26,7 +26,7 @@ import { PushLevelSetting } from './PushLevelSetting';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('PushLevelSetting', () => {
-  it('opens the four-choice picker and saves the selected level', async () => {
+  it('opens the three-choice picker and saves the selected level', async () => {
     const onSave = vi.fn(async () => undefined);
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
@@ -40,6 +40,11 @@ describe('PushLevelSetting', () => {
     expect(renderer.root.findByProps({ testID: 'push-notifications-sheet' }).props.visible).toBe(
       true,
     );
+    expect(
+      renderer.root
+        .findAllByType('Choice')
+        .map((choice: { props: { testID: string } }) => choice.props.testID),
+    ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine']);
     expect(
       ['off', 'direct', 'mine'].map(
         (level) => renderer.root.findByProps({ testID: `push-level-${level}` }).props.label,

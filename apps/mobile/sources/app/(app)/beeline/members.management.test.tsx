@@ -825,19 +825,16 @@ describe('Members workspace management', () => {
     );
   });
 
-  it('uses pencil and close glyph controls instead of boxed rename and close actions', async () => {
+  it('uses a pencil control and collapses the detail from the open row', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(
       renderer.root.findByProps({ testID: 'edit-agent-soul' }).findByType('Text').props.children,
     ).toBe('✎');
-    expect(
-      renderer.root.findByProps({ testID: 'close-agent-settings' }).findByType('Text').props
-        .children,
-    ).toBe('×');
+    expect(renderer.root.findAllByProps({ testID: 'close-agent-settings' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'rename-agent' })).toHaveLength(0);
-    await press(renderer, 'close-agent-settings');
+    await press(renderer, `agent-${AGENT}-identity`);
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
   });
 

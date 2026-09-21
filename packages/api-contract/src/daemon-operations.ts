@@ -760,10 +760,24 @@ export type ConnectorStatus = {
   readonly errorMessage?: string;
 };
 
+/**
+ * Where Squire's connect run says the sign-in page actually opened, read
+ * verbatim from its machine-readable report — never detected here. `none`
+ * means the run opened no browser at all; `unknown` means it could not say.
+ */
+export type ConnectorBrowserLocation =
+  | { readonly kind: 'host_screen' }
+  | { readonly kind: 'virtual'; readonly url: string }
+  | { readonly kind: 'unreachable'; readonly reason: string }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'unknown'; readonly reason: string };
+
 /** The sign-in surface a connector reports while it waits for the human. */
 export type ConnectorSignIn = {
   readonly method: 'streamed-page' | 'oauth';
   readonly url: string;
+  /** Where the page opened, when the connect report said. */
+  readonly browserLocation?: ConnectorBrowserLocation;
 };
 
 /** Metadata about one vault entry (no secret values). */

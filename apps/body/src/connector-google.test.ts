@@ -128,23 +128,22 @@ describe('installGoogleTool', () => {
     expect(result.errorMessage).toContain('not a Google tool connector');
   });
 
-  it('does not present a Trusty Squire browser-session failure as Google’s own breakage', async () => {
+  it('falls through to the manual path when Squire refuses, never presenting its error as Google’s own', async () => {
     const squire = fakeSquire(() => {
       throw new Error(
         'another Trusty Squire session is already using the browser — close it first',
       );
     });
+    const home = mkdtempSync(join(tmpdir(), 'beeline-google-refused-'));
     const result = await installGoogleTool({
       connectorType: 'google-gmail',
-      home: '/tmp/home',
+      home,
       squire,
       client: okClient,
     });
     expect(result.status).toBe('error');
-    expect(result.errorMessage).toBe(
-      'Trusty Squire is still using the browser — connect Trusty Squire first',
-    );
-    expect(result.errorMessage).not.toMatch(/another Trusty Squire session is already using the browser/i);
+    expect(result.errorMessage).toContain('no Google credentials found');
+    expect(result.errorMessage).not.toMatch(/already using the browser/i);
   });
 });
 

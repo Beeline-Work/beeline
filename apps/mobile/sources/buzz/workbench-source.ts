@@ -207,6 +207,9 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
             method:
               row.status.signIn.method === 'oauth' ? ('oauth' as const) : ('streamed' as const),
             url: row.status.signIn.url,
+            ...(row.status.signIn.browserLocation
+              ? { browserLocation: row.status.signIn.browserLocation }
+              : {}),
           }
         : null,
       connected: row.status.status === 'connected',

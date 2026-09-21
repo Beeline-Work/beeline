@@ -274,6 +274,33 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(route.params.url).toContain('https://');
   });
 
+  it('shows where the sign-in page opened, from the helper report', async () => {
+    searchParams.params = {
+      workspaceId: 'workspace-1',
+      viewerId: 'human-dani',
+      connectorId: 'trusty-squire',
+      pairedConnectorId: 'connector-row-1',
+    };
+    const readInstallState = vi.fn(async () => ({
+      connectorId: 'connector-row-1',
+      helperName: 'squire-box',
+      steps: [{ label: 'waiting for sign-in', status: 'active' as const }],
+      signIn: {
+        method: 'streamed' as const,
+        url: 'https://trustysquire.ai/install?token=secret',
+        browserLocation: { kind: 'virtual' as const, url: 'https://tunnel.example.test/#p=x' },
+      },
+      connected: false,
+    }));
+    setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { readInstallState }));
+    const renderer = await render();
+    await advancePolls();
+    const line = renderer.root.findByProps({ testID: 'connect-sign-in-location' });
+    expect([line.props.children].flat().join('')).toBe(
+      'Sign-in page opened on a virtual display · https://tunnel.example.test/#p=x',
+    );
+  });
+
   it('streams each step’s CLI command and captured output under the checklist', async () => {
     const renderer = await render();
     await pair(renderer);

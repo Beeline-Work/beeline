@@ -1,14 +1,23 @@
-import React, { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
-import { TURN_LINE_BAR_MARGIN_BOTTOM, TURN_LINE_ROW_MIN_HEIGHT } from '@/buzz/room-bottom-chrome';
+import {
+  TURN_LINE_BAR_MARGIN_BOTTOM,
+  TURN_LINE_ROW_MIN_HEIGHT,
+  reservedTurnBandHeight,
+  roomBottomChromeStyles,
+} from '@/buzz/room-bottom-chrome';
 
 /** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
 const STOP_HIT_SLOP = 9;
+
+/** One glyph in the label's own font. The measured copy needs a line box, not
+ *  a word — nobody ever sees this character. */
+const MEASURE_GLYPH = 'M';
 
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question
@@ -149,9 +158,88 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
   );
 }
 
+/**
+ * The band's box with nothing in it, mounted always and shown never, so the
+ * slot's height is known BEFORE any band is shown.
+ *
+ * The reserve cannot be read off the visible band. A band reports its height
+ * only once it has been laid out, and a band taller than the reserve — the
+ * reader's accessibility text scale makes one — has by then already taken the
+ * extra out of the list's viewport and shrunk the transcript. This copy is
+ * laid out in the same width, at the same text scale, out of the same
+ * stylesheet, while the slot is still empty.
+ *
+ * It carries the tallest variant's parts — the mark cell, the mono label and
+ * the stop control — because the row is as tall as its tallest child. It has
+ * no counter, no breath, and no accessibility presence: it exists to be
+ * measured, not to be read or heard.
+ */
+function TurnLineMeasure() {
+  return (
+    <View style={styles.bar}>
+      <View style={styles.row}>
+        <View style={styles.glyphCell} />
+        <Text numberOfLines={1} style={styles.label}>
+          {MEASURE_GLYPH}
+        </Text>
+        <View style={styles.stop}>
+          <Text style={styles.stopLabel}>■ STOP</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The band's slot: the strip above the composer that holds the turn line's
+ * height open whether or not an agent is working.
+ *
+ * `room-bottom-chrome.ts` carries the argument for why the slot is permanent.
+ * The two rules it keeps here are that the height is EXACT — `height`, never
+ * `minHeight`, so no child can grow the strip and move the transcript — and
+ * that the height comes from `TurnLineMeasure`, which is already laid out by
+ * the time a band arrives.
+ */
+export function TurnBandSlot({
+  children,
+  testID,
+}: {
+  children?: React.ReactNode;
+  testID?: string;
+}) {
+  const [reserved, setReserved] = useState<number | null>(null);
+  const onMeasureLayout = useCallback((event: LayoutChangeEvent) => {
+    const measured = event.nativeEvent.layout.height;
+    setReserved((held) => reservedTurnBandHeight({ reserved: held, measured }));
+  }, []);
+
+  return (
+    <View
+      style={[styles.slot, { height: reservedTurnBandHeight({ reserved, measured: null }) }]}
+      testID={testID}
+    >
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        onLayout={onMeasureLayout}
+        pointerEvents="none"
+        style={styles.slotMeasure}
+        testID={testID ? `${testID}-measure` : undefined}
+      >
+        <TurnLineMeasure />
+      </View>
+      {children}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
+  const bottomChrome = roomBottomChromeStyles(groknight);
   return {
+    // The strip and its hidden ruler are the bottom chrome's own geometry.
+    slot: bottomChrome.hangingTurnChrome,
+    slotMeasure: bottomChrome.turnBandMeasure,
     // In-flow band above the composer (`room-bottom-chrome`). The transcript
     // tail does not grow a matching reserve — that step jumped the last
     // message — and the line must not paint over the newest row.

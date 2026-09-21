@@ -13,10 +13,17 @@
  *
  * Every number the page lays out is read out of the app: the band's fill and
  * hairline and the reserved slot rule come from `buzz/room-bottom-chrome`, and
- * the line's row and margin tokens from that module or, on a tree that does
- * not export them yet, from `TurnProgressLine`'s own stylesheet. So dropping
- * the rule or changing the reserve moves this proof, and it runs unchanged on
- * the tree before the fix — which is the run that reproduces the jump.
+ * the line's row, margin and label tokens from that module or, on a tree that
+ * does not export them yet, from `TurnProgressLine`'s own stylesheet. So
+ * dropping the rule or changing the reserve moves this proof, and it runs
+ * unchanged on the tree before the fix — which is the run that reproduces the
+ * jump.
+ *
+ * It runs the whole transition twice: once at the default text scale, once at
+ * an accessibility scale large enough that the band is taller than the
+ * default-scale fallback. The second run is the one that fails if the reserve
+ * is measured off the visible band, because by then the taller band has
+ * already taken its height out of the list.
  *
  * Run: node apps/mobile/scripts/turn-band-hold-proof.mjs
  * Exits non-zero when the newest row moves in either direction.
@@ -34,6 +41,13 @@ const CHROME = process.env.CHROME_BIN ?? 'google-chrome';
 const SCREEN = { width: 390, height: 780 };
 /** Stand-in for the newest message row; its height is irrelevant to the shift. */
 const NEWEST_ROW_HEIGHT = 44;
+/**
+ * Text scales the transition is driven at. 1 is the default; 1.8 is an
+ * ordinary accessibility setting, and it makes the band taller than a reserve
+ * computed from the default-scale tokens — the case a reserve measured off the
+ * visible band cannot hold still.
+ */
+const TEXT_SCALES = [1, 1.8];
 
 const out = mkdtempSync(join('/tmp', 'turn-band-proof-'));
 
@@ -82,6 +96,10 @@ function bandToken(exportName, styleKey, property) {
 const bandTokens = {
   rowMinHeight: bandToken('TURN_LINE_ROW_MIN_HEIGHT', 'row', 'minHeight'),
   barMarginBottom: bandToken('TURN_LINE_BAR_MARGIN_BOTTOM', 'bar', 'marginBottom'),
+  // The label's own type, which is what the reader's text scale multiplies.
+  // No export claims these, so they come off the line's stylesheet.
+  labelFontSize: bandToken('TURN_LINE_LABEL_FONT_SIZE', 'label', 'fontSize'),
+  labelLineHeight: bandToken('TURN_LINE_LABEL_LINE_HEIGHT', 'label', 'lineHeight'),
 };
 
 const page = `<!doctype html>
@@ -103,29 +121,27 @@ const page = `<!doctype html>
 <script>
 const chrome = globalThis.BEELINE_CHROME;
 const bandTokens = ${JSON.stringify(bandTokens)};
+const scales = ${JSON.stringify(TEXT_SCALES)};
 const hull = { bgTerminal: '#140d1c', border: '#2e2438' };
 const layout = chrome.roomBottomChromeStyles(hull);
 const px = (n) => (n == null ? 0 : n) + 'px';
+const round = (n) => Math.round(n * 100) / 100;
 
 // The inverted list's own tail, straight from the app's rule.
 const tail = globalThis.BEELINE_TAIL_PADDING({ turnChromeVisible: true, pushedChromeVisible: false });
 document.getElementById('transcript').style.paddingBottom = px(tail);
 
-// The app reserves the band's slot permanently. A tree without that rule
-// reserves nothing, which is the geometry this proof was written to catch.
-const reserve = typeof chrome.reservedTurnBandHeight === 'function'
-  ? chrome.reservedTurnBandHeight({ reserved: null, measured: null })
-  : 0;
+// How this tree holds the slot open, read off the app rather than assumed:
+//   unreserved — no reserve rule at all; the slot mounts with the band.
+//   fallback   — the slot is permanent but its height is a floor the band can
+//                push open, and the reserve is measured off the visible band.
+//   measured   — the slot's height is exact and comes from a hidden copy of
+//                the band that is laid out before any band is shown.
+const reserves = typeof chrome.reservedTurnBandHeight === 'function';
+const measureStyle = layout.turnBandMeasure ?? null;
+const mode = !reserves ? 'unreserved' : measureStyle ? 'measured' : 'fallback';
 
 const chromeStack = document.getElementById('chrome');
-const slot = document.createElement('div');
-Object.assign(slot.style, {
-  backgroundColor: layout.hangingTurnChrome.backgroundColor,
-  borderTopStyle: 'solid',
-  borderTopWidth: px(layout.hangingTurnChrome.borderTopWidth),
-  borderTopColor: layout.hangingTurnChrome.borderTopColor ?? 'transparent',
-  minHeight: px(reserve),
-});
 const composer = document.createElement('div');
 Object.assign(composer.style, {
   paddingTop: px(layout.composerRow.paddingTop),
@@ -134,16 +150,11 @@ Object.assign(composer.style, {
   borderTopColor: layout.composerRow.borderTopColor,
   height: '52px',
 });
-// A reserved slot stays mounted whether or not an agent is working, and only
-// its contents come and go. With no reserve rule the screen mounts the whole
-// slot — fill, rule and all — with the band, which is the tree this proof
-// reproduces the jump on.
-const slotIsReserved = reserve > 0;
-if (slotIsReserved) chromeStack.append(slot);
-chromeStack.append(composer);
 
-/** The turn line's own box, built from the line's own tokens. */
-function buildBand() {
+/** The turn line's own box, at the reader's text scale, from the line's own
+ *  tokens. The row is as tall as its tallest child, so a scaled-up label is
+ *  what pushes the band past a reserve computed at the default scale. */
+function buildBand(scale) {
   const bar = document.createElement('div');
   Object.assign(bar.style, {
     width: '100%',
@@ -157,31 +168,85 @@ function buildBand() {
     display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
+    fontSize: px(bandTokens.labelFontSize * scale),
+    lineHeight: px(bandTokens.labelLineHeight * scale),
   });
   row.textContent = 'nerd thinking…';
   bar.append(row);
   return bar;
 }
 
+function buildSlot() {
+  const slot = document.createElement('div');
+  Object.assign(slot.style, {
+    backgroundColor: layout.hangingTurnChrome.backgroundColor,
+    borderTopStyle: 'solid',
+    borderTopWidth: px(layout.hangingTurnChrome.borderTopWidth),
+    borderTopColor: layout.hangingTurnChrome.borderTopColor ?? 'transparent',
+  });
+  return slot;
+}
+
 const topOfNewest = () =>
-  Math.round(document.getElementById('newest').getBoundingClientRect().top * 100) / 100;
+  round(document.getElementById('newest').getBoundingClientRect().top);
 
-const before = topOfNewest();
-const band = buildBand();
-slot.append(band);
-if (!slotIsReserved) chromeStack.prepend(slot);
-const during = topOfNewest();
-band.remove();
-if (!slotIsReserved) slot.remove();
-const after = topOfNewest();
+/** Drive one whole transition — no band, band, no band — at one text scale. */
+function run(scale) {
+  chromeStack.textContent = '';
+  const slot = buildSlot();
+  let reserve = 0;
 
-const bandBox = bandTokens.rowMinHeight + bandTokens.barMarginBottom;
+  if (mode !== 'unreserved') {
+    // A reserved slot is mounted whether or not an agent is working.
+    reserve = chrome.reservedTurnBandHeight({ reserved: null, measured: null });
+    slot.style[mode === 'measured' ? 'height' : 'minHeight'] = px(reserve);
+    chromeStack.append(slot);
+  }
+  chromeStack.append(composer);
+
+  if (mode === 'measured') {
+    // The hidden copy: mounted before any band, out of flow, laid out at this
+    // text scale. Its height is what the slot then holds.
+    const ruler = document.createElement('div');
+    Object.assign(ruler.style, {
+      position: measureStyle.position,
+      left: px(measureStyle.left),
+      right: px(measureStyle.right),
+      top: px(measureStyle.top),
+      opacity: String(measureStyle.opacity),
+    });
+    ruler.append(buildBand(scale));
+    slot.append(ruler);
+    reserve = chrome.reservedTurnBandHeight({
+      reserved: null,
+      measured: ruler.getBoundingClientRect().height,
+    });
+    slot.style.height = px(reserve);
+  }
+
+  const before = topOfNewest();
+  const band = buildBand(scale);
+  slot.append(band);
+  // With no reserve rule the screen mounts the whole slot — fill, rule and all
+  // — with the band, which is the tree this proof reproduces the jump on.
+  if (mode === 'unreserved') chromeStack.prepend(slot);
+  const during = topOfNewest();
+  const bandBox = round(band.getBoundingClientRect().height + bandTokens.barMarginBottom);
+  band.remove();
+  if (mode === 'unreserved') slot.remove();
+  const after = topOfNewest();
+
+  return {
+    scale, reserve: round(reserve), bandBox, before, during, after,
+    onAppear: round(during - before),
+    onGo: round(after - during),
+  };
+}
+
 document.getElementById('result').textContent = JSON.stringify({
-  reserve, tail, bandBox,
+  mode, tail,
   rule: (layout.hangingTurnChrome.borderTopWidth ?? 0),
-  before, during, after,
-  onAppear: Math.round((during - before) * 100) / 100,
-  onGo: Math.round((after - during) * 100) / 100,
+  runs: scales.map(run),
 });
 </script></body></html>`;
 
@@ -216,22 +281,31 @@ const m = JSON.parse(found[1]);
 
 console.log(`Room bottom edge measured in headless Chrome at ${SCREEN.width}x${SCREEN.height}`);
 console.log(`  transcript tail padding : ${m.tail}px`);
-console.log(`  thinking band box       : ${m.bandBox}px`);
-console.log(`  reserved band slot      : ${m.reserve}px`);
 console.log(`  rule above the band     : ${m.rule}px`);
-console.log('');
-console.log('  newest message top, in screen px:');
-console.log(`    before the band : ${m.before}`);
-console.log(`    band showing    : ${m.during}`);
-console.log(`    after it goes   : ${m.after}`);
-console.log('');
-console.log(`  moved on appear : ${m.onAppear}px`);
-console.log(`  moved on go     : ${m.onGo}px`);
+console.log(`  slot                    : ${m.mode}`);
 
-const held = m.onAppear === 0 && m.onGo === 0;
+for (const run of m.runs) {
+  console.log('');
+  console.log(`  text scale ${run.scale}x`);
+  console.log(`    thinking band box : ${run.bandBox}px`);
+  console.log(`    reserved slot     : ${run.reserve}px`);
+  console.log('    newest message top, in screen px:');
+  console.log(`      before the band : ${run.before}`);
+  console.log(`      band showing    : ${run.during}`);
+  console.log(`      after it goes   : ${run.after}`);
+  console.log(`    moved on appear : ${run.onAppear}px`);
+  console.log(`    moved on go     : ${run.onGo}px`);
+}
+
+const moved = m.runs.filter((run) => run.onAppear !== 0 || run.onGo !== 0);
+const held = moved.length === 0;
 const unfenced = m.rule === 0;
 console.log('');
-console.log(held ? 'HELD — the newest message never moves.' : 'MOVED — the transcript jumps.');
+console.log(
+  held
+    ? 'HELD — the newest message never moves, at any text scale.'
+    : `MOVED — the transcript jumps at text scale ${moved.map((run) => run.scale).join(', ')}.`,
+);
 console.log(
   unfenced
     ? 'UNFENCED — no rule above the band.'

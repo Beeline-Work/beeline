@@ -61,7 +61,7 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
+import { TurnBandSlot, TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { beelineThemes } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
@@ -88,6 +88,63 @@ const layout = roomBottomChromeStyles(beelineThemes.obsidian);
 
 const px = (value: unknown): number => Number(value ?? 0);
 
+const flattenStyle = (style: unknown): ViewStyle[] =>
+  ([] as unknown[]).concat(style ?? []).filter(Boolean) as ViewStyle[];
+
+type TestNode = { type: unknown; props: Record<string, unknown> };
+
+const hostByTestID = (renderer: ReactTestRenderer, testID: string): TestNode =>
+  renderer.root.findAll(
+    (node: TestNode) => typeof node.type === 'string' && node.props.testID === testID,
+  )[0];
+
+/**
+ * The slot as the screen mounts it, driven the way the phone drives it: the
+ * hidden copy reports a layout, the band comes, the band goes. The height the
+ * assertions read is the height the list's viewport loses.
+ */
+function mountBandSlot() {
+  let renderer!: ReactTestRenderer;
+  const band = React.createElement(TurnProgressLine, {
+    label: 'nerd thinking…',
+    testID: 'band',
+  });
+  const tree = (showBand: boolean) =>
+    React.createElement(TurnBandSlot, { testID: 'slot' }, showBand ? band : null);
+  act(() => {
+    renderer = create(tree(false));
+  });
+  return {
+    /** The exact height the slot takes out of the screen right now. */
+    slotHeight(): number {
+      const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+      return px((style as ViewStyle).height);
+    },
+    slotStyle(): ViewStyle {
+      return Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    },
+    measure(): TestNode {
+      return hostByTestID(renderer, 'slot-measure');
+    },
+    /** The hidden copy reports the height it was laid out at. */
+    reportMeasuredHeight(height: number) {
+      const onLayout = this.measure().props.onLayout as (event: {
+        nativeEvent: { layout: { height: number } };
+      }) => void;
+      act(() => onLayout({ nativeEvent: { layout: { height } } }));
+    },
+    showBand(showBand: boolean) {
+      act(() => renderer.update(tree(showBand)));
+    },
+    bandIsMounted(): boolean {
+      return hostByTestID(renderer, 'band') != null;
+    },
+    unmount() {
+      act(() => renderer.unmount());
+    },
+  };
+}
+
 /** The turn line's own layout box, measured off a rendered line. */
 function measureTurnLine(): { height: number; bottomMargin: number; box: number } {
   let renderer!: ReactTestRenderer;
@@ -96,8 +153,7 @@ function measureTurnLine(): { height: number; bottomMargin: number; box: number 
       React.createElement(TurnProgressLine, { label: 'nerd thinking…', testID: 'turn-line' }),
     );
   });
-  const flatten = (style: unknown): ViewStyle[] =>
-    ([] as unknown[]).concat(style ?? []).filter(Boolean) as ViewStyle[];
+  const flatten = flattenStyle;
   const bar = renderer.root.findAll(
     (node: { type: unknown; props: { testID?: string } }) =>
       node.type === 'View' && node.props.testID === 'turn-line',
@@ -196,6 +252,89 @@ describe('the Room turn line is a band above the composer', () => {
     // No band mounted reports nothing, and holds what it was holding.
     expect(reservedTurnBandHeight({ reserved: wrapped, measured: 0 })).toBe(wrapped);
     expect(reservedTurnBandHeight({ reserved: wrapped, measured: null })).toBe(wrapped);
+  });
+
+  /**
+   * The slot as it is actually mounted, through the transition the reader
+   * sees. The reducer above is the rule; these are the frames.
+   */
+  it('mounts its ruler while nobody is working, hidden and out of flow', () => {
+    const slot = mountBandSlot();
+    const measure = slot.measure();
+
+    // The ruler is what makes the reserve knowable before the first band. It
+    // is there when no agent is working, it cannot be seen, touched or heard,
+    // and being absolute it adds no height to the strip it is measured in.
+    expect(measure, 'the slot must keep a hidden copy of the band mounted').toBeTruthy();
+    expect(typeof measure.props.onLayout).toBe('function');
+    expect(slot.bandIsMounted()).toBe(false);
+    const hidden = Object.assign({}, ...flattenStyle(measure.props.style)) as ViewStyle;
+    expect(hidden.position).toBe('absolute');
+    expect(hidden.opacity).toBe(0);
+    expect(measure.props.pointerEvents).toBe('none');
+    expect(measure.props.accessibilityElementsHidden).toBe(true);
+    expect(measure.props.importantForAccessibility).toBe('no-hide-descendants');
+
+    slot.unmount();
+  });
+
+  it('holds an exact height, not a floor the band could push open', () => {
+    const line = measureTurnLine();
+    const slot = mountBandSlot();
+
+    // `height`, never `minHeight`: a floor is what lets a band taller than the
+    // reserve grow the strip the moment it mounts, which is the shift again.
+    expect(slot.slotHeight()).toBe(line.box);
+    expect(Object.keys(slot.slotStyle())).not.toContain('minHeight');
+
+    slot.unmount();
+  });
+
+  it('does not move when the band comes or goes at the default text scale', () => {
+    const line = measureTurnLine();
+    const slot = mountBandSlot();
+    slot.reportMeasuredHeight(line.box);
+
+    const before = slot.slotHeight();
+    slot.showBand(true);
+    const during = slot.slotHeight();
+    slot.showBand(false);
+    const after = slot.slotHeight();
+
+    expect(slot.bandIsMounted()).toBe(false);
+    expect([during, after]).toEqual([before, before]);
+
+    slot.unmount();
+  });
+
+  /**
+   * RB-31 at a larger accessibility text scale, which is where measuring the
+   * VISIBLE band left a hole: the first band mounted at its real, taller
+   * height, the slot grew to it, and the transcript shrank once before the
+   * measurement ever landed. The hidden copy is laid out at the reader's text
+   * scale while the slot is still empty, so the first band is shown into a
+   * slot that already fits it.
+   */
+  it('shows the first band of the session into a slot that already fits it', () => {
+    const line = measureTurnLine();
+    const slot = mountBandSlot();
+    // The same band at a larger text scale: taller than the default-scale
+    // fallback, and reported by the ruler before any band is shown.
+    const scaled = line.box + 14;
+    expect(scaled).toBeGreaterThan(reservedTurnBandHeight({ reserved: null, measured: null }));
+    slot.reportMeasuredHeight(scaled);
+
+    const before = slot.slotHeight();
+    expect(before).toBe(scaled);
+
+    // The reader's first turn of the session.
+    slot.showBand(true);
+    expect(slot.bandIsMounted()).toBe(true);
+    expect(slot.slotHeight()).toBe(before);
+    slot.showBand(false);
+    expect(slot.slotHeight()).toBe(before);
+
+    slot.unmount();
   });
 
   /**

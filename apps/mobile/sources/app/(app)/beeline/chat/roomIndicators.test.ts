@@ -144,13 +144,15 @@ describe('the turn indicator is the Room’s only line above the composer', () =
   it('renders the turn indicator on its own gate, inside a slot that is always there', () => {
     expect(chatSource).toContain('desktopExperience ? (');
     // The SLOT is unconditional on phone — it holds the band's measured
-    // height open so the transcript does not move when the band comes or
-    // goes. Only the LINE is gated on a turn. Re-gating the slot on
-    // `composerAck` puts the jump straight back.
-    expect(chatSource).toMatch(
-      /\{!desktopExperience && \(\s*<View\s+style=\{\[styles\.hangingTurnChrome, \{ minHeight: turnBandReserve \}\]\}/,
-    );
-    expect(chatSource).toContain('onLayout={onTurnBandLayout}');
+    // height so the transcript does not move when the band comes or goes.
+    // Only the LINE is gated on a turn. Re-gating the slot on `composerAck`
+    // puts the jump straight back.
+    expect(chatSource).toMatch(/\{!desktopExperience && \(\s*<TurnBandSlot\s/);
+    // The height lives in `TurnBandSlot`, measured off a hidden copy of the
+    // band. A screen-local reserve keyed off the visible band is what let a
+    // taller first band shrink the transcript once.
+    expect(chatSource).not.toContain('minHeight: turnBandReserve');
+    expect(chatSource).not.toContain('onLayout={onTurnBandLayout}');
     expect(chatSource).toContain('{composerAck ? (');
     expect(chatSource).toContain('<TurnProgressLine');
     expect(chatSource).toContain('label={composerAck.label}');

@@ -24,6 +24,16 @@
  * beyond the canvas it already sits on — an empty reserved strip must read as
  * part of the transcript's own background, not as a second surface.
  *
+ * The slot's height is that reserve EXACTLY, never a floor, and the reserve is
+ * measured off a copy of the band that is mounted from the start and never
+ * shown (`turnBandMeasure`, `TurnLineMeasure`). Both halves are load-bearing.
+ * A floor would let a band taller than the reserve — a larger accessibility
+ * text scale makes one — grow the slot at the moment it mounted, which is the
+ * same shift by another route; and measuring off the visible band reports only
+ * after that band has already been laid out, too late to hold anything still.
+ * The hidden copy is laid out at the reader's text scale before any band is
+ * shown, so the first band of the session lands in a slot that already fits.
+ *
  * `room-bottom-chrome.test.tsx` measures the overlay-cover counterfactual, the
  * in-flow placement, and the reserve against a rendered line.
  */
@@ -36,8 +46,9 @@ export const TURN_LINE_BAR_MARGIN_BOTTOM = 4;
 /**
  * The band's height before anything has measured it, composed from the line's
  * own tokens rather than written down as a number. It is the exact height of a
- * single-line band at the default text scale, so the first band a Room ever
- * shows lands in a slot that already fits it.
+ * single-line band at the default text scale — it covers only the frames
+ * between the slot mounting and the hidden copy reporting its layout, and at
+ * any other text scale that copy's measurement is what the slot holds.
  */
 export const TURN_BAND_FALLBACK_HEIGHT = TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM;
 
@@ -54,6 +65,18 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
     // surfaces.
     hangingTurnChrome: {
       backgroundColor: hull.bgTerminal,
+    },
+    // The copy of the band that exists only to be measured. Absolute, so it
+    // contributes no height of its own to the slot it is measured inside, and
+    // stretched to the slot's width so it wraps exactly as the real band
+    // would. Invisible, not unmounted: the reserve has to be known before the
+    // first band is shown.
+    turnBandMeasure: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 0,
+      opacity: 0,
     },
     composerRow: {
       paddingHorizontal: 16,
@@ -76,19 +99,25 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
  * `TURN_BAND_FALLBACK_HEIGHT` only covers the moments before any band has
  * been laid out; the first real measurement takes over.
  *
- * The reserve never shrinks within a session. A taller band — a wrapped label,
- * a larger text scale — raises it once and it stays raised, because letting it
- * fall back would move the transcript in the other direction the next time a
- * short band replaced a tall one. Growing once is the only motion this rule
- * admits, and only on the first band that needs the extra room.
+ * `measured` comes from the hidden copy of the band, which is mounted whether
+ * or not an agent is working — NOT from the visible band. A visible band can
+ * only report its height after it has been laid out, and a band taller than
+ * the reserve has by then already shrunk the transcript once. Measuring the
+ * hidden copy settles the reserve while the slot is still empty, so the first
+ * band of the session is shown into a slot that already fits it at whatever
+ * text scale the reader is on.
+ *
+ * The reserve never shrinks within a session. A taller measurement raises it
+ * and it stays raised, because letting it fall back would move the transcript
+ * in the other direction the next time a short band replaced a tall one.
  */
 export function reservedTurnBandHeight({
   reserved,
   measured,
 }: {
-  /** The height held open so far this session; null before the first band. */
+  /** The height held open so far this session; null before the first layout. */
   reserved: number | null;
-  /** The band's height as just laid out; null or 0 when no band is mounted. */
+  /** The hidden copy's height as just laid out; null before it reports. */
   measured: number | null;
 }): number {
   return Math.max(TURN_BAND_FALLBACK_HEIGHT, reserved ?? 0, measured ?? 0);

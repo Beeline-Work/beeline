@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -96,15 +96,13 @@ export default function TextSelectionScreen() {
                     showsVerticalScrollIndicator
                     contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 16 }]}
                 >
-                    <TextInput
+                    <Text
                         accessibilityLabel={t('textSelection.title')}
-                        editable={false}
-                        multiline
-                        scrollEnabled={false}
-                        selectTextOnFocus={false}
-                        style={styles.textInput}
-                        value={fullText}
-                    />
+                        selectable
+                        style={styles.textContent}
+                    >
+                        {fullText}
+                    </Text>
                 </ScrollView>
             )}
 
@@ -151,7 +149,7 @@ const styles = StyleSheet.create((theme) => ({
         flexGrow: 1,
         paddingTop: 18,
     },
-    textInput: {
+    textContent: {
         minHeight: 200,
         paddingHorizontal: 0,
         paddingVertical: 0,

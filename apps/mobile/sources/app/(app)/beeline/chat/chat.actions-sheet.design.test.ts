@@ -212,22 +212,50 @@ describe('Room and corner actions sheets', () => {
   it('opens the message actions sheet from the row long press with the same list', () => {
     // Long press on any human or agent message opens this third sheet: the
     // emoji scroll is its top cell (the reaction entry point itself), then
-    // Copy/Reply/Forward act on press.
+    // Copy/Select/Reply/Forward act on press.
     expect(messageSheet).toContain('visible={Boolean(messageActionsTarget)}');
-    for (const testID of ['message-copy-action', 'message-reply-action', 'message-forward-action']) {
+    for (const testID of [
+      'message-copy-action',
+      'message-select-action',
+      'message-reply-action',
+      'message-forward-action',
+    ]) {
       expect(row(messageSheet, testID)).toContain('<HullActionSheetRow');
     }
     expect(row(messageSheet, 'message-copy-action')).toContain('label="Copy"');
+    expect(row(messageSheet, 'message-select-action')).toContain('label="Select"');
     expect(row(messageSheet, 'message-reply-action')).toContain('label="Reply"');
     expect(row(messageSheet, 'message-forward-action')).toContain('label="Forward"');
-    // Copy, Reply and Forward are plain actions — no fifth mark.
-    for (const testID of ['message-copy-action', 'message-reply-action', 'message-forward-action']) {
+    // Copy, Select, Reply and Forward are plain actions — no fifth mark.
+    for (const testID of [
+      'message-copy-action',
+      'message-select-action',
+      'message-reply-action',
+      'message-forward-action',
+    ]) {
       const plain = row(messageSheet, testID);
       expect(plain).not.toContain('chevron');
       expect(plain).not.toContain('toggle=');
       expect(plain).not.toContain('metadata=');
     }
     expect(messageSheet).toContain('testID="message-actions-close"');
+  });
+
+  it('stages the visible message text and opens the native selection screen', () => {
+    const select = row(messageSheet, 'message-select-action');
+    expect(select).toContain('handleSelectLedgerMessage(');
+    expect(select).toContain('agentActivityReplyExcerpt(target)');
+    expect(select).toContain('target.text');
+    expect(chat).toContain(
+      "router.push({ pathname: '/text-selection', params: { textId } } as Href)",
+    );
+
+    const selectionScreen = readFileSync(
+      new URL('../../text-selection.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(selectionScreen).toContain('selectable');
+    expect(selectionScreen).not.toContain('<TextInput');
   });
 
   it('presents reactions as the emoji scroll itself — no React row, no buried menu', () => {

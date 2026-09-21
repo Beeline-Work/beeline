@@ -2662,7 +2662,18 @@ export function BuzzChatSurface({
         await forwardMessageToRoom(
           (input) => monolithPhoneOperation('sendRoomMessage', input),
           roomId,
-          { text: forwardTarget.text, attachments: forwardTarget.attachments },
+          {
+            text: forwardTarget.text,
+            author: forwardTarget.authorIdentity ?? {
+              name: forwardTarget.pubkey
+                ? fallbackMemberName(forwardTarget.pubkey)
+                : 'SOMEONE',
+              ...(forwardTarget.pubkey
+                ? { handle: fallbackMemberHandle(forwardTarget.pubkey) }
+                : {}),
+            },
+            attachments: forwardTarget.attachments,
+          },
           displayRoomName,
         );
         setForwardTarget(null);

@@ -1156,12 +1156,12 @@ export class MonolithRoomTurnLoop {
               if (!reply && explained?.recoveredText) {
                 // Text the harness recorded but never streamed. Kept on a
                 // corner-open turn too: it is the same reply the live lane
-                // would have shown, arriving only at settle.
+                // would have shown, arriving only at settle. Sanitized first,
+                // because a recovered string that is only harness preamble or
+                // the scaffold echo leaves nothing to say.
                 reply = durableReplyText(explained.recoveredText);
-                console.warn(
-                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
-                );
-              } else if (!reply && explained && !cornerOpened) {
+              }
+              if (!reply && explained && !cornerOpened) {
                 // A named reason (pi's provider refusal, an empty model answer,
                 // the stream's shape) carrying the provider that served the
                 // turn — never the bare "no reply" as the only fact. A corner
@@ -1169,6 +1169,11 @@ export class MonolithRoomTurnLoop {
                 // prose; do not fail that turn for emptiness.
                 throw new Error(
                   turnFailureReasonWithProvider(explained.reason, this.servingProviders()),
+                );
+              }
+              if (reply && explained) {
+                console.warn(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ${explained.reason}`,
                 );
               }
               // The server's corner-open card and this reply are one

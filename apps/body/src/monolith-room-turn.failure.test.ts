@@ -582,4 +582,41 @@ describe('Room turn failure receipt', () => {
     expect(posted.map((message) => message.text)).toEqual(['All good.']);
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
   });
+
+  it('fails the turn when the only pi-recorded text is harness preamble', async () => {
+    // pi records its startup banner as an assistant message, so a turn whose
+    // ACP stream delivered nothing recovers text that sanitizes away entirely.
+    // With no corner to complete the turn, that is silence — and silence is a
+    // failed turn with a named reason, never a quiet `complete`.
+    const { receipts, posted } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: async ({ agentHomeRoot }) => {
+        const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, '2026_room-session.jsonl'),
+          [
+            JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+            JSON.stringify({
+              type: 'message',
+              message: {
+                role: 'assistant',
+                content: [
+                  { type: 'text', text: 'pi v0.85.1\n\n## Skills\n- /home/agent/skills/skill.md' },
+                ],
+                stopReason: 'stop',
+              },
+            }),
+          ].join('\n'),
+        );
+        return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+      },
+    });
+    expect(posted).toEqual([]);
+    const failed = receipts.find((receipt) => receipt.status === 'failed');
+    expect(failed).toBeDefined();
+    expect(String(failed!.reason)).not.toBe('');
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(false);
+  });
 });

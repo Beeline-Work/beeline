@@ -2,7 +2,11 @@ import { type RoomViewMessage } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const controls = vi.hoisted(() => ({ fetch: vi.fn(), authorization: vi.fn() }));
+const controls = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  authorization: vi.fn(),
+  identityListeners: new Set<() => void>(),
+}));
 const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
 
 vi.mock('expo-crypto', () => ({
@@ -16,7 +20,14 @@ vi.mock('@/buzz/runtime-config', () => ({
   }),
 }));
 vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: { fetch: controls.fetch, authorization: controls.authorization },
+  monolithSession: {
+    fetch: controls.fetch,
+    authorization: controls.authorization,
+    subscribeIdentityChange: (listener: () => void) => {
+      controls.identityListeners.add(listener);
+      return () => controls.identityListeners.delete(listener);
+    },
+  },
 }));
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -46,6 +57,7 @@ vi.mock('react-native-mmkv', () => ({
 }));
 
 import { MonolithRigTransport } from './monolith-rig-transport';
+import { resetSharedLiveConnection } from './live-connection';
 import { BuzzRigTransport } from './buzz-rig-transport';
 import { MonolithPhoneOperationError } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
@@ -87,9 +99,11 @@ describe('monolith Room send path', () => {
     });
     controls.authorization.mockReset();
     controls.authorization.mockResolvedValue('phone-session');
+    controls.identityListeners.clear();
   });
 
   afterEach(() => {
+    resetSharedLiveConnection();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -156,10 +170,37 @@ describe('monolith Room send path', () => {
       },
     ]);
 
-    sockets[1]!.onclose?.();
     stop();
+    expect(sockets[1]!.closed).toBe(false);
+    for (const listener of controls.identityListeners) listener();
+    expect(sockets[1]!.closed).toBe(true);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(sockets).toHaveLength(2);
+  });
+
+  it('shares one live socket across two subscribing transports', async () => {
+    const sockets: unknown[] = [];
+    class TestWebSocket {
+      constructor() {
+        sockets.push(this);
+      }
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', TestWebSocket);
+
+    const stopFirst = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      () => {},
+    );
+    const stopSecond = await new MonolithRigTransport(identity).surfaceSubscribe(
+      [{ '#h': [ROOM] }],
+      () => {},
+    );
+
+    expect(sockets).toHaveLength(1);
+    stopFirst();
+    stopSecond();
   });
 
   it('retries authorization and resets reconnect backoff after opening', async () => {

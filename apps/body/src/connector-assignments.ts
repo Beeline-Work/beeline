@@ -43,13 +43,13 @@ import {
   releaseSquireConnectSession,
   isSquireBrowserSessionFailure,
   readVault,
+  readVaultFromSession,
   revokeGrants,
   squireConnectSession,
   type InstallSquireOptions,
   type InstallSquireResult,
   type SquireMcpClient,
 } from './connector-squire.js';
-import { readVaultFromSession } from './squire-connect-state.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
 
 export const CONNECTOR_POLL_INTERVAL_MS = 10_000;

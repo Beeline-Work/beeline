@@ -5,11 +5,9 @@ import { join } from 'node:path';
 import {
   connectStatusFromFacts,
   credentialFromSession,
-  hostSeatDisplay,
   noteSquireVaultAuth,
   publishSquireVisibility,
   readSquireSession,
-  readVaultFromSession,
   resetSquireConnectFacts,
   shouldStartSquireConnect,
   type SquireConnectFacts,
@@ -36,18 +34,6 @@ function facts(partial: Partial<SquireConnectFacts>): SquireConnectFacts {
   };
 }
 
-describe('hostSeatDisplay', () => {
-  it('uses the screen already in the process env', () => {
-    expect(hostSeatDisplay({ env: { DISPLAY: ':0' } })).toBe(':0');
-    expect(hostSeatDisplay({ env: { DISPLAY: ':99' } })).toBe(':99');
-    expect(hostSeatDisplay({ env: { WAYLAND_DISPLAY: 'wayland-0' } })).toBe('wayland-0');
-  });
-
-  it('has no screen when the process env has none', () => {
-    expect(hostSeatDisplay({ env: {} })).toBeUndefined();
-  });
-});
-
 describe('credential and connect status', () => {
   it('reads the session file this helper owns', () => {
     const home = scratch();
@@ -65,6 +51,39 @@ describe('credential and connect status', () => {
       accountId: 'acct_9',
       agentSessionToken: 'tok',
     });
+  });
+
+  it('reads the pinned host config root, not an ambient XDG_CONFIG_HOME', () => {
+    // Every helper-spawned Squire writes its session under <home>/.config,
+    // because squireHostRewriteEnv pins XDG_CONFIG_HOME there. A daemon that
+    // inherited some other XDG_CONFIG_HOME must still read what Squire wrote.
+    const home = scratch();
+    const ambient = scratch();
+    for (const [root, account] of [
+      [join(home, '.config'), 'acct_9'],
+      [ambient, 'acct_ambient'],
+    ] as const) {
+      mkdirSync(join(root, 'trusty-squire'), { recursive: true });
+      writeFileSync(
+        join(root, 'trusty-squire', 'session.json'),
+        JSON.stringify({
+          api_base_url: 'https://vault.test',
+          account_id: account,
+          agent_session_token: 'tok',
+        }),
+      );
+    }
+    const previous = { home: process.env.HOME, config: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = home;
+    process.env.XDG_CONFIG_HOME = ambient;
+    try {
+      expect(readSquireSession()?.accountId).toBe('acct_9');
+    } finally {
+      if (previous.home === undefined) delete process.env.HOME;
+      else process.env.HOME = previous.home;
+      if (previous.config === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous.config;
+    }
   });
 
   it('derives connected from a valid session, not from a running process', () => {
@@ -117,7 +136,7 @@ describe('credential and connect status', () => {
   });
 
   it('marks a held surface without a session as a challenge', () => {
-    publishSquireVisibility({ kind: 'local', held: true });
+    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=x' });
     expect(credentialFromSession(undefined)).toEqual({ kind: 'challenge' });
   });
 
@@ -130,39 +149,5 @@ describe('credential and connect status', () => {
         agentSessionToken: 'dead',
       }),
     ).toEqual({ kind: 'expired' });
-  });
-});
-
-describe('readVaultFromSession', () => {
-  it('lists KEYS from the session token without a broker', async () => {
-    const home = scratch();
-    mkdirSync(join(home, 'trusty-squire'));
-    writeFileSync(
-      join(home, 'trusty-squire', 'session.json'),
-      JSON.stringify({
-        api_base_url: 'https://vault.test',
-        account_id: 'acct_9',
-        agent_session_token: 'tok',
-      }),
-    );
-    const vault = await readVaultFromSession({
-      configHome: home,
-      fetch: async (url, init) => {
-        expect(String(url)).toBe('https://vault.test/v1/vault/credentials');
-        expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
-        return new Response(
-          JSON.stringify({
-            credentials: [{ reference: 'cred_groq', service: 'groq', label: 'Groq API' }],
-          }),
-        );
-      },
-    });
-    expect(vault).toEqual([
-      expect.objectContaining({ reference: 'cred_groq', label: 'Groq API', service: 'groq' }),
-    ]);
-  });
-
-  it('does not invent KEYS when there is no session', async () => {
-    expect(await readVaultFromSession({ configHome: scratch() })).toBeUndefined();
   });
 });

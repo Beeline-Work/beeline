@@ -3,10 +3,10 @@
  *
  * Connect is three ordinary facts (`squire-connect-state.ts`): process,
  * visibility, and credential. The install starts a browser only when all
- * three are empty. Two branches only: if this process already has a screen
- * (`DISPLAY` or `WAYLAND_DISPLAY`), Squire uses that screen; if it has
- * none, Squire starts the virtual display. Connected is the session file
- * this helper owns, never a phrase Squire printed.
+ * three are empty. Connect inherits the env this process already has, so
+ * Squire itself chooses the host screen or its own virtual display.
+ * Connected is the session file this helper owns, never a phrase Squire
+ * printed.
  *
  * One helper shares the host Squire broker and its one Chrome. The install
  * runs Squire's own `connect` through a STREAMING runner that captures the
@@ -50,12 +50,13 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
   connectStatusFromFacts,
   credentialFromSession,
+  noteSquireVaultAuth,
   publishedSquireVisibility,
   publishSquireVisibility,
   readSquireSession,
@@ -63,6 +64,7 @@ import {
   visibilitySignIn,
   type SquireConnectFacts,
   type SquireProcessFact,
+  type SquireSessionRecord,
 } from './squire-connect-state.js';
 import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
@@ -127,10 +129,15 @@ export function isProcessAlive(pid: number | undefined): boolean {
  * process has died (the human closed the page and the process exited, or the
  * claim outlived its spawn) is cleared outright; a still-live owner is
  * aborted — the fresh attempt supersedes it.
+ *
+ * The published ceremony goes with it: a released connect takes its tunnel
+ * down, so leaving the surface published would hand every later attempt a
+ * dead URL instead of starting a connect.
  */
 export function releaseSquireConnectSession(log?: (message: string) => void): void {
   const claim = activeConnectSession;
   activeConnectSession = undefined;
+  publishSquireVisibility({ kind: 'none' });
   if (!claim) return;
   if (isProcessAlive(claim.pid)) {
     log?.(
@@ -259,6 +266,88 @@ function removeProfileLock(lockPath: string): void {
 }
 
 /**
+ * The cross-agent connect claim. Squire's own lock lives in `/tmp`, which is
+ * a different inode inside every `PrivateTmp=yes` agent unit, so it cannot
+ * answer "is another HELPER starting a browser right now?". This one lives in
+ * the Chrome profile directory every helper already shares, so two agents
+ * polling in the same window produce one browser.
+ */
+function squireConnectClaimPath(profileDir: string = squireChromeProfileDir()): string {
+  return join(profileDir, '.beeline-connect-claim');
+}
+
+/** Name the claim's owner: the process whose life the claim now follows. */
+export function nameSquireConnectClaim(claimPath: string, pid: number): void {
+  try {
+    writeFileSync(
+      join(claimPath, 'owner.json'),
+      JSON.stringify({ host: hostname(), pid, start_time: readLinuxStartTime(pid) ?? 'unknown' }),
+    );
+  } catch {
+    // An unwritable claim is no claim; the next take reclaims it.
+  }
+}
+
+const SQUIRE_CLAIM_UNAVAILABLE =
+  "Trusty Squire's browser claim could not be taken on this host. Press Connect again.";
+
+/** The window between another helper's `mkdir` and the owner it writes next. */
+const CLAIM_NAMING_GRACE_MS = 5_000;
+
+function claimJustTaken(claimPath: string): boolean {
+  try {
+    return Date.now() - lstatSync(claimPath).mtimeMs < CLAIM_NAMING_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
+export type SquireConnectClaim =
+  | { readonly kind: 'taken'; readonly path: string }
+  | { readonly kind: 'blocked-foreign'; readonly action: string };
+
+/**
+ * Take the shared claim before spawning connect. `mkdir` is the atomic take,
+ * so of two agents arriving together exactly one wins and the loser reads the
+ * winner's owner and waits. The claim is named with THIS process first (the
+ * connect has no pid yet), then re-named with the connect's own pid, so its
+ * life is the ceremony's life and a finished connect frees it by exiting.
+ */
+export function takeSquireConnectClaim(options?: {
+  readonly profileDir?: string;
+  readonly ourPids?: readonly number[];
+  readonly log?: (message: string) => void;
+}): SquireConnectClaim {
+  const profileDir = options?.profileDir ?? squireChromeProfileDir();
+  const claimPath = squireConnectClaimPath(profileDir);
+  mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(claimPath);
+      nameSquireConnectClaim(claimPath, process.pid);
+      return { kind: 'taken', path: claimPath };
+    } catch {
+      const owner = readLockFileOwner(claimPath);
+      if (!owner && claimJustTaken(claimPath)) {
+        // Another helper won the mkdir and is naming itself right now.
+        return { kind: 'blocked-foreign', action: SQUIRE_CLAIM_UNAVAILABLE };
+      }
+      const ours =
+        owner !== undefined &&
+        (owner.pid === process.pid || (options?.ourPids ?? []).includes(owner.pid));
+      if (owner && !ours && (owner.host !== hostname() || lockOwnerIsAlive(owner))) {
+        options?.log?.(
+          `trusty-squire connect claim held by pid ${owner.pid} — another helper is using the browser`,
+        );
+        return { kind: 'blocked-foreign', action: squireForeignClaimAction(owner) };
+      }
+      removeProfileLock(claimPath);
+    }
+  }
+  return { kind: 'blocked-foreign', action: SQUIRE_CLAIM_UNAVAILABLE };
+}
+
+/**
  * Reclaim Squire's on-disk browser claim so a fresh connect is not blocked
  * by a phantom lock. Dead owners (process gone, or pid reused with a
  * different start_time) are cleared. A pid this helper already aborted is
@@ -278,14 +367,18 @@ export function observeSquireProcess(options?: {
   const profileDir = options?.profileDir ?? squireChromeProfileDir();
   const lockRoot = options?.lockRoot ?? tmpdir();
   const lockPath = squireProfileLockPath(profileDir, lockRoot);
+  const claimOwner = readLockFileOwner(squireConnectClaimPath(profileDir));
+  if (
+    claimOwner &&
+    claimOwner.pid !== process.pid &&
+    claimOwner.pid !== claim?.pid &&
+    (claimOwner.host !== hostname() || lockOwnerIsAlive(claimOwner))
+  ) {
+    return { kind: 'foreign', pid: claimOwner.pid, action: squireForeignClaimAction(claimOwner) };
+  }
   const owner = readLockFileOwner(lockPath);
   if (!owner) {
-    try {
-      lstatSync(lockPath);
-      return { kind: 'unidentified' };
-    } catch {
-      return { kind: 'none' };
-    }
+    return { kind: 'none' };
   }
   if (claim?.pid !== undefined && owner.pid === claim.pid) {
     return lockOwnerIsAlive(owner) ? { kind: 'ours', pid: owner.pid } : { kind: 'none' };
@@ -387,8 +480,6 @@ export type StreamedCommandResult = {
   /** The sign-in surface, captured from live output. Undefined when the process
    * exited or errored before printing a URL. */
   readonly signIn?: ConnectorSignIn;
-  /** The host already has a seat display; the person looks at that screen. */
-  readonly localScreen?: boolean;
   /** Kill the background process and clean up. Safe to call even if the
    * process has already exited. */
   readonly abort: () => void;
@@ -405,33 +496,6 @@ export function squireConnectProcessEnv(
     ...squireHostRewriteEnv(homedir()),
     TRUSTY_SQUIRE_PROFILE_DIR: profileDir,
   };
-}
-
-/**
- * Two branches only. A screen already in this process (`DISPLAY` or
- * `WAYLAND_DISPLAY`) is left for Squire. No screen means those vars are
- * cleared so Squire starts the virtual display. Tests inject a seat string
- * or `null` (headless); omitted reads the process env.
- */
-export function squireConnectEnv(
-  profileDir: string = squireChromeProfileDir(),
-  seatDisplay?: string | null,
-): NodeJS.ProcessEnv {
-  const env = { ...squireConnectProcessEnv(profileDir) };
-  if (seatDisplay === null) {
-    delete env.DISPLAY;
-    delete env.WAYLAND_DISPLAY;
-    return env;
-  }
-  if (seatDisplay !== undefined && seatDisplay.trim()) {
-    env.DISPLAY = seatDisplay.trim();
-    return env;
-  }
-  if (!env.DISPLAY?.trim() && !env.WAYLAND_DISPLAY?.trim()) {
-    delete env.DISPLAY;
-    delete env.WAYLAND_DISPLAY;
-  }
-  return env;
 }
 
 export type StreamedShellRunner = (
@@ -740,12 +804,6 @@ export type InstallSquireOptions = {
   readonly lockRoot?: string;
   /** Session file root (`<configHome>/trusty-squire/session.json`). */
   readonly configHome?: string;
-  /**
-   * Screen branch override. A string is that DISPLAY. `null` is headless
-   * (virtual display). Omitted uses this process's existing DISPLAY /
-   * WAYLAND_DISPLAY, or none.
-   */
-  readonly seatDisplay?: string | null;
 };
 
 export type InstallSquireResult = {
@@ -851,9 +909,8 @@ export function parseSignedInAs(output: string): string | undefined {
  * is connected. A live or published surface stays installing and does not
  * start another browser. Connect runs only when all three facts are empty.
  *
- * Two branches only: a screen already in this process's env is passed
- * through; otherwise DISPLAY/WAYLAND are cleared so Squire starts virtual.
- * Then Squire's own output is the answer — no local-screen shortcut.
+ * Connect inherits this process's env as it stands, screen and all, and
+ * Squire picks the host screen or its own virtual display from that.
  *
  * Order after a start: helper reached → trusty-squire installed → waiting
  * for sign-in → paired. An outstanding ceremony stays installing.
@@ -897,12 +954,8 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     return fail(observed.process.action);
   }
   if (!shouldStartSquireConnect(observed)) {
-    const wait =
-      observed.visibility.kind === 'local'
-        ? 'complete the sign-in on that screen'
-        : undefined;
     push(step('trusty-squire installed', 'done'));
-    push(step('waiting for sign-in', 'running', wait));
+    push(step('waiting for sign-in', 'running'));
     return {
       status: 'installing',
       steps,
@@ -925,6 +978,15 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     push(step('trusty-squire installed', 'failed', claim.action));
     return fail(claim.action);
   }
+  const shared = takeSquireConnectClaim({
+    log,
+    profileDir,
+    ...(previousPid !== undefined ? { ourPids: [previousPid] } : {}),
+  });
+  if (shared.kind === 'blocked-foreign') {
+    push(step('trusty-squire installed', 'failed', shared.action));
+    return fail(shared.action);
+  }
 
   const resolution = await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
@@ -933,10 +995,14 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     );
   }
 
-  // Connect uses the shared host Chrome, or Squire's virtual display when
-  // this process has no screen. Do not pass --skip-browser or --force-relogin.
-  const env = squireConnectEnv(profileDir, options.seatDisplay);
+  // Connect inherits this process's env as it stands, so Squire itself picks
+  // the host screen or its virtual display. Never --skip-browser/--force-relogin.
+  const env = squireConnectProcessEnv(profileDir);
   const install = await streamRun('npx', [...resolution.npxArgs, 'connect', '--target=codex'], env);
+  // The claim now belongs to the connect itself, so it is freed by that
+  // process ending rather than by anybody remembering to release it.
+  if (install.pid !== undefined) nameSquireConnectClaim(shared.path, install.pid);
+  else removeProfileLock(shared.path);
   const alreadyConnected =
     !install.signIn && parseConnectAlreadyConnected(`${install.stdout}\n${install.stderr}`);
   if (!install.signIn && !alreadyConnected) {
@@ -1053,6 +1119,44 @@ export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
     stale: record.stale === true,
     state: record.state === 'error' ? 'error' : 'active',
   };
+}
+
+/**
+ * KEYS straight from the session file this helper owns: an HTTP read of the
+ * account vault, so a host with no broker elected still lists its keys.
+ * Undefined means "no answer" (no session, a refusal, or a body this reader
+ * does not recognise) and the MCP read answers instead — never an empty list,
+ * which would blank the Workbench KEYS surface.
+ */
+export async function readVaultFromSession(options?: {
+  readonly session?: SquireSessionRecord;
+  readonly configHome?: string;
+  readonly fetch?: typeof fetch;
+}): Promise<VaultConnectionMeta[] | undefined> {
+  const session = options?.session ?? readSquireSession(options?.configHome);
+  if (!session?.agentSessionToken) return undefined;
+  try {
+    const response = await (options?.fetch ?? fetch)(`${session.apiBaseUrl}/v1/vault/credentials`, {
+      headers: {
+        Authorization: `Bearer ${session.agentSessionToken}`,
+        Accept: 'application/json',
+        ...(session.accountId ? { 'x-account-id': session.accountId } : {}),
+      },
+    });
+    if (response.status === 401) {
+      noteSquireVaultAuth('expired');
+      return undefined;
+    }
+    if (!response.ok) return undefined;
+    noteSquireVaultAuth('ok');
+    const body = (await response.json()) as unknown;
+    if (Array.isArray(body)) return body.map(vaultConnectionMeta);
+    const record = asRecord(body);
+    const credentials = record.credentials ?? record.items;
+    return Array.isArray(credentials) ? credentials.map(vaultConnectionMeta) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** `list_credentials` through the Squire MCP, shaped to the contract. */

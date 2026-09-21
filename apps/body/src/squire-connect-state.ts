@@ -13,18 +13,16 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { VaultConnectionMeta } from '@beeline/api-contract/daemon';
+import { squireHostPaths } from './squire-host.js';
 
 export type SquireProcessFact =
   | { readonly kind: 'none' }
   | { readonly kind: 'starting' }
   | { readonly kind: 'ours'; readonly pid: number }
-  | { readonly kind: 'foreign'; readonly pid: number; readonly action: string }
-  | { readonly kind: 'unidentified' };
+  | { readonly kind: 'foreign'; readonly pid: number; readonly action: string };
 
 export type SquireVisibilityFact =
   | { readonly kind: 'none' }
-  | { readonly kind: 'local'; readonly held: boolean }
   | { readonly kind: 'remote'; readonly held: boolean; readonly url: string };
 
 export type SquireCredentialFact =
@@ -67,22 +65,12 @@ export function resetSquireConnectFacts(): void {
 }
 
 /**
- * Two branches only. A screen is whatever this process already has
- * (`DISPLAY` or `WAYLAND_DISPLAY`). No sockets, logind, or seat filter —
- * Squire answers which of its paths work.
+ * The session root every helper-spawned Squire writes to: the same pinned
+ * `XDG_CONFIG_HOME` `squireHostRewriteEnv` gives it, never this process's
+ * ambient one. The argument is the test seam.
  */
-export function hostSeatDisplay(options?: {
-  readonly env?: NodeJS.ProcessEnv;
-}): string | undefined {
-  const env = options?.env ?? process.env;
-  const display = env.DISPLAY?.trim();
-  if (display) return display;
-  const wayland = env.WAYLAND_DISPLAY?.trim();
-  return wayland || undefined;
-}
-
 export function squireSessionPath(configHome?: string): string {
-  const root = configHome?.trim() || process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), '.config');
+  const root = configHome?.trim() || squireHostPaths(homedir()).configHome;
   return join(root, 'trusty-squire', 'session.json');
 }
 
@@ -140,7 +128,7 @@ export function connectStatusFromFacts(facts: SquireConnectFacts): 'connected' |
  *  live connect may be released and retried; a foreign process may not. */
 export function shouldStartSquireConnect(facts: SquireConnectFacts): boolean {
   if (facts.credential.kind === 'valid') return false;
-  if (facts.process.kind === 'foreign' || facts.process.kind === 'unidentified') return false;
+  if (facts.process.kind === 'foreign') return false;
   if (facts.visibility.kind !== 'none') return false;
   return true;
 }
@@ -149,54 +137,4 @@ export function visibilitySignIn(
   visibility: SquireVisibilityFact,
 ): { method: 'streamed-page'; url: string } | undefined {
   return visibility.kind === 'remote' ? { method: 'streamed-page', url: visibility.url } : undefined;
-}
-
-/**
- * KEYS from the session the app owns. A missing broker does not hide them:
- * this is an HTTP read of the account vault, not a façade spawn.
- */
-export async function readVaultFromSession(options?: {
-  readonly session?: SquireSessionRecord;
-  readonly configHome?: string;
-  readonly fetch?: typeof fetch;
-}): Promise<VaultConnectionMeta[] | undefined> {
-  const session = options?.session ?? readSquireSession(options?.configHome);
-  if (!session?.agentSessionToken) return undefined;
-  try {
-    const response = await (options?.fetch ?? fetch)(`${session.apiBaseUrl}/v1/vault/credentials`, {
-      headers: {
-        Authorization: `Bearer ${session.agentSessionToken}`,
-        Accept: 'application/json',
-        ...(session.accountId ? { 'x-account-id': session.accountId } : {}),
-      },
-    });
-    if (response.status === 401) {
-      noteSquireVaultAuth('expired');
-      return undefined;
-    }
-    if (!response.ok) return undefined;
-    noteSquireVaultAuth('ok');
-    const body = (await response.json()) as { credentials?: unknown };
-    return Array.isArray(body.credentials) ? body.credentials.map(sessionVaultMeta) : [];
-  } catch {
-    return undefined;
-  }
-}
-
-function sessionVaultMeta(raw: unknown): VaultConnectionMeta {
-  const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const strings = (value: unknown) =>
-    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
-  const created = record.created_at ?? record.createdAt;
-  const reference = String(record.reference ?? record.id ?? '');
-  return {
-    reference,
-    service: typeof record.service === 'string' ? record.service : null,
-    label: String(record.label ?? record.service ?? reference),
-    fieldNames: strings(record.field_names ?? record.fieldNames),
-    allowedHosts: strings(record.allowed_hosts ?? record.allowedHosts ?? record.login_hosts),
-    createdAt: typeof created === 'number' && Number.isFinite(created) ? created : 0,
-    stale: record.stale === true,
-    state: record.state === 'error' ? 'error' : 'active',
-  };
 }

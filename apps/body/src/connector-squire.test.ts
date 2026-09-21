@@ -18,10 +18,12 @@ import {
   readGrants,
   readVault,
   reclaimSquireProfileClaim,
+  nameSquireConnectClaim,
+  readVaultFromSession,
   releaseSquireConnectSession,
   resolveSquireConnectSpec,
+  takeSquireConnectClaim,
   revokeGrants,
-  squireConnectEnv,
   squireConnectProcessEnv,
   squireConnectSession,
   squireProfileLockPath,
@@ -33,20 +35,22 @@ import {
 } from './connector-squire.js';
 import { publishSquireVisibility, resetSquireConnectFacts } from './squire-connect-state.js';
 
-let previousConfigHome: string | undefined;
-let isolatedConfig: string;
+// The host home owns the shared profile, the connect claim, and the session
+// file, so every default path in this file is re-rooted at a scratch home.
+let previousHome: string | undefined;
+let isolatedHome: string;
 beforeEach(() => {
-  isolatedConfig = mkdtempSync(join(tmpdir(), 'squire-cfg-'));
-  previousConfigHome = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = isolatedConfig;
+  isolatedHome = mkdtempSync(join(tmpdir(), 'squire-home-'));
+  previousHome = process.env.HOME;
+  process.env.HOME = isolatedHome;
   resetSquireConnectFacts();
 });
 afterEach(() => {
   resetSquireConnectFacts();
   releaseSquireConnectSession();
-  if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = previousConfigHome;
-  rmSync(isolatedConfig, { recursive: true, force: true });
+  if (previousHome === undefined) delete process.env.HOME;
+  else process.env.HOME = previousHome;
+  rmSync(isolatedHome, { recursive: true, force: true });
 });
 
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
@@ -412,6 +416,31 @@ describe('installSquire', () => {
     expect(started).toBe(0);
     expect(result.status).toBe('installing');
     expect(result.signIn).toEqual({ method: 'streamed-page', url: 'https://tunnel.test/#p=x' });
+  });
+
+  it('starts a fresh connect once the published ceremony is released', async () => {
+    // The ceremony died with its connect (the expiry path releases the
+    // session), so the next attempt must raise a new one instead of handing
+    // the person the dead tunnel forever.
+    publishSquireVisibility({ kind: 'remote', held: true, url: 'https://tunnel.test/#p=dead' });
+    releaseSquireConnectSession();
+    let started = 0;
+    const result = await installSquire({
+      workspaceId: 'ws-1',
+      run: okRunner(),
+      streamRun: async () => {
+        started += 1;
+        return {
+          stdout: '',
+          stderr: '',
+          signIn: { method: 'streamed-page' as const, url: 'https://tunnel.test/#p=fresh' },
+          abort: () => {},
+        };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(started).toBe(1);
+    expect(result.signIn?.url).toBe('https://tunnel.test/#p=fresh');
   });
 
   it('stays installing while the ceremony it printed is outstanding', async () => {
@@ -949,18 +978,121 @@ describe('on-disk profile claim reclaim', () => {
     );
     dir.cleanup();
   });
-});
 
-describe('squireConnectEnv', () => {
-  it('clears DISPLAY and WAYLAND on the headless branch', () => {
-    const env = squireConnectEnv('/tmp/squire-profile', null);
-    expect(env.DISPLAY).toBeUndefined();
-    expect(env.WAYLAND_DISPLAY).toBeUndefined();
+  it('gives the shared profile to one helper when two arrive together', async () => {
+    // Squire's own lock lives in each unit's PrivateTmp /tmp, so the claim in
+    // the shared profile directory is what the second helper can see at all.
+    const dir = claimDir();
+    const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
+    const first = takeSquireConnectClaim({ profileDir: dir.profileDir });
+    expect(first.kind).toBe('taken');
+    if (first.kind !== 'taken') throw new Error('claim not taken');
+    nameSquireConnectClaim(first.path, holder.pid!);
+
+    const second = takeSquireConnectClaim({ profileDir: dir.profileDir });
+    expect(second.kind).toBe('blocked-foreign');
+
+    let streamed = false;
+    const { run } = scriptedRunner([{ stdout: '1.1.15' }, { stdout: '1.1.15' }]);
+    const result = await installSquire({
+      workspaceId: 'ws-2',
+      profileDir: dir.profileDir,
+      lockRoot: dir.lockRoot,
+      run,
+      streamRun: async () => {
+        streamed = true;
+        return { stdout: '', stderr: '', abort: () => {} };
+      },
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(streamed).toBe(false);
+    expect(result.status).toBe('error');
+    expect(result.errorMessage).toContain(String(holder.pid));
+
+    holder.kill();
+    dir.cleanup();
   });
 
-  it('passes an injected screen through for Squire to use', () => {
-    const env = squireConnectEnv('/tmp/squire-profile', ':0');
-    expect(env.DISPLAY).toBe(':0');
+  it('frees the shared claim once the connect that held it is gone', async () => {
+    const dir = claimDir();
+    const taken = takeSquireConnectClaim({ profileDir: dir.profileDir });
+    if (taken.kind !== 'taken') throw new Error('claim not taken');
+    nameSquireConnectClaim(taken.path, 2_147_483_647);
+    const again = takeSquireConnectClaim({ profileDir: dir.profileDir });
+    expect(again.kind).toBe('taken');
+    dir.cleanup();
+  });
+});
+
+describe('vault reads from the session file', () => {
+  function sessionHome(): string {
+    const home = mkdtempSync(join(tmpdir(), 'squire-session-'));
+    mkdirSync(join(home, 'trusty-squire'));
+    writeFileSync(
+      join(home, 'trusty-squire', 'session.json'),
+      JSON.stringify({
+        api_base_url: 'https://vault.test',
+        account_id: 'acct_9',
+        agent_session_token: 'tok',
+      }),
+    );
+    return home;
+  }
+
+  it('lists KEYS from the session token without a broker', async () => {
+    const home = sessionHome();
+    const vault = await readVaultFromSession({
+      configHome: home,
+      fetch: async (url, init) => {
+        expect(String(url)).toBe('https://vault.test/v1/vault/credentials');
+        expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+        return new Response(
+          JSON.stringify({
+            credentials: [
+              {
+                reference: 'cred_groq',
+                service: 'groq',
+                label: 'Groq API',
+                created_at: '2026-09-20T03:24:15.020Z',
+              },
+            ],
+          }),
+        );
+      },
+    });
+    expect(vault).toEqual([
+      expect.objectContaining({
+        reference: 'cred_groq',
+        label: 'Groq API',
+        // The one mapper parses Squire's ISO-8601 stamp; a flattened 0 would
+        // date every key from the row's own insert time instead.
+        createdAt: Math.floor(Date.parse('2026-09-20T03:24:15.020Z') / 1000),
+      }),
+    ]);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('leaves an unrecognised body to the MCP read instead of blanking KEYS', async () => {
+    const home = sessionHome();
+    expect(
+      await readVaultFromSession({
+        configHome: home,
+        fetch: async () => new Response(JSON.stringify({ data: 'something else' })),
+      }),
+    ).toBeUndefined();
+    expect(
+      await readVaultFromSession({
+        configHome: home,
+        fetch: async () => new Response(JSON.stringify([{ reference: 'cred_bare' }])),
+      }),
+    ).toEqual([expect.objectContaining({ reference: 'cred_bare' })]);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('does not invent KEYS when there is no session', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'squire-session-'));
+    expect(await readVaultFromSession({ configHome: empty })).toBeUndefined();
+    rmSync(empty, { recursive: true, force: true });
   });
 });
 

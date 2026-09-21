@@ -5,15 +5,14 @@
 # the web build first and then wraps it.
 #
 # Triggers:
-#   pull_request  — only when a desktop-owning path changes (the crate, the
-#                   configs, the icons, the mobile manifest, this file). A
-#                   three-runner matrix is too expensive to attach to every
-#                   mobile PR, and nothing in sources/ can break the shell
-#                   without also failing MOBILE SUITE.
+#   pull_request  — the workflow always starts so a skipped required check
+#                   still reports. The three-runner matrix runs only when
+#                   desktop code, packages/, or an unmapped path changes.
+#                   A sources/-only mobile PR does not build the shell.
 #   workflow_dispatch — pick the variant; this is how a tester gets a build of
 #                   an arbitrary branch.
 #   workflow_call   — the unified release builds production installers before
-#                   it creates the GitHub release.
+#                   it creates the GitHub release. Unfiltered.
 #
 # The variant selects which config the CLI merges over tauri.conf.json:
 # production is the release identity, preview installs beside it with console
@@ -28,21 +27,7 @@
 name: Desktop
 
 on:
-  pull_request:
-    paths:
-      - 'apps/mobile/src-tauri/**'
-      - 'apps/mobile/package.json'
-      - 'apps/mobile/package-lock.json'
-      - 'apps/mobile/app.config.js'
-      - 'apps/mobile/scripts/generate-tauri-icons.mjs'
-      - 'apps/mobile/sources/assets/images/icon.png'
-      - 'packages/api-contract/package.json'
-      - 'packages/buzz-client/package.json'
-      - 'scripts/clean-dist.mjs'
-      - 'scripts/clean-dist.test.mjs'
-      - 'scripts/desktop-update.mjs'
-      - 'scripts/desktop-update.test.mjs'
-      - '.github/workflows/desktop.yml'
+  pull_request: {}
   workflow_dispatch:
     inputs:
       variant:
@@ -120,11 +105,59 @@ defaults:
     shell: bash
 
 jobs:
+  changes:
+    name: Detect desktop changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      desktop: ${{ steps.decide.outputs.desktop }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            packages:
+              - 'packages/**'
+            unmapped:
+              - '**'
+              - '*'
+              - '!packages/**'
+              - '!apps/body/**'
+              - '!apps/push-gateway/**'
+              - '!apps/server/**'
+              - '!apps/mobile/**'
+            desktopModule:
+              - 'apps/mobile/src-tauri/**'
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/app.config.js'
+              - 'apps/mobile/scripts/generate-tauri-icons.mjs'
+              - 'apps/mobile/sources/assets/images/icon.png'
+      - id: decide
+        env:
+          PACKAGES: ${{ steps.filter.outputs.packages }}
+          UNMAPPED: ${{ steps.filter.outputs.unmapped }}
+          DESKTOP_MODULE: ${{ steps.filter.outputs.desktopModule }}
+        run: |
+          set -euo pipefail
+          if [ "$PACKAGES" = true ] || [ "$UNMAPPED" = true ] || [ "$DESKTOP_MODULE" = true ]; then
+            echo 'desktop=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'desktop=false' >> "$GITHUB_OUTPUT"
+          fi
+
   # icons/ is generated from sources/assets/images/icon.png. Regenerating is
   # seconds of node, so prove the committed files still match the source
   # before spending three runners on a bundle that would ship a stale mark.
   icons:
     name: DESKTOP ICONS
+    needs: changes
+    if: >-
+      !cancelled() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.outputs.desktop == 'true'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -142,7 +175,8 @@ jobs:
 
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
-    needs: icons
+    needs: [changes, icons]
+    if: ${{ !cancelled() && needs.icons.result == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:

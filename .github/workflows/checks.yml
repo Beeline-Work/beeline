@@ -1,25 +1,31 @@
 # The consolidated PR gates in one file (was typecheck.yml, body-tests.yml,
 # client-truth-gates.yml, workflow-lint.yml, auth-image.yml). Check names are
-# the job `name:`s below and are unchanged: TYPECHECK, BODY SUITE,
-# DEAD CODE, PUSH-GATEWAY SUITE, MOBILE SUITE, MOBILE-EXPORT REACHABILITY,
-# PRODUCTION-CORPUS REPLAY, FRAME-BUDGET, STATE-UPGRADE, NATIVE FINGERPRINT,
-# README PARITY, APP LINK ASSOCIATIONS, ACTIONLINT, Build auth container,
-# Detect changes.
+# the job `name:`s below and must stay stable: TYPECHECK, SHARED PACKAGE
+# TESTS, BODY SUITE, DEAD CODE, PUSH-GATEWAY SUITE, MOBILE SUITE,
+# MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, FRAME-BUDGET,
+# STATE-UPGRADE, NATIVE FINGERPRINT, README PARITY, APP LINK ASSOCIATIONS,
+# ACTIONLINT, Build auth container, Detect changes. A job `name:` IS a
+# required-check context — renaming one blocks merges.
 #
-# One `changes` job maps the diff to the gates it can affect; a gate whose
-# paths are untouched is skipped, and a skipped job still posts a passing
-# check, so an unrelated diff never blocks a merge. TYPECHECK alone has no
-# path filter: a type error can be introduced by two independently green PRs
-# merging cleanly (see #850 + #851), so it observes the whole workspace graph,
-# and it runs the root `npm run typecheck` — turbo's task alone omits the
-# isolated mobile app and tsconfig.scripts.json.
+# TYPECHECK and SHARED PACKAGE TESTS always run on a pull request. Heavy
+# suites prune by MODULE, not by guessing which tests import the file:
+#   apps/body            → BODY SUITE
+#   apps/push-gateway    → PUSH-GATEWAY SUITE
+#   apps/server          → PRODUCTION-CORPUS REPLAY
+#   apps/mobile          → MOBILE SUITE + MOBILE-EXPORT REACHABILITY
+#   packages/**          → every path-filtered job (imported by every app)
+#   any path in no module → every path-filtered job (fail closed)
+# A skipped required job uses a job-level `if:` so GitHub reports the check
+# as skipped-and-satisfied. Never put a required check behind a workflow-level
+# `on.pull_request.paths` filter: that omits the check entirely and the PR
+# waits forever. Dispatch and release workflows are unfiltered.
 #
 # Every gate here executes something, or names the run it takes its verdict
 # from. FRAME-BUDGET and STATE-UPGRADE each name one test that MOBILE SUITE
-# already runs. PRODUCTION-CORPUS REPLAY has its own cached, production-scale
-# database because plan/timing evidence cannot come from the tiny suite tables.
-# A path filter must cover the graph its tests import, not just the directory
-# they live in.
+# already runs, so those filters stay a subset of the mobile module (a
+# skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
+# production-scale database because plan/timing evidence cannot come from
+# the tiny suite tables.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -37,6 +43,7 @@ on:
         options:
           - all
           - typecheck
+          - shared-package-tests
           - dead-code
           - body-suite
           - push-gateway-suite
@@ -62,18 +69,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      body: ${{ steps.filter.outputs.body }}
-      pushGateway: ${{ steps.filter.outputs.pushGateway }}
-      mobileSuite: ${{ steps.filter.outputs.mobileSuite }}
-      mobileExportReachability: ${{ steps.filter.outputs.mobileExportReachability }}
-      productionCorpusReplay: ${{ steps.filter.outputs.productionCorpusReplay }}
-      frameBudget: ${{ steps.filter.outputs.frameBudget }}
-      stateUpgrade: ${{ steps.filter.outputs.stateUpgrade }}
-      nativeFingerprint: ${{ steps.filter.outputs.nativeFingerprint }}
-      readme: ${{ steps.filter.outputs.readme }}
-      appLinkAssociations: ${{ steps.filter.outputs.appLinkAssociations }}
-      workflows: ${{ steps.filter.outputs.workflows }}
-      authImage: ${{ steps.filter.outputs.authImage }}
+      body: ${{ steps.decide.outputs.body }}
+      pushGateway: ${{ steps.decide.outputs.pushGateway }}
+      mobileSuite: ${{ steps.decide.outputs.mobileSuite }}
+      mobileExportReachability: ${{ steps.decide.outputs.mobileExportReachability }}
+      productionCorpusReplay: ${{ steps.decide.outputs.productionCorpusReplay }}
+      frameBudget: ${{ steps.decide.outputs.frameBudget }}
+      stateUpgrade: ${{ steps.decide.outputs.stateUpgrade }}
+      nativeFingerprint: ${{ steps.decide.outputs.nativeFingerprint }}
+      readme: ${{ steps.decide.outputs.readme }}
+      appLinkAssociations: ${{ steps.decide.outputs.appLinkAssociations }}
+      workflows: ${{ steps.decide.outputs.workflows }}
+      authImage: ${{ steps.decide.outputs.authImage }}
     steps:
       - uses: dorny/paths-filter@v3
         id: filter
@@ -82,83 +89,30 @@ jobs:
           # composed from YAML anchors, so the diff-membership logic never
           # depends on how dorny/paths-filter treats a nested-list merge.
           filters: |
-            # apps/body/src/daemon-api-client.integration.test.ts imports the
-            # server harness directly (../../server/src/*.js), and the server
-            # reaches @beeline/auth and @beeline/push-gateway; body's own source
-            # imports @beeline/api-contract. All of it is in the job's build
-            # chain, so all of it can break this suite.
-            body:
+            # Shared packages have no safe blast radius: every app imports
+            # them as dist. A stale compiled copy blanked every Room.
+            packages:
+              - 'packages/**'
+            # A path that belongs to no heavy-suite module fails closed.
+            unmapped:
+              - '**'
+              - '*'
+              - '!packages/**'
+              - '!apps/body/**'
+              - '!apps/push-gateway/**'
+              - '!apps/server/**'
+              - '!apps/mobile/**'
+            bodyModule:
               - 'apps/body/**'
+            pushGatewayModule:
+              - 'apps/push-gateway/**'
+            serverModule:
               - 'apps/server/**'
-              - 'apps/auth/**'
-              - 'apps/push-gateway/**'
-              - 'packages/nostr/**'
-              - 'packages/api-contract/**'
-              - 'packages/buzz-client/**'
-              - 'apps/gate/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
-            # apps/push-gateway/package.json depends on @beeline/body and its
-            # production entry imports @beeline/body/release-status.
-            pushGateway:
-              - 'apps/push-gateway/**'
-              - 'apps/body/**'
-              - 'packages/nostr/**'
-              - 'packages/api-contract/**'
-              - 'packages/buzz-client/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
-            mobileSuite:
-              - 'packages/nostr/**'
-              - 'packages/api-contract/**'
-              - 'packages/buzz-client/**'
+            mobileModule:
               - 'apps/mobile/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
-            # A Metro export resolves the whole app graph, so any app source
-            # file or any @beeline/* package it imports can break it — the old
-            # three-directory subset omitted packages/api-contract and most of
-            # sources/, which is exactly where an unreachable import lands.
-            mobileExportReachability:
-              - 'apps/mobile/**'
-              - 'packages/nostr/**'
-              - 'packages/api-contract/**'
-              - 'packages/buzz-client/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
-            # The replay covers both the retained relay projection and every
-            # monolith hot read, so source changes on either side rerun it.
-            productionCorpusReplay:
-              - 'apps/server/**'
-              - 'apps/body/**'
-              - 'apps/auth/**'
-              - 'apps/gate/**'
-              - 'packages/nostr/**'
-              - 'packages/api-contract/**'
-              - 'packages/buzz-client/**'
-              - 'apps/push-gateway/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
-            # FRAME-BUDGET takes its verdict from MOBILE SUITE; subset of
-            # mobileSuite above.
+            # FRAME-BUDGET takes its verdict from MOBILE SUITE; this list
+            # must stay a subset of mobileModule (plus run-everything).
             frameBudget:
-              - 'packages/nostr/**'
-              - 'packages/buzz-client/**'
               - 'apps/mobile/package.json'
               - 'apps/mobile/package-lock.json'
               - 'apps/mobile/tsconfig.json'
@@ -166,19 +120,12 @@ jobs:
               - 'apps/mobile/sources/buzz/**'
               - 'apps/mobile/sources/sync/transport/**'
               - 'apps/mobile/sources/app/(app)/buzz/chat/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
             # The daemon durable-state half of this gate is retired with the
             # feature: apps/body/src/durable-state.ts and its test are deleted
             # and stay deleted. The surviving state authority is the phone's
             # stored-surface upgrade path, so this reads as a subset of
             # mobileSuite and STATE-UPGRADE takes its verdict from MOBILE SUITE.
             stateUpgrade:
-              - 'packages/nostr/**'
-              - 'packages/buzz-client/**'
               - 'apps/mobile/package.json'
               - 'apps/mobile/package-lock.json'
               - 'apps/mobile/tsconfig.json'
@@ -186,11 +133,6 @@ jobs:
               - 'apps/mobile/sources/buzz/**'
               - 'apps/mobile/sources/sync/transport/**'
               - 'apps/mobile/sources/app/(app)/buzz/chat/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'tsconfig.base.json'
-              - 'turbo.json'
-              - '.github/workflows/checks.yml'
             # Exactly the inputs @expo/fingerprint hashes for this app, plus
             # the gate's own parts. Anything else cannot move the stamp, and a
             # gate that runs on unrelated diffs only teaches people to ignore it.
@@ -269,6 +211,54 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
 
+      - id: decide
+        env:
+          PACKAGES: ${{ steps.filter.outputs.packages }}
+          UNMAPPED: ${{ steps.filter.outputs.unmapped }}
+          BODY_MODULE: ${{ steps.filter.outputs.bodyModule }}
+          PUSH_GATEWAY_MODULE: ${{ steps.filter.outputs.pushGatewayModule }}
+          SERVER_MODULE: ${{ steps.filter.outputs.serverModule }}
+          MOBILE_MODULE: ${{ steps.filter.outputs.mobileModule }}
+          FRAME_BUDGET: ${{ steps.filter.outputs.frameBudget }}
+          STATE_UPGRADE: ${{ steps.filter.outputs.stateUpgrade }}
+          NATIVE_FINGERPRINT: ${{ steps.filter.outputs.nativeFingerprint }}
+          README: ${{ steps.filter.outputs.readme }}
+          APP_LINK_ASSOCIATIONS: ${{ steps.filter.outputs.appLinkAssociations }}
+          WORKFLOWS: ${{ steps.filter.outputs.workflows }}
+          AUTH_IMAGE: ${{ steps.filter.outputs.authImage }}
+        run: |
+          set -euo pipefail
+          run_everything=false
+          if [ "$PACKAGES" = true ] || [ "$UNMAPPED" = true ]; then
+            run_everything=true
+          fi
+          set_out() {
+            local name=$1 module=$2
+            if [ "$run_everything" = true ] || [ "$module" = true ]; then
+              echo "${name}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${name}=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          set_out body "$BODY_MODULE"
+          set_out pushGateway "$PUSH_GATEWAY_MODULE"
+          set_out mobileSuite "$MOBILE_MODULE"
+          set_out mobileExportReachability "$MOBILE_MODULE"
+          set_out productionCorpusReplay "$SERVER_MODULE"
+          set_out frameBudget "$FRAME_BUDGET"
+          set_out stateUpgrade "$STATE_UPGRADE"
+          set_out nativeFingerprint "$NATIVE_FINGERPRINT"
+          set_out readme "$README"
+          set_out appLinkAssociations "$APP_LINK_ASSOCIATIONS"
+          set_out workflows "$WORKFLOWS"
+          set_out authImage "$AUTH_IMAGE"
+          {
+            echo "run_everything=$run_everything"
+            echo "packages=$PACKAGES unmapped=$UNMAPPED"
+            echo "body=$BODY_MODULE push-gateway=$PUSH_GATEWAY_MODULE"
+            echo "server=$SERVER_MODULE mobile=$MOBILE_MODULE"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   typecheck:
     name: TYPECHECK
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'typecheck'
@@ -303,6 +293,24 @@ jobs:
       # workflow file, so a filtered lane would never see it.
       - name: Check no workflow names a deleted test
         run: npm run lint:workflow-paths
+
+  shared-package-tests:
+    name: SHARED PACKAGE TESTS
+    if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # buzz-client resolves @beeline/nostr and @beeline/api-contract from
+      # built dist, the same as every app that imports those packages.
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract
+      - name: Run hermetic shared-package tests
+        run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
 
   dead-code:
     name: DEAD CODE

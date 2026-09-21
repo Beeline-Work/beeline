@@ -9,7 +9,7 @@ const rowSource = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
   'utf8',
 );
-const membersSource = readFileSync(new URL('./MembersScreen.tsx', import.meta.url), 'utf8');
+const membersSource = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
 const channelsSource = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
 
 describe('Room participant roster layout', () => {

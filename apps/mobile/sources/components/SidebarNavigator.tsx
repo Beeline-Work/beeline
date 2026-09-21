@@ -44,11 +44,15 @@ export const SidebarNavigator = React.memo(() => {
   const [desktopSession, setDesktopSession] = React.useState<DesktopSessionState>(
     inDesktopShell ? 'checking' : 'signed-in',
   );
-  const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell || desktopPlatform, isTablet);
+  // Web follows the live window: only `isTablet` (width ≥ 768) opens the
+  // two-pane frame. `desktopPlatform` is true for every browser, so OR-ing it
+  // here painted the desktop shell at phone width. Native Tauri still keeps
+  // the frame at every width through `inDesktopShell`.
+  const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell, isTablet);
   const isAppSurface = pathname.startsWith('/beeline/') && !pathname.includes('/onboarding');
   const showSessionChrome =
     isAppSurface &&
-    showsDesktopSessionChrome(inDesktopShell, desktopPlatform || isTablet, desktopSession);
+    showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession);
   const showSidebar = showSessionChrome && !zenMode;
   const { width: windowWidth } = useWindowDimensions();
 

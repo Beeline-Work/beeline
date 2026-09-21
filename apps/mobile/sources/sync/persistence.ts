@@ -57,6 +57,12 @@ export function saveAppearanceLaunch(mode: 'light' | 'dark'): void {
   mmkv.set(APPEARANCE_LAUNCH_KEY, mode);
 }
 
+export function storeTempText(content: string): string {
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  mmkv.set(`temp_text_${id}`, content);
+  return id;
+}
+
 export function retrieveTempText(id: string): string | null {
   const key = `temp_text_${id}`;
   const content = mmkv.getString(key) ?? null;

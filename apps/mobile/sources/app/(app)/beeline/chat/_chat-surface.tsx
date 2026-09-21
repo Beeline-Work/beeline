@@ -238,6 +238,7 @@ import {
   transcriptKeyboardDismissMode,
 } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
+import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import {
@@ -3999,6 +4000,10 @@ export function BuzzChatSurface({
   const handleCopyLedgerMessage = useCallback((text: string) => {
     void copyEntireTurn(text, Clipboard.setStringAsync);
   }, []);
+  const handleSelectLedgerMessage = useCallback((text: string) => {
+    const textId = storeTempText(text);
+    router.push({ pathname: '/text-selection', params: { textId } } as Href);
+  }, []);
 
   const renderMessage = useCallback(
     (
@@ -5347,6 +5352,22 @@ export function BuzzChatSurface({
               setMessageActionsTarget(null);
             }}
             testID="message-copy-action"
+          />
+        ) : null}
+        {messageActionsTarget ? (
+          <HullActionSheetRow
+            accessibilityLabel="Select message text"
+            label="Select"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) {
+                handleSelectLedgerMessage(
+                  target.isAgentActivity ? agentActivityReplyExcerpt(target) : target.text,
+                );
+              }
+            }}
+            testID="message-select-action"
           />
         ) : null}
         {messageActionsTarget ? (
